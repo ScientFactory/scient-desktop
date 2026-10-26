@@ -22,6 +22,10 @@ import {
   ExtensionsError,
   ExtensionsInventory,
   ExtensionsListInput,
+  ProviderStoreSearchInput,
+  ProviderStoreEntryInput,
+  ProviderStorePage,
+  ProviderStoreEntry,
   ProviderPluginActionInput,
   ProviderPluginActionResult,
   ScientPluginInstallInput,
@@ -31,6 +35,8 @@ import {
 
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_EXTENSION_WS_METHODS = {
+  extensionsProviderStoreSearch: "extensions.providerStore.search",
+  extensionsProviderStoreEntry: "extensions.providerStore.entry",
   extensionsList: "extensions.list",
   extensionsSubscribeChanges: "extensions.subscribeChanges",
   extensionsConnectorAdd: "extensions.connectors.add",
@@ -143,3 +149,12 @@ export const WsProviderPluginsActRpc = Rpc.make(SCIENT_EXTENSION_WS_METHODS.prov
   success: ProviderPluginActionResult,
   error: ExtensionsRpcError,
 });
+
+export const WsExtensionsProviderStoreSearchRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsProviderStoreSearch,
+  { payload: ProviderStoreSearchInput, success: ProviderStorePage, error: ExtensionsRpcError },
+);
+export const WsExtensionsProviderStoreEntryRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsProviderStoreEntry,
+  { payload: ProviderStoreEntryInput, success: ProviderStoreEntry, error: ExtensionsRpcError },
+);

@@ -12,6 +12,7 @@ import { Button } from "../../components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
 import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
+import { ProviderStoreShelves } from "./ProviderStorePages";
 import { ConnectorItem, EntryItem, PluginItem } from "./ExtensionItems";
 import {
   BackLink,
@@ -233,6 +234,7 @@ function DiscoverHome() {
           </ExtensionGrid>
         </ExtensionsSection>
       ) : null}
+      <ProviderStoreShelves />
       <h2 className={SECTION_HEADING_CLASS}>
         <Link to="/settings/extensions/all" className={SECTION_TITLE_LINK_CLASS}>
           Browse all MCP servers
@@ -310,7 +312,14 @@ function Discover() {
           <SearchField label="Search extensions" value={search} onChange={setSearch} />
         </ExtensionsTopBar>
       </SettingsSearchTarget>
-      {query ? <DiscoverSearchResults query={query} /> : <DiscoverHome />}
+      {query ? (
+        <>
+          <DiscoverSearchResults query={query} />
+          <ProviderStoreShelves query={query} />
+        </>
+      ) : (
+        <DiscoverHome />
+      )}
     </>
   );
 }

@@ -19,7 +19,10 @@
     "apps/server/src/provider/CodexPluginInventory.ts",
     "apps/server/src/provider/ProviderNativeInventory.ts",
     "apps/server/src/provider/ScientProviderNativeInventory.ts",
-    "packages/contracts/src/scient/extensionAudience.ts"
+    "packages/contracts/src/scient/extensionAudience.ts",
+    "packages/contracts/src/scient/providerStore.ts",
+    "apps/web/src/routes/_chat.settings.extensions_.store.$instanceId.tsx",
+    "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",
@@ -244,6 +247,11 @@
       "path": "apps/web/src/components/settings/ProviderInstanceCard.tsx",
       "anchor": "ScientClaudePluginsSetting",
       "purpose": "Expose the version-gated default-on Claude plugin source preference for Scient Agent."
+    },
+    {
+      "path": "packages/contracts/src/clientRpcPermissions.ts",
+      "anchor": "WS_METHODS.providerPluginsAct",
+      "purpose": "Require the destination settings grant for provider plugin commands."
     }
   ],
   "scientMounts": [

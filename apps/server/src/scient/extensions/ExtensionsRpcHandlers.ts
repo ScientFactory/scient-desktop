@@ -3,6 +3,7 @@
  * than predicting its resulting state.
  */
 import {
+  ExtensionsError,
   type ExtensionsChangedEvent,
   type ExtensionsInventory,
   type ServerProviders,
@@ -204,6 +205,54 @@ export const makeExtensionsRpcHandlers = ({
       ),
     [WS_METHODS.extensionsDiscoverCatalog]: () =>
       observeRpcEffect(WS_METHODS.extensionsDiscoverCatalog, discover.catalog(), traceAttributes),
+    [WS_METHODS.extensionsProviderStoreSearch]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsProviderStoreSearch,
+        Effect.gen(function* () {
+          const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+            input.instanceId,
+          );
+          if (!actions?.store || (yield* actions.isRetired))
+            return yield* new ExtensionsError({
+              reason: "unsupported",
+              message: "This agent has no available plugin store.",
+            });
+          return yield* actions.store.search(input).pipe(
+            Effect.mapError(
+              () =>
+                new ExtensionsError({
+                  reason: "state-unavailable",
+                  message: "Could not read this agent’s plugin store.",
+                }),
+            ),
+          );
+        }),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsProviderStoreEntry]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsProviderStoreEntry,
+        Effect.gen(function* () {
+          const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+            input.instanceId,
+          );
+          if (!actions?.store || (yield* actions.isRetired))
+            return yield* new ExtensionsError({
+              reason: "unsupported",
+              message: "This agent has no available plugin store.",
+            });
+          return yield* actions.store.entry(input.entryId).pipe(
+            Effect.mapError(
+              () =>
+                new ExtensionsError({
+                  reason: "not-found",
+                  message: "This plugin is no longer available.",
+                }),
+            ),
+          );
+        }),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsDiscoverEntry]: (input) =>
       observeRpcEffect(WS_METHODS.extensionsDiscoverEntry, discover.entry(input), traceAttributes),
     [WS_METHODS.extensionsPluginInstall]: (input) =>

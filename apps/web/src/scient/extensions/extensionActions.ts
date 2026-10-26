@@ -105,7 +105,7 @@ function finishSignIn(patch: OperationPatch, opening: SignInOpening, startedAt: 
  * component that started the action being replaced by another view of the
  * same item.
  */
-function useActionLock(item: string) {
+export function useActionLock(item: string) {
   const { environmentId, canWrite } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const operation = useAtomValue(

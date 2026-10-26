@@ -99,6 +99,18 @@ export function createExtensionsAtoms<R, E>(
       idleTtlMs: 10 * 60_000,
       refreshTrigger: changesOf,
     }),
+    providerStorePage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:provider-store",
+      tag: WS_METHODS.extensionsProviderStoreSearch,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
+    providerStoreEntry: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:provider-store-entry",
+      tag: WS_METHODS.extensionsProviderStoreEntry,
+      staleTimeMs: 60_000,
+      idleTtlMs: 60_000,
+    }),
     addConnector: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:extensions:add-connector",
       tag: WS_METHODS.extensionsConnectorAdd,
@@ -202,3 +214,6 @@ export const setScientPluginEnabled = extensionsAtoms.setScientPluginEnabled;
 export const startConnectorSignIn = extensionsAtoms.startConnectorSignIn;
 export const testConnector = extensionsAtoms.testConnector;
 export const actOnProviderPlugin = extensionsAtoms.actOnProviderPlugin;
+
+export const extensionsProviderStorePage = extensionsAtoms.providerStorePage;
+export const extensionsProviderStoreEntry = extensionsAtoms.providerStoreEntry;

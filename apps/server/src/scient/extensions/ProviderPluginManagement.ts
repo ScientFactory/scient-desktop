@@ -252,6 +252,63 @@ export function makeProviderPluginManagement(
     };
   });
 
+  const install = Effect.fn("ProviderPluginManagement.install")(function* (
+    input: ProviderPluginActionInput,
+    entryId: string,
+  ) {
+    const { actions } = yield* admit(input.instanceId);
+    if (!actions?.store)
+      return yield* failure("unsupported", "This agent cannot install plugins from Scient.");
+    const entry = yield* untilRetired(
+      actions,
+      "checking the plugin",
+      actions.store.entry(entryId),
+    ).pipe(
+      Effect.mapError(() =>
+        failure("state-unavailable", "Could not read the plugin before installing."),
+      ),
+    );
+    if (entry.disabledReason) return yield* failure("unsupported", entry.disabledReason);
+    yield* untilRetired(actions, "installing the plugin", actions.store.install(entryId)).pipe(
+      Effect.mapError(() =>
+        failure(
+          "provider-rejected",
+          "The agent did not confirm the installation. Refresh to check.",
+        ),
+      ),
+    );
+    const verified = yield* untilRetired(
+      actions,
+      "verifying the installation",
+      actions.store.entry(entryId),
+    ).pipe(
+      Effect.mapError(() =>
+        failure("state-unavailable", "The installation was sent, but could not be verified."),
+      ),
+    );
+    if (!verified.installed)
+      return yield* failure(
+        "provider-rejected",
+        "The agent does not list this plugin as installed.",
+      );
+    const listing = yield* untilRetired(
+      actions,
+      "reading installed plugins",
+      actions.listPlugins({ cwd: input.cwd }),
+    ).pipe(
+      Effect.mapError(() =>
+        failure("state-unavailable", "Installed, but could not refresh the agent’s inventory."),
+      ),
+    );
+    return {
+      providers: yield* providerRegistry.recordProviderNativeInventory({
+        instanceId: input.instanceId,
+        reportedBy: actions,
+        inventory: { cwd: input.cwd, ...listing },
+      }),
+    };
+  });
+
   const reserveProcessSlot = Ref.modify(processSlotsRef, (used) =>
     used >= MAX_PENDING_PROVIDER_MCP_SIGN_INS ? [false, used] : [true, used + 1],
   ).pipe(
@@ -425,6 +482,40 @@ export function makeProviderPluginManagement(
   return {
     act: (input) => {
       switch (input.action.type) {
+        case "install":
+          return writePermit.withPermits(1)(install(input, input.action.entryId));
+        case "add-official-store":
+          return writePermit.withPermits(1)(
+            Effect.gen(function* () {
+              const { actions } = yield* admit(input.instanceId);
+              if (!actions?.store?.addOfficialStore)
+                return yield* failure("unsupported", "This agent cannot add that store.");
+              yield* untilRetired(
+                actions,
+                "adding the store",
+                actions.store.addOfficialStore(),
+              ).pipe(
+                Effect.mapError(() =>
+                  failure("provider-rejected", "The store could not be added. Refresh to check."),
+                ),
+              );
+              const page = yield* untilRetired(
+                actions,
+                "verifying the store",
+                actions.store.search({ limit: 1 }),
+              ).pipe(
+                Effect.mapError(() =>
+                  failure("state-unavailable", "Could not verify the new store."),
+                ),
+              );
+              if (page.canAddOfficialStore)
+                return yield* failure(
+                  "provider-rejected",
+                  "The agent does not list the store yet.",
+                );
+              return { providers: yield* providerRegistry.getProviders };
+            }),
+          );
         case "refresh-inventory":
           return Effect.gen(function* () {
             const { actions } = yield* admit(input.instanceId);

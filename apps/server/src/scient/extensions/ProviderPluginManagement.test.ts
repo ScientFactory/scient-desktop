@@ -738,3 +738,85 @@ describe("ProviderPluginManagement enablement", () => {
     ),
   );
 });
+
+describe("ProviderPluginManagement install", () => {
+  it.effect("publishes only an installation that a fresh owner read verifies", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const installed = yield* Ref.make(false);
+        const accept = yield* Ref.make(false);
+        let mutations = 0;
+        const { actions } = yield* makeGeneration({
+          store: {
+            search: () => Effect.succeed({ entries: [], total: 0 }),
+            entry: () =>
+              Ref.get(installed).pipe(
+                Effect.map((installed) => ({
+                  id: "review@official",
+                  name: "review",
+                  marketplace: "official",
+                  displayName: "Review",
+                  description: "",
+                  kind: "shared" as const,
+                  installed,
+                  includes: [],
+                  apps: [],
+                })),
+              ),
+            install: () =>
+              Effect.gen(function* () {
+                mutations++;
+                yield* Ref.set(installed, yield* Ref.get(accept));
+              }),
+          },
+          listPlugins: () =>
+            Ref.get(installed).pipe(Effect.flatMap((value) => listing(value ? [linear] : []))),
+        });
+        const { management, recorded } = yield* makeHarness({ actions });
+        const input = {
+          instanceId: INSTANCE_ID,
+          action: { type: "install" as const, entryId: "review@official" },
+        };
+        const rejected = yield* management.act(input).pipe(Effect.flip);
+        assert.strictEqual(rejected.reason, "provider-rejected");
+        assert.deepStrictEqual(yield* Ref.get(recorded), []);
+        yield* Ref.set(accept, true);
+        yield* management.act(input);
+        assert.strictEqual(mutations, 2);
+        assert.strictEqual((yield* Ref.get(recorded)).length, 1);
+      }),
+    ),
+  );
+  it.effect("refuses policy-disabled plugins before sending an installation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { actions } = yield* makeGeneration({
+          store: {
+            search: () => Effect.succeed({ entries: [], total: 0 }),
+            entry: () =>
+              Effect.succeed({
+                id: "blocked",
+                name: "blocked",
+                marketplace: "store",
+                displayName: "Blocked",
+                description: "",
+                kind: "shared",
+                installed: false,
+                includes: [],
+                apps: [],
+                disabledReason: "Disabled by your administrator",
+              }),
+            install: () => Effect.die("must not install"),
+          },
+        });
+        const { management } = yield* makeHarness({ actions });
+        assert.strictEqual(
+          (yield* management
+            .act({ instanceId: INSTANCE_ID, action: { type: "install", entryId: "blocked" } })
+            .pipe(Effect.flip)).reason,
+          "unsupported",
+        );
+      }),
+    ),
+  );
+});

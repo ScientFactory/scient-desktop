@@ -87,7 +87,7 @@ function DetailBack({ to }: { readonly to: BackTo }) {
  * Every detail page: a header with the item's actions, an optional longer
  * description and feedback, then its cards.
  */
-function DetailLayout({
+export function DetailLayout({
   back,
   header,
   description,
@@ -120,7 +120,7 @@ function DetailLayout({
 }
 
 /** 64px icon, name and tagline; the item's buttons on the right. */
-function DetailHeader({
+export function DetailHeader({
   name,
   iconUrl,
   glyph,
@@ -192,7 +192,7 @@ function MoreMenu({ label, children }: { readonly label: string; readonly childr
   );
 }
 
-function DetailSection({
+export function DetailSection({
   title,
   children,
 }: {
@@ -229,7 +229,7 @@ function fact(label: string, value: ReactNode | null | undefined): Fact | null {
 }
 
 /** Key/value rows in a card; rows without data are left out. */
-function AboutCard({ rows }: { readonly rows: ReadonlyArray<Fact | null> }) {
+export function AboutCard({ rows }: { readonly rows: ReadonlyArray<Fact | null> }) {
   const shown = rows.filter((row) => row !== null);
   if (shown.length === 0) return null;
   return (
@@ -324,7 +324,7 @@ function DetailGroupRow({ group }: { readonly group: DetailGroup }) {
 }
 
 /** Collapsible groups in one card; empty groups are left out. */
-function GroupsCard({
+export function GroupsCard({
   label,
   groups,
 }: {

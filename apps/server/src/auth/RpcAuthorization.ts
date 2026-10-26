@@ -114,6 +114,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.extensionsSubscribeChanges]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverSearch]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverCatalog]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsProviderStoreSearch]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsProviderStoreEntry]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverEntry]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDeliveryReceipt]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsConnectorAdd]: AuthSettingsWriteScope,

@@ -10,6 +10,8 @@ export {
   supportsScientClaudePlugins,
 } from "./extensionAudience.ts";
 
+export * from "./providerStore.ts";
+
 import { GrantScope, VaultSecretRef } from "./secrets.ts";
 
 /**
@@ -456,6 +458,8 @@ export const ProviderPluginActionInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   action: Schema.Union([
     Schema.Struct({ type: Schema.Literal("refresh-inventory") }),
+    Schema.Struct({ type: Schema.Literal("install"), entryId: TrimmedNonEmptyString }),
+    Schema.Struct({ type: Schema.Literal("add-official-store") }),
     Schema.Struct({
       type: Schema.Literal("set-enabled"),
       pluginId: TrimmedNonEmptyString,

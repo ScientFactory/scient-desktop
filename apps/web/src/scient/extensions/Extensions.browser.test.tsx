@@ -190,6 +190,7 @@ vi.mock("../../state/query", async () => {
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: unknown) => value }));
 vi.mock("./extensionsState", async () => {
   const { Atom } = await import("effect/reactivity");
+  const storeAtom = Atom.family((key: string) => Object.assign(Atom.make(null), JSON.parse(key)));
   const idle = { busy: null, error: null, blockedSignInUrl: null, signInStartedAt: null };
   return {
     extensionsInventory: ({ environmentId }: { environmentId: string }) => ({
@@ -214,6 +215,20 @@ vi.mock("./extensionsState", async () => {
       environmentId: string;
       input: Record<string, unknown>;
     }) => ({ kind: "discover", environmentId, input }),
+    extensionsProviderStorePage: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "store", environmentId, input })),
+    extensionsProviderStoreEntry: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "store-entry", environmentId, input })),
     // Real atoms: each test renders into its own registry, so nothing leaks between tests.
     extensionItemOperation: Atom.family((_key: string) => Atom.make(idle).pipe(Atom.keepAlive)),
     extensionItemOperationKey: (environmentId: string, item: string) =>
@@ -226,11 +241,12 @@ vi.mock("./extensionsState", async () => {
     installScientPlugin: "install",
     removeScientPlugin: "pluginRemove",
     setScientPluginEnabled: "pluginEnabled",
-    actOnProviderPlugin: "providerAct",
+    actOnProviderPlugin: { name: "providerAct", permissionAtom: () => Atom.make(true) },
   };
 });
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: keyof typeof state.commands) => state.commands[command],
+  useAtomCommand: (command: keyof typeof state.commands | { name: keyof typeof state.commands }) =>
+    state.commands[typeof command === "string" ? command : command.name],
 }));
 vi.mock("../../localApi", () => ({
   ensureLocalApi: () => ({
@@ -1011,7 +1027,7 @@ describe("Installed", () => {
     const fromCodex = fixture.section("From Codex");
     expect(fixture.rowNames(fromCodex)).toHaveLength(6);
     const toggle = buttonIn(fromCodex, "Show all 8")!;
-    expect(toggle.parentElement?.querySelector("h2")?.textContent).toBe("From Codex");
+    expect(toggle.closest("section")?.querySelector("h2")?.textContent).toBe("From Codex");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await userEvent.click(toggle);
     expect(fixture.rowNames(fromCodex)).toHaveLength(8);
@@ -1444,8 +1460,12 @@ describe("Detail pages", () => {
   });
 
   const OPENCODE_REASON = "Only when Scient starts the OpenCode server";
-  const withLimitedOpenCode = () =>
-    inventory({
+  const withLimitedOpenCode = () => {
+    state.providersByEnvironment.local = [
+      ...(state.providersByEnvironment.local ?? []),
+      provider(ProviderInstanceId.make("opencode"), "opencode", {}),
+    ];
+    return inventory({
       providerSupport: [
         ...inventory().providerSupport,
         {
@@ -1457,8 +1477,9 @@ describe("Detail pages", () => {
         },
       ],
     });
+  };
   const agentsCard = () =>
-    document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents"]');
+    document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents"][data-open]');
   // A closed tooltip stays mounted until its exit transition ends, which fake
   // timers never finish; only an open popup counts as showing the reason.
   const reasonTooltip = () =>
@@ -1472,9 +1493,9 @@ describe("Detail pages", () => {
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     // Agents with limits count; Pi can't use connectors at all.
-    expect(fixture.aboutValue("Works with")).toBe("3 agents");
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
-    expect(trigger.textContent).toBe("3 agents");
+    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
+    expect(trigger.textContent).toBe("Works with all your agents");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(fixture.section("About").querySelector("[data-support]")).toBeNull();
 
@@ -1511,7 +1532,7 @@ describe("Detail pages", () => {
     // A touch screen has no pointer resting anywhere: park the test's mouse
     // where no card or tooltip will open under it.
     await userEvent.hover(fixture.container.querySelector("h1")!);
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
     // A real tap: touch pointer events and a click with `detail: 1` (a click
     // with `detail: 0` reads as a keyboard press).
     const tap = async (target: HTMLElement) => {
@@ -1559,7 +1580,7 @@ describe("Detail pages", () => {
     await using fixture = setup();
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
     for (let step = 0; step < 60 && document.activeElement !== trigger; step += 1) {
       await userEvent.tab();
     }
@@ -1577,7 +1598,7 @@ describe("Detail pages", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("shows a plain count when none of the agents can use the connector", async () => {
+  it("explains unsupported agents in the works-with popover", async () => {
     await using fixture = setup();
     state.inventory = inventory({
       providerSupport: inventory().providerSupport.map((entry) => ({
@@ -1586,8 +1607,15 @@ describe("Detail pages", () => {
       })),
     });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.aboutValue("Works with")).toBe("None of your agents");
-    expect(buttonIn(fixture.section("About"), "Works with: None of your agents")).toBeNull();
+    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
+    await userEvent.click(trigger);
+    await expect.element(page.getByRole("dialog", { name: "Agents" })).toBeVisible();
+    expect(
+      [...agentsCard()!.querySelectorAll("[data-support]")].every(
+        (tile) => tile.getAttribute("data-support") === "unsupported",
+      ),
+    ).toBe(true);
   });
 
   it("lists tools only after See tools, grouped by kind", async () => {

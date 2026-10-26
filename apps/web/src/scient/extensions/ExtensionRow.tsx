@@ -10,6 +10,7 @@ import { iconTint } from "./extensionsView";
 
 /** Every place an extension row or button can open. */
 export type ExtensionTarget =
+  | { readonly kind: "provider-store"; readonly instanceId: string; readonly entryId: string }
   | { readonly kind: "connector"; readonly connectorId: string }
   | { readonly kind: "server"; readonly name: string }
   | { readonly kind: "plugin"; readonly pluginId: string }
@@ -34,6 +35,17 @@ function ExtensionLink({
   readonly "aria-label"?: string;
 }) {
   switch (target.kind) {
+    case "provider-store":
+      return (
+        <Link
+          {...props}
+          className={className}
+          to="/settings/extensions/item/store/$instanceId/$entryId"
+          params={{ instanceId: target.instanceId, entryId: target.entryId }}
+        >
+          {children}
+        </Link>
+      );
     case "connector":
       return (
         <Link

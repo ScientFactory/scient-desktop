@@ -6,6 +6,9 @@
  */
 import type {
   ModelSelection,
+  ProviderStoreEntry,
+  ProviderStorePage,
+  ProviderStoreSearchInput,
   ProviderAuthorizationUrlKind,
   ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
@@ -65,6 +68,20 @@ export interface ProviderMcpSignInAttempt {
  * changes the configuration that generation was created with.
  */
 export interface ProviderPluginActions {
+  readonly store?:
+    | {
+        readonly search: (
+          input: Omit<ProviderStoreSearchInput, "instanceId">,
+        ) => Effect.Effect<ProviderStorePage, ProviderPluginActionFailure>;
+        readonly entry: (
+          entryId: string,
+        ) => Effect.Effect<ProviderStoreEntry, ProviderPluginActionFailure>;
+        readonly install: (entryId: string) => Effect.Effect<void, ProviderPluginActionFailure>;
+        readonly addOfficialStore?:
+          | (() => Effect.Effect<void, ProviderPluginActionFailure>)
+          | undefined;
+      }
+    | undefined;
   readonly refreshInventory?:
     | ((input: { readonly force: boolean }) => Effect.Effect<void, ProviderPluginActionFailure>)
     | undefined;

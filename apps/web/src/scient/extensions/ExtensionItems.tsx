@@ -42,6 +42,11 @@ function useOpenExtension() {
   const navigate = useNavigate();
   return (target: ExtensionTarget) => {
     switch (target.kind) {
+      case "provider-store":
+        return void navigate({
+          to: "/settings/extensions/item/store/$instanceId/$entryId",
+          params: { instanceId: target.instanceId, entryId: target.entryId },
+        });
       case "connector":
         return void navigate({
           to: "/settings/extensions/item/connector/$connectorId",

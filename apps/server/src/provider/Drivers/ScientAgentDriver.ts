@@ -54,6 +54,7 @@ import {
   makeScientAgentPluginInventory,
   runScientAgentPluginCommand,
 } from "../../scient/extensions/ScientAgentPluginInventory.ts";
+import { makeSharedPluginStore } from "../../scient/extensions/SharedPluginStore.ts";
 import { readClaudeInstalledPlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
@@ -318,8 +319,30 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
             )
           : Effect.succeed([]),
     ).pipe(Effect.provideService(Path.Path, path));
+    const store = yield* makeSharedPluginStore({
+      kind: "scient",
+      claudeHome,
+      agentRoot: root,
+      installed: () => native.actions.listPlugins({}),
+      run: (args) =>
+        runScientAgentPluginCommand(
+          launchConfig.binaryPath,
+          processEnv,
+          serverConfig.stateDir,
+          args,
+          effectiveConfig.useClaudePlugins,
+        ).pipe(
+          Effect.provideService(OmpExecutableGate, executableGate),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
     return {
-      pluginActions: native.actions,
+      pluginActions: { ...native.actions, store },
       nativeInventoryChanges: native.reports,
       instanceId,
       driverKind: DRIVER_KIND,

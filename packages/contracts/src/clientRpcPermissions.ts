@@ -14,6 +14,9 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
+  [WS_METHODS.providerPluginsAct]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.documentsExportServerBrowserPdf]: AuthPreviewOperateScope,
   [WS_METHODS.documentsNavigateServerBrowser]: AuthPreviewOperateScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
