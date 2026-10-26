@@ -137,6 +137,21 @@
       "path": "scripts/lib/cli-external-packages.test.ts",
       "anchor": "\"@1password/sdk\",",
       "purpose": "Expect the 1Password SDK among the server's on-disk runtime externals."
+    },
+    {
+      "path": "packages/client-runtime/src/rpc/client.ts",
+      "anchor": "WS_METHODS.accountsSubscribeChanges",
+      "purpose": "Treat the Accounts change feed as a subscription stream in the shared RPC client."
+    },
+    {
+      "path": "packages/contracts/src/index.ts",
+      "anchor": "./scient/accounts.ts",
+      "purpose": "Export the fork-owned Accounts contracts."
+    },
+    {
+      "path": "packages/contracts/src/rpc.ts",
+      "anchor": "...SCIENT_ACCOUNT_WS_METHODS",
+      "purpose": "Register the Accounts RPC group and method names."
     }
   ],
   "scientMounts": [
@@ -159,6 +174,11 @@
       "path": "apps/server/src/customModels.ts",
       "anchor": "Scient Accounts: linked keys use Custom models' validation",
       "purpose": "Expose the owning key resolver for Accounts links."
+    },
+    {
+      "path": "packages/contracts/src/scient/desktopBridge.ts",
+      "anchor": "accounts?: DesktopAccountsBridge",
+      "purpose": "Expose the Accounts desktop bridge as a Scient member of the desktop bridge."
     }
   ]
 }
