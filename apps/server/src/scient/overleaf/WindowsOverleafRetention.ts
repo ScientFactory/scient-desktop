@@ -17,10 +17,14 @@ import {
   publicationLeaseBindings,
 } from "../workspace/RetainedFileMutation.ts";
 
-export async function windowsPrivateRetention(directory: string, create: boolean) {
-  const helper = await resolveNativeFilePublicationHelperPath(
-    process.env.SCIENT_FILE_PUBLICATION_HELPER,
-  );
+export async function windowsPrivateRetention(
+  directory: string,
+  create: boolean,
+  configuredHelper?: string | null,
+) {
+  const helper =
+    configuredHelper ??
+    (await resolveNativeFilePublicationHelperPath(process.env.SCIENT_FILE_PUBLICATION_HELPER));
   if (!helper) throw new Error("Windows retention requires the publication helper.");
   await windowsPrivateDirectory(directory, create, helper);
 }

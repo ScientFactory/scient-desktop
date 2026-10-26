@@ -9,7 +9,6 @@ import { windowsPrivateRetention, probeWindowsRetention } from "./WindowsOverlea
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { overleafCloudRoot } from "./overleafCloudRoots.ts";
 
 import {
@@ -96,7 +95,7 @@ async function ensurePrivate(
     return;
   }
   if (HostProcess.Platform.defaultValue() === "win32") {
-    await windowsPrivateRetention(directory, create);
+    await windowsPrivateRetention(directory, create, helper);
     return;
   }
   if (create)

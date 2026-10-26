@@ -37,8 +37,6 @@ import * as OverleafStateStore from "./OverleafStateStore.ts";
 import { make as makeApplier, WorkspaceApplier } from "./WorkspaceApplier.ts";
 import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
 
-import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
-
 export const canApply = await nativePublicationHost();
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
 const volumeUuid = async (path: string) =>
