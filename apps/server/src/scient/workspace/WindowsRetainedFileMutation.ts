@@ -232,6 +232,7 @@ export async function runWindowsRetainedMutation(
     return true;
   };
   const captureOriginal = async () => {
+    if (!record.restrictedOriginal) await save({ restrictedOriginal: true });
     const restricted = await command("win-restrict");
     if (!good(restricted)) return false;
     await point("restricted");
@@ -285,8 +286,10 @@ export async function runWindowsRetainedMutation(
           ) !== record.originalDescriptor
         )
           return result();
-        const restored = await command("win-restore-policy");
-        if (!good(restored)) return result();
+        if (record.restrictedOriginal) {
+          const restored = await command("win-restore-policy");
+          if (!good(restored)) return result();
+        }
         await save({ sourceMutation: false, currentRevision: await fileRevision(target) });
         if (
           kind === "prune" &&

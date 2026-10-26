@@ -851,6 +851,18 @@ static int set_recorded_dacl(HANDLE file, PSECURITY_DESCRIPTOR descriptor) {
   NTSTATUS result = nt_security(file, DACL_SECURITY_INFORMATION, descriptor);
   return result < 0 ? (int)nt_error(result) : 0;
 }
+/* Stored ACE bytes in order; header padding is not policy. */
+static int acl_equal(PACL left, PACL right) {
+  if (left->AceCount != right->AceCount) return 0;
+  for (DWORD index = 0; index < left->AceCount; ++index) {
+    void *left_ace = NULL, *right_ace = NULL;
+    if (!GetAce(left, index, &left_ace) || !GetAce(right, index, &right_ace)) return 0;
+    ACE_HEADER *left_header = left_ace, *right_header = right_ace;
+    if (left_header->AceSize != right_header->AceSize ||
+        memcmp(left_ace, right_ace, left_header->AceSize)) return 0;
+  }
+  return 1;
+}
 static int restore_policy(Context *context, HANDLE original) {
   HANDLE file = open_relative(context->record, L"original-security", GENERIC_READ | READ_CONTROL, 0, FILE_SHARE_READ);
   if (file == INVALID_HANDLE_VALUE) return (int)GetLastError();
@@ -866,7 +878,24 @@ static int restore_policy(Context *context, HANDLE original) {
     if (!GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) || !present || !dacl ||
         !GetSecurityDescriptorControl(descriptor, &control, &revision)) error = ERROR_INVALID_DATA;
     else {
-      error = set_recorded_dacl(original, descriptor);
+      PSECURITY_DESCRIPTOR current = NULL; PACL current_dacl = NULL;
+      error = (int)GetSecurityInfo(original, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+        NULL, NULL, &current_dacl, NULL, &current);
+      SECURITY_DESCRIPTOR_CONTROL current_control = 0; DWORD current_revision = 0;
+      if (!error && !GetSecurityDescriptorControl(current, &current_control, &current_revision))
+        error = (int)GetLastError();
+      /* Undo only our restriction: an unchanged or already-restored DACL is
+         left alone, and a policy someone else set is never overwritten. */
+      if (!error) {
+        int unchanged = (current_control & SE_DACL_PRESENT) && current_dacl &&
+          acl_equal(current_dacl, dacl) &&
+          ((current_control ^ control) & (SE_DACL_PROTECTED | SE_DACL_AUTO_INHERITED)) == 0;
+        if (unchanged) error = 0;
+        else if (!private_security(original, SE_FILE_OBJECT, NULL))
+          error = set_recorded_dacl(original, descriptor);
+        else error = ERROR_ACCESS_DENIED;
+      }
+      if (current) LocalFree(current);
     }
   }
   free(descriptor); CloseHandle(file); return error;

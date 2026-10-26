@@ -190,6 +190,22 @@ describe.skipIf(!windows)("Windows capture and install", () => {
       expect(recovered.outcome).toBe("skipped");
       expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
     }));
+  it("keeps a policy changed after preparation when nothing was restricted", () =>
+    fixture(async (input, target) => {
+      await expect(
+        mutateRetainedFile(input, target, {
+          at: async (point) => {
+            if (point === "prepared") throw new Error("interrupted");
+          },
+        }),
+      ).rejects.toThrow("interrupted");
+      NodeChildProcess.execFileSync("icacls.exe", [target, "/grant", "*S-1-5-32-545:(R)"]);
+      const changed = await security(target);
+      const recovered = await mutateRetainedFile({ ...input, bytes: undefined }, target);
+      expect(recovered.outcome).toBe("skipped");
+      expect(await security(target)).toBe(changed);
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+    }));
   it("restores A's original policy even when a foreign file occupies the kept name", () =>
     fixture(async (input, target) => {
       const policy = await security(target);
