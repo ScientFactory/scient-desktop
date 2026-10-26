@@ -6,6 +6,7 @@ import { AgentInvocationContext } from "../../operations/AgentInvocationContext.
 import { accountSessionScope } from "./scope.ts";
 import {
   AccountsError,
+  DEFAULT_BROWSER_PROFILE_ID,
   defaultBrowserProfileRecord,
   type PreviewTabId,
   type PreviewAutomationOpenInput,
@@ -95,7 +96,9 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
     const profileId =
       existing?.profileId ??
       profile?.id ??
-      (input.profileId === undefined ? status.defaultProfileId : undefined);
+      (input.profileId === undefined
+        ? (status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID)
+        : undefined);
     if (profileId === undefined)
       return yield* new AccountsError({
         reason: "denied",

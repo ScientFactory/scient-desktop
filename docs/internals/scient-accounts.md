@@ -83,7 +83,8 @@ reach every profile.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
 session may use, and `preview_open` refuses an Off profile (or asks for an Ask one), including the
-default profile when the agent names none. Existing-tab actions recheck global access, profile Off
+default profile when the agent names none (the built-in default if a cold browser has no default
+inventory yet). Existing-tab actions recheck global access, profile Off
 and project scope without prompting; Ask approval is decided at open. Status also omits denied tabs
 and clears current-page metadata when the current tab is denied.
 

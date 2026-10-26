@@ -1,5 +1,6 @@
 import {
   BrowserProfileId,
+  DEFAULT_BROWSER_PROFILE_ID,
   ProjectId,
   ThreadId,
   defaultBrowserProfileRecord,
@@ -124,4 +125,29 @@ it.effect("keeps unrecorded named profiles from the browser inventory discoverab
     );
     expect(filtered.profiles).toEqual(status.profiles);
   }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "opens the built-in default on a cold browser without a defaultProfileId while enforcing its access",
+  () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const cold: PreviewAutomationStatus = {
+        available: true,
+        visible: false,
+        tabId: null,
+        url: null,
+        title: null,
+        loading: false,
+      };
+      const open = authorizePreviewProfile(scope, cold, {}).pipe(
+        Effect.provideService(AccountsService, service),
+      );
+      expect((yield* open).profileId).toBe(DEFAULT_BROWSER_PROFILE_ID);
+      yield* service.setControls({
+        target: { type: "profile", profileId: DEFAULT_BROWSER_PROFILE_ID },
+        access: "off",
+      });
+      expect((yield* Effect.flip(open)).reason).toBe("denied");
+    }).pipe(Effect.scoped),
 );
