@@ -303,6 +303,14 @@ export const layer = Layer.effect(
             result[field] = yield* sources.customModel(source.connectionId);
             break;
           case "1password": {
+            if (
+              field === "totp" ||
+              field === "otp" ||
+              source.reference.endsWith("?attribute=otp")
+            ) {
+              result[field] = yield* (yield* getOnePasswordClient).resolve(source.reference);
+              break;
+            }
             const time = yield* Clock.currentTimeMillis;
             let entry = cache.get(accountId);
             if (!entry || entry.until <= time) {

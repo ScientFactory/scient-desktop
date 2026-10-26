@@ -528,3 +528,35 @@ it.effect(
       }
     }),
 );
+
+it.effect(
+  "refreshes 1Password OTP references and TOTP fields instead of returning cached values",
+  () =>
+    Effect.gen(function* () {
+      let current = syntheticValue();
+      const { service } = yield* makeHarness({
+        sourceOverrides: {
+          onePassword: () =>
+            Effect.succeed({
+              label: "Synthetic vault",
+              resolve: () => Effect.sync(() => Redacted.make(current)),
+            }),
+        },
+      });
+      yield* service.connectOnePassword({ mode: "desktop", accountName: "Synthetic" });
+      const { accountId } = yield* service.save({
+        ...website(),
+        secrets: {
+          password: { type: "1password", reference: "op://vault/item/password?attribute=otp" },
+          totp: { type: "1password", reference: "op://vault/item/totp" },
+        },
+      });
+      const first = yield* service.resolveSecrets(accountId, ["password", "totp"]);
+      expect(secretEquals(first.password, current) && secretEquals(first.totp, current)).toBe(true);
+      yield* TestClock.adjust("30 seconds");
+      current = syntheticValue();
+      const next = yield* service.resolveSecrets(accountId, ["password", "totp"]);
+      expect(secretEquals(next.password, current)).toBe(true);
+      expect(secretEquals(next.totp, current)).toBe(true);
+    }),
+);

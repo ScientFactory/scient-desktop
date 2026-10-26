@@ -36,12 +36,12 @@ project file.
 Secret fields per kind are fixed (`ACCOUNT_SECRET_FIELDS`); a command-line login's secret fields
 are its secret variable names. Each field has a source:
 
-| Source         | Where the value lives                                                                                   | Read                                                  |
-| -------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `scient`       | Scient's encrypted store                                                                                | Decrypted in the server when used                     |
-| `keychain`     | An existing macOS Keychain, Windows Credential Manager or Linux Secret Service item (service + account) | `@napi-rs/keyring`, when used                         |
-| `1password`    | An `op://` reference                                                                                    | `@1password/sdk`, cached per account for five minutes |
-| `custom-model` | A Custom models connection's key                                                                        | Custom models' own resolver; stored once              |
+| Source         | Where the value lives                                                                                   | Read                                                                                            |
+| -------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `scient`       | Scient's encrypted store                                                                                | Decrypted in the server when used                                                               |
+| `keychain`     | An existing macOS Keychain, Windows Credential Manager or Linux Secret Service item (service + account) | `@napi-rs/keyring`, when used                                                                   |
+| `1password`    | An `op://` reference                                                                                    | `@1password/sdk`, cached per account for five minutes except OTP references and OTP/TOTP fields |
+| `custom-model` | A Custom models connection's key                                                                        | Custom models' own resolver; stored once                                                        |
 
 A field has one read source and optional copies in other stores. Links are read when needed. On macOS the user approves Scient once
 per keychain item ("Always Allow"). On Windows and Linux any program running as the user can read
