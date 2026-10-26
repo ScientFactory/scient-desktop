@@ -240,7 +240,12 @@ export interface RetainedMutationHooks {
   readonly at?: (point: MutationPoint) => Promise<void>;
 }
 /** Why a request was refused before anything changed, where a caller can say more. */
-export type RetainedRefusal = "kept-folder-not-empty";
+export type RetainedRefusal =
+  | "kept-folder-not-empty"
+  | "file-busy"
+  | "alternate-data-streams"
+  | "encrypted-file"
+  | "multiple-hard-links";
 export class RetainedMutationError extends Error {
   readonly reason: "intent" | "unavailable" | "target" | "recovery";
   readonly recoveryId: string;

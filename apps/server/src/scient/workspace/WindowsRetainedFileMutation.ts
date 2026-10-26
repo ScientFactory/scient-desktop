@@ -16,6 +16,7 @@ import {
   retainedStorageBytes,
   readRetainedRecord,
   RetainedMutationError,
+  type RetainedRefusal,
   type WindowsRetainedRecord,
   type RetainedMutationInput,
   type RetainedMutationResult,
@@ -316,8 +317,9 @@ export async function runWindowsRetainedMutation(
             : "win-prepare",
       );
       held = true;
+      if (prepared.code !== 0 && prepared.outcome !== "unchanged") return result();
       if (prepared.code !== 0) {
-        const reasons: Record<number, string> = {
+        const reasons: Partial<Record<number, RetainedRefusal>> = {
           32: "file-busy",
           33: "file-busy",
           536870914: "encrypted-file",
@@ -328,6 +330,8 @@ export async function runWindowsRetainedMutation(
           "unavailable",
           reasons[prepared.code] ?? `Windows file preparation refused (${prepared.code}).`,
           input.id,
+          [],
+          reasons[prepared.code] ? { refusal: reasons[prepared.code]! } : undefined,
         );
       }
       await save({
