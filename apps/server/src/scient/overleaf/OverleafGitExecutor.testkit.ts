@@ -35,7 +35,7 @@ export function windowsCompilerCommand(command: string, cwd: string) {
   NodeChildProcess.execFileSync(
     process.env.COMSPEC ?? "cmd.exe",
     ["/d", "/s", "/c", `"call "${compiler}" >nul && ${command}"`],
-    { stdio: "inherit", cwd },
+    { stdio: "inherit", cwd, windowsVerbatimArguments: true },
   );
 }
 
