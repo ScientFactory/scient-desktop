@@ -4,6 +4,7 @@
  * wait/steal. Acquire lazily so overlap during old-server exit does not permanently disable writes.
  * Reads need no lease; preserve unreadable state as quarantine evidence.
  */
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -27,7 +28,6 @@ import { makeRuntimeSqliteLayer } from "../../persistence/Sqlite.ts";
 import { directoryIdentity, syncDirectory } from "../workspace/RetainedFileMutation.ts";
 import {
   locateOverleafRetention,
-  macVolumeUuid,
   type OverleafVolumeFileIdentity,
   type OverleafVolumeIdentityResolver,
 } from "./OverleafRetentionVault.ts";
@@ -677,7 +677,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
             userId,
             exchangeHelper: input.exchangeHelper,
             expected: input.expected,
-            volumeUuid: options.volumeUuid ?? macVolumeUuid,
+            volumeUuid: options.volumeUuid ?? platformFileIdentity.volume,
           });
         });
         if (located._tag === "refused")

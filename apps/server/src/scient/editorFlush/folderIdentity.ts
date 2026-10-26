@@ -3,6 +3,7 @@
  * Use physical ancestor identity so symlink/case/detour spellings find the same folder. Place
  * nonexistent files by their nearest existing ancestor.
  */
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -18,10 +19,7 @@ export interface FolderIdentity {
 const missing = (error: unknown) =>
   ["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "");
 
-const keyOf = async (path: string) => {
-  const stat = await NodeFSP.stat(path, { bigint: true });
-  return `${stat.dev}:${stat.ino}`;
-};
+const keyOf = platformFileIdentity.key;
 
 /** Fails when the folder does not exist or cannot be examined. */
 export async function identifyFolder(

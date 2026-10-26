@@ -3,6 +3,7 @@
  * manuscript file and sends nothing; the first sync does both. Disconnect archives
  * with history and kept copies; reconnecting the same folder/project reactivates it.
  * Relink records a moved folder or renewed binding and keeps the base. */
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -220,9 +221,9 @@ export const gitRefusal = (
 const identityChain = async (path: string): Promise<ReadonlyArray<string> | null> => {
   const chain: string[] = [];
   for (let current = path; ;) {
-    const stat = await NodeFSP.stat(current, { bigint: true }).catch(() => null);
-    if (stat === null) return null;
-    chain.push(`${stat.dev}:${stat.ino}`);
+    const key = await platformFileIdentity.key(current).catch(() => null);
+    if (key === null) return null;
+    chain.push(key);
     const parent = NodePath.dirname(current);
     if (parent === current) return chain;
     current = parent;
@@ -263,12 +264,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
 
   /** The volume and file ID of a directory, or null when it is not one or its disk has none. */
   const identityOf = (path: string) =>
-    Effect.promise(async () => {
-      const stat = await NodeFSP.lstat(path, { bigint: true }).catch(() => null);
-      if (stat === null || !stat.isDirectory()) return null;
-      const volume = await options.volumeUuid(path);
-      return volume === null ? null : { volume, fileId: String(stat.ino) };
-    });
+    Effect.promise(() => platformFileIdentity.directory(path, options.volumeUuid));
 
   /** Every readable connection of this environment, and whether any record could not be read. */
   const readAll = Effect.gen(function* () {
@@ -448,9 +444,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
           let archive: OverleafConnectionDocument | null = null;
           for (const other of others) {
             const otherChain = yield* Effect.promise(() => identityChain(folderOf(other)));
-            const sameDirectory =
-              other.folder.identity.volume === folderIdentity.volume &&
-              other.folder.identity.fileId === folderIdentity.fileId;
+            const sameDirectory = platformFileIdentity.equal(other.folder.identity, folderIdentity);
             const sameFolder = sameDirectory || (otherChain !== null && otherChain[0] === chain[0]);
             if (other.state === "archived") {
               // Reactivate an archive only for its own project and recorded directory:
@@ -753,8 +747,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
                 continue;
               const otherChain = yield* Effect.promise(() => identityChain(folderOf(other)));
               if (
-                (other.folder.identity.volume === folderIdentity.volume &&
-                  other.folder.identity.fileId === folderIdentity.fileId) ||
+                platformFileIdentity.equal(other.folder.identity, folderIdentity) ||
                 (otherChain !== null && overlaps(chain, otherChain))
               )
                 return {
@@ -863,9 +856,9 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     const checkout = yield* identityOf(document.checkout.canonicalRoot);
     const folder = yield* identityOf(folderOf(document));
     const same = (
-      found: { readonly volume: string; readonly fileId: string } | null,
-      recorded: { readonly volume: string; readonly fileId: string },
-    ) => found !== null && found.volume === recorded.volume && found.fileId === recorded.fileId;
+      found: OverleafConnectionDocument["folder"]["identity"] | null,
+      recorded: OverleafConnectionDocument["folder"]["identity"],
+    ) => found !== null && platformFileIdentity.equal(found, recorded);
     if (!same(checkout, document.checkout.identity) || !same(folder, document.folder.identity))
       return {
         ...base,

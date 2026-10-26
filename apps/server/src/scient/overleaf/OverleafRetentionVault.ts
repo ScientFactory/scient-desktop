@@ -4,22 +4,22 @@
  * folder ID, not device number, across remounts. Once recorded, missing/replaced vaults must be
  * reported, never silently recreated.
  */
-import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  platformFileIdentity,
+  type StoredFileIdentity,
+  type VolumeIdentityResolver,
+} from "../workspace/PlatformFileIdentity.ts";
 
 import { exchange, syncDirectory } from "../workspace/RetainedFileMutation.ts";
 
 /** The hidden folder created beside a checkout on another disk. */
 const OVERLEAF_VAULT_DIRECTORY = ".scient-overleaf";
 
-export interface OverleafVolumeFileIdentity {
-  readonly volume: string;
-  readonly fileId: string;
-}
+export type OverleafVolumeFileIdentity = StoredFileIdentity;
 
 export type OverleafRetentionRefusal =
   /** The checkout's disk is not mounted (unplugged, or its path is gone). */
@@ -40,34 +40,7 @@ export type OverleafRetentionRefusal =
   /** A folder exists at the location but is not the recorded one. */
   | "vault-replaced";
 
-export type OverleafVolumeIdentityResolver = (path: string) => Promise<string | null>;
-
-const run = (file: string, args: ReadonlyArray<string>) =>
-  new Promise<string | null>((resolve) =>
-    NodeChildProcess.execFile(
-      file,
-      [...args],
-      { timeout: 10_000, maxBuffer: 1024 * 1024, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } },
-      (error, stdout) => resolve(error ? null : stdout),
-    ),
-  );
-
-/**
- * The volume UUID of the disk holding `path`, from `diskutil`, or null when
- * the disk reports none. macOS only; other platforms are not supported yet.
- */
-export const macVolumeUuid: OverleafVolumeIdentityResolver = async (path) => {
-  if (HostProcess.Platform.defaultValue() !== "darwin") return null;
-  // `diskutil` needs a device or mount point, so ask `df` which device holds the path.
-  const df = await run("/bin/df", ["-P", path]);
-  const device = df?.split("\n")[1]?.split(/\s+/u)[0];
-  if (device === undefined || !device.startsWith("/dev/")) return null;
-  const info = await run("/usr/sbin/diskutil", ["info", "-plist", device]);
-  const uuid = info?.match(
-    /<key>VolumeUUID<\/key>\s*<string>([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})<\/string>/u,
-  )?.[1];
-  return uuid === undefined ? null : uuid.toUpperCase();
-};
+export type OverleafVolumeIdentityResolver = VolumeIdentityResolver;
 
 const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code;
 const isReadOnly = (error: unknown) =>
@@ -226,7 +199,9 @@ async function verifiedFolder(
   const stat = await statOrRefuse(directory, "vault-missing");
   if (stat.dev !== checkoutStat.dev || (await physicallyInside(directory, checkoutStat)))
     throw new Refused("unsafe-directory");
-  return { directory, identity: { volume, fileId: String(stat.ino) } };
+  const identity = await platformFileIdentity.directory(directory, async () => volume);
+  if (identity === null) throw new Refused("vault-replaced");
+  return { directory, identity };
 }
 
 /**
@@ -243,7 +218,7 @@ export async function locateOverleafRetention(input: {
   readonly exchangeHelper: string | null;
   /** The identity recorded for this connection, or null for a new one. */
   readonly expected: OverleafVolumeFileIdentity | null;
-  readonly volumeUuid: OverleafVolumeIdentityResolver;
+  readonly volumeUuid?: OverleafVolumeIdentityResolver;
 }): Promise<
   | {
       readonly _tag: "ready";
@@ -263,7 +238,7 @@ export async function locateOverleafRetention(input: {
       throw error;
     }
     const checkoutStat = await statOrRefuse(checkout, "volume-unavailable");
-    const volume = await input.volumeUuid(checkout);
+    const volume = await (input.volumeUuid ?? platformFileIdentity.volume)(checkout);
     if (volume === null) throw new Refused("no-volume-identity");
 
     const stateLevels = [
@@ -322,10 +297,7 @@ export async function locateOverleafRetention(input: {
             volume,
             false,
           );
-          if (
-            folder.identity.volume === expected.volume &&
-            folder.identity.fileId === expected.fileId
-          ) {
+          if (platformFileIdentity.equal(folder.identity, expected)) {
             match = folder;
             break;
           }
