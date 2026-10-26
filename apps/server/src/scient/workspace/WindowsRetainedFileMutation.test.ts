@@ -360,7 +360,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
             env: { ...process.env, SCIENT_TEST_ACCOUNT: account, SCIENT_TEST_PASSWORD: password },
           }),
         );
-        expect(cloud.code).toBe(0);
+        expect(cloud.code, JSON.stringify(cloud)).toBe(0);
         const result = await mutateRetainedFile(input, target, {
           at: async (point) => {
             if (point === "restricted") expect(access(target)).not.toBe(0);
