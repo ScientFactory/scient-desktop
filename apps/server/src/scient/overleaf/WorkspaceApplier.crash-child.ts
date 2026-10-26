@@ -46,9 +46,16 @@ export interface CrashJob {
 const jobPath = process.argv[2];
 if (jobPath !== undefined) {
   const job: CrashJob = JSON.parse(await NodeFSP.readFile(jobPath, "utf8"));
+  let nativeProcess: number | null = null;
   const kill = () => {
     if (HostProcess.Platform.defaultValue() === "win32") {
       if (!job.terminationHelper) throw new Error("Windows crash proof requires TerminateProcess.");
+      if (nativeProcess !== null)
+        NodeChildProcess.execFileSync(job.terminationHelper, [
+          "--windows=1",
+          "terminate",
+          String(nativeProcess),
+        ]);
       NodeChildProcess.execFileSync(job.terminationHelper, [
         "--windows=1",
         "terminate",
@@ -99,6 +106,9 @@ if (jobPath !== undefined) {
         root: job.root,
         helper: job.helper,
         retainedHooks: {
+          nativeProcess: (pid) => {
+            nativeProcess = pid;
+          },
           at: async (point) => {
             if (point === job.killAt && ++reached === (job.occurrence ?? 1)) kill();
           },

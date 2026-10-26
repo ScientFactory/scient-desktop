@@ -4,6 +4,7 @@
  * real applier and a scripted Overleaf. A throwing hook stands in for a crash
  * between the coordinator's durable steps: nothing at this level compensates.
  */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -346,7 +347,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             crash && point === "applied"
               ? Effect.promise(async () => {
                   const intent = (await NodeFSP.readdir(stateRoot, { recursive: true })).find(
-                    (path) => path.endsWith("/apply.json"),
+                    (path) => path.replaceAll(NodePath.sep, "/").endsWith("/apply.json"),
                   );
                   staging = `.scient-overleaf-apply-${NodePath.basename(NodePath.dirname(intent!))}-held-source`;
                   await NodeFSP.writeFile(NodePath.join(folder, staging), "the only copy");
@@ -385,7 +386,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           remote: { "new.tex": "chapter text that moves", "main.tex": "M" },
           // The rename's second step removes old.tex; it changes just before.
           native: async (point, folder) => {
-            if (point === "prepared" && ++prepared === 2)
+            if (
+              point === (HostProcess.Platform.defaultValue() === "win32" ? "intent" : "prepared") &&
+              ++prepared === 2
+            )
               await NodeFSP.writeFile(NodePath.join(folder, "old.tex"), "edited meanwhile");
           },
         });
@@ -417,7 +421,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           remote: { "theirs.tex": "chapter text that moves" },
           // The group's second step removes new.tex; it changes just before.
           native: async (point, folder) => {
-            if (point === "prepared" && ++prepared === 2)
+            if (
+              point === (HostProcess.Platform.defaultValue() === "win32" ? "intent" : "prepared") &&
+              ++prepared === 2
+            )
               await NodeFSP.writeFile(NodePath.join(folder, "new.tex"), "edited meanwhile");
           },
         });
@@ -644,7 +651,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const listed = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
         expect(listed.map((copy) => copy.kept.split("/").pop()).sort()).toEqual([
           "provisional",
-          "slot",
+          HostProcess.Platform.defaultValue() === "win32" ? "retained" : "slot",
         ]);
         // The extra version restores like the main one.
         const extra = listed.find((copy) => copy.kept.endsWith("/provisional"))!;
@@ -804,7 +811,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const vault = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION }))[0]!;
         yield* Effect.promise(async () => {
           const found = (await NodeFSP.readdir(w.stateRoot, { recursive: true })).find((path) =>
-            path.endsWith(vault.kept),
+            path.replaceAll(NodePath.sep, "/").endsWith(vault.kept),
           );
           await NodeFSP.writeFile(NodePath.join(w.stateRoot, found!), "late write");
         });
@@ -1313,7 +1320,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
         yield* Effect.promise(async () => {
           const record = (await NodeFSP.readdir(w.stateRoot, { recursive: true })).find((path) =>
-            path.endsWith("/step-0/record.json"),
+            path.replaceAll(NodePath.sep, "/").endsWith("/step-0/record.json"),
           );
           await NodeFSP.writeFile(NodePath.join(w.stateRoot, record!), "{ damaged");
         });

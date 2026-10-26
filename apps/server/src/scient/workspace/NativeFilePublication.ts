@@ -554,6 +554,7 @@ export async function runNativeFilePublication(
 
 export type NativeFilePublicationParentBinding = Omit<NativeFileLeaseBinding, "mode">;
 export interface NativeFilePublicationLease {
+  readonly processId?: number;
   /** Namespace work runs inside the bounded lock holder's owned retirement protocol. */
   readonly run: (request: NativeFilePublicationRequest) => Promise<NativeFilePublicationResult>;
   readonly runDirectory: (
@@ -793,6 +794,7 @@ export async function withNativeFilePublicationLease<T>(
     return command.result.promise;
   };
   const lease: NativeFilePublicationLease = {
+    ...(child.pid === undefined ? {} : { processId: child.pid }),
     assertHeld: () => {
       if (!alive || !acquired || releasing || protocolError)
         throw (
