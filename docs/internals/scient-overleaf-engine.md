@@ -229,23 +229,37 @@ file with the manuscript atomically. Compile the shipped C source with:
 pnpm run build:file-exchange
 ```
 
-The macOS artifact pipeline compiles the requested arm64, x64 or universal slices
-from source and stages the protocol-1 helper outside ASAR at
-`Contents/Resources/file-exchange/scient-file-publication`. The existing signing hook
-signs it with hardened runtime and empty helper entitlements, and verifies its
-signature and team against the app. Final bundle validation checks its receipt,
-executable permissions, architecture and protocol on a compatible host.
+The desktop artifact pipeline compiles the target's single protocol-1 publication
+helper outside ASAR in `Resources/file-exchange` on macOS and
+`resources/file-exchange` on Windows and Linux. Windows release assembly verifies
+the source-commit prerequisite receipt before copying it. The server tarball
+includes its build host's helper in `dist/file-exchange`; it does not authorize
+Overleaf writes on another OS or architecture. No compiler is needed at runtime.
 
-Desktop supplies that absolute server-host path through its private bootstrap.
-The helper is never discovered from the workspace or PATH at runtime. Development
-uses the explicit `build:file-exchange` output. A separately launched server may
-set the absolute host-owned `SCIENT_FILE_PUBLICATION_HELPER`; a client path cannot
-select the remote server's helper. A packaged macOS installation preserves the
-required path even when damaged, so a missing or incompatible helper fails
-visibly instead of silently falling back. Recovery resolves the current app's
-resource path rather than persisting an obsolete installation path; it preserves
-the journaled mechanism and refuses to downgrade an exchange-based record.
-Without a qualified publication helper, retained writes refuse before displacement.
+Desktop supplies the installed absolute server-host path through its private
+bootstrap, including when the required file is missing. A separately launched
+server defaults to its own installed resources and may explicitly set the
+absolute host-owned `SCIENT_FILE_PUBLICATION_HELPER`. Both paths require the
+production receipt, SHA-256 digest, matching host architecture, native executable
+format, executable permissions and protocol capabilities. Symlinks and resources
+writable by another user are refused; Windows checks owner and write ACLs. The
+helper is never discovered from the workspace or PATH. Development uses the
+helper staged beside its server bundle.
+
+Signing preserves the existing hardened-runtime entitlements and same-team check
+on macOS and Authenticode policy on Windows. The helper's digest is recorded after
+signing, before sealing the macOS app or building the Windows installer. Recovery
+resolves the current installed resource instead of persisting an old app path;
+its journaled mechanism never changes. Overleaf write operations revalidate the
+resource and return `helper-unavailable` before displacement if it is damaged or
+missing. Plain-host saving cannot substitute for a retained transaction.
+
+The existing Windows, Linux and remote-server packaging jobs execute the bundled
+connection, coordinator, Git and file services with a fresh synthetic profile and
+local bare remote. They connect, apply, restart in a separate process and sync
+changes both ways, asserting the installed helper path. Linux checks both the
+mounted AppImage and extracted app. This qualifies artifact wiring; authenticated
+Overleaf service access and real provider folders remain separate acceptance work.
 
 A direct writer's displaced file is compared after exchange. Mismatches are
 restored without overwrite-capable rename; a competing newer file is retained

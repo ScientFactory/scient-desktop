@@ -50,6 +50,7 @@
       // Vite+ pack entries and the launcher used by installed background services.
       "entry": [
         "src/bin.ts!",
+        "src/overleaf-packaging-probe.ts!",
         "src/service-launcher.ts!",
         "src/analytics-worker.ts!",
         "src/pdf-validation-worker.ts!",

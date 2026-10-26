@@ -1,3 +1,4 @@
+import { qualifyPackagedOverleaf } from "./qualify-overleaf-packaged.mjs";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -81,6 +82,11 @@ process.stdout.write('Remote native probes: canvas, file search, msgpackr, Curso
 `,
   );
   process.stdout.write(run(process.execPath, ["qualification.mjs"], installed));
+  if (platform === "linux")
+    qualifyPackagedOverleaf({
+      executable: process.execPath,
+      entry: NodePath.join(installed, "dist/overleaf-packaging-probe.mjs"),
+    });
   const bin = NodePath.join(installed, "dist/bin.mjs");
   NodeAssert.match(run(process.execPath, [bin, "--help"], installed), /serve/u);
   run(

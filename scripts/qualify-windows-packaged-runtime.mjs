@@ -1,3 +1,4 @@
+import { qualifyPackagedOverleaf } from "./qualify-overleaf-packaged.mjs";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
@@ -58,6 +59,15 @@ NodeAssert.equal(probe.status, 0, probe.error?.message ?? "Packaged runtime prob
 NodeAssert.match(probe.stdout, /10 concurrent terminals.*passed/);
 
 if (process.argv.includes("--launch-smoke")) {
+  qualifyPackagedOverleaf({
+    executable: NodePath.join(packageRoot, "Scient.exe"),
+    electron: true,
+    entry: NodePath.join(
+      packageRoot,
+      "resources/server.asar/apps/server/dist/overleaf-packaging-probe.mjs",
+    ),
+    helper: NodePath.join(packageRoot, "resources/file-exchange/scient-file-publication.exe"),
+  });
   const profileRoot = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-packaged-smoke-"));
   const smokeEnv = {
     ...process.env,
