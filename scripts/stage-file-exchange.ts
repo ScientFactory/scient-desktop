@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Standalone host compiler invocation, no server runtime.
+import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -98,7 +99,7 @@ try {
   }
   await NodeFSP.writeFile(
     NodePath.join(destination, "publication-artifact.json"),
-    `${JSON.stringify({ protocol: 1, platform, arch, probe, executable: NodePath.basename(executable) })}\n`,
+    `${JSON.stringify({ protocol: 1, platform, arch, probe, executable: NodePath.basename(executable), sha256: publicationDigest(await NodeFSP.readFile(executable)) })}\n`,
   );
 } finally {
   await NodeFSP.rm(scratch, { recursive: true, force: true });

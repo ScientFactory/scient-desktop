@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- synthetic native signing fixtures use temporary local bundles.
+import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -230,4 +231,35 @@ it("accepts matching signing identity metadata but rejects added capabilities", 
     mockSignedPreview(() => safe);
     expect(() => verifySignedConversationPreview(app)).not.toThrow();
   });
+});
+
+it("records the signed helper bytes before sealing the app and excludes it from resigning", async () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-sign-receipt-"));
+  const app = NodePath.join(root, "Scient.app");
+  const helper = NodePath.join(app, "Contents/Resources/file-exchange/scient-file-publication");
+  const receipt = NodePath.join(NodePath.dirname(helper), "publication-artifact.json");
+  NodeFS.mkdirSync(NodePath.dirname(helper), { recursive: true });
+  NodeFS.writeFileSync(helper, "unsigned");
+  NodeFS.writeFileSync(receipt, JSON.stringify({ protocol: 1, sha256: "before" }));
+  subprocess.execFileSync.mockImplementation(() => {
+    NodeFS.writeFileSync(helper, "signed helper bytes");
+    return "";
+  });
+  subprocess.spawnSync.mockImplementation((_command: string, args: string[]) => ({
+    status: 0,
+    stdout: args[0] === "-dv" ? "TeamIdentifier=TESTTEAM\n" : "",
+    stderr: "",
+  }));
+  vi.mocked(signApplication).mockImplementationOnce(async (options) => {
+    expect(JSON.parse(NodeFS.readFileSync(receipt, "utf8")).sha256).toBe(
+      publicationDigest(NodeFS.readFileSync(helper)),
+    );
+    expect(typeof options.ignore === "function" && options.ignore(helper)).toBe(true);
+    expect(options.binaries).not.toContain(helper);
+  });
+  try {
+    await sign({ app, identity: "TESTTEAM" });
+  } finally {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+  }
 });
