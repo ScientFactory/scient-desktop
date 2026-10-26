@@ -101,3 +101,13 @@ it.each(["linux"] as const)(
     expect(volume).not.toHaveBeenCalled();
   },
 );
+
+it("refuses UNC identities as network filesystems before attempting native metadata access", async () => {
+  using _host = vi.spyOn(HostProcess.Platform, "defaultValue").mockReturnValue("win32");
+  await expect(platformFileIdentity.directory("\\\\server\\share\\paper")).rejects.toMatchObject({
+    reason: "network-filesystem",
+  });
+  await expect(
+    platformFileIdentity.directory("\\\\?\\UNC\\server\\share\\paper"),
+  ).rejects.toMatchObject({ reason: "network-filesystem" });
+});
