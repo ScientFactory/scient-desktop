@@ -225,6 +225,13 @@ Stop turns into a queued message joins the held queue. Upstream's release block 
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
 `SteeringCompletion.integration.test.ts` assert Scient's rule.
 
+The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
+`queuedRunsControl` slot. Scient's additions live in
+`scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
+`SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
+command errors, the edit row after extraction and the delayed "Queuing…" status. Take
+upstream's changes to the rest of the file as they are.
+
 Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
 and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
 `SCIENT-FORK` mounts in upstream hosts. Local checkpoint preparation observes the
