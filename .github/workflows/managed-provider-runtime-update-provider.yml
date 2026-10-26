@@ -169,7 +169,9 @@ jobs:
 
       - name: Install official ACP qualification dependencies
         if: inputs.provider == 'antigravityAcp'
-        run: vp install --frozen-lockfile --filter=t3...
+        # ACP initializes the downloaded native executables over stdio; repository
+        # native addons are unrelated to this installer/protocol qualification.
+        run: vp install --frozen-lockfile --ignore-scripts --filter=t3...
 
       - name: Qualify the official ACP executable and harness through the app installer
         if: inputs.provider == 'antigravityAcp'
@@ -330,8 +332,17 @@ jobs:
           # whole tree; the quoted pattern is matched by git in both commits, so a
           # server module added on main counts too.
           if [[ "$PROVIDER" == droid ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            package.json \
             vite.config.ts \
+            apps/server/vite.config.ts \
+            infra/task-cache/src/remoteCache.ts \
+            scripts/lib/cached-tests.ts \
+            scripts/lib/cli-bundle-aliases.ts \
+            scripts/lib/cli-external-packages.ts \
+            scripts/lib/managed-runtime-live-tests.ts \
+            scripts/lib/public-config.ts \
             apps/server/package.json \
+            apps/server/src/testUtils \
             packages/effect-acp \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/auth \
@@ -425,10 +436,19 @@ jobs:
             exit 1
           fi
 
-          # Pi's qualification runs its live suites, under the root test configuration,
-          # against the server's Pi code.
+          # Pi's live suites use the server's test configuration and Pi code.
           if [[ "$PROVIDER" == pi ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            package.json \
             vite.config.ts \
+            apps/server/vite.config.ts \
+            apps/server/package.json \
+            apps/server/src/testUtils \
+            infra/task-cache/src/remoteCache.ts \
+            scripts/lib/cached-tests.ts \
+            scripts/lib/cli-bundle-aliases.ts \
+            scripts/lib/cli-external-packages.ts \
+            scripts/lib/managed-runtime-live-tests.ts \
+            scripts/lib/public-config.ts \
             apps/server/src/provider/pi \
             apps/server/src/customModels.ts \
             apps/server/src/customModelCapabilities.ts \
