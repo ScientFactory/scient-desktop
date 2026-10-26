@@ -135,13 +135,19 @@ if (phase === "refuse") {
       filePublicationRetentionRoot: NodePath.join(root, "retention"),
     });
     const entries = WorkspaceEntries.WorkspaceEntries.of({
-      refresh: () => Effect.void,
-      browse: () => Effect.die("unused"),
-      list: () => Effect.die("unused"),
-      listIgnoredFiles: () => Effect.die("unused"),
-      listDirectory: () => Effect.die("unused"),
-      search: () => Effect.die("unused"),
-      searchContents: () => Effect.die("unused"),
+      refresh: Effect.fn("WorkspaceEntries.WorkspaceEntries.refresh")(() => Effect.void),
+      browse: Effect.fn("WorkspaceEntries.WorkspaceEntries.browse")(() => Effect.die("unused")),
+      list: Effect.fn("WorkspaceEntries.WorkspaceEntries.list")(() => Effect.die("unused")),
+      listIgnoredFiles: Effect.fn("WorkspaceEntries.WorkspaceEntries.listIgnoredFiles")(() =>
+        Effect.die("unused"),
+      ),
+      listDirectory: Effect.fn("WorkspaceEntries.WorkspaceEntries.listDirectory")(() =>
+        Effect.die("unused"),
+      ),
+      search: Effect.fn("WorkspaceEntries.WorkspaceEntries.search")(() => Effect.die("unused")),
+      searchContents: Effect.fn("WorkspaceEntries.WorkspaceEntries.searchContents")(() =>
+        Effect.die("unused"),
+      ),
     });
     const files = yield* Files.make.pipe(
       Effect.provide([config, WorkspacePaths.layer]),
