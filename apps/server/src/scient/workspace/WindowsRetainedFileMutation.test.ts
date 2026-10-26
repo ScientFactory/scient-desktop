@@ -22,7 +22,7 @@ import {
 import { overleafFilesAvailability } from "../overleaf/overleafFileAvailability.ts";
 import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 import type { WindowsCrashJob } from "./WindowsRetainedFileMutation.crash-child.ts";
-import { windowsNativeFile } from "./WindowsNativeFile.ts";
+import { windowsNativeFile, windowsPrivateDirectory } from "./WindowsNativeFile.ts";
 
 const windows = HostProcess.Platform.defaultValue() === "win32";
 const probe = windows ? await filePublicationProbeHelper() : undefined;
@@ -546,6 +546,16 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
         if (previous === undefined) delete process.env.SCIENT_PUBLICATION_LOCK_ROOT;
         else process.env.SCIENT_PUBLICATION_LOCK_ROOT = previous;
       }
+    }));
+  it("rechecks a private folder's changed DACL on every reuse without repairing it", () =>
+    fixture(async (input) => {
+      const directory = NodePath.join(input.retentionDirectory, "checked");
+      await windowsPrivateDirectory(directory, true, helper!);
+      await windowsPrivateDirectory(directory, false, helper!);
+      NodeChildProcess.execFileSync("icacls.exe", [directory, "/grant", "*S-1-1-0:(R)"]);
+      const changed = await security(directory);
+      await expect(windowsPrivateDirectory(directory, true, helper!)).rejects.toThrow();
+      expect(await security(directory)).toBe(changed);
     }));
   it("refuses an existing broad directory without changing its policy", () =>
     fixture(async (input) => {
