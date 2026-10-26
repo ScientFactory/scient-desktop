@@ -75,7 +75,18 @@ export const withExecutor = <A, E>(
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-overleaf-git-" });
+      const root = yield* Effect.acquireRelease(
+        fs.makeTempDirectory({ prefix: "scient-overleaf-git-" }),
+        (directory) =>
+          Effect.promise(() =>
+            NodeFSP.rm(directory, {
+              recursive: true,
+              force: true,
+              // Windows can keep a killed child's cwd handle busy during process retirement.
+              maxRetries: HostProcess.Platform.defaultValue() === "win32" ? 5 : 0,
+            }),
+          ),
+      );
       const runtimeRoot = NodePath.join(root, "runtime");
       const work = NodePath.join(root, "work");
       yield* fs.makeDirectory(work);

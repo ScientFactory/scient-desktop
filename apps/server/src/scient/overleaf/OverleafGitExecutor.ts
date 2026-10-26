@@ -461,7 +461,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
         const scratch = yield* Effect.acquireRelease(
           Effect.tryPromise(() => scratchRoot.create()),
           (directory) =>
-            fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignoreCause()),
+            Effect.promise(() => scratchRoot.remove(directory)).pipe(Effect.ignoreCause()),
         );
         const home = path.join(scratch, "home");
         const temp = path.join(scratch, "tmp");
