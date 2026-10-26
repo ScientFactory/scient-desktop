@@ -37,14 +37,18 @@ describe("Overleaf host path budgets", () => {
   });
 });
 
-it("returns native disk admission failures through the shared filesystem error channel", async () => {
-  using _identity = vi
-    .spyOn(platformFileIdentity, "directory")
-    .mockRejectedValue(new WindowsNativeFileError("network-filesystem"));
-  const error = await Effect.runPromise(Effect.flip(overleafDirectoryIdentity("network")));
-  expect(error).toMatchObject({
-    _tag: "OverleafFilesystemError",
-    reason: "network-filesystem",
-    path: "network",
-  });
-});
+it.effect(
+  "returns native disk admission failures through the shared filesystem error channel",
+  () =>
+    Effect.gen(function* () {
+      using _identity = vi
+        .spyOn(platformFileIdentity, "directory")
+        .mockRejectedValue(new WindowsNativeFileError("network-filesystem"));
+      const error = yield* Effect.flip(overleafDirectoryIdentity("network"));
+      expect(error).toMatchObject({
+        _tag: "OverleafFilesystemError",
+        reason: "network-filesystem",
+        path: "network",
+      });
+    }),
+);
