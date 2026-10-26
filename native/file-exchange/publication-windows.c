@@ -25,8 +25,7 @@
 #ifndef FILE_OPEN
 #define FILE_OPEN 1
 #endif
-/* Keep every ancestor open, excluding both delete and write sharing. Existing incompatible
- * handles make binding fail; we never weaken sharing modes to make the call succeed. */
+/* Exclude delete sharing to pin ancestors while allowing edits to their children. */
 struct Context {
   HANDLE *ancestors; size_t count, capacity;
   HANDLE root, parent, record, lock;
@@ -135,7 +134,7 @@ static HANDLE walk(Context *context, HANDLE base, const wchar_t *relative) {
       SetLastError(ERROR_INVALID_NAME); current = INVALID_HANDLE_VALUE; break;
     }
     HANDLE child = open_relative(current, next, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
-                                 FILE_DIRECTORY_FILE, FILE_SHARE_READ);
+                                 FILE_DIRECTORY_FILE, FILE_SHARE_READ | FILE_SHARE_WRITE);
     if (child == INVALID_HANDLE_VALUE) { current = child; break; }
     Entry entry = {0};
     int error = identify(child, &entry);
@@ -168,7 +167,7 @@ static HANDLE absolute_directory(Context *context, const char *path) {
   wchar_t volume[] = L"\\\\?\\C:\\";
   volume[4] = name[0];
   HANDLE drive = CreateFileW(volume, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
-    FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
   if (drive == INVALID_HANDLE_VALUE) { DWORD error = GetLastError(); free(name); SetLastError(error); return drive; }
   if (!remember(context, drive)) {
     DWORD error = GetLastError(); CloseHandle(drive); free(name); SetLastError(error); return INVALID_HANDLE_VALUE;
@@ -366,6 +365,7 @@ static int cloud_managed(HANDLE folder) {
   HRESULT result = query(folder, 0 /* CF_SYNC_ROOT_INFO_BASIC */, buffer, sizeof(buffer), &returned);
 
   FreeLibrary(library);
+  /* A volume without CldFlt returns INVALID_FUNCTION even when the driver runs elsewhere. */
   if (result == HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION) && cloud_filter_absent(folder)) return 0;
   if (SUCCEEDED(result)) return 0x20000001; /* sync-managed-folder */
   return result == HRESULT_FROM_WIN32(ERROR_NOT_A_CLOUD_SYNC_ROOT) ||
