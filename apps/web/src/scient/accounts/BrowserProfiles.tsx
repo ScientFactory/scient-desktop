@@ -593,7 +593,7 @@ export function BrowserProfiles({
                     })
                   }
                 >
-                  Use in scripts
+                  Share with scripts
                 </MenuCheckboxItem>
                 {window.desktopBridge?.accounts ? (
                   <MenuItem onClick={() => setViewingSites(profile.id)}>Signed-in sites</MenuItem>

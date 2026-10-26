@@ -134,7 +134,13 @@ export function accountIconUrl(sites: ReadonlyArray<string>, name?: string): str
 }
 
 export const accountCatalogue = [
-  { name: "GitHub", kind: "cli-login", site: "github.com", tool: "gh", variables: ["GH_TOKEN"] },
+  {
+    name: "GitHub token",
+    kind: "cli-login",
+    site: "github.com",
+    tool: "gh",
+    variables: ["GH_TOKEN"],
+  },
   { name: "Hugging Face", kind: "api-key", site: "huggingface.co", envName: "HF_TOKEN" },
   { name: "OpenAI", kind: "api-key", site: "api.openai.com", envName: "OPENAI_API_KEY" },
   { name: "Anthropic", kind: "api-key", site: "api.anthropic.com", envName: "ANTHROPIC_API_KEY" },

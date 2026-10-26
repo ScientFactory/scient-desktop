@@ -144,7 +144,7 @@ function AccountRow({
                 void controls({ target, visibility: readable ? "readable" : "hidden" })
               }
             >
-              Use in scripts
+              Agents can read it
             </MenuCheckboxItem>
             {details.kind !== "website" && details.kind !== "library" ? (
               <MenuItem
