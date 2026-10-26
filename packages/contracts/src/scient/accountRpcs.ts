@@ -3,6 +3,8 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  AccountMatchSignInInput,
+  AccountMatchSignInResult,
   AccountActivityEntry,
   AccountActivityInput,
   AccountApprovalRespondInput,
@@ -44,6 +46,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsOnePasswordDisconnect: "accounts.onePassword.disconnect",
   accountsImportPasswords: "accounts.importPasswords",
   accountsFillValues: "accounts.fillValues",
+  accountsMatchSignIn: "accounts.matchSignIn",
 } as const;
 
 const AccountsRpcError = Schema.Union([AccountsError, EnvironmentAuthorizationError]);
@@ -134,5 +137,11 @@ export const WsAccountsImportPasswordsRpc = Rpc.make(
 export const WsAccountsFillValuesRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsFillValues, {
   payload: AccountFillValuesInput,
   success: AccountFillValues,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsMatchSignInRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsMatchSignIn, {
+  payload: AccountMatchSignInInput,
+  success: AccountMatchSignInResult,
   error: AccountsRpcError,
 });

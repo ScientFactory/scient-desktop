@@ -1,6 +1,7 @@
 import {
   AccountsError,
   AccountSummary,
+  AccountWriteStore,
   BrowserProfileRecord,
   AccountActivityEntry,
   OnePasswordStatus,
@@ -11,6 +12,7 @@ import { AccountVault } from "./AccountVault.ts";
 
 export const StoredAccount = Schema.Struct({
   summary: AccountSummary,
+  pendingCopies: Schema.optional(Schema.Record(Schema.String, Schema.Array(AccountWriteStore))),
   values: Schema.Record(
     Schema.String,
     Schema.String.check(Schema.isPattern(/^accounts-value-[a-f0-9-]{36}$/)),

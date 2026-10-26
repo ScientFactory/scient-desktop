@@ -93,6 +93,8 @@ export const makeAccountsRpcHandlers = ({
         accounts.importPasswords(input),
         attributes,
       ),
+    [WS_METHODS.accountsMatchSignIn]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsMatchSignIn, accounts.matchSignIn(input), attributes),
     [WS_METHODS.accountsFillValues]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsFillValues,
@@ -129,6 +131,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         disconnectOnePassword: missingService,
         importPasswords: () => missingService,
         fillValues: () => missingService,
+        matchSignIn: () => missingService,
         forSession: () => missingService,
         authorize: () => missingService,
         resolveSecrets: () => missingService,

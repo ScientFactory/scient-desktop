@@ -4,6 +4,8 @@ import {
   ACCOUNT_SECRET_FIELDS,
   AccountId,
   AccountSaveInput,
+  AccountMatchSignInInput,
+  DEFAULT_BROWSER_PROFILE_ID,
   AccountsError,
   defaultAccountControls,
   type AccountActivityEntry,
@@ -16,6 +18,7 @@ import {
   type AccountTarget,
   type BrowserProfileRecord,
   type AccountValueSource,
+  type AccountWriteStore,
 } from "@t3tools/contracts";
 import {
   Clock,
@@ -56,6 +59,7 @@ import {
   sameTarget,
   siteMatches,
 } from "./AccountDecisions.ts";
+import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
 import { parsePasswordImport } from "./PasswordImport.ts";
 
 const failure = (reason: AccountsError["reason"], message: string) =>
@@ -63,6 +67,7 @@ const failure = (reason: AccountsError["reason"], message: string) =>
 const missing = () => failure("not-found", "The account no longer exists.");
 const valueName = () => `accounts-value-${NodeCrypto.randomUUID()}`;
 const decodeSave = Schema.decodeEffect(AccountSaveInput);
+const decodeMatch = Schema.decodeEffect(AccountMatchSignInInput);
 const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 const safeDetail = (detail: string | undefined) => {
   if (!detail) return undefined;
@@ -307,50 +312,228 @@ export const layer = Layer.effect(
         if (existing && Object.hasOwn(existing.values, field))
           values[field] = existing.values[field]!;
       }
-      const write = Effect.gen(function* () {
-        for (const [field, change] of Object.entries(input.secrets)) {
-          delete values[field];
-          if (change.type === "clear") {
-            delete secrets[field];
+      const warnings: string[] = [];
+      const pendingCopies: Record<string, ReadonlyArray<AccountWriteStore>> = Object.assign(
+        Object.create(null),
+        Object.fromEntries(
+          Object.entries(existing?.pendingCopies ?? {}).filter(([field]) =>
+            permitted.includes(field),
+          ),
+        ),
+      );
+      const updates: Array<{
+        field: string;
+        value: Redacted.Redacted<string>;
+        destinations: ReadonlyArray<CopyDestination>;
+        primary?: AccountValueSource;
+      }> = [];
+      for (const [field, change] of Object.entries(input.secrets)) {
+        delete values[field];
+        const previousPending = pendingCopies[field];
+        delete pendingCopies[field];
+        if (change.type === "clear") {
+          delete secrets[field];
+          continue;
+        }
+        const old = secrets[field];
+        const linked = change.type !== "scient" && Boolean(old?.copies?.length);
+        const linkedValue = !linked
+          ? undefined
+          : change.type === "keychain"
+            ? yield* sources.keychain(change)
+            : change.type === "custom-model"
+              ? yield* sources.customModel(change.connectionId)
+              : yield* (yield* getOnePasswordClient).resolve(change.reference);
+        if (change.type === "scient" || linkedValue) {
+          const value = change.type === "scient" ? Redacted.make(change.value) : linkedValue!;
+          const name = valueName();
+          yield* persistence.write(
+            name,
+            Redacted.make(new TextEncoder().encode(Redacted.value(value))),
+          );
+          values[field] = name;
+          const replacingLink =
+            change.type === "scient" &&
+            change.saveTo === undefined &&
+            old?.source.type !== "scient" &&
+            !old?.copies?.length;
+          const planned = planSecretStores(
+            input.details,
+            field,
+            replacingLink ? undefined : old,
+            change.type === "scient" ? change.saveTo : undefined,
+            replacingLink ? undefined : previousPending,
+          );
+          const destinations =
+            change.type === "scient"
+              ? planned
+              : [
+                  ...new Map(
+                    [change, ...planned].map((source) => [JSON.stringify(source), source]),
+                  ).values(),
+                ];
+          const actual = destinations.filter(
+            (destination): destination is AccountValueSource =>
+              !(destination.type === "1password" && "vaultId" in destination),
+          );
+          pendingCopies[field] = destinations.flatMap((destination) =>
+            destination.type === "1password" && "vaultId" in destination ? [destination] : [],
+          );
+          secrets[field] = {
+            source: { type: "scient" },
+            copies: actual.filter((source) => source.type !== "scient"),
+            ...(input.details.kind === "api-key" && Redacted.value(value).length > 4
+              ? { hint: Redacted.value(value).slice(-4) }
+              : {}),
+          };
+          updates.push({
+            field,
+            value,
+            destinations,
+            ...(change.type === "scient" ? {} : { primary: change }),
+          });
+        } else secrets[field] = { source: change };
+      }
+      const summary = (): AccountSummary => ({
+        accountId,
+        name: input.name,
+        details: input.details,
+        secrets: structuredClone(secrets),
+        controls:
+          input.controls ??
+          existing?.summary.controls ??
+          defaultAccountControls(input.details.kind),
+        status:
+          warnings.length || Object.values(pendingCopies).some((targets) => targets.length)
+            ? "needs-attention"
+            : "ready",
+        ...(warnings.length ? { statusMessage: warnings[0] } : {}),
+        createdAt: existing?.summary.createdAt ?? timestamp,
+        updatedAt: timestamp,
+        ...(existing?.summary.lastUsedAt ? { lastUsedAt: existing.summary.lastUsedAt } : {}),
+      });
+      // Persist the new value before external writes; a rejected copy never loses the user's password.
+      yield* commit(
+        replaceAccount({
+          summary: summary(),
+          values: { ...values },
+          pendingCopies: { ...pendingCopies },
+        }),
+      );
+      const stagedValues = Object.values(values);
+      for (const { field, value, destinations, primary: preferred } of updates) {
+        const completed: AccountValueSource[] = [];
+        const retry: AccountWriteStore[] = [];
+        let failed = false;
+        for (const destination of destinations) {
+          if (destination.type === "scient") {
+            completed.push(destination);
             continue;
           }
-          if (change.type === "scient") {
-            const name = valueName();
-            yield* persistence.write(name, Redacted.make(new TextEncoder().encode(change.value)));
-            values[field] = name;
-            secrets[field] = {
-              source: { type: "scient" },
-              ...(input.details.kind === "api-key" && change.value.length > 4
-                ? { hint: change.value.slice(-4) }
-                : {}),
-            };
-          } else secrets[field] = { source: change };
+          if (destination.type === "custom-model") continue;
+          const vaultId =
+            destination.type === "1password"
+              ? "vaultId" in destination
+                ? destination.vaultId
+                : destination.reference.split("/")[2]
+              : undefined;
+          const status = state.onePasswordStatus;
+          const vaultInfo =
+            status.state === "connected"
+              ? status.vaults?.find((vault) => vault.id === vaultId || vault.name === vaultId)
+              : undefined;
+          const operation: Effect.Effect<AccountValueSource, AccountsError> =
+            destination.type === "keychain"
+              ? sources.writeKeychain(destination, value).pipe(Effect.as(destination))
+              : Effect.gen(function* () {
+                  if (vaultInfo?.readOnly)
+                    return yield* failure("denied", "1Password vault is read-only.");
+                  const client = yield* getOnePasswordClient;
+                  if ("reference" in destination) {
+                    if (!client.write)
+                      return yield* failure("unsupported", "1Password writes are unavailable.");
+                    yield* client.write(destination.reference, value);
+                    return destination;
+                  }
+                  if (!client.createLogin)
+                    return yield* failure("unsupported", "1Password writes are unavailable.");
+                  return yield* client.createLogin({
+                    vaultId: destination.vaultId,
+                    copyId: `${accountId}:${field}`,
+                    title: input.name,
+                    details: input.details,
+                    field,
+                    value,
+                  });
+                });
+          const result = yield* operation.pipe(Effect.result);
+          if (result._tag === "Success") completed.push(result.success);
+          else {
+            failed = true;
+            if (destination.type === "keychain") retry.push({ type: "keychain" });
+            else if (vaultId) retry.push({ type: "1password", vaultId });
+            if (
+              destination.type === "1password" &&
+              result.failure.reason === "denied" &&
+              status.state === "connected"
+            ) {
+              state = {
+                ...state,
+                onePasswordStatus: {
+                  ...status,
+                  vaults:
+                    status.vaults?.map((vault) =>
+                      vault === vaultInfo ? { ...vault, readOnly: true } : vault,
+                    ) ?? [],
+                },
+              };
+            }
+            warnings.push(
+              destination.type === "keychain"
+                ? "Could not save to System keychain."
+                : result.failure.reason === "denied"
+                  ? `Vault ${vaultInfo?.name ?? vaultId ?? "1Password"} is read-only.`
+                  : `Could not save to ${vaultInfo?.name ?? "1Password"}.`,
+            );
+            if ("reference" in destination || destination.type === "keychain")
+              completed.push(destination);
+          }
         }
-        const summary: AccountSummary = {
-          accountId,
-          name: input.name,
-          details: input.details,
-          secrets,
-          controls:
-            input.controls ??
-            existing?.summary.controls ??
-            defaultAccountControls(input.details.kind),
-          status: "ready",
-          createdAt: existing?.summary.createdAt ?? timestamp,
-          updatedAt: timestamp,
-          ...(existing?.summary.lastUsedAt ? { lastUsedAt: existing.summary.lastUsedAt } : {}),
+        pendingCopies[field] = retry;
+        const primary = failed
+          ? { type: "scient" as const }
+          : (preferred ??
+            (destinations.some((target) => target.type === "scient")
+              ? { type: "scient" as const }
+              : completed[0]));
+        if (!primary) continue;
+        secrets[field] = {
+          ...secrets[field]!,
+          source: primary,
+          copies: completed.filter((source) => JSON.stringify(source) !== JSON.stringify(primary)),
         };
-        yield* commit(replaceAccount({ summary, values }));
-      });
-      yield* write;
+        if (
+          primary.type !== "scient" &&
+          !secrets[field]?.copies?.some((source) => source.type === "scient")
+        )
+          delete values[field];
+      }
+      if (updates.length)
+        yield* commit(
+          replaceAccount({
+            summary: summary(),
+            values: { ...values },
+            pendingCopies: { ...pendingCopies },
+          }),
+        );
       cache.delete(accountId);
       yield* removeValues(
-        Object.values(existing?.values ?? {}).filter(
+        [...Object.values(existing?.values ?? {}), ...stagedValues].filter(
           (name) => !Object.values(values).includes(name),
         ),
       );
       yield* denyRevoked;
-      return { accountId };
+      return { accountId, ...(warnings.length ? { warnings: [...new Set(warnings)] } : {}) };
     });
 
     const service = AccountsService.of({
@@ -387,14 +570,24 @@ export const layer = Layer.effect(
             const result = yield* resolve(accountId, Object.keys(existing.summary.secrets)).pipe(
               Effect.result,
             );
+            const hasPending = Object.values(existing.pendingCopies ?? {}).some(
+              (targets) => targets.length,
+            );
             const { statusMessage: _, ...summary } = existing.summary;
             yield* commit(
               replaceAccount({
                 ...existing,
                 summary: {
                   ...summary,
-                  status: result._tag === "Success" ? "ready" : "needs-attention",
-                  ...(result._tag === "Failure" ? { statusMessage: result.failure.message } : {}),
+                  status: result._tag === "Success" && !hasPending ? "ready" : "needs-attention",
+                  ...(result._tag === "Failure"
+                    ? { statusMessage: result.failure.message }
+                    : hasPending
+                      ? {
+                          statusMessage:
+                            existing.summary.statusMessage ?? "A password copy needs attention.",
+                        }
+                      : {}),
                 },
               }),
             );
@@ -532,6 +725,7 @@ export const layer = Layer.effect(
                 state: "connected",
                 mode: input.mode,
                 label: connected.success.label,
+                vaults: connected.success.vaults ?? [],
               },
             });
             onePasswordClient = connected.success;
@@ -611,6 +805,49 @@ export const layer = Layer.effect(
           }),
         ),
       ),
+      matchSignIn: Effect.fn("AccountsService.matchSignIn")((raw) =>
+        locked(
+          Effect.gen(function* () {
+            const input = yield* decodeMatch(raw).pipe(
+              Effect.mapError(() => failure("invalid-input", "Sign-in input is invalid.")),
+            );
+            const candidates = state.accounts
+              .filter(
+                ({ summary: { details } }) =>
+                  (details.kind === "website" || details.kind === "library") &&
+                  details.username === input.username &&
+                  siteMatches(details.sites, input.origin) &&
+                  (input.profileId === undefined ||
+                    (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === input.profileId),
+              )
+              .sort((a, b) => {
+                const exact = (account: StoredAccount) =>
+                  "sites" in account.summary.details &&
+                  account.summary.details.sites.includes(input.origin)
+                    ? 1
+                    : 0;
+                return (
+                  exact(b) - exact(a) ||
+                  (b.summary.lastUsedAt ?? "").localeCompare(a.summary.lastUsedAt ?? "")
+                );
+              });
+            const digest = (value: Redacted.Redacted<string>) =>
+              NodeCrypto.createHash("sha256").update(Redacted.value(value)).digest();
+            const submitted = digest(Redacted.make(input.password));
+            for (const account of candidates) {
+              const resolved = yield* resolve(account.summary.accountId, ["password"]);
+              if (
+                resolved.password &&
+                NodeCrypto.timingSafeEqual(submitted, digest(resolved.password))
+              )
+                return { result: "same" as const, accountId: account.summary.accountId };
+            }
+            return candidates[0]
+              ? { result: "password-changed" as const, accountId: candidates[0].summary.accountId }
+              : { result: "new" as const };
+          }),
+        ),
+      ),
       fillValues: Effect.fn("AccountsService.fillValues")((accountId, origin) =>
         locked(
           Effect.gen(function* () {
@@ -642,6 +879,12 @@ export const layer = Layer.effect(
                 catch: () => failure("unavailable", "A one-time password could not be generated."),
               });
             }
+            yield* commit(
+              replaceAccount({
+                ...account,
+                summary: { ...account.summary, lastUsedAt: yield* now },
+              }),
+            );
             return {
               ...(details.username === undefined ? {} : { username: details.username }),
               ...(values.password ? { password: Redacted.value(values.password) } : {}),

@@ -29,10 +29,21 @@ export interface DesktopCapturedSignIn {
   readonly password: string;
 }
 
+export interface DesktopLoginForm {
+  readonly tabId: string;
+  readonly profileId: string;
+  readonly url: string;
+  readonly documentId: string;
+  readonly userEdited: boolean;
+  readonly hasValues: boolean;
+}
+
 export interface DesktopSignInFill {
   readonly tabId: string;
   /** Reject if the main frame or a filled frame has a different origin at fill time. */
   readonly expectedOrigin?: string;
+  readonly documentId?: string;
+  readonly automatic?: boolean;
   readonly username?: string;
   readonly password?: string;
   readonly otp?: string;
@@ -50,5 +61,7 @@ export interface DesktopAccountsBridge {
   ) => Promise<ReadonlyArray<DesktopProfileSignedInSite>>;
   /** Fills the login form on the tab's current page. Resolves false when it found none. */
   readonly fill: (input: DesktopSignInFill) => Promise<boolean>;
+  readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;
+  readonly onLoginFormDetected?: (listener: (form: DesktopLoginForm) => void) => () => void;
   readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;
 }

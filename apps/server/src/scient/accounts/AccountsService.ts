@@ -4,6 +4,8 @@
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
 import type {
+  AccountMatchSignInInput,
+  AccountMatchSignInResult,
   AccountActivityEntry,
   AccountApprovalDecision,
   AccountFillValues,
@@ -90,6 +92,10 @@ export interface AccountsServiceShape {
     accountId: AccountId,
     origin: string,
   ) => Effect.Effect<AccountFillValues, AccountsError>;
+
+  readonly matchSignIn: (
+    input: AccountMatchSignInInput,
+  ) => Effect.Effect<AccountMatchSignInResult, AccountsError>;
 
   // Agent surface (Scient MCP tools).
   readonly forSession: (

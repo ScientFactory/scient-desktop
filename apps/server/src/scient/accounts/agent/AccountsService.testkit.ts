@@ -43,6 +43,7 @@ export function fakeAccounts(
     disconnectOnePassword: unavailable,
     importPasswords: () => unavailable,
     fillValues: () => unavailable,
+    matchSignIn: () => unavailable,
     forSession: () =>
       Effect.succeed({
         agentAccess: options.agentAccess ?? true,

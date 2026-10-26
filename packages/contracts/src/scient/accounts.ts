@@ -79,7 +79,7 @@ export type OnePasswordReference = typeof OnePasswordReference.Type;
 
 const KeychainName = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 
-/** Where one secret value lives. Links are read when needed; nothing is copied. */
+/** The read source of a secret field or the location of a saved copy. */
 export const AccountValueSource = Schema.Union([
   Schema.Struct({ type: Schema.Literal("scient") }),
   Schema.Struct({ type: Schema.Literal("keychain"), service: KeychainName, account: KeychainName }),
@@ -89,8 +89,16 @@ export const AccountValueSource = Schema.Union([
 ]);
 export type AccountValueSource = typeof AccountValueSource.Type;
 
+export const AccountWriteStore = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("scient") }),
+  Schema.Struct({ type: Schema.Literal("keychain") }),
+  Schema.Struct({ type: Schema.Literal("1password"), vaultId: TrimmedNonEmptyString }),
+]);
+export type AccountWriteStore = typeof AccountWriteStore.Type;
+
 export const AccountSecretSummary = Schema.Struct({
   source: AccountValueSource,
+  copies: Schema.optional(Schema.Array(AccountValueSource)),
   /** Last four characters of a token-like value held by Scient; never for passwords. */
   hint: Schema.optional(Schema.String.check(Schema.isMaxLength(4))),
 });
@@ -304,6 +312,15 @@ export const OnePasswordStatus = Schema.Union([
     mode: Schema.Literals(["service-account", "desktop"]),
     /** Vault names for a service account; the account name for the desktop app. */
     label: TrimmedNonEmptyString,
+    vaults: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          id: TrimmedNonEmptyString,
+          name: TrimmedNonEmptyString,
+          readOnly: Schema.Boolean,
+        }),
+      ),
+    ),
   }),
   Schema.Struct({
     state: Schema.Literal("error"),
@@ -348,7 +365,13 @@ const SecretValue = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLengt
 
 /** How a save changes one secret field. Omitted fields are kept. */
 export const AccountSecretInput = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("scient"), value: SecretValue }),
+  Schema.Struct({
+    type: Schema.Literal("scient"),
+    value: SecretValue,
+    saveTo: Schema.optional(
+      Schema.Array(AccountWriteStore).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
+    ),
+  }),
   Schema.Struct({ type: Schema.Literal("keychain"), service: KeychainName, account: KeychainName }),
   Schema.Struct({ type: Schema.Literal("1password"), reference: OnePasswordReference }),
   Schema.Struct({ type: Schema.Literal("custom-model"), connectionId: TrimmedNonEmptyString }),
@@ -367,7 +390,10 @@ export const AccountSaveInput = Schema.Struct({
 });
 export type AccountSaveInput = typeof AccountSaveInput.Type;
 
-export const AccountSaveResult = Schema.Struct({ accountId: AccountId });
+export const AccountSaveResult = Schema.Struct({
+  accountId: AccountId,
+  warnings: Schema.optional(Schema.Array(Schema.String)),
+});
 export type AccountSaveResult = typeof AccountSaveResult.Type;
 
 export const AccountRemoveInput = Schema.Struct({ accountId: AccountId });
@@ -473,6 +499,19 @@ export const AccountFillValues = Schema.Struct({
   otp: Schema.optional(Schema.String),
 });
 export type AccountFillValues = typeof AccountFillValues.Type;
+
+export const AccountMatchSignInInput = Schema.Struct({
+  origin: AccountFillValuesInput.fields.origin,
+  username: Schema.String.check(Schema.isMaxLength(256)),
+  password: SecretValue,
+  profileId: Schema.optional(BrowserProfileId),
+});
+export type AccountMatchSignInInput = typeof AccountMatchSignInInput.Type;
+export const AccountMatchSignInResult = Schema.Struct({
+  result: Schema.Literals(["new", "password-changed", "same"]),
+  accountId: Schema.optional(AccountId),
+});
+export type AccountMatchSignInResult = typeof AccountMatchSignInResult.Type;
 
 export const AccountsTestInput = Schema.Struct({ accountId: AccountId });
 

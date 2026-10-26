@@ -121,11 +121,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accountsProfileRemove]: AuthSettingsWriteScope,
   [WS_METHODS.accountsApprovalRespond]: AuthSettingsWriteScope,
   [WS_METHODS.accountsActivity]: AuthOrchestrationReadScope,
-  [WS_METHODS.accountsKeychainCandidates]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountsKeychainCandidates]: AuthSettingsWriteScope,
   [WS_METHODS.accountsOnePasswordConnect]: AuthSettingsWriteScope,
   [WS_METHODS.accountsOnePasswordDisconnect]: AuthSettingsWriteScope,
   [WS_METHODS.accountsImportPasswords]: AuthSettingsWriteScope,
   [WS_METHODS.accountsFillValues]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMatchSignIn]: AuthSettingsWriteScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient extensions: reads observe, every change is a settings write.
   [WS_METHODS.extensionsList]: AuthOrchestrationReadScope,

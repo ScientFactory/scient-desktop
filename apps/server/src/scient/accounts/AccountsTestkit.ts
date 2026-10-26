@@ -84,6 +84,7 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
     profiles: Effect.succeed(BUILT_IN_BROWSER_PROFILES.map((profile) => profile.id)),
     customModelKeys: Effect.succeed([]),
     keychain: () => Effect.fail(unavailable()),
+    writeKeychain: () => Effect.fail(unavailable()),
     customModel: () => Effect.fail(unavailable()),
     onePassword: () => Effect.fail(unavailable()),
     candidates: () => Effect.succeed({ listed: false, candidates: [] }),

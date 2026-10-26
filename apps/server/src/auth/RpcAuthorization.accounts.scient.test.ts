@@ -30,10 +30,6 @@ it.effect(
       );
       yield* reader[WS_METHODS.accountsSnapshot]({});
       expect(yield* reader[WS_METHODS.accountsActivity]({})).toEqual([]);
-      expect(yield* reader[WS_METHODS.accountsKeychainCandidates]({})).toEqual({
-        listed: false,
-        candidates: [],
-      });
       expect(
         (yield* Stream.runCollect(
           reader[WS_METHODS.accountsSubscribeChanges]({}).pipe(Stream.take(1)),
@@ -42,6 +38,7 @@ it.effect(
       const accountId = AccountId.make("acc_synthetic123");
       const before = blobs.size;
       const writes = [
+        reader[WS_METHODS.accountsKeychainCandidates]({}),
         reader[WS_METHODS.accountsSave](website()),
         reader[WS_METHODS.accountsRemove]({ accountId }),
         reader[WS_METHODS.accountsTest]({ accountId }),
@@ -66,6 +63,11 @@ it.effect(
           content: "name,url,username,password",
         }),
         reader[WS_METHODS.accountsFillValues]({ accountId, origin: "https://example.com" }),
+        reader[WS_METHODS.accountsMatchSignIn]({
+          origin: "https://example.com",
+          username: "synthetic",
+          password: syntheticValue(),
+        }),
       ];
       for (const write of writes)
         expect(yield* write.pipe(Effect.flip)).toMatchObject({

@@ -26,7 +26,11 @@ describe("Accounts client authorization", () => {
       scopes: [AuthSettingsWriteScope],
       permissions: [AuthSettingsWriteScope],
     };
-    for (const method of [WS_METHODS.accountsSave, WS_METHODS.accountsFillValues]) {
+    for (const method of [
+      WS_METHODS.accountsSave,
+      WS_METHODS.accountsFillValues,
+      WS_METHODS.accountsMatchSignIn,
+    ]) {
       const scopes = clientRpcRequiredScopes(method, {});
       expect(scopes.every((scope) => sessionGrantsScope(reader, scope))).toBe(false);
       expect(scopes.every((scope) => sessionGrantsScope(writer, scope))).toBe(true);
