@@ -169,38 +169,40 @@ describe("AccountsService persistence", () => {
       );
     }),
   );
-  it.effect("updates and skips imported accounts by site and username", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      const value = syntheticValue();
-      const content = `name,url,username,password,note\nSynthetic,https://login.example.com/path,user,${value},\nSynthetic,https://login.example.com/path,user,${value},`;
-      expect(
-        yield* service.importPasswords({ format: "auto", content, profileId: "imported" }),
-      ).toEqual({ created: 1, updated: 0, skipped: 1 });
-      const next = syntheticValue();
-      expect(
-        yield* service.importPasswords({
-          format: "auto",
-          content: content.replaceAll(value, next),
-        }),
-      ).toEqual({ created: 0, updated: 1, skipped: 1 });
-      const account = (yield* service.snapshot).accounts[0]!;
-      expect(
-        secretEquals(
-          (yield* service.resolveSecrets(account.accountId, ["password"])).password,
-          next,
-        ),
-      ).toBe(true);
-      expect(
-        yield* service.importPasswords({
-          format: "auto",
-          content: content.replaceAll(value, next).replaceAll("Synthetic,", "Renamed,"),
-        }),
-      ).toEqual({ created: 0, updated: 1, skipped: 1 });
-      const changed = (yield* service.snapshot).accounts[0]!;
-      expect(changed.name).toBe("Renamed");
-      expect(changed.details.kind === "website" && changed.details.profileId).toBe("imported");
-    }),
+  it.effect(
+    "updates and skips imported accounts by site and username, keeping the user's name",
+    () =>
+      Effect.gen(function* () {
+        const { service } = yield* makeHarness();
+        const value = syntheticValue();
+        const content = `name,url,username,password,note\nSynthetic,https://login.example.com/path,user,${value},\nSynthetic,https://login.example.com/path,user,${value},`;
+        expect(
+          yield* service.importPasswords({ format: "auto", content, profileId: "imported" }),
+        ).toEqual({ created: 1, updated: 0, skipped: 1 });
+        const next = syntheticValue();
+        expect(
+          yield* service.importPasswords({
+            format: "auto",
+            content: content.replaceAll(value, next),
+          }),
+        ).toEqual({ created: 0, updated: 1, skipped: 1 });
+        const account = (yield* service.snapshot).accounts[0]!;
+        expect(
+          secretEquals(
+            (yield* service.resolveSecrets(account.accountId, ["password"])).password,
+            next,
+          ),
+        ).toBe(true);
+        expect(
+          yield* service.importPasswords({
+            format: "auto",
+            content: content.replaceAll(value, next).replaceAll("Synthetic,", "Renamed,"),
+          }),
+        ).toEqual({ created: 0, updated: 0, skipped: 2 });
+        const changed = (yield* service.snapshot).accounts[0]!;
+        expect(changed.name).toBe("Synthetic");
+        expect(changed.details.kind === "website" && changed.details.profileId).toBe("imported");
+      }),
   );
 });
 

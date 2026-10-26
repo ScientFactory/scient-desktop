@@ -273,3 +273,12 @@ export function matchExistingProfile(
     ? { source: browser[0]!, profile: browser[0]!.profiles[0]! }
     : undefined;
 }
+
+/** What each kind of account is called on screen. */
+export const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
+  website: "Website sign-in",
+  library: "Library access",
+  "api-key": "API key",
+  database: "Database",
+  "cli-login": "Command-line login",
+};

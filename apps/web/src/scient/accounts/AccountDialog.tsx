@@ -34,6 +34,7 @@ import { useAccountCommand } from "./useAccounts";
 import {
   accountCatalogue,
   catalogueDetails,
+  KIND_LABELS,
   secretFields,
   type CatalogueEntry,
 } from "./accountsView";
@@ -58,13 +59,6 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   clientCert: "Client certificate",
   clientKey: "Client key",
   caCert: "CA certificate",
-};
-const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
-  website: "Website sign-in",
-  library: "Library access",
-  "api-key": "API key",
-  database: "Database",
-  "cli-login": "Command-line login",
 };
 const OPTIONAL_FIELDS = new Set(["totp", "clientCert", "clientKey", "caCert"]);
 

@@ -171,7 +171,13 @@ export function PasswordStores({
             if (result.ok)
               toastManager.add({
                 type: "success",
-                title: `Imported ${result.value.created + result.value.updated}`,
+                title:
+                  [
+                    result.value.created ? `Added ${result.value.created}` : "",
+                    result.value.updated ? `Updated ${result.value.updated}` : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "Nothing new to import",
               });
           } catch {
             toastManager.add({ type: "error", title: "Could not read password file" });

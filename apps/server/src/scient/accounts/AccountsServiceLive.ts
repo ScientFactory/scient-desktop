@@ -766,9 +766,7 @@ export const layer = Layer.effect(
                 const current = yield* resolve(existing.summary.accountId, ["password", "totp"]);
                 const details = existing.summary.details;
                 if (
-                  existing.summary.name === entry.name &&
                   details.kind === "website" &&
-                  details.loginUrl === entry.loginUrl &&
                   (input.profileId === undefined || details.profileId === input.profileId) &&
                   current.password &&
                   Redacted.value(current.password) === entry.password &&
@@ -780,12 +778,16 @@ export const layer = Layer.effect(
               }
               yield* save({
                 ...(existing ? { accountId: existing.summary.accountId } : {}),
-                name: entry.name,
+                // An import refreshes values; the user's own name and sign-in address stay.
+                name: existing?.summary.name ?? entry.name,
                 details: {
                   kind: "website",
                   sites: [entry.site],
                   username: entry.username,
-                  loginUrl: entry.loginUrl,
+                  loginUrl:
+                    (existing?.summary.details.kind === "website"
+                      ? existing.summary.details.loginUrl
+                      : undefined) ?? entry.loginUrl,
                   ...(input.profileId
                     ? { profileId: input.profileId }
                     : existing?.summary.details.kind === "website" &&

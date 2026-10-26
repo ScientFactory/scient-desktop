@@ -37,6 +37,7 @@ import { AccountDialog } from "./AccountDialog";
 import { BrowserProfiles, BrowserImportDialog } from "./BrowserProfiles";
 import { PasswordStores, OnePasswordDialog } from "./PasswordStores";
 import { AccountApprovals } from "./AccountApprovals";
+import { KIND_LABELS } from "./accountsView";
 
 function AccountRow({
   account,
@@ -83,7 +84,7 @@ function AccountRow({
         </span>
       }
       description={[
-        details.kind.replaceAll("-", " "),
+        KIND_LABELS[details.kind],
         "sites" in details
           ? details.sites.join(", ")
           : details.kind === "database"
