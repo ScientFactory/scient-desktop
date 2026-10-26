@@ -4,6 +4,10 @@
  * wait/steal. Acquire lazily so overlap during old-server exit does not permanently disable writes.
  * Reads need no lease; preserve unreadable state as quarantine evidence.
  */
+import {
+  ensureNativePrivateRetentionDirectory,
+  resolveNativeFilePublicationHelperPath,
+} from "../workspace/NativeFilePublication.ts";
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -300,8 +304,14 @@ async function privateDirectory(
 ): Promise<boolean> {
   if (await overleafCloudRoot(directory))
     throw new OverleafRetentionUnavailableError({ reason: "sync-managed-folder" });
-  if (HostProcess.Platform.defaultValue() === "linux") {
-    const helper = configuredHelper ?? (await resolveNativeFilePublicationHelperPath());
+  const platform = HostProcess.Platform.defaultValue();
+  if (platform === "linux" || platform === "win32") {
+    const helper =
+      platform === "linux"
+        ? (configuredHelper ?? (await resolveNativeFilePublicationHelperPath()))
+        : await resolveNativeFilePublicationHelperPath(
+            configuredHelper ?? process.env.SCIENT_FILE_PUBLICATION_HELPER,
+          );
     if (!helper) return false;
     await ensureNativePrivateRetentionDirectory(helper, directory);
     return true;
