@@ -149,6 +149,31 @@ describe.skipIf(!windows)("Windows capture and install", () => {
       expect(recovered.outcome).toBe("skipped");
       expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
     }));
+  it("restores A's original policy even when a foreign file occupies the kept name", () =>
+    fixture(async (input, target) => {
+      const policy = await security(target);
+      await expect(
+        mutateRetainedFile(input, target, {
+          at: async (point) => {
+            if (point === "restricted") {
+              await NodeFSP.writeFile(
+                NodePath.join(input.retentionDirectory, "one/retained"),
+                "foreign",
+                { flag: "wx" },
+              );
+              throw new Error("interrupted");
+            }
+          },
+        }),
+      ).rejects.toThrow("interrupted");
+      const recovered = await mutateRetainedFile({ ...input, bytes: undefined }, target);
+      expect(recovered.outcome).toBe("attention");
+      expect(await security(target)).toBe(policy);
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+      expect(
+        await NodeFSP.readFile(NodePath.join(input.retentionDirectory, "one/retained"), "utf8"),
+      ).toBe("foreign");
+    }));
   it("creates without retaining or overwriting an occupant", () =>
     fixture(async (input, target) => {
       await NodeFSP.unlink(target);
@@ -225,6 +250,40 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
           expect(live).toBe("incoming");
           expect(recovered.retainedIdentity).toEqual(original);
         }
+      }),
+  );
+  it.each(["prepared", "checked"] as const)(
+    "does not publish a fenced create after a changed peer and process death at %s",
+    (point) =>
+      fixture(async (input, target) => {
+        await NodeFSP.unlink(target);
+        const peer = NodePath.join(input.cwd, "peer.tex");
+        await NodeFSP.writeFile(peer, "guard");
+        const guarded = {
+          ...input,
+          kind: "create" as const,
+          condition: "absent" as const,
+          expectedRevision: null,
+          expectedMutationEpoch: "epoch",
+          peerGuards: [{ path: "peer.tex", revision: bytesRevision(Buffer.from("guard")) }],
+        };
+        const jobPath = NodePath.join(NodePath.dirname(input.cwd), "fenced-create.json");
+        const job: WindowsCrashJob = { input: guarded, target, point, probe: probe! };
+        await NodeFSP.writeFile(jobPath, JSON.stringify(job));
+        const killed = NodeChildProcess.spawnSync(
+          process.execPath,
+          [
+            NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"),
+            jobPath,
+          ],
+          { encoding: "utf8" },
+        );
+        expect(killed.status, killed.stderr).toBe(73);
+        await NodeFSP.writeFile(peer, "later");
+        const recovered = await mutateRetainedFile({ ...guarded, bytes: undefined }, target);
+        expect(recovered).toMatchObject({ outcome: "skipped", sourceMutation: false });
+        await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await NodeFSP.readFile(peer, "utf8")).toBe("later");
       }),
   );
   it("refuses a file held for writing by another process", () =>
