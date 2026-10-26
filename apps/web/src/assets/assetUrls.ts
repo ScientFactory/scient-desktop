@@ -11,6 +11,7 @@ import { AssetResource, type AssetCreateUrlResult, EnvironmentId } from "@t3tool
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { assetEnvironment } from "~/state/assets";
 import { useFilesystemReadAccess } from "~/state/filesystem";
 import { readEnvironmentScope, usePreparedConnection } from "~/state/session";
@@ -143,7 +144,9 @@ export function useAssetUrlRefresh(
     reportFailure: false,
     refresh: true,
   });
-  return async () => {
+  // SCIENT-FORK:START — a stable callback: mint effects key on its identity, and a new
+  // identity on every render re-mints the URL and remounts heavy previews (Office).
+  return useStableCallback(async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
     // SCIENT-FORK:START — file access can be revoked while the signed URL is minted.
     const needsReadAccess = isFileResource(resource);
@@ -155,7 +158,8 @@ export function useAssetUrlRefresh(
     // SCIENT-FORK:END
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
     return resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-  };
+  });
+  // SCIENT-FORK:END
 }
 
 export function useAssetUrls(

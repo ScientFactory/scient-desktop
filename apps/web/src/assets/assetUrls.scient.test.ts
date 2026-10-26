@@ -19,7 +19,12 @@ const state = vi.hoisted(() => ({
   refresh: vi.fn(),
 }));
 
-vi.mock("react", () => ({ useCallback: <A>(callback: A) => callback }));
+vi.mock("react", () => ({
+  useCallback: <A>(callback: A) => callback,
+  useRef: <A>(initial: A) => ({ current: initial }),
+  useState: <A>(initial: () => A) => [initial(), () => undefined],
+  useLayoutEffect: (effect: () => void) => effect(),
+}));
 vi.mock("@effect/atom-react", () => ({
   useAtomRefresh: () => state.refresh,
   useAtomValue: (atom: unknown) =>
