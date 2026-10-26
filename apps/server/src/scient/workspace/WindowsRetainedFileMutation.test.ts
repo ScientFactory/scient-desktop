@@ -354,6 +354,13 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
             }),
           ).code;
         expect(access(target)).toBe(0);
+        const cloud = JSON.parse(
+          NodeChildProcess.execFileSync(probe!, ["--windows=1", "as-account-cloud", target], {
+            encoding: "utf8",
+            env: { ...process.env, SCIENT_TEST_ACCOUNT: account, SCIENT_TEST_PASSWORD: password },
+          }),
+        );
+        expect(cloud.code).toBe(0);
         const result = await mutateRetainedFile(input, target, {
           at: async (point) => {
             if (point === "restricted") expect(access(target)).not.toBe(0);
