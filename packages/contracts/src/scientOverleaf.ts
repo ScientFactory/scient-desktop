@@ -169,8 +169,8 @@ export const ScientOverleafDisconnectRequest = Schema.Struct({
 export type ScientOverleafDisconnectRequest = typeof ScientOverleafDisconnectRequest.Type;
 
 export const ScientOverleafCancelResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("requested"), operationId: Schema.String }),
-  Schema.Struct({ _tag: Schema.Literal("nothing-running") }),
+  Schema.TaggedStruct("requested", { operationId: Schema.String }),
+  Schema.TaggedStruct("nothing-running", {}),
 ]);
 export type ScientOverleafCancelResult = typeof ScientOverleafCancelResult.Type;
 
@@ -207,12 +207,11 @@ export type ScientOverleafConnectionList = typeof ScientOverleafConnectionList.T
 
 /** Connect, relink or disconnect: done, or a fixed reason it did nothing. */
 export const ScientOverleafManageResult = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("done"),
+  Schema.TaggedStruct("done", {
     connection: ScientOverleafConnectionSummary,
     reconnected: Schema.optional(Schema.Boolean),
   }),
-  Schema.Struct({ _tag: Schema.Literal("refused"), reason: Schema.String }),
+  Schema.TaggedStruct("refused", { reason: Schema.String }),
 ]);
 export type ScientOverleafManageResult = typeof ScientOverleafManageResult.Type;
 
@@ -228,13 +227,12 @@ export const ScientOverleafStatus = Schema.Struct({
   reasons: Schema.Array(Schema.String),
   local: Schema.NullOr(
     Schema.Union([
-      Schema.Struct({
-        _tag: Schema.Literal("read"),
+      Schema.TaggedStruct("read", {
         changed: Schema.Number,
         deleted: Schema.Number,
         added: Schema.Number,
       }),
-      Schema.Struct({ _tag: Schema.Literal("unread"), reason: Schema.String }),
+      Schema.TaggedStruct("unread", { reason: Schema.String }),
     ]),
   ),
   markerPaths: Schema.Array(ManuscriptPath),
@@ -335,23 +333,20 @@ const ScientOverleafSettledApply = Schema.Struct({
 const ScientOverleafSettled = Schema.NullOr(ScientOverleafSettledApply);
 
 export const ScientOverleafPreviewResult = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("review"),
+  Schema.TaggedStruct("review", {
     review: ScientOverleafReview,
     settled: ScientOverleafSettled,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("refused"),
+  Schema.TaggedStruct("refused", {
     refusal: ScientOverleafRefusal,
     settled: ScientOverleafSettled,
   }),
-  Schema.Struct({ _tag: Schema.Literal("recovered") }),
+  Schema.TaggedStruct("recovered", {}),
 ]);
 export type ScientOverleafPreviewResult = typeof ScientOverleafPreviewResult.Type;
 
 export const ScientOverleafSyncResult = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("synced"),
+  Schema.TaggedStruct("synced", {
     review: ScientOverleafReview,
     outcome: Schema.String,
     interrupted: Schema.Number,
@@ -363,29 +358,25 @@ export const ScientOverleafSyncResult = Schema.Union([
     activity: OtherAgents,
     linkedElsewhere: Schema.Boolean,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("needs-decision"),
+  Schema.TaggedStruct("needs-decision", {
     review: ScientOverleafReview,
     retried: Schema.Boolean,
     settled: ScientOverleafSettled,
     activity: OtherAgents,
     linkedElsewhere: Schema.Boolean,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("refused"),
+  Schema.TaggedStruct("refused", {
     refusal: ScientOverleafRefusal,
     retried: Schema.Boolean,
     settled: ScientOverleafSettled,
   }),
-  Schema.Struct({ _tag: Schema.Literal("duplicate"), category: Schema.NullOr(Schema.String) }),
-  Schema.Struct({
-    _tag: Schema.Literal("unsettled"),
+  Schema.TaggedStruct("duplicate", { category: Schema.NullOr(Schema.String) }),
+  Schema.TaggedStruct("unsettled", {
     reason: Schema.String,
     retried: Schema.Boolean,
     settled: ScientOverleafSettled,
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("cancelled"),
+  Schema.TaggedStruct("cancelled", {
     stage: Schema.Literals(["before-prepare", "before-apply"]),
     retried: Schema.Boolean,
     settled: ScientOverleafSettled,
@@ -429,7 +420,7 @@ const ScientOverleafApplyOutcome = Schema.Literals(["complete", "replan", "atten
  * first); `attention` may have stopped partway. The others wrote nothing.
  */
 export const ScientOverleafRestoreResult = Schema.Union([
-  Schema.Struct({ _tag: Schema.Literal("restored"), outcome: ScientOverleafApplyOutcome }),
+  Schema.TaggedStruct("restored", { outcome: ScientOverleafApplyOutcome }),
   Schema.Struct({ _tag: Schema.Literals(["stale", "unknown-copy", "duplicate"]) }),
 ]);
 export type ScientOverleafRestoreResult = typeof ScientOverleafRestoreResult.Type;
@@ -461,8 +452,7 @@ export type ScientOverleafUndoableSends = typeof ScientOverleafUndoableSends.Typ
  * its apply ended (null if nothing was written) and `sync` the sync that followed.
  * A partway/replanned apply is not synced (`not-synced`): nothing was sent. */
 export const ScientOverleafUndoResult = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("undone"),
+  Schema.TaggedStruct("undone", {
     /** Files the send changed, back to Overleaf's earlier version. */
     restored: Schema.Array(ManuscriptPath),
     /** Files the send added, removed. */
@@ -484,14 +474,12 @@ export const ScientOverleafUndoResult = Schema.Union([
     outcome: Schema.NullOr(ScientOverleafApplyOutcome),
     sync: Schema.Union([
       ScientOverleafSyncResult,
-      Schema.Struct({
-        _tag: Schema.Literal("not-synced"),
+      Schema.TaggedStruct("not-synced", {
         reason: Schema.Literal("undo-incomplete"),
       }),
     ]),
   }),
-  Schema.Struct({
-    _tag: Schema.Literal("not-eligible"),
+  Schema.TaggedStruct("not-eligible", {
     reason: Schema.Literals([
       "not-recorded",
       "unresolved",
@@ -500,10 +488,10 @@ export const ScientOverleafUndoResult = Schema.Union([
       "history-unavailable",
     ]),
   }),
-  Schema.Struct({ _tag: Schema.Literal("refused"), refusal: ScientOverleafRefusal }),
-  Schema.Struct({ _tag: Schema.Literal("duplicate") }),
+  Schema.TaggedStruct("refused", { refusal: ScientOverleafRefusal }),
+  Schema.TaggedStruct("duplicate", {}),
   /** Stopped on request after saving editors, before anything was put back. */
-  Schema.Struct({ _tag: Schema.Literal("cancelled") }),
+  Schema.TaggedStruct("cancelled", {}),
 ]);
 export type ScientOverleafUndoResult = typeof ScientOverleafUndoResult.Type;
 

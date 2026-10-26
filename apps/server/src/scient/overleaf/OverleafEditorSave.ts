@@ -61,39 +61,41 @@ export const layerFromEditorFlush = Layer.effect(
   Effect.gen(function* () {
     const flush = yield* EditorFlush.EditorFlush;
     return {
-      saveFolder: (input) =>
-        flush
-          .flushFolder({ ...input, timeout: WINDOW_TIMEOUT, overallTimeout: OVERALL_TIMEOUT })
-          .pipe(
-            Effect.map((result): OverleafEditorSaveResult => {
-              switch (result._tag) {
-                case "NoWindowOpen":
-                  return { _tag: "saved" };
-                case "FolderUnavailable":
-                  return {
-                    _tag: "failed",
-                    failures: [{ path: input.folder, reason: "folder-unavailable" }],
-                    unanswered: [],
-                  };
-                case "Answered":
-                  return result.allSaved
-                    ? { _tag: "saved" }
-                    : {
-                        _tag: "failed",
-                        failures: result.windows.flatMap((window) =>
-                          window._tag === "Failed"
-                            ? window.failures.map(({ path, reason }) => ({ path, reason }))
-                            : [],
-                        ),
-                        unanswered: result.windows.flatMap((window) =>
-                          window._tag === "Unanswered"
-                            ? [{ window: window.window.clientId, reason: window.reason }]
-                            : [],
-                        ),
-                      };
-              }
-            }),
-          ),
+      saveFolder: Effect.fn("OverleafEditorSave.saveFolder")(
+        (input: { readonly checkoutRoot: string; readonly folder: string }) =>
+          flush
+            .flushFolder({ ...input, timeout: WINDOW_TIMEOUT, overallTimeout: OVERALL_TIMEOUT })
+            .pipe(
+              Effect.map((result): OverleafEditorSaveResult => {
+                switch (result._tag) {
+                  case "NoWindowOpen":
+                    return { _tag: "saved" };
+                  case "FolderUnavailable":
+                    return {
+                      _tag: "failed",
+                      failures: [{ path: input.folder, reason: "folder-unavailable" }],
+                      unanswered: [],
+                    };
+                  case "Answered":
+                    return result.allSaved
+                      ? { _tag: "saved" }
+                      : {
+                          _tag: "failed",
+                          failures: result.windows.flatMap((window) =>
+                            window._tag === "Failed"
+                              ? window.failures.map(({ path, reason }) => ({ path, reason }))
+                              : [],
+                          ),
+                          unanswered: result.windows.flatMap((window) =>
+                            window._tag === "Unanswered"
+                              ? [{ window: window.window.clientId, reason: window.reason }]
+                              : [],
+                          ),
+                        };
+                }
+              }),
+            ),
+      ),
     };
   }),
 );
