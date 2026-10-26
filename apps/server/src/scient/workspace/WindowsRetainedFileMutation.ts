@@ -181,7 +181,8 @@ export async function runWindowsRetainedMutation(
   const stage = NodePath.join(NodePath.dirname(target), record.stageName);
   const retained = NodePath.join(directory, "retained");
   const published = record.destination ?? target;
-  const stageRevision = record.kind === "rename" ? record.expected : record.desired;
+  let stageRevision =
+    record.kind === "rename" ? (record.currentRevision ?? record.expected) : record.desired;
   const command = (
     operation: NativeFilePublicationRequest["operation"],
     source = NodePath.basename(target),
@@ -298,6 +299,22 @@ export async function runWindowsRetainedMutation(
           "Retained storage cannot admit this mutation.",
           input.id,
         );
+      if (
+        record.destination &&
+        (await NodeFSP.lstat(record.destination).then(
+          () => true,
+          (error: unknown) => {
+            if (!absent(error)) throw error;
+            return false;
+          },
+        ))
+      )
+        return finish("skipped", "exists");
+      if (kind === "rename" && stageRevision === null) {
+        stageRevision = await fileRevision(target);
+        if (!stageRevision) return finish("skipped", "target");
+        await save({ currentRevision: stageRevision });
+      }
       if (stageRevision !== null) {
         const payload = await NodeFSP.open(NodePath.join(directory, "payload"), "wx", 0o600);
         try {
@@ -355,6 +372,7 @@ export async function runWindowsRetainedMutation(
           (!snapshot ||
             !same(snapshot.identity, record.originalIdentity) ||
             (condition === "revision" && snapshot.revision !== record.expected) ||
+            (kind === "rename" && snapshot.revision !== stageRevision) ||
             (input.guardMaxBytes !== undefined &&
               (snapshot.byteLength > input.guardMaxBytes || snapshot.binary)))
         )

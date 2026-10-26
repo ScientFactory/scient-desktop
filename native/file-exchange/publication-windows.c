@@ -5,6 +5,8 @@
 #include <winternl.h>
 #include <aclapi.h>
 #include <sddl.h>
+#include <fltuser.h>
+#include <cfapi.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,6 +69,7 @@ static wchar_t *wide(const char *text) {
   }
   return result;
 }
+static int cloud_tag(DWORD tag) { return (tag & ~0x0000f000UL) == 0x9000001aUL; }
 static int identify(HANDLE handle, Entry *entry) {
   FILE_ID_INFO id;
   FILE_ATTRIBUTE_TAG_INFO attributes;
@@ -87,7 +90,7 @@ static int identify(HANDLE handle, Entry *entry) {
   for (size_t i = 0; i < sizeof(id.FileId.Identifier); ++i)
     snprintf(entry->ino + i * 2, sizeof(entry->ino) - i * 2, "%02x", id.FileId.Identifier[i]);
   entry->present = 1;
-  entry->type = (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ? "reparse" :
+  entry->type = (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && !cloud_tag(attributes.ReparseTag) ? "reparse" :
                 (attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "directory" : "file";
   return 0;
 }
@@ -319,6 +322,37 @@ static HANDLE create_relative(HANDLE parent, const wchar_t *name, ACCESS_MASK ac
   if (code < 0) { SetLastError(nt_error(code)); return INVALID_HANDLE_VALUE; }
   return handle;
 }
+static int cloud_filter_absent(HANDLE folder) {
+  HMODULE library = LoadLibraryW(L"fltlib.dll");
+  if (!library) return 0;
+  typedef HRESULT (WINAPI *First)(LPCWSTR, INSTANCE_INFORMATION_CLASS, LPVOID, DWORD, LPDWORD, LPHANDLE);
+  typedef HRESULT (WINAPI *Next)(HANDLE, INSTANCE_INFORMATION_CLASS, LPVOID, DWORD, LPDWORD);
+  typedef HRESULT (WINAPI *Close)(HANDLE);
+  First first = NULL; Next next = NULL; Close close = NULL;
+  FARPROC address = GetProcAddress(library, "FilterVolumeInstanceFindFirst"); memcpy(&first, &address, sizeof(first));
+  address = GetProcAddress(library, "FilterVolumeInstanceFindNext"); memcpy(&next, &address, sizeof(next));
+  address = GetProcAddress(library, "FilterVolumeInstanceFindClose"); memcpy(&close, &address, sizeof(close));
+  wchar_t volume[32768];
+  DWORD length = GetFinalPathNameByHandleW(folder, volume, 32768, VOLUME_NAME_NT);
+  int absent = 0;
+  if (first && next && close && length && length < 32768 && !wcsncmp(volume, L"\\Device\\", 8)) {
+    wchar_t *end = wcschr(volume + 8, L'\\');
+    if (end) *end = 0;
+    union { ULONGLONG aligned; BYTE bytes[65536]; } buffer;
+    HANDLE search = INVALID_HANDLE_VALUE; DWORD returned = 0;
+    HRESULT result = first(volume, InstanceFullInformation, buffer.bytes, sizeof(buffer.bytes), &returned, &search);
+    int found = 0;
+    while (SUCCEEDED(result)) {
+      INSTANCE_FULL_INFORMATION *info = (INSTANCE_FULL_INFORMATION *)buffer.bytes;
+      if (returned < sizeof(*info) || info->FilterNameBufferOffset + info->FilterNameLength > returned) { found = 1; break; }
+      if (info->FilterNameLength == 12 && !_wcsnicmp((PWSTR)(buffer.bytes + info->FilterNameBufferOffset), L"CldFlt", 6)) { found = 1; break; }
+      result = next(search, InstanceFullInformation, buffer.bytes, sizeof(buffer.bytes), &returned);
+    }
+    absent = !found && result == HRESULT_FROM_WIN32(ERROR_NO_MORE_ITEMS);
+    if (search != INVALID_HANDLE_VALUE) close(search);
+  }
+  FreeLibrary(library); return absent;
+}
 static int cloud_managed(HANDLE folder) {
   typedef HRESULT (WINAPI *CloudInfo)(HANDLE, int, PVOID, DWORD, PDWORD);
   HMODULE library = LoadLibraryW(L"cldapi.dll");
@@ -329,8 +363,9 @@ static int cloud_managed(HANDLE folder) {
   if (!query) { FreeLibrary(library); return ERROR_PROC_NOT_FOUND; }
   BYTE buffer[65536]; DWORD returned = 0;
   HRESULT result = query(folder, 0 /* CF_SYNC_ROOT_INFO_BASIC */, buffer, sizeof(buffer), &returned);
-  if (FAILED(result)) fprintf(stderr, "Cloud Files HRESULT: %08lx\n", (unsigned long)result);
+
   FreeLibrary(library);
+  if (result == HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION) && cloud_filter_absent(folder)) return 0;
   if (SUCCEEDED(result)) return 0x20000001; /* sync-managed-folder */
   return result == HRESULT_FROM_WIN32(ERROR_NOT_A_CLOUD_SYNC_ROOT) ||
     result == HRESULT_FROM_WIN32(ERROR_CLOUD_FILE_NOT_UNDER_SYNC_ROOT) ? 0 : (int)HRESULT_CODE(result);
@@ -363,7 +398,7 @@ int platform_lock_parent(Context *context, int exclusive) {
   if (!error) error = identify(directory, &state_entry);
   if (!error && strcmp(state_entry.type, "directory")) error = ERROR_REPARSE_TAG_INVALID;
   if (!error) error = private_security(directory, SE_FILE_OBJECT, NULL);
-  if (!error) { error = cloud_managed(directory); if (error) fprintf(stderr, "lock cloud query: %d\n", error); }
+  if (!error) error = cloud_managed(directory);
   if (descriptor) LocalFree(descriptor); descriptor = NULL;
   if (sid) LocalFree(sid); sid = NULL;
   if (!error) error = current_user_security(&descriptor, &sid, 0);
@@ -382,7 +417,7 @@ int platform_lock_parent(Context *context, int exclusive) {
     if (getenv("SCIENT_LEASE_PROBE")) { printf("LEASE_WAIT\n"); fflush(stdout); }
     if (getenv("SCIENT_LEASE_TRY")) flags |= LOCKFILE_FAIL_IMMEDIATELY;
 #endif
-    if (!LockFileEx(context->lock, flags, 0, 1, 0, &overlapped)) { error = (int)GetLastError(); fprintf(stderr, "lock byte range: %d\n", error); }
+    if (!LockFileEx(context->lock, flags, 0, 1, 0, &overlapped)) error = (int)GetLastError();
     else context->lock_owned = 1;
   }
   if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
@@ -664,7 +699,9 @@ static int supported_file(HANDLE file) {
   FILE_STANDARD_INFO standard;
   if (!GetFileInformationByHandleEx(file, FileAttributeTagInfo, &attributes, sizeof(attributes)) ||
       !GetFileInformationByHandleEx(file, FileStandardInfo, &standard, sizeof(standard))) return (int)GetLastError();
-  if (attributes.FileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) return ERROR_REPARSE_TAG_INVALID;
+  if ((attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+      ((attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && !cloud_tag(attributes.ReparseTag))) return ERROR_REPARSE_TAG_INVALID;
+  if (attributes.FileAttributes & (FILE_ATTRIBUTE_OFFLINE | 0x00400000UL)) return 0x20000007;
   if (attributes.FileAttributes & FILE_ATTRIBUTE_ENCRYPTED) return 0x20000002;
   if (standard.NumberOfLinks != 1) return 0x20000003;
   BYTE streams[65536]; IO_STATUS_BLOCK status;
@@ -789,8 +826,12 @@ static int windows_operation(Context *context, const char *operation, const char
       if (payload != INVALID_HANDLE_VALUE) CloseHandle(payload);
       FILE_BASIC_INFO attributes;
       if (!error && transaction.original) {
-        if (!GetFileInformationByHandleEx(transaction.original, FileBasicInfo, &attributes, sizeof(attributes)) ||
-            !SetFileInformationByHandle(transaction.stage, FileBasicInfo, &attributes, sizeof(attributes))) error = (int)GetLastError();
+        if (!GetFileInformationByHandleEx(transaction.original, FileBasicInfo, &attributes, sizeof(attributes))) error = (int)GetLastError();
+        else {
+          attributes.FileAttributes &= ~(FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | 0x00400000UL);
+          if (!attributes.FileAttributes) attributes.FileAttributes = FILE_ATTRIBUTE_NORMAL;
+          if (!SetFileInformationByHandle(transaction.stage, FileBasicInfo, &attributes, sizeof(attributes))) error = (int)GetLastError();
+        }
       }
       if (!error) error = flush_handle(transaction.stage);
       if (!error) error = identify(transaction.stage, &transaction.stage_id);
@@ -851,6 +892,25 @@ static int qualified_volume(HANDLE folder) {
 }
 int platform_windows_main(int argc, char **argv) {
 #ifdef SCIENT_PUBLICATION_PROBE
+  if (argc == 4 && (!strcmp(argv[2], "register-sync-root") || !strcmp(argv[2], "unregister-sync-root"))) {
+    HMODULE library = LoadLibraryW(L"cldapi.dll");
+    typedef HRESULT (WINAPI *Register)(LPCWSTR, const CF_SYNC_REGISTRATION *, const CF_SYNC_POLICIES *, CF_REGISTER_FLAGS);
+    typedef HRESULT (WINAPI *Unregister)(LPCWSTR);
+    Register registration = NULL; Unregister unregistration = NULL;
+    FARPROC address = library ? GetProcAddress(library, "CfRegisterSyncRoot") : NULL; memcpy(&registration, &address, sizeof(registration));
+    address = library ? GetProcAddress(library, "CfUnregisterSyncRoot") : NULL; memcpy(&unregistration, &address, sizeof(unregistration));
+    wchar_t *path = wide(argv[3]); HRESULT result = E_NOTIMPL;
+    if (registration && unregistration && path) {
+      CF_SYNC_REGISTRATION data = {0}; data.StructSize = sizeof(data);
+      data.ProviderName = L"Scient file qualification"; data.ProviderVersion = L"1";
+      CF_SYNC_POLICIES policies = {0}; policies.StructSize = sizeof(policies);
+      policies.Hydration.Primary = CF_HYDRATION_POLICY_FULL;
+      policies.Population.Primary = CF_POPULATION_POLICY_FULL;
+      result = !strcmp(argv[2], "register-sync-root") ? registration(path, &data, &policies, CF_REGISTER_FLAG_NONE) : unregistration(path);
+    }
+    printf("{\"code\":%lu}\n", (unsigned long)HRESULT_CODE(result));
+    free(path); if (library) FreeLibrary(library); return 0;
+  }
   if (argc == 4 && !strcmp(argv[2], "terminate")) {
     HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, (DWORD)strtoul(argv[3], NULL, 10));
     if (!process) return 71;

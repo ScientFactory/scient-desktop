@@ -559,6 +559,8 @@ export async function durableJson(file: string, value: unknown) {
 export async function assertPrivateRetention(directory: string) {
   if (HostProcess.Platform.defaultValue() === "win32") {
     const info = await windowsNativeFile(directory, "private");
+    if (info.code === 2 || info.code === 3)
+      throw Object.assign(new Error("Missing private directory."), { code: "ENOENT" });
     if (info.code !== 0 || info.syncManaged)
       throw new RetainedMutationError(
         "unavailable",

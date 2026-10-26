@@ -119,7 +119,8 @@ async function crashAt(
     encoding: "utf8",
     timeout: 60_000,
   });
-  expect(run.signal, run.stderr).toBe("SIGKILL");
+  if (HostProcess.Platform.defaultValue() === "win32") expect(run.status, run.stderr).not.toBe(0);
+  else expect(run.signal, run.stderr).toBe("SIGKILL");
 }
 type Harness = Parameters<Parameters<typeof fixture>[0]>[0];
 /** A settled read of the whole folder, as an editor makes, which settles every pending record. */
@@ -177,53 +178,57 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
   );
 
   // A peer is checked by what stands there, not only by its bytes.
-  it.live.each(["empty folder", "folder with a file", "link", "named pipe"] as const)(
-    "publishes nothing when a peer that should be absent becomes a %s",
-    (occupant) =>
-      fixture(async (h) => {
-        await crashAt(h, "prepared", {
-          captured: { "guard.tex": "guard" },
-          target: { "a.tex": "remote", "b.tex": "B", "guard.tex": "guard" },
-        });
-        const peer = NodePath.join(h.cwd, "b.tex");
-        if (occupant === "link") {
-          await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "B");
-          await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
-        } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
-        else {
-          await NodeFSP.mkdir(peer);
-          if (occupant === "folder with a file") await put(peer, { "later.tex": "later" });
-        }
-        await h.restart();
-        await editorReads(h);
-        expect(await read(h.cwd, "a.tex")).toBeNull();
-        await h.apply("crash").catch(() => undefined);
-        expect(await read(h.cwd, "a.tex")).toBeNull();
-      }),
+  it.live.each(
+    HostProcess.Platform.defaultValue() === "win32"
+      ? (["empty folder", "folder with a file", "link"] as const)
+      : (["empty folder", "folder with a file", "link", "named pipe"] as const),
+  )("publishes nothing when a peer that should be absent becomes a %s", (occupant) =>
+    fixture(async (h) => {
+      await crashAt(h, "prepared", {
+        captured: { "guard.tex": "guard" },
+        target: { "a.tex": "remote", "b.tex": "B", "guard.tex": "guard" },
+      });
+      const peer = NodePath.join(h.cwd, "b.tex");
+      if (occupant === "link") {
+        await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "B");
+        await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
+      } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
+      else {
+        await NodeFSP.mkdir(peer);
+        if (occupant === "folder with a file") await put(peer, { "later.tex": "later" });
+      }
+      await h.restart();
+      await editorReads(h);
+      expect(await read(h.cwd, "a.tex")).toBeNull();
+      await h.apply("crash").catch(() => undefined);
+      expect(await read(h.cwd, "a.tex")).toBeNull();
+    }),
   );
 
-  it.live.each(["empty folder", "folder with a file", "link", "named pipe"] as const)(
-    "publishes nothing when a peer that should be a file becomes a %s",
-    (occupant) =>
-      fixture(async (h) => {
-        await crashAt(h, "prepared", {
-          captured: { "a.tex": "base", "z.tex": "guard" },
-          target: { "a.tex": "remote", "z.tex": "guard" },
-        });
-        const peer = NodePath.join(h.cwd, "z.tex");
-        await NodeFSP.unlink(peer);
-        if (occupant === "link") {
-          await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "guard");
-          await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
-        } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
-        else {
-          await NodeFSP.mkdir(peer);
-          if (occupant === "folder with a file") await put(peer, { foreign: "foreign" });
-        }
-        await h.restart();
-        await editorReads(h);
-        expect(await read(h.cwd, "a.tex")).toBe("base");
-      }),
+  it.live.each(
+    HostProcess.Platform.defaultValue() === "win32"
+      ? (["empty folder", "folder with a file", "link"] as const)
+      : (["empty folder", "folder with a file", "link", "named pipe"] as const),
+  )("publishes nothing when a peer that should be a file becomes a %s", (occupant) =>
+    fixture(async (h) => {
+      await crashAt(h, "prepared", {
+        captured: { "a.tex": "base", "z.tex": "guard" },
+        target: { "a.tex": "remote", "z.tex": "guard" },
+      });
+      const peer = NodePath.join(h.cwd, "z.tex");
+      await NodeFSP.unlink(peer);
+      if (occupant === "link") {
+        await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "guard");
+        await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
+      } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
+      else {
+        await NodeFSP.mkdir(peer);
+        if (occupant === "folder with a file") await put(peer, { foreign: "foreign" });
+      }
+      await h.restart();
+      await editorReads(h);
+      expect(await read(h.cwd, "a.tex")).toBe("base");
+    }),
   );
 
   it.live("publishes nothing when a file blocks the folder of a path the group adds", () =>

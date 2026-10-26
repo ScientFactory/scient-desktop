@@ -222,3 +222,26 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
       }),
   );
 });
+
+describe.skipIf(!windows)("Windows retention placement", () => {
+  it("refuses a registered Cloud Files sync root and its descendant without repairing it", () =>
+    fixture(async (input) => {
+      const root = NodePath.join(input.retentionDirectory, "cloud-root");
+      await ensureNativePrivateRetentionDirectory(helper!, root);
+      const child = NodePath.join(root, "child");
+      await NodeFSP.mkdir(child);
+      const register = (operation: string) =>
+        JSON.parse(
+          NodeChildProcess.execFileSync(probe!, ["--windows=1", operation, root], {
+            encoding: "utf8",
+          }),
+        ).code;
+      expect(register("register-sync-root")).toBe(0);
+      try {
+        await expect(ensureNativePrivateRetentionDirectory(helper!, root)).rejects.toThrow();
+        await expect(ensureNativePrivateRetentionDirectory(helper!, child)).rejects.toThrow();
+      } finally {
+        expect(register("unregister-sync-root")).toBe(0);
+      }
+    }));
+});
