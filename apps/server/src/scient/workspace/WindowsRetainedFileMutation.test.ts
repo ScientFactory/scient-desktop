@@ -100,13 +100,13 @@ describe.skipIf(!windows)("Windows capture and install", () => {
     }));
   it("preserves read-only and hidden attributes and removes the kept file by its held parent", () =>
     fixture(async (input, target) => {
-      const oldTime = new Date("2000-01-01T00:00:00.000Z");
+      const oldTime = 946684800;
       await NodeFSP.utimes(target, oldTime, oldTime);
       NodeChildProcess.execFileSync("attrib.exe", ["+R", "+H", target]);
       const result = await mutateRetainedFile(input, target);
       expect(result.outcome).toBe("done");
       expect((await windowsNativeFile(target, "flags")).flags & 3).toBe(3);
-      expect((await NodeFSP.stat(target)).mtimeMs).toBeGreaterThan(oldTime.getTime());
+      expect((await NodeFSP.stat(target)).mtimeMs).toBeGreaterThan(oldTime * 1000);
       expect((await windowsNativeFile(result.retainedPath!, "flags")).flags & 3).toBe(3);
       const binding = await bindNativeFilePublicationParent(helper!, result.recordDirectory, "");
       await withNativeFilePublicationLease(
@@ -305,29 +305,32 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
         "outside save",
       );
     }));
-  it("refuses a file held for writing by another process", () =>
-    fixture(async (input, target) => {
-      const holder = NodeChildProcess.spawn(probe!, ["--windows=1", "hold-write", target], {
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      const retired = new Promise<void>((resolve) => holder.once("close", () => resolve()));
-      try {
-        await new Promise<void>((resolve, reject) => {
-          holder.stdout.once("data", () => resolve());
-          holder.once("error", reject);
-          holder.once("exit", (code) => {
-            if (code !== null) reject(new Error(`writer exited ${code}`));
+  it.each(["hold-write", "hold-map"] as const)(
+    "refuses a file held for writing by another process (%s)",
+    (mode) =>
+      fixture(async (input, target) => {
+        const holder = NodeChildProcess.spawn(probe!, ["--windows=1", mode, target], {
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        const retired = new Promise<void>((resolve) => holder.once("close", () => resolve()));
+        try {
+          await new Promise<void>((resolve, reject) => {
+            holder.stdout.once("data", () => resolve());
+            holder.once("error", reject);
+            holder.once("exit", (code) => {
+              if (code !== null) reject(new Error(`writer exited ${code}`));
+            });
           });
-        });
-        await expect(mutateRetainedFile(input, target)).rejects.toMatchObject({
-          message: "file-busy",
-        });
-        expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
-      } finally {
-        holder.stdin.end("\n");
-        await retired;
-      }
-    }));
+          await expect(mutateRetainedFile(input, target)).rejects.toMatchObject({
+            message: "file-busy",
+          });
+          expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+        } finally {
+          holder.stdin.end("\n");
+          await retired;
+        }
+      }),
+  );
   it("preserves explicit permissions and restricts retained bytes before capture", () =>
     fixture(async (input, target) => {
       const account = `Scient${NodeCrypto.randomBytes(5).toString("hex")}`;
