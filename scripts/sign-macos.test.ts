@@ -8,8 +8,8 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 import sign, {
   conversationPreviewSignOptions,
   verifySignedConversationPreview,
-  fileExchangeSignOptions,
-  verifySignedFileExchange,
+  filePublicationSignOptions,
+  verifySignedFilePublication,
 } from "./sign-macos.ts";
 
 vi.mock("@electron/osx-sign", () => ({ sign: vi.fn() }));
@@ -18,12 +18,12 @@ vi.mock("node:child_process", () => subprocess);
 
 beforeEach(() => vi.clearAllMocks());
 
-it("signs the exchange helper without Electron entitlements and verifies its team", () => {
+it("signs the publication helper without Electron entitlements and verifies its team", () => {
   withPreviewApp((app) => {
-    const helper = NodePath.join(app, "Contents/Resources/file-exchange/scient-file-exchange");
+    const helper = NodePath.join(app, "Contents/Resources/file-exchange/scient-file-publication");
     NodeFS.mkdirSync(NodePath.dirname(helper), { recursive: true });
     NodeFS.writeFileSync(helper, "native");
-    const options = fileExchangeSignOptions({
+    const options = filePublicationSignOptions({
       app,
       optionsForFile: () => ({ entitlements: "/electron.plist" }),
     });
@@ -43,7 +43,7 @@ it("signs the exchange helper without Electron entitlements and verifies its tea
       stdout: args[0] === "-dv" ? "TeamIdentifier=TESTTEAM\n" : "",
       stderr: "",
     }));
-    verifySignedFileExchange(app);
+    verifySignedFilePublication(app);
     subprocess.spawnSync.mockImplementation((_command: string, args: string[]) => ({
       status: 0,
       stdout:
@@ -52,21 +52,21 @@ it("signs the exchange helper without Electron entitlements and verifies its tea
           : "",
       stderr: "",
     }));
-    expect(() => verifySignedFileExchange(app)).toThrow("signature does not match");
+    expect(() => verifySignedFilePublication(app)).toThrow("signature does not match");
   });
 });
 
 it("refuses omission of a helper required by the packaging pipeline", () => {
-  const previous = process.env.SCIENT_FILE_EXCHANGE_EXPECTED;
-  process.env.SCIENT_FILE_EXCHANGE_EXPECTED = "1";
+  const previous = process.env.SCIENT_FILE_PUBLICATION_EXPECTED;
+  process.env.SCIENT_FILE_PUBLICATION_EXPECTED = "1";
   try {
-    expect(() => fileExchangeSignOptions({ app: "/missing/Scient.app" })).toThrow(
+    expect(() => filePublicationSignOptions({ app: "/missing/Scient.app" })).toThrow(
       "Missing required",
     );
-    expect(() => verifySignedFileExchange("/missing/Scient.app")).toThrow("Missing required");
+    expect(() => verifySignedFilePublication("/missing/Scient.app")).toThrow("Missing required");
   } finally {
-    if (previous === undefined) delete process.env.SCIENT_FILE_EXCHANGE_EXPECTED;
-    else process.env.SCIENT_FILE_EXCHANGE_EXPECTED = previous;
+    if (previous === undefined) delete process.env.SCIENT_FILE_PUBLICATION_EXPECTED;
+    else process.env.SCIENT_FILE_PUBLICATION_EXPECTED = previous;
   }
 });
 

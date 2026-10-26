@@ -100,7 +100,7 @@ generation. Packaged launchers do not enable source-map loading. Preserve the
 corresponding source revision and build output when diagnosing bundled stacks.
 
 Whisper, resource monitor, SyncTeX, and `scient-file-publication` run from external Electron resources.
-macOS also carries `scient-file-exchange` for volume probes.
+Overleaf volume probes use that same publication helper.
 Their `apps/desktop/prod-resources` staging trees are excluded from `app.asar`
 on every platform; Linux also excludes the KDE and Hyprland capture staging
 trees. Keep individual exclusions: Linux registration reads

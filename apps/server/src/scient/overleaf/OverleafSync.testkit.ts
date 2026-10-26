@@ -17,10 +17,7 @@ import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceBindingStore } from "../projectScope/WorkspaceBindingStore.ts";
-import {
-  fileExchangeTestHelper,
-  filePublicationTestHelper,
-} from "../workspace/fileExchange.testkit.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 import { OverleafEditorSave, type OverleafEditorSaveResult } from "./OverleafEditorSave.ts";
 import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
 import * as OverleafRepository from "./OverleafRepository.ts";
@@ -92,7 +89,7 @@ export const overleafSyncWorld = (input?: {
       volumeUuid: async () => VOLUME,
     });
     const helper = yield* Effect.promise(() => filePublicationTestHelper());
-    const exchangeHelper = (yield* Effect.promise(() => fileExchangeTestHelper())) ?? null;
+    const publicationHelper = helper ?? null;
     const files = yield* makeApplierFiles({ root, helper, retainedHooks: {} });
     const applier = yield* makeApplier({
       at: async (point, path) => {
@@ -248,7 +245,7 @@ export const overleafSyncWorld = (input?: {
     const service = yield* makeOverleafSync({
       stateRoot,
       environmentId: "environment-1",
-      exchangeHelper,
+      publicationHelper,
       activeThreads: Effect.suspend(() => onActivity().pipe(Effect.map(() => threads))),
       gitUrl: overleafFor,
       volumeUuid: async () => VOLUME,
