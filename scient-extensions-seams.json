@@ -25,7 +25,8 @@
     "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx",
     "packages/contracts/src/scient/extensionIcon.ts",
     "packages/contracts/src/scient/extensionsPermissions.ts",
-    "packages/contracts/src/scient/extensionsPermissions.test.ts"
+    "packages/contracts/src/scient/extensionsPermissions.test.ts",
+    "packages/contracts/src/scient/pluginContents.ts"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",
@@ -255,6 +256,11 @@
       "path": "packages/contracts/src/clientRpcPermissions.ts",
       "anchor": "SCIENT_EXTENSION_GUARDED_RPC_SCOPES",
       "purpose": "Require the destination settings grant for provider plugin commands."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatComposer.tsx",
+      "anchor": "composerSkillPrompt",
+      "purpose": "Reuse the same invocation token for composer selection and the shared skill card."
     }
   ],
   "scientMounts": [
@@ -317,6 +323,31 @@
       "path": "apps/server/src/provider/omp/OmpRpcProcess.ts",
       "anchor": "useClaudePlugins",
       "purpose": "Enable Claude plugin sources only after runtime identity proves Scient Agent 0.1.3 support."
+    },
+    {
+      "path": "apps/web/src/scient/skills/SkillCard.tsx",
+      "anchor": "SkillCard",
+      "purpose": "Use one existing Dialog and Markdown presentation for Extensions and Skills settings."
+    },
+    {
+      "path": "apps/web/src/scient/skills/ManagedSkillCard.tsx",
+      "anchor": "ManagedSkillCard",
+      "purpose": "Read managed skill documents for the shared skill card."
+    },
+    {
+      "path": "apps/web/src/scient/skills/ScientSkillsSettings.tsx",
+      "anchor": "ManagedSkillCard",
+      "purpose": "Open managed skills in the same card as plugin skills."
+    },
+    {
+      "path": "apps/web/src/scient/skills/SkillSettingsRow.tsx",
+      "anchor": "onOpen",
+      "purpose": "Let a settings skill name open its shared document card."
+    },
+    {
+      "path": "apps/web/src/scient/skills/composerSkills.ts",
+      "anchor": "composerSkillPrompt",
+      "purpose": "Share skill invocation tokens and create a draft on the exact environment and provider."
     }
   ]
 }

@@ -1,4 +1,5 @@
 import type {
+  ExtensionPluginContents,
   ProviderStoreEntry,
   ProviderStoreApp,
   ServerProviderPlugin,
@@ -17,6 +18,7 @@ import type * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { CURATED_SERVERS } from "./discover/curatedCatalog.ts";
+import { codexSkillRoot, readContainedPluginText } from "./LocalPluginContents.ts";
 import { makeCodexStoreIcons } from "./CodexStoreIcons.ts";
 
 type Client = CodexClient.CodexAppServerClient["Service"];
@@ -67,6 +69,7 @@ export function codexAppInstallUrl(value: string | null | undefined): string | u
 export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(function* <E>(
   open: (cwd: string | undefined) => Effect.Effect<Client, E, Scope.Scope>,
   icon = makeCodexStoreIcons(),
+  pluginCacheRoot?: string,
 ) {
   const lifetime = yield* Effect.scope;
   const lock = yield* Semaphore.make(1);
@@ -91,10 +94,11 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const readApps = Effect.fn("CodexProviderStore.readApps")(function* (
     client: Client,
     references: ReadonlyArray<CodexSchema.V2PluginReadResponse__AppSummary>,
+    refresh = false,
   ) {
     const ids = [...new Set(references.map((app) => app.id))];
     if (!ids.length) return [];
-    const installed = yield* client.request("app/installed", {});
+    const installed = yield* client.request("app/installed", { forceRefresh: refresh });
     const states = new Map(installed.apps.map((app) => [app.id, app]));
     const apps: App[] = [];
     for (let offset = 0; offset < ids.length; offset += 100) {
@@ -102,6 +106,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       apps.push(
         ...page.apps.map((app) => ({
           ...app,
+          ...(app.iconUrl ? { logoUrl: app.iconUrl } : {}),
           isAccessible: states.has(app.id),
           isEnabled: states.get(app.id)?.enabled ?? true,
         })),
@@ -209,7 +214,21 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         marketplace.plugins.filter((plugin) => plugin.installed).map((plugin) => plugin.id),
       ),
     );
-    return { store, installedIds, plan: account.planType };
+    const known = new Set(store.entries.map(({ plugin }) => plugin.id));
+    const localEntries = installed.marketplaces.flatMap((marketplace) =>
+      marketplace.plugins
+        .filter((plugin) => !known.has(plugin.id))
+        .map((plugin) => ({
+          plugin,
+          marketplace: marketplace.name,
+          ...(marketplace.path ? { marketplacePath: marketplace.path } : {}),
+        })),
+    );
+    return {
+      store: { ...store, entries: [...store.entries, ...localEntries] },
+      installedIds,
+      plan: account.planType,
+    };
   });
   const project = Effect.fn("CodexProviderStore.project")(function* (
     item: CachedPlugin,
@@ -325,7 +344,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const references = new Map(
           [...detail.plugin.apps, ...(pendingAuth.get(id) ?? [])].map((app) => [app.id, app]),
         );
-        const apps = yield* readApps(client, [...references.values()]);
+        const apps = yield* readApps(client, [...references.values()].slice(0, 200));
         const indexedApps = new Map(apps.map((app) => [app.id, app]));
         const summary = yield* project(item, current.plan, current.installedIds.has(id));
         return {
@@ -336,16 +355,27 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
             ...detail.plugin.mcpServers.map((server) => `MCP server: ${server}`),
             ...(detail.plugin.hooks.length ? ["Hooks"] : []),
           ],
-          apps: [...references.values()].map((reference): ProviderStoreApp => {
-            const app = indexedApps.get(reference.id);
-            const url = codexAppInstallUrl(app?.installUrl ?? reference.installUrl);
-            return {
-              name: app?.name ?? reference.name,
-              connected: app?.isAccessible === true,
-              enabled: app?.isEnabled !== false,
-              ...(url ? { installUrl: url } : {}),
-            };
-          }),
+          apps: yield* Effect.forEach(
+            [...references.values()].slice(0, 200),
+            Effect.fn("CodexProviderStore.app")(function* (reference) {
+              const app = indexedApps.get(reference.id);
+              const url = codexAppInstallUrl(app?.installUrl ?? reference.installUrl);
+              const iconUrl = yield* icon(app?.logoUrl).pipe(
+                Effect.timeoutOption("1 second"),
+                Effect.map(Option.getOrUndefined),
+              );
+              return {
+                id: reference.id,
+                ...(app?.description ? { description: app.description } : {}),
+                ...(iconUrl ? { iconUrl } : {}),
+                name: app?.name ?? reference.name,
+                connected: app?.isAccessible === true,
+                enabled: app?.isEnabled !== false,
+                ...(url ? { installUrl: url } : {}),
+              };
+            }),
+            { concurrency: 4 },
+          ),
         };
       }),
     );
@@ -379,24 +409,106 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         };
       }),
     );
-  const enrichInstalled = (plugins: ReadonlyArray<ServerProviderPlugin>) =>
+  const detailFor = Effect.fn("CodexProviderStore.detailFor")(function* (
+    client: Client,
+    id: string,
+  ) {
+    const current = yield* state(client);
+    const item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+    if (!current || !item) return yield* fail("This plugin is no longer available.");
+    const detail = (yield* client.request("plugin/read", {
+      pluginName: item.plugin.name,
+      ...(item.marketplacePath
+        ? { marketplacePath: item.marketplacePath }
+        : { remoteMarketplaceName: item.marketplace }),
+    })).plugin;
+    return { detail, installed: current.installedIds.has(id) };
+  });
+  const skillRoot = (detail: CodexSchema.V2PluginReadResponse__PluginDetail, file: string) => {
+    const source = detail.summary?.source;
+    const root =
+      source && (source.type === "local" || source.type === "git")
+        ? (source.path ?? undefined)
+        : undefined;
+    return Effect.tryPromise(() => codexSkillRoot(root, pluginCacheRoot, file)).pipe(
+      Effect.orElseSucceed(() => undefined),
+    );
+  };
+  const contents = (id: string) =>
+    entry(id).pipe(
+      Effect.flatMap((summary) =>
+        withClient(
+          Effect.fn("CodexProviderStore.contents")(function* (client: Client) {
+            const { detail, installed } = yield* detailFor(client, id);
+            return {
+              apps: summary.apps,
+              mcpServers: detail.mcpServers.slice(0, 200).map((name) => ({ name })),
+              skills: yield* Effect.forEach(
+                detail.skills.slice(0, 200),
+                Effect.fn("CodexProviderStore.skillSummary")(function* (skill) {
+                  const root = skill.path ? yield* skillRoot(detail, skill.path) : undefined;
+                  return {
+                    id: skill.name,
+                    ...(skill.path ? { path: skill.path } : {}),
+                    name: skill.name,
+                    description: skill.shortDescription ?? skill.description ?? "",
+                    enabled: installed && skill.enabled !== false,
+                    documentAvailable: root !== undefined,
+                  };
+                }),
+              ),
+              hooks: detail.hooks.slice(0, 200).map((hook) => hook.eventName),
+              commands: [],
+              agents: [],
+            } satisfies ExtensionPluginContents;
+          }),
+        ),
+      ),
+    );
+  const skillDocument = (id: string, skillId: string) =>
+    withClient(
+      Effect.fn("CodexProviderStore.skillDocument")(function* (client: Client) {
+        const { detail } = yield* detailFor(client, id);
+        const skill = detail.skills.slice(0, 200).find((skill) => skill.name === skillId);
+        const root = skill?.path ? yield* skillRoot(detail, skill.path) : undefined;
+        if (!root || !skill?.path)
+          return yield* fail("Install this plugin to read its skill documents.");
+        const text = yield* Effect.tryPromise(() =>
+          readContainedPluginText(root, skill.path!),
+        ).pipe(
+          Effect.mapError(() => ({
+            message: "This skill must stay within its plugin and be at most 256 KB.",
+          })),
+        );
+        return { instructions: text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim() };
+      }),
+    );
+  const enrichInstalled = (plugins: ReadonlyArray<ServerProviderPlugin>, refresh = false) =>
     withClient(
       Effect.fn("CodexProviderStore.enrichInstalled")(function* (client: Client) {
         const account = (yield* client.request("account/read", { refreshToken: false })).account;
         if (account?.type !== "chatgpt") return plugins;
-        const references = yield* Effect.forEach(plugins, (plugin) =>
-          client
-            .request("plugin/read", {
+        const installed = yield* client.request("plugin/installed", {});
+        const references = yield* Effect.forEach(
+          plugins,
+          Effect.fn("CodexProviderStore.installedApps")(function* (plugin) {
+            const marketplace = installed.marketplaces.find((entry) =>
+              entry.plugins.some((item) => item.id === plugin.id),
+            );
+            if (!marketplace) return [];
+            return (yield* client.request("plugin/read", {
               pluginName: plugin.name,
-              ...(plugin.marketplace ? { remoteMarketplaceName: plugin.marketplace } : {}),
-            })
-            .pipe(Effect.map((detail) => detail.plugin.apps)),
+              ...(marketplace.path
+                ? { marketplacePath: marketplace.path }
+                : { remoteMarketplaceName: marketplace.name }),
+            })).plugin.apps;
+          }),
         );
-        const apps = yield* readApps(client, references.flat());
-        return plugins.map((plugin) => ({
+        const apps = yield* readApps(client, references.flat(), refresh);
+        return plugins.map((plugin, index) => ({
           ...plugin,
           apps: apps
-            .filter((app) => app.pluginDisplayNames?.includes(plugin.displayName ?? plugin.name))
+            .filter((app) => references[index]?.some((reference) => reference.id === app.id))
             .map((app): ProviderStoreApp => {
               const url = codexAppInstallUrl(app.installUrl);
               return {
@@ -409,5 +521,13 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         }));
       }),
     );
-  return { search, entry, install, changes: Stream.fromPubSub(changes), enrichInstalled };
+  return {
+    contents,
+    skillDocument,
+    search,
+    entry,
+    install,
+    changes: Stream.fromPubSub(changes),
+    enrichInstalled,
+  };
 });

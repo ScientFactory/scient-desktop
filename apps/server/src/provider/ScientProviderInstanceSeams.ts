@@ -5,6 +5,8 @@
  * absent keep pure T3 behaviour.
  */
 import type {
+  ExtensionPluginContents,
+  ExtensionSkillDocument,
   ModelSelection,
   ProviderStoreInstallResult,
   ProviderStoreEntry,
@@ -72,6 +74,15 @@ export interface ProviderMcpSignInAttempt {
 export interface ProviderPluginActions {
   readonly store?:
     | {
+        readonly contents?:
+          | ((id: string) => Effect.Effect<ExtensionPluginContents, ProviderPluginActionFailure>)
+          | undefined;
+        readonly skillDocument?:
+          | ((
+              id: string,
+              skillId: string,
+            ) => Effect.Effect<ExtensionSkillDocument, ProviderPluginActionFailure>)
+          | undefined;
         readonly changes?: Stream.Stream<void> | undefined;
         readonly marketplaceSource?:
           | ((entryId: string) => Effect.Effect<string, ProviderPluginActionFailure>)

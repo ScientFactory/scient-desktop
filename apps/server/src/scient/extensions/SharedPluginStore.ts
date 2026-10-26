@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
+import { readLocalPluginContents, readLocalPluginSkill } from "./LocalPluginContents.ts";
 import { readPluginJson } from "./LocalPluginFiles.ts";
 
 const Name = Schema.String.check(
@@ -411,7 +412,38 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
     },
     Effect.mapError(() => ({ message: "Could not read this plugin's details." })),
   );
+  const pluginRoot = Effect.fn("SharedPluginStore.pluginRoot")(
+    function* (id: string) {
+      const item = (yield* listing()).entries.find((item) => item.entry.id === id);
+      if (!item?.pluginDir)
+        return yield* Effect.fail({ message: "This plugin has not been cloned locally." });
+      const root = yield* fs.realPath(item.root);
+      const plugin = yield* fs.realPath(item.pluginDir);
+      if (plugin !== root && !plugin.startsWith(`${root}${path.sep}`))
+        return yield* Effect.fail({ message: "This plugin is outside its marketplace." });
+      return plugin;
+    },
+    Effect.mapError(() => ({ message: "Could not read this plugin's local contents." })),
+  );
   return {
+    contents: (id) =>
+      pluginRoot(id).pipe(
+        Effect.flatMap((root) =>
+          Effect.tryPromise({
+            try: () => readLocalPluginContents(root),
+            catch: () => ({ message: "Could not read this plugin's contents." }),
+          }),
+        ),
+      ),
+    skillDocument: (id, skillId) =>
+      pluginRoot(id).pipe(
+        Effect.flatMap((root) =>
+          Effect.tryPromise({
+            try: () => readLocalPluginSkill(root, skillId),
+            catch: () => ({ message: "Could not read this skill document." }),
+          }),
+        ),
+      ),
     search,
     entry,
     marketplaceSource: (id) =>

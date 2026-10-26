@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Real local plugin document fixtures.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -50,6 +54,8 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
       installUrl: "https://chatgpt.com/apps/sample/app",
       pluginDisplayNames: ["sample"],
     },
+    localPlugins: [] as Plugin[],
+    skills: [{ name: "search" }] as Array<{ name: string; path?: string; description?: string }>,
     repeatCursor: false,
     incomplete: false,
   };
@@ -75,7 +81,7 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
               marketplaces: [
                 {
                   name: "remote",
-                  plugins: state.plugins
+                  plugins: [...state.plugins, ...state.localPlugins]
                     .filter((plugin) => state.installed.has(plugin.id))
                     .map((plugin) => ({ ...plugin, installed: true })),
                 },
@@ -85,7 +91,7 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
             return Effect.succeed({
               plugin: {
                 apps: [{ id: "app", name: "Sample", installUrl: state.app.installUrl }],
-                skills: [{ name: "search" }],
+                skills: state.skills,
                 mcpServers: ["sample"],
                 hooks: [],
               },
@@ -185,6 +191,7 @@ describe("Codex provider store", () => {
           });
           expect((yield* store.entry("sample")).apps).toEqual([
             {
+              id: "app",
               name: "Sample",
               connected: false,
               enabled: true,
@@ -289,6 +296,7 @@ it.effect("refreshes installed app summaries without reloading or publishing the
       const fixture = clientFixture([plugin("sample"), plugin("uninstalled")]);
       fixture.state.installed.add("sample");
       fixture.state.app.isAccessible = true;
+      fixture.state.app.pluginDisplayNames = [];
       const inventory = yield* makeCodexNativeInventory(() => Effect.succeed(fixture.client));
       yield* inventory.actions.refreshInventory!({ force: true, connectionsOnly: true });
       const report = yield* inventory.reports.pipe(Stream.runHead);
@@ -300,6 +308,53 @@ it.effect("refreshes installed app summaries without reloading or publishing the
         expect(encode(report.value).length).toBeLessThan(5000);
       }
       expect(fixture.calls.some((call) => call.method === "plugin/list")).toBe(false);
+      expect(
+        fixture.calls.filter((call) => call.method === "app/installed").at(-1)?.params,
+      ).toEqual({ forceRefresh: true });
     }),
   ),
+);
+
+it.effect(
+  "reads cached skills for installed plugins absent from the marketplace and rejects foreign paths",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cache = yield* Effect.acquireRelease(
+          Effect.promise(() =>
+            NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-codex-contents-")),
+          ),
+          (root) => Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true })),
+        );
+        const root = NodePath.join(cache, "plugin");
+        const directory = NodePath.join(root, "skills", "search");
+        const path = NodePath.join(directory, "SKILL.md");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(directory, { recursive: true });
+          await NodeFSP.writeFile(path, "---\nname: search\n---\n# Search locally");
+        });
+        const fixture = clientFixture([]);
+        fixture.state.localPlugins = [plugin("local")];
+        fixture.state.installed.add("local");
+        fixture.state.skills = [{ name: "search", path, description: "Search locally" }];
+        const store = yield* makeCodexProviderStore(
+          () => Effect.succeed(fixture.client),
+          () => Effect.succeed(undefined),
+          cache,
+        );
+        expect((yield* store.contents("local")).skills).toMatchObject([
+          { name: "search", documentAvailable: true, enabled: true },
+        ]);
+        expect(yield* store.skillDocument("local", "search")).toEqual({
+          instructions: "# Search locally",
+        });
+        fixture.state.skills = [
+          { name: "search", path: NodePath.join(NodeOS.tmpdir(), "outside/SKILL.md") },
+        ];
+        expect((yield* store.contents("local")).skills[0]?.documentAvailable).toBe(false);
+        expect((yield* store.skillDocument("local", "search").pipe(Effect.result))._tag).toBe(
+          "Failure",
+        );
+      }),
+    ),
 );

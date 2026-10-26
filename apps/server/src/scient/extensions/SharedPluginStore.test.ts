@@ -216,3 +216,30 @@ it("ranks reviewed plugins before familiar brands and formats readable slug name
   expect(sharedPluginShelfRank("unknown", { state: "pending", by: { type: "anthropic" } })).toBe(2);
   expect(sharedPluginDisplayName("github-api-pdf-tools")).toBe("GitHub API PDF Tools");
 });
+
+it.effect(
+  "previews reviewed plugins before brands and other entries regardless of catalog order",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { home, clone, path, write } = yield* fixture;
+        yield* write(path.join(clone, ".claude-plugin", "marketplace.json"), {
+          name: "claude-plugins-official",
+          plugins: [
+            { name: "other", source: "./plugins/other" },
+            { name: "github", displayName: "GitHub", source: "./plugins/github" },
+            { name: "review", source: "./plugins/review" },
+          ],
+        });
+        const store = yield* makeSharedPluginStore({
+          kind: "claude",
+          claudeHome: home,
+          installed: () => Effect.succeed({ plugins: [], sequence: 1 }),
+          run: () => Effect.fail({ message: "Read-only fixture" }),
+        });
+        expect(
+          (yield* store.search({ preview: true })).entries.map((entry) => entry.displayName),
+        ).toEqual(["Review", "GitHub", "Other"]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);

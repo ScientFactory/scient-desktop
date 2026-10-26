@@ -57,8 +57,14 @@ access.
   - **Tools** (connectors) — listed only on request ("See tools" runs Test);
     the result belongs to the connector's current sign-in generation and is
     discarded when it changes.
-  - **Includes** (plugins) — the plugin's contributed parts, with skills linking
-    to Settings → Skills.
+  - **Apps**, **MCP servers**, and **Skills** (plugins) — counted contents read on
+    demand from the owning agent or local plugin. Skills show five rows before
+    expanding; clicking one opens the same Markdown skill card as Settings → Skills.
+    “Try now” opens a draft with the composer's skill token when that agent can use it.
+    Remote plugins without a local copy show skill metadata until installation.
+    Local documents stay within the resolved plugin root and are limited to 256 KB;
+    listings include at most 200 skills. Commands, agents and hook events appear when present.
+    Other contributed parts remain under **Includes**.
   - **About** — provenance and facts the entry actually has; rows without data
     are omitted.
 - **Works with** — the existing line and popover express audience:
@@ -799,3 +805,10 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
   account label.
 - **Other agents**: inventory still depends on each provider exposing a verified
   owner interface. Codex, Claude, and Scient Agent have the paths above.
+
+GitHub uses a bearer personal access token by default, linked from its add dialog.
+Build the web client with `VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID` to offer
+“Sign in with GitHub” through the existing connector OAuth/PKCE flow and callback.
+It stays hidden when unset; registering the Scient OAuth app and configuring the
+provider's callback/client requirements remain prerequisites for live sign-in.
+Only user-added URLs expose custom OAuth client settings.

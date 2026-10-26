@@ -1,3 +1,4 @@
+import { PluginContents } from "./PluginContents";
 import {
   type ConnectorSummary,
   type ConnectorTestResult,
@@ -211,7 +212,11 @@ export function DetailSection({
 
 const CARD_CLASS = "divide-y divide-border overflow-hidden rounded-xl border bg-card";
 
-function CardRow({ children }: { readonly children: ReactNode }) {
+export function DetailCard({ children }: { readonly children: ReactNode }) {
+  return <div className={CARD_CLASS}>{children}</div>;
+}
+
+export function CardRow({ children }: { readonly children: ReactNode }) {
   return <div className="flex min-h-14 items-center gap-3 px-4 py-3">{children}</div>;
 }
 
@@ -956,9 +961,15 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
       }
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
-      {plugin.components.length > 0 ? (
+      <PluginContents key={plugin.pluginId} input={{ pluginId: plugin.pluginId }} />
+      {plugin.components.some((component) => component.type !== "skill") ? (
         <DetailSection title="Includes">
-          <GroupsCard label="Parts" groups={componentGroups(plugin.components)} />
+          <GroupsCard
+            label="Parts"
+            groups={componentGroups(
+              plugin.components.filter((component) => component.type !== "skill"),
+            )}
+          />
         </DetailSection>
       ) : null}
       <AboutCard
@@ -1053,7 +1064,6 @@ function ProviderPluginDetail({
 }) {
   const actions = useProviderPluginActions(group.provider, group.label, plugin, workspace);
   const name = plugin.displayName ?? plugin.name;
-  const servers = group.mcpServers.filter((server) => server.pluginId === plugin.id);
   return (
     <DetailLayout
       back="installed"
@@ -1091,48 +1101,15 @@ function ProviderPluginDetail({
       }
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
-      {plugin.apps?.length ? (
-        <DetailSection title="Connection">
-          <GroupsCard
-            label="Apps"
-            groups={[
-              {
-                label: "Apps",
-                rows: plugin.apps.map((app) => ({
-                  key: app.name,
-                  name: app.name,
-                  detail: !app.enabled ? (
-                    "Disabled in Codex"
-                  ) : app.connected ? (
-                    "Connected"
-                  ) : app.installUrl ? (
-                    <ProviderAppConnect provider={group.provider} pluginId={plugin.id} app={app} />
-                  ) : (
-                    "Not connected"
-                  ),
-                })),
-              },
-            ]}
-          />
-        </DetailSection>
-      ) : null}
-      {servers.length > 0 ? (
-        <DetailSection title="Includes">
-          <GroupsCard
-            label="Parts"
-            groups={[
-              {
-                label: "MCP servers",
-                rows: servers.map((server) => ({
-                  key: server.name,
-                  name: server.name,
-                  detail: mcpServerSummary(server),
-                })),
-              },
-            ]}
-          />
-        </DetailSection>
-      ) : null}
+      <PluginContents
+        key={JSON.stringify([group.provider.instanceId, plugin.id, workspace])}
+        provider={group.provider}
+        input={{
+          instanceId: group.provider.instanceId,
+          pluginId: plugin.id,
+          ...(workspace ? { cwd: workspace } : {}),
+        }}
+      />
       <AboutCard
         rows={[
           ["Managed by", group.label],

@@ -13,6 +13,7 @@ export {
 } from "./extensionAudience.ts";
 
 export * from "./providerStore.ts";
+export * from "./pluginContents.ts";
 
 import { GrantScope, VaultSecretRef } from "./secrets.ts";
 

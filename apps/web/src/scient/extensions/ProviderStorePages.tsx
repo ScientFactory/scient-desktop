@@ -1,3 +1,4 @@
+import { PluginContents } from "./PluginContents";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   ProviderInstanceId,
@@ -12,14 +13,8 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useDebouncedValue } from "../../state/queries";
 import { useActionLock } from "./extensionActions";
-import { ActionFeedback, ProviderAppConnect } from "./ExtensionItems";
-import {
-  AboutCard,
-  DetailHeader,
-  DetailLayout,
-  DetailSection,
-  GroupsCard,
-} from "./ExtensionDetailPages";
+import { ActionFeedback } from "./ExtensionItems";
+import { AboutCard, DetailHeader, DetailLayout } from "./ExtensionDetailPages";
 import {
   BackLink,
   ExtensionsPage,
@@ -37,6 +32,15 @@ import {
 } from "./extensionsState";
 import { WorksWithValue } from "./WorksWith";
 
+function storeAvailable(provider: ServerProvider) {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    (provider.status === "ready" || provider.status === "warning") &&
+    provider.availability !== "unavailable"
+  );
+}
+
 function StoreInstall({
   provider,
   entry,
@@ -49,7 +53,8 @@ function StoreInstall({
   const { environmentId, providers } = useExtensionsEnvironment();
   const target =
     entry.kind === "shared" && provider.driver === "scient"
-      ? (providers.find((item) => item.enabled && item.driver === "claudeAgent") ?? provider)
+      ? (providers.find((item) => storeAvailable(item) && item.driver === "claudeAgent") ??
+        provider)
       : provider;
   const installed =
     entry.installed || target.plugins?.some((plugin) => plugin.name === entry.id) === true;
@@ -122,7 +127,7 @@ function StoreResults({
   });
   const page = useEnvironmentQuery(atom);
   // Scient Agent's official entries repeat Claude's only when Claude's own home serves them.
-  const claude = providers.find((item) => item.enabled && item.driver === "claudeAgent");
+  const claude = providers.find((item) => storeAvailable(item) && item.driver === "claudeAgent");
   const claudePage = useEnvironmentQuery(
     extensionsProviderStorePage({
       environmentId,
@@ -245,27 +250,15 @@ function StoreResults({
 export function ProviderStoreShelves({ query = "" }: { readonly query?: string }) {
   const { providers } = useExtensionsEnvironment();
   const claude = providers.filter(
-    (provider) =>
-      provider.enabled &&
-      provider.installed &&
-      provider.status !== "error" &&
-      provider.driver === "claudeAgent",
+    (provider) => storeAvailable(provider) && provider.driver === "claudeAgent",
   );
   const scient = providers.filter(
-    (provider) =>
-      provider.enabled &&
-      provider.installed &&
-      provider.status !== "error" &&
-      provider.driver === "scient",
+    (provider) => storeAvailable(provider) && provider.driver === "scient",
   );
   const targets = [...claude, ...scient];
   const primary = targets[0];
   const codex = providers.filter(
-    (provider) =>
-      provider.enabled &&
-      provider.installed &&
-      provider.status !== "error" &&
-      provider.driver === "codex",
+    (provider) => storeAvailable(provider) && provider.driver === "codex",
   );
   return (
     <>
@@ -441,48 +434,12 @@ function StoreDetail({
       description={entry.description}
     >
       {entry.disabledReason ? <MutedLine>{entry.disabledReason}</MutedLine> : null}
-      {entry.kind === "codex" ? (
-        <DetailSection title="Connection">
-          {entry.authPolicy === "ON_USE" ? (
-            <MutedLine>Connects the first time Codex uses it</MutedLine>
-          ) : null}
-          <GroupsCard
-            label="Apps"
-            groups={[
-              {
-                label: "Apps",
-                rows: entry.apps.map((app) => ({
-                  key: app.name,
-                  name: app.name,
-                  detail: app.connected ? (
-                    "Connected"
-                  ) : !app.enabled ? (
-                    "Disabled in Codex"
-                  ) : entry.installed && app.installUrl ? (
-                    <ProviderAppConnect
-                      provider={provider}
-                      pluginId={entry.id}
-                      app={app}
-                      disabled={Boolean(entry.disabledReason)}
-                    />
-                  ) : (
-                    "Not connected"
-                  ),
-                })),
-              },
-            ]}
-          />
-        </DetailSection>
-      ) : null}
-      <DetailSection title="Includes">
-        <GroupsCard
-          label="Parts"
-          groups={entry.includes.map((name) => ({ label: name, rows: [{ key: name, name }] }))}
-        />
-        {!entry.includes.length ? (
-          <MutedLine>Contents are available after the plugin is cloned.</MutedLine>
-        ) : null}
-      </DetailSection>
+      <PluginContents
+        key={JSON.stringify([provider.instanceId, entry.id])}
+        provider={provider}
+        canConnectApps={entry.installed}
+        input={{ instanceId: provider.instanceId, entryId: entry.id }}
+      />
       <AboutCard
         rows={[
           [

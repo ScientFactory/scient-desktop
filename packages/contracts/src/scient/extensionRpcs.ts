@@ -3,6 +3,10 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  ExtensionPluginContentsInput,
+  ExtensionPluginContents,
+  ExtensionSkillDocumentInput,
+  ExtensionSkillDocument,
   ConnectorAddInput,
   ConnectorAddResult,
   ConnectorRemoveInput,
@@ -38,6 +42,8 @@ export const SCIENT_EXTENSION_WS_METHODS = {
   extensionsProviderStoreSearch: "extensions.providerStore.search",
   extensionsProviderStoreEntry: "extensions.providerStore.entry",
   extensionsList: "extensions.list",
+  extensionsPluginContents: "extensions.plugins.contents",
+  extensionsSkillDocument: "extensions.skills.document",
   extensionsSubscribeChanges: "extensions.subscribeChanges",
   extensionsConnectorAdd: "extensions.connectors.add",
   extensionsConnectorStartSignIn: "extensions.connectors.startSignIn",
@@ -157,4 +163,21 @@ export const WsExtensionsProviderStoreSearchRpc = Rpc.make(
 export const WsExtensionsProviderStoreEntryRpc = Rpc.make(
   SCIENT_EXTENSION_WS_METHODS.extensionsProviderStoreEntry,
   { payload: ProviderStoreEntryInput, success: ProviderStoreEntry, error: ExtensionsRpcError },
+);
+
+export const WsExtensionsPluginContentsRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsPluginContents,
+  {
+    payload: ExtensionPluginContentsInput,
+    success: ExtensionPluginContents,
+    error: ExtensionsRpcError,
+  },
+);
+export const WsExtensionsSkillDocumentRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsSkillDocument,
+  {
+    payload: ExtensionSkillDocumentInput,
+    success: ExtensionSkillDocument,
+    error: ExtensionsRpcError,
+  },
 );

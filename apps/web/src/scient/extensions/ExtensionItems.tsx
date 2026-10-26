@@ -11,7 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 import { actOnProviderPlugin } from "./extensionsState";
@@ -465,15 +465,18 @@ export function ProviderAppConnect({
   pluginId,
   app,
   disabled = false,
+  onConnectionChange,
 }: {
   readonly provider: ServerProvider;
   readonly pluginId: string;
   readonly app: ProviderStoreApp;
   readonly disabled?: boolean;
+  readonly onConnectionChange?: (() => void) | undefined;
 }) {
   const { environmentId } = useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin);
   const waiting = useRef(false);
+  const refreshContents = useEffectEvent(() => onConnectionChange?.());
   useEffect(() => {
     const refresh = () => {
       if (!waiting.current) return;
@@ -484,7 +487,7 @@ export function ProviderAppConnect({
           instanceId: provider.instanceId,
           action: { type: "refresh-inventory", connectionsOnly: true },
         },
-      });
+      }).then(() => refreshContents());
     };
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);

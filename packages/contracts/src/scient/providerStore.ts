@@ -5,6 +5,9 @@ import { ProviderInstanceId } from "../providerInstance.ts";
 
 export const ProviderStoreApp = Schema.Struct({
   name: TrimmedNonEmptyString,
+  id: Schema.optional(Schema.String),
+  description: Schema.optional(Schema.String),
+  iconUrl: Schema.optional(ExtensionIconDataUri),
   installUrl: Schema.optional(Schema.String),
   connected: Schema.Boolean,
   enabled: Schema.Boolean,

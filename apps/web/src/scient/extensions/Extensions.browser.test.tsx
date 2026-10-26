@@ -30,6 +30,11 @@ import {
 } from "../../../test/render";
 import { page, userEvent } from "vite-plus/test/browser";
 
+vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
+vi.mock("../../components/ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <div>{text}</div>,
+}));
+
 const state = vi.hoisted(() => ({
   primaryEnvironmentId: "local" as string | null,
   /** The environment the settings scope picker selected; undefined means no scope. */
@@ -159,6 +164,31 @@ vi.mock("../../state/query", async () => {
       useStateVersion();
       if (atom === null) return { data: null, error: null, failure: null, isPending: false };
       state.queryTargets.push(atom);
+      if (atom.kind === "contents") {
+        const plugin = state.inventory?.plugins.find(
+          (item) => item.pluginId === atom.input?.pluginId,
+        );
+        return {
+          data: {
+            apps: state.storeEntry?.apps ?? [],
+            mcpServers: [],
+            skills: (plugin?.components.filter((item) => item.type === "skill") ?? []).map(
+              (skill) => ({
+                id: skill.name,
+                name: skill.name,
+                description: skill.detail ?? "",
+                enabled: true,
+                documentAvailable: true,
+              }),
+            ),
+            commands: [],
+            agents: [],
+          },
+          error: null,
+        };
+      }
+      if (atom.kind === "skill-document")
+        return { data: { instructions: "Skill instructions" }, error: null };
       if (atom.kind === "store-entry") return { data: state.storeEntry, error: null };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
       if (atom.kind === "catalog") return { data: state.catalog, error: null };
@@ -196,6 +226,20 @@ vi.mock("./extensionsState", async () => {
   const storeAtom = Atom.family((key: string) => Object.assign(Atom.make(null), JSON.parse(key)));
   const idle = { busy: null, error: null, blockedSignInUrl: null, signInStartedAt: null };
   return {
+    extensionsPluginContents: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "contents", environmentId, input })),
+    extensionsSkillDocument: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "skill-document", environmentId, input })),
     extensionsInventory: ({ environmentId }: { environmentId: string }) => ({
       kind: "inventory",
       environmentId,
@@ -1746,7 +1790,7 @@ describe("Detail pages", () => {
     expect(buttonIn(fixture.section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
-  it("lists a plugin's parts under Includes and links its skills to the Skills page", async () => {
+  it("opens a plugin skill with its scoped document while retaining other contributed parts", async () => {
     await using fixture = setup();
     state.inventory = inventory({
       plugins: [
@@ -1761,9 +1805,16 @@ describe("Detail pages", () => {
     });
     await fixture.render(<PluginDetailPage pluginId="sources" />);
     const includes = fixture.section("Includes");
-    expect(groupTrigger(includes, "Skills")?.textContent).toBe("Skills1");
-    await userEvent.click(groupTrigger(includes, "Skills")!);
-    expect(linkIn(includes, "find-papers")?.getAttribute("href")).toBe("/settings/skills");
+    await userEvent.click(buttonIn(fixture.section("Skills 1"), "Find Papers")!);
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    expect(state.queryTargets).toContainEqual(
+      expect.objectContaining({
+        kind: "skill-document",
+        environmentId: "local",
+        input: { pluginId: "sources", skillId: "find-papers" },
+      }),
+    );
+    await userEvent.keyboard("{Escape}");
     await userEvent.click(groupTrigger(includes, "Tools")!);
     expect(includes.querySelector('[aria-label="Tools"]')?.textContent).toBe(
       "sources:readsources_search",
@@ -1879,7 +1930,6 @@ describe("Codex store connection", () => {
     await expect
       .element(page.getByRole("button", { name: "Installed", exact: true }))
       .toBeDisabled();
-    await userEvent.click(fixture.section("Connection").querySelector("button")!);
     await expect
       .element(page.getByRole("button", { name: "Connect Sample", exact: true }))
       .toBeVisible();
@@ -1889,6 +1939,13 @@ describe("Codex store connection", () => {
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
     expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
-    expect(fixture.section("Connection").textContent).toContain("Connected");
+    expect(fixture.section("Apps 1").textContent).toContain("Connected");
+    state.storeEntry = {
+      ...state.storeEntry,
+      apps: [{ name: "Sample", connected: true, enabled: false }],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(fixture.section("Apps 1").textContent).toContain("Disabled");
   });
 });
