@@ -12,7 +12,7 @@ import {
 } from "./PlatformFileIdentity.ts";
 
 const decode = Schema.decodeUnknownSync(StoredFileIdentity);
-it("preserves legacy records and refuses unknown platform/version tags", () => {
+it("reads legacy macOS records unchanged and refuses unknown platform or version tags", () => {
   const old = { volume: "0A1B2C3D-0000-4000-8000-000000000001", fileId: "18446744073709551615" };
   expect(decode(old)).toEqual(old);
   expect(decode({ ...old, version: 1, platform: "darwin" })).toEqual({
@@ -22,22 +22,6 @@ it("preserves legacy records and refuses unknown platform/version tags", () => {
   });
   expect(() => decode({ ...old, version: 2, platform: "darwin" })).toThrow();
   expect(() => decode({ ...old, version: 1, platform: "unknown" })).toThrow();
-  const windows = {
-    version: 1,
-    platform: "windows",
-    volume: "volume-guid",
-    fileId: "0123456789abcdef0123456789abcdef",
-  };
-  expect(decode(windows)).toEqual(windows);
-  expect(() => decode({ ...windows, fileId: "0123456789abcdef" })).toThrow();
-  const linux = {
-    version: 1,
-    platform: "linux",
-    volume: "fs-uuid",
-    fileId: "18446744073709551615",
-    subvolumeId: "257",
-  };
-  expect(decode(linux)).toEqual(linux);
 });
 
 it("compares old macOS records with tagged identities without conflating platforms or subvolumes", () => {

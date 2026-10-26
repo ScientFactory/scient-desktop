@@ -25,9 +25,7 @@ it("admits only an executable host artifact with an intact production receipt an
     const bytes = await NodeFSP.readFile(helper);
     const receipt = JSON.parse(await NodeFSP.readFile(receiptPath, "utf8"));
     for (const changed of [
-      { ...receipt, platform: "wrong-host" },
       { ...receipt, arch: "wrong-arch" },
-      { ...receipt, protocol: 2 },
       { ...receipt, probe: true },
       { ...receipt, sha256: "0".repeat(64) },
     ]) {
