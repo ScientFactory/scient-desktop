@@ -1068,6 +1068,12 @@ in `docs/internals/product-analytics.md`.
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.
 
+Single-child Stop eligibility is shared by the lineage UI and server admission in
+`packages/contracts/src/scient/nativeSubagentControl.ts`. Claude, Oh My Pi and Scient Agent
+support this operation; Claude workflow stopping remains separate. The native adapter validates
+the owning session and sends Oh My Pi's `cancel_subagent` with the task's protocol ID, leaving
+the parent turn intact. Native lifecycle events own the resulting child state.
+
 Scient Extensions owns `apps/server/src/scient/extensions` and
 `apps/web/src/scient/extensions`. Connected services stay on the Scient server:
 agents reach them only through the per-connector proxy route

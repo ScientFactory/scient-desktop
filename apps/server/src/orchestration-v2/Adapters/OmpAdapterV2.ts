@@ -114,6 +114,9 @@ export interface OmpAdapterV2Options extends Pick<
   readonly eventQueueItemLimit?: number;
 }
 const JsonString = Schema.fromJsonString(Schema.String);
+const decodeSubagentCancellation = Schema.decodeUnknownEffect(
+  Schema.Struct({ cancelled: Schema.Boolean }),
+);
 const encodeJsonString = Schema.encodeSync(JsonString);
 const encodeJsonStringEffect = Schema.encodeEffect(JsonString);
 
@@ -1298,6 +1301,41 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           );
         });
         const native: NativeSession = {
+          stopSubagent: Effect.fn("OmpAdapterV2.stopSubagent")(
+            function* (nativeTaskId: string) {
+              const response = yield* client
+                .command({
+                  type: "cancel_subagent",
+                  subagentId: nativeTaskId,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new NativeSessionOperationError({
+                        detail:
+                          cause._tag === "OmpRpcCommandError" &&
+                          /unknown command|unsupported|not supported/i.test(cause.message)
+                            ? `${target.name} runtime does not support stopping individual subagents. Update the runtime and try again.`
+                            : `${target.name} could not stop this subagent: ${client.redaction.text(cause.message)}`,
+                      }),
+                  ),
+                );
+              yield* decodeSubagentCancellation(response.data).pipe(
+                Effect.mapError(
+                  () =>
+                    new NativeSessionOperationError({
+                      detail: `${target.name} returned an invalid subagent cancellation response.`,
+                    }),
+                ),
+              );
+            },
+            (effect, nativeTaskId) =>
+              effect.pipe(
+                Effect.tapError((cause) =>
+                  notice(cause.detail, false, `subagent-stop:${nativeTaskId}`),
+                ),
+              ),
+          ),
           // SCIENT-FORK: older agents can reject compact without breaking the conversation.
           compact: Effect.fn("OmpAdapterV2.compact")(function* (_turnInput, nativeTurnId) {
             const state = yield* client.getState().pipe(Effect.mapError(safeFailure));
