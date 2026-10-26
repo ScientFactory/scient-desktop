@@ -62,18 +62,26 @@ describe.skipIf(!windows)("Windows capture and install", () => {
       expect(await fileIdentity(target)).not.toEqual(original);
       expect((await windowsNativeFile(result.retainedPath!, "private", helper)).code).toBe(0);
     }));
-  it("keeps a newcomer at the target after capture", () =>
-    fixture(async (input, target) => {
-      const result = await mutateRetainedFile(input, target, {
-        at: async (point) => {
-          if (point === "displaced")
-            await NodeFSP.writeFile(target, "outside save", { flag: "wx" });
-        },
-      });
-      expect(result.outcome).toBe("attention");
-      expect(await NodeFSP.readFile(target, "utf8")).toBe("outside save");
-      expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("original");
-    }));
+  it.each(["create", "replace"] as const)(
+    "keeps another process’s %s at the target after capture",
+    (mode) => () =>
+      fixture(async (input, target) => {
+        const result = await mutateRetainedFile(input, target, {
+          at: async (point) => {
+            if (point === "displaced")
+              NodeChildProcess.execFileSync(process.execPath, [
+                "-e",
+                'const fs = require("node:fs"); const [target, mode] = process.argv.slice(1); if (mode === "replace") { fs.writeFileSync(target, "intermediate"); fs.writeFileSync(target + ".outside", "outside save"); fs.renameSync(target + ".outside", target); } else fs.writeFileSync(target, "outside save", { flag: "wx" });',
+                target,
+                mode,
+              ]);
+          },
+        });
+        expect(result.outcome).toBe("attention");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("outside save");
+        expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("original");
+      }),
+  );
   it("restores A's policy when interrupted between restriction and capture", () =>
     fixture(async (input, target) => {
       await expect(

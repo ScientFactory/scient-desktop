@@ -22,20 +22,24 @@ const Reply = Schema.Struct({
 
 const decodeReply = Schema.decodeUnknownSync(Schema.fromJsonString(Reply));
 
+async function invokeWindows(args: string[], helper?: string) {
+  const executable =
+    helper ??
+    (await resolveNativeFilePublicationHelperPath(process.env.SCIENT_FILE_PUBLICATION_HELPER));
+  if (!executable) throw new Error("Windows native file helper is unavailable.");
+  return (await run(executable, args, { windowsHide: true, maxBuffer: 65536 })).stdout;
+}
+const decodeFlags = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.Number)));
+export async function windowsNativeFlags(paths: ReadonlyArray<string>) {
+  return decodeFlags(await invokeWindows(["--windows-flags=1", ...paths]));
+}
+
 export async function windowsNativeFile(
   path: string,
   operation: "info" | "flags" | "private" = "info",
   helper?: string,
 ) {
-  const executable =
-    helper ??
-    (await resolveNativeFilePublicationHelperPath(process.env.SCIENT_FILE_PUBLICATION_HELPER));
-  if (!executable) throw new Error("Windows native file helper is unavailable.");
-  const { stdout } = await run(executable, ["--windows=1", operation, path], {
-    windowsHide: true,
-    maxBuffer: 65536,
-  });
-  return decodeReply(stdout);
+  return decodeReply(await invokeWindows(["--windows=1", operation, path], helper));
 }
 
 export async function windowsFileIdentity(path: string) {

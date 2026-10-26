@@ -329,6 +329,7 @@ static int cloud_managed(HANDLE folder) {
   if (!query) { FreeLibrary(library); return ERROR_PROC_NOT_FOUND; }
   BYTE buffer[65536]; DWORD returned = 0;
   HRESULT result = query(folder, 0 /* CF_SYNC_ROOT_INFO_BASIC */, buffer, sizeof(buffer), &returned);
+  if (FAILED(result)) fprintf(stderr, "Cloud Files HRESULT: %08lx\n", (unsigned long)result);
   FreeLibrary(library);
   if (SUCCEEDED(result)) return 0x20000001; /* sync-managed-folder */
   return result == HRESULT_FROM_WIN32(ERROR_NOT_A_CLOUD_SYNC_ROOT) ||
@@ -362,7 +363,7 @@ int platform_lock_parent(Context *context, int exclusive) {
   if (!error) error = identify(directory, &state_entry);
   if (!error && strcmp(state_entry.type, "directory")) error = ERROR_REPARSE_TAG_INVALID;
   if (!error) error = private_security(directory, SE_FILE_OBJECT, NULL);
-  if (!error) error = cloud_managed(directory);
+  if (!error) { error = cloud_managed(directory); if (error) fprintf(stderr, "lock cloud query: %d\n", error); }
   if (descriptor) LocalFree(descriptor); descriptor = NULL;
   if (sid) LocalFree(sid); sid = NULL;
   if (!error) error = current_user_security(&descriptor, &sid, 0);
@@ -381,7 +382,7 @@ int platform_lock_parent(Context *context, int exclusive) {
     if (getenv("SCIENT_LEASE_PROBE")) { printf("LEASE_WAIT\n"); fflush(stdout); }
     if (getenv("SCIENT_LEASE_TRY")) flags |= LOCKFILE_FAIL_IMMEDIATELY;
 #endif
-    if (!LockFileEx(context->lock, flags, 0, 1, 0, &overlapped)) error = (int)GetLastError();
+    if (!LockFileEx(context->lock, flags, 0, 1, 0, &overlapped)) { error = (int)GetLastError(); fprintf(stderr, "lock byte range: %d\n", error); }
     else context->lock_owned = 1;
   }
   if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory);
@@ -927,7 +928,7 @@ int platform_windows_main(int argc, char **argv) {
   if (!error) error = identify(file, &entry);
   if (!error && strcmp(entry.type, "file") && strcmp(entry.type, "directory")) error = ERROR_REPARSE_TAG_INVALID;
   if (!error) error = qualified_volume(file);
-  if (!error) {
+  if (!error && !strcmp(argv[2], "private")) {
     int cloud = cloud_managed(file);
     if (cloud == 0x20000001) managed = 1;
     else if (cloud) error = cloud;
@@ -955,4 +956,28 @@ int platform_windows_main(int argc, char **argv) {
   if (file != INVALID_HANDLE_VALUE && context && file != context->parent) CloseHandle(file);
   if (context) platform_close(context);
   free(path); return 0;
+}
+
+int platform_windows_flags(int argc, char **argv) {
+  if (argc < 2 || argc > 258) return 64;
+  printf("[");
+  for (int i = 2; i < argc; ++i) {
+    wchar_t *path = wide(argv[i]);
+    DWORD flags = 0, error = ERROR_INVALID_NAME;
+    if (path) {
+      WIN32_FIND_DATAW data;
+      HANDLE find = FindFirstFileW(path, &data);
+      error = find == INVALID_HANDLE_VALUE ? GetLastError() : 0;
+      if (find != INVALID_HANDLE_VALUE) { flags = data.dwFileAttributes; FindClose(find); }
+      if (wcslen(path) == 3 && path[1] == L':') {
+        flags = GetFileAttributesW(path);
+        error = flags == INVALID_FILE_ATTRIBUTES ? GetLastError() : 0;
+      }
+      free(path);
+    }
+    if (i > 2) printf(",");
+    if (!error) printf("%lu", (unsigned long)flags);
+    else printf("%d", error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ? 0 : -1);
+  }
+  printf("]\n"); return 0;
 }

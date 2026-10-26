@@ -659,7 +659,9 @@ export async function withNativeFilePublicationLease<T>(
         const message = decodeLeaseMessage(line);
         if ("lease" in message) {
           if (message.lease !== "acquired" || acquired || message.code !== 0) {
-            failProtocol(`Native lease refused (${message.codeDomain}:${message.code}).`);
+            failProtocol(
+              `Native lease refused (${message.codeDomain}:${message.code}, ${diagnostic}).`,
+            );
           } else if (acquisitionCancelled) {
             ready.reject(
               new NativeFilePublicationError("Publication lease acquisition cancelled.", null),
