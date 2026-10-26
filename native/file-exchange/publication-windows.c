@@ -437,7 +437,7 @@ static int cloud_managed(HANDLE folder) {
     int error = cloud_bootstrap(folder, registration, unregistration);
     /* Registration can fail because an existing provider owns an ancestor: ask again either way. */
     result = query(folder, 0, buffer, sizeof(buffer), &returned);
-    if (result == HRESULT_FROM_WIN32(ERROR_INVALID_FUNCTION) && error) { FreeLibrary(library); return error; }
+    if (FAILED(result) && error) { FreeLibrary(library); return error; }
   }
   FreeLibrary(library);
   if (SUCCEEDED(result)) return 0x20000001;
@@ -1055,6 +1055,65 @@ static int qualified_volume(HANDLE folder) {
 }
 int platform_windows_main(int argc, char **argv) {
 #ifdef SCIENT_PUBLICATION_PROBE
+  if (argc == 4 && !strcmp(argv[2], "detach-cloud")) {
+    HANDLE token = NULL; TOKEN_PRIVILEGES privileges = {0}; DWORD error = 0;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) error = GetLastError();
+    if (!error && !LookupPrivilegeValueW(NULL, L"SeLoadDriverPrivilege", &privileges.Privileges[0].Luid)) error = GetLastError();
+    privileges.PrivilegeCount = 1; privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    if (!error) { SetLastError(0); if (!AdjustTokenPrivileges(token, FALSE, &privileges, 0, NULL, NULL) || GetLastError()) error = GetLastError(); }
+    HMODULE library = LoadLibraryW(L"fltlib.dll");
+    typedef HRESULT (WINAPI *Detach)(LPCWSTR, LPCWSTR, LPCWSTR);
+    Detach detach = NULL; FARPROC address = library ? GetProcAddress(library, "FilterDetach") : NULL; memcpy(&detach, &address, sizeof(detach));
+    wchar_t *path = wide_path(argv[3]);
+    if (!error) {
+      HRESULT result = detach && path ? detach(L"CldFlt", path, NULL) : E_NOTIMPL;
+      if (result != S_OK && result != (HRESULT)ERROR_FLT_INSTANCE_NOT_FOUND && result != (HRESULT)ERROR_FLT_FILTER_NOT_FOUND) error = (DWORD)result;
+    }
+    free(path); if (library) FreeLibrary(library); if (token) CloseHandle(token);
+    printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
+  }
+  if (argc == 4 && !strcmp(argv[2], "cloud-check-cold")) {
+    SID_IDENTIFIER_AUTHORITY authority = SECURITY_NT_AUTHORITY; PSID administrators = NULL; BOOL elevated = TRUE;
+    if (!AllocateAndInitializeSid(&authority, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &administrators)) return 71;
+    if (!CheckTokenMembership(NULL, administrators, &elevated)) { FreeSid(administrators); return 71; }
+    FreeSid(administrators); if (elevated) return ERROR_ACCESS_DENIED;
+    int error = 0; Context *context = platform_bind_parent("C:\\", ".", &error);
+    if (!context) return error;
+    wchar_t *path = wide_path(argv[3]);
+    HANDLE directory = path ? CreateFileW(path, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | READ_CONTROL,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL) : INVALID_HANDLE_VALUE;
+    free(path);
+    if (directory == INVALID_HANDLE_VALUE) error = (int)GetLastError();
+    else {
+      error = cloud_managed(directory);
+      if (!error && probe_cloud_bootstraps != 1) error = ERROR_ALREADY_INITIALIZED;
+      CloseHandle(directory);
+    }
+    platform_close(context); return error;
+  }
+  if (argc == 4 && !strcmp(argv[2], "as-account-cloud-process")) {
+    wchar_t account[256] = {0}, password[256] = {0}, executable[32768], command[32768], system_directory[MAX_PATH] = {0}, windows_directory[MAX_PATH] = {0}, environment[MAX_PATH * 2 + 64];
+    GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", account, 256); GetEnvironmentVariableW(L"SCIENT_TEST_PASSWORD", password, 256);
+    DWORD size = GetModuleFileNameW(NULL, executable, 32768), error = 0;
+    wchar_t *path = wide_path(argv[3]);
+    if (!path || !size || size >= 32768 || !GetSystemDirectoryW(system_directory, MAX_PATH) || !GetWindowsDirectoryW(windows_directory, MAX_PATH)) error = ERROR_INVALID_NAME;
+    if (!error && swprintf(command, 32768, L"\"%ls\" --windows=1 cloud-check-cold \"%ls\"", executable, path) < 0) error = ERROR_FILENAME_EXCED_RANGE;
+    int length = swprintf(environment, MAX_PATH * 2 + 64, L"PATH=%ls", system_directory);
+    if (length < 0) error = ERROR_BAD_ENVIRONMENT;
+    else {
+      ++length; int rest = swprintf(environment + length, MAX_PATH * 2 + 64 - length, L"SystemRoot=%ls", windows_directory);
+      if (rest < 0) error = ERROR_BAD_ENVIRONMENT; else environment[length + rest + 1] = 0;
+    }
+    STARTUPINFOW startup = {0}; PROCESS_INFORMATION process = {0}; startup.cb = sizeof(startup);
+    if (!error && !CreateProcessWithLogonW(account, L".", password, LOGON_WITH_PROFILE, executable, command,
+        CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, environment, system_directory, &startup, &process)) error = GetLastError();
+    if (!error) {
+      if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0 || !GetExitCodeProcess(process.hProcess, &error)) error = GetLastError();
+      CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    }
+    SecureZeroMemory(password, sizeof(password)); free(path);
+    printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
+  }
   if (argc == 4 && !strcmp(argv[2], "drive-mask")) {
     printf("{\"mask\":%lu}\n", (unsigned long)GetLogicalDrives()); return 0;
   }
