@@ -3,6 +3,7 @@
  * authority and the stored token. Only a conflict stops a sync; editors are saved
  * in every window before any folder write, holding the connection throughout.
  * A connection is used only in its recorded checkout by its host project. */
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -43,7 +44,7 @@ import { newOverleafId } from "./OverleafGitExecutor.ts";
 import * as OverleafRepositoryModule from "./OverleafRepository.ts";
 import { OverleafRepository } from "./OverleafRepository.ts";
 import { OverleafEditorSave, type OverleafEditorSaveResult } from "./OverleafEditorSave.ts";
-import { macVolumeUuid, type OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
+import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
 import type { OverleafReview } from "./OverleafReview.ts";
 import { OverleafStateStore } from "./OverleafStateStore.ts";
 import * as OverleafStateStoreModule from "./OverleafStateStore.ts";
@@ -385,7 +386,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const store = yield* OverleafStateStore;
   const repos = yield* OverleafRepository;
   const editors = yield* OverleafEditorSave;
-  const volumeUuid = options.volumeUuid ?? macVolumeUuid;
+  const volumeUuid = options.volumeUuid ?? platformFileIdentity.volume;
   const reservations = OverleafCoordinator.makeOverleafReservations();
   /** Advances on every token change; reviews built before it are stale. */
   let credentialEpoch = 0;

@@ -407,6 +407,14 @@ describe("overleafTransitionViolation", () => {
     expect(violation(holding, { retention: { ...freshVault, copies: [copy] } })).toBe(
       "vault-replaced-while-referenced",
     );
+    expect(
+      violation(holding, {
+        retention: {
+          ...holding.retention,
+          vaultIdentity: { ...holding.retention.vaultIdentity, platform: "darwin", version: 1 },
+        },
+      }),
+    ).toBeNull();
 
     const applying = next(synced, {
       activeApply: {
