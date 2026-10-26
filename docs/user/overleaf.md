@@ -10,9 +10,24 @@ syncs on its own: a sync runs when you, or an agent you asked, start it.
 - **Git access to the Overleaf project.** Overleaf offers Git on its paid plans.
   Your plan or the project owner's plan must include it.
 - **An Overleaf Git token** (next section).
-- **macOS**, with the project on an **APFS** disk (the Mac's own disk is APFS).
-- **Git 2.39 or newer** on this computer. The one in Apple's command line tools
-  is recent enough.
+- **Git 2.39 or newer** on the machine that holds the project. For a remote
+  project, install Git on this project's server.
+
+| System holding the project | Supported local disk                                                             |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| Windows 10 1809 or later   | NTFS                                                                             |
+| Linux                      | ext4, XFS or Btrfs; the manuscript and kept copies must be in the same subvolume |
+| macOS                      | APFS                                                                             |
+
+Network and mapped drives, FAT/exFAT, Windows ReFS, and Linux temporary or
+container filesystems are refused. A remote server with a supported local disk
+is supported; a network-mounted folder is a different kind of storage.
+
+Cloud folders (OneDrive, Dropbox, iCloud and Google Drive) can hold the project,
+but download online-only files first. Scient keeps its state and kept copies
+outside detected cloud folders on the same disk, and refuses sync if it cannot
+find a safe location. Unknown sync tools cannot be detected; keep Scient's
+state and kept copies outside any folders those tools manage.
 
 Only Overleaf's own site (overleaf.com) is supported.
 
@@ -89,7 +104,8 @@ your analysis, and keeps Scient's own files (`AGENTS.md`, `PROJECT.md`,
    for example `~/Thesis`. It is made in the location Add project browses
    from, named after the project; a folder that already is a project is used
    as it is. **Change…** shows the **location** (the folder button opens your
-   computer's folder chooser) and the **paper folder**, which you name there,
+   computer's folder chooser; for a remote project, type a location on that
+   project's server) and the **paper folder**, which you name there,
    for example `paper`; the path then reads `~/Thesis/paper`;
 3. your token, if none is saved yet.
 
@@ -154,7 +170,7 @@ the folder last synced, **Open in Overleaf** and **Overleaf settings…**.
     folder is the project's top.
 - **Never sent:** Git's and Scient's own folders, nested repositories, links, Git
   LFS pointers, system and editor droppings (`.DS_Store`, swap files), and new
-  files over 50,000,000 bytes (they stay only on this computer, and each sync
+  files over 50,000,000 bytes (they stay only here, and each sync
   says so).
 - A file Overleaf already has is synced like any other, even if its name is on
   the skip list.
@@ -165,7 +181,7 @@ the folder last synced, **Open in Overleaf** and **Overleaf settings…**.
 The Overleaf tab (**See changes**) lists the new files the next sync finds,
 and how many it will send:
 
-- a file that will be sent has **Keep only on this computer**. Scient remembers
+- a file that will be sent has **Keep only here**. Scient remembers
   it and leaves it out of every sync until you send it;
 - a skipped file says why ("Build output", "Hidden file", "Scient project
   file") and has **Send this file**. A file over Overleaf's 50 MB limit can't
@@ -239,7 +255,7 @@ The dialog lists every file that send changed and what Undo does to it
 it deleted). Click **Undo**: Scient saves the folder's open editors, puts the
 earlier versions back, keeps the files it replaces as copies, then syncs, so
 Overleaf has its earlier text again. A file you edited since that send is left
-as it is and named, and so is a file you keep only on this computer: Undo never
+as it is and named, and so is a file you keep only here: Undo never
 writes it. If collaborators changed the same files since, they merge
 like any other edit, and only a conflict stops. Only a send Overleaf accepted
 can be undone, among the last 64.

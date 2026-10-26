@@ -222,7 +222,7 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
     case "unreachable":
       return "Overleaf couldn't be reached. Check the connection and sync again.";
     case "git-unavailable":
-      return "Overleaf sync needs Git 2.39 or newer on this computer.";
+      return "Overleaf sync needs Git 2.39 or newer on this project's server.";
     case "git-failed":
       return "Git failed while talking to Overleaf. Sync again.";
     case "no-branch":
@@ -262,17 +262,17 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
     case "managed-limit":
     case "candidate-file-limit":
     case "remote-file-limit":
-      return "More than 2,000 files to sync. Keep some only on this computer, or choose a narrower folder.";
+      return "More than 2,000 files to sync. Keep some only here, or choose a narrower folder.";
     case "total-too-large":
     case "candidate-too-large":
     case "remote-too-large":
-      return "More than 250 MiB to sync. Keep some files only on this computer, or choose a narrower folder.";
+      return "More than 250 MiB to sync. Keep some files only here, or choose a narrower folder.";
     case "file-too-large":
     case "candidate-file-too-large":
     case "remote-file-too-large":
       return `A file is over Overleaf's 50 MB limit${at}.`;
     case "local-only-limit":
-      return "Too many files are kept only on this computer. Choose a narrower folder.";
+      return "Too many files are kept only here. Choose a narrower folder.";
     case "unstable":
       return `A file changed while Scient read it${at}. Sync again.`;
     case "unreadable":
@@ -811,7 +811,7 @@ export function countOverleafConflictBlocks(contents: string): number {
 
 export type OverleafConflictResolution = "mine" | "theirs" | "both";
 
-/** The lines that replace a block: this computer's, Overleaf's, or both in that order. */
+/** The lines that replace a block: this folder's, Overleaf's, or both in that order. */
 export function resolvedConflictLines(
   block: OverleafConflictBlock,
   resolution: OverleafConflictResolution,
