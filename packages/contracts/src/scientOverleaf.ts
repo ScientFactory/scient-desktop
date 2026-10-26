@@ -17,6 +17,8 @@ export const ScientOverleafFilesystemRefusalReason = Schema.Literals([
   "alternate-data-streams",
   "encrypted-file",
   "multiple-hard-links",
+  "unsupported-file-owner",
+  "unsupported-file-policy",
   "online-only-file",
   "path-too-long",
   "component-too-long",
@@ -37,6 +39,9 @@ const FILESYSTEM_REFUSAL_TEXT: Record<ScientOverleafFilesystemRefusalReason, str
     "Remove alternate data streams or move an ordinary copy into the project, then sync again.",
   "encrypted-file":
     "Decrypt this file or move an unencrypted copy into the project, then sync again.",
+  "unsupported-file-owner":
+    "Choose files owned by the account running this project’s server, then sync again.",
+  "unsupported-file-policy": "Use a file with a supported Windows access policy, then sync again.",
   "multiple-hard-links": "Replace this hard-linked file with an independent copy, then sync again.",
   "online-only-file": "Download this file from your cloud storage first, then sync again.",
   "path-too-long":

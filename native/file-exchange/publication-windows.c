@@ -739,7 +739,8 @@ static int save_policy(Context *context, HANDLE original, PSECURITY_DESCRIPTOR *
   if (!error) error = current_user_security(&private_descriptor, &sid, 0);
   PSID current = NULL; BOOL defaulted = FALSE;
   if (!error && !GetSecurityDescriptorOwner(private_descriptor, &current, &defaulted)) error = (int)GetLastError();
-  if (!error && (!owner || !EqualSid(owner, current) || !dacl)) error = ERROR_ACCESS_DENIED;
+  if (!error && (!owner || !EqualSid(owner, current))) error = 0x20000008;
+  if (!error && !dacl) error = 0x20000009;
   HANDLE file = INVALID_HANDLE_VALUE;
   if (!error) {
     file = create_relative(context->record, L"original-security", GENERIC_WRITE | READ_CONTROL,
@@ -940,6 +941,24 @@ static int qualified_volume(HANDLE folder) {
 }
 int platform_windows_main(int argc, char **argv) {
 #ifdef SCIENT_PUBLICATION_PROBE
+  if (argc == 4 && !strcmp(argv[2], "default-owner")) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)strtoul(argv[3], NULL, 10));
+    HANDLE token = NULL; DWORD error = 0, length = 0;
+    TOKEN_USER *user = NULL;
+    if (!process || !OpenProcessToken(process, TOKEN_QUERY | TOKEN_ADJUST_DEFAULT, &token)) error = GetLastError();
+    if (!error) {
+      GetTokenInformation(token, TokenUser, NULL, 0, &length);
+      user = malloc(length);
+      if (!user) error = ERROR_NOT_ENOUGH_MEMORY;
+      else if (!GetTokenInformation(token, TokenUser, user, length, &length)) error = GetLastError();
+      else {
+        TOKEN_OWNER owner = { user->User.Sid };
+        if (!SetTokenInformation(token, TokenOwner, &owner, sizeof(owner))) error = GetLastError();
+      }
+    }
+    free(user); if (token) CloseHandle(token); if (process) CloseHandle(process);
+    printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
+  }
   if (argc == 4 && (!strcmp(argv[2], "register-sync-root") || !strcmp(argv[2], "unregister-sync-root"))) {
     HMODULE library = LoadLibraryW(L"cldapi.dll");
     typedef HRESULT (WINAPI *Register)(LPCWSTR, const CF_SYNC_REGISTRATION *, const CF_SYNC_POLICIES *, CF_REGISTER_FLAGS);

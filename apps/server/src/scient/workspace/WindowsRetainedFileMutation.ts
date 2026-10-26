@@ -184,12 +184,25 @@ export async function runWindowsRetainedMutation(
   const published = record.destination ?? target;
   let stageRevision =
     record.kind === "rename" ? (record.currentRevision ?? record.expected) : record.desired;
-  const command = (
+  const command = async (
     operation: NativeFilePublicationRequest["operation"],
     source = NodePath.basename(target),
     destination = record.stageName,
     binding = input.binding,
-  ) => lease.run({ operation, sourceName: source, destinationName: destination, binding });
+  ): Promise<NativeFilePublicationResult> => {
+    const reply = await lease.run({
+      operation,
+      sourceName: source,
+      destinationName: destination,
+      binding,
+    });
+    if (reply.code !== 0)
+      await save({
+        nativeFailure: { operation, code: reply.code, outcome: reply.outcome },
+        failure: "recovery",
+      });
+    return reply;
+  };
   const peersIntact = async () => {
     const planned = new Set([
       NodePath.relative(input.cwd, target).replaceAll(NodePath.sep, "/"),
@@ -378,6 +391,8 @@ export async function runWindowsRetainedMutation(
           32: "file-busy",
           33: "file-busy",
           536870919: "online-only-file",
+          536870920: "unsupported-file-owner",
+          536870921: "unsupported-file-policy",
           536870914: "encrypted-file",
           536870915: "multiple-hard-links",
           536870916: "alternate-data-streams",

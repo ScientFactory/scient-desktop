@@ -60,7 +60,10 @@ describe.skipIf(!windows)("Windows capture and install", () => {
     fixture(async (input, target) => {
       const original = await fileIdentity(target);
       const result = await mutateRetainedFile(input, target);
-      expect(result.outcome).toBe("done");
+      expect(
+        result.outcome,
+        await NodeFSP.readFile(NodePath.join(result.recordDirectory, "record.json"), "utf8"),
+      ).toBe("done");
       expect(result.retainedIdentity).toEqual(original);
       expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("original");
       expect(await NodeFSP.readFile(target, "utf8")).toBe("incoming");
@@ -107,7 +110,10 @@ describe.skipIf(!windows)("Windows capture and install", () => {
         { ...input, kind: "create", condition: "absent", expectedRevision: null },
         target,
       );
-      expect(result.outcome).toBe("done");
+      expect(
+        result.outcome,
+        await NodeFSP.readFile(NodePath.join(result.recordDirectory, "record.json"), "utf8"),
+      ).toBe("done");
       expect(result.retainedPath).toBeNull();
       expect(await NodeFSP.readFile(target, "utf8")).toBe("incoming");
     }));
@@ -185,10 +191,20 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
   it("preserves explicit permissions and restricts retained bytes before capture", () =>
     fixture(async (input, target) => {
       const account = `Scient${NodeCrypto.randomBytes(5).toString("hex")}`;
-      const password = `Scient!${NodeCrypto.randomUUID()}a7`;
-      NodeChildProcess.execFileSync("net.exe", ["user", account, password, "/add"], {
-        stdio: "pipe",
-      });
+      const password = `S!${NodeCrypto.randomBytes(5).toString("hex")}a7`;
+      NodeChildProcess.execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$password = ConvertTo-SecureString -AsPlainText $env:SCIENT_TEST_PASSWORD -Force; New-LocalUser -Name $env:SCIENT_TEST_ACCOUNT -Password $password -AccountNeverExpires | Out-Null",
+        ],
+        {
+          env: { ...process.env, SCIENT_TEST_ACCOUNT: account, SCIENT_TEST_PASSWORD: password },
+          stdio: "pipe",
+        },
+      );
       try {
         NodeChildProcess.execFileSync("icacls.exe", [target, "/grant", `${account}:(R,W)`]);
         const policy = await security(target);
@@ -207,7 +223,10 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
               expect(access(NodePath.join(input.retentionDirectory, "one/retained"))).not.toBe(0);
           },
         });
-        expect(result.outcome).toBe("done");
+        expect(
+          result.outcome,
+          await NodeFSP.readFile(NodePath.join(result.recordDirectory, "record.json"), "utf8"),
+        ).toBe("done");
         expect(await security(target)).toBe(policy);
         expect(access(result.retainedPath!)).toBe(5);
         await NodeFSP.writeFile(target, "original");

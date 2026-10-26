@@ -89,10 +89,17 @@ function compileFilePublicationTestHelper(probe: boolean) {
       });
       if (!probe) {
         process.env.SCIENT_FILE_PUBLICATION_HELPER = helper;
-        const cloud = NodeChildProcess.spawnSync("sc.exe", ["query", "CldFlt"], {
-          encoding: "utf8",
-        });
-        process.stdout.write(`Cloud Files filter: ${cloud.stdout} ${cloud.stderr}\n`);
+        // Windows Server defaults elevated creations to Administrators; fixtures exercise user-owned files.
+        const bootstrap = await compileFilePublicationTestHelper(true);
+        const owner = JSON.parse(
+          NodeChildProcess.execFileSync(
+            bootstrap!,
+            ["--windows=1", "default-owner", String(process.pid)],
+            { encoding: "utf8" },
+          ),
+        );
+        if (owner.code !== 0)
+          throw new Error(`Fixture default-owner setup refused (${owner.code}).`);
       }
       return helper;
     }
