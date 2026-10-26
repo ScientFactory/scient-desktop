@@ -182,6 +182,9 @@ export type ServerBrowserViewerOutput =
       readonly controller: "agent" | "you" | "another-viewer" | "unclaimed";
       readonly generation: number;
       readonly controllingViewerId?: string;
+      // SCIENT-FORK:START — how many other windows watch the page
+      readonly otherViewers?: number;
+      // SCIENT-FORK:END
       readonly dialog: {
         readonly type: string;
         readonly message: string;
@@ -555,6 +558,9 @@ const make = Effect.gen(function* () {
         ...(viewer.canOperate && tab.control.controller === viewer.id
           ? { controllingViewerId: viewer.id }
           : {}),
+        // SCIENT-FORK:START — lets the one in control see that another window waits
+        otherViewers: tab.viewers.size - 1,
+        // SCIENT-FORK:END
         dialog: dialogStatus(tab),
       });
   };

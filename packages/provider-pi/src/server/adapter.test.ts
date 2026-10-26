@@ -26,6 +26,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
@@ -2113,7 +2114,7 @@ describe("PiAdapterV2", () => {
       const prompt = yield* fake.takeRequest("prompt");
       assert.equal(
         prompt["message"],
-        `/skill:repo-review Review this change please\n\n[Attachment saved at ${attachmentPath}]`,
+        `/skill:repo-review Review this change please\n\n[Attached file "notes.pdf" is saved at: ${attachmentPath}]`,
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

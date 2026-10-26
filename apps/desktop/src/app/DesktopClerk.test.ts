@@ -466,9 +466,9 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell, listeners)),
         Effect.provideService(HostProcess.Arguments, entry === "startup" ? ["t3", link] : ["t3"]),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
-        Effect.provideService(ElectronWindow.ElectronWindow, {
-          currentMainOrFirst: Effect.succeedNone,
-        } as ElectronWindow.ElectronWindow["Service"]),
+        Effect.provide(
+          Layer.mock(ElectronWindow.ElectronWindow)({ currentMainOrFirst: Effect.succeedNone }),
+        ),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
       );
     }).pipe(Effect.scoped),

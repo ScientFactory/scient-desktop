@@ -113,10 +113,9 @@ describe("shared SSH preparation", () => {
     Effect.gen(function* () {
       const prep = yield* harness;
       const callers = yield* Effect.forkChild(
-        Effect.all(
-          [1, 2, 3].map(() =>
-            Effect.flip(prep.await(KEY, prep.job(failAfter("2 seconds", "refused")), BOUNDED)),
-          ),
+        Effect.forEach(
+          [1, 2, 3],
+          () => Effect.flip(prep.await(KEY, prep.job(failAfter("2 seconds", "refused")), BOUNDED)),
           { concurrency: "unbounded" },
         ),
       );

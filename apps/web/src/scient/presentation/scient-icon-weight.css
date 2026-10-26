@@ -1,0 +1,35 @@
+/*
+ * Lighter 17px icons. Lucide draws on a 24-unit grid, so its stroke of 2 grows
+ * with the icon: a 17px icon draws a 1.42px line, a 15px icon 1.24px, a 13px
+ * icon 1.06px. Drawing 17px icons at 1.75 gives them the 1.24px line of the
+ * 15px ones; smaller icons keep 2, which would go faint below one pixel.
+ *
+ * Each icon measures itself: it is a size container, and its shapes take the
+ * lighter stroke while it is 16–18.5px wide. Only icons left at Lucide's stroke
+ * of 2 change. An icon that sets its own weight (any stroke class or inline
+ * stroke width), or that is marked to keep its weight, keeps it. A size
+ * container has no intrinsic size, so icons whose width is automatic or set
+ * inline are left out rather than risk collapsing.
+ *
+ * Every exception is decided on the icon itself, which alone becomes the
+ * named container; the shapes' rule names no attribute. An attribute test
+ * such as [style*=…] on the parent of a `> *` rule makes Chromium restyle the
+ * whole subtree of any element whose inline style changes, which is every
+ * frame in a scrolling or streaming timeline.
+ */
+svg.lucide[stroke-width="2"]:not(
+    .w-auto,
+    .size-auto,
+    [style*="width"],
+    [class*="stroke-"],
+    [data-preserve-icon-weight],
+    [data-preserve-icon-weight="true"] > svg
+  ) {
+  container: scient-icon / size;
+}
+
+@container scient-icon (min-width: 16px) and (max-width: 18.5px) {
+  svg.lucide > * {
+    stroke-width: 1.75;
+  }
+}

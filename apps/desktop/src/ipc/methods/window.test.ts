@@ -247,7 +247,7 @@ describe("reloadMainWindow", () => {
       assert.equal(contents.listenerCount("will-prevent-unload"), 0);
     }).pipe(
       Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeed(Option.some(window)) }),
+        Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) }),
       ),
     );
   });

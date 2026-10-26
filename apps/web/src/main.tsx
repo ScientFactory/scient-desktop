@@ -8,6 +8,9 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
+// SCIENT-FORK:START — one tooltip timing for the whole app.
+import { AppTooltipTiming } from "./scient/presentation/AppTooltipTiming";
+// SCIENT-FORK:END
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
 const router = startAppServices();
@@ -24,7 +27,13 @@ window.addEventListener("vite:preloadError", (event) => {
   }
 });
 
-const app = <AppRoot router={router} />;
+// SCIENT-FORK:START — the app renders inside Scient's tooltip timing.
+const app = (
+  <AppTooltipTiming>
+    <AppRoot router={router} />
+  </AppTooltipTiming>
+);
+// SCIENT-FORK:END
 
 // Split by runtime to keep Clerk out of local startup and clerk-js out of browser builds.
 const managedAuthShellModule =

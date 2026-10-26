@@ -6,7 +6,6 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import type { BrowserWindow } from "electron";
 import { afterEach, beforeEach, expect, vi } from "vite-plus/test";
 
@@ -138,12 +137,9 @@ describe("AssetCopy", () => {
   it.effect("treats native dialog cancellation as a normal result", () => {
     const owner = { id: 11 } as BrowserWindow;
     showSaveDialogMock.mockResolvedValue({ canceled: true, filePath: "" });
-    const windowLayer = Layer.succeed(
-      ElectronWindow.ElectronWindow,
-      ElectronWindow.ElectronWindow.of({
-        focusedMainOrFirst: Effect.succeed(Option.some(owner)),
-      } as ElectronWindow.ElectronWindow["Service"]),
-    );
+    const windowLayer = Layer.mock(ElectronWindow.ElectronWindow)({
+      focusedMainOrFirst: Effect.succeedSome(owner),
+    });
 
     return Effect.gen(function* () {
       const result = yield* saveAssetCopy(request);
@@ -159,12 +155,9 @@ describe("AssetCopy", () => {
 
   it.effect("returns a typed failure when the native dialog cannot open", () => {
     showSaveDialogMock.mockRejectedValue(new Error("dialog unavailable"));
-    const windowLayer = Layer.succeed(
-      ElectronWindow.ElectronWindow,
-      ElectronWindow.ElectronWindow.of({
-        focusedMainOrFirst: Effect.succeed(Option.none()),
-      } as ElectronWindow.ElectronWindow["Service"]),
-    );
+    const windowLayer = Layer.mock(ElectronWindow.ElectronWindow)({
+      focusedMainOrFirst: Effect.succeedNone,
+    });
 
     return Effect.gen(function* () {
       const result = yield* saveAssetCopy(request);

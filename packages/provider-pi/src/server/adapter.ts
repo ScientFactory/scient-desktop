@@ -2036,7 +2036,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           dispatchIfCurrent: (dispatch) =>
             Effect.suspend(() => {
               if (!isCurrent()) return Effect.succeedNone;
-              return dispatch.pipe(Effect.map(Option.some));
+              return dispatch.pipe(Effect.asSome);
             }),
           clearIfCurrent: () => disposeBufferedWork(work),
         };
@@ -3628,11 +3628,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   const entriesData = yield* request({ type: "get_entries" }).pipe(
                     // Command-level probes may be unavailable; a lost transport cannot
                     // confirm the rollback ordering barrier and must remain a failure.
-                    Effect.catch((error) =>
-                      error._tag === "PiRpcError" &&
-                      ["read", "write", "exit", "terminate"].includes(error.operation)
-                        ? Effect.fail(error)
-                        : Effect.succeed(undefined),
+                    Effect.catchIf(
+                      (error) =>
+                        !(
+                          error._tag === "PiRpcError" &&
+                          ["read", "write", "exit", "terminate"].includes(error.operation)
+                        ),
+                      () => Effect.void,
                     ),
                   );
                   const leafId = recordString(entriesData, "leafId") ?? null;
