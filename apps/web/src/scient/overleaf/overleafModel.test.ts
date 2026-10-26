@@ -121,9 +121,13 @@ describe("paths", () => {
   it("names folders and paths from the workspace", () => {
     expect(workspacePathOf("paper", "main.tex")).toBe("paper/main.tex");
     expect(workspacePathOf("", "main.tex")).toBe("main.tex");
-    expect(newFolderPath("", " thesis ")).toBe("thesis");
+    expect(newFolderPath("", " thesis ")).toBe(" thesis ");
+    expect(folderNameProblem(" thesis ")).not.toBeNull();
     expect(newFolderPath("papers/", "thesis")).toBe("papers/thesis");
     expect(folderNameProblem("")).not.toBeNull();
+    expect(folderNameProblem("COM³.tex")).not.toBeNull();
+    expect(folderNameProblem("é".repeat(128))).not.toBeNull();
+    expect(folderNameProblem("a".repeat(255))).toBeNull();
     expect(folderNameProblem("a/b")).not.toBeNull();
     expect(folderNameProblem(".hidden")).not.toBeNull();
     expect(folderNameProblem("paper")).toBeNull();

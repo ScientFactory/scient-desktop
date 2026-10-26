@@ -35,6 +35,16 @@ async function put(cwd: string, files: Record<string, string>) {
   }
 }
 describe("Overleaf publication admission", () => {
+  it.live("refuses an oversized apply path before recording an intent", () =>
+    fixture(async (h) => {
+      const name = `${"a/".repeat(2100)}main.tex`;
+      await expect(h.apply("oversize", plan({}, { [name]: "new" }))).rejects.toMatchObject({
+        _tag: "WorkspaceApplyError",
+      });
+      expect(await NodeFSP.readdir(h.cwd)).toEqual([]);
+      await expect(NodeFSP.lstat(h.owner)).rejects.toMatchObject({ code: "ENOENT" });
+    }),
+  );
   it.live(
     "admits replacement only with qualified capture, preserving the original inode and permissions",
     () =>

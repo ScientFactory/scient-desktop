@@ -3,6 +3,11 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import {
+  overleafFilesystemRefusalText,
+  ScientOverleafFilesystemRefusalReason,
+} from "@t3tools/contracts";
+
 import type {
   ScientOverleafKeptCopies,
   ScientOverleafManageResult,
@@ -10,6 +15,7 @@ import type {
   SecretRef,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
@@ -73,6 +79,8 @@ const OVERLEAF_FAILURES = {
     toolError("git-unavailable", "Git 2.39 or newer is needed on this computer."),
   "git-failed": () => toolError("failed", "Git failed while talking to Overleaf. Try again."),
 } as const;
+
+const isFilesystemReason = Schema.is(ScientOverleafFilesystemRefusalReason);
 
 /**
  * An engine or service failure as a fixed category with a plain next step.
@@ -162,8 +170,17 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
       return Effect.succeed(
         toolError("connection-not-ready", "This link's record cannot be read."),
       );
-    case "OverleafRetentionUnavailableError":
-      return Effect.succeed(toolError("retention-unavailable", error.message));
+    case "OverleafFilesystemError":
+    case "OverleafRetentionUnavailableError": {
+      const reason = field("reason");
+      return Effect.succeed(
+        new ScientOverleafToolError({
+          code: "retention-unavailable",
+          message: overleafFilesystemRefusalText(String(reason)) ?? error.message,
+          ...(isFilesystemReason(reason) ? { reason } : {}),
+        }),
+      );
+    }
     case "OverleafGitError": {
       // The service classifies Git failures itself; this is the same reading for any left raw.
       const reason = field("reason");
@@ -327,7 +344,7 @@ const MANAGE_REFUSALS: Record<OverleafConnectionRefusal, string> = {
 };
 
 const manageRefusalLine = (reason: string) =>
-  `Nothing changed: ${MANAGE_REFUSALS[reason as OverleafConnectionRefusal] ?? reason}`;
+  `Nothing changed: ${overleafFilesystemRefusalText(reason) ?? MANAGE_REFUSALS[reason as OverleafConnectionRefusal] ?? reason}`;
 
 /** File kinds that suggest a folder holds more than a paper (pr-c-design.md section 3). */
 const CODE_OR_DATA =

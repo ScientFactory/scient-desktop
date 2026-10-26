@@ -1,3 +1,4 @@
+import { OverleafFilesystemError } from "../../../scient/overleaf/overleafHostPaths.ts";
 /**
  * The Overleaf tools against a fake service, where real Git is not the point:
  * what an editor that could not save says, errors as fixed categories, and the token
@@ -453,6 +454,10 @@ describe("Overleaf tool handlers", () => {
           "recovery-required",
         ],
         [new OverleafSyncRefusedError({ reason: "token-missing" }), "token-missing"],
+        [
+          new OverleafFilesystemError({ reason: "online-only-file", path: "/private/path" }),
+          "retention-unavailable",
+        ],
         [new OverleafSyncRefusedError({ reason: "relink-needed" }), "relink-needed"],
         [new OverleafSyncRefusedError({ reason: "access-denied" }), "overleaf-access-denied"],
         [new OverleafSyncRefusedError({ reason: "unreachable" }), "overleaf-unreachable"],
@@ -465,6 +470,8 @@ describe("Overleaf tool handlers", () => {
       for (const [error, code] of cases) {
         const mapped = yield* failWith(error);
         expect(mapped.code, code).toBe(code);
+        if (error._tag === "OverleafFilesystemError")
+          expect(mapped.reason).toBe("online-only-file");
         expect(encodeError(mapped)).not.toContain(SECRET);
         expect(mapped.message).not.toContain("fatal");
       }

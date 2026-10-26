@@ -64,6 +64,7 @@ import {
 import * as OverleafStateStore from "./OverleafStateStore.ts";
 import type { ConflictChoice, Rename } from "./syncRules.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
+import { assertOverleafApplyPaths, OverleafFilesystemError } from "./overleafHostPaths.ts";
 import * as WorkspaceApplier from "./WorkspaceApplier.ts";
 
 /** Another operation holds this connection. Admission never queues. */
@@ -344,6 +345,7 @@ export type OverleafRecoverResult =
 type FetchError = OverleafRepository.OverleafRepositoryError | OverleafGitError;
 /** Everything a coordinator operation can fail with; business outcomes are results instead. */
 export type OverleafCoordinatorError =
+  | OverleafFilesystemError
   | OverleafOperationActiveError
   | OverleafConnectionNotReadyError
   | OverleafRetainedLimitError
@@ -1239,6 +1241,15 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       checkoutRoot: connection.checkout.canonicalRoot,
       publicationHelper: options.publicationHelper,
       expected: connection.retention.vaultIdentity,
+    });
+    yield* Effect.try({
+      try: () =>
+        assertOverleafApplyPaths(
+          folderOf(connection),
+          retention.directory,
+          new Set([...plan.captured.keys(), ...plan.target.keys()]),
+        ),
+      catch: (error) => error as OverleafFilesystemError,
     });
     return yield* applier.fits({
       cwd: folderOf(connection),

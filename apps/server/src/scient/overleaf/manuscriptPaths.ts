@@ -4,11 +4,14 @@
  * published, or applied to the folder, whichever side it came from.
  */
 
+import { overleafNameProblem } from "@t3tools/contracts";
+
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
 
 export type ManuscriptPathProblem =
   | "empty"
   | "too-long"
+  | "component-too-long"
   | "absolute"
   | "traversal"
   | "reserved"
@@ -16,13 +19,6 @@ export type ManuscriptPathProblem =
 
 /** Names that never belong to a connection, wherever they appear in a path. */
 const RESERVED_SEGMENTS = new Set([".git", ".scient"]);
-const WINDOWS_DEVICE = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/u;
-const hasControlCharacter = (value: string) =>
-  [...value].some((character) => {
-    const code = character.charCodeAt(0);
-    return code <= 0x1f || code === 0x7f;
-  });
-
 /** Why a path cannot be part of a manuscript, or `null` when it can. */
 export function manuscriptPathProblem(path: string): ManuscriptPathProblem | null {
   if (path.length === 0) return "empty";
@@ -36,14 +32,9 @@ export function manuscriptPathProblem(path: string): ManuscriptPathProblem | nul
       segment.toLowerCase().startsWith(".scient-overleaf-apply-")
     )
       return "reserved";
-    if (
-      /^ |[ .]$/u.test(segment) ||
-      /[<>:"|?*]/u.test(segment) ||
-      hasControlCharacter(segment) ||
-      WINDOWS_DEVICE.test((segment.split(".")[0] ?? "").toUpperCase())
-    ) {
-      return "invalid-on-a-supported-platform";
-    }
+    const problem = overleafNameProblem(segment);
+    if (problem === "component-too-long") return problem;
+    if (problem !== null) return "invalid-on-a-supported-platform";
   }
   return null;
 }
