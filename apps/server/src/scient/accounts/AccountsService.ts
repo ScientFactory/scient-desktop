@@ -42,7 +42,7 @@ export interface AccountSessionScope {
   readonly unattended: boolean;
 }
 
-/** What one session may see. Out-of-scope accounts and profiles are absent. */
+/** What one session may see, Off included so agents can say so. Out-of-scope ones are absent. */
 export interface SessionAccounts {
   readonly agentAccess: boolean;
   readonly accounts: ReadonlyArray<AccountSummary>;

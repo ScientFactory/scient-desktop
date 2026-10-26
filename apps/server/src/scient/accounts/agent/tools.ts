@@ -39,7 +39,7 @@ const list = metadata(
   Tool.make("scient_accounts_list", {
     ...common,
     description:
-      "List accounts and browser profiles available to this session, with permitted ways to use them. Never returns values.",
+      "List accounts and browser profiles for this session: how each may be used, and which the user turned off (tell the user; they can allow it in Settings → Accounts). Never returns values.",
     parameters: Tool.EmptyParams,
     success: Schema.Struct({
       accounts: Schema.Array(
@@ -58,6 +58,7 @@ const list = metadata(
         Schema.Struct({
           profileId: BrowserProfileId,
           name: Schema.String,
+          email: Schema.optional(Schema.String),
           usage: Schema.Array(Schema.String),
           access: Schema.String,
           scriptSignIn: Schema.Boolean,

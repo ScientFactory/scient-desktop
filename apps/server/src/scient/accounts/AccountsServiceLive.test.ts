@@ -318,47 +318,51 @@ describe("AccountsService source resolution", () => {
 });
 
 describe("AccountsService grants and approvals", () => {
-  it.effect("filters account and profile inventories by scope, off and the global switch", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      const { accountId } = yield* service.save(website());
-      const target = { type: "account" as const, accountId };
-      yield* service.setControls({ target, scope: { type: "projects", projectIds: [] } });
-      yield* service.updateProfile({ profileId: "imported", color: "#aabbcc" });
-      yield* service.setControls({
-        target: { type: "profile", profileId: "imported" },
-        access: "off",
-      });
-      const inventory = yield* service.forSession(scope, ["old-profile"]);
-      expect(inventory.accounts).toEqual([]);
-      expect(inventory.profiles.some((profile) => profile.profileId === "imported")).toBe(false);
-      expect(
-        inventory.profiles.find((profile) => profile.profileId === "old-profile")?.access,
-      ).toBe("allowed");
-      yield* service.setAgentAccess(false);
-      expect(yield* service.forSession(scope)).toEqual({
-        agentAccess: false,
-        accounts: [],
-        profiles: [],
-      });
-      expect(yield* service.authorize(scope, target, "credentials")).toEqual({
-        decision: "denied",
-        reason: "off",
-      });
-      yield* service.setAgentAccess(true);
-      expect(yield* service.authorize(scope, target, "credentials")).toEqual({
-        decision: "denied",
-        reason: "out-of-scope",
-      });
-      yield* service.updateProfile({ profileId: "imported", color: null });
-      expect((yield* service.snapshot).profiles[0]?.color).toBeUndefined();
-      yield* service.removeProfile("imported");
-      expect(
-        (yield* service.forSession(scope, ["imported"])).profiles.find(
-          (profile) => profile.profileId === "imported",
-        )?.access,
-      ).toBe("allowed");
-    }),
+  it.effect(
+    "hides out-of-scope inventory, lists off entries as off, and honors the global switch",
+    () =>
+      Effect.gen(function* () {
+        const { service } = yield* makeHarness();
+        const { accountId } = yield* service.save(website());
+        const target = { type: "account" as const, accountId };
+        yield* service.setControls({ target, scope: { type: "projects", projectIds: [] } });
+        yield* service.updateProfile({ profileId: "imported", color: "#aabbcc" });
+        yield* service.setControls({
+          target: { type: "profile", profileId: "imported" },
+          access: "off",
+        });
+        const inventory = yield* service.forSession(scope, ["old-profile"]);
+        expect(inventory.accounts).toEqual([]);
+        expect(inventory.profiles.find((profile) => profile.profileId === "imported")?.access).toBe(
+          "off",
+        );
+        expect(
+          inventory.profiles.find((profile) => profile.profileId === "old-profile")?.access,
+        ).toBe("allowed");
+        yield* service.setAgentAccess(false);
+        expect(yield* service.forSession(scope)).toEqual({
+          agentAccess: false,
+          accounts: [],
+          profiles: [],
+        });
+        expect(yield* service.authorize(scope, target, "credentials")).toEqual({
+          decision: "denied",
+          reason: "off",
+        });
+        yield* service.setAgentAccess(true);
+        expect(yield* service.authorize(scope, target, "credentials")).toEqual({
+          decision: "denied",
+          reason: "out-of-scope",
+        });
+        yield* service.updateProfile({ profileId: "imported", color: null });
+        expect((yield* service.snapshot).profiles[0]?.color).toBeUndefined();
+        yield* service.removeProfile("imported");
+        expect(
+          (yield* service.forSession(scope, ["imported"])).profiles.find(
+            (profile) => profile.profileId === "imported",
+          )?.access,
+        ).toBe("allowed");
+      }),
   );
   it.effect("grants once without changing controls, and stores project and always decisions", () =>
     Effect.gen(function* () {

@@ -1,4 +1,5 @@
 import {
+  INCOGNITO_BROWSER_PROFILE_ID,
   AccountsError,
   type AccountId,
   type AccountTarget,
@@ -94,37 +95,44 @@ export const accountAgentOperations = {
     );
     return {
       accounts: session.agentAccess
-        ? session.accounts
-            .filter((account) => account.controls.access !== "off")
-            .map((account) => ({
-              accountId: account.accountId,
-              name: account.name,
-              kind: account.details.kind,
-              sites: "sites" in account.details ? account.details.sites : [],
-              access: account.controls.access,
-              readable: account.controls.visibility === "readable",
-              status: account.status,
-              usage: [
-                ...(account.controls.visibility === "readable"
-                  ? ["scient_account_credentials"]
-                  : []),
-                ...(account.details.kind === "api-key" ? ["scient_account_request"] : []),
-                ...(["website", "library"].includes(account.details.kind)
-                  ? ["scient_account_sign_in", "scient_account_browser_session"]
-                  : []),
-              ],
-            }))
+        ? session.accounts.map((account) => ({
+            accountId: account.accountId,
+            name: account.name,
+            kind: account.details.kind,
+            sites: "sites" in account.details ? account.details.sites : [],
+            access: account.controls.access,
+            readable: account.controls.visibility === "readable",
+            status: account.status,
+            usage:
+              account.controls.access === "off"
+                ? []
+                : [
+                    ...(account.controls.visibility === "readable"
+                      ? ["scient_account_credentials"]
+                      : []),
+                    ...(account.details.kind === "api-key" ? ["scient_account_request"] : []),
+                    ...(["website", "library"].includes(account.details.kind)
+                      ? ["scient_account_sign_in", "scient_account_browser_session"]
+                      : []),
+                  ],
+          }))
         : [],
       profiles: session.agentAccess
         ? session.profiles
-            .filter((profile) => profile.access !== "off")
+            .filter((profile) => profile.profileId !== INCOGNITO_BROWSER_PROFILE_ID)
             .map((profile) => ({
               profileId: profile.profileId,
               name:
                 browser?.profiles?.find((item) => item.id === profile.profileId)?.name ??
                 profile.source?.profileName ??
                 profile.profileId,
-              usage: profile.scriptSignIn ? ["scient_account_browser_session"] : ["preview_open"],
+              ...(profile.source?.email ? { email: profile.source.email } : {}),
+              usage:
+                profile.access === "off"
+                  ? []
+                  : profile.scriptSignIn
+                    ? ["preview_open", "scient_account_browser_session"]
+                    : ["preview_open"],
               access: profile.access,
               scriptSignIn: profile.scriptSignIn,
             }))

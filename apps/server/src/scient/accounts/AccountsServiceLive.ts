@@ -909,19 +909,12 @@ export const layer = Layer.effect(
               accounts: state.agentAccess
                 ? state.accounts
                     .map((account) => account.summary)
-                    .filter(
-                      (account) =>
-                        account.controls.access !== "off" &&
-                        inScope(account.controls.scope, scope.projectId),
-                    )
+                    .filter((account) => inScope(account.controls.scope, scope.projectId))
                 : [],
               profiles: state.agentAccess
                 ? profiles
                     .map((id) => effectiveProfile(state.profiles, id))
-                    .filter(
-                      (profile) =>
-                        profile.access !== "off" && inScope(profile.scope, scope.projectId),
-                    )
+                    .filter((profile) => inScope(profile.scope, scope.projectId))
                 : [],
             };
           }),
