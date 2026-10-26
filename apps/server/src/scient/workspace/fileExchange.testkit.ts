@@ -48,12 +48,49 @@ function compileFilePublicationTestHelper(probe: boolean) {
   if (cached) return cached;
   const building = (async () => {
     const platform = HostProcess.Platform.defaultValue();
-    if (platform !== "darwin" && platform !== "linux") return undefined;
+    if (platform !== "darwin" && platform !== "linux" && platform !== "win32") return undefined;
     const directory = await NodeFSP.mkdtemp(
       NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-"),
     );
     afterAll(() => NodeFSP.rm(directory, { recursive: true, force: true }));
-    const helper = NodePath.join(directory, "scient-file-publication");
+    const helper = NodePath.join(
+      directory,
+      platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication",
+    );
+    if (platform === "win32") {
+      const installer = NodePath.join(
+        process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
+        "Microsoft Visual Studio/Installer/vswhere.exe",
+      );
+      const installation = NodeChildProcess.execFileSync(
+        installer,
+        [
+          "-latest",
+          "-products",
+          "*",
+          "-requires",
+          "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+          "-property",
+          "installationPath",
+        ],
+        { encoding: "utf8" },
+      ).trim();
+      const vcvars = NodePath.join(installation, "VC/Auxiliary/Build/vcvars64.bat");
+      const sources = ["publication.c", "publication-windows.c"].map((name) =>
+        NodePath.resolve(import.meta.dirname, "../../../../../native/file-exchange", name),
+      );
+      const build = NodePath.join(directory, "build.cmd");
+      await NodeFSP.writeFile(
+        build,
+        `@echo off\r\ncall "${vcvars}" >nul\r\ncl.exe /nologo /O2 /W4 /WX /D_CRT_SECURE_NO_WARNINGS ${probe ? "/DSCIENT_PUBLICATION_PROBE" : ""} ${sources.map((source) => `"${source}"`).join(" ")} /link /OUT:"${helper}" Advapi32.lib\r\n`,
+      );
+      NodeChildProcess.execFileSync("cmd.exe", ["/d", "/c", build], {
+        cwd: directory,
+        stdio: "pipe",
+      });
+      if (!probe) process.env.SCIENT_FILE_PUBLICATION_HELPER = helper;
+      return helper;
+    }
     NodeChildProcess.execFileSync("cc", [
       "-O2",
       "-Wall",
