@@ -32,11 +32,14 @@ export function windowsCompilerCommand(command: string, cwd: string) {
     { encoding: "utf8" },
   ).trim();
   const compiler = NodePath.join(installation, "VC", "Auxiliary", "Build", "vcvars64.bat");
-  NodeChildProcess.execFileSync(
+  const result = NodeChildProcess.spawnSync(
     process.env.COMSPEC ?? "cmd.exe",
     ["/d", "/s", "/c", `"call "${compiler}" >nul && ${command}"`],
     { stdio: "inherit", cwd, windowsVerbatimArguments: true },
   );
+  if (result.error) throw result.error;
+  if (result.status !== 0)
+    throw new Error(`Windows test compilation failed (exit ${result.status}).`);
 }
 
 let buildDirectory: string | undefined;
@@ -67,7 +70,6 @@ export const withExecutor = <A, E>(
   }) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
   options: {
     readonly allowLocalProtocols?: boolean;
-    readonly environment?: NodeJS.ProcessEnv;
   } = {},
 ) =>
   Effect.scoped(
@@ -77,9 +79,7 @@ export const withExecutor = <A, E>(
       const runtimeRoot = NodePath.join(root, "runtime");
       const work = NodePath.join(root, "work");
       yield* fs.makeDirectory(work);
-      const git = yield* make({ runtimeRoot, ...options }).pipe(
-        Effect.provideService(HostProcess.Environment, options.environment ?? process.env),
-      );
+      const git = yield* make({ runtimeRoot, ...options });
       return yield* body({ git, runtimeRoot, work });
     }),
   ).pipe(Effect.provide(NodeServices.layer));
