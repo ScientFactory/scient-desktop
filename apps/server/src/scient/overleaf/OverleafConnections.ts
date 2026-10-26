@@ -264,7 +264,13 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
 
   /** The volume and file ID of a directory, or null when it is not one or its disk has none. */
   const identityOf = (path: string) =>
-    Effect.promise(() => platformFileIdentity.directory(path, options.volumeUuid));
+    Effect.promise(() =>
+      platformFileIdentity.directory(
+        path,
+        options.volumeUuid,
+        options.publicationHelper ?? undefined,
+      ),
+    );
 
   /** Every readable connection of this environment, and whether any record could not be read. */
   const readAll = Effect.gen(function* () {

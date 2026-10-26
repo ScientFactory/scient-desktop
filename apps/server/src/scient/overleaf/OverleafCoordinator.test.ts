@@ -32,6 +32,7 @@ import {
   write,
 } from "./OverleafCoordinator.testkit.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 import { WorkspaceApplier } from "./WorkspaceApplier.ts";
 
 describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
@@ -1344,6 +1345,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "B" } });
         // Another store on the same state folder cannot take the lease this one holds.
         const other = yield* OverleafStateStore.make({
+          publicationHelper: yield* Effect.promise(filePublicationTestHelper),
           root: w.stateRoot,
           volumeUuid: w.volumeUuid,
         });

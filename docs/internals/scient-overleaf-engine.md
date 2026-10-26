@@ -103,7 +103,23 @@ record kept in the same folder):
   changed since, goes through the helper as before; a folder that gains
   entries changes too, so a record store is asked about on each write.
 
-Journals, their syncs and the order of every step are unchanged.
+macOS journals and their publication order are unchanged. Linux creates use a separate
+`staged-create` record decoded beside the clone-create record. Before publication,
+the helper writes a reserved `.scient-overleaf-apply-` file in the held destination
+folder with its normal inherited permissions and default ACL, then syncs it. The
+journal records that inode before `renameat2(RENAME_NOREPLACE)` installs it, followed
+by a directory sync. Recovery requires the recorded inode and revision; matching
+bytes alone never prove ownership. An unpublished stage is not evidence of a
+manuscript mutation. Replacement continues to use `RENAME_EXCHANGE`.
+
+Linux authority is explicitly `linux-held-root`: Landlock ABI 3 or newer confines
+writes to the linked folder object and the private record folder, while namespace
+operations use held directory descriptors. If the linked folder moves mid-call,
+publication follows that object; a replacement folder at its old path is untouched,
+and a later sync refuses the missing or changed binding. This differs from macOS's
+current-path sandbox. Missing or disabled Landlock refuses retained publication.
+Private Linux folders have inherited default and access ACLs cleared through their
+new descriptor before use. Existing folders are checked and never repaired.
 
 What a lease holds of the kept records (`bindingsFor` in
 `WorkspaceFileMutations.ts`). A write first looks at every record kept for its
@@ -359,19 +375,47 @@ checkout's volume and lies outside it. Otherwise it is a hidden
 project's own disk, so projects on external disks are supported. Either way it
 is private, owned by the server user, not a symlink and outside the checkout,
 so checkout cleanup cannot erase it. Its location is recorded as the disk's
-volume UUID (from `diskutil`) plus the folder's file ID, never the device
-number, so a disk mounted again under another path is recognized. New identities
-carry platform and version tags; existing untagged macOS identities decode unchanged
-and compare as the same objects. Linux and Windows identity shapes are defined,
-but those hosts remain refused until their resolvers and file mechanisms qualify. Once
+volume UUID plus the folder's file ID, never the device number, so a disk mounted
+again under another path is recognized. macOS resolves the UUID through `diskutil`.
+Linux reads it from the held object with `FS_IOC_GETFSUUID`, falling back to a unique
+`/dev/disk/by-uuid` entry for the mount's block device. Btrfs identities also include
+the subvolume ID, and kept copies must share the manuscript's subvolume. Linux
+admission checks held-folder `fstatfs` magic and `/proc/self/mountinfo`: ext4, XFS and
+Btrfs are accepted; memory filesystems, overlay, network/virtual filesystems, FUSE,
+FAT/exFAT and NTFS drivers are refused. New identities carry platform and version
+tags; existing untagged macOS identities decode unchanged and compare as the same
+objects. Windows retains its separate resolver boundary. Once
 recorded, nothing is created: a missing folder (unplugged disk, deleted
 folder) or a different folder in its place is reported, never replaced.
-Before use, a probe exchanges two files through the publication helper;
-a disk that cannot (exFAT and FAT among them) is refused. Without a helper,
+Before use, a probe exchanges two files through the publication helper; Linux also
+trials staged create and no-replace refusal. A disk that cannot perform those exact
+operations (exFAT and FAT among them) is refused. Without a helper,
 the declared development fallback requires hard links instead. Each refusal
 has its own reason: disk not connected, no volume UUID, unsupported file
 system, read-only or shared parent, checkout at the root of its disk, unsafe
 folder, missing or replaced folder.
+
+Scient's Overleaf state and kept copies must be outside detectable cloud provider
+roots. Detection covers macOS `~/Library/CloudStorage/*` and
+`~/Library/Mobile Documents`, Dropbox's registered account paths, OneDrive's
+registered macOS folders and Linux `sync_dir` configuration, and Google Drive's
+configured mount point. Checks follow symlinks and compare physical ancestors,
+including macOS firmlink aliases. If a checkout's sibling location is managed,
+new kept copies go beside the outermost provider root, on the same disk and Btrfs
+subvolume; otherwise admission refuses `sync-managed-folder`. A recorded folder is
+never relocated or recreated. Windows can add its by-handle Cloud Files root query
+at the same path-check boundary. Unknown sync tools and undiscoverable custom client
+configurations cannot be detected; real-provider qualification remains required.
+
+Linux platform tests compile both production and probe helpers. The coordinator,
+sync, HTTP and process-death suites fail discovery when Linux publication authority
+is absent, instead of silently skipping. `LinuxFilePublication.test.ts` exercises
+held-folder relocation and staged-create ownership, and invokes privileged loopback
+ext4/XFS/Btrfs, tmpfs and overlay fixtures. Those fixtures require root or passwordless
+sudo plus `e2fsprogs`, `xfsprogs`, `btrfs-progs`, `acl`, Python and util-linux; missing
+prerequisites fail CI and are reported explicitly outside CI. The safety bar is
+process-death recovery; ordinary file and directory `fsync` are best effort for
+machine power loss, not a power-cut qualification.
 
 ## Checkout barrier
 

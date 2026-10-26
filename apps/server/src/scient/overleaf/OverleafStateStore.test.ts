@@ -104,6 +104,7 @@ const openStore = (
     );
     const store = yield* OverleafStateStore.make({
       root,
+      publicationHelper: helper,
       ...(hooks === undefined ? {} : { hooks }),
       ...(volumeUuid === undefined ? {} : { volumeUuid }),
     }).pipe(Scope.provide(scope));
@@ -951,7 +952,7 @@ describe("OverleafStateStore", () => {
           const denied = NodePath.join(root, "state", "retained");
           yield* Effect.acquireRelease(
             Effect.promise(async () => {
-              await NodeFSP.mkdir(denied, { recursive: true });
+              await NodeFSP.mkdir(denied, { recursive: true, mode: 0o700 });
               await NodeFSP.chmod(denied, 0o000);
             }),
             () => Effect.promise(() => NodeFSP.chmod(denied, 0o700)),
@@ -1076,7 +1077,7 @@ describe("OverleafStateStore", () => {
           const elsewhere = NodePath.join(root, "elsewhere");
           yield* Effect.promise(async () => {
             await NodeFSP.mkdir(checkout);
-            await NodeFSP.mkdir(NodePath.join(root, "state"), { recursive: true });
+            await NodeFSP.mkdir(NodePath.join(root, "state"), { recursive: true, mode: 0o700 });
             await NodeFSP.mkdir(elsewhere);
             await NodeFSP.symlink(elsewhere, NodePath.join(root, "state", "retained"));
           });

@@ -7,6 +7,8 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { overleafCloudRoot } from "./overleafCloudRoots.ts";
 
 import {
   platformFileIdentity,
@@ -21,6 +23,11 @@ import {
   observedDirectoryBinding,
   withNativeFilePublicationLease,
   removeNativeRetainedEntry,
+  ensureNativePrivateRetentionDirectory,
+  checkNativePrivateRetentionDirectory,
+  nativeLinuxFileIdentity,
+  nativeFilePublicationCapabilities,
+  hasNativeFileAuthority,
 } from "../workspace/NativeFilePublication.ts";
 
 /** The hidden folder created beside a checkout on another disk. */
@@ -35,6 +42,9 @@ export type OverleafRetentionRefusal =
   | "no-volume-identity"
   /** The disk cannot exchange files atomically (exFAT, FAT), or link them in development fallback. */
   | "unsupported-filesystem"
+  | "network-filesystem"
+  | "volatile-filesystem"
+  | "sync-managed-folder"
   | "read-only-parent"
   /** The folder beside the checkout belongs to another user. */
   | "shared-parent"
@@ -62,7 +72,27 @@ class Refused extends Error {
 }
 
 /** Creates (or, with `create: false`, only checks) one owner-only, non-symlink directory. */
-async function ensurePrivate(directory: string, userId: number | undefined, create: boolean) {
+async function ensurePrivate(
+  directory: string,
+  userId: number | undefined,
+  create: boolean,
+  helper: string | null,
+) {
+  if (await overleafCloudRoot(directory)) throw new Refused("sync-managed-folder");
+  if (HostProcess.Platform.defaultValue() === "linux") {
+    if (!helper) throw new Refused("unsupported-filesystem");
+    if (!create) await statOrRefuse(directory, "vault-missing");
+    try {
+      await (create ? ensureNativePrivateRetentionDirectory : checkNativePrivateRetentionDirectory)(
+        helper,
+        directory,
+      );
+    } catch (cause) {
+      if (isReadOnly(cause)) throw new Refused("read-only-parent");
+      throw new Refused("unsafe-directory");
+    }
+    return;
+  }
   if (create)
     try {
       await NodeFSP.mkdir(directory, { mode: 0o700 });
@@ -82,7 +112,7 @@ async function ensurePrivate(directory: string, userId: number | undefined, crea
   }
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Refused("unsafe-directory");
   if (userId !== undefined && stat.uid !== userId) throw new Refused("unsafe-directory");
-  if ((stat.mode & 0o077) !== 0) await NodeFSP.chmod(directory, 0o700);
+  if ((stat.mode & 0o077) !== 0) throw new Refused("unsafe-directory");
 }
 
 /**
@@ -102,6 +132,7 @@ async function probeCapability(directory: string, publicationHelper: string | nu
       directory = ordinary;
   }
   const stem = `.probe-${NodeCrypto.randomUUID()}`;
+  const stage = `.scient-overleaf-apply-${NodeCrypto.randomUUID()}`;
   const [left, right, link] = [`${stem}-a`, `${stem}-b`, `${stem}-link`];
   const path = (name: string) => NodePath.join(directory, name);
   const create = async () => {
@@ -158,6 +189,38 @@ async function probeCapability(directory: string, publicationHelper: string | nu
             Object.values(result.flush).some((value) => value > 0)
           )
             throw new Refused("unsupported-filesystem");
+          if (HostProcess.Platform.defaultValue() === "linux") {
+            const trial = async (
+              operation: "stage-create" | "staged-create",
+              sourceName: string,
+              destinationName: string,
+            ) =>
+              lease.run({
+                binding,
+                operation,
+                authority: "bound-object",
+                sourceName,
+                destinationName,
+              });
+            const staged = await trial("stage-create", left, stage);
+            const installed = await trial("staged-create", stage, link);
+            const restaged = await trial("stage-create", left, stage);
+            const refused = await trial("staged-create", stage, link);
+            if (
+              [staged, installed, restaged].some(
+                (reply) =>
+                  reply.code !== 0 ||
+                  reply.outcome !== "applied" ||
+                  Object.values(reply.flush).some((value) => value > 0),
+              ) ||
+              installed.destinationAfter?.ino !== staged.destinationAfter?.ino ||
+              installed.sourceAfter !== null ||
+              refused.outcome !== "unchanged" ||
+              refused.code !== 17 ||
+              (await NodeFSP.readFile(path(link), "utf8")) !== "b"
+            )
+              throw new Refused("unsupported-filesystem");
+          }
         } catch {
           throw new Refused("unsupported-filesystem");
         }
@@ -171,7 +234,7 @@ async function probeCapability(directory: string, publicationHelper: string | nu
         );
         if (!swapped) throw new Refused("unsupported-filesystem");
       } finally {
-        for (const name of [left, right, link])
+        for (const name of [left, right, link, stage])
           await removeNativeRetainedEntry(lease, directory, name);
       }
     },
@@ -213,11 +276,34 @@ async function siblingLevels(
   userId: number | undefined,
   environmentId: string,
   connectionId: string,
+  helper: string | null,
 ) {
-  const parent = NodePath.dirname(checkout);
+  const cloud = await overleafCloudRoot(checkout);
+  const parent = NodePath.dirname(cloud ?? checkout);
   if (parent === checkout) throw new Refused("disk-root-checkout");
   const parentStat = await statOrRefuse(parent, "volume-unavailable");
-  if (parentStat.dev !== checkoutStat.dev) throw new Refused("disk-root-checkout");
+  if (parentStat.dev !== checkoutStat.dev)
+    throw new Refused(cloud ? "sync-managed-folder" : "disk-root-checkout");
+  if (await overleafCloudRoot(parent)) throw new Refused("sync-managed-folder");
+  if (cloud && HostProcess.Platform.defaultValue() === "linux") {
+    const checkoutIdentity = await platformFileIdentity.directory(
+      checkout,
+      undefined,
+      helper ?? undefined,
+    );
+    const parentIdentity = await platformFileIdentity.directory(
+      parent,
+      undefined,
+      helper ?? undefined,
+    );
+    if (
+      checkoutIdentity?.platform !== "linux" ||
+      parentIdentity?.platform !== "linux" ||
+      checkoutIdentity.volume !== parentIdentity.volume ||
+      checkoutIdentity.subvolumeId !== parentIdentity.subvolumeId
+    )
+      throw new Refused("sync-managed-folder");
+  }
   // Checked on every use, not only the first: whoever owns the parent can replace its entries.
   if (userId !== undefined && Number(parentStat.uid) !== userId) throw new Refused("shared-parent");
   // A parent others can write to, without the sticky bit, lets them rename our folder away.
@@ -239,10 +325,12 @@ async function verifiedFolder(
   userId: number | undefined,
   volume: string,
   create: boolean,
+  helper: string | null,
+  checkoutIdentity: StoredFileIdentity | null,
 ) {
   let directory: string;
   try {
-    for (const level of levels) await ensurePrivate(level, userId, create);
+    for (const level of levels) await ensurePrivate(level, userId, create, helper);
     directory = await NodeFSP.realpath(levels.at(-1)!);
   } catch (error) {
     // Denial or disappearance of one candidate must not stop the search for another.
@@ -254,8 +342,19 @@ async function verifiedFolder(
   const stat = await statOrRefuse(directory, "vault-missing");
   if (stat.dev !== checkoutStat.dev || (await physicallyInside(directory, checkoutStat)))
     throw new Refused("unsafe-directory");
-  const identity = await platformFileIdentity.directory(directory, async () => volume);
+  const identity = await platformFileIdentity.directory(
+    directory,
+    async () => volume,
+    helper ?? undefined,
+  );
   if (identity === null) throw new Refused("vault-replaced");
+  if (
+    checkoutIdentity?.platform === "linux" &&
+    identity.platform === "linux" &&
+    (identity.volume !== checkoutIdentity.volume ||
+      identity.subvolumeId !== checkoutIdentity.subvolumeId)
+  )
+    throw new Refused("unsupported-filesystem");
   return { directory, identity };
 }
 
@@ -293,7 +392,23 @@ export async function locateOverleafRetention(input: {
       throw error;
     }
     const checkoutStat = await statOrRefuse(checkout, "volume-unavailable");
-    const volume = await (input.volumeUuid ?? platformFileIdentity.volume)(checkout);
+    const linux =
+      HostProcess.Platform.defaultValue() === "linux"
+        ? await nativeLinuxFileIdentity(checkout, true, input.publicationHelper ?? undefined)
+        : null;
+    if (linux?.reason) throw new Refused(linux.reason);
+    if (
+      HostProcess.Platform.defaultValue() === "linux" &&
+      (!input.publicationHelper ||
+        !hasNativeFileAuthority(
+          await nativeFilePublicationCapabilities(input.publicationHelper, checkout),
+        ))
+    )
+      throw new Refused("unsupported-filesystem");
+    const checkoutIdentity = linux?.identity ?? null;
+    const volume =
+      checkoutIdentity?.volume ??
+      (await (input.volumeUuid ?? platformFileIdentity.volume)(checkout));
     if (volume === null) throw new Refused("no-volume-identity");
 
     const stateLevels = [
@@ -323,8 +438,17 @@ export async function locateOverleafRetention(input: {
             input.userId,
             input.environmentId,
             input.connectionId,
+            input.publicationHelper,
           );
-      found = await verifiedFolder(levels, checkoutStat, input.userId, volume, true);
+      found = await verifiedFolder(
+        levels,
+        checkoutStat,
+        input.userId,
+        volume,
+        true,
+        input.publicationHelper,
+        checkoutIdentity,
+      );
     } else {
       // Find the recorded folder wherever it was placed; never create one.
       // Where it is placed can change (state moved, checkout remounted), its identity cannot.
@@ -338,6 +462,7 @@ export async function locateOverleafRetention(input: {
             input.userId,
             input.environmentId,
             input.connectionId,
+            input.publicationHelper,
           ),
       ];
       let replaced = false;
@@ -351,6 +476,8 @@ export async function locateOverleafRetention(input: {
             input.userId,
             volume,
             false,
+            input.publicationHelper,
+            checkoutIdentity,
           );
           if (platformFileIdentity.equal(folder.identity, expected)) {
             match = folder;
@@ -380,6 +507,8 @@ export async function locateOverleafRetention(input: {
       input.userId,
       volume,
       false,
+      input.publicationHelper,
+      checkoutIdentity,
     );
     if (after.identity.fileId !== found.identity.fileId) throw new Refused("vault-replaced");
     return { _tag: "ready", ...found };

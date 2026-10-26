@@ -34,6 +34,8 @@ import * as OverleafStateStore from "./OverleafStateStore.ts";
 import { make as makeApplier, WorkspaceApplier } from "./WorkspaceApplier.ts";
 import { makeApplierFiles } from "./WorkspaceApplier.files.testkit.ts";
 
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
+
 export const canApply = await nativePublicationHost();
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
 const volumeUuid = async () => VOLUME;
@@ -128,9 +130,11 @@ export const world = (input: {
     // The store has a scope of its own, so a restart can release its lease.
     let storeScope = yield* Scope.make();
     yield* Effect.addFinalizer(() => Scope.close(storeScope, Exit.void));
-    const store = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid }).pipe(
-      Scope.provide(storeScope),
-    );
+    const store = yield* OverleafStateStore.make({
+      root: stateRoot,
+      volumeUuid,
+      publicationHelper: helper,
+    }).pipe(Scope.provide(storeScope));
     const files = yield* makeApplierFiles({
       root,
       helper,
@@ -265,17 +269,21 @@ export const world = (input: {
       publicationHelper,
       expected: null,
     });
-    const fileId = (path: string) =>
-      Effect.promise(async () => String((await NodeFSP.stat(path, { bigint: true })).ino));
+    const identity = (path: string) =>
+      Effect.promise(async () => {
+        const found = await platformFileIdentity.directory(path, volumeUuid, helper);
+        if (found === null) throw new Error("Test checkout has no persistent native identity.");
+        return found;
+      });
     yield* store.createConnection({
       ...overleafConnectionFixture(CONNECTION),
       checkout: {
         canonicalRoot: checkout,
-        identity: { volume: VOLUME, fileId: yield* fileId(checkout) },
+        identity: yield* identity(checkout),
       },
       folder: {
         relativePath: input.atCheckoutTop ? "" : "paper",
-        identity: { volume: VOLUME, fileId: yield* fileId(folder) },
+        identity: yield* identity(folder),
       },
       base: { commit: synced.commit, tree: synced.tree, generation: 1 },
       completedSyncCount: 1,
@@ -376,9 +384,11 @@ export const world = (input: {
       restart: Effect.fnUntraced(function* () {
         yield* Scope.close(storeScope, Exit.void);
         storeScope = yield* Scope.make();
-        const next = yield* OverleafStateStore.make({ root: stateRoot, volumeUuid }).pipe(
-          Scope.provide(storeScope),
-        );
+        const next = yield* OverleafStateStore.make({
+          root: stateRoot,
+          volumeUuid,
+          publicationHelper: helper,
+        }).pipe(Scope.provide(storeScope));
         // Reviews live in memory: none survives a restart.
         const coordinator = yield* OverleafCoordinator.make({
           ...options,

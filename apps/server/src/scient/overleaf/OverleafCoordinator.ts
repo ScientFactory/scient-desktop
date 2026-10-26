@@ -724,7 +724,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         [connection.checkout.canonicalRoot, connection.checkout.identity],
         [folderOf(connection), connection.folder.identity],
       ] as const) {
-        const identity = await platformFileIdentity.directory(path, volumeUuid);
+        const identity = await platformFileIdentity.directory(
+          path,
+          volumeUuid,
+          options.publicationHelper ?? undefined,
+        );
         if (identity === null || !platformFileIdentity.equal(identity, recorded)) return false;
       }
       return true;
