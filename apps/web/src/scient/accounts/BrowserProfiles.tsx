@@ -13,8 +13,8 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { Button } from "~/components/ui/button";
+import { Input } from "~/components/ui/input";
 import { DraftInput } from "~/components/ui/draft-input";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { Checkbox } from "~/components/ui/checkbox";
@@ -58,51 +58,104 @@ import {
 
 const decodeProfileUpdate = Schema.decodeOption(BrowserProfileRecordUpdateInput);
 
-/** The desktop lists at most this many signed-in sites per profile. */
-const SIGNED_IN_SITES_LIMIT = 50;
-
 type SourceMatch = NonNullable<ReturnType<typeof matchExistingProfile>>;
 
 function profileError() {
   toastManager.add({ type: "error", title: "Browser profile action failed" });
 }
 
-function SignedInSites({
-  profileId,
+function SignedInSitesDialog({
+  profile,
   environmentId,
+  canWrite,
+  onClose,
 }: {
-  profileId: string;
+  profile: { id: string; name: string; record: BrowserProfileRecord };
   environmentId: EnvironmentId;
+  canWrite: boolean;
+  onClose: () => void;
 }) {
   const [sites, setSites] = useState<ReadonlyArray<{ domain: string }> | null>(null);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const load = useEffectEvent(() =>
+    window.desktopBridge?.accounts
+      ?.signedInSites(profile.id, environmentId)
+      .then(setSites)
+      .catch(() => setSites([])),
+  );
   useEffect(() => {
-    let live = true;
-    void window.desktopBridge?.accounts
-      ?.signedInSites(profileId, environmentId)
-      .then((value) => {
-        if (live) setSites(value);
-      })
-      .catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, [profileId, environmentId]);
-  return sites?.length ? (
-    <Tooltip>
-      <TooltipTrigger render={<div className="flex min-w-0 text-xs text-muted-foreground" />}>
-        <span className="truncate">
-          {sites
-            .slice(0, 3)
-            .map((site) => site.domain)
-            .join(" · ")}
-          {sites.length > 3
-            ? ` + ${sites.length - 3}${sites.length >= SIGNED_IN_SITES_LIMIT ? "+" : ""} more`
-            : ""}
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup>{sites.map((site) => site.domain).join(", ")}</TooltipPopup>
-    </Tooltip>
-  ) : null;
+    void load();
+  }, []);
+  const signOut = async (site: string) => {
+    setBusy(site);
+    const done = await window.desktopBridge?.accounts
+      ?.signOutSite?.(profile.id, site, environmentId)
+      .catch(() => false);
+    if (!done) profileError();
+    await load();
+    setBusy(null);
+  };
+  const shown = (sites ?? []).filter((site) => site.domain.includes(query.trim().toLowerCase()));
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup>
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <ProfilePicture
+              name={profile.name}
+              picture={profile.record.picture}
+              color={profile.record.color}
+            />
+            <div className="grid">
+              <DialogTitle>{profile.name}</DialogTitle>
+              {profile.record.source?.email ? (
+                <span className="text-sm text-muted-foreground">{profile.record.source.email}</span>
+              ) : null}
+            </div>
+          </div>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="grid gap-3">
+            <Input
+              type="search"
+              aria-label="Find a site"
+              placeholder={sites ? `${sites.length} signed-in sites` : "Signed-in sites"}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <div className="max-h-96 overflow-y-auto rounded-lg border">
+              {shown.map((site) => (
+                <div
+                  key={site.domain}
+                  className="group flex items-center justify-between gap-3 border-b px-3 py-1.5 text-sm last:border-b-0"
+                >
+                  <span className="truncate">{site.domain}</span>
+                  {window.desktopBridge?.accounts?.signOutSite ? (
+                    <span className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        disabled={!canWrite || busy !== null}
+                        onClick={() => void signOut(site.domain)}
+                      >
+                        Sign out
+                      </Button>
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+              {sites && shown.length === 0 ? (
+                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  No sign-ins
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
+  );
 }
 
 export function BrowserImportDialog({
@@ -302,10 +355,10 @@ export function BrowserProfiles({
   });
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
-  const [siteRevision, setSiteRevision] = useState(0);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
   const [scopeProfile, setScopeProfile] = useState<BrowserProfileRecord | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [viewingSites, setViewingSites] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles);
   const disabled = !canWrite || !hydrated || busy;
@@ -338,7 +391,6 @@ export function BrowserProfiles({
     setBusy(true);
     try {
       await operation();
-      setSiteRevision((revision) => revision + 1);
     } catch {
       profileError();
     }
@@ -482,56 +534,45 @@ export function BrowserProfiles({
           title={
             <div className="flex items-center gap-3">
               <ProfilePicture
+                size="sm"
                 name={profile.name}
                 picture={profile.record.picture}
                 color={profile.record.color}
               />
-              <div className="grid gap-1">
-                <div className="flex items-center gap-2">
-                  {renaming !== profile.id ? (
-                    <span className="text-sm text-foreground">{profile.name}</span>
-                  ) : (
-                    <DraftInput
-                      aria-label="Profile name"
-                      autoFocus
-                      nativeInput
-                      size="sm"
-                      value={profile.name}
-                      disabled={disabled}
-                      maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
-                      onCommit={(value) => {
-                        const name = value.trim();
-                        if (name)
-                          void changeSettings((current) => ({
-                            ...current,
-                            browserProfiles: current.browserProfiles.map((item) =>
-                              item.id === profile.id ? { ...item, name } : item,
-                            ),
-                          }));
-                      }}
-                    />
-                  )}
-                </div>
-                {profile.record.source ? (
-                  <span className="text-xs text-muted-foreground">
-                    {[
-                      profile.record.source.browser[0]!.toUpperCase() +
-                        profile.record.source.browser.slice(1),
-                      profile.record.source.profileName === profile.name
-                        ? undefined
-                        : profile.record.source.profileName,
-                      profile.record.source.email,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                ) : null}
-                <SignedInSites
-                  key={`${profile.id}:${siteRevision}`}
-                  profileId={profile.id}
-                  environmentId={environmentId}
+              {renaming === profile.id ? (
+                <DraftInput
+                  aria-label="Profile name"
+                  autoFocus
+                  nativeInput
+                  size="sm"
+                  value={profile.name}
+                  disabled={disabled}
+                  maxLength={BROWSER_PROFILE_NAME_MAX_LENGTH}
+                  onCommit={(value) => {
+                    const name = value.trim();
+                    if (name)
+                      void changeSettings((current) => ({
+                        ...current,
+                        browserProfiles: current.browserProfiles.map((item) =>
+                          item.id === profile.id ? { ...item, name } : item,
+                        ),
+                      }));
+                  }}
                 />
-              </div>
+              ) : (
+                <button
+                  type="button"
+                  className="flex min-w-0 items-baseline gap-2 text-left outline-none focus-visible:underline"
+                  onClick={() => setViewingSites(profile.id)}
+                >
+                  <span className="truncate text-sm text-foreground">{profile.name}</span>
+                  {profile.record.source?.email ? (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {profile.record.source.email}
+                    </span>
+                  ) : null}
+                </button>
+              )}
             </div>
           }
           control={
@@ -555,6 +596,9 @@ export function BrowserProfiles({
                 >
                   Use in scripts
                 </MenuCheckboxItem>
+                {window.desktopBridge?.accounts ? (
+                  <MenuItem onClick={() => setViewingSites(profile.id)}>Signed-in sites</MenuItem>
+                ) : null}
                 {isBuiltInBrowserProfileId(profile.id) ? null : (
                   <MenuItem onClick={() => setRenaming(profile.id)}>Rename</MenuItem>
                 )}
@@ -632,6 +676,14 @@ export function BrowserProfiles({
           }
         />
       ))}
+      {viewingSites && profiles.some((profile) => profile.id === viewingSites) ? (
+        <SignedInSitesDialog
+          profile={profiles.find((profile) => profile.id === viewingSites)!}
+          environmentId={environmentId}
+          canWrite={canWrite}
+          onClose={() => setViewingSites(null)}
+        />
+      ) : null}
       {linking ? (
         <Dialog open onOpenChange={(open) => !open && setLinking(null)}>
           <DialogPopup>

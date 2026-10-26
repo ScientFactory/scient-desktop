@@ -59,6 +59,12 @@ export interface DesktopAccountsBridge {
     profileId: string,
     environmentId?: string,
   ) => Promise<ReadonlyArray<DesktopProfileSignedInSite>>;
+  /** Removes every cookie of one site (a registrable domain) from the profile. Optional for older desktops. */
+  readonly signOutSite?: (
+    profileId: string,
+    site: string,
+    environmentId?: string,
+  ) => Promise<boolean>;
   /** Fills the login form on the tab's current page. Resolves false when it found none. */
   readonly fill: (input: DesktopSignInFill) => Promise<boolean>;
   readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;

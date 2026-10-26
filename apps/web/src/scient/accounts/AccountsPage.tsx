@@ -64,9 +64,27 @@ function AccountRow({
   return (
     <SettingsRow
       title={
-        <span className="flex items-center gap-2">
-          <KeyRoundIcon className="size-4 text-muted-foreground" />
-          {account.name}
+        <span className="flex min-w-0 items-baseline gap-2">
+          <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
+          <button
+            type="button"
+            className="truncate text-left outline-none focus-visible:underline"
+            onClick={onEdit}
+          >
+            {account.name}
+          </button>
+          <span className="truncate text-xs text-muted-foreground">
+            {[
+              KIND_LABELS[details.kind],
+              "sites" in details
+                ? details.sites.join(", ")
+                : details.kind === "database"
+                  ? details.host
+                  : details.tool,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </span>
           {account.status === "needs-attention" ? (
             <Tooltip>
               <TooltipTrigger
@@ -74,7 +92,7 @@ function AccountRow({
                   <span
                     role="img"
                     aria-label="Needs attention"
-                    className="size-1.5 rounded-full bg-amber-500"
+                    className="size-1.5 shrink-0 self-center rounded-full bg-amber-500"
                   />
                 }
               />
@@ -83,16 +101,6 @@ function AccountRow({
           ) : null}
         </span>
       }
-      description={[
-        KIND_LABELS[details.kind],
-        "sites" in details
-          ? details.sites.join(", ")
-          : details.kind === "database"
-            ? details.host
-            : details.tool,
-      ]
-        .filter(Boolean)
-        .join(" · ")}
       control={
         <div className="flex items-center gap-2">
           <AccessChip

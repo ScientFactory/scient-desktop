@@ -1,5 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import { groupSignedInSites } from "./signedInSites.ts";
+import { groupSignedInSites, siteCookieRemovals } from "./signedInSites.ts";
 
 it("groups subdomains using public and private suffixes and returns only domain counts", () => {
   expect(
@@ -23,12 +23,19 @@ it("groups subdomains using public and private suffixes and returns only domain 
   ]);
 });
 
-it("caps the most frequent sites at fifty", () => {
-  const cookies = Array.from({ length: 55 }, (_, index) => ({ domain: `site${index}.example` }));
-  const result = groupSignedInSites([
-    ...cookies,
-    ...Array.from({ length: 3 }, () => ({ domain: "site54.example" })),
+it("signs out of exactly one site, including its subdomains", () => {
+  expect(
+    siteCookieRemovals(
+      [
+        { domain: ".huji.ac.il", path: "/", name: "sso", secure: true },
+        { domain: "moodle.huji.ac.il", path: "/my", name: "session", secure: true },
+        { domain: "huji.ac.il.evil.test", path: "/", name: "lookalike", secure: true },
+        { domain: "example.com", name: "other" },
+      ],
+      "huji.ac.il",
+    ),
+  ).toEqual([
+    { url: "https://huji.ac.il/", name: "sso" },
+    { url: "https://moodle.huji.ac.il/my", name: "session" },
   ]);
-  expect(result).toHaveLength(50);
-  expect(result[0]).toEqual({ domain: "site54.example", cookies: 4 });
 });

@@ -14,6 +14,8 @@ export function makeDesktopAccountsBridge(
     sourceProfiles: () => ipc.invoke(Channels.SOURCE_PROFILES),
     signedInSites: (profileId, environmentId) =>
       ipc.invoke(Channels.SIGNED_IN_SITES, { profileId, environmentId }),
+    signOutSite: (profileId, site, environmentId) =>
+      ipc.invoke(Channels.SIGN_OUT_SITE, { profileId, site, environmentId }),
     fill: (input) => ipc.invoke(Channels.FILL, input),
     loginForm: (tabId) => ipc.invoke(Channels.LOGIN_FORM, { tabId }),
     onLoginFormDetected: (listener) => {

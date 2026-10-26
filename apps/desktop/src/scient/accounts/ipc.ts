@@ -14,7 +14,7 @@ import { PreviewManager } from "../../preview/Manager.ts";
 import { safeHttpOrigin } from "../../preview/FaviconCapture.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { discoverSourceProfiles } from "./sourceProfiles.ts";
-import { groupSignedInSites } from "./signedInSites.ts";
+import { groupSignedInSites, siteCookieRemovals } from "./signedInSites.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
@@ -42,6 +42,11 @@ const Capture = Schema.Struct({
 
 const decodeFill = Schema.decodeUnknownOption(Fill);
 const decodeSites = Schema.decodeUnknownOption(Sites);
+const SignOut = Schema.Struct({
+  ...Sites.fields,
+  site: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253)),
+});
+const decodeSignOut = Schema.decodeUnknownOption(SignOut);
 const decodeCapture = Schema.decodeUnknownOption(Capture);
 
 type AccountsInvokeEvent = DesktopIpcInvokeEvent & { readonly senderFrame?: unknown };
@@ -116,6 +121,34 @@ export const signedInSites = Effect.fn("DesktopAccounts.signedInSites")(function
   );
 });
 
+export const signOutSite = Effect.fn("DesktopAccounts.signOutSite")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* mainSender(event))) return false;
+  const input = decodeSignOut(raw);
+  if (Option.isNone(input)) return false;
+  const manager = yield* PreviewManager;
+  const scope = resolvePartitionScope(
+    input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
+    input.value.profileId,
+  );
+  return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
+    Effect.flatMap((session) =>
+      Effect.tryPromise({
+        try: async () => {
+          const removals = siteCookieRemovals(await session.cookies.get({}), input.value.site);
+          await Promise.all(removals.map(({ url, name }) => session.cookies.remove(url, name)));
+          await session.cookies.flushStore();
+          return true;
+        },
+        catch: unavailable,
+      }),
+    ),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
 const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
@@ -128,6 +161,7 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   const ipc = yield* DesktopIpc;
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
+  yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });
   const manager = yield* PreviewManager;
