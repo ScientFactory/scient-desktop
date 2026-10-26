@@ -12,6 +12,7 @@ import * as NodePath from "node:path";
 import {
   loadEmbeddedSkillRelease,
   skillOriginKey,
+  skillReleaseKey,
   SKILL_DOCUMENT_FILE,
   type SkillRelease,
 } from "@scientfactory/scient-skills";
@@ -925,6 +926,42 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
   );
 
   return ScientPluginRegistry.of({
+    contents: (pluginId) =>
+      Ref.get(state).pipe(
+        Effect.map((current) => {
+          const plugin = current.plugins.find((item) => item.record.pluginId === pluginId);
+          return {
+            apps: [],
+            mcpServers: [],
+            skills: (plugin?.bundle?.releases ?? []).slice(0, 200).map((release) => ({
+              id: skillReleaseKey(release),
+              releaseKey: skillReleaseKey(release),
+              name: release.name,
+              description: release.description,
+              documentAvailable: true,
+              enabled: plugin?.record.enabled === true,
+            })),
+            commands: [],
+            agents: [],
+          };
+        }),
+      ),
+    skillDocument: (pluginId, skillId) =>
+      Ref.get(state).pipe(
+        Effect.flatMap((current) => {
+          const release = current.plugins
+            .find((item) => item.record.pluginId === pluginId)
+            ?.bundle?.releases.find((item) => skillReleaseKey(item) === skillId);
+          return release
+            ? Effect.succeed({ instructions: release.instructions })
+            : Effect.fail(
+                new ExtensionsError({
+                  reason: "not-found",
+                  message: "This skill is no longer in the plugin.",
+                }),
+              );
+        }),
+      ),
     list,
     install,
     remove,

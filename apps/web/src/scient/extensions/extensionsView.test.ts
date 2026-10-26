@@ -7,6 +7,8 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   audienceReaches,
+  connectorActions,
+  providerServerDisplayName,
   audienceSupport,
   collectProviderExtensionGroups,
   preferCuratedStoreEntries,
@@ -74,4 +76,23 @@ it("keeps standalone Claude MCP servers private and retains a Scient-owned share
   const shared = providerExtensionAudience(own, { ...plugin, marketplace: "official" });
   expect(audienceReaches(shared, own)).toBe(true);
   expect(audienceReaches(providerExtensionAudience(claude, plugin), own)).toBe(false);
+});
+
+it("offers sign-in only when the grant is needed and keeps account connector identity intact", () => {
+  const connector = { status: "connected", auth: { type: "oauth" } } as Parameters<
+    typeof connectorActions
+  >[0];
+  expect(connectorActions(connector)).toEqual({ signIn: null, canTest: true });
+  expect(connectorActions({ ...connector, status: "needs-auth" })).toEqual({
+    signIn: "sign-in",
+    canTest: false,
+  });
+  expect(connectorActions({ ...connector, status: "needs-credential" })).toEqual({
+    signIn: null,
+    canTest: false,
+  });
+  const server = { name: "claude.ai Gmail", scope: "claudeai" };
+  expect(providerServerDisplayName(server)).toBe("Gmail");
+  expect(server.name).toBe("claude.ai Gmail");
+  expect(providerServerDisplayName({ ...server, scope: "user" })).toBe(server.name);
 });

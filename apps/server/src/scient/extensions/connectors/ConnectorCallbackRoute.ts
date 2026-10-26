@@ -1,9 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Server-only nonce generation for the standalone callback page.
 /**
  * `GET /oauth/connectors/callback`: where a vendor's authorization server
  * returns the user after connector sign-in. Unauthenticated by design: the
  * single-use `state` is the only authority, and the PKCE verifier never leaves
  * the server, so a leaked code is useless.
  */
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -11,34 +13,8 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { ConnectorRuntime, type ConnectorSignInCallbackOutcome } from "../ExtensionsServices.ts";
 import { CONNECTOR_OAUTH_CALLBACK_PATH } from "./ConnectorOAuth.ts";
 
-const HTML_ESCAPES: Readonly<Record<string, string>> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
-const escapeHtml = (text: string): string =>
-  text.replace(/[&<>"']/g, (character) => HTML_ESCAPES[character] ?? character);
-
-const renderCallbackPage = (outcome: ConnectorSignInCallbackOutcome): string => {
-  const title =
-    outcome.outcome === "connected"
-      ? `${outcome.displayName ?? "Service"} connected`
-      : "Sign-in did not complete";
-  return [
-    "<!doctype html>",
-    '<html lang="en">',
-    '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
-    `<title>${escapeHtml(title)} · Scient</title></head>`,
-    "<body>",
-    `<h1>${escapeHtml(title)}</h1>`,
-    `<p>${escapeHtml(outcome.message)}</p>`,
-    "</body>",
-    "</html>",
-  ].join("\n");
-};
+import { renderCallbackPage } from "./ConnectorCallbackPage.ts";
+import { CURATED_SERVERS } from "../discover/curatedCatalog.ts";
 
 const handler = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -51,11 +27,13 @@ const handler = Effect.gen(function* () {
     error: params.get("error") ?? undefined,
     errorDescription: params.get("error_description") ?? undefined,
   });
-  return HttpServerResponse.text(renderCallbackPage(outcome), {
+  const nonce = NodeCrypto.randomUUID();
+  const icon = CURATED_SERVERS.find((server) => server.displayName === outcome.displayName)?.icon;
+  return HttpServerResponse.text(renderCallbackPage(outcome, nonce, icon), {
     status: outcome.outcome === "connected" ? 200 : 400,
     contentType: "text/html; charset=utf-8",
     headers: {
-      "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+      "content-security-policy": `default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src data:; style-src 'nonce-${nonce}'`,
       "referrer-policy": "no-referrer",
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",

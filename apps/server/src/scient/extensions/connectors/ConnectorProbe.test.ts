@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import type { ConnectorFetch } from "./ConnectorOutbound.ts";
-import { probeConnector } from "./ConnectorProbe.ts";
+import { connectorRetryDelay, probeConnector } from "./ConnectorProbe.ts";
 
 const REPLY = JSON.stringify({
   jsonrpc: "2.0",
@@ -101,4 +101,15 @@ describe("probeConnector over JSON", () => {
     expect(await jsonProbe(JSON.stringify({ jsonrpc: "2.0", id: 2, result }))).toEqual(notMcp);
     expect(await jsonProbe("not json")).toEqual(notMcp);
   });
+});
+
+it("retries only temporary handshake failures within the retry budget", () => {
+  expect(connectorRetryDelay(429, null, 0, 0, 5000)).toBe(500);
+  expect(connectorRetryDelay(429, null, 1, 0, 5000)).toBe(1000);
+  expect(connectorRetryDelay(429, "2", 0, 0, 5000)).toBe(2000);
+  expect(connectorRetryDelay(503, "Thu, 01 Jan 1970 00:00:03 GMT", 0, 1000, 5000)).toBe(2000);
+  expect(connectorRetryDelay(429, "60", 0, 0, 5000)).toBeUndefined();
+  expect(connectorRetryDelay(429, "0", 2, 0, 5000)).toBeUndefined();
+  expect(connectorRetryDelay(503, null, 0, 0, 5000)).toBe(500);
+  expect(connectorRetryDelay(500, "1", 0, 0, 5000)).toBeUndefined();
 });

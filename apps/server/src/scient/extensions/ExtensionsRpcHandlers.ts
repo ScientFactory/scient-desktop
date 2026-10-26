@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 import { ProviderRegistry, type ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
+import { makePluginContents } from "./PluginContents.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
 import {
   ConnectorRuntime,
@@ -146,6 +147,7 @@ export const makeExtensionsRpcHandlers = ({
     } satisfies ExtensionsInventory;
   });
 
+  const contents = makePluginContents(providerRegistry, pluginRegistry);
   return WsExtensionsRpcGroup.of({
     [WS_METHODS.extensionsBrandIcon]: (input) =>
       observeRpcEffect(
@@ -158,6 +160,14 @@ export const makeExtensionsRpcHandlers = ({
             }),
           ),
         })),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsPluginContents]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginContents, contents.read(input), traceAttributes),
+    [WS_METHODS.extensionsSkillDocument]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsSkillDocument,
+        contents.document(input),
         traceAttributes,
       ),
     [WS_METHODS.extensionsList]: () =>

@@ -808,7 +808,7 @@ describe("connector OAuth sign-in", () => {
         expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
         expect(response.headers.get("referrer-policy")).toBe("no-referrer");
         expect(response.headers.get("cache-control")).toBe("no-store");
-        expect(yield* readText(response)).toContain("Vendor connected");
+        expect(yield* readText(response)).toContain("Vendor is connected");
 
         const listed = yield* harness.runtime.list();
         expect(listed.connectors[0]).toMatchObject({

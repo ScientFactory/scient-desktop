@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
+import { readLocalPluginContents, readLocalPluginSkill } from "./LocalPluginContents.ts";
 import { readPluginJson } from "./LocalPluginFiles.ts";
 
 const Name = Schema.String.check(
@@ -48,6 +49,7 @@ const Plugin = Schema.Struct({
       url: Schema.optional(Schema.String),
     }),
   ]),
+  displayName: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   version: Schema.optional(Schema.String),
   homepage: Schema.optional(Schema.String),
@@ -89,6 +91,49 @@ const decodeRecord = Schema.decodeUnknownOption(Schema.Record(Schema.String, Sch
 const OFFICIAL = "claude-plugins-official";
 const OFFICIAL_CLAUDE_STORE = "anthropics/claude-plugins-official";
 
+const pluginNameKey = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
+const BRANDS: Readonly<Record<string, string>> = {
+  github: "GitHub",
+  gitlab: "GitLab",
+  slack: "Slack",
+  notion: "Notion",
+  figma: "Figma",
+  linear: "Linear",
+  sentry: "Sentry",
+  vercel: "Vercel",
+  supabase: "Supabase",
+  playwright: "Playwright",
+  context7: "Context7",
+  adobe: "Adobe",
+  atlassian: "Atlassian",
+  stripe: "Stripe",
+  google: "Google",
+  microsoft: "Microsoft",
+  salesforce: "Salesforce",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+};
+export function sharedPluginDisplayName(slug: string): string {
+  return slug
+    .split(/[-_]+/)
+    .map(
+      (part) =>
+        BRANDS[part.toLowerCase()] ??
+        (/^(api|ai|mcp|sql|pdf|csv|html|css|sdk|ui|ux|aws)$/i.test(part)
+          ? part.toUpperCase()
+          : part.charAt(0).toUpperCase() + part.slice(1)),
+    )
+    .join(" ");
+}
+export function sharedPluginShelfRank(
+  name: string,
+  review?: { readonly state: string; readonly by?: { readonly type: string } | undefined },
+): number {
+  if (review?.state === "done" && ["anthropic", "partner"].includes(review.by?.type ?? ""))
+    return 0;
+  return name.split(/[-_]+/).some((part) => BRANDS[part.toLowerCase()]) ? 1 : 2;
+}
+
 export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function* (options: {
   readonly kind: "claude" | "scient";
   readonly claudeHome: string;
@@ -103,6 +148,15 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
   const optionalJson = Effect.fn("SharedPluginStore.optionalJson")(function* (file: string) {
     return (yield* fs.exists(file)) ? yield* readPluginJson(file) : undefined;
   });
+  const readReviews = () =>
+    optionalJson(path.join(options.claudeHome, "plugins", "plugin-directory-cache-v2.json")).pipe(
+      Effect.flatMap((raw) =>
+        raw === undefined
+          ? Effect.succeed([])
+          : decodeReviews(raw).pipe(Effect.map((value) => value.listings)),
+      ),
+      Effect.orElseSucceed(() => []),
+    );
   const sources = Effect.fn("SharedPluginStore.sources")(function* () {
     const knownRaw = yield* optionalJson(
       path.join(options.claudeHome, "plugins", "known_marketplaces.json"),
@@ -147,6 +201,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
   });
   const listing = Effect.fn("SharedPluginStore.listing")(function* () {
     const roots = yield* sources();
+    const reviews = yield* readReviews();
     const native = (yield* options.installed()).plugins;
     const installed = new Set(native.map((item) => item.name));
     const installedPaths = new Map(
@@ -164,6 +219,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       repo?: string;
       uri: string;
       relative?: string | undefined;
+      rank: number;
     }> = [];
     for (const source of roots) {
       const raw = yield* optionalJson(source.catalog);
@@ -196,7 +252,11 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
             : plugin.source.repo
               ? `https://github.com/${plugin.source.repo}`
               : plugin.source.url;
+        const directory = reviews.find(
+          (entry) => pluginNameKey(entry.name) === pluginNameKey(plugin.name),
+        );
         entries.push({
+          rank: sharedPluginShelfRank(plugin.name, directory?.checks?.review),
           root: pluginRoot,
           uri: source.uri,
           ...(pluginDir ? { pluginDir, relative } : {}),
@@ -205,7 +265,11 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
             id,
             name: plugin.name,
             marketplace: source.name,
-            displayName: plugin.name,
+            displayName:
+              plugin.displayName?.trim() ||
+              (directory?.name.includes(" ")
+                ? directory.name
+                : sharedPluginDisplayName(directory?.name ?? plugin.name)),
             description: plugin.description ?? "",
             kind: "shared",
             installed: installed.has(id),
@@ -244,6 +308,10 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
           `${entry.name} ${entry.description} ${entry.marketplace}`.toLowerCase().includes(term),
         ),
       );
+      if (input.preview)
+        matching.sort(
+          (a, b) => a.rank - b.rank || a.entry.displayName.localeCompare(b.entry.displayName),
+        );
       const offset = input.cursor ? Number(input.cursor) : 0;
       if (!Number.isSafeInteger(offset) || offset < 0)
         return yield* Effect.fail({ message: "Invalid store cursor." });
@@ -344,7 +412,38 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
     },
     Effect.mapError(() => ({ message: "Could not read this plugin's details." })),
   );
+  const pluginRoot = Effect.fn("SharedPluginStore.pluginRoot")(
+    function* (id: string) {
+      const item = (yield* listing()).entries.find((item) => item.entry.id === id);
+      if (!item?.pluginDir)
+        return yield* Effect.fail({ message: "This plugin has not been cloned locally." });
+      const root = yield* fs.realPath(item.root);
+      const plugin = yield* fs.realPath(item.pluginDir);
+      if (plugin !== root && !plugin.startsWith(`${root}${path.sep}`))
+        return yield* Effect.fail({ message: "This plugin is outside its marketplace." });
+      return plugin;
+    },
+    Effect.mapError(() => ({ message: "Could not read this plugin's local contents." })),
+  );
   return {
+    contents: (id) =>
+      pluginRoot(id).pipe(
+        Effect.flatMap((root) =>
+          Effect.tryPromise({
+            try: () => readLocalPluginContents(root),
+            catch: () => ({ message: "Could not read this plugin's contents." }),
+          }),
+        ),
+      ),
+    skillDocument: (id, skillId) =>
+      pluginRoot(id).pipe(
+        Effect.flatMap((root) =>
+          Effect.tryPromise({
+            try: () => readLocalPluginSkill(root, skillId),
+            catch: () => ({ message: "Could not read this skill document." }),
+          }),
+        ),
+      ),
     search,
     entry,
     marketplaceSource: (id) =>

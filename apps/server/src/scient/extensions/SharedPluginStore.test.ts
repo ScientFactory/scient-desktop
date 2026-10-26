@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { makeSharedPluginStore } from "./SharedPluginStore.ts";
+import {
+  makeSharedPluginStore,
+  sharedPluginDisplayName,
+  sharedPluginShelfRank,
+} from "./SharedPluginStore.ts";
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const fixture = Effect.gen(function* () {
@@ -192,6 +196,50 @@ it.effect(
         expect(commands).toEqual([["plugin", "marketplace", "add", "org/lab"]]);
         yield* store.ensureMarketplace!({ name: "lab", source: "https://github.com/org/lab.git" });
         expect(commands).toHaveLength(1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it("ranks reviewed plugins before familiar brands and formats readable slug names", () => {
+  const entries = ["42crunch-api-security-testing", "github", "reviewed"].map((name) => ({
+    name,
+    rank: sharedPluginShelfRank(
+      name,
+      name === "reviewed" ? { state: "done", by: { type: "partner" } } : undefined,
+    ),
+  }));
+  expect(entries.sort((a, b) => a.rank - b.rank).map((entry) => entry.name)).toEqual([
+    "reviewed",
+    "github",
+    "42crunch-api-security-testing",
+  ]);
+  expect(sharedPluginShelfRank("unknown", { state: "pending", by: { type: "anthropic" } })).toBe(2);
+  expect(sharedPluginDisplayName("github-api-pdf-tools")).toBe("GitHub API PDF Tools");
+});
+
+it.effect(
+  "previews reviewed plugins before brands and other entries regardless of catalog order",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { home, clone, path, write } = yield* fixture;
+        yield* write(path.join(clone, ".claude-plugin", "marketplace.json"), {
+          name: "claude-plugins-official",
+          plugins: [
+            { name: "other", source: "./plugins/other" },
+            { name: "github", displayName: "GitHub", source: "./plugins/github" },
+            { name: "review", source: "./plugins/review" },
+          ],
+        });
+        const store = yield* makeSharedPluginStore({
+          kind: "claude",
+          claudeHome: home,
+          installed: () => Effect.succeed({ plugins: [], sequence: 1 }),
+          run: () => Effect.fail({ message: "Read-only fixture" }),
+        });
+        expect(
+          (yield* store.search({ preview: true })).entries.map((entry) => entry.displayName),
+        ).toEqual(["Review", "GitHub", "Other"]);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );

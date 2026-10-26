@@ -4,6 +4,10 @@ import * as Rpc from "effect/rpc/Rpc";
 import { ExtensionIconDataUri } from "./extensionIcon.ts";
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  ExtensionPluginContentsInput,
+  ExtensionPluginContents,
+  ExtensionSkillDocumentInput,
+  ExtensionSkillDocument,
   ConnectorAddInput,
   ConnectorAddResult,
   ConnectorRemoveInput,
@@ -40,6 +44,8 @@ export const SCIENT_EXTENSION_WS_METHODS = {
   extensionsProviderStoreSearch: "extensions.providerStore.search",
   extensionsProviderStoreEntry: "extensions.providerStore.entry",
   extensionsList: "extensions.list",
+  extensionsPluginContents: "extensions.plugins.contents",
+  extensionsSkillDocument: "extensions.skills.document",
   extensionsSubscribeChanges: "extensions.subscribeChanges",
   extensionsConnectorAdd: "extensions.connectors.add",
   extensionsConnectorStartSignIn: "extensions.connectors.startSignIn",
@@ -168,3 +174,19 @@ export const WsExtensionsBrandIconRpc = Rpc.make(SCIENT_EXTENSION_WS_METHODS.ext
   success: Schema.Struct({ icons: Schema.Record(Schema.String, ExtensionIconDataUri) }),
   error: ExtensionsRpcError,
 });
+export const WsExtensionsPluginContentsRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsPluginContents,
+  {
+    payload: ExtensionPluginContentsInput,
+    success: ExtensionPluginContents,
+    error: ExtensionsRpcError,
+  },
+);
+export const WsExtensionsSkillDocumentRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsSkillDocument,
+  {
+    payload: ExtensionSkillDocumentInput,
+    success: ExtensionSkillDocument,
+    error: ExtensionsRpcError,
+  },
+);

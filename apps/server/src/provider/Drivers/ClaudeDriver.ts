@@ -309,7 +309,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     const retired = yield* Deferred.make<void>();
     yield* Effect.addFinalizer(() => Deferred.succeed(retired, undefined));
     const refreshInventory = yield* makeClaudeAccountInventoryRefresh(
-      Ref.get(lastGoodCapabilities),
+      Effect.suspend(() => resolveCapabilities).pipe(Effect.orElseSucceed(() => undefined)),
       probeClaudeAccountServers(effectiveConfig, effectiveProcessEnv, serverConfig.stateDir).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

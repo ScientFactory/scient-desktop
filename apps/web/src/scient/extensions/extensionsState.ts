@@ -112,6 +112,20 @@ export function createExtensionsAtoms<R, E>(
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),
+    pluginContents: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:plugin-contents",
+      tag: WS_METHODS.extensionsPluginContents,
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+      refreshTrigger: changesOf,
+    }),
+    skillDocument: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:skill-document",
+      tag: WS_METHODS.extensionsSkillDocument,
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+      refreshTrigger: changesOf,
+    }),
     providerStoreEntry: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:provider-store-entry",
       tag: WS_METHODS.extensionsProviderStoreEntry,
@@ -227,3 +241,5 @@ export const extensionsProviderStorePage = extensionsAtoms.providerStorePage;
 export const extensionsProviderStoreEntry = extensionsAtoms.providerStoreEntry;
 
 export const extensionsBrandIcon = extensionsAtoms.brandIcon;
+export const extensionsPluginContents = extensionsAtoms.pluginContents;
+export const extensionsSkillDocument = extensionsAtoms.skillDocument;
