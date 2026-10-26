@@ -56,7 +56,7 @@ import {
 } from "~/scient/rightPanel/useScientRightPanelOpeners";
 import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelContent";
 import { type OptimisticUserMessage } from "~/scient/threadQueue/optimisticQueuePresentation";
-import { useThreadQueue } from "~/scient/threadQueue/useThreadQueue";
+import { useLegacyQueueRecoveryError } from "~/scient/threadQueue/useLegacyQueueRecoveryError";
 import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
 import {
   ScientRevertDialogDiagnostics,
@@ -1550,14 +1550,11 @@ function ChatViewContent(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeRuntime);
-  // SCIENT-FORK:START — Scient thread queue: pending composer payloads for
-  // this thread. Server-thread-scoped only; local draft threads have no
-  // queue surface.
-  const threadQueue = useThreadQueue({
-    environmentId: isServerThread ? environmentId : null,
-    threadId: isServerThread && activeThread ? activeThread.id : null,
-    threadBusy: phase === "running",
-  });
+  // SCIENT-FORK:START — saved pre-native queue work that needs recovery says so in the queue.
+  const legacyQueueRecoveryError = useLegacyQueueRecoveryError(
+    isServerThread ? environmentId : null,
+    isServerThread && activeThread ? activeThread.id : null,
+  );
   const queueContextKeyRef = useRef(activeThreadKey);
   useLayoutEffect(() => {
     queueContextKeyRef.current = activeThreadKey;
@@ -2730,11 +2727,9 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — retire admitted previews permanently so editing or deleting a queue row
   // cannot reveal them again.
   const queuedAdmissionIds = new Set(
-    isServerThread
-      ? (serverProjection?.runs
-          .filter((run) => run.status === "queued")
-          .map((run) => run.userMessageId) ?? [])
-      : threadQueue.items.map((item) => item.messageId),
+    serverProjection?.runs
+      .filter((run) => run.status === "queued")
+      .map((run) => run.userMessageId) ?? [],
   );
   if (
     optimisticUserMessages.some(
@@ -3491,7 +3486,6 @@ function ChatViewContent(props: ChatViewProps) {
   const { onSend } = useComposerSend({
     queueEditsReady,
     queueContextKeyRef,
-    threadQueue,
     serverProjection,
     hasHeldQueuedRuns,
     onForkConversation,
@@ -3601,7 +3595,7 @@ function ChatViewContent(props: ChatViewProps) {
           threadId={activeThread.id}
           optimisticMessages={optimisticUserMessages}
           // SCIENT-FORK:START — queued edits live in Scient edit sessions (scient/threadQueue/editSession).
-          error={threadQueue.error ?? queueEditStorageError}
+          error={legacyQueueRecoveryError ?? queueEditStorageError}
           editingRunId={queueEdit?.nativeRun?.runId ?? null}
           onEditQueuedRun={beginEditingQueuedRunStable}
           onCancelEdit={() => {

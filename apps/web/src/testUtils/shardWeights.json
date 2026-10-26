@@ -1006,7 +1006,6 @@
   "src/scient/threadQueue/optimisticQueuePresentation.test.ts": 0.012,
   "src/scient/threadQueue/queueImageRestore.test.ts": 0.026,
   "src/scient/threadQueue/submission.test.ts": 0.131,
-  "src/scient/threadQueue/useThreadQueue.browser.test.tsx": 0.065,
   "src/scient/threadQueue/workingPlaceholder.test.ts": 0.008,
   "src/scient/threadTimeline/keptAnswers.test.ts": 0.037,
   "src/scient/threadTimeline/V2TimelinePresentation.test.ts": 0.018,
