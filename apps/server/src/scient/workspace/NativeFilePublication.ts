@@ -105,8 +105,11 @@ export interface NativeFilePublicationRequest {
     | "win-prepare-delete"
     | "win-resume"
     | "win-resume-stage"
+    | "win-resume-captured"
     | "win-restrict"
     | "win-capture"
+    | "win-remove-captured"
+    | "win-return-captured"
     | "win-install"
     | "win-restore-policy"
     | "win-release";

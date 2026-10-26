@@ -65,20 +65,20 @@ export async function probeWindowsRetention(directory: string, helper: string | 
       throw new Error("Windows retention volume failed capture/install qualification.");
   } finally {
     const folders = [NodePath.join(records, "probe"), records, scratch, directory];
-    const bindings = await Promise.all(
-      folders.map((folder) => observedDirectoryBinding(helper, folder)),
-    );
-    await withNativeFilePublicationLease(
-      helper,
-      await publicationLeaseBindings(helper, bindings),
-      async (lease) => {
-        for (const folder of folders.slice(0, -1)) {
-          for (const name of await NodeFSP.readdir(folder))
+    // Retire a child's pinned handles before deleting that child from its parent.
+    for (const folder of folders) {
+      const binding = await observedDirectoryBinding(helper, folder);
+      await withNativeFilePublicationLease(
+        helper,
+        await publicationLeaseBindings(helper, [binding]),
+        async (lease) => {
+          for (const name of folder === directory
+            ? [NodePath.basename(scratch)]
+            : await NodeFSP.readdir(folder))
             await removeNativeRetainedEntry(lease, folder, name);
-        }
-        await removeNativeRetainedEntry(lease, directory, NodePath.basename(scratch));
-      },
-      { mode: "exclusive" },
-    );
+        },
+        { mode: "exclusive" },
+      );
+    }
   }
 }

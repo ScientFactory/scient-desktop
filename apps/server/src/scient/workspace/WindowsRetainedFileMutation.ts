@@ -23,6 +23,7 @@ import {
   type RetainedMutationHooks,
   type MutationPoint,
 } from "./RetainedFileMutation.ts";
+import { windowsFileIdentity } from "./WindowsNativeFile.ts";
 import type {
   NativeFileBinding,
   NativeFileIdentity,
@@ -191,7 +192,7 @@ export async function runWindowsRetainedMutation(
   ) => lease.run({ operation, sourceName: source, destinationName: destination, binding });
   const peersIntact = async () => {
     const planned = new Set([
-      NodePath.relative(input.cwd, target),
+      NodePath.relative(input.cwd, target).replaceAll(NodePath.sep, "/"),
       ...(record.peerGuards ?? []).map((peer) => peer.path),
     ]);
     for (const peer of record.peerGuards ?? []) {
@@ -205,13 +206,30 @@ export async function runWindowsRetainedMutation(
     }
     return true;
   };
+  const settlePrune = async () => {
+    const removed = await command("win-remove-captured");
+    if (good(removed)) return finish("done");
+    await save({ phase: "restoring", failure: "target" });
+    const restored = await command("win-return-captured", "retained", NodePath.basename(target));
+    if (!good(restored)) return result();
+    const policy = await command("win-restore-policy");
+    return good(policy) ? finish("attention", "target") : result();
+  };
   let held = false;
   try {
     if (previous && record.phase !== "preparing") {
-      const current = await fileIdentity(target);
-      const kept = await fileIdentity(retained);
+      const current =
+        kind === "prune" ? await windowsFileIdentity(target) : await fileIdentity(target);
+      const kept =
+        kind === "prune" ? await windowsFileIdentity(retained) : await fileIdentity(retained);
       const staged = await fileIdentity(stage);
       if (same(await fileIdentity(published), record.stagedIdentity) && staged === null) {
+        if (
+          record.publication !== "windows-stage-create" &&
+          (!same(kept, record.originalIdentity) ||
+            (await fileRevision(retained)) !== (record.currentRevision ?? record.expected))
+        )
+          return finish("attention", "recovery");
         if ((await fileRevision(published)) !== stageRevision)
           return finish("attention", "recovery");
         await save({ publishedIdentity: record.stagedIdentity, publishedRevision: stageRevision });
@@ -235,14 +253,29 @@ export async function runWindowsRetainedMutation(
         await save({ sourceMutation: false, currentRevision: await fileRevision(target) });
         return finish("skipped", "revision");
       }
+      if (
+        kind === "prune" &&
+        kept === null &&
+        record.phase === "displaced" &&
+        record.capturedIdentity
+      )
+        return finish("done");
       if (record.publication !== "windows-stage-create") {
         if (
           !same(kept, record.originalIdentity) ||
-          (await fileRevision(retained)) !== (record.currentRevision ?? record.expected)
+          (kind !== "prune" &&
+            (await fileRevision(retained)) !== (record.currentRevision ?? record.expected))
         )
           return finish("attention", "recovery");
         await save({ capturedIdentity: record.originalIdentity, sourceMutation: true });
-        if (kind === "delete" || kind === "prune")
+        if (kind === "prune") {
+          const resumed = await command("win-resume-captured", "retained");
+          held = true;
+          if (resumed.code !== 0 || !same(resumed.sourceBefore, record.originalIdentity))
+            return result();
+          return settlePrune();
+        }
+        if (kind === "delete")
           return finish(
             current === null ? "done" : "attention",
             current === null ? null : "recovery",
@@ -264,7 +297,7 @@ export async function runWindowsRetainedMutation(
       if (
         record.expectedMutationEpoch &&
         input.bytes === undefined &&
-        record.sourceMutation === false
+        (record.sourceMutation === false || record.publication === "windows-stage-create")
       )
         return finish("skipped", "revision");
       const resumed = await command("win-resume-stage");
@@ -372,7 +405,8 @@ export async function runWindowsRetainedMutation(
       await save({ phase: "prepared" });
       await point("prepared");
       if (!creation) {
-        const snapshot = await inspectGuardedFile(target, input.guardMaxBytes);
+        const snapshot =
+          kind === "prune" ? null : await inspectGuardedFile(target, input.guardMaxBytes);
         if (
           kind !== "prune" &&
           (!snapshot ||
@@ -386,6 +420,8 @@ export async function runWindowsRetainedMutation(
         await save({ currentRevision: snapshot?.revision ?? null });
       }
       if (!(await peersIntact())) return finish("skipped", "revision");
+      if (kind === "prune" && (await NodeFSP.readdir(target)).length)
+        return finish("skipped", "target");
       await save({
         phase: "publishing",
         sourceMutation: true,
@@ -404,8 +440,11 @@ export async function runWindowsRetainedMutation(
         await point("displaced");
       }
     }
-    if (kind === "delete" || kind === "prune") return finish("done");
-    await save({ phase: "installing" });
+    if (kind === "delete") return finish("done");
+    if (kind === "prune") {
+      return settlePrune();
+    }
+    await save({ phase: "installing", sourceMutation: true });
     await point("install-intent");
     const installed = await command(
       "win-install",
