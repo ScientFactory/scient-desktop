@@ -244,7 +244,13 @@ class MuseReplayController {
   }
 
   receive(host: MuseReplayHost, actual: unknown): void {
-    if (this.failure !== null) return;
+    // SCIENT-FORK:START — a host spawned after a mismatch gets EOF, so its
+    // initialize request fails instead of waiting forever for replay output.
+    if (this.failure !== null) {
+      host.incoming.end();
+      return;
+    }
+    // SCIENT-FORK:END
     const entries = this.transcript.entries;
     let possible = false;
     for (let index = this.cursor; index < entries.length && !possible; index += 1) {
@@ -497,6 +503,7 @@ export function materializeScientMuseRequests(
           SCIENT_PULL_REQUEST_LINKING_INSTRUCTIONS,
         )
         .replace("you are running in T3 Code through ", "you are running in Scient through ")
+        .replace("open it in T3 Code's files viewer.", "open it in Scient's files viewer.")
         .replace("When the t3-code MCP server exposes ", "When the Scient MCP server exposes ")
         .replace("T3 Code wakes you when checks finish", "Scient wakes you when checks finish");
       return {

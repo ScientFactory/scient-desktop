@@ -115,6 +115,15 @@ const withBundledCompatibility = (snapshot: ServerProvider) =>
     undefined,
     ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
   );
+// SCIENT-FORK:START — a live instance's snapshots carry its native-inventory generation.
+const withoutLiveInventoryGeneration = ({
+  nativeInventoryGeneration,
+  ...snapshot
+}: ServerProvider) => {
+  assert.isString(nativeInventoryGeneration);
+  return snapshot;
+};
+// SCIENT-FORK:END
 
 const layerTestHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -1588,7 +1597,10 @@ it.layer(
         ).pipe(Scope.provide(scope));
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry.ProviderRegistry;
-          assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
+          assert.deepStrictEqual(
+            (yield* registry.getProviders).map(withoutLiveInventoryGeneration),
+            [initialProvider],
+          );
           assert.strictEqual(yield* Ref.get(refreshCalls), 0);
         }).pipe(Effect.provide(runtimeServices));
       }),
@@ -2435,7 +2447,9 @@ it.layer(
             [{ ...recoveredOpenCodeProvider.models[0], isDefault: true }],
           );
           assert.deepStrictEqual(
-            recoveredProviders.find((provider) => provider.instanceId === codexInstanceId),
+            recoveredProviders
+              .map(withoutLiveInventoryGeneration)
+              .find((provider) => provider.instanceId === codexInstanceId),
             withBundledCompatibility(codexProvider),
           );
 
@@ -2446,7 +2460,9 @@ it.layer(
             [{ ...changedCatalogProvider.models[0], isDefault: true }],
           );
           assert.deepStrictEqual(
-            changedProviders.find((provider) => provider.instanceId === codexInstanceId),
+            changedProviders
+              .map(withoutLiveInventoryGeneration)
+              .find((provider) => provider.instanceId === codexInstanceId),
             withBundledCompatibility(codexProvider),
           );
         }).pipe(Effect.provide(runtimeServices));
@@ -2894,15 +2910,18 @@ it.layer(
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry.ProviderRegistry;
 
-          assert.deepStrictEqual(yield* registry.getProviders, [
-            withBundledCompatibility(cachedProvider),
-          ]);
-          assert.deepStrictEqual(yield* registry.refresh(codexDriver), [
-            withBundledCompatibility(cachedProvider),
-          ]);
-          assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
-            withBundledCompatibility(cachedProvider),
-          ]);
+          assert.deepStrictEqual(
+            (yield* registry.getProviders).map(withoutLiveInventoryGeneration),
+            [withBundledCompatibility(cachedProvider)],
+          );
+          assert.deepStrictEqual(
+            (yield* registry.refresh(codexDriver)).map(withoutLiveInventoryGeneration),
+            [withBundledCompatibility(cachedProvider)],
+          );
+          assert.deepStrictEqual(
+            (yield* registry.refreshInstance(codexInstanceId)).map(withoutLiveInventoryGeneration),
+            [withBundledCompatibility(cachedProvider)],
+          );
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
@@ -3010,9 +3029,10 @@ it.layer(
 
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry.ProviderRegistry;
-          assert.deepStrictEqual(yield* registry.getProviders, [
-            withBundledCompatibility(codexProvider),
-          ]);
+          assert.deepStrictEqual(
+            (yield* registry.getProviders).map(withoutLiveInventoryGeneration),
+            [withBundledCompatibility(codexProvider)],
+          );
 
           yield* Ref.set(failNextList, true);
           yield* PubSub.publish(changes, undefined);

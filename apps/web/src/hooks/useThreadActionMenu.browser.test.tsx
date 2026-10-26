@@ -80,7 +80,10 @@ vi.mock("../state/environments", () => ({
 vi.mock("../state/threads", () => ({
   threadEnvironment: { markUnread: { command: "mark-unread" } },
 }));
-vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../state/server", () => ({
+  environmentServerConfigsAtom: {},
+  primaryServerKeybindingsAtom: {},
+}));
 vi.mock("../state/vcs", () => ({ vcsEnvironment: {} }));
 vi.mock("../state/orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));

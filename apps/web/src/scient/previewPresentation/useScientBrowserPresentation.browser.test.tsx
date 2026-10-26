@@ -100,7 +100,8 @@ it("does not replay an old hidden request after the user manually reopens the br
   usePreviewMiniPlayerStore.getState().open(ref, browserMiniPlayerSource("tab-a"));
   app.update([{ ...session("tab-a", false, "hidden"), updatedAt: "2026-10-08T00:00:01Z" }]);
   expect(tab()).toBe("tab-a");
-  app.update([session("tab-a", false, "hidden-again")]);
+  // The store keeps the newer snapshot, so a later request must also be later.
+  app.update([{ ...session("tab-a", false, "hidden-again"), updatedAt: "2026-10-08T00:00:02Z" }]);
   expect(player()).toBeNull();
 });
 

@@ -67,6 +67,14 @@ const withBundledCompatibility = (snapshot: ServerProvider) =>
     undefined,
     ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
   );
+// A live instance's snapshots carry its native-inventory generation.
+const withoutLiveInventoryGeneration = ({
+  nativeInventoryGeneration,
+  ...snapshot
+}: ServerProvider) => {
+  assert.isString(nativeInventoryGeneration);
+  return snapshot;
+};
 
 const TestHttpClientLive = Layer.merge(
   Layer.succeed(
@@ -885,23 +893,31 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             yield* Effect.gen(function* () {
               const registry = yield* ProviderRegistry.ProviderRegistry;
 
-              assert.deepStrictEqual(yield* registry.getProviders, [
-                withBundledCompatibility(cachedProvider),
-              ]);
-              assert.deepStrictEqual(yield* registry.refresh(codexDriver), [
-                withBundledCompatibility(cachedProvider),
-              ]);
-              assert.deepStrictEqual(yield* registry.refreshInstance(codexInstanceId), [
-                withBundledCompatibility(cachedProvider),
-              ]);
+              assert.deepStrictEqual(
+                (yield* registry.getProviders).map(withoutLiveInventoryGeneration),
+                [withBundledCompatibility(cachedProvider)],
+              );
+              assert.deepStrictEqual(
+                (yield* registry.refresh(codexDriver)).map(withoutLiveInventoryGeneration),
+                [withBundledCompatibility(cachedProvider)],
+              );
+              assert.deepStrictEqual(
+                (yield* registry.refreshInstance(codexInstanceId)).map(
+                  withoutLiveInventoryGeneration,
+                ),
+                [withBundledCompatibility(cachedProvider)],
+              );
               const strictRefreshError = yield* registry
                 .refreshInstanceStrict(codexInstanceId)
                 .pipe(Effect.flip);
               assert.strictEqual(strictRefreshError.operation, "refresh");
               assert.strictEqual(strictRefreshError.instanceId, codexInstanceId);
-              assert.deepStrictEqual(yield* registry.reloadInstance(codexInstanceId), [
-                withBundledCompatibility(cachedProvider),
-              ]);
+              assert.deepStrictEqual(
+                (yield* registry.reloadInstance(codexInstanceId)).map(
+                  withoutLiveInventoryGeneration,
+                ),
+                [withBundledCompatibility(cachedProvider)],
+              );
               const strictReloadError = yield* registry
                 .reloadInstanceStrict(codexInstanceId)
                 .pipe(Effect.flip);

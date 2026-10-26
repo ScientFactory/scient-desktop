@@ -1,3 +1,4 @@
+import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import { createElement } from "react";
 import { type ReactNode } from "react";
 import { render } from "../../../test/render";
@@ -5,6 +6,8 @@ import { render } from "../../../test/render";
 import "~/index.css";
 import { describe, expect, it, vi } from "vite-plus/test";
 vi.mock("~/hooks/useSettings", () => ({
+  useClientSettings: (selector: (settings: ClientSettings) => unknown) =>
+    selector(DEFAULT_CLIENT_SETTINGS),
   useEnvironmentIdentificationMode: () => "none",
 }));
 vi.mock("../SidebarStageBackdrop", () => ({

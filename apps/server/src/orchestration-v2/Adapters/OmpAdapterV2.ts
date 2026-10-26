@@ -1198,8 +1198,10 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               });
           }
           const { maxFrameBytes } = yield* client.limits;
-          let text = yield* providerMessageTextWithAttachmentPaths({
-            text: message.text,
+          let text = message.text;
+          // The frame keeps the attachment lines; a private prompt file holds only the text.
+          const attachmentContext = yield* providerMessageTextWithAttachmentPaths({
+            text: "",
             attachments: message.attachments,
             resolveAttachmentPath: (attachment) => attachmentPaths.get(attachment) ?? null,
             resolveExtractedTextPath: (path) =>
@@ -1214,7 +1216,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               maxFrameBytes,
               buildMessage: (externalImages) =>
                 [
-                  text,
+                  ...(text ? [text] : []),
+                  ...(attachmentContext ? [attachmentContext] : []),
                   ...(externalImages.length === 0
                     ? []
                     : [

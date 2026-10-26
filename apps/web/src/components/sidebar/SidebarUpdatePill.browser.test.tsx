@@ -43,7 +43,8 @@ vi.mock("./useUpdateEverything", () => ({
   }),
 }));
 
-vi.mock("./updateEverythingRun", () => ({
+vi.mock("./updateEverythingRun", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./updateEverythingRun")>()),
   useUpdateEverythingRun: () => null,
   clearSavedUpdateEverythingResult: vi.fn(),
   saveUpdateEverythingResult: vi.fn(),

@@ -12,6 +12,9 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+// SCIENT-FORK:START
+import { useRetryCachedAssetFailure } from "~/scient/images/useRetryCachedAssetFailure";
+// SCIENT-FORK:END
 
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { cn } from "../../lib/utils";
@@ -349,6 +352,9 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : undefined,
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
+  // SCIENT-FORK:START — reopening retries a cached failure; a cached URL is kept.
+  useRetryCachedAssetFailure(assetUrl);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — rooted file resources retain literal path identity.
   const path =
     resource._tag === "media-file"

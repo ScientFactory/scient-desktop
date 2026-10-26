@@ -24,6 +24,15 @@ vi.mock(import("~/lib/openPullRequestLink"), async (original) => ({
   ...(await original()),
   useOpenChangeRequestLink: () => openChangeRequestLink,
 }));
+vi.mock(import("~/assets/longLivedAssetUrls"), async (original) => ({
+  ...(await original()),
+  useLongLivedAssetUrl: () => ({
+    _tag: "Success",
+    url: "https://environment.test/original.html",
+    expiresAt: Date.now() + cachedUrl.lifeMs,
+    refresh: () => {},
+  }),
+}));
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlState: () => ({

@@ -2584,7 +2584,8 @@ describe("OpenCodeAdapterV2", () => {
           },
           session: {
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-            get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            // Scient installs each turn's permission rules before prompting.
+            ...nativePermissionPeer(),
             promptAsync: async () => {
               prompts++;
               return { data: true };

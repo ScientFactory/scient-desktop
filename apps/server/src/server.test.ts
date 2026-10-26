@@ -7951,6 +7951,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 instanceId: instanceIds[1],
                 cwd,
                 fresh: mode === "workspace-fresh",
+                awaitNativeInventory: false,
               });
               return probe(versionCache);
             },
