@@ -34,6 +34,7 @@ import {
   Stream,
 } from "effect";
 import { TOTP, URI } from "otpauth";
+import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import {
   AccountsService,
   type AccountSessionScope,
@@ -86,6 +87,7 @@ export const layer = Layer.effect(
     const sources = yield* AccountSources;
     const vault = yield* AccountVault;
     const serviceScope = yield* Scope.Scope;
+    const sourceControl = yield* Effect.serviceOption(SourceControlProviderRegistry);
     const writes = yield* Semaphore.make(1);
     const events = yield* PubSub.sliding<AccountsSnapshot>({ capacity: 1, replay: 1 });
     let state: AccountsState = emptyState;
@@ -108,6 +110,39 @@ export const layer = Layer.effect(
 
     const snapshotNow = Effect.gen(function* () {
       const customModelKeys = yield* sources.customModelKeys.pipe(Effect.orElseSucceed(() => []));
+      const providers = Option.isSome(sourceControl) ? yield* sourceControl.value.discover : [];
+      const github = providers.find((provider) => provider.kind === "github");
+      const githubAccounts =
+        github?.auth.accounts?.filter((account) => account.authenticated) ?? [];
+      if (
+        github &&
+        githubAccounts.length === 0 &&
+        github.auth.status === "authenticated" &&
+        Option.isSome(github.auth.account)
+      ) {
+        githubAccounts.push({
+          account: github.auth.account.value,
+          host: Option.getOrElse(github.auth.host, () => "github.com"),
+          active: true,
+          authenticated: true,
+        });
+      }
+      const managedElsewhere: NonNullable<AccountsSnapshot["managedElsewhere"]> = [
+        ...githubAccounts.map((account) => ({
+          kind: "github" as const,
+          id: `${account.host}:${account.account}`,
+          name: account.account,
+          detail: account.host,
+          href: "/settings/source-control" as const,
+        })),
+        ...customModelKeys.map((connection) => ({
+          kind: "custom-model" as const,
+          id: connection.connectionId,
+          name: connection.name,
+          detail: connection.origin,
+          href: "/settings/custom-models" as const,
+        })),
+      ];
       return {
         agentAccess: state.agentAccess,
         accounts: state.accounts.map((account) => account.summary),
@@ -120,6 +155,7 @@ export const layer = Layer.effect(
         approvals: [...pending.values()].map((entry) => entry.approval),
         recentActivity,
         customModelKeys,
+        managedElsewhere,
       } satisfies AccountsSnapshot;
     });
     const publish = Effect.gen(function* () {

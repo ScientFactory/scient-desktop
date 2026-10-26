@@ -358,6 +358,17 @@ export const AccountsSnapshot = Schema.Struct({
   approvals: Schema.Array(AccountApproval),
   recentActivity: Schema.Array(AccountActivityEntry),
   customModelKeys: Schema.Array(AccountCustomModelKey),
+  managedElsewhere: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        kind: Schema.Literals(["github", "custom-model"]),
+        id: TrimmedNonEmptyString,
+        name: TrimmedNonEmptyString,
+        detail: Schema.optional(TrimmedNonEmptyString),
+        href: Schema.Literals(["/settings/source-control", "/settings/custom-models"]),
+      }),
+    ),
+  ),
 });
 export type AccountsSnapshot = typeof AccountsSnapshot.Type;
 

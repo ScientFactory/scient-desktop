@@ -179,6 +179,52 @@ function AccountRow({
   );
 }
 
+function ManagedAccountRow({
+  row,
+}: {
+  row: {
+    kind: "github" | "custom-model" | "extension";
+    name: string;
+    detail?: string | undefined;
+    href: "/settings/source-control" | "/settings/custom-models" | "/settings/extensions/installed";
+  };
+}) {
+  const iconUrl = accountIconUrl(
+    row.kind === "github" ? ["github.com"] : row.detail ? [row.detail] : [],
+    row.name,
+  );
+  return (
+    <SettingsRow
+      title={
+        <span className="flex min-w-0 items-baseline gap-2">
+          {iconUrl ? (
+            <span
+              aria-hidden
+              className="flex size-6 shrink-0 items-center justify-center self-center overflow-hidden rounded-md border bg-white p-0.5 [color-scheme:light] dark:border-white/10"
+            >
+              <img alt="" src={iconUrl} className="size-full object-contain" />
+            </span>
+          ) : (
+            <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
+          )}
+          <span className="truncate">{row.name}</span>
+          {row.detail ? (
+            <span className="truncate text-xs text-muted-foreground">{row.detail}</span>
+          ) : null}
+          <Link to={row.href} className="shrink-0 text-xs text-muted-foreground hover:underline">
+            Managed in{" "}
+            {row.kind === "github"
+              ? "Source Control"
+              : row.kind === "custom-model"
+                ? "Custom models"
+                : "Extensions"}
+          </Link>
+        </span>
+      }
+    />
+  );
+}
+
 function AccountsContent({
   environmentId,
   snapshot,
@@ -195,18 +241,23 @@ function AccountsContent({
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
   const firstRun = snapshot.accounts.length === 0 && userProfiles.length === 0;
-  const connectorRows = inventory.data?.connectors.map((connector) => (
-    <SettingsRow
-      key={connector.connectorId}
-      title={connector.displayName}
-      description="Extension"
-      control={
-        <Link to="/settings/extensions/installed" className="text-sm text-primary hover:underline">
-          Extensions
-        </Link>
-      }
-    />
-  ));
+  const managedRows = [
+    ...(snapshot.managedElsewhere ??
+      snapshot.customModelKeys.map((connection) => ({
+        kind: "custom-model" as const,
+        id: connection.connectionId,
+        name: connection.name,
+        detail: connection.origin,
+        href: "/settings/custom-models" as const,
+      }))),
+    ...(inventory.data?.connectors.map((connector) => ({
+      kind: "extension" as const,
+      id: connector.connectorId,
+      name: connector.displayName,
+      detail: new URL(connector.url).origin,
+      href: "/settings/extensions/installed" as const,
+    })) ?? []),
+  ];
   return (
     <div className="grid gap-8">
       <SettingsSection title="Accounts" hideTitle>
@@ -251,7 +302,7 @@ function AccountsContent({
         canWrite={canWrite}
         onImport={() => setDialog("import")}
       />
-      {!firstRun || snapshot.accounts.length > 0 || connectorRows?.length ? (
+      {!firstRun || snapshot.accounts.length > 0 || managedRows.length ? (
         <SettingsSection
           id="accounts-list"
           title="Accounts"
@@ -276,7 +327,9 @@ function AccountsContent({
               onActivity={setActivity}
             />
           ))}
-          {connectorRows}
+          {managedRows.map((row) => (
+            <ManagedAccountRow key={`${row.kind}:${row.id}`} row={row} />
+          ))}
         </SettingsSection>
       ) : null}
       <PasswordStores
