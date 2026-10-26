@@ -31,8 +31,8 @@ export interface DesktopCapturedSignIn {
 
 export interface DesktopSignInFill {
   readonly tabId: string;
-  /** Bind an asynchronous values lookup to the origin the user requested. */
-  readonly origin?: string;
+  /** Reject if the main frame or a filled frame has a different origin at fill time. */
+  readonly expectedOrigin?: string;
   readonly username?: string;
   readonly password?: string;
   readonly otp?: string;
@@ -40,6 +40,8 @@ export interface DesktopSignInFill {
 
 /** Scient Accounts members of the desktop bridge (`ScientDesktopBridge.accounts`). */
 export interface DesktopAccountsBridge {
+  /** Set only when fill enforces expectedOrigin in the native guest before applying values. */
+  readonly originBoundFill?: true;
   readonly sourceProfiles: () => Promise<ReadonlyArray<DesktopSourceProfileDetails>>;
   /** Omit environmentId for the primary local environment. */
   readonly signedInSites: (

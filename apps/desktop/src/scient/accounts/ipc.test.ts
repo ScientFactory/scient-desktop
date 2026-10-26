@@ -144,7 +144,9 @@ it.effect("accepts fill only from the application main frame and rejects invalid
     const f = fixture();
     const input = { tabId: "tab", password: NodeCrypto.randomBytes(16).toString("hex") };
     expect(yield* f.run(fill(input, f.mainEvent))).toBe(true);
-    expect(yield* f.run(fill({ ...input, origin: "https://other.test" }, f.mainEvent))).toBe(false);
+    expect(
+      yield* f.run(fill({ ...input, expectedOrigin: "https://other.test" }, f.mainEvent)),
+    ).toBe(false);
     expect(yield* f.run(fill(input, f.guestEvent))).toBe(false);
     expect(yield* f.run(fill(input, { ...f.mainEvent, senderFrame: {} }))).toBe(false);
     expect(yield* f.run(fill({ ...input, tabId: 42 }, f.mainEvent))).toBe(false);

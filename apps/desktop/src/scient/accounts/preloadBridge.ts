@@ -6,6 +6,7 @@ export function makeDesktopAccountsBridge(
   ipc: Pick<IpcRenderer, "invoke" | "on" | "removeListener">,
 ): DesktopAccountsBridge {
   return {
+    originBoundFill: true,
     sourceProfiles: () => ipc.invoke(Channels.SOURCE_PROFILES),
     signedInSites: (profileId, environmentId) =>
       ipc.invoke(Channels.SIGNED_IN_SITES, { profileId, environmentId }),

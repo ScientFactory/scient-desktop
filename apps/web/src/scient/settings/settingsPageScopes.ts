@@ -8,11 +8,17 @@ import type { SettingsScopeSearch } from "~/components/settings/settingsScope";
 const SINGLE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   "/settings/providers": true,
   "/settings/documents": true,
+  // SCIENT-FORK:START — Scient Accounts: scope account grants to one server.
+  "/settings/accounts": true,
+  // SCIENT-FORK:END
   "/settings/extensions": true,
 };
 
 const SERVER_ONLY_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   "/settings/documents": true,
+  // SCIENT-FORK:START — Scient Accounts: scope account grants to one server.
+  "/settings/accounts": true,
+  // SCIENT-FORK:END
   "/settings/extensions": true,
 };
 

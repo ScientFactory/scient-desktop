@@ -23,7 +23,7 @@ import * as Channels from "./protocol.ts";
 const Value = Schema.String.check(Schema.isMaxLength(65_536));
 const Fill = Schema.Struct({
   tabId: DesktopPreviewTabInputSchema.fields.tabId,
-  origin: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
+  expectedOrigin: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
   username: Schema.optional(Value),
   password: Schema.optional(Value),
   otp: Schema.optional(Value),
@@ -70,7 +70,10 @@ export const fill = Effect.fn("DesktopAccounts.fill")(function* (
     const contents = yield* manager.accountsWebContents(input.value.tabId);
     if (contents.isDestroyed() || contents.getType() !== "webview") return false;
     const origin = safeHttpOrigin(contents.getURL());
-    if (origin === null || (input.value.origin !== undefined && input.value.origin !== origin))
+    if (
+      origin === null ||
+      (input.value.expectedOrigin !== undefined && input.value.expectedOrigin !== origin)
+    )
       return false;
     return yield* Effect.tryPromise({
       try: () =>
