@@ -605,61 +605,61 @@
     "scient": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "scient-agent-darwin-arm64",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.2/scient-agent-darwin-arm64",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.3/scient-agent-darwin-arm64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "bef1d224a5060450fdfc5a28635d4d3755e7c38b2a7c7b17922a5e07c478999f"
+            "digest": "dbfd6ccb2dbb3a3b331eb771f3dfe97f057aa092e4cc8b6cf31b3df4eefe8fe0"
           },
-          "size": 201043232
+          "size": 201835808
         },
         "darwin-x64": {
           "artifactName": "scient-agent-darwin-x64",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.2/scient-agent-darwin-x64",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.3/scient-agent-darwin-x64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "ab56d10bb91d66ecc5b1cd27413d6c77013f4b2efd7c7797e67f9964a21f9c22"
+            "digest": "e866766927c842fb5866ec11d6f5845b4ef60198a4c88eb90b64b3cd0bfa4565"
           },
-          "size": 246042144
+          "size": 246950432
         },
         "linux-arm64-glibc": {
           "artifactName": "scient-agent-linux-arm64",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.2/scient-agent-linux-arm64",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.3/scient-agent-linux-arm64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "fc8a1159b8697c114734c1a1052be7db1b004d5550fb5ea10da5e5c80cae1bf0"
+            "digest": "306e29f9a6b01b9347f05726186ff1ffdb2b752c9bbb01d64dad74e22609f5be"
           },
-          "size": 223856936
+          "size": 224512296
         },
         "linux-x64-glibc": {
           "artifactName": "scient-agent-linux-x64",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.2/scient-agent-linux-x64",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.3/scient-agent-linux-x64",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "ca9f9ce8193a11e702a567307af543197803712516647732e66748e7e16f1c0b"
+            "digest": "55d2e176810b18b0b039f4489bba2d07e8bc147214db6425c0187325b89234e6"
           },
-          "size": 264697312
+          "size": 265504224
         },
         "win32-arm64": {
           "artifactName": "scient-agent-windows-arm64.exe",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.2/scient-agent-windows-arm64.exe",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.3/scient-agent-windows-arm64.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "168c7c97a59eb4de3e89a1248b0a2ca3da1fda32a57dc7c166242ad4485f003f"
+            "digest": "de354aa704cea62cacaac8fa0967aadae1ab0bfd0b1874873d54ae2a8325a69a"
           },
-          "size": 213585408
+          "size": 214403584
         },
         "win32-x64": {
           "artifactName": "scient-agent-windows-x64.exe",
-          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.2/scient-agent-windows-x64.exe",
+          "url": "https://github.com/ScientFactory/scient-agent/releases/download/v0.1.3/scient-agent-windows-x64.exe",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "1dedcc3c6b11ea1a9786540223ec638061802e3929e06e4900519d25da96629f"
+            "digest": "8d4907d257723f61206cc6dd427fc18af1182b433f3fa349c581b9d2d125cdcd"
           },
-          "size": 259160576
+          "size": 259943936
         }
       }
     },
