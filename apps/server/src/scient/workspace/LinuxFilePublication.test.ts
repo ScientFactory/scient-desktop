@@ -6,7 +6,11 @@ import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import { platformFileIdentity } from "./PlatformFileIdentity.ts";
-import { bindNativeFilePublication } from "./NativeFilePublication.ts";
+import {
+  bindNativeFilePublication,
+  ensureNativePrivateRetentionDirectory,
+  nativeLinuxFileIdentity,
+} from "./NativeFilePublication.ts";
 import {
   filePublicationProbeHelper,
   filePublicationTestHelper,
@@ -156,46 +160,120 @@ describe.skipIf(!linux || !available)("Linux held-folder publication", () => {
     }
   });
 
-  it("qualifies loopback ext4/XFS/Btrfs and refuses tmpfs/overlay when root is available", () => {
-    const missing = [
-      "mkfs.ext4",
-      "mkfs.xfs",
-      "mkfs.btrfs",
-      "mount",
-      "setfacl",
-      "btrfs",
-      "python3",
-      "blkid",
-      "losetup",
-      "udevadm",
-    ].filter((command) => NodeChildProcess.spawnSync("which", [command]).status !== 0);
-    const root = process.getuid?.() === 0;
-    const sudo = !root && NodeChildProcess.spawnSync("sudo", ["-n", "true"]).status === 0;
-    if (missing.length || (!root && !sudo)) {
-      const reason = `Linux loopback fixtures NOT RUN: missing ${missing.join(", ") || "root or passwordless sudo"}.`;
+  // CI runs this with passwordless sudo; elsewhere it says why it did not run.
+  it("admits ext4, XFS and Btrfs and refuses tmpfs and overlay, on real mounts", async () => {
+    const tools = ["mkfs.ext4", "mkfs.xfs", "mkfs.btrfs", "btrfs", "setfacl", "getfacl", "blkid"];
+    const missing = tools.filter((tool) => NodeChildProcess.spawnSync("which", [tool]).status);
+    if (missing.length > 0 || NodeChildProcess.spawnSync("sudo", ["-n", "true"]).status !== 0) {
+      const reason = `Linux filesystem mounts NOT RUN: missing ${missing.join(", ") || "passwordless sudo"}.`;
       if (process.env.CI) throw new Error(reason);
       process.stderr.write(`${reason}\n`);
       return;
     }
-    const helper = NodeChildProcess.execFileSync;
-    return Promise.all([filePublicationTestHelper(), filePublicationProbeHelper()]).then(
-      ([binary, probe]) => {
-        const args = [
-          NodePath.resolve(
-            import.meta.dirname,
-            "../../../../../native/file-exchange/linux-fixtures.sh",
-          ),
-          binary!,
-          probe!,
-        ];
-        const result = root
-          ? helper("bash", args, { encoding: "utf8" })
-          : helper("sudo", ["-n", "bash", ...args], { encoding: "utf8" });
-        expect(result).toContain("PASS Linux btrfs:");
-        expect(result).toContain("PASS Linux tmpfs refusal");
-        expect(result).toContain("PASS Linux overlay refusal");
-        process.stdout.write(result);
-      },
+    const script = NodePath.resolve(
+      import.meta.dirname,
+      "../../../../../native/file-exchange/linux-fixtures.sh",
     );
+    const root = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-linux-filesystems-")),
+    );
+    const owner = `${process.getuid!()}:${process.getgid!()}`;
+    const run = (command: string, args: ReadonlyArray<string>, env = process.env) =>
+      NodeChildProcess.execFileSync(command, args, { encoding: "utf8", env }).trim();
+    try {
+      run("sudo", ["-n", "bash", script, "mount", root, owner]);
+      const helper = (await filePublicationTestHelper())!;
+      for (const format of ["ext4", "xfs", "btrfs"] as const) {
+        const mount = NodePath.join(root, format);
+        const found = await nativeLinuxFileIdentity(mount, true, helper);
+        expect(found?.reason).toBeNull();
+        expect(found?.identity?.volume).toBe(
+          run("blkid", ["-s", "UUID", "-o", "value", `${mount}.img`]).toLowerCase(),
+        );
+        expect(found?.identity?.subvolumeId != null).toBe(format === "btrfs");
+        // A retained create, then a replacement, through the production path.
+        const paper = NodePath.join(mount, "paper");
+        const records = NodePath.join(mount, "records");
+        const target = NodePath.join(paper, "main.tex");
+        await NodeFSP.mkdir(paper);
+        await NodeFSP.mkdir(records, { mode: 0o700 });
+        const base = {
+          cwd: paper,
+          relativePath: "main.tex",
+          retentionDirectory: records,
+          nativePublicationHelper: helper,
+        };
+        const created = await mutateRetainedFile(
+          {
+            ...base,
+            id: "create",
+            kind: "create",
+            condition: "absent",
+            expectedRevision: null,
+            bytes: Buffer.from("first"),
+          },
+          target,
+        );
+        expect(created.outcome).toBe("done");
+        const replaced = await mutateRetainedFile(
+          {
+            ...base,
+            id: "write",
+            kind: "write",
+            condition: "revision",
+            expectedRevision: bytesRevision(Buffer.from("first")),
+            bytes: Buffer.from("second"),
+          },
+          target,
+        );
+        expect(replaced.outcome).toBe("done");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("second");
+      }
+      // Kept copies in another Btrfs subvolume would not share the manuscript's inodes.
+      await expect(
+        bindNativeFilePublication(helper, {
+          rootPath: NodePath.join(root, "btrfs/paper"),
+          parentRelativePath: "",
+          recordPath: NodePath.join(root, "btrfs/other-subvolume"),
+        }),
+      ).rejects.toThrow();
+      // A new private folder sheds an inherited default ACL; an existing folder is never repaired.
+      const paper = NodePath.join(root, "ext4/paper");
+      run("setfacl", ["-m", "d:u:65534:rwx", paper]);
+      await ensureNativePrivateRetentionDirectory(helper, NodePath.join(paper, "private"));
+      expect(run("getfacl", ["--omit-header", "-d", NodePath.join(paper, "private")])).toBe("");
+      await NodeFSP.mkdir(NodePath.join(paper, "existing"), { mode: 0o700 });
+      await expect(
+        ensureNativePrivateRetentionDirectory(helper, NodePath.join(paper, "existing")),
+      ).rejects.toThrow();
+      // Without the UUID ioctl the device's UUID link is used, and an ambiguous device refuses.
+      const probe = (await filePublicationProbeHelper())!;
+      const mount = NodePath.join(root, "ext4");
+      const links = NodePath.join(root, "uuid-links");
+      await NodeFSP.mkdir(links);
+      const device = run("findmnt", ["-no", "SOURCE", mount]);
+      const uuid = run("blkid", ["-s", "UUID", "-o", "value", `${mount}.img`]).toLowerCase();
+      await NodeFSP.symlink(device, NodePath.join(links, uuid));
+      const inquire = () =>
+        JSON.parse(
+          run(probe, ["--linux-folder=1", mount, "directory"], {
+            ...process.env,
+            SCIENT_LINUX_UUID_DIRECTORY: links,
+          }),
+        );
+      expect(inquire().identity?.volume).toBe(uuid);
+      await NodeFSP.symlink(device, NodePath.join(links, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+      expect(inquire()).toMatchObject({ identity: null, reason: "no-volume-identity" });
+      for (const [format, reason] of [
+        ["tmpfs", "volatile-filesystem"],
+        ["overlay", "unsupported-filesystem"],
+      ] as const)
+        expect(await nativeLinuxFileIdentity(NodePath.join(root, format), true, helper)).toEqual({
+          identity: null,
+          reason,
+        });
+    } finally {
+      run("sudo", ["-n", "bash", script, "unmount", root]);
+    }
   });
 });
