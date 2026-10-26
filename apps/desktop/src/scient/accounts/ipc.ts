@@ -82,9 +82,7 @@ export const fill = Effect.fn("DesktopAccounts.fill")(function* (
     return yield* Effect.tryPromise({
       try: () =>
         contents
-          .executeJavaScriptInIsolatedWorld(999, [
-            { code: loginFillScript(input.value, origin, input.value) },
-          ])
+          .executeJavaScript(loginFillScript(input.value, origin, input.value))
           .then((result: unknown) => result === true),
       catch: unavailable,
     });
@@ -220,7 +218,7 @@ const readLoginForm = Effect.fn("DesktopAccounts.readLoginForm")(function* (tabI
   if (contents.isDestroyed() || contents.getType() !== "webview" || identity?.persistent !== true)
     return null;
   const result = yield* Effect.tryPromise({
-    try: () => contents.executeJavaScriptInIsolatedWorld(999, [{ code: loginFormReportScript }]),
+    try: () => contents.executeJavaScript(loginFormReportScript),
     catch: unavailable,
   });
   const report = decodeFormReport(result);

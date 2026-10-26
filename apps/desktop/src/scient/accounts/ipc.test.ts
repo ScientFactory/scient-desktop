@@ -40,7 +40,7 @@ function fixture() {
     isDestroyed: () => false,
     getType: () => "webview",
     getURL: () => url,
-    executeJavaScriptInIsolatedWorld: async () => true,
+    executeJavaScript: async () => true,
   } as unknown as Electron.WebContents;
   let registered = true;
   const scopes: unknown[] = [];

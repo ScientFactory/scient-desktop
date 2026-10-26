@@ -117,7 +117,7 @@ export interface LoginDocumentState {
 }
 
 export function loginDocumentState() {
-  // Electron's preload and native fill run in the same isolated world (999).
+  // Preview webviews disable context isolation, so the preload, report and fill share the page's world.
   return (globalThis as typeof globalThis & { __scientAccountsLogin?: LoginDocumentState })
     .__scientAccountsLogin;
 }
