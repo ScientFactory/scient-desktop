@@ -1,10 +1,12 @@
 // SCIENT-FORK:START — Scient Accounts: enforce profile grants at preview discovery and open.
 import {
   authorizePreviewProfile,
+  authorizePreviewTab,
   filterPreviewProfiles,
   withPreviewAccounts,
   recordProfileUse,
 } from "../../../scient/accounts/agent/previewProfileAccess.ts";
+import type { AccountsError } from "@t3tools/contracts";
 import { previewProfileFallback } from "../../../scient/accounts/agent/previewProfileFallback.ts";
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
@@ -66,7 +68,10 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
 ): Effect.fn.Return<
   { result: A; toolIcon?: ToolActivityIcon },
   | import("@t3tools/contracts").PreviewAutomationError
-  | import("@t3tools/contracts").OrchestratorMcpFailure,
+  | import("@t3tools/contracts").OrchestratorMcpFailure
+  // SCIENT-FORK:START — Scient Accounts: existing-tab operations can deny revoked profiles.
+  | AccountsError,
+  // SCIENT-FORK:END
   McpInvocationContext.McpInvocationContext | PreviewAutomationBroker.PreviewAutomationBroker
 > {
   const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview").pipe(
@@ -74,16 +79,34 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   );
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
-  const result = yield* broker.invoke<A>({
-    onTargetTab: (resolvedTabId) => {
-      targetTabId = resolvedTabId;
-    },
-    scope,
-    operation,
-    input,
-    ...(timeoutMs === undefined ? {} : { timeoutMs }),
-    ...(tabId === undefined ? {} : { tabId }),
-  });
+  // SCIENT-FORK:START — Scient Accounts: recheck existing-tab profile access before every action.
+  const request = (resolvedTabId = tabId) =>
+    broker.invoke<A>({
+      onTargetTab: (resolvedTabId) => {
+        targetTabId = resolvedTabId;
+      },
+      scope,
+      operation,
+      input,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(resolvedTabId === undefined ? {} : { tabId: resolvedTabId }),
+    });
+  const result = yield* operation === "status" || operation === "open"
+    ? request()
+    : withPreviewAccounts(request(), (accountScope) =>
+        Effect.gen(function* () {
+          const status = yield* broker.invoke<PreviewAutomationStatus>({
+            scope,
+            operation: "status",
+            input: {},
+            updateCurrentTab: false,
+            ...(tabId === undefined ? {} : { tabId }),
+          });
+          const target = yield* authorizePreviewTab(accountScope, status, tabId);
+          return yield* request(target);
+        }),
+      );
+  // SCIENT-FORK:END
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
   const statusTabId =
     (operation !== "evaluate" && typeof result === "object" && result !== null

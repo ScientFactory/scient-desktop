@@ -81,8 +81,9 @@ reach every profile.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
 session may use, and `preview_open` refuses an Off profile (or asks for an Ask one), including the
-default profile when the agent names none. Tabs the user opened in an Off profile stay theirs; the
-check covers the agent's own open.
+default profile when the agent names none. Existing-tab actions recheck global access, profile Off
+and project scope without prompting; Ask approval is decided at open. Status also omits denied tabs
+and clears current-page metadata when the current tab is denied.
 
 The server cannot enumerate profiles kept in a client's settings. `forSession(scope, profileIds)`
 accepts the preview inventory's ids so profiles without records receive the same defaults; its

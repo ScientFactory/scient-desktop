@@ -7,28 +7,68 @@ import { accountSessionScope } from "./scope.ts";
 import {
   AccountsError,
   defaultBrowserProfileRecord,
+  type PreviewTabId,
   type PreviewAutomationOpenInput,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 
+const profileIds = (status: PreviewAutomationStatus) => [
+  ...new Set([
+    ...(status.profiles?.map((profile) => profile.id) ?? []),
+    ...(status.tabs?.flatMap((tab) => (tab.profileId ? [tab.profileId] : [])) ?? []),
+  ]),
+];
+
+export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab")(function* (
+  scope: AccountSessionScope,
+  status: PreviewAutomationStatus,
+  tabId: PreviewTabId | undefined,
+) {
+  const accounts = yield* AccountsService;
+  const session = yield* accounts.forSession(scope, profileIds(status));
+  const tab = status.tabs?.find((item) => item.tabId === (tabId ?? status.tabId));
+  if (
+    !session.agentAccess ||
+    !tab?.profileId ||
+    !session.profiles.some(
+      (profile) => profile.profileId === tab.profileId && profile.access !== "off",
+    )
+  )
+    return yield* new AccountsError({
+      reason: "denied",
+      message:
+        "This browser profile is unavailable to this session. Change its access in Settings → Accounts.",
+    });
+  return tab.tabId;
+});
+
 export const filterPreviewProfiles = Effect.fn("AccountsAgent.filterPreviewProfiles")(function* (
   scope: AccountSessionScope,
   status: PreviewAutomationStatus,
 ) {
   const accounts = yield* AccountsService;
-  const session = yield* accounts.forSession(
-    scope,
-    status.profiles?.map((profile) => profile.id),
-  );
-  const allowed = (id: string) =>
+  const session = yield* accounts.forSession(scope, profileIds(status));
+  const allowed = (id: string | undefined) =>
     session.agentAccess &&
     session.profiles.some((profile) => profile.profileId === id && profile.access !== "off");
   const profiles = status.profiles?.filter((profile) => allowed(profile.id));
+  const tabs = status.tabs?.filter((tab) => allowed(tab.profileId));
   const { defaultProfileId, ...rest } = status;
+  const current = status.tabs?.find((tab) => tab.tabId === status.tabId);
   return {
-    ...rest,
+    ...(status.tabId === null || allowed(current?.profileId)
+      ? rest
+      : {
+          available: status.available,
+          visible: status.visible,
+          tabId: null,
+          url: null,
+          title: null,
+          loading: false,
+        }),
+    ...(tabs === undefined ? {} : { tabs }),
     ...(profiles === undefined ? {} : { profiles }),
     ...(defaultProfileId !== undefined && allowed(defaultProfileId) ? { defaultProfileId } : {}),
   };

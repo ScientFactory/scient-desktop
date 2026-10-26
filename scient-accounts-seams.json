@@ -12,7 +12,8 @@
     "packages/contracts/src/scient/desktopAccountsBridge.ts",
     "packages/contracts/src/scient/secrets.ts",
     "apps/web/src/routes/_chat.settings.accounts.tsx",
-    "packages/contracts/src/clientRpcPermissions.scient.test.ts"
+    "packages/contracts/src/clientRpcPermissions.scient.test.ts",
+    "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts"
   ],
   "accountsDiffSignals": [
     "scient/accounts",
@@ -171,7 +172,7 @@
     {
       "path": "apps/server/src/mcp/toolkits/preview/handlers.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: enforce profile grants at preview discovery and open.",
-      "purpose": "Enforce profile grants at preview discovery and open."
+      "purpose": "Enforce profile grants at discovery and open, and recheck access before every existing-tab action with safe denials."
     },
     {
       "path": "apps/server/src/mcp/toolkits/preview/tools.ts",
