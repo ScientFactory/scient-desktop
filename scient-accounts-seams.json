@@ -258,7 +258,7 @@
     },
     {
       "path": "apps/server/src/scient/operations/AgentCapabilityBudget.test.ts",
-      "anchor": "actual41Bytes",
+      "anchor": "actual42Bytes",
       "purpose": "Include the five account tools in the eager schema inventory."
     },
     {

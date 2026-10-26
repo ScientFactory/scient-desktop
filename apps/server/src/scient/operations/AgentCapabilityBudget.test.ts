@@ -154,7 +154,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(41);
+      expect(scientTools).toHaveLength(42);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_click",
         "preview_dialog",
@@ -177,6 +177,7 @@ it.live(
         "preview_wait_for",
         "scient_account_browser_session",
         "scient_account_credentials",
+        "scient_account_find_profile",
         "scient_account_request",
         "scient_account_sign_in",
         "scient_accounts_list",
@@ -200,7 +201,7 @@ it.live(
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",
-        actual41Bytes: Buffer.byteLength(encode(schemas)),
+        actual42Bytes: Buffer.byteLength(encode(schemas)),
         synthetic31Bytes: size(31),
         synthetic100Bytes: size(100),
         synthetic500Bytes: size(500),
