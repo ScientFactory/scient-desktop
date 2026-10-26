@@ -1,3 +1,4 @@
+import { hasNativeFileAuthority } from "./NativeFilePublication.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import * as NodeFSP from "node:fs/promises";
@@ -17,7 +18,8 @@ const bytes = (text: string) => Buffer.from(text);
 const helper = await filePublicationTestHelper();
 const capabilities = helper === undefined ? null : await nativeFilePublicationCapabilities(helper);
 const qualifiedCapture =
-  capabilities?.strictCurrentRoot === true &&
+  capabilities != null &&
+  hasNativeFileAuthority(capabilities) &&
   capabilities.exclusiveMove &&
   capabilities.exclusiveLink;
 async function fixture(

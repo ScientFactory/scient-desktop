@@ -361,6 +361,27 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
     record.desired !== (ownValue(state.plan.target, name)?.revision ?? null)
   )
     throw new Error("Retained mutation does not match apply intent.");
+  if (record.version === 2 && record.publication === "staged-create") {
+    if (record.phase === "done") return record.sourceMutation !== false;
+    if (record.phase === "preparing" || record.phase === "prepared") return false;
+    const published = await fileIdentity(record.target);
+    if (
+      published &&
+      record.createStageIdentity &&
+      published.dev === record.createStageIdentity.dev &&
+      published.ino === record.createStageIdentity.ino
+    )
+      return true;
+    const stage = await fileIdentity(
+      NodePath.join(NodePath.dirname(record.target), record.createStageName),
+    );
+    return !(
+      stage &&
+      record.createStageIdentity &&
+      stage.dev === record.createStageIdentity.dev &&
+      stage.ino === record.createStageIdentity.ino
+    );
+  }
   if (record.phase === "done") return record.outcome !== "skipped";
   if (record.phase === "preparing") return false;
   if (record.phase !== "prepared") return true;

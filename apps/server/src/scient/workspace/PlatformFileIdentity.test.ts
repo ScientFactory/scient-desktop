@@ -90,14 +90,11 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("macOS physica
   });
 });
 
-it.each(["linux", "win32"] as const)(
-  "refuses persistent identity on %s until its resolver is implemented",
-  async (platform) => {
-    using _host = vi.spyOn(HostProcess.Platform, "defaultValue").mockReturnValue(platform);
-    const volume = vi.fn(async () => "volume");
-    expect(await platformFileIdentity.volume("/")).toBeNull();
-    expect(await platformFileIdentity.persistent("/", volume)).toBeNull();
-    expect(await platformFileIdentity.directory("/", volume)).toBeNull();
-    expect(volume).not.toHaveBeenCalled();
-  },
-);
+it("refuses persistent identity on Windows until its resolver is implemented", async () => {
+  using _host = vi.spyOn(HostProcess.Platform, "defaultValue").mockReturnValue("win32");
+  const volume = vi.fn(async () => "volume");
+  expect(await platformFileIdentity.volume("/")).toBeNull();
+  expect(await platformFileIdentity.persistent("/", volume)).toBeNull();
+  expect(await platformFileIdentity.directory("/", volume)).toBeNull();
+  expect(volume).not.toHaveBeenCalled();
+});
