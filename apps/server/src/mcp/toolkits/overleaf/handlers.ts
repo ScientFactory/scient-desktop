@@ -76,7 +76,7 @@ const OVERLEAF_FAILURES = {
   unreachable: () =>
     toolError("overleaf-unreachable", "Overleaf could not be reached. Try again later."),
   "git-unavailable": () =>
-    toolError("git-unavailable", "Git 2.39 or newer is needed on this computer."),
+    toolError("git-unavailable", "Git 2.39 or newer is needed on this project's server."),
   "git-failed": () => toolError("failed", "Git failed while talking to Overleaf. Try again."),
 } as const;
 
@@ -330,7 +330,7 @@ const MANAGE_REFUSALS: Record<OverleafConnectionRefusal, string> = {
   "project-not-found": OVERLEAF_FAILURES["project-not-found"]().message,
   unreachable: OVERLEAF_FAILURES.unreachable().message,
   "no-branch": "The Overleaf project has no single main or master branch.",
-  "git-unavailable": "Git 2.39 or newer is needed on this computer.",
+  "git-unavailable": "Git 2.39 or newer is needed on this project's server.",
   "git-failed": "Git failed. Try again.",
   "local-work-pending":
     "An interrupted sync is not settled yet. Use scient_overleaf_manage with action recover first.",

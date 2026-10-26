@@ -59,7 +59,7 @@ describe("overleafActions", () => {
       });
     await readOverleafChanges(environmentId, ROOT, "c1");
     expect(readOverleafWorkspace(environmentId, ROOT).previewErrors.get("c1")).toBe(
-      "It first finished an interrupted sync, which wrote the folder. More than 250 MiB to sync. Keep some files only on this computer, or choose a narrower folder.",
+      "It first finished an interrupted sync, which wrote the folder. More than 250 MiB to sync. Keep some files only here, or choose a narrower folder.",
     );
     await readOverleafChanges(environmentId, ROOT, "c1");
     const after = readOverleafWorkspace(environmentId, ROOT);
