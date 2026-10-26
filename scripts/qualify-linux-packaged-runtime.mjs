@@ -1,3 +1,4 @@
+import { qualifyPackagedOverleaf } from "./qualify-overleaf-packaged.mjs";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -174,6 +175,13 @@ async function qualify() {
     "Pass AppImage, extracted root, report, baseline AppImage and extracted baseline root",
   );
   const { resources, archive } = inspectLinuxPayload(root);
+  qualifyPackagedOverleaf({ executable: image, electron: true });
+  qualifyPackagedOverleaf({
+    executable: NodePath.join(root, "scient"),
+    electron: true,
+    entry: NodePath.join(archive, "apps/server/dist/overleaf-packaging-probe.mjs"),
+    helper: NodePath.join(resources, "file-exchange/scient-file-publication"),
+  });
   const profile = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-linux-qualification-"));
   const env = {
     ...process.env,
