@@ -23,6 +23,9 @@ import {
   createLucideIcon,
   CalendarClockIcon,
   FileTextIcon,
+  // SCIENT-FORK:START — Synced folders
+  FolderSyncIcon,
+  // SCIENT-FORK:END
   GitBranchIcon,
   HardDriveIcon,
   PanelsTopLeftIcon,
@@ -125,6 +128,9 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/scientific-computing": ScientificComputingSidebarIcon,
   "/settings/documents": FileTextIcon,
+  // SCIENT-FORK:START — Synced folders
+  "/settings/synced-folders": FolderSyncIcon,
+  // SCIENT-FORK:END
   "/settings/source-control": GitBranchIcon,
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,

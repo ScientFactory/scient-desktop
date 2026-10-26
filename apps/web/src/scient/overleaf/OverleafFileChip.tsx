@@ -160,7 +160,7 @@ export function OverleafFileChip(props: {
             <ExternalLink aria-hidden className="size-4 text-muted-foreground" />
             Open in Overleaf
           </MenuItem>
-          <MenuItem onClick={() => void navigate({ to: "/settings/source-control" })}>
+          <MenuItem onClick={() => void navigate({ to: "/settings/synced-folders" })}>
             <Settings aria-hidden className="size-4 text-muted-foreground" />
             Overleaf settings…
           </MenuItem>

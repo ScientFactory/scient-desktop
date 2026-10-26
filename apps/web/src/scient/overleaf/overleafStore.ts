@@ -4,6 +4,7 @@
 import type {
   EnvironmentId,
   ScientOverleafConnectionList,
+  ScientOverleafConflictChoice,
   ScientOverleafReview,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
@@ -19,6 +20,8 @@ import {
   reviewIdentity,
   type OverleafFileDecision,
 } from "./overleafModel";
+
+export type OverleafReviewChoice = ScientOverleafConflictChoice | "agent";
 
 export type OverleafConnection = ScientOverleafConnectionList["connections"][number];
 
@@ -58,6 +61,11 @@ export interface OverleafWorkspaceSnapshot {
   readonly previewErrors: ReadonlyMap<string, string>;
   /** What the last read of a link's changes did first: an interrupted sync it finished. */
   readonly previewNotes: ReadonlyMap<string, string>;
+  /** Conflict choices stay with the review they answer when the tab closes. */
+  readonly conflictChoices: ReadonlyMap<
+    string,
+    { readonly review: string; readonly choices: ReadonlyMap<string, OverleafReviewChoice> }
+  >;
   /**
    * Per-file decisions waiting for the next sync, by connection. Kept here, not
    * in the tab, so opening a file (which replaces the tab) doesn't lose them.
@@ -82,6 +90,7 @@ const EMPTY: OverleafWorkspaceSnapshot = {
   previewing: new Set(),
   previewErrors: new Map(),
   previewNotes: new Map(),
+  conflictChoices: new Map(),
   fileDecisions: new Map(),
   submittedDecisions: new Map(),
 };
@@ -113,6 +122,7 @@ const EMPTY_LIFECYCLE: Lifecycle = {
   previewing: new Set(),
   previewErrors: new Map(),
   previewNotes: new Map(),
+  conflictChoices: new Map(),
   fileDecisions: new Map(),
   submittedDecisions: new Map(),
 };
@@ -401,6 +411,36 @@ function pruneDecisions(snapshot: Lifecycle, connectionId: string): Lifecycle["f
   return next;
 }
 
+function pruneConflictChoices(
+  snapshot: Lifecycle,
+  connectionId: string,
+): Lifecycle["conflictChoices"] {
+  const current = snapshot.conflictChoices.get(connectionId);
+  const shown = snapshot.reviews.get(connectionId);
+  if (current === undefined || (shown && current.review === reviewIdentity(shown.review)))
+    return snapshot.conflictChoices;
+  const next = new Map(snapshot.conflictChoices);
+  next.delete(connectionId);
+  return next;
+}
+
+/** Choices answer only the review currently shown for this link. */
+export function setOverleafConflictChoices(
+  environmentId: EnvironmentId,
+  connectionId: string,
+  review: string,
+  choices: ReadonlyMap<string, OverleafReviewChoice>,
+): void {
+  updateLifecycle(environmentId, (current) => {
+    const shown = current.reviews.get(connectionId);
+    if (!shown || reviewIdentity(shown.review) !== review) return current;
+    return {
+      ...current,
+      conflictChoices: new Map(current.conflictChoices).set(connectionId, { review, choices }),
+    };
+  });
+}
+
 /**
  * Records a sync's result. `carried` is what that sync sent as per-file
  * decisions: a review it returned at a conflict already encodes them.
@@ -420,8 +460,11 @@ export function recordOverleafSync(
       const versionKey = reviewKeyOf(environmentId, connectionId);
       reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
     }
-    let { fileDecisions, submittedDecisions } = current;
+    let { fileDecisions, submittedDecisions, conflictChoices } = current;
     if (result._tag === "synced") {
+      const spentChoices = new Map(conflictChoices);
+      spentChoices.delete(connectionId);
+      conflictChoices = spentChoices;
       // Applied: the decisions it carried are spent.
       const spentDecisions = new Map(fileDecisions);
       spentDecisions.delete(connectionId);
@@ -451,12 +494,17 @@ export function recordOverleafSync(
       reviews,
       syncedAt,
       fileDecisions,
+      conflictChoices,
       submittedDecisions,
       previewNotes,
       lastSync: new Map(current.lastSync).set(connectionId, { result, at }),
     };
     return result._tag === "needs-decision"
-      ? { ...next, fileDecisions: pruneDecisions(next, connectionId) }
+      ? {
+          ...next,
+          fileDecisions: pruneDecisions(next, connectionId),
+          conflictChoices: pruneConflictChoices(next, connectionId),
+        }
       : next;
   });
 }
@@ -497,6 +545,7 @@ export function forgetOverleafConnection(environmentId: EnvironmentId, connectio
       ...current,
       reviews: without(current.reviews),
       fileDecisions: without(current.fileDecisions),
+      conflictChoices: without(current.conflictChoices),
       submittedDecisions: without(current.submittedDecisions),
       lastSync: without(current.lastSync),
       previewErrors: without(current.previewErrors),
@@ -559,7 +608,11 @@ export function finishOverleafPreview(
     }
     const next = { ...snapshot, previewing, previewErrors, previewNotes, reviews };
     return outcome._tag === "review"
-      ? { ...next, fileDecisions: pruneDecisions(next, connectionId) }
+      ? {
+          ...next,
+          fileDecisions: pruneDecisions(next, connectionId),
+          conflictChoices: pruneConflictChoices(next, connectionId),
+        }
       : next;
   });
 }
