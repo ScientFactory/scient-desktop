@@ -157,9 +157,8 @@ export type AnyRetainedRecord =
   | typeof StagedCreateJournal.Type
   | WindowsRetainedRecord;
 export type RetainedRecord = AnyRetainedRecord;
-const validateRecord = Schema.decodeUnknownSync(
-  Schema.Union([Journal, StagedCreateJournal, WindowsJournal]),
-);
+type PosixRetainedRecord = typeof Journal.Type | typeof StagedCreateJournal.Type;
+const validateRecord = Schema.decodeUnknownSync(Schema.Union([Journal, StagedCreateJournal]));
 export const decodeRetainedRecord = Schema.decodeUnknownSync(
   Schema.fromJsonString(
     Schema.Union([Journal, StagedCreateJournal, WindowsJournal, LegacyJournal]),
@@ -809,7 +808,7 @@ async function run(
   };
   const kind = input.kind ?? (input.bytes === null ? "delete" : "write");
   const condition = input.condition ?? (input.expectedRevision === null ? "absent" : "revision");
-  let record: typeof Journal.Type;
+  let record: PosixRetainedRecord;
   let previous;
   try {
     previous = await readRetainedRecord(directory);
@@ -919,7 +918,7 @@ async function run(
         : { expectedMutationEpoch: input.expectedMutationEpoch }),
     };
   }
-  const save = async (patch: Partial<typeof Journal.Type>) => {
+  const save = async (patch: Partial<PosixRetainedRecord>) => {
     lease.assertHeld();
     record = validateRecord({ ...record, ...patch, generation: record.generation + 1 });
     await durableJson(journalPath, record);
@@ -1064,7 +1063,7 @@ async function run(
     return stat && { dev: String(stat.dev), ino: String(stat.ino) };
   };
   /** Whether a `publishing` record's call ran: false if not, the phase it reached if so, null if unknown. */
-  const publicationRan = async (): Promise<false | Partial<typeof Journal.Type> | null> => {
+  const publicationRan = async (): Promise<false | Partial<PosixRetainedRecord> | null> => {
     if (record.publication === "staged-create") {
       const stage = NodePath.join(NodePath.dirname(target), record.createStageName);
       if (record.createStageIdentity === null) return null;

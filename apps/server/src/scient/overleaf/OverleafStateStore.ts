@@ -4,7 +4,6 @@
  * wait/steal. Acquire lazily so overlap during old-server exit does not permanently disable writes.
  * Reads need no lease; preserve unreadable state as quarantine evidence.
  */
-import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
 import { windowsPrivateDirectory } from "../workspace/WindowsNativeFile.ts";
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
@@ -304,14 +303,10 @@ async function privateDirectory(
     throw new OverleafRetentionUnavailableError({ reason: "sync-managed-folder" });
   const platform = HostProcess.Platform.defaultValue();
   if (platform === "linux" || platform === "win32") {
-    const helper =
-      platform === "linux"
-        ? (configuredHelper ?? (await resolveNativeFilePublicationHelperPath()))
-        : await resolveNativeFilePublicationHelperPath(
-            configuredHelper ?? process.env.SCIENT_FILE_PUBLICATION_HELPER,
-          );
+    const helper = configuredHelper ?? (await resolveNativeFilePublicationHelperPath());
     if (!helper) return false;
-    await windowsPrivateDirectory(directory, true, helper);
+    if (platform === "win32") await windowsPrivateDirectory(directory, true, helper);
+    else await ensureNativePrivateRetentionDirectory(helper, directory);
     return true;
   }
   // mkdir returns the first directory it created; sync each new entry's parent
