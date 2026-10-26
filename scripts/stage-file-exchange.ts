@@ -41,6 +41,8 @@ if (probe && !argumentsByName.has("--destination"))
     "Qualification probes require an explicit isolated --destination; never replace the default production helper.",
   );
 await NodeFSP.mkdir(destination, { recursive: true });
+for (const legacy of ["scient-file-exchange", "provenance.json"])
+  await NodeFSP.rm(NodePath.join(destination, legacy), { force: true });
 const scratch = await NodeFSP.mkdtemp(
   NodePath.join(NodeOS.tmpdir(), "scient-publication-compile-"),
 );

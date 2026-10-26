@@ -14,7 +14,14 @@ import {
   type VolumeIdentityResolver,
 } from "../workspace/PlatformFileIdentity.ts";
 
-import { exchange, syncDirectory } from "../workspace/RetainedFileMutation.ts";
+import { syncDirectory } from "../workspace/RetainedFileMutation.ts";
+
+import {
+  bindNativeFilePublication,
+  observedDirectoryBinding,
+  withNativeFilePublicationLease,
+  removeNativeRetainedEntry,
+} from "../workspace/NativeFilePublication.ts";
 
 /** The hidden folder created beside a checkout on another disk. */
 const OVERLEAF_VAULT_DIRECTORY = ".scient-overleaf";
@@ -80,48 +87,96 @@ async function ensurePrivate(directory: string, userId: number | undefined, crea
 
 /**
  * Proves the folder's disk supports the replacement Scient will use: atomic
- * exchange through the host helper, or hard links for the declared
+ * exchange through the publication helper, or hard links for the declared
  * development fallback when no helper is configured.
  */
-async function probeCapability(directory: string, exchangeHelper: string | null) {
-  const stem = NodePath.join(directory, `.probe-${NodeCrypto.randomUUID()}`);
+async function probeCapability(directory: string, publicationHelper: string | null) {
+  // Seatbelt subpath rules use the data volume's ordinary spelling, not its firmlink alias.
+  const prefix = "/System/Volumes/Data";
+  if (directory.startsWith(`${prefix}/`)) {
+    const ordinary = directory.slice(prefix.length);
+    if (
+      (await platformFileIdentity.key(ordinary).catch(() => null)) ===
+      (await platformFileIdentity.key(directory))
+    )
+      directory = ordinary;
+  }
+  const stem = `.probe-${NodeCrypto.randomUUID()}`;
   const [left, right, link] = [`${stem}-a`, `${stem}-b`, `${stem}-link`];
-  try {
+  const path = (name: string) => NodePath.join(directory, name);
+  const create = async () => {
     try {
-      await NodeFSP.writeFile(left, "a", { flag: "wx", mode: 0o600 });
-      await NodeFSP.writeFile(right, "b", { flag: "wx", mode: 0o600 });
+      await NodeFSP.writeFile(path(left), "a", { flag: "wx", mode: 0o600 });
+      await NodeFSP.writeFile(path(right), "b", { flag: "wx", mode: 0o600 });
     } catch (error) {
       if (isReadOnly(error)) throw new Refused("read-only-parent");
       throw error;
     }
-    if (exchangeHelper === null) {
+  };
+  if (publicationHelper === null) {
+    try {
+      await create();
       try {
-        await NodeFSP.link(left, link);
+        await NodeFSP.link(path(left), path(link));
       } catch {
         throw new Refused("unsupported-filesystem");
       }
-      return;
+    } finally {
+      await Promise.all([left, right, link].map((name) => NodeFSP.rm(path(name), { force: true })));
     }
-    // A missing helper is a configuration fault, not a property of the disk.
-    await NodeFSP.access(exchangeHelper, NodeFSP.constants.X_OK);
-    try {
-      await exchange(exchangeHelper, left, right);
-    } catch {
-      throw new Refused("unsupported-filesystem");
-    }
-    // Some drivers accept the swap and do a plain rename instead (FAT32 on macOS 26
-    // destroys the second file and reports success), so check both sides.
-    const swapped = await Promise.all([
-      NodeFSP.readFile(left, "utf8"),
-      NodeFSP.readFile(right, "utf8"),
-    ]).then(
-      ([l, r]) => l === "b" && r === "a",
-      () => false,
-    );
-    if (!swapped) throw new Refused("unsupported-filesystem");
-  } finally {
-    await Promise.all([left, right, link].map((file) => NodeFSP.rm(file, { force: true })));
+    return;
   }
+  // A missing helper is a configuration fault, not a property of the disk.
+  await NodeFSP.access(publicationHelper, NodeFSP.constants.X_OK);
+  const held = await observedDirectoryBinding(publicationHelper, directory);
+  await withNativeFilePublicationLease(
+    publicationHelper,
+    [held],
+    async (lease) => {
+      try {
+        await create();
+        try {
+          const binding = await bindNativeFilePublication(
+            publicationHelper,
+            {
+              rootPath: directory,
+              parentRelativePath: "",
+              recordPath: directory,
+            },
+            "bound-object",
+          );
+          const result = await lease.run({
+            binding,
+            operation: "exchange",
+            authority: "bound-object",
+            sourceName: left,
+            destinationName: right,
+          });
+          if (
+            result.code !== 0 ||
+            result.outcome !== "applied" ||
+            Object.values(result.flush).some((value) => value > 0)
+          )
+            throw new Refused("unsupported-filesystem");
+        } catch {
+          throw new Refused("unsupported-filesystem");
+        }
+        // A driver can report success after a destructive rename instead of a swap.
+        const swapped = await Promise.all([
+          NodeFSP.readFile(path(left), "utf8"),
+          NodeFSP.readFile(path(right), "utf8"),
+        ]).then(
+          ([l, r]) => l === "b" && r === "a",
+          () => false,
+        );
+        if (!swapped) throw new Refused("unsupported-filesystem");
+      } finally {
+        for (const name of [left, right, link])
+          await removeNativeRetainedEntry(lease, directory, name);
+      }
+    },
+    { mode: "exclusive" },
+  );
 }
 
 type Stat = Awaited<ReturnType<typeof statOrRefuse>>;
@@ -215,7 +270,7 @@ export async function locateOverleafRetention(input: {
   readonly connectionId: string;
   readonly checkoutRoot: string;
   readonly userId: number | undefined;
-  readonly exchangeHelper: string | null;
+  readonly publicationHelper: string | null;
   /** The identity recorded for this connection, or null for a new one. */
   readonly expected: OverleafVolumeFileIdentity | null;
   readonly volumeUuid?: OverleafVolumeIdentityResolver;
@@ -315,7 +370,7 @@ export async function locateOverleafRetention(input: {
       }
       found = match;
     }
-    await probeCapability(found.directory, input.exchangeHelper);
+    await probeCapability(found.directory, input.publicationHelper);
     // Another process may have swapped the folder while it was probed. This closes
     // the window up to here; the coordinator (step 3) must re-verify the identity
     // before each later use, because nothing below this module does.

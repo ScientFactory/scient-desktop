@@ -73,10 +73,7 @@ import { loadRepoEnv } from "./lib/public-config.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { stageScientVoiceRuntimeForDesktopBuild } from "./lib/scient-voice-build.ts";
 import { stageScientSyncTexRuntimeForDesktopBuild } from "./lib/scient-synctex-build.ts";
-import {
-  stageFileExchangeForDesktopBuild,
-  validatePackagedFileExchange,
-} from "./lib/scient-file-exchange-build.ts";
+import { validatePackagedFilePublication } from "./lib/scient-file-publication-build.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -4420,21 +4417,6 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       sourceCommit: commitHash,
     });
   } else {
-    yield* Effect.tryPromise({
-      try: () =>
-        stageFileExchangeForDesktopBuild({
-          repoRoot,
-          stageResourcesDir,
-          platform: options.platform,
-          arch: options.arch,
-        }),
-      catch: (cause) =>
-        new BuildCommandFailedError({
-          command: `stage file exchange (${options.platform}/${options.arch})`,
-          exitCode: 1,
-          stderrTail: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
     yield* runCommand(
       ChildProcess.make(
         process.execPath,
@@ -4789,8 +4771,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     delete buildEnv.SCIC_PREVIEW_EXPECTED;
     delete buildEnv.SCIC_PREVIEW_EXPECTED_BUNDLE_ID;
   }
-  if (options.platform === "mac") buildEnv.SCIENT_FILE_EXCHANGE_EXPECTED = "1";
-  else delete buildEnv.SCIENT_FILE_EXCHANGE_EXPECTED;
+  if (options.platform === "mac") buildEnv.SCIENT_FILE_PUBLICATION_EXPECTED = "1";
+  else delete buildEnv.SCIENT_FILE_PUBLICATION_EXPECTED;
 
   if (hostPlatform === "win32") {
     const python = yield* resolvePythonForNodeGyp();
@@ -4861,10 +4843,10 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       if (!(yield* fs.exists(app))) continue;
       bundles++;
       yield* Effect.tryPromise({
-        try: () => validatePackagedFileExchange(app, options.arch),
+        try: () => validatePackagedFilePublication(app, options.arch),
         catch: (cause) =>
           new BuildCommandFailedError({
-            command: "verify packaged file exchange",
+            command: "verify packaged file publication",
             exitCode: 1,
             stderrTail: cause instanceof Error ? cause.message : String(cause),
           }),
@@ -4872,7 +4854,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     }
     if (bundles === 0)
       return yield* new BuildCommandFailedError({
-        command: "verify packaged file exchange",
+        command: "verify packaged file publication",
         exitCode: 1,
         stderrTail: "No packaged macOS app found for helper validation.",
       });

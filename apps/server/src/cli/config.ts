@@ -121,10 +121,6 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
-  fileExchangePath: Config.String("SCIENT_FILE_EXCHANGE_PATH").pipe(
-    Config.option,
-    Config.map(Option.getOrUndefined),
-  ),
   developmentScratchRoot: Config.String("SCIENT_DEV_SCRATCH_ROOT").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -456,7 +452,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     env.filePublicationRetentionRoot === undefined
       ? undefined
       : path.resolve(yield* expandHomePath(env.filePublicationRetentionRoot));
-  const fileExchangePath = bootstrap?.fileExchangePath ?? env.fileExchangePath;
   const autoBootstrapProjectFromCwd = Option.getOrElse(
     resolveOptionPrecedence(
       Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
@@ -608,7 +603,6 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ...(env.filePublicationRetentionLimitBytes === undefined
       ? {}
       : { filePublicationRetentionLimitBytes: env.filePublicationRetentionLimitBytes }),
-    fileExchangePath,
     autoBootstrapProjectFromCwd,
     logWebSocketEvents,
     tailscaleServeEnabled,

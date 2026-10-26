@@ -1299,12 +1299,6 @@ describe("DesktopBackendConfiguration", () => {
         const config = yield* configuration.resolvePrimary;
         assert.equal(config.bootstrap.resourceMonitorPath, monitorPath);
         assert.equal(config.bootstrap.syncTexNavigatorPath, syncTexPath);
-        // Even a missing required resource retains this path: never silently
-        // use the missing-path fallback in a damaged production installation.
-        assert.equal(
-          config.bootstrap.fileExchangePath,
-          path.join(resourcesPath, "file-exchange/scient-file-exchange"),
-        );
         // SCIENT-FORK:END scient-backend-launch
         assert.equal(config.bootstrap.desktopTelemetryFd, 4);
         assert.equal(config.bootstrap.desktopTelemetryControlFd, 5);
@@ -1387,12 +1381,6 @@ describe("DesktopBackendConfiguration", () => {
       });
       const dirname = path.join(baseDir, "apps/desktop/src");
       const syncTexPath = path.join(baseDir, "native/synctex-runtime/darwin-x64/synctex");
-      const exchangePath = path.join(
-        baseDir,
-        "native/file-exchange/darwin-x64/scient-file-exchange",
-      );
-      yield* fileSystem.makeDirectory(path.dirname(exchangePath), { recursive: true });
-      yield* fileSystem.writeFileString(exchangePath, "binary");
       yield* fileSystem.makeDirectory(path.dirname(syncTexPath), { recursive: true });
       yield* fileSystem.writeFileString(syncTexPath, "binary");
 
@@ -1400,7 +1388,6 @@ describe("DesktopBackendConfiguration", () => {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const config = yield* configuration.resolvePrimary;
         assert.equal(config.bootstrap.syncTexNavigatorPath, syncTexPath);
-        assert.equal(config.bootstrap.fileExchangePath, exchangePath);
       }).pipe(
         Effect.provide(
           layerBackendConfiguration().pipe(
