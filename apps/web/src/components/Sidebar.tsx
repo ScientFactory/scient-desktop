@@ -166,7 +166,6 @@ import {
   isSidebarNestedLinkClick,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
-  planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
   resolveSidebarSweepKeys,
@@ -229,6 +228,11 @@ import {
   SidebarSectionsView,
 } from "../scient/sections/SidebarSectionsView";
 import { useSidebarSections } from "../scient/sections/useSidebarSections";
+import {
+  planStatusThreadDrop,
+  statusDropOrderReleased,
+} from "../scient/sidebar/statusAutomaticPlacement";
+import { useStatusAutomaticPlacement } from "../scient/sidebar/useStatusAutomaticPlacement";
 import {
   SidebarNewThreadRow,
   useSidebarNewThreadRowActions,
@@ -322,6 +326,9 @@ type SidebarOptimisticDrop = {
   readonly order: readonly string[] | null;
   readonly keysAtDrop: ReadonlyMap<string, string | null>;
   readonly assignedKeys: ReadonlyMap<string, string>;
+  // SCIENT-FORK:START
+  readonly presentationPending?: boolean;
+  // SCIENT-FORK:END
 };
 
 interface SidebarThreadPartitionInput {
@@ -736,30 +743,29 @@ function isOptimisticDropReleased(input: {
   if (canonicalSection !== optimisticDrop.section) return false;
   if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return false;
   const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
-  const canonicalDestination = destinationKeys.flatMap((key) => {
-    const canonical = canonicalByKey.get(key);
-    return canonical === undefined ? [] : [canonical];
-  });
+  // SCIENT-FORK:START — canonical re-keying can include rows hidden by a project filter.
   const keyByThread = new Map(
-    canonicalDestination.map((thread) => [
+    threads.map((thread) => [
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
       (optimisticDrop.section === "pinned" ? thread.pinOrderKey : thread.activeOrderKey) ?? null,
     ]),
   );
+  // SCIENT-FORK:END
   const heldOrder = optimisticDrop.order;
   const heldKeys = new Set(heldOrder);
   const membershipChanged =
     destinationKeys.length !== heldOrder.length ||
     destinationKeys.some((key) => !heldKeys.has(key));
-  const foreignKeyLanded = destinationKeys.some((threadKey) => {
-    const currentKey = keyByThread.get(threadKey) ?? null;
-    if (currentKey === (optimisticDrop.keysAtDrop.get(threadKey) ?? null)) return false;
-    return currentKey !== optimisticDrop.assignedKeys.get(threadKey);
+  // SCIENT-FORK:START
+  return statusDropOrderReleased({
+    presentationPending: optimisticDrop.presentationPending === true,
+    membershipChanged,
+    destinationKeys,
+    before: optimisticDrop.keysAtDrop,
+    assigned: optimisticDrop.assignedKeys,
+    current: keyByThread,
   });
-  const allAssignmentsLanded = [...optimisticDrop.assignedKeys].every(
-    ([threadKey, orderKey]) => keyByThread.get(threadKey) === orderKey,
-  );
-  return membershipChanged || foreignKeyLanded || allAssignmentsLanded;
+  // SCIENT-FORK:END
 }
 
 // Build maps in a hook so the compiler can prove they are frozen and cache them.
@@ -1138,7 +1144,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
-    activeThreads,
+    activeThreads: canonicalActiveThreads,
     workingThreads,
     snoozedThreads,
     settledThreads,
@@ -1159,7 +1165,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     visibleSnoozedThreads,
     visibleWorkingThreads,
     // SCIENT-FORK:START — the Status layout's order; the Sections view swaps in its own below.
-    orderedThreadKeys: statusOrderedThreadKeys,
     threadByKey: statusThreadByKey,
     sectionActiveThreads,
     // SCIENT-FORK:END
@@ -1167,7 +1172,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     snoozedThreadKeys,
     sectionByThreadKey,
     pinnedKeys,
-    activeKeys,
     pinnedKeysById,
     activeKeysById,
     routeRowThreadKey,
@@ -1201,8 +1205,36 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     sectionMenuFor,
     sectionsView,
     visibleGroupThreads,
-    onInteractionChange: onSectionInteractionChange,
+    onInteractionChange: onSectionsInteractionChange,
   } = sections;
+  const statusPlacement = useStatusAutomaticPlacement({
+    threads,
+    activeThreads: canonicalActiveThreads,
+    serverConfigs,
+    openKey: routeRowThreadKey,
+    now: snoozeNow,
+    visible: !sectionsView,
+    workingShelfEnabled,
+    interacting:
+      dragState !== null ||
+      optimisticDrop !== null ||
+      actionSweep !== null ||
+      renamingThreadKey !== null,
+    optimisticOrder: optimisticDrop?.section === "active" ? optimisticDrop.order : null,
+  });
+  const { activeThreads, canonicalActiveOrder } = statusPlacement;
+  const activeKeys = activeThreads.map(threadShellKey);
+  const statusOrderedThreadKeys = [
+    ...pinnedThreads,
+    ...activeThreads,
+    ...visibleWorkingThreads,
+    ...visibleSnoozedThreads,
+    ...renderedSettledThreads,
+  ].map(threadShellKey);
+  const onSectionInteractionChange = useStableCallback((active: boolean) => {
+    onSectionsInteractionChange(active);
+    statusPlacement.onInteractionChange(active);
+  });
   // The Status layout carries the Working shelf; the Sections view replaces
   // that layout, so a grouped sidebar never folds.
   const { orderedThreadKeys, threadByKey } = sidebarSectionsOrder({
@@ -1931,7 +1963,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
         if (target === null) return false;
         return (
-          planSidebarThreadDrop({
+          planStatusThreadDrop({
             activeKey: draggedThreadKey,
             activeSection: draggedFromSection,
             activePinned: source.pinnedAt != null,
@@ -1944,8 +1976,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             pinnedKeysById,
             reorderableKeys: draggableThreadKeys,
             activeOrder: activeKeys,
+            canonicalActiveOrder,
             activeKeysById,
-            activeReorderableKeys: activeReorderableThreadKeys,
+            // SCIENT-FORK:START
+            activeReorderableKeys: statusPlacement.reorderableKeys ?? activeReorderableThreadKeys,
+            // SCIENT-FORK:END
             activeTimeOrdered: workingShelfEnabled,
           }).kind !== "none"
         );
@@ -1966,7 +2001,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const activeThread = threadByKey.get(activeKey);
     if (activeSection === undefined || target === null || activeThread === undefined) return;
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
-    const plan = planSidebarThreadDrop({
+    const plan = planStatusThreadDrop({
       activeKey,
       activeSection,
       activePinned: activeThread.pinnedAt != null,
@@ -1979,8 +2014,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       pinnedKeysById,
       reorderableKeys: draggableThreadKeys,
       activeOrder: activeKeys,
+      canonicalActiveOrder,
       activeKeysById,
-      activeReorderableKeys: activeReorderableThreadKeys,
+      // SCIENT-FORK:START
+      activeReorderableKeys: statusPlacement.reorderableKeys ?? activeReorderableThreadKeys,
+      // SCIENT-FORK:END
       activeTimeOrdered: workingShelfEnabled,
     });
     if (plan.kind === "none") return;
@@ -1997,7 +2035,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (
       !checkThreadOperations(
         [activeKey, ...assignments.map(({ id }) => id)].flatMap((key) => {
-          const thread = threadByKey.get(key);
+          // SCIENT-FORK:START — canonical re-keying can include rows hidden by the project filter.
+          const thread = threads.find((thread) => threadShellKey(thread) === key);
+          // SCIENT-FORK:END
           return thread ? [thread] : [];
         }),
       )
@@ -2015,6 +2055,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       order: plan.kind === "settle" ? null : plan.order,
       keysAtDrop: target.section === "active" ? activeKeysById : pinnedKeysById,
       assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
+      // SCIENT-FORK:START — shell echoes can precede the awaited command result.
+      presentationPending: canonicalActiveOrder !== undefined && plan.kind === "move-active",
+      // SCIENT-FORK:END
     };
     setOptimisticDrop(drop);
     void (async () => {
@@ -2081,7 +2124,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
       const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
       for (const assignment of keyWrites) {
-        const thread = threadByKey.get(assignment.id);
+        // SCIENT-FORK:START
+        const thread = threads.find((thread) => threadShellKey(thread) === assignment.id);
+        // SCIENT-FORK:END
         if (thread === undefined) continue;
         if (
           !(await run(
@@ -2096,6 +2141,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         )
           return;
       }
+      // SCIENT-FORK:START — acknowledge the visual slot only after every order write succeeds.
+      if (plan.kind === "move-active" && plan.order !== null) {
+        statusPlacement.onManualPlacement(activeKey, plan.order, drop.assignedKeys);
+        setOptimisticDrop((current) =>
+          current === drop ? { ...current, presentationPending: false } : current,
+        );
+      }
+      // SCIENT-FORK:END
     })();
   };
   const performSnooze = async (

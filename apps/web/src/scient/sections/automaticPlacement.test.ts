@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   EMPTY_PLACEMENT,
+  displayedPlacementOrders,
   manuallyPlaceThread,
   manualOrderForPlacement,
   readPlacement,
@@ -162,6 +163,39 @@ it("projects only the dragged row onto saved manual order", () => {
     "a",
     "c",
   ]);
+});
+it("renders what reconciliation will commit, holding unacknowledged keys and paused rows", () => {
+  const state = update(EMPTY_PLACEMENT, []);
+  const shown = (input: PlacementInput[], live = true) =>
+    displayedPlacementOrders(state, input, null, 0, () => false, live).get("general");
+  // A known row's activation and an arrival in the same snapshot.
+  const batch = rows(["x", "a", "b", "c", "n"], ["b", "n"]);
+  expect(shown(batch)).toEqual(order(reconcilePlacement(state, batch, null, 0)));
+  expect(shown(batch)).toEqual(["b", "n", "x", "a", "c"]);
+  // A shell still carrying a pre-drop key is not a remote move.
+  const promoted = update(EMPTY_PLACEMENT, ["b"]);
+  const stale = rows(["x", "a", "b", "c"], ["b"]).map((group) => ({
+    ...group,
+    rows: group.rows.map((row) => (row.key === "b" ? { ...row, orderKey: "0" } : row)),
+  }));
+  expect(
+    displayedPlacementOrders(promoted, stale, null, 0, () => false, true).get("general"),
+  ).toEqual(["b", "x", "a", "c"]);
+  // Paused or not ready: known rows hold; an unseen row joins its canonical neighbours.
+  expect(shown(batch, false)).toEqual(["x", "a", "b", "c", "n"]);
+});
+it("judges a drop by the rows the user saw, not rows a filter hides", () => {
+  const current = rows(["h", "x", "a"], ["a"]);
+  const state: PlacementState = {
+    groups: [
+      { id: "general", rows: current[0]!.rows, order: ["h", "x", "a"], upper: [], aside: ["a"] },
+    ],
+    pending: [],
+  };
+  const dropped = manuallyPlaceThread(state, "general", ["a", "x"], "a", current);
+  expect(order(dropped)).toEqual(["h", "a", "x"]);
+  expect(dropped.groups[0]!.upper).toEqual(["a"]);
+  expect(dropped.groups[0]!.aside).toEqual([]);
 });
 it("honours remote order-key changes", () => {
   const state = update(EMPTY_PLACEMENT, ["a"]);

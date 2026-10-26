@@ -1068,6 +1068,12 @@ in `docs/internals/product-analytics.md`.
 onboarding, skills, analysis and LaTeX seams in the upstream-provenance workflow.
 Keep this RPC client separate from Pi's RPC client.
 
+Single-child Stop eligibility is shared by the lineage UI and server admission in
+`packages/contracts/src/scient/nativeSubagentControl.ts`. Claude, Oh My Pi and Scient Agent
+support this operation; Claude workflow stopping remains separate. The native adapter validates
+the owning session and sends Oh My Pi's `cancel_subagent` with the task's protocol ID, leaving
+the parent turn intact. Native lifecycle events own the resulting child state.
+
 Scient Extensions owns `apps/server/src/scient/extensions` and
 `apps/web/src/scient/extensions`. Connected services stay on the Scient server:
 agents reach them only through the per-connector proxy route
@@ -1152,17 +1158,18 @@ never overwrite each other. Environment-local resolution lives entirely in
 `apps/web/src/scient/sections` and added no upstream seams. Scient code lives under
 `apps/web/src/scient/sections`, `apps/web/src/scient/sidebar` and
 `apps/server/src/scient/threadSections`; upstream files carry `SCIENT-FORK`-marked
-mounts. A few lines change in place: two in `Sidebar.tsx`, the search field's class
+mounts. A few bindings change in place in `Sidebar.tsx`, along with the search field's class
 list and the New thread icon's `hidden` attribute in `SidebarThreadHeader.tsx`, and
 the undo-action union in `showThreadUndoNotice.ts`. New thread always opens the
 "New thread in…" picker (`shouldOpenNewThreadTargetPicker` changes in place), which
 keeps Add project above No project beneath the scrolling project list, so a project,
 including the first, can be added from New thread; Shift+click and ⇧⌘N still start directly in the current project. The
 Sections view reuses T3's rows, shelves and canonical manual order keys and never changes pin state.
-Its optional **Keep active threads near the top** presentation is client-local, lives
-in `apps/web/src/scient/sections`, and never writes order keys on status transitions.
-Manual drops update only the deliberate placement; Status view continues to use the
-canonical order. If T3 ships its own
+The default Status sidebar and Sections view share the default-on **Keep active threads
+near the top** preference. Placement is client-local, lives in `apps/web/src/scient/sections`
+and `apps/web/src/scient/sidebar`, and never writes order keys on status transitions.
+Manual drops update only the deliberate placement against canonical neighbours; Status
+keeps the Working-section beta's own ordering while that beta is enabled. If T3 ships its own
 grouping or collapsible shelves, reconcile against these seams instead of layering a
 second grouping. Decisions, invariants and the full seam list are in
 [sidebar sections](docs/internals/scient-sidebar-sections.md).

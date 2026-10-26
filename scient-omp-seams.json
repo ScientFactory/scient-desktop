@@ -8,6 +8,8 @@
     "apps/server/src/provider/scient"
   ],
   "ownedFiles": [
+    "packages/contracts/src/scient/nativeSubagentControl.ts",
+    "apps/server/src/orchestration-v2/Adapters/OmpAdapterV2.subagent-stop.scient.test.ts",
     "apps/web/src/testUtils/shardWeights.json",
     "packages/contracts/src/scient/providerSettings.ts",
     "apps/server/src/provider/testUtils/controlledOmpPeer.mjs",
@@ -45,6 +47,21 @@
     "scripts/scient-alignment-checks.json"
   ],
   "upstreamMounts": [
+    {
+      "path": "packages/contracts/src/index.ts",
+      "anchor": "export * from \"./scient/nativeSubagentControl.ts\";",
+      "purpose": "Share native child Stop eligibility between server admission and clients."
+    },
+    {
+      "path": "apps/web/src/components/chat/ThreadRelationshipsControl.tsx",
+      "anchor": "supportsNativeSubagentStop(agent.driver)",
+      "purpose": "Expose individual native child Stop for Claude, Oh My Pi and Scient Agent."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/Orchestrator.ts",
+      "anchor": "!supportsNativeSubagentStop(subagent.driver)",
+      "purpose": "Admit native child Stop, and settle one whose session was released, through the shared capability while retaining task and session ownership checks."
+    },
     {
       "path": "apps/web/src/session-logic.ts",
       "anchor": "planDriver !== \"omp\" && planDriver !== \"scient\"",
@@ -178,6 +195,11 @@
   ],
   "ompDiffSignals": ["Oh My Pi", "effect-omp-rpc", "provider/omp", "Omp", "\"omp\""],
   "scientMounts": [
+    {
+      "path": "apps/server/src/orchestration-v2/Adapters/NativeSessionAdapterV2.ts",
+      "anchor": "NativeSessionAdapterV2.stopSubagent",
+      "purpose": "Validate the live native child owner before calling its optional cancellation operation."
+    },
     {
       "path": "packages/scient-analytics/src/wireContract.ts",
       "anchor": "export const ANALYTICS_PROVIDER_KINDS",
