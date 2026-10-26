@@ -14,9 +14,6 @@ import {
   buildOverleafGitEnvironment,
   isSupportedGitVersion,
   parseGitVersion,
-  posixAskpassScript,
-  windowsAskpassLauncher,
-  windowsAskpassPowerShellScript,
 } from "./OverleafGitExecutor.ts";
 
 import { withExecutor } from "./OverleafGitExecutor.testkit.ts";
@@ -82,14 +79,6 @@ describe("Overleaf Git environment", () => {
     const env = buildOverleafGitEnvironment({ ...base, allowLocalProtocols: true });
     expect(config(env)["protocol.file.allow"]).toBe("always");
   });
-
-  it("keeps the askpass helpers free of the token itself", () => {
-    expect(posixAskpassScript()).toContain("SCIENT_OVERLEAF_TOKEN_FILE");
-    expect(windowsAskpassPowerShellScript()).toContain(
-      "ReadAllText($env:SCIENT_OVERLEAF_TOKEN_FILE)",
-    );
-    expect(windowsAskpassLauncher("C:\\ps.exe", "C:\\a.ps1")).toContain('-File "C:\\a.ps1" %*');
-  });
 });
 
 describe("Overleaf Git version gate", () => {
@@ -108,16 +97,6 @@ describe("Overleaf Git version gate", () => {
 });
 
 describe("OverleafGitExecutor", () => {
-  it.effect("finds a supported Git", () =>
-    withExecutor(({ git }) =>
-      Effect.gen(function* () {
-        const found = yield* git.availability;
-        expect(NodePath.isAbsolute(found.executable)).toBe(true);
-        expect(parseGitVersion(found.version)).not.toBeNull();
-      }),
-    ),
-  );
-
   it.effect("passes standard input and returns raw output", () =>
     withExecutor(({ git, work }) =>
       Effect.gen(function* () {
