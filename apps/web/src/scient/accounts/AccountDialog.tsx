@@ -17,6 +17,7 @@ import * as Option from "effect/Option";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
+import { ChevronDownIcon } from "lucide-react";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { NativeSelect } from "~/components/ui/select";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
@@ -137,6 +138,7 @@ function SecretField({
           <Menu>
             <MenuTrigger render={<Button size="xs" variant="ghost-muted" />}>
               {source === "scient" ? "Use existing" : "Change"}
+              <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
             </MenuTrigger>
             <MenuPopup align="end">
               {source !== "scient" ? (

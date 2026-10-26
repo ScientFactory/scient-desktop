@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { DraftInput } from "~/components/ui/draft-input";
+import { ChevronDownIcon } from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { Checkbox } from "~/components/ui/checkbox";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
@@ -493,6 +494,7 @@ export function BrowserProfiles({
             }
           >
             Add profile
+            <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
           </MenuTrigger>
           <MenuPopup>
             <MenuItem

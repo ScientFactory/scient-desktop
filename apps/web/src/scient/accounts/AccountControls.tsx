@@ -41,7 +41,7 @@ export function AccessChip({
     <Menu>
       <MenuTrigger render={<Button size="xs" variant="outline" disabled={disabled} />}>
         {ACCESS_LABELS[access]}
-        <ChevronDownIcon aria-hidden className="-me-1 size-3 opacity-50" />
+        <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
       </MenuTrigger>
       <MenuPopup align="end">
         <MenuRadioGroup
