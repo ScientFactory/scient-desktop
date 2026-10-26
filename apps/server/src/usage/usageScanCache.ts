@@ -12,13 +12,8 @@ import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptRea
 const USAGE_SCAN_CACHE_VERSION = 9 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
-/**
- * Each cache version writes its own file in the state directory. An older
- * server sharing that directory cannot read a newer cache and would replace
- * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A server imports the newest prior cache once, when its own file is missing,
- * and never writes the prior files.
- */
+/** Separate versioned caches prevent older servers from replacing newer saved usage.
+ * Import the newest prior cache only when missing; never write prior files. */
 export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v9.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
   "usage-scan-cache-v8.json",
@@ -35,11 +30,7 @@ export interface CachedFile {
   readonly mtimeMs: number;
   readonly provider: UsageProviderKind;
   readonly records: readonly UsageRecord[];
-  /**
-   * Records from a trailing segment the writer had not newline-terminated at
-   * parse time. Kept apart from `records` because an incremental parse
-   * re-reads that segment and would otherwise double count it.
-   */
+  /** Unterminated tail records stay separate because incremental parsing rereads them. */
   readonly tailRecords: readonly UsageRecord[];
   /** Whole-file count, including diagnostics from the tentative tail. */
   readonly malformedRecords: number;
@@ -150,11 +141,7 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
   };
 }
 
-/**
- * Entries are replaced, never mutated, when their file changes, so an entry's JSON is memoised by
- * identity. The intern tables only grow, so a memoised entry's indexes stay valid; a pruned entry
- * can leave an unused string behind until the next process start.
- */
+/** Memoizes immutable entries by identity; growing intern tables preserve indexes, retaining unused strings until restart. */
 export function makeScanCacheWriter(): (
   cache: ScanCache,
   extra: Readonly<Record<string, unknown>>,
@@ -212,9 +199,7 @@ export function decodeScanCache(
   const models = root.models as readonly string[];
   const sessions = root.sessions as readonly string[];
 
-  // Any corrupt row disqualifies the whole entry. Keeping the survivors
-  // under the original (size, mtime) would read as a valid warm hit and the
-  // file would never be re-parsed, silently losing the dropped rows' usage.
+  // Reject entire corrupt entries; partial survivors would appear warm and hide usage until the file changes.
   const decodeRecords = (
     rows: readonly unknown[],
     provider: UsageProviderKind,
@@ -375,10 +360,7 @@ export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): num
   return removed;
 }
 
-/**
- * Callers stitching an incremental parse together pass one `seen` set across the line and tail
- * record batches so the whole file stays deduplicated as a unit; the set is mutated in place.
- */
+/** Mutates seen; share it across incremental line/tail batches to deduplicate the whole file. */
 export function dedupeWithinFile(
   records: readonly UsageRecord[],
   seen: Set<string> = new Set(),

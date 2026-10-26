@@ -74,10 +74,7 @@ const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 // Codex model catalogs are selected by this opaque upstream request identity.
 // Preserve it independently of Scient's human-readable initialize title.
 const CODEX_COMPATIBILITY_ORIGINATOR = "T3 Code";
-// Codex's probe does a full handshake plus account, models, and skills requests, which can
-// legitimately run past the shared 10s AUTH_PROBE_TIMEOUT_MS on a loaded or slow machine
-// (most often reported on Windows). Give Codex its own longer budget instead of raising the
-// timeout for every provider.
+// Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 
@@ -392,18 +389,9 @@ const withCodexDiscoveryDeadline = Effect.fnUntraced(function* <A, E, R>(
   );
 });
 
-/**
- * Lists the ChatGPT model catalog as fetched for Scient Desktop.
- *
- * `model/list` serves `CODEX_HOME/models_cache.json` while it is under five
- * minutes old. Every Codex client on the machine shares that file, and the
- * backend tailors the catalog to each client's originator: the plain CLI does
- * not get Sol Ultrafast. So the first answer can be another client's catalog.
- * App-server refreshes the catalog online at startup, so wait until a write
- * newer than this process's spawn lands, then list again. If no refresh
- * lands in time, keep the first answer. Another client writing in the same
- * few hundred milliseconds can still win; the next probe corrects it.
- */
+/** Shared models_cache.json may contain another client's originator-specific catalog.
+ * Wait for a write after app-server spawn, then list again; fall back to the first answer.
+ * A concurrent client can still win; the next probe corrects it. */
 const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(function* (input: {
   readonly client: CodexClient.CodexAppServerClient["Service"];
   readonly codexHome: string;
@@ -437,16 +425,8 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
   );
 });
 
-/**
- * Environment for every `codex app-server` Scient Desktop spawns.
- *
- * Codex sends its client name as the `originator` header, and the backend
- * tailors the model catalog to it. App-server starts its catalog refresh
- * before `initialize` names the client, so that first fetch goes out as the
- * plain CLI, misses tiers like Sol Ultrafast, and overwrites the shared
- * `models_cache.json`. Naming the originator at spawn closes that race.
- * A value the user already set wins.
- */
+/** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
+// Preserve a user-supplied originator.
 export const codexAppServerEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv => ({
@@ -542,9 +522,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   /** Qualification and assisted login must not inherit unrelated host secrets. */
   readonly extendEnvironment?: boolean;
 }) {
-  // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
-  // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
-  // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
+  // Expand CODEX_HOME explicitly: spawn passes a literal ~ that Codex rejects.
   const resolvedHomePath = input.homePath
     ? expandHomePath(input.homePath, yield* HostProcess.HomeDirectory)
     : undefined;

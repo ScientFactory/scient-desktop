@@ -98,6 +98,7 @@ const bodyStyle = () => document.body.style;
 
 describe("panel resize cleanup", () => {
   // SCIENT-FORK:START — main's useResizeDrag.ts chooses ew-resize on Windows.
+
   // regression: a75a6d7643 test(web): misc-b tests run in a real browser (#20869)
   it.each(["unmount", "lost capture", "blur", "cancel"])(
     "clears the cursor and pending resize after %s",

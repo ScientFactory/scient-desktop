@@ -48,6 +48,10 @@ PDF.js `PDFViewer` owns visible-page rendering, text and annotation layers,
 internal destinations, bounded canvases, and cleanup. The reader additionally
 virtualizes thumbnails, loads outlines lazily, preserves fit modes across panel
 resizes, and destroys loading/rendering work on file switches or unmount.
+Page changes update navigation without scheduling resize settlement: fitting
+each newly visible page would change the entire document's scale and scroll
+position in mixed-size PDFs. Explicit Fit width uses the current page; actual
+container resizes and rotation continue through the resize settlement path.
 
 Pages sit 8px from the view's edges and 8px apart. PDF.js runs with
 `removePageBorders`, so its fit modes use the container's whole client box, and the
@@ -189,3 +193,90 @@ and should remain independent of PDF UI decisions.
 
 PDF.js is distributed under Apache-2.0. Its bundled support-data license files
 and root license remain in the emitted `pdfjs-assets` tree.
+
+## Page editing and immediate publication
+
+Page selection is immediate and independent of the editing worker. Only a page
+mutation loads the PDF worker. Ordinary reading, opening a context menu and checkbox
+selection do not parse a second copy of the document. The virtualized thumbnail
+list explicitly invalidates its items for selection and busy-state changes.
+Opening a page's context menu does not change checkbox selection. Commands on
+an unchecked page receive its ID as an explicit target; checked-page commands
+use the selected group.
+Drag data captures explicit page IDs at pickup: an unchecked page drags alone,
+while a checked page drags the checked group. Drop targets use those IDs without
+changing checkbox selection. `pdfPageDragImage.ts` replaces the browser's still
+drag image with copies of the dragged thumbnails on screen, which glide from their
+places to the pointer and follow it as a stack with a page-count badge; the
+originals stay in place, faded, until the drop. Thumbnails render off screen and
+are copied in whole, so a re-rendered sidebar never shows a cleared canvas.
+The context menu's Move item captures explicit page IDs and opens `PdfMovePagesPopover`
+at the menu's click point, with no slide or scale animation. `pdfMoveDestinations` gives
+the To start, Up, Down and To end boundaries (null, so disabled, when `movePdfPages` would
+keep the order) and `toPage(N)`, which puts the first moved page at page N, from 1 to
+page count minus moved pages plus one. Up and Down keep the card open; the others
+close it. It uses the same save and undo path as dragging. Gap menus only insert blank or imported pages.
+Checkboxes, the Rotate/Move/Duplicate/Delete context menu, page dragging and
+the zero-height gap insertion controls stay in the existing sidebar. No edit
+toolbar, mode, or additional thumbnail spacing is introduced.
+
+`pdfEditSession.ts` serializes changes and undo/redo. It assembles candidate
+bytes off the UI thread, then calls the environment's authenticated multipart
+`POST /api/scient/pdf/save` endpoint. The displayed revision and history advance
+only after a successful save. Failures leave the candidate out of the current
+history. The PDF reader retains its existing document identity and zoom state.
+
+The transport calls `PdfFileEdits.save`; the server owns all destination paths.
+Workspace/environment PDFs use the shared binary-file mutation boundary with
+a SHA-256 expected revision and a unique operation ID. A concurrent writer is
+never silently overwritten. Generated PDFs, Sources PDFs (a `source` origin, or any path inside a
+project's `.scient/sources`, whose content-addressed files are shared by every
+attachment with the same bytes; the save classifies the fully resolved file, and
+the shared workspace writer itself refuses `.scient/sources/files` at the target
+it resolves, so a folder swapped in mid-save fails instead of writing) and
+environment PDFs outside known writable projects publish independent, validated
+revisions through
+`GeneratedDocumentStore`, under a PDF-editor-owned binding. Later saves check
+that binding's expected revision under a per-binding lease. The original PDF
+remains immutable; only registered workspace files use the workspace writer.
+The client remembers the edited-copy descriptor and view choice by reader scope
+in local storage, so the copy remains openable after closing or restarting the
+reader. Records for generated PDFs are keyed by the original revision, so a
+rebuild shows the new build and a save still finishing for an older build cannot
+replace the newer build's record. Only the 100 most recently saved records are
+kept. Quote metadata follows the saved copy's identity.
+Attachments retain the existing read-only experience.
+
+The worker (`pdfEdit.worker.ts`, a listener around `createPdfEditor` in
+`pdfEditor.ts`, which the Node tests call directly) rebuilds from the base PDF context, retaining the catalog, metadata,
+attachments and original page references. Removed-page destinations are rebound
+to a surviving page. Copied pages rebind explicit and named internal links to
+inserted targets; external links and non-link annotations retain their objects.
+Inherited resources and page boxes are materialized before reparenting original
+page nodes. Before serializing, `keepOnlyDrawnXObjects` narrows each page's and
+each drawn form's XObject list to the names its content could draw, and the page
+tree stops passing a shared resource dictionary down. A name counts as drawn if
+it appears anywhere in the content, read as one joined stream and part by part,
+including in strings, comments and inline image data, read byte for byte, plus
+everything forms and annotation appearances without their own resources draw
+with the caller's. Over-counting only keeps more; scopes with undecodable content,
+decode parameters pdf-lib does not apply (such as predictors), external stream
+data, or Type 3 fonts drawing with caller resources are left whole. Then objects the trailer (Root, Info, Encrypt, ID) no
+longer reaches are removed; pdf-lib otherwise writes every object it loaded.
+Fonts, patterns and annotation appearances are not narrowed.
+A tagged base PDF (one with a `StructTreeRoot`) must keep each original page
+exactly once, because its structure tree points at those pages; the session and
+worker both refuse delete and duplicate. Every copied page, and everything it
+draws, drops `StructParents`/`StructParent` claims, since it joins no structure
+tree. A picked import is released from the worker's 50 MB source budget when its
+form is cancelled or its gap control unmounts, including while it still loads. Page-label number trees are read before editing and rebuilt in output
+order so Roman, alphabetic, prefixed and custom labels follow their source pages,
+including duplicates and imports. Unlabeled and blank pages use their physical
+position when mixed with custom labels; wholly unlabeled PDFs retain automatic
+numbering. Malformed label trees fail before publication rather than saving stale
+ranges. Distinct duplicated page nodes can be rotated independently. Unsupported forms,
+certificate permissions and encrypted documents fail before publication.
+The session retains up to 100 undo steps; undo/redo uses the same save precondition.
+Generated source revisions have separate editing sessions. An unpublished cache
+is invalidated before actions are enabled on a replacement presentation. The last
+subscriber releases history and the worker after admitted saves have finished.

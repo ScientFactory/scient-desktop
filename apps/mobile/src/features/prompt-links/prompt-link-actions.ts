@@ -1,9 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
-import * as Linking from "expo-linking";
-import { type LinkedPrompt } from "@t3tools/shared/promptLinks";
-// SCIENT-FORK:START — registered app identity and local draft-link policy.
-import { buildScientNewThreadLink as buildNewThreadLink } from "@t3tools/shared/scientPromptLinks";
-// SCIENT-FORK:END
+import { buildNewThreadLink, type LinkedPrompt } from "@t3tools/shared/promptLinks";
 
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
@@ -41,11 +37,7 @@ export async function applyLinkedPromptToThreadDraft(
 }
 
 export async function copyPromptLink(prompt: string): Promise<void> {
-  // SCIENT-FORK:START — preserve this binary's registered scheme; never publish draft text to a hosted URL.
-  const params = new URL(buildNewThreadLink({ prompt })).searchParams;
-  const link = Linking.createURL("new", { queryParams: Object.fromEntries(params) });
-  // SCIENT-FORK:END
-  if (!(await tryCopyTextWithHaptic(link, { target: "prompt link" }))) {
+  if (!(await tryCopyTextWithHaptic(buildNewThreadLink({ prompt }), { target: "prompt link" }))) {
     Dialog.alert("Could not copy", "Try again.");
   }
 }

@@ -43,18 +43,9 @@ function isOutputProducingFact(output: ComputeOutput): boolean {
 }
 
 /**
- * Derives current output areas from an append-only transcript.
- *
- * Facts must be supplied in durable append order and belong to one runtime
- * session generation. That is the scope in which a Jupyter display ID has
- * meaning; a restart cannot update a display created by the namespace it
- * destroyed.
- *
- * Display updates preserve the original display position and identity while
- * replacing its representation bundle. `clear_output(wait=true)` clears only
- * when the next output-producing fact arrives. Scient system facts survive a
- * runtime clear because they describe retained-history integrity, not cell
- * presentation.
+ * Project durable append order within one session generation; display IDs cannot cross restart.
+ * Updates preserve display identity/position, deferred clear waits for output, and Scient integrity
+ * facts survive runtime clears because they are history evidence.
  */
 export function projectComputeOutputAreas<AreaId>(
   facts: ReadonlyArray<ComputeOutputAreaFact<AreaId>>,

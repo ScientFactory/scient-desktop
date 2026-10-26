@@ -155,14 +155,9 @@ export interface ExtensionDeliveryReceiptsShape {
     },
   ) => Effect.Effect<void>;
   /**
-   * A settled adapter connector registration for the credential
-   * `providerSessionId`: the delivered connectors it left out (a
-   * provider-native server owns the name, the agent's servers were unknown,
-   * or registering failed). Replaces the previous report for that credential,
-   * so connectors a later registration did register return to delivered.
-   * Ignored while another credential owns the thread's receipt. Ordering
-   * between overlapping registrations is the caller's: see
-   * `ConnectorSessionDelivery.registrationTrackerFor`.
+   * Replace registration omissions for the same credential; ignore reports once another credential
+   * owns the thread. The credential's ConnectorSessionDelivery tracker orders overlapping
+   * registrations independently of receipt retention.
    */
   readonly reportRegistration: (input: {
     readonly threadId: ThreadId;

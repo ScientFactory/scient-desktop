@@ -325,12 +325,8 @@ export const ScientSourceOperationItem = Schema.Struct({
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 
 /**
- * Maximum number of references in one durable import operation.
- *
- * Each item is checkpointed in the operation record so an interrupted import
- * can resume without guessing what reached the project ledger. Larger library
- * transfers need a versioned append-only operation format rather than a larger
- * in-memory array and repeated whole-file rewrites.
+ * Every import item is durably checkpointed for restart. Larger transfers need a versioned
+ * append-only format, not ever-larger arrays and repeated whole-file rewrites.
  */
 export const SCIENT_SOURCE_IMPORT_ITEM_LIMIT = 500;
 

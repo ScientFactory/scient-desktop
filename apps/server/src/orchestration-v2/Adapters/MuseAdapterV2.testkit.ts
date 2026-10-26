@@ -27,10 +27,7 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
 import { makeMuseAdapterV2 } from "@t3tools/provider-muse/server";
-import {
-  buildScientRuntimeInstructions,
-  SCIENT_PULL_REQUEST_LINKING_INSTRUCTIONS,
-} from "../../provider/ScientRuntimeInstructions.ts";
+import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 
 export const MUSE_PROVIDER_KIND = "muse";
 export const MUSE_MSP_REPLAY_PROTOCOL = "muse.msp-jsonl";
@@ -204,12 +201,7 @@ interface MuseReplayHost {
   open: boolean;
 }
 
-/**
- * A write that matches a later outbound record of the same turn is held until
- * the transcript reaches it, because independent adapter fibers can reach stdin
- * in a different order than recorded. A write that matches nothing before the
- * next turn fails at once.
- */
+/** Adapter fibers can reorder stdin writes; hold matches within the turn until reached, and fail unmatched writes. */
 class MuseReplayController {
   private cursor = 0;
   private failure: unknown = null;
@@ -431,7 +423,6 @@ export function layer(input: {
           environment: input.environment ?? {},
           createHost: input.createHost,
           runtimeInstructions: buildScientRuntimeInstructions,
-          // Same queue the continuation worker drains when the fixture runs it.
           continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         }),
       ];
@@ -453,6 +444,11 @@ export function layer(input: {
 const RECORDED_MUSE_PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 When the t3-code MCP server exposes link_pull_request, you must use it to register every pull request you create or work on for this thread. Call link_pull_request with the full PR URL immediately after creating a PR or starting work on an existing PR. For a stack, call it for every layer, not just the current branch or the top PR. This applies when creating or updating PRs through gh, gh stack, another CLI, or the host API: those operations do not register the PRs with this thread. Linking an already-linked PR is safe. Before finishing PR work, call list_thread_pull_requests and link any PR from your work that is missing. Do not link unrelated PRs mentioned only as background. If a linking call fails, report that failure instead of claiming the PR is linked. As a delegated child task, do not watch or poll PRs; return PR URLs, head SHA, and pending review/check state to your parent. Otherwise, when asked to monitor, watch, or babysit a PR and watch_pull_request is available, call it and end your turn: T3 Code wakes you when checks finish, someone else comments, or the branch conflicts, so do not poll or run your own watcher. When monitoring is done and you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
 </pull_request_linking>`;
+// The block Scient sends today, from the same composition the adapter uses.
+const SCIENT_PULL_REQUEST_LINKING_INSTRUCTIONS =
+  /<pull_request_linking>[\s\S]*<\/pull_request_linking>/.exec(
+    buildScientRuntimeInstructions({ harness: "Muse" }),
+  )?.[0] ?? "";
 
 /** Adapt only Scient-owned request copy; native records and matcher stay exact. */
 export function materializeScientMuseRequests(
@@ -518,11 +514,7 @@ export function materializeScientMuseRequests(
 }
 
 // SCIENT-FORK:END
-/**
- * Fills a recording's `<workspace>` with what the adapter sends on this host:
- * the canonical path (macOS /var -> /private/var), which `turn/start` names in
- * museWorkspaceRoot's form (verbatim on Windows).
- */
+/** Uses canonical workspace paths, with turn/start in museWorkspaceRoot form (verbatim on Windows). */
 export const materializeMuseReplayWorkspace = Effect.fn("materializeMuseReplayWorkspace")(
   function* (transcript: ProviderReplayTranscript, workspace: string) {
     const canonical = yield* FileSystem.FileSystem.pipe(

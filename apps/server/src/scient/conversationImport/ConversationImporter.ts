@@ -1,138 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the content digest is checked inside a synchronous schema filter.
 /**
- * The seam between staging a portable conversation file and importing it.
- *
- * Two owners meet here:
- *
- * - **Staging** receives the upload, validates the package, stages its
- *   attachments, serves previews, runs confirm and cancel, and is the only code
- *   that creates or removes a staging area.
- * - **The importer** (`ConversationImporter`) turns one validated, leased import
- *   into a new independent thread with a single `thread.conversation.import`
- *   command, and settles attempts that will not continue. It never starts a
- *   provider session.
- *
- * ## Authorization
- *
- * Every import endpoint (create-upload, preview, import, cancel) first calls
- * `requireEnvironmentScope(SCIENT_CONVERSATION_IMPORT_REQUIRED_SCOPE)`, as the
- * other mutating Scient endpoints do; the signed upload URL is issued only
- * after that check and accepts exactly the admitted bytes, once. The confirm
- * passes the authenticated principal to `importConversation`, which checks it
- * again and checks authority over the destination as a thread-creating
- * dispatch would: the project exists, is not deleted, and is not being cloned.
- * A retried confirm is checked with its own principal.
- *
- * ## Staging areas
- *
- * One directory per import, `<stateDir>/scient/conversation-imports/<importId>/`,
- * created only by `createUpload` (under a fresh ID) and removed only by
- * staging. Its layout is private to staging except `attemptDirectory`, which
- * belongs to the importer (its attempt journal) and which staging only ever
- * removes as part of the whole area. Each area counts against
- * `CONVERSATION_IMPORT_STAGING_QUOTA_BYTES` and `CONVERSATION_IMPORT_MAX_LIVE`
- * from admission until it is gone: its declared upload size until it is
- * validated, then its staged snapshot and attachments. Validation and imports
- * run one at a time, so the only bytes beyond the quota are the expansion of
- * the one package being validated, at most `SCIC_MAX_UNCOMPRESSED_BYTES`. A
- * receive ends after a minute without bytes or at a deadline scaled to its
- * size. An idle area expires `CONVERSATION_IMPORT_STAGING_TTL_MS` after its
- * last upload, preview, or confirm; an area whose upload never arrives expires
- * with its upload URL.
- *
- * Staging removes an area when the user cancels, after a successful import,
- * when it expires, when its file is refused, and at server startup (every
- * area left from an earlier run is abandoned). A validation that fails for a
- * reason a retry may clear (no room yet, a read error) keeps the upload for
- * the next preview instead. Before removing an area whose `attemptDirectory`
- * is not empty, staging calls `settleAttempt`; if settling fails, the area
- * stays and is settled again on the next sweep. An area that cannot be
- * removed yet stays, still counted, until a sweep removes it. An empty
- * `attemptDirectory` means nothing was published.
- *
- * ## The per-import lease
- *
- * Every operation on one import runs under its exclusive, in-process lease:
- * receiving the upload, validation (the first preview), the import (confirm),
- * and removal (cancel, expiry, startup). Validation and the import run in
- * fibers owned by staging, not by the HTTP request, so a client disconnect
- * interrupts neither. While one runs:
- *
- * - a second preview joins the running validation; a confirm waits for it and
- *   then imports; a second confirm joins the running import if its package
- *   digest and destination match, and fails `import-busy` otherwise;
- * - expiry skips the area (both operations refresh its expiry);
- * - cancel marks the import cancel-requested, stops a receive in progress or
- *   interrupts the running fiber, and joins it before deciding anything, so
- *   an upload's reservation is held until its stream has stopped.
- *
- * A preview is returned only if the import is still live when validation
- * ends; a cancelled validation fails its joined previews `cancelled`. A
- * cancelled or unknown ID never gets an area again: uploads and validation
- * write only into an existing, live area.
- *
- * An import's outcome is decided by its commit receipt, never by the cancel.
- * Once the fiber has ended, staging settles the attempt (the fiber's own
- * success already proves an accepted receipt). If the command committed —
- * including when the interrupt arrived after the uninterruptible dispatch —
- * the import is finished: staging persists its completion, joined confirms
- * get the result (or `already-imported` when their destination differs), and
- * cancel answers `already-imported`. Only an attempt proven uncommitted
- * (receipt rejected or absent) ends `cancelled`: its files are rolled back,
- * the area is removed, and joined confirms fail `cancelled`.
- *
- * ## Attempts and commit receipts
- *
- * One import has at most one committed thread. An attempt is one command ID,
- * destination thread ID, and confirm binding (package digest and
- * destination), recorded in the importer's journal. The journal is written and
- * flushed before any file is published or any command is dispatched, so every
- * attempt that can have committed has a durable binding. The binding is fixed
- * for the attempt: a confirm whose destination differs from a kept,
- * uncommitted attempt's fails `destination-changed` and never resumes or
- * re-targets the journaled command (cancel ends the attempt instead).
- *
- * The command's receipt decides everything, never whether a thread exists now:
- *
- * - **accepted** — the thread committed. Published files belong to it and are
- *   never deleted. `importConversation` and `settleAttempt` return the
- *   attempt's `ConversationImportCompletion`, rebuilt from the journal's
- *   binding, so the original destination is reported whatever destination the
- *   current confirm asked for.
- * - **rejected** — the engine refused that command, permanently: resending
- *   the same command ID fails `OrchestrationCommandPreviouslyRejectedError`.
- *   The importer deletes exactly the journal-listed files, clears
- *   `attemptDirectory`, and reports `import-rejected` (or `rejected` when
- *   settling). The attempt is over; confirming again starts a new attempt with
- *   a new command ID, thread ID, and binding, typically with another
- *   destination.
- * - **absent** — nothing committed. After a failure the attempt is kept:
- *   `importConversation` fails `import-failed`, and the next confirm with the
- *   same binding resumes it from the journal with the same IDs, so a dispatch
- *   that did commit is found rather than repeated. When the attempt will not
- *   continue (cancel, expiry, startup), `settleAttempt` deletes exactly the
- *   journal-listed files and reports `rolled-back`. Settling runs only when no
- *   import fiber is running, so no dispatch for the attempt can still be in
- *   flight.
- *
- * ## Completions
- *
- * A committed import's `ConversationImportCompletion` (package digest and
- * result, which carries the destination) outlives its staging area. Write
- * order, for a commit reported by `importConversation` or by `settleAttempt`
- * (including at startup): (1) staging writes the completion record durably
- * (temporary file, flush, rename) under
- * `<stateDir>/scient/conversation-imports/completions/`; (2) only then removes the
- * area, journal included. If step 1 fails, the area and journal stay and the
- * next sweep settles again, so a crash anywhere between commit and cleanup
- * still ends with the completion recorded. Records are kept for
- * `CONVERSATION_IMPORT_COMPLETION_RETENTION_MS` across restarts. While it is
- * retained it answers first, whatever the staging area is doing (still being
- * removed, or gone): a repeated confirm with the same digest and destination
- * returns the result, another digest fails `package-changed`, another
- * destination `already-imported`; a cancel answers `already-imported`, and a
- * preview fails `already-imported`. Only an import with no retained
- * completion and no live area is `import-not-found`.
+ * Staging owns leased areas/quota until removal, even after failed cleanup; disconnect cannot
+ * cancel its fibers. Reauthorize confirms and bind each durable journal to one destination.
+ * Receipts alone settle ownership; join before rollback. Persist completion before removing the
+ * journal so crash/cancel cannot erase an accepted import.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -177,13 +48,9 @@ export const CONVERSATION_IMPORT_MAX_LIVE = 8;
 /** How long a committed import's confirm binding and result are kept. */
 export const CONVERSATION_IMPORT_COMPLETION_RETENTION_MS = 24 * 60 * 60_000;
 /**
- * Records one import may write: messages, reasoning, work-log entries, plans,
- * and answers. One `thread.conversation.import` command writes them all in one
- * transaction, which holds the orchestration engine. Measured with the opt-in
- * `ConversationImportBenchmark` on an on-disk database, a work-log-heavy import
- * (eight tool entries of 8,000 output characters per turn) commits 5,000
- * records in about 3.5 s; the cost then grows faster than linearly (about 14 s
- * at 10,000 and 65 s at 20,000).
+ * Import commits hold the orchestration engine in one transaction. Work-log-heavy commit cost grows
+ * faster than linearly, so cap records rather than relying only on byte limits; qualify with
+ * ConversationImportBenchmark.
  */
 export const CONVERSATION_IMPORT_MAX_RECORDS = 5_000;
 
@@ -199,19 +66,9 @@ export function conversationImportRecordCount(snapshot: ConversationSnapshotV1):
 }
 
 /**
- * Recomputes a snapshot's content digest the way the exporter computed it:
- * SHA-256 of `canonicalSnapshotContent`, which leaves out `captured` and the
- * digest itself.
- *
- * It is computed over the decoded snapshot, so it certifies exactly what an
- * import writes. A package from a newer minor version whose snapshot carries
- * fields this build does not know is therefore rejected by the reader rather
- * than verified over content the import would silently drop: the reader
- * requires the canonical form of `conversation.json` as received to equal the
- * canonical form of its decoded snapshot, and reports a difference as
- * `unsupported-version` for a newer minor version and `snapshot-invalid`
- * otherwise. Newer minor versions that add only manifest data still import,
- * with a warning.
+ * Hash the decoded snapshot, excluding captured/digest, to certify exactly what import writes.
+ * Reject received canonical content that decoding would discard; newer minor manifest-only
+ * additions can still import with a warning.
  */
 export function conversationContentDigest(snapshot: ConversationSnapshotV1): Sha256Digest {
   const { contentDigest: _contentDigest, captured: _captured, ...content } = snapshot;
@@ -379,14 +236,9 @@ function firstDuplicate(values: Iterable<string>): string | null {
 }
 
 /**
- * The snapshot's own structure is unambiguous enough to map every external
- * record to exactly one new local record: message numbers run 1..N in order,
- * message and reasoning IDs are unique together, other record IDs are unique
- * per kind, each named turn's messages form one run (messages without a turn
- * may sit inside it, as steering prompts do), the omitted running turn
- * appears nowhere, unselected content is absent, a range ends at its last
- * message, and inline references are unique per message and point at that
- * message's own attachments.
+ * Require unambiguous external-to-local mapping: unique IDs, contiguous turn messages, ordered
+ * numbering, no omitted/unselected records, and references to each message's own attachments.
+ * Turnless steering may sit inside a turn's run.
  */
 function checkSnapshotStructure(snapshot: ConversationSnapshotV1): true | string {
   for (const [index, message] of snapshot.messages.entries()) {
@@ -459,13 +311,9 @@ function checkSnapshotStructure(snapshot: ConversationSnapshotV1): true | string
 }
 
 /**
- * Omissions the snapshot's own facts prove must be reported, so a sender cannot
- * hide them by dropping warnings: exactly one running-turn warning, for the
- * omitted turn, when there is one; and an unavailable or unsupported
- * attachment warning for each (name, message) with an unavailable attachment
- * (message `null` for attachments on a submitted answer), and no other.
- * Skipped-records warnings describe what the snapshot left out and pass
- * through.
+ * Derive mandatory running-turn and unavailable-attachment warnings from snapshot facts so senders
+ * cannot hide omissions by deleting warnings. Preserve skipped-record warnings whose omitted
+ * contents are no longer observable.
  */
 function checkSnapshotWarnings(snapshot: ConversationSnapshotV1): true | string {
   const runningWarnings = snapshot.warnings.filter(
@@ -552,13 +400,8 @@ function checkAttachments(input: {
 }
 
 /**
- * Everything validation guarantees about a `ValidatedConversationImport`
- * beyond the shape of its parts: the snapshot's content hashes to its content
- * digest, the package describes this snapshot (digest, source thread, a
- * supported major version), the snapshot's structure is
- * unambiguous, its warnings report every omission its facts prove, the
- * omissions and version warning are exactly what the snapshot and package
- * imply, and the staged attachments back exactly the available snapshot
+ * Shape validation is insufficient: bind snapshot digest/source/version to the package, require
+ * unambiguous structure and factual omission warnings, and match staged bytes exactly to available
  * attachments.
  */
 function checkValidatedConversationImport(
@@ -616,16 +459,9 @@ function checkValidatedConversationImport(
 }
 
 /**
- * What staging hands the importer: a package that passed every validation
- * check, described by its manifest summary, with its attachments staged.
- *
- * Every identifier inside `snapshot` — `captured.threadId`, message, turn, plan,
- * question, activity, and reference IDs, and any origin in
- * `snapshot.provenance` — was minted by another installation. The importer
- * mints new local IDs for everything it writes, maps each external ID to
- * exactly one of them, and records external identity only as the imported
- * thread's provenance (`conversationImportProvenance`). `snapshot.provenance`
- * is the sender's history, never the imported thread's provenance.
+ * Every snapshot ID is external. Mint fresh local IDs with a one-to-one mapping; record sender
+ * identity only as import provenance. The sender's snapshot.provenance is history, never the
+ * imported thread's own origin.
  */
 export const ValidatedConversationImport = Schema.Struct({
   importId: ConversationImportId,
@@ -654,11 +490,8 @@ export const ValidatedConversationImportParts = ValidatedConversationImport.mapF
 export type ValidatedConversationImportParts = typeof ValidatedConversationImportParts.Type;
 
 /**
- * Joins a decoded snapshot and the rest of its import with every guarantee of
- * `ValidatedConversationImport`, without encoding and decoding the snapshot
- * again. `computedContentDigest` is `conversationContentDigest` of this
- * snapshot, computed by the caller (the reader computes it once), or the
- * digest of a snapshot the caller staged byte for byte after validating it.
+ * Reuse the caller's digest only for this decoded snapshot or byte-identical validated staged
+ * bytes; avoid a second snapshot encode/decode pass.
  */
 export function joinValidatedConversationImport(
   parts: ValidatedConversationImportParts,
@@ -775,11 +608,8 @@ export interface ConversationImportLease {
    */
   readonly attemptDirectory: string;
   /**
-   * Publishes a staged attachment at `destinationPath`, a server path the
-   * importer chose inside its own storage. Copies (the staged file stays),
-   * verifies size and SHA-256 while copying, writes through a temporary file
-   * and rename, and succeeds without copying when the destination already
-   * holds the same bytes.
+   * Copy rather than consume staging. Verify size/SHA-256 through temporary write and rename; an
+   * existing destination succeeds only when its bytes match.
    */
   readonly copyAttachment: (input: {
     readonly resourceId: ConversationImportResourceId;
@@ -847,16 +677,10 @@ export class ConversationImporter extends Context.Service<
   ConversationImporter,
   {
     /**
-     * Imports once, under the lease. Checks, in order: a kept attempt's receipt
-     * (accepted returns its completion, whatever `request.destination` is;
-     * rejected clears it), then a kept attempt's binding (another destination
-     * fails `destination-changed`), then authority. Succeeds only after the
-     * import command committed. Cancel interrupts this effect: everything up to
-     * the dispatch of `thread.conversation.import` must tolerate interruption
-     * (leaving only journal-listed files), and the dispatch and everything
-     * after it must be uninterruptible. A failure after commit (for example
-     * while reporting back) is repaired by the next call, which finds the
-     * accepted receipt and returns the same completion.
+     * Check kept receipts before binding/authority so accepted retries report the original
+     * destination. Before dispatch, tolerate interruption with only journal-listed files; dispatch
+     * onward is uninterruptible. Repair post-commit failure from the receipt rather than
+     * redispatching history.
      */
     readonly importConversation: (
       lease: ConversationImportLease,

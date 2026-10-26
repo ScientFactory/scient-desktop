@@ -1,29 +1,7 @@
 /**
- * Document bundle → Word (.docx), through the managed Pandoc.
- *
- * The two-pass pipeline qualified for Word export (Pandoc qualification,
- * REPORT §4), with Scient's preparation between the passes:
- *
- * 1. **Read**, sandboxed: `pandoc --sandbox -f <Scient profile> -t json`, the
- *    bundle Markdown on stdin.
- * 2. **Prepare and secure**, in Scient: map Scient's Markdown profile
- *    (conversation structure, details, alerts, task lists, Mermaid, wide
- *    tables), turn citation groups with references into `Cite` nodes, then run
- *    the security pass (metadata, raw nodes, images, links) and mark text
- *    direction.
- * 3. **Write**, sandboxed: `pandoc --sandbox -f json -t docx` with Scient's
- *    reference document and, when the document cites references, a CSL-JSON
- *    bibliography and `--citeproc`; every file Pandoc may read is copied into
- *    the run's scratch directory under a fixed name first.
- *
- * Each pass is a separate Pandoc process with a fresh environment, a heap
- * limit, a timeout, and an output limit (`pandocProcess.ts`), and the whole
- * conversion shares one time budget ({@link SCIENT_WORD_CONVERSION_TIMEOUT_MS}),
- * which clients outwait. The Word file is
- * streamed to `<output>.partial` and renamed into place only when Pandoc
- * succeeded; interruption kills Pandoc and removes the partial file and the
- * scratch directory. Pandoc's options are Scient's alone: no filters, no
- * `--pdf-engine`, no user-supplied flags.
+ * Secure the parsed tree between sandboxed passes; Pandoc flags are Scient-owned. Copy permitted
+ * inputs to fixed scratch names and share one conversion deadline. Publish only by successful
+ * partial-file rename; interruption kills the process and removes partial/scratch state.
  */
 import {
   SCIENT_WORD_CONVERSION_TIMEOUT_MS,
@@ -63,13 +41,8 @@ import type { PreparedLatexProject } from "./latexProjectPreparation.ts";
 import type { CapturedWorkspaceImage } from "./wordImageSnapshot.ts";
 
 /**
- * Scient's document and chat profiles, read with CommonMark plus exactly the
- * extensions the profiles have: GFM tables, task lists, strikethrough, and
- * autolinks; alerts; `$…$` math; footnotes; wiki links; YAML front matter; raw
- * HTML (so `<details>` reaches preparation). Pandoc-only syntax (attributes,
- * fenced divs, bracketed spans, raw attributes, definition and fancy lists,
- * sub/superscript, smart punctuation, emoji, implicit header references) is
- * off, so text Scient shows literally is not reinterpreted.
+ * Enable only Scient's grammar, retaining raw HTML until preparation. Disable Pandoc-only syntax so
+ * text Scient displays literally is not reinterpreted during export.
  */
 export const SCIENT_PANDOC_READER = [
   "commonmark_x",

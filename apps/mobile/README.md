@@ -96,14 +96,6 @@ Build and run the local iOS preview app:
 vp run ios:preview
 ```
 
-Force the review diff highlighter engine:
-
-```bash
-EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=javascript vp run ios:dev
-```
-
-`javascript` is the default and recommended setting for the review diff screen. Set `EXPO_PUBLIC_REVIEW_HIGHLIGHTER_ENGINE=native` only when you explicitly want to test the native Shiki engine.
-
 Inspect the resolved Expo config for a variant:
 
 ```bash
@@ -117,21 +109,7 @@ Run static checks for mobile native code:
 node ../../scripts/mobile-native-static-check.ts
 ```
 
-The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin. Missing SwiftLint is reported as a warning and skipped locally; missing ktlint or detekt fails the task. CI installs the default toolset from `apps/mobile/Brewfile` before running the native checks.
-
-On macOS with Xcode, check the installed native removal-guard algorithm:
-
-```bash
-node scripts/check-native-removal-guard.mjs
-```
-
-The check compiles the installed screens dependency's resolver and pop decision
-against Foundation containment doubles. It covers collapsed detail-column removal
-as well as ordinary screen removal. It does not replace UIKit Back/swipe, layout,
-or keyboard testing. The screens patch preserves the pinned t3.37 archive and
-its MIT license; it only extends guard traversal through a navigation controller
-that UIKit removes as a whole. Reinstall dependencies and rebuild the native
-client, including CocoaPods, after changing this patch.
+The native lint task runs SwiftLint for Swift plus ktlint and detekt for Kotlin. Missing native tools are reported as warnings and skipped locally. CI installs the default toolset from `apps/mobile/Brewfile` before running the native checks.
 
 ## EAS Builds
 

@@ -263,12 +263,9 @@ const makeHarness = (input: {
    */
   readonly missingFiles?: ReadonlyArray<string>;
   /**
-   * Runs inside `beginProduction`, after the store has claimed the binding and
-   * before the caller ever sees the handle. That gap is a real window in the
-   * service — a cancel landing in it finds no production to release — and this
-   * is the only way to stand inside it deterministically. The argument is the
-   * 1-based attempt, so a test can let the first build through and park the
-   * second.
+   * Pause after beginProduction claims the binding but before its handle is visible. This
+   * deterministically exposes cancellation's no-handle ownership window; ordinary scheduling cannot
+   * reliably stand inside it.
    */
   readonly beginProductionGate?: (attempt: number) => Effect.Effect<void>;
   /** Runs on the first binding read after commit, outside the workspace publication fence. */
@@ -590,11 +587,8 @@ const makeHarness = (input: {
   });
 
 /**
- * Waits for the build-input evidence to reach disk. A build reports
- * `succeeded` as soon as the PDF is bound and persists its evidence just
- * afterwards, so a test that simulates a restart has to let the state
- * directory settle first — a real restart is not instantaneous either.
- * The receipt is the landing rename of the atomic write, not a timer.
+ * Succeeded binding precedes evidence persistence. Before simulating restart, wait for the evidence
+ * write's atomic rename receipt rather than a timer.
  */
 const awaitPersistedEvidence = (latexDir: string) =>
   Effect.gen(function* () {
@@ -1701,11 +1695,8 @@ describe("LatexBuildService", () => {
 
   it.live("refuses to publish the half-typeset PDF of a run that ended in error", () =>
     Effect.gen(function* () {
-      // The engine runs to the end of the document, so it can and does leave a
-      // PDF behind after an error: the pages before the error, a bibliography
-      // that never ran, every reference resolved to `??`. Publishing it would
-      // put "Built" over a document nobody produced and turn the errors shown
-      // beside it into advice. There is nothing to publish here.
+      // TeX can leave partial/error PDFs after reaching the document end. Do not publish them as
+      // Built merely because bytes exist; compiler errors mean no valid production.
       const harness = yield* makeHarness({
         compiles: [{ transcript: ERROR_TRANSCRIPT, exitCode: 1, pdf: minimalPdf("partial") }],
       });
@@ -1822,12 +1813,8 @@ describe("LatexBuildService", () => {
 
   it.live("releases the binding when a cancel lands inside the beginProduction window", () =>
     Effect.gen(function* () {
-      // The window: `beginProduction` has claimed the binding and marked it
-      // `producing`, and the handle has not yet reached the entry. A cancel
-      // arriving here reads `entry.production === null`, finds nothing to
-      // release, and leaves — and the binding sits in `producing` until the
-      // next build or a restart reconciles it. Nothing in the viewer moves
-      // while it does.
+      // Cancel can arrive after the store claims producing but before entry.production receives its
+      // handle. Guard that window so cancellation cannot strand the binding until restart/rebuild.
       const reached = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
@@ -1876,13 +1863,8 @@ describe("LatexBuildService", () => {
 
   it.live("leaves a good PDF current when a build dies of something that is not the document", () =>
     Effect.gen(function* () {
-      // Everything that reaches the unexpected-failure handler is
-      // infrastructure — a full disk, a state directory that vanished, a
-      // defect in this service — and none of it is a claim about the sources.
-      // Staling on it puts "out of date" over a PDF that matches its inputs
-      // perfectly, and tells the reader to distrust the one thing that was
-      // never at fault. Here the fake engine runs out of compiles, which dies
-      // exactly the way an infrastructure defect does.
+      // Infrastructure failure says nothing about source freshness. Preserve the last valid PDF's
+      // standing rather than marking matching inputs stale because disk/service machinery failed.
       const harness = yield* makeHarness({
         compiles: [{ transcript: "", exitCode: 0, pdf: minimalPdf("good") }],
       });
@@ -1917,11 +1899,8 @@ describe("LatexBuildService", () => {
 
   it.live("does not stale a published PDF when shutdown interrupts a build in flight", () =>
     Effect.gen(function* () {
-      // `buildScope` closing on shutdown interrupts every in-flight build
-      // fiber, and an interrupt arrives at the same handler a defect does.
-      // Reading it as a build outcome meant a server stopped mid-compile came
-      // back up with its last good PDF marked out of date, on the strength of
-      // nothing but its own shutdown.
+      // Shutdown interruption shares the unexpected-failure handler. It must not become a
+      // source/build verdict that marks the last good PDF stale across restart.
       const hold = yield* Deferred.make<void>();
       const first = yield* makeHarness({
         compiles: [
@@ -3349,11 +3328,9 @@ describe("LatexBuildService", () => {
           })
           .pipe(Effect.result);
 
-        // Where `C:evil\x.tex` lands depends on the drive the workspace sits
-        // on: the same drive resolves it to an ordinary missing file inside the
-        // workspace, another drive makes `path.relative` hand back an absolute
-        // path that the containment guard rejects. Neither reaches the engine,
-        // and neither is allowed to name a path outside the root.
+        // Windows drive-relative paths resolve differently on same/other drives. Missing same-drive
+        // files and absolute cross-drive results must both stop before the engine and never name
+        // outside-root inputs.
         if (outcome._tag === "Failure") {
           expect(outcome.failure.reason).toBe("invalid-path");
         } else {
@@ -3367,15 +3344,9 @@ describe("LatexBuildService", () => {
 
   it.live("never reports a failed build without saying why", () =>
     Effect.gen(function* () {
-      // The regression, as it happened. A first compile stops on
-      // `microtype.sty`; the fetch reports failure (in production, a `tlmgr`
-      // whose shim was killed at the budget while its perl kept going); the
-      // reader rebuilds; and `latexmk` — holding, in the work directory that
-      // outlives a build, both the record that the last run failed and the
-      // paths it looked for the missing file in — declines to rerun the engine
-      // at all. Its refusal is prose: no `file:line:`, no `!`, no missing file.
-      // The build recorded that as an empty diagnostics list under the bare
-      // "LaTeX build failed.", which is the one thing a reader cannot act on.
+      // latexmk can refuse to repeat a previously failed run using prose without parseable
+      // diagnostics. Preserve that explanation after a failed missing-package fetch; an empty
+      // diagnostics list would leave the reader only an unactionable generic failure.
       const harness = yield* makeHarness({
         toolchain: MANAGED_LATEXMK,
         compiles: [

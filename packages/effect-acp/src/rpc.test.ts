@@ -9,16 +9,9 @@ const decodeLenient = Schema.decodeUnknownEffect(LenientSetSessionConfigOptionRe
 const decodeStrict = Schema.decodeUnknownEffect(AcpSchema.SetSessionConfigOptionResponse);
 
 /**
- * Pins the Droid compatibility rule: `session/set_config_option` responses
- * may omit (or null out) `configOptions`. The tolerance lives in this
- * hand-written codec (`LenientSetSessionConfigOptionResponse`) rather than in
- * the generated schema, so `pnpm generate` cannot silently drop it — if this
- * test fails after a regeneration, the lenient codec needs revisiting.
- *
- * Absence must stay distinguishable from an authoritative empty inventory:
- * the session runtime treats a missing/null inventory as "the refreshed
- * state arrives via the async `config_option_update` notification" and must
- * not overwrite already-observed state with an empty list.
+ * Droid may omit/null configOptions to defer inventory to an async update; this differs from an
+ * authoritative empty list. Keep tolerance in the handwritten codec so regeneration cannot silently
+ * erase it or clear observed state.
  */
 describe("LenientSetSessionConfigOptionResponse", () => {
   it.effect("uses the lenient codec in the production compatibility registration", () =>

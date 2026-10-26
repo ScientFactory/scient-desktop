@@ -1597,3 +1597,117 @@ describe("Oh My Pi RPC client decoding", () => {
     ),
   );
 });
+
+// SCIENT-FORK: optional desktop observations survive both known and degraded frames.
+describe("desktop RPC observations", () => {
+  it.effect("retains message usage even when another optional message field drifts", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* negotiate(h.stdout, h.stdin);
+        const usage = {
+          input: 12,
+          cacheRead: 30,
+          cacheWrite: 20,
+          output: 4,
+          totalTokens: 66,
+          futureCounter: 1,
+        };
+        yield* Queue.offer(
+          h.stdout,
+          line({
+            type: "message_end",
+            messageId: "normal",
+            message: { role: "assistant", provider: "vendor", model: "model", usage },
+          }),
+        );
+        yield* Queue.offer(
+          h.stdout,
+          line({
+            type: "message_end",
+            messageId: "drifted",
+            message: {
+              role: "assistant",
+              provider: "vendor",
+              model: "model",
+              usage,
+              stopReason: { changed: true },
+            },
+          }),
+        );
+        const notifications = yield* h.drain;
+        const normal = eventsOf(notifications).find((event) => event.messageId === "normal");
+        expect(normal?.message).toMatchObject({ usage, provider: "vendor", model: "model" });
+        const degraded = notifications.find(
+          (notification) => notification._tag === "UndecodableEvent",
+        );
+        expect(degraded).toMatchObject({ eventType: "message_end" });
+        expect(
+          eventsOf(notifications).find((event) => event.messageId === "drifted")?.message,
+        ).toMatchObject({ usage, provider: "vendor", model: "model" });
+      }),
+    ),
+  );
+
+  it.effect(
+    "retains dialog deadlines, notice provenance, fallback identity and billed warming usage",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* makeHarness();
+          yield* negotiate(h.stdout, h.stdin);
+          const frames = [
+            {
+              type: "extension_ui_request",
+              id: "editor",
+              method: "editor",
+              prefill: " text\n",
+              timeout: 2000,
+            },
+            {
+              type: "notice",
+              level: "error",
+              source: "session-persistence",
+              message: "Saving failed",
+            },
+            {
+              type: "retry_fallback_applied",
+              from: "vendor/a",
+              to: "vendor/b",
+              reason: "Rate limit",
+            },
+            { type: "cache_warming_end", usage: { input: 1, cost: { total: 0.1 } } },
+          ];
+          for (const frame of frames) yield* Queue.offer(h.stdout, line(frame));
+          const notifications = yield* h.drain;
+          expect(notifications.every((notification) => notification._tag === "Event")).toBe(true);
+          expect(eventsOf(notifications)).toEqual(
+            frames.map((frame) => expect.objectContaining(frame)),
+          );
+        }),
+      ),
+  );
+
+  it.effect("decodes optional context and todo state while accepting older state responses", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* negotiate(h.stdout, h.stdin);
+        const pending = yield* h.client.getState().pipe(Effect.forkScoped);
+        const request = yield* h.takeCommand;
+        const todoPhases = [{ name: "Plan", tasks: [{ content: "Work", status: "pending" }] }];
+        yield* h.respond(request, {
+          contextUsage: { tokens: 40, contextWindow: 1000 },
+          todoPhases,
+        });
+        expect(yield* Fiber.join(pending)).toMatchObject({
+          contextUsage: { tokens: 40 },
+          todoPhases,
+        });
+        const old = yield* h.client.getState().pipe(Effect.forkScoped);
+        yield* h.respond(yield* h.takeCommand, { isStreaming: false });
+        expect(yield* Fiber.join(old)).toEqual({ isStreaming: false });
+      }),
+    ),
+  );
+});

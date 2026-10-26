@@ -66,11 +66,8 @@ const MAX_NAMED_INSTALLING_PACKAGES = 2;
 const MAX_NAMED_FIRST_BUILD_PACKAGES = 6;
 
 /**
- * What the strip says while a build waits for a package the document turned
- * out to need. Naming the packages is the point: the build looks stalled
- * otherwise, and this is the one pause that is not the compiler's. A long list
- * leads with how many there are, because the strip is one line and the tail of
- * it is the first thing an ellipsis takes.
+ * Name missing packages so the compiler-independent pause does not look stalled. Lead long lists
+ * with the count because ellipsis removes the tail of the single-line strip.
  */
 function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): string {
   if (packages.length <= MAX_NAMED_INSTALLING_PACKAGES) {
@@ -81,12 +78,8 @@ function latexInstallingPackagesLabel(packages: ReadonlyArray<string>): string {
 }
 
 /**
- * And what it says the first time, before this document has ever produced a
- * PDF. A first build against a distribution Scient installed fetches every
- * package the preamble names in one go, which is the slowest thing this
- * feature ever does and the only time the wait is measured in minutes. Saying
- * so is the difference between a reader waiting and a reader deciding the app
- * has hung; every later build is fast, and says the ordinary thing.
+ * The first managed-distribution build may spend minutes fetching preamble packages; say so to
+ * distinguish that wait from a hung app. Later builds use ordinary progress copy.
  */
 function latexFirstBuildInstallingLabel(packages: ReadonlyArray<string>): string {
   const named =

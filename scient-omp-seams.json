@@ -46,6 +46,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "apps/web/src/session-logic.ts",
+      "anchor": "planDriver !== \"omp\" && planDriver !== \"scient\"",
+      "purpose": "Keep unfinished Oh My Pi and Scient Agent tasks visible between runs in their owning provider session."
+    },
+    {
       "path": "apps/server/src/testUtils/shardWeights.json",
       "anchor": "\"src/assets/AssetAccess.test.ts\":",
       "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
@@ -84,11 +89,6 @@
       "path": "apps/web/src/modelSelection.ts",
       "anchor": "entry.driverKind === \"omp\"",
       "purpose": "Keep automatic Pi and Oh My Pi metadata markers out of the model picker until discovery supplies a model."
-    },
-    {
-      "path": "apps/mobile/src/components/ProviderIcon.tsx",
-      "anchor": "props.provider === \"omp\"",
-      "purpose": "Show the Oh My Pi mark in the mobile provider icon."
     },
     {
       "path": "apps/server/src/mcp/McpHttpServer.ts",

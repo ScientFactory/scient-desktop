@@ -6,12 +6,9 @@ import { MANAGED_PYTHON_SPECIFICATIONS } from "../src/scient/compute/managed-pyt
 import { ServerCliBuildAssetMissingError } from "./cliErrors.ts";
 
 /**
- * The compute bridge, in the source tree and in a built server.
- *
- * `STAGED_BRIDGE_DIRECTORY` in `PythonComputeRuntime.ts` is the runtime half of
- * this agreement: the server looks for the bridge here, so the build has to put
- * it here. Spelled out rather than imported because a build script that pulled
- * in a server module would pull in its dependencies with it.
+ * Keep this build path synchronized with STAGED_BRIDGE_DIRECTORY in PythonComputeRuntime.ts. Spell
+ * it locally: importing the server module would pull its runtime dependencies into the build
+ * script.
  */
 export const SCIENT_COMPUTE_BRIDGES = [
   {

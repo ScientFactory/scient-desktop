@@ -3,17 +3,9 @@ import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 /**
- * Live activity: what tells the reader the agent is working, kept calm.
- *
- * - Only the current activity sweeps: the latest live row (Thinking, the
- *   running-tool bar, an active compaction or a running worktree setup).
- *   Other work in progress (earlier groups still running, expanded entries)
- *   stays still, so the page never shimmers all over.
- * - The working header carries a small breathing dot instead of a sweep; its
- *   label sweeps only while it is the activity itself (compacting, or
- *   preparing a worktree before that has a row of its own).
- * - The sweep moves at one pace for any label length and loops continuously
- *   (scient/presentation/scient-live-activity.css).
+ * Only the latest live activity sweeps; earlier in-progress rows stay still to avoid page-wide
+ * shimmer. The header uses a breathing dot unless it is itself the current compaction/worktree
+ * activity. Keep sweep speed independent of label length.
  */
 
 /**
@@ -51,7 +43,9 @@ export function currentLiveActivityRowId(
     if (
       row.kind === "thinking" ||
       (row.kind === "work-live" && row.active) ||
-      (row.kind === "context-compaction" && row.active)
+      (row.kind === "context-compaction" && row.active) ||
+      // A running compaction that owns the working row has no divider of its own yet.
+      (row.kind === "working" && row.compacting !== undefined)
     )
       return row.id;
   }

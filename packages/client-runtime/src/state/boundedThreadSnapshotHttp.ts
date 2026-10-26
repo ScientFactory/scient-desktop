@@ -11,7 +11,7 @@ import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeAuthenticatedEnvironmentHttpRequest,
-  withCompactThreadSnapshotHeaders,
+  withOrchestrationProtocolHeader,
 } from "./environmentHttpAuth.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
@@ -30,7 +30,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
 }) {
   const endpoint = {
     params: { threadId: input.threadId },
-    query: { compactTurnItems: "1" },
+    query: { compactTurnItems: "1", dedupeBodies: "1", compactIds: "1" },
   };
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
@@ -41,7 +41,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
     request: ({ client, headers }) =>
       client.threadBoundedSnapshot({
         ...endpoint,
-        headers: withCompactThreadSnapshotHeaders(headers),
+        headers: withOrchestrationProtocolHeader(headers),
       }),
   }).pipe(
     Effect.map(({ turnItemsOmitLocalVisible, ...snapshot }) => ({

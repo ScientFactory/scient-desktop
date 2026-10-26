@@ -108,8 +108,7 @@ export function QueuedRunsControl({
       return url ? [[resource.attachmentId, url] as const] : [];
     }),
   );
-  // Acknowledged messages retire their optimistic copies even after their run
-  // has left the queue; filtering only by queued IDs would resurrect them.
+  // Run-only acknowledgements can resurrect pending rows after cancellation or startup.
   const acknowledged = new Set((projection?.messages ?? []).map((message) => message.id));
   const pendingMessages = props.optimisticMessages
     .filter(

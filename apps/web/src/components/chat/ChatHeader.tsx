@@ -29,6 +29,9 @@ import { ExtensionsReceiptIndicator } from "~/scient/extensions/ExtensionsReceip
 // SCIENT-FORK:END
 import { readLocalApi } from "~/localApi";
 import { threadEnvironment } from "../../state/threads";
+import { serverEnvironment } from "../../state/server";
+import { canShareWithGuestAtom } from "./guestShareAvailability";
+import { useAtomValue } from "@effect/atom-react";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -43,6 +46,7 @@ import { cn } from "~/lib/utils";
 import { ConversationImportProvenanceBadge } from "./scient-import/ConversationImportBanner";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
+import { GuestShareIndicator } from "./GuestShareControls";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -69,10 +73,7 @@ function resolveRenameCommit(input: {
   return { action: "commit", title: trimmed };
 }
 
-// How long a click on the thread title waits before opening the action menu, so
-// a double-click-to-rename can cancel it first. Only the native desktop menu
-// needs this: it swallows input while open, so the wait must cover the OS
-// double-click interval.
+// Delay the input-swallowing native menu through the double-click rename interval.
 const TITLE_MENU_OPEN_DELAY_MS = 500;
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
@@ -98,6 +99,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
   );
+  const canShareWithGuest = useAtomValue(canShareWithGuestAtom(activeThreadEnvironmentId));
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -207,6 +209,7 @@ export const ChatHeader = memo(function ChatHeader({
     // SCIENT-FORK:END
     projectCwd: activeProjectCwd,
     onStartRename: startRename,
+    canShareWithGuest,
   });
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
   const titleMenuTimerRef = useRef<number | null>(null);
@@ -435,6 +438,7 @@ export const ChatHeader = memo(function ChatHeader({
         />
       ) : null}
       {/* SCIENT-FORK:END */}
+      {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );
 });

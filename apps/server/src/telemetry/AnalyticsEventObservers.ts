@@ -1,10 +1,6 @@
 /**
- * Scient-owned semantic analytics observers.
- *
- * These observers consume the canonical T3 runtime streams instead of adding
- * provider-specific or UI-click instrumentation. They retain only bounded,
- * short-lived correlation state and emit through AnalyticsService's strict
- * allowlist.
+ * Observe canonical runtime streams rather than provider/UI clicks. Keep correlation bounded and
+ * short-lived, and emit only through AnalyticsService's strict allowlist.
  */
 import {
   isToolLifecycleItemType,

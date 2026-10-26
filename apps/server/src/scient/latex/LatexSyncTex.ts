@@ -719,15 +719,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Where each page of this build begins: the source file and line SyncTeX
-   * maps near the top of each page's text, for every workspace source the
-   * build compiled. Pages beginning with material from outside the workspace
-   * are omitted. Navigation hints for Visual, not a reproduction of TeX's page
-   * breaking.
-   *
-   * The batch runs once per build, detached from the requests that wait for
-   * it: a request that goes away does not cancel the others, and the answer is
-   * kept for the next one. It is bounded by an overall budget.
+   * SyncTeX page starts are navigation hints, not reproduced pagination. Exclude non-workspace
+   * sources; run one bounded shared batch per build so one abandoned request cannot cancel other
+   * waiters or discard their cached answer.
    */
   const pageAnchors = Effect.fn("LatexSyncTex.pageAnchors")(function* (
     input: ScientLatexPageAnchorsRequest,

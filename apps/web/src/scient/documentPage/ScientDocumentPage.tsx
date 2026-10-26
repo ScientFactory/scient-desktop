@@ -38,11 +38,8 @@ import "../math/scient-math.css";
 import "./scient-document-page.css";
 
 /**
- * The document page: one complete, non-virtualized, print-ready rendering of
- * a captured document bundle. It shares chat's Markdown grammar, math, Mermaid
- * runtime, and bidirectional text handling, but none of chat's interaction:
- * links to files, citations, and chips print as plain text, and nothing here
- * talks to a Scient server beyond the capture it was given.
+ * Print a complete non-virtualized capture without contacting the server beyond that bundle. File
+ * links, citations, and chips must render as plain text rather than chat interactions.
  */
 
 type KatexRuntime = typeof import("../math/katexRuntime");

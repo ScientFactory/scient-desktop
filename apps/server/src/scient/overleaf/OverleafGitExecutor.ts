@@ -1,13 +1,7 @@
 /**
- * Runs the system Git for the Overleaf connection under a closed contract:
- * an absolute executable, an environment built from scratch (no inherited
- * home, configuration, credential helper, hooks, or proxy settings), a fixed
- * neutral commit identity, a wall-clock limit, an output byte limit, and a
- * process-group kill when the run is interrupted, times out, or overruns.
- *
- * The Overleaf token reaches Git only through a per-command askpass file that
- * is removed with the command's scratch directory. It never appears in
- * arguments, URLs, the environment, logs, or errors.
+ * Run absolute Git with a fresh environment, neutral identity, bounded output/time, and owned-group
+ * cleanup; inherit no hooks/config/credentials/proxies. Hand tokens only through per-command
+ * askpass files removed with scratch, never args/URLs/env/logs/errors.
  */
 // @effect-diagnostics nodeBuiltinImport:off -- Native child streams need an error listener before stdin writes.
 import * as NodeChildProcess from "node:child_process";
@@ -547,7 +541,7 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
   return OverleafGitExecutor.of({ availability, execute });
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const layer = (options: OverleafGitExecutorOptions) =>
   Layer.effect(OverleafGitExecutor, make(options));
 

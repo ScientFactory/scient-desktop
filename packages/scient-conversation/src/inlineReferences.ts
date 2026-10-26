@@ -1,9 +1,6 @@
 /**
- * Scient's inline message references (composer context chips and captured
- * quotes) as the conversation snapshot carries them: link destinations become
- * `scient-ref:<id>` and each reference keeps only its typed display fields.
- * Installation-local identities (environment, thread and message ids,
- * absolute workspace roots, file revisions, editor positions) are dropped.
+ * Snapshots retain only typed display fields for inline references. Drop installation-local IDs,
+ * roots, revisions, and editor positions rather than exporting authority-bearing context.
  */
 import {
   CONVERSATION_REFERENCE_URL_PREFIX,

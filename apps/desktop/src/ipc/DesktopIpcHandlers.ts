@@ -26,6 +26,7 @@ import {
   renderDocumentPagePdf,
   revealSavedAsset,
   saveAssetCopy,
+  savePdfBytesCopy,
 } from "./methods/documentArtifacts.ts";
 import {
   getLocalEnvironmentEnabled,
@@ -171,6 +172,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pickFolder);
   yield* ipc.handle(pickProjectFavicon);
   yield* ipc.handle(saveAssetCopy);
+  yield* ipc.handle(savePdfBytesCopy);
   yield* ipc.handle(revealSavedAsset);
   yield* ipc.handle(renderDocumentPagePdf);
   yield* ipc.handle(pickThemeFiles);

@@ -1,14 +1,4 @@
-/**
- * Comprehensive Scient migration runner tests.
- *
- * Covers VAL-MIGRATE-01 through VAL-MIGRATE-12, VAL-MIGRATE-14, and
- * VAL-MIGRATE-15, plus strict ledger-integrity preflight tests (gaps, name
- * mismatches, unknown future IDs). All fixtures are synthetic in-memory or
- * temporary file SQLite databases. No live user data is used.
- *
- * Each test gets its own fresh in-memory database via `Effect.provide` so
- * schema state never leaks between tests.
- */
+/** Each test needs its own synthetic database so migration state cannot leak between cases. */
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";

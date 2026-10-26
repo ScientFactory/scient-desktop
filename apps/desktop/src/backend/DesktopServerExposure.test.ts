@@ -452,6 +452,7 @@ describe("DesktopServerExposure", () => {
   );
 
   // SCIENT-FORK:START restored-behavior-guards
+
   // regression: 2b8e012924 [codex] Structure desktop server exposure errors (#3269)
   it.effect("preserves persistence request context and the settings failure chain", () => {
     const diskFailure = new Error("disk exploded");

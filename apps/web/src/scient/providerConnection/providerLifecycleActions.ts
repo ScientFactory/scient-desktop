@@ -15,11 +15,8 @@ export function hasExternalProviderUpdate(provider: ServerProvider): boolean {
 }
 
 /**
- * The update a provider offers and how Scient applies it: `managed` installs a
- * reviewed, verified runtime beside the current one; `external` runs the
- * installation's own updater in place, and checks the version only after it
- * finishes. `version` is the offered version and `command` the updater
- * command Scient runs, when known.
+ * Managed updates verify a reviewed side-by-side runtime before selection; external updaters mutate
+ * in place and establish the resulting version only afterward.
  */
 export type ProviderUpdateOffer =
   | { readonly path: "managed"; readonly version: string | null }

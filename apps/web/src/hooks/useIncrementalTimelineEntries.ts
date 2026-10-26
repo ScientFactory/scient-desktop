@@ -29,11 +29,6 @@ function sameAnchoredMessages(
   return left.every((message, index) => shallow(message, right[index]));
 }
 
-/**
- * Timeline entries for a thread, derived from the previous projection so
- * unchanged rows keep their identity and memoized rows skip rendering. A new
- * thread starts from scratch.
- */
 export function useIncrementalTimelineEntries(
   threadKey: string | null,
   input: TimelineEntriesInput,

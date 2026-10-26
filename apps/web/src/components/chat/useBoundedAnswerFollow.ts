@@ -3,7 +3,10 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { observeResize } from "~/lib/observeResize";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
-import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
+import {
+  CHAT_TIMELINE_ANCHOR_OFFSET,
+  type TimelineListMeasurementState,
+} from "./timelineScrollAnchoring";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
 import { motionClock } from "./motionClock";
 import { streamingRevealActive, subscribeStreamingReveal } from "./useStreamingBlockEntrance";
@@ -39,12 +42,29 @@ export function promptResponseLastIndex(
 }
 
 /**
- * How far the reveal may scroll now. Growth is revealed only while the sent
- * prompt's text keeps room above it. When traces and tool rows push the
- * latest message below the fold, the reveal continues past the prompt just
- * far enough to show that message's first lines, and never scrolls the
- * message itself above the reading margin: the answer is read from its
- * beginning, not followed to its end.
+ * Place an unmounted row from measured list positions so scrolling can mount it. Without its own
+ * measurement, use the previous row and the list estimate rather than waiting for a DOM element.
+ */
+export function placeUnmountedRow(
+  state: Pick<TimelineListMeasurementState, "scroll" | "positionAtIndex" | "sizeAtIndex">,
+  index: number,
+  viewportTop: number,
+): { top: number; bottom: number } | null {
+  const previous = index > 0 ? index - 1 : undefined;
+  const position =
+    state.positionAtIndex(index) ??
+    (previous === undefined
+      ? undefined
+      : (state.positionAtIndex(previous) ?? NaN) + (state.sizeAtIndex(previous) ?? NaN));
+  const size = state.sizeAtIndex(index) ?? ESTIMATED_ROW_SIZE;
+  if (position === undefined || !Number.isFinite(position)) return null;
+  const top = viewportTop + position - state.scroll;
+  return { top, bottom: top + size };
+}
+
+/**
+ * Reveal only the answer's beginning, never follow its text past the reading margin. If trace rows
+ * push it below the fold, scroll beyond the prompt only far enough to expose its first lines.
  */
 export function boundedAnswerScrollDelta(input: {
   promptTextTop: number;
@@ -73,19 +93,9 @@ export function boundedAnswerScrollDelta(input: {
 }
 
 /**
- * After an eligible send, reveals the prompt and then the start of its
- * response. The response's latest assistant message is the target, so the
- * reveal moves past progress notes and trace runs to the message the agent is
- * writing now. For a later prompt (`followResponse`), the whole response is
- * followed at a calmer pace, keeping the view at the conversation's end, until
- * the prompt reaches the top margin. It stops once the prompt's own run has
- * ended and its last message is revealed, or when the reader scrolls back up.
- * Scrolling down, clicks, text selection and scrolling inside nested output
- * never cancel it. It moves only while there is something to reveal, and
- * otherwise rests until the content, the view or a reveal changes.
- *
- * Returns a reader for the prompt it is following right now (not cancelled,
- * not finished), for saving with the reading position.
+ * Follow belongs to one prompt's V2 run and ends only after its last message is revealed or the
+ * reader scrolls up. Downward/nested scrolling, selection, and clicks do not cancel it. Rest
+ * without pending reveal work; save only an active follow owner.
  */
 export function useBoundedAnswerFollow({
   listRef,
@@ -186,19 +196,9 @@ export function useBoundedAnswerFollow({
             top: element.getBoundingClientRect().top,
             rect: element.getBoundingClientRect(),
           };
-        // A row never rendered has no measured size yet: place it from its
-        // position (or right after the row before it) with the list's estimate.
-        const previous = index > 0 ? index - 1 : undefined;
-        const position =
-          measuredState.positionAtIndex(index) ??
-          (previous === undefined
-            ? undefined
-            : (measuredState.positionAtIndex(previous) ?? NaN) +
-              (measuredState.sizeAtIndex(previous) ?? NaN));
-        const size = measuredState.sizeAtIndex(index) ?? ESTIMATED_ROW_SIZE;
-        if (position === undefined || !Number.isFinite(position)) return null;
-        const top = viewportRect.top + position - measuredState.scroll;
-        return { element: null, top, rect: { top, bottom: top + size } };
+        const placed = placeUnmountedRow(measuredState, index, viewportRect.top);
+        if (!placed) return null;
+        return { element: null, top: placed.top, rect: placed };
       };
       // How far the conversation's real end is below its resting place above
       // the composer, never past the scroll range (nor into reserved space).

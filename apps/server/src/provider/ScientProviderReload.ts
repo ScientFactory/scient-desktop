@@ -1,9 +1,6 @@
 /**
- * Scient's provider reload and strict refreshes. A reload rebuilds one
- * instance from its unchanged config and probes the replacement source. The
- * strict variants fail with ProviderRegistryRefreshError instead of keeping
- * cached providers, and a refresh after an account change clears a proven
- * authentication failure only once fresh verification succeeds.
+ * Strict refresh must fail instead of retaining cached providers. Clear proven authentication
+ * failure only after fresh verification of the unchanged instance's replacement succeeds.
  */
 import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";

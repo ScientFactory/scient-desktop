@@ -48,7 +48,6 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import {
@@ -60,6 +59,9 @@ import {
 import { parseActiveThreadPath, type HardwareKeyboardCommand } from "./hardwareKeyboardCommands";
 import { threadJumpIndex } from "./threadKeyboardShortcuts";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { openSettings } from "../settings/settings-navigation";
+import { useSelectWorkspaceTab } from "../workspace/useSelectWorkspaceTab";
+import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "commandPalette",
@@ -208,8 +210,9 @@ export function CommandPalette(props: {
   readonly onCommand: (command: HardwareKeyboardCommand) => void;
 }) {
   const navigation = useNavigation();
+  const selectTab = useSelectWorkspaceTab();
   const { themeVariables } = useAppearancePreferences();
-  const { selectThread, selectThreadRoute } = useAdaptiveWorkspaceLayout();
+  const selectDetail = useSelectWorkspaceDetail();
   const runCommand = props.onCommand;
   const projects = useProjects();
   const threads = useThreadShells();
@@ -238,7 +241,21 @@ export function CommandPalette(props: {
         .map((environment) => environment.environmentId),
     [environments],
   );
-  const search = useThreadSearch(searchEnvironmentIds, query.startsWith(">") ? "" : query);
+  // The palette matches environment names when there are several; older rows must match the same.
+  const environmentLabels =
+    environments.length > 1
+      ? Object.fromEntries(
+          searchEnvironmentIds.flatMap((environmentId) => {
+            const label = savedConnectionsById[environmentId]?.environmentLabel;
+            return label === undefined ? [] : [[environmentId, label]];
+          }),
+        )
+      : undefined;
+  const search = useThreadSearch(
+    searchEnvironmentIds,
+    query.startsWith(">") ? "" : query,
+    environmentLabels === undefined ? {} : { environmentLabels },
+  );
   const contentMatchByKey = useMemo(
     () =>
       new Map(
@@ -269,72 +286,48 @@ export function CommandPalette(props: {
         kind: "action",
         title: "Open settings",
         searchTerms: ["preferences", "configuration"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "Settings" },
-          }),
+        run: () => selectTab("settings"),
       },
       {
         key: "appearance",
         kind: "action",
         title: "Appearance",
         searchTerms: ["theme", "colors", "dark", "light"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsAppearance" },
-          }),
+        run: () => openSettings(navigation, "SettingsAppearance"),
       },
       {
         key: "environments",
         kind: "action",
         title: "Manage environments",
         searchTerms: ["connections", "server", "remote"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsEnvironments" },
-          }),
+        run: () => openSettings(navigation, "SettingsEnvironments"),
       },
       {
         key: "scheduledTasks",
         kind: "action",
         title: "Scheduled tasks",
         searchTerms: ["schedule", "automations", "recurring"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsScheduledTasks" },
-          }),
+        run: () => openSettings(navigation, "SettingsScheduledTasks"),
       },
       {
         key: "usage",
         kind: "action",
         title: "Usage",
         searchTerms: ["limits", "accounts", "quota"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsUsage" },
-          }),
+        run: () => openSettings(navigation, "SettingsUsage"),
       },
       {
         key: "archive",
         kind: "action",
         title: "Archived threads",
         searchTerms: ["restore", "history"],
-        run: () =>
-          navigation.navigate("SettingsSheet", {
-            screen: "SettingsContent",
-            params: { screen: "SettingsArchive" },
-          }),
+        run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
-    const activeProject = activeThread?.projectId
+    const activeProject = activeThread
       ? projectByKey.get(scopedProjectKey(activeThread.environmentId, activeThread.projectId))
       : null;
     if (activeProject) {
@@ -344,12 +337,15 @@ export function CommandPalette(props: {
         title: `New thread in ${activeProject.title}`,
         searchTerms: ["new task", "chat", "create"],
         run: () =>
-          selectThreadRoute({
-            draft: {
-              requestId: uuidv4(),
-              environmentId: activeProject.environmentId,
-              projectId: activeProject.id,
-              title: activeProject.title,
+          selectDetail({
+            name: "Thread",
+            params: {
+              draft: {
+                requestId: uuidv4(),
+                environmentId: activeProject.environmentId,
+                projectId: activeProject.id,
+                title: activeProject.title,
+              },
             },
           }),
       });
@@ -379,12 +375,15 @@ export function CommandPalette(props: {
       detail: `New thread · ${savedConnectionsById[project.environmentId]?.environmentLabel ?? project.environmentId}`,
       searchTerms: [project.workspaceRoot, "new thread", "project"],
       run: () =>
-        selectThreadRoute({
-          draft: {
-            requestId: uuidv4(),
-            environmentId: project.environmentId,
-            projectId: project.id,
-            title: project.title,
+        selectDetail({
+          name: "Thread",
+          params: {
+            draft: {
+              requestId: uuidv4(),
+              environmentId: project.environmentId,
+              projectId: project.id,
+              title: project.title,
+            },
           },
         }),
     }));
@@ -393,35 +392,31 @@ export function CommandPalette(props: {
         (thread) =>
           thread.archivedAt === null && thread.lineage.relationshipToParent !== "subagent",
       )
-      .flatMap((thread): CommandPaletteItem[] => {
-        // SCIENT-FORK:START projectless thread guard
-        // Scient is project-first. The shared shell schema remains tolerant of
-        // legacy projectless records, but they must not become mobile targets.
-        if (thread.projectId === null) return [];
-        // SCIENT-FORK:END
+      .map((thread) => {
         const project = projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId));
         const environment =
           savedConnectionsById[thread.environmentId]?.environmentLabel ?? thread.environmentId;
-        return [
-          {
-            key: scopedThreadKey(thread.environmentId, thread.id),
-            kind: "thread",
-            title: thread.title || "Untitled thread",
-            detail: [project?.title, environment].filter(Boolean).join(" · "),
-            searchTerms: [],
-            threadSearch: threadSearchSubject(
-              thread,
-              project?.title,
-              environments.length > 1 ? environment : null,
-            ),
-            // Last among threads: picking the thread already open does nothing.
-            ...(thread.environmentId === activeThread?.environmentId &&
-            thread.id === activeThread.id
-              ? { secondary: true }
-              : {}),
-            run: () => selectThread(thread),
-          },
-        ];
+        return {
+          key: scopedThreadKey(thread.environmentId, thread.id),
+          kind: "thread",
+          title: thread.title || "Untitled thread",
+          detail: [project?.title, environment].filter(Boolean).join(" · "),
+          searchTerms: [],
+          threadSearch: threadSearchSubject(
+            thread,
+            project?.title,
+            environments.length > 1 ? environment : null,
+          ),
+          // Last among threads: picking the thread already open does nothing.
+          ...(thread.environmentId === activeThread?.environmentId && thread.id === activeThread.id
+            ? { secondary: true }
+            : {}),
+          run: () =>
+            selectDetail({
+              name: "Thread",
+              params: { environmentId: String(thread.environmentId), threadId: String(thread.id) },
+            }),
+        };
       });
     // Recent means used recently: written in or opened, whichever is later.
     threadItems.sort(
@@ -431,6 +426,7 @@ export function CommandPalette(props: {
     );
     return [...actions, ...projectItems, ...threadItems];
   }, [
+    selectTab,
     activeThread,
     activeThreadRef,
     environments.length,
@@ -438,8 +434,7 @@ export function CommandPalette(props: {
     projects,
     runCommand,
     savedConnectionsById,
-    selectThread,
-    selectThreadRoute,
+    selectDetail,
     threads,
   ]);
   const rankedMessageKeys = useMemo(() => {
@@ -490,23 +485,17 @@ export function CommandPalette(props: {
     // A pick sends its open with the query, always, so the server records it;
     // the thread screen then skips its own open. The open thread is no pick.
     if (thread && !item.secondary) claimThreadOpen(thread.environmentId, thread.id, Date.now());
-    // SCIENT-FORK:START - a pick records the open, not a read. Scient's
-    // useAcknowledgeThreadAnswer is the only read-watermark writer, so the pick
-    // sends the current watermark (the server never moves it backwards). A thread
-    // never read (`null`) keeps only the local open: any time would become its
-    // first watermark. Matches the web client's ThreadOpenRecorder.
-    if (thread && thread.lastVisitedAt != null && !item.secondary) {
+    if (thread && thread.lastVisitedAt !== undefined && !item.secondary) {
       void visitThread({
         environmentId: thread.environmentId,
         input: {
           threadId: thread.id,
-          visitedAt: thread.lastVisitedAt,
+          visitedAt: thread.updatedAt,
           opened: true,
           searchQuery: pickedQuery(query),
         },
       });
     }
-    // SCIENT-FORK:END
     item.run();
   };
   const firstMessageIndex = results.findIndex((item) => item.fromMessages);
@@ -533,9 +522,7 @@ export function CommandPalette(props: {
     pendingAction.current?.();
   }, [props]);
 
-  // iOS drops Modal onDismiss when the VC is dismissed mid-presentation (e.g.
-  // ⌘K during the fade-in) or raced by another sheet — without a fallback the
-  // palette stays mounted-but-invisible and ⌘K dead-ends on a stale open state.
+  // iOS may drop onDismiss during presentation or competing sheets; a fallback clears stale palette state.
   useEffect(() => {
     if (visible) return;
     const fallback = setTimeout(handleDismissed, 400);

@@ -108,7 +108,6 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly canOpenTerminal: boolean;
   readonly canOperateTerminal: boolean;
   readonly canOpenFiles: boolean;
-  readonly canOpenGit: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
   readonly showActionControls?: boolean;
@@ -420,20 +419,12 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
 
 export function useThreadGitRightHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  return [
-    ...(props.canOpenGit ? [actionItems.git] : []),
-    actionItems.files,
-    actionItems.terminal,
-  ] as HeaderItems;
+  return [actionItems.git, actionItems.files, actionItems.terminal] as HeaderItems;
 }
 
 export function useThreadGitCenterHeaderItems(props: ThreadGitControlsProps): HeaderItems {
   const actionItems = useThreadGitHeaderActionItems(props);
-  return [
-    actionItems.files,
-    ...(props.canOpenGit ? [actionItems.git] : []),
-    actionItems.terminal,
-  ] as HeaderItems;
+  return [actionItems.files, actionItems.git, actionItems.terminal] as HeaderItems;
 }
 
 export function ThreadGitControls(props: ThreadGitControlsProps) {
@@ -520,18 +511,11 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           separateBackground
         />
       ) : null}
-      {showActionControls && props.canOpenGit
-        ? createNativeHeaderMenu(threadGitMenuDefinition(props, model))
-        : null}
+      {showActionControls ? createNativeHeaderMenu(threadGitMenuDefinition(props, model)) : null}
     </Toolbar>
   );
 }
 
-/**
- * The standalone git actions menu (branch status, quick commit/push action,
- * review, more). Rendered inside a Toolbar by both the thread
- * chat header and the review screen's toolbar.
- */
 export function ThreadGitMenu(props: ThreadGitMenuProps) {
   const menu = useThreadGitMenuDefinition(props);
   return menu ? createNativeHeaderMenu(menu) : null;

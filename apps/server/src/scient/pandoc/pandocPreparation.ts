@@ -1,27 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Mermaid rendering ids are content hashes computed with node:crypto.
 /**
- * Preparation: shapes the tree Pandoc read from a Scient document bundle into
- * what Scient means, before the security pass and the Word writer see it.
- *
- * Pandoc does not share Scient's Markdown parser, so everything Scient's
- * profiles add is mapped here explicitly rather than left for Pandoc to guess:
- *
- * - conversation structure markers (`<!-- scient:message … -->`,
- *   `<!-- scient:part … -->`) give speaker headings a speaker style and tell
- *   work-log and reasoning `<details>` blocks apart; the markers themselves are
- *   removed;
- * - `<details>` blocks become divs whose summary survives as a bold first
- *   paragraph (the Word writer drops raw HTML, and with it the summary); work
- *   log and reasoning divs carry the `Scient Work Log` / `Scient Reasoning`
- *   styles, and work-log steps become paragraphs so the style applies to them;
- * - GitHub alerts get the `Scient Alert` style with their title in bold;
- * - task lists become `Scient Task List` paragraphs with ☐ / ☑ boxes;
- * - Mermaid fences become the bundle's rendered diagram image, or a clearly
- *   labelled, complete Mermaid source block when no image was captured;
- * - tables get full-text-width, content-proportional columns without starving
- *   short-label columns; authored widths are preserved.
- *
- * Citations and text direction live in their own modules.
+ * Pandoc's grammar differs from Scient's: explicitly prepare
+ * structure/details/alerts/tasks/Mermaid/tables rather than letting it guess. Preserve details
+ * summaries that raw-HTML removal would lose, and retain authored table widths.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -67,15 +48,8 @@ export const SCIENT_WORD_STYLES = {
 } as const;
 
 /**
- * The asset id a document bundle gives the rendered image of a Mermaid fence:
- * `mermaid-` and the first 16 hex digits of the SHA-256 of the fence source
- * (without its final newline). Producers that render diagrams name the
- * `rendered-diagram` asset this way so Word export can find it.
- *
- * The source is hashed as Pandoc reads it, so the fence Scient's Markdown
- * parser found and the code block Pandoc returns get the same id: Pandoc drops
- * every carriage return from its input, and the Word read pass keeps tabs
- * (`--preserve-tabs`), so tabs are hashed as written.
+ * Hash diagram source as Pandoc sees it: drop carriage returns and final newline, preserve tabs.
+ * Producers and Word lookup must derive the same mermaid asset ID.
  */
 export function mermaidDiagramAssetId(source: string): string {
   const digest = NodeCrypto.createHash("sha256")
@@ -463,12 +437,8 @@ const sectionBreak = (landscape: boolean, rtl: boolean): PandocNode => ({
 });
 
 /**
- * Puts each very wide top-level table on its own landscape page. A section
- * break paragraph ends the portrait section before the table and the landscape
- * section after it; adjacent wide tables share one landscape section.
- *
- * This inserts Scient's own OpenXML, so it runs after the security pass, which
- * removes every raw node that came from the document.
+ * Landscape section breaks are trusted generated OpenXML. Insert them only after the security pass
+ * has removed authored raw nodes; adjacent wide tables should share a section.
  */
 export function landscapeWideTables(blocks: Array<PandocNode>, rtl: boolean): number {
   const out: Array<PandocNode> = [];

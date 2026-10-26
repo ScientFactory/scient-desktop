@@ -1,8 +1,6 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
-// SCIENT-FORK:START — registered app identity and local draft-link policy.
-import { parseScientThreadLinkPrompt as parseThreadLinkPrompt } from "@t3tools/shared/scientPromptLinks";
-// SCIENT-FORK:END
+import { parseThreadLinkPrompt } from "@t3tools/shared/promptLinks";
 import { useEffect, useRef } from "react";
 
 import { applyLinkedPromptToThreadDraft } from "./prompt-link-actions";

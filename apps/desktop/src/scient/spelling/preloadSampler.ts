@@ -117,16 +117,9 @@ export interface SpellingSampler {
 }
 
 /**
- * Sends the main process a sample of the text being edited, so that it can
- * enable the matching spelling dictionary. Windows and Linux only: macOS
- * detects the language itself.
- *
- * After a dictionary is added or finishes loading, each field already
- * checked is rechecked when the user next types into it: its marks are
- * cleared just ahead of text that is certain to be inserted, which is what makes Chromium check the field again. Clearing
- * them before anything that might change nothing (a modifier key, Backspace
- * at the start, a cancelled edit) would hide real typos until the user typed
- * again, so the field simply stays marked until then.
+ * macOS detects spelling language itself. On Windows/Linux clear old marks only before guaranteed
+ * insertion after a dictionary change; modifiers, boundary Backspace, or cancelled edits would
+ * otherwise hide typos until later typing.
  */
 export function installSpellingSampler(
   send: (sample: string) => Promise<SampleOutcome>,

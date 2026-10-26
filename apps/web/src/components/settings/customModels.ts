@@ -128,11 +128,8 @@ const listLabels = (levels: ReadonlyArray<string>, conjunction: "and" | "or") =>
     : `${levels.slice(0, -1).map(levelLabel).join(", ")} ${conjunction} ${levelLabel(levels.at(-1)!)}`;
 
 /**
- * The levels of a custom model that Droid applies, in the model's own order
- * and without Off. Droid (0.213.0 to 0.230.0) sends an effort API whatever
- * level the model is configured with. For Messages the model ID decides
- * (`droidAdaptiveClaudeLevels`): Low, Medium and High, plus the extra levels
- * of a Claude model Droid knows as adaptive.
+ * Droid sends a configured effort level directly, but Messages levels depend on whether it
+ * recognizes the model as adaptive. Off is outside this configured-level list.
  */
 export function droidDefaultReasoningLevels(input: {
   readonly protocol: CustomModelProtocol;
@@ -171,12 +168,8 @@ export function droidDefaultReasoningNote(input: {
 }
 
 /**
- * What a Droid thread can pick among a custom model's reasoning levels. Droid
- * (0.213.0 to 0.230.0) offers Low, Medium and High for every custom model. For
- * effort APIs it sends one other level, the model's default. For Messages the
- * model ID decides (`droidAdaptiveClaudeLevels`): an adaptive Claude model
- * also gets Off and the extra levels Droid sends for it, any other model
- * nothing more.
+ * Droid offers Low/Medium/High for custom models plus an effort API's configured default. Messages
+ * gets Off/extra levels only when Droid recognizes the model as adaptive.
  */
 export function droidReasoningNote(input: {
   readonly protocol: CustomModelProtocol;

@@ -350,11 +350,8 @@ function minimallyPatchedTextBlock(
   next: ProseMirrorNode,
   environment: MarkdownParseEnvironment,
 ): string | null {
-  // CommonMark soft line breaks become one space in the rich document. Their
-  // UTF-16 width remains one, so edits around them can still map to the exact
-  // source span without reflowing a hard-wrapped paragraph. Inline atoms such
-  // as wiki links can deliberately expose different display text; those use
-  // the conservative unique-span fallback below.
+  // Soft breaks become spaces but retain UTF-16 width, preserving narrow source mapping without
+  // reflow. Atoms with different display text need the conservative unique-span fallback.
   const logicalOffsetsAligned = block.logicalText.replace(/\n/gu, " ") === baseline.textContent;
   if (baseline.textContent === next.textContent) return null;
   if (!sameTextStructure(baseline, next)) return null;
@@ -770,11 +767,9 @@ export function refreshScientMarkdownReferences(
   )
     return null;
   const cache = projectionCache(projection);
-  // A definition requires an opening bracket. Keep the ordered source of all
-  // bracket-bearing blocks plus every raw block (which could swallow following
-  // definitions with an unfinished HTML comment or fence),
-  // so edits elsewhere cannot invalidate reference context. This deliberately
-  // over-invalidates ambiguous syntax instead of guessing at definition rules.
+  // Track bracket-bearing blocks and every raw block: unfinished HTML/fences can swallow later
+  // definitions. Over-invalidate ambiguous reference context rather than guessing which edits are
+  // harmless.
   const referenceSources = projected.blockRanges
     .map(({ from, to }) => projected.source.slice(from, to))
     .filter(

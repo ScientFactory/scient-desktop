@@ -4,17 +4,9 @@ import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
 import { END_GAP, FIRST_LINES_PX, promptResponseLastIndex } from "./useBoundedAnswerFollow";
 
 /**
- * Where the follow of `promptId` would have the view now (a scroll offset),
- * for a reader who left while following it and comes back. If everything
- * since that prompt fits, the end of its response (the bottom when it is the
- * latest prompt). Otherwise the prompt rests at the top of the reading area,
- * unless its response's latest message's start would then be below the
- * screen: that start rests at the top instead. A later prompt and its
- * response never move it further.
- *
- * When a row this needs has never been rendered (outside the list's window),
- * it says which row to bring into view first, so it can be measured. Null
- * when the list cannot be measured or the prompt is not in the loaded rows.
+ * Restore only this prompt's response; later prompts must not pull it further. Request rendering of
+ * any unmeasured target row before computing its offset, and return null when measurements or the
+ * prompt are unavailable.
  */
 function liveFollowOffset(
   list: LegendListRef,
@@ -77,11 +69,8 @@ function liveFollowOffset(
 }
 
 /**
- * Brings a reader who left while following `promptId` back to where its
- * follow would be now: to the end first, then to `liveFollowOffset` until it
- * holds for two frames (at most 60 frames). A needed row the list has not
- * rendered yet is scrolled into view first and measured there. Frames go through `nextFrame`, so the caller's restore
- * cleanup cancels them; `done` runs once it holds, or when it gives up.
+ * Render and measure needed rows before restoring follow. Route frames through nextFrame so restore
+ * cleanup can cancel them; finish after stability or the bounded frame limit.
  */
 export function returnToLiveFollow(input: {
   list: LegendListRef;

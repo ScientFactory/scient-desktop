@@ -1,6 +1,6 @@
-import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
+import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -42,6 +42,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
+import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useClientSettings } from "./useSettings";
@@ -66,6 +67,7 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
+  readonly canShareWithGuest: boolean;
   // SCIENT-FORK:START — "New section…" needs a name, which the caller asks for.
   readonly onRequestNewSection: (
     threadRefs: readonly ScopedThreadRef[],
@@ -73,7 +75,7 @@ export function useThreadActionMenu(input: {
   ) => void;
   // SCIENT-FORK:END
 }) {
-  const { threadRef, projectCwd, onStartRename } = input;
+  const { threadRef, projectCwd, onStartRename, canShareWithGuest } = input;
   // SCIENT-FORK:START
   const { menuFor: sectionMenuFor, handleMenuAction: handleSectionMenuAction } =
     useThreadSectionMenu(input.onRequestNewSection);
@@ -158,6 +160,7 @@ export function useThreadActionMenu(input: {
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
         snoozePresets,
+        canShareWithGuest,
         // SCIENT-FORK:START
         sectionMenu: sectionMenuFor([thread]),
         // SCIENT-FORK:END
@@ -269,6 +272,9 @@ export function useThreadActionMenu(input: {
         case "mark-unread":
           markThreadUnread(threadRef);
           return;
+        case "share-guest":
+          openGuestShareDialog(threadRef);
+          return;
         case "copy-path": {
           const workspacePath = thread.worktreePath ?? projectCwd;
           if (!workspacePath) {
@@ -330,9 +336,7 @@ export function useThreadActionMenu(input: {
           if (
             deleted._tag === "Failure" &&
             !isAtomCommandInterrupted(deleted) &&
-            // A failure with the thread already gone is worktree cleanup
-            // failing after a successful delete — deleteThread has toasted
-            // that itself, and "Failed to delete thread" would be a lie.
+            // A missing thread means cleanup failed after deletion; deleteThread already toasted that failure.
             readThreadShell(threadRef) !== null
           ) {
             failureToast("Failed to delete thread", squashAtomCommandFailure(deleted));

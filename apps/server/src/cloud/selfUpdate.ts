@@ -364,9 +364,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       desktopAppUpdate.commit(requestId, onHandoffAccepted),
   });
 });
-// The RPC stream used to own this fiber, so a dropped client socket interrupted
-// the download. Offers after the queue shuts down are ignored; the update
-// still finishes, and the in-flight guard stays as it was.
+// The update outlives client sockets; progress offers to a closed queue are ignored.
 export const updateProgressStream = (
   selfUpdate: ServerSelfUpdate["Service"],
   input: ServerSelfUpdateInput,

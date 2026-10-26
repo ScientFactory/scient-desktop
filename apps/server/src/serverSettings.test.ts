@@ -2359,7 +2359,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  // A backend behind a custom model may refuse the built-in default (#12651).
+  // A backend behind a custom model may refuse the built-in default.
   it.effect("falls back to the thread default when it is a custom model on that instance", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
@@ -3347,7 +3347,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.notInclude(yield* fs.readFileString(config.settingsPath), value);
         assert.notInclude(JSON.stringify(client), value);
       }
-      // Editing another field from the client's copy keeps the saved password.
       const clientConfig = client.providerInstances[opencode]?.config as Record<string, unknown>;
       const edited = yield* service.updateProviderInstance({
         operation: "upsert",

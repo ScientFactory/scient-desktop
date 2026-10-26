@@ -33,11 +33,8 @@ export interface ClaudeWorkflowProgress {
 }
 
 /**
- * Defensive parse of the SDK's undeclared-but-real workflow_progress array on
- * task_progress messages (wire-confirmed; absent from sdk.d.ts). Unknown
- * shapes are skipped per-entry; phases and agents dedupe by index before
- * caps; a vanished field never throws. If the array disappears upstream the
- * caller keeps the coordinator row and plain task lifecycle.
+ * workflow_progress is present on the wire but absent from SDK types. Skip unknown entries, dedupe
+ * before caps, and fall back to coordinator/plain lifecycle if the field disappears.
  */
 export function parseWorkflowProgress(value: unknown): ClaudeWorkflowProgress | undefined {
   if (!Array.isArray(value) || value.length === 0) {

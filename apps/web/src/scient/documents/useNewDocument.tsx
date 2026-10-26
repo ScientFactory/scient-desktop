@@ -322,11 +322,9 @@ export function useNewDocument(input: {
   };
 
   /**
-   * A new document that is a folder takes its title's name. The open document
-   * is held first, so nothing on its page can change meanwhile; then the files
-   * Scient made move, each only as made, and the open document last. A
-   * definitive refusal may compensate confirmed moves. Any terminal or
-   * unconfirmed outcome stops compensation and keeps the source draft.
+   * Hold the open document before moving owned files, each only as created, and move the document
+   * last. Compensate confirmed moves only after a definitive refusal; terminal/unknown outcomes
+   * stop compensation and retain the source draft.
    */
   const moveFolderToTitle = useEffectEvent(async (stem: string) => {
     if (!key || !entry || !lease || !snapshot || !input.moveInPlace) return;
@@ -481,11 +479,8 @@ export function useNewDocument(input: {
   });
 
   /**
-   * Into or out of a template that is a folder: the document is made again in
-   * its new place, the tab follows it there, and its old place is removed while
-   * still exactly as made; the files it made go only once the document itself
-   * is gone. Bound to the document it started on, whatever shows meanwhile.
-   * Returns the document's new place, or null.
+   * Bind replacement to the starting document despite navigation. Remove the old document only
+   * while unchanged, and remove its companions only after the document is gone.
    */
   const relocate = async (
     document: {

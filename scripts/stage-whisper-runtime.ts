@@ -314,11 +314,8 @@ const WINDOWS_BUILD_TOOLS_REQUIRED =
   "Building the Windows voice helper needs Visual Studio 2022 or later with the C++ desktop workload (Build Tools are enough), which packaging runners have. A machine without them can use a runtime another checkout on it staged (see docs/internals/scient-voice.md).";
 
 /**
- * The upstream Windows archive needs the Visual C++ Redistributable, including
- * its OpenMP library, which many Windows machines lack. This build needs only
- * Windows: ggml's own thread pool replaces OpenMP, and every file carries the
- * C and C++ runtime it uses. The CPU backends stay separate files so that each
- * machine gets the fastest one its processor supports.
+ * Windows machines may lack the VC++/OpenMP redistributables. Use ggml's pool and ship each file's
+ * C/C++ runtime; retain separate CPU backends so runtime selection can match the processor.
  */
 export function windowsCMakeConfigureArguments(
   sourceDirectory: string,
@@ -701,12 +698,9 @@ export function developmentRuntimeCacheEntry(
 }
 
 /**
- * Whether a folder holds this exact pinned runtime, complete: its receipt
- * names this version, commit, platform, architecture and build, and the folder holds
- * exactly the recorded files, each an ordinary file of the recorded size and
- * checksum. A link, a folder, a partial copy, a damaged file and another
- * version all fail. It is not a defence against someone who can already write
- * to the user's files.
+ * Require the exact pinned receipt and every recorded ordinary file, size, and checksum; partial
+ * copies, links, or other versions are not usable. This is integrity checking, not protection
+ * against a user-files writer.
  */
 export async function isStagedWhisperRuntime(
   directory: string,
@@ -762,12 +756,9 @@ export async function isStagedWhisperRuntime(
 }
 
 /**
- * Puts a verified copy of `source` at `destination`. The copy is checked
- * before it is given its name, so the destination is this runtime, complete,
- * or is left as it was. A destination that already holds this runtime is never
- * removed: when two checkouts publish at once the first one stays and the
- * second finds it there. Only a destination that fails verification is moved
- * aside to make room.
+ * Verify the staged copy before naming it so failure preserves the destination. Concurrent
+ * publishers must keep an already-verified destination; move aside only one that fails
+ * verification.
  */
 async function publishVerifiedCopy(input: {
   readonly source: string;

@@ -8,13 +8,9 @@ import type {
 import type { DocumentSaveIntent } from "../session.ts";
 
 /**
- * Randomized interleavings for any document format: local typing and long
- * typing bursts, agent writes to the same file, ordered saves and reads that
- * succeed, conflict, disconnect, or fail ambiguously, watcher hints, deferred
- * external updates (as during IME composition), renames, and explicit conflict
- * choices. A format describes its tracked units; this harness checks that no
- * user or agent change is silently lost, that saving never silently stalls,
- * and that the coordinator settles on the disk bytes.
+ * Assert surviving user/agent edits and final disk convergence under interleaving, conflict,
+ * disconnect, and ambiguous outcomes; absence of exceptions alone cannot establish lossless
+ * reconciliation.
  */
 
 export type StressSide = "local" | "agent";

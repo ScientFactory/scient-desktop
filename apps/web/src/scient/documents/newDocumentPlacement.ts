@@ -116,12 +116,8 @@ export function untitledStem(format: NewDocumentFormat, template: DocumentTempla
 }
 
 /**
- * Creates a new document in `base`: `<stem>.tex` or `.md`, or for a LaTeX
- * template that is a folder, `<stem>/main.tex` in a folder nothing in the
- * project uses yet; then the files it keeps beside it. Further attempts number
- * the name. A path `skip` rejects is passed over. Null if nothing could be
- * created, or if a file of the template's own could not be: what was made is
- * then removed again.
+ * If any companion file cannot be created, remove the partial document rather than publishing an
+ * incomplete template.
  */
 export async function placeNewDocument(input: {
   readonly format: NewDocumentFormat;

@@ -8,11 +8,8 @@ import { sectionGroupId } from "./logic";
 import { buildSectionSubmenu, parseSectionMenuAction, type SectionMenuId } from "./menu";
 
 /**
- * The Section submenu for thread context menus (sidebar rows, multi-select and
- * the chat header): building it for the clicked threads and handling its ids.
- * Threads join sections of their own environment, so the submenu lists one
- * environment's sections; a selection spanning environments offers only
- * General and a new section (created on each of their environments).
+ * Thread sections belong to their own environment. Cross-environment selections may offer only
+ * General or a new section created separately in each environment.
  */
 export function useThreadSectionMenu(
   onRequestNewSection: (

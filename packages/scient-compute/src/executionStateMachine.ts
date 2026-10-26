@@ -4,34 +4,10 @@ import * as Schema from "effect/Schema";
 import { ComputeExecutionStatus } from "./contract.ts";
 
 /**
- * Lifecycle transitions an execution may take.
- *
- * `queued` reaches `cancelled` directly: work a user withdrew before it was
- * handed to a runtime never ran, and pretending it was interrupted would
- * misreport it.
- *
- * `submitting` reaches `interrupting` because a user can press stop while the
- * command is still on the wire. Refusing that would either drop the request or
- * force a caller to wait for `running` it may never see, and the runtime
- * answers an interrupt for an unknown execution honestly with `terminal`.
- *
- * `interrupting` reaches `succeeded` and `failed`, not only `cancelled`. An
- * interrupt is a request, and the code it targets is often finished before the
- * request lands. Recording that as a cancellation would tell a user their
- * result was thrown away when it was kept.
- *
- * `running` reaches `cancelled` directly when the namespace is deliberately
- * destroyed by restart or shutdown. That is not an interrupt: the transport
- * observed that the execution ended, so routing the transition through
- * `interrupting` would record an operation the user never requested.
- *
- * A rejected interrupt returns to `running`: requesting an interrupt changes
- * the observed activity, but a runtime that refuses it leaves the execution
- * alive.
- *
- * Every execution handed to a runtime can reach `lost`, because the runtime
- * can disappear before the outcome is known. Queued work cannot be lost: it
- * never left Scient, so recovery and session loss cancel it honestly.
+ * Queued work cancels, never becomes lost. Submitting can be interrupted; interrupting may still
+ * succeed/fail because a request is not its result. Rejected interrupts return running, namespace
+ * destruction cancels directly, and any submitted work may become lost when outcome evidence
+ * disappears.
  */
 const ALLOWED_EXECUTION_TRANSITIONS: Readonly<
   Record<ComputeExecutionStatus, ReadonlySet<ComputeExecutionStatus>>

@@ -19,20 +19,15 @@ export interface MarkdownSourceBlock {
   readonly source: string;
   readonly trailing: string;
   /**
-   * Logical text in the order a rich document exposes it. Direct spans point
-   * at source bytes that contain exactly the same UTF-16 text and can
-   * therefore accept a narrow text patch without normalizing Markdown around
-   * them. Non-direct spans keep later offsets aligned but require block
+   * Only direct spans have identical UTF-16 source text and permit narrow patches without
+   * normalizing surrounding Markdown. Non-direct spans preserve offsets but require block
    * serialization when edited.
    */
   readonly logicalText: string;
   readonly textSpans: ReadonlyArray<MarkdownSourceTextSpan>;
   /**
-   * Kinds of the blocks nested inside a container (quote, list, list item,
-   * footnote), in document order and without repeats, plus `html` for inline
-   * HTML within those nested blocks. Empty for a block whose content is
-   * inline only. Lets a projection notice nested syntax, such as a reference
-   * definition or an HTML comment, that it cannot carry.
+   * Include nested syntax and inline HTML so projections can detect content they cannot carry, even
+   * inside containers.
    */
   readonly nestedBlockKinds: ReadonlyArray<string>;
   /** For a merged `<div dir>` region holding exactly one block, that block's kind. */

@@ -589,6 +589,7 @@ it("summarizes changed files in one line", async () => {
 // SCIENT-FORK:END
 
 // SCIENT-FORK:START — disclosure preserves reader ownership after restoration (UPSTREAM.md).
+
 // regression: 99efaa0faa Collapse long user messages by default (#2180)
 it("renders collapse controls for long user messages", async () => {
   await using screen = await renderElement(

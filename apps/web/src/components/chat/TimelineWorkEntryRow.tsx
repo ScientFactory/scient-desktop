@@ -579,6 +579,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
               onImageExpand={ctx.onImageExpand}
+              source={ctx.turnItemSource}
             />
           ) : (
             <>
@@ -590,6 +591,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   projectedItem={workEntry.projectedItem}
                   environmentId={ctx.activeThreadEnvironmentId}
                   onImageExpand={onImageExpand}
+                  source={ctx.turnItemSource}
                 />
               ) : null}
             </>

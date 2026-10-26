@@ -71,11 +71,8 @@ export interface ClaudeInitInventoryMessage {
 }
 
 /**
- * Claude's provider-native MCP servers. A server Scient set on the session
- * (its own endpoint or a delivered connector) arrives with source `dynamic`,
- * or without a source from older CLIs; such a server is Scient's, not the
- * provider's, and is left out. A server from a configuration scope keeps its
- * place even when a connector shares its name.
+ * Exclude Scient-delivered MCP servers (dynamic or legacy unsourced entries) from provider
+ * inventory. Keep configuration-scoped servers even when a connector shares their name.
  */
 export function claudeNativeMcpServers(
   servers: ReadonlyArray<ClaudeMcpServerReport>,

@@ -141,7 +141,6 @@ it.effect("a persisted fork leaves PR watching with its parent until explicitly 
     assert.deepEqual(fork.pendingBackgroundTasks, []);
     assert.deepEqual(yield* orchestrator.getThreadShell(sourceThreadId), parentBefore);
 
-    // A delayed watcher update cannot reinstate the parent's subscription on the fork.
     const stale = yield* orchestrator
       .dispatch({
         type: "thread.pull-request-watch.sync",
@@ -164,7 +163,6 @@ it.effect("a persisted fork leaves PR watching with its parent until explicitly 
     assert.equal(stale._tag, "OrchestratorDispatchError");
     assert.deepEqual((yield* orchestrator.getThreadProjection(targetThreadId)).runs, []);
 
-    // Advance virtual time only to distinguish the independent watch's start time.
     yield* TestClock.adjust("1 second");
     yield* orchestrator.dispatch({
       type: "thread.pull-request.watch",
@@ -190,7 +188,6 @@ it.effect("a persisted fork leaves PR watching with its parent until explicitly 
     const stoppedFork = yield* orchestrator.getThreadShell(targetThreadId);
     const [forkLink] = fork.pullRequests ?? [];
     assert.isDefined(forkLink);
-    // The fork remembers its own watch, never the parent's, so watching again resumes from it.
     assert.deepEqual(stoppedFork?.pullRequests, [
       { ...forkLink, endedWatch: watchingFork.pullRequests[0].watch },
     ]);
@@ -689,12 +686,8 @@ it.effect.each(
 );
 
 // SCIENT-FORK:START — Scient forks natively only with exact native boundary evidence
-// (scient-fork/ConversationForkNativeSource.ts), which this fixture's run lacks, so the
-// same-provider fork here is portable. A Scient fork carries the source's frozen history
-// (`scient_fork_history`) rather than live inheritance, and its handoff retains that
-// history by reference, so the oversized messages still reach the fork. The cross-provider
-// Codex fork does not reach session open on /compact, before this merge as well; it is a
-// separate Scient defect, so this case covers the same-provider fork only.
+// This fixture lacks that evidence, so its same-provider fork carries frozen portable history.
+// Handoff retains history by reference, including oversized messages.
 it.effect.each([{ name: "same-provider", sameProvider: true }] as const)(
   "a $name fork's first /compact compacts its inherited history",
   ({ name, sameProvider }) => {

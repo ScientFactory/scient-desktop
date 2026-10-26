@@ -1,3 +1,8 @@
+import {
+  ScientPdfEditSaveRequest,
+  ScientPdfEditSaveResult,
+  ScientPdfEditError,
+} from "../scientPdfEdits.ts";
 import * as Schema from "effect/Schema";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -489,6 +494,15 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
+  class EnvironmentScientPdfHttpApi extends HttpApiGroup.make("scientPdf").add(
+    HttpApiEndpoint.post("save", "/api/scient/pdf/save", {
+      headers: OptionalBearerHeaders,
+      payload: ScientPdfEditSaveRequest,
+      success: ScientPdfEditSaveResult,
+      error: [EnvironmentHttpCommonError, ScientPdfEditError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
   class EnvironmentScientMarkdownHttpApi extends HttpApiGroup.make("scientMarkdown").add(
     HttpApiEndpoint.post("imageUpload", "/api/scient/markdown/images/upload", {
       headers: OptionalBearerHeaders,
@@ -716,6 +730,7 @@ export function makeScientEnvironmentHttpGroups({
     EnvironmentScientSourcesHttpApi,
     EnvironmentScientLatexHttpApi,
     EnvironmentScientMarkdownHttpApi,
+    EnvironmentScientPdfHttpApi,
     EnvironmentScientAnalyticsHttpApi,
     EnvironmentScientThreadQueueHttpApi,
     EnvironmentScientConversationExportHttpApi,

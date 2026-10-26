@@ -1,4 +1,3 @@
-import { useSettingsIntentPreload } from "../settings/useSettingsIntentPreload";
 import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
@@ -163,13 +162,11 @@ function SidebarUtilityItem({
   label,
   onClick,
   secondary = false,
-  onIntent,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
   secondary?: boolean;
-  onIntent?: () => void;
 }) {
   return (
     <SidebarMenuItem
@@ -179,13 +176,7 @@ function SidebarUtilityItem({
       <Tooltip>
         <TooltipTrigger
           render={
-            <SidebarMenuButton
-              aria-label={label}
-              onClick={onClick}
-              onMouseEnter={onIntent}
-              onFocus={onIntent}
-              size="icon"
-            >
+            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
               {icon}
             </SidebarMenuButton>
           }
@@ -196,8 +187,8 @@ function SidebarUtilityItem({
   );
 }
 
+// SCIENT-FORK: exported for Scient's update-pill and utility-row tests.
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
-  const preloadSettings = useSettingsIntentPreload();
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -264,7 +255,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<SettingsIcon />}
               label="Settings"
               onClick={handleSettingsClick}
-              onIntent={() => preloadSettings("/settings")}
             />
             {pullRequestsSupported ? (
               <SidebarUtilityItem

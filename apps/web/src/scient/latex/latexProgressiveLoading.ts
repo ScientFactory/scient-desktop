@@ -68,11 +68,9 @@ export function latexOpeningPlan(document: JSONContent, start = 0): LatexOpening
 }
 
 /**
- * Adds the remaining blocks a slice per frame, alternating below and above the
- * opening blocks. The reading anchor keeps visible content still meanwhile.
- * Stops when anything else changes the document; `onDone(false)` then leaves
- * completion to that change (an outside source revision replaces the whole
- * projection). Returns a cancel function.
+ * Stop progressive loading when another change replaces the document. Return incomplete then and
+ * let that change own completion; reading anchors must hold visible content while idle slices
+ * arrive.
  */
 export function loadLatexVisualDocument(
   editor: Editor,

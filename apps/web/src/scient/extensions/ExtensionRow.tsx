@@ -131,11 +131,8 @@ export function ExtensionIcon({
 }) {
   const image = iconUrl !== undefined && isExtensionIconDataUri(iconUrl) ? iconUrl : undefined;
   if (image !== undefined || Glyph) {
-    // Logos come in every shape and colour, and most are drawn for a light
-    // background: some are dark marks that vanish on a dark tile, others are
-    // SVGs that recolour themselves for dark mode. Logos therefore always sit
-    // on a white tile rendered in the light scheme; Scient's own glyphs follow
-    // the theme.
+    // Many logos disappear on dark backgrounds or recolour with dark mode; render them on a white
+    // tile in the light scheme. Scient glyphs still follow the theme.
     return (
       <span
         aria-hidden

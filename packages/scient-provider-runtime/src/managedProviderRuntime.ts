@@ -508,11 +508,9 @@ export class ManagedProviderRuntime {
     const state = await this.readState();
     const activeState =
       state?.targetKey === managedRuntimeTargetKey(artifact.target) ? state : undefined;
-    // A newly reviewed artifact may be newer than the currently active copy.
-    // Keep reporting (and launching) the last atomically activated executable
-    // until the new artifact has been downloaded, verified, smoke-tested, and
-    // activated. Treating only the catalog version as installed would make a
-    // healthy older copy disappear during an app update.
+    // Continue launching/reporting the last atomically activated executable while a newer reviewed
+    // artifact is merely cataloged or staged. Only download, verification, smoke test, and
+    // activation can replace the healthy installed copy.
     const launchPath = activeState
       ? NodePath.resolve(this.#root, activeState.executableRelativePath)
       : this.launchPath(artifact);
@@ -532,11 +530,8 @@ export class ManagedProviderRuntime {
   }
 
   /**
-   * Recover an install or activation that was interrupted by a crash. Every
-   * driver instance calls this when it is created, possibly while another
-   * runtime object for the same root is mid-activation. An activation journal
-   * is a crash only when no live mutation owns the root, so this does nothing
-   * while one does: the owner commits or rolls back its own activation.
+   * An activation journal proves a crash only without a live root mutation owner. Concurrent
+   * runtime objects must leave a live activation alone to commit or roll itself back.
    */
   async reconcile(artifact?: ManagedRuntimeArtifact): Promise<void> {
     await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });

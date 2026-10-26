@@ -1,28 +1,8 @@
 /**
- * Saving the open editors of one folder in every window, before a server
- * operation reads that folder from disk (an Overleaf sync, its agent tools,
- * an undo). Text a person typed is only on disk once the window that holds it
- * has saved it, so the server asks every window of this environment and
- * waits for each answer.
- *
- * A window is known by the authenticated session that registered it and the
- * id it chose; another session can neither replace it nor answer for it.
- * Membership is not the set of open connections. A window that closes says
- * goodbye (`leave`) and is forgotten at once. A window whose connection drops
- * without a goodbye stays known, and every flush counts it as unanswered,
- * until it reconnects (it is then asked) or is retired after five minutes. A
- * window that registers while a request is open is asked too.
- *
- * A window's answer time starts when the request reaches it; the whole
- * request also ends at its overall deadline, however many windows join.
- *
- * Each window asks the server which of its editors' files are in the folder
- * (`resolve`); the server compares physical identity, so any spelling of a
- * path is found. A window answers with the files it saved and every file it
- * could not save, with the reason. With no window known, no editor holds
- * unsaved text: the result says so.
- *
- * @module EditorFlush
+ * Flush every known authenticated window before folder reads, including late joiners and
+ * disconnected windows until retirement; dropped connections do not prove drafts saved. Compare
+ * physical folder identity and await each answer within delivery/overall deadlines. Only explicit
+ * leave removes membership immediately.
  */
 import type {
   EditorFlushFileFailure,

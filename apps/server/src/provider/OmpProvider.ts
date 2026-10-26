@@ -37,7 +37,8 @@ const presentation = (target: OmpTarget) =>
   ({
     displayName: target.displayName,
     badgeLabel: "Early Access",
-    reportsContextWindow: false,
+    // SCIENT-FORK: native RPC usage now feeds the shared context meter.
+    reportsContextWindow: true,
     showInteractionModeToggle: false,
     supportedRuntimeModes: ["full-access"],
     supportsConversationRollback: false,

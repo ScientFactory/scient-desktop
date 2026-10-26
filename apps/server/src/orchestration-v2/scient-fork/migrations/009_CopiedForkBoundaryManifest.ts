@@ -1,10 +1,6 @@
 /**
- * Compatibility convergence for development databases that already recorded
- * migration 8 before copied fork boundaries replaced the seed-send workflow.
- *
- * Fresh databases receive this column from migration 8. Existing development
- * databases run this idempotent migration once, without rewriting lineage or
- * user data.
+ * Development databases may have recorded migration 8 before it added this column; converge
+ * idempotently without rewriting lineage or user data.
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

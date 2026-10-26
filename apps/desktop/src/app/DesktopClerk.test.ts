@@ -213,6 +213,7 @@ describe("DesktopClerk", () => {
   );
 
   // SCIENT-FORK:START restored-sole-guards - upstream's snap dropped this; the mutation it guards passed every other desktop test.
+
   // regression: 3e01c4bc57 Migrate desktop auth to Clerk bridge (#3092) - sole guard: skipping bridge.cleanup() on release passed every other desktop test
   it.effect("acquires and releases the SDK bridge with the layer", () => {
     const cleanup = vi.fn();

@@ -1,10 +1,6 @@
 /**
- * Conversation-fork preferences.
- *
- * SCIENT-OWNED. A fork (or a provider session that lost its history) receives
- * the retained conversation as a portable handoff. Its size follows upstream
- * Orchestration V2's budget formula and is always bounded by the model's
- * context window; this preference only chooses how much of that room to use.
+ * Fork/history-recovery handoffs stay bounded by the destination model window. This preference
+ * chooses retained context within that room, never permission to exceed capacity.
  */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

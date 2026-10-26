@@ -1,9 +1,6 @@
 /**
- * How the conversation export groups a turn's work log around its messages, and
- * chat's per-message line-break decision. This is the export's own, turn-keyed
- * grouping: it approximates chat's timeline folds (`MessagesTimeline.logic.ts`,
- * keyed by run), but chat does not call it and the two can differ. Pure and
- * framework-free: entries are described structurally.
+ * Export grouping is turn-keyed and only approximates run-keyed chat folds; chat does not use it,
+ * so parity must not be assumed.
  */
 import type { TurnId } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -105,12 +102,9 @@ export function deriveTerminalAssistantMessageIds(
 }
 
 /**
- * The session's running turn is authoritative when latestTurn briefly lags or
- * regresses behind it. Otherwise, the latest turn counts as unsettled while it
- * is still running (or has not recorded a completion). This is deliberately
- * keyed on turn lifecycle rather than transient working state: right after the
- * user sends a message, the previous turn is still the "active" one until the
- * server creates the new turn, and folding must not flicker through that window.
+ * Prefer the session's running turn when latestTurn lags. Use lifecycle rather than transient
+ * working state so the old active turn between Send and server run creation cannot cause folding
+ * flicker.
  */
 export function deriveUnsettledTurnId(
   latestTurn: Pick<GroupingLatestTurn, "turnId" | "state" | "completedAt"> | null,

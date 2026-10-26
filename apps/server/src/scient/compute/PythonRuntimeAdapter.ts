@@ -262,18 +262,9 @@ export function buildProfile(
 }
 
 /**
- * Builds the launch plan for the bridge process.
- *
- * The selected executable launches the checked-in bridge by absolute path:
- * `<selected-python> -I -u <absolute-bridge-path>`
- *
- * `-I` prevents project-controlled PYTHONPATH, user site packages, and current
- * directory imports from changing bridge code resolution.
- *
- * The environment policy is applied here rather than by the caller. This is the
- * only function that produces a plan, so enforcing it here means no caller can
- * forget to -- and the raw environment a caller passes in is treated as an
- * input to sanitize rather than a decision to honour.
+ * Launch the absolute bridge with selected Python -I so project PYTHONPATH, user site packages, and
+ * cwd cannot redirect imports. Sanitize inside this sole plan builder so callers cannot bypass
+ * environment policy.
  */
 export function buildLaunchPlan(
   request: ComputeLaunchRequest,
@@ -399,16 +390,8 @@ function runtimeError(
 }
 
 /**
- * Creates the Python runtime adapter.
- *
- * Pure helpers (`parseProbeOutput`, `checkReadiness`, `buildProfile`,
- * `buildLaunchPlan`, `computeFingerprint`, `discoverCandidates`) are exported
- * separately for unit testing without Python.
- *
- * @param spawnProbe - A function that runs the probe script on a candidate
- *   executable and returns its stdout.  This is the only process boundary;
- *   tests inject a fake.
- * @param bridgePath - Absolute path to the checked-in bridge script.
+ * Keep probing as the single injected process boundary so adapter policy can be verified without
+ * launching Python.
  */
 export function makePythonRuntimeAdapter(
   spawnProbe: (executable: string) => Effect.Effect<string, ComputeRuntimeError>,

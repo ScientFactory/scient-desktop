@@ -21,6 +21,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
@@ -1021,5 +1022,138 @@ it.layer(TestLayer)("NativeSessionAdapterV2", (it) => {
         );
       }),
     ),
+  );
+
+  it.effect(
+    "publishes the last 20 startup notices under the first turn without continuations",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness();
+          for (let index = 0; index < 21; index += 1) {
+            yield* h.publish({
+              type: "item",
+              id: `startup-${index}`,
+              status: "completed",
+              item: { type: "system_notice", message: `Startup notice ${index}` },
+            });
+          }
+          yield* h.publish({ type: "model", model: "startup-barrier" });
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "provider_session.updated" &&
+              event.providerSession.model === "startup-barrier",
+          );
+          assert.equal(h.wakes(), 0);
+          assert.isFalse(h.recorded.some((event) => event.type === "turn_item.updated"));
+
+          yield* h.start;
+          yield* h.publish({ type: "terminal", status: "completed" });
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+          const notices = h.recorded.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem]
+              : [],
+          );
+          assert.deepEqual(
+            notices.map((notice) => notice.message),
+            Array.from({ length: 20 }, (_, index) => `Startup notice ${index + 1}`),
+          );
+          const turn = h.recorded.find((event) => event.type === "provider_turn.updated");
+          assert.isDefined(turn);
+          for (const notice of notices) {
+            assert.equal(notice.runId, h.turnInput.runId);
+            assert.equal(notice.threadId, threadId);
+            assert.equal(notice.providerTurnId, turn?.providerTurn.id);
+          }
+          assert.equal(h.wakes(), 0);
+        }),
+      ),
+  );
+
+  it.effect("replays startup notices in arrival order around a first autonomous turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        const notice = (id: string) =>
+          h.publish({
+            type: "item",
+            id,
+            status: "completed",
+            item: { type: "system_notice", message: id },
+          });
+        yield* notice("before");
+        yield* h.publish({ type: "text", id: "wake", delta: "Autonomous output" });
+        yield* notice("after");
+        yield* h.publish({ type: "terminal", status: "completed" });
+        yield* h.startWake;
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
+        const order = h.recorded.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : event.type === "message.updated"
+              ? [event.message.text]
+              : [],
+        );
+        assert.deepEqual([...new Set(order)], ["before", "Autonomous output", "after"]);
+        assert.equal(h.wakes(), 1);
+      }),
+    ),
+  );
+
+  it.effect.each(["completed", "failed"] as const)(
+    "releases a %s retry owner after updating its original turn during a newer turn",
+    (status) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* harness();
+          yield* h.start;
+          const retry = {
+            type: "item" as const,
+            id: "retry",
+            status: "running" as const,
+            item: {
+              type: "error" as const,
+              failure: makeProviderFailure({ message: "Retrying", class: "provider_error" }),
+              retry: { attempt: 1, maxAttempts: 2, retryDelayMs: 100 },
+            },
+          };
+          yield* h.publish(retry);
+          yield* h.publish({ type: "terminal", status: "completed" });
+          yield* h.takeUntil((event) => event.type === "turn.terminal");
+          const secondInput = {
+            ...h.turnInput,
+            runId: RunId.make("second-run"),
+            attemptId: RunAttemptId.make("second-attempt"),
+            providerTurnOrdinal: 2,
+            runOrdinal: 2,
+          };
+          yield* h.runtime.startTurn(secondInput);
+          yield* h.publish({ ...retry, status });
+          const final = yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.status === status,
+          );
+          assert.isTrue(final.type === "turn_item.updated");
+          if (final.type !== "turn_item.updated") return;
+          assert.equal(final.turnItem.runId, h.turnInput.runId);
+          // Reusing the identity proves the completed owner was released.
+          yield* h.publish(retry);
+          const next = yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "error" &&
+              event.turnItem.status === "running",
+          );
+          assert.isTrue(next.type === "turn_item.updated");
+          if (next.type === "turn_item.updated") {
+            assert.equal(next.turnItem.runId, secondInput.runId);
+            assert.notEqual(next.turnItem.id, final.turnItem.id);
+          }
+          assert.equal(h.wakes(), 0);
+        }),
+      ),
   );
 });

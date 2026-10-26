@@ -1,15 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Folder identities and private scratch folders.
 /**
- * A manual Overleaf sync (coordinator contract sections 3 to 6, 8 and 9; steps
- * 3b and 4). It prepares reviews, applies a confirmed one to the folder, adopts
- * the applier's result into the connection, then sends it to Overleaf once:
- * verified, recorded first, never resent. Recovery finishes an interrupted
- * apply and settles earlier sends by positive evidence only; it never sends.
- *
- * Lock order: the connection's operation reservation (in memory, refused rather
- * than queued), then the checkout barrier's application section, then the
- * store's compare-and-set, then the file layer's own locks. Fetching Overleaf
- * happens before the section is taken.
+ * Record/verify sends before the single attempt; recovery only settles from positive evidence and
+ * never resends. Lock order is operation reservation, checkout application section, store CAS, then
+ * file locks. Fetch before taking the section; refuse concurrent reservations rather than queueing
+ * them.
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -712,11 +706,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           ),
     );
     if (link.kind === "retained-restore") {
-      // A restore keeps the bytes it displaced (never released automatically), never
-      // moves the base, and sends nothing. The restored file takes part in the sync
-      // again unless it is local-only on purpose; restored conflict material is
-      // tracked again. A restore the applier could not finish leaves its group for
-      // review beside those already recorded.
+      // Restore retains displaced bytes without automatic release, never advances base or sends.
+      // Preserve intentional local-only state; track restored conflict material again. Keep
+      // unfinished groups for review beside earlier evidence.
       const restored = (yield* repos.readTree({ repo, tree: link.intentTree })).map(
         (entry) => entry.path,
       );
@@ -1153,14 +1145,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   });
 
   /**
-   * Admits a recorded attempt and sends it once, outside the application section: the
-   * network is never awaited while holding the checkout (contract section 9). Admission
-   * is a short section of its own, deciding from what it finds there: the same checkout
-   * (every key of its chain) at the same epoch as at verification, the same physical
-   * folders, and the reviewed credential. Anything else (a pull, switch or restore that
-   * ran or is running, a checkout replaced or removed, a renewed credential) records
-   * `not-sent`. Changes after admission are later local changes; they never alter what
-   * is sent.
+   * Admit only the reviewed credential and identical checkout chain/epoch/physical folders;
+   * otherwise record not-sent. Release the checkout section before network send. Later local
+   * changes cannot alter the already-admitted payload.
    */
   const send = Effect.fn("OverleafCoordinator.publish")(function* (input: {
     readonly repo: string;
@@ -1702,11 +1689,9 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     ),
   );
 
-  // A bulk change of a checkout first settles an apply left pending in it, when
-  // nothing else holds that connection (owner decision 3); otherwise it refuses.
-  // It fails closed: a connection it cannot read could be one with work pending
-  // here, so an unreadable record refuses every bulk change until it is
-  // quarantined or repaired.
+  // Bulk checkout changes must settle pending applies first or refuse a busy connection. Unreadable
+  // connection state fails closed because it may hide pending work; require repair/quarantine
+  // before any bulk change.
   yield* barrier.settleBeforeBulk((section) =>
     Effect.gen(function* () {
       const refuse = new CheckoutBarrier.CheckoutRecoveryRequiredError({ checkout: section.root });

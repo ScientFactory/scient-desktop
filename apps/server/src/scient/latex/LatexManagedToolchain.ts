@@ -1,19 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off -- The reviewed download boundary for the pinned distribution, matching `@scientfactory/provider-runtime`: a streamed body with progress and a host allowlist over compile-time-constant URLs, hashed by the host.
 /**
- * Installs the LaTeX distribution Scient pins, for people who have none.
- *
- * A fresh machine has no TeX. Telling a researcher to go install TeX Live and
- * come back is where this feature would lose them, so Scient offers to place
- * one itself: download the pinned TinyTeX bundle, check it against the digest
- * in `tinytexManifest.ts`, expand it into app-owned state, and only then swap
- * it into place. Nothing outside `<latexDir>/managed` is touched, no elevation
- * is asked for. A fully capable system TeX keeps precedence; this distribution
- * fills missing compiler capabilities before a partial system fallback.
- *
- * The install runs on a supervised fiber and reports itself through a single
- * state value that clients poll, because the work outlives the request that
- * started it. One install runs at a time; asking again while one is in flight
- * answers with the install already running rather than starting a second.
+ * Supervise single-flight install because it outlives the initiating request. Verify the pinned
+ * bundle before activation inside managed state; preserve fully capable system TeX precedence and
+ * fill missing compilers without modifying system installations.
  */
 import * as NodeCrypto from "node:crypto";
 
@@ -75,16 +64,9 @@ const MAX_REDIRECTS = 5;
 const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT = "10 minutes";
 /**
- * The ceiling over the whole run, phases and the gaps between them alike. The
- * body stream has `DOWNLOAD_TIMEOUT` and the expansion has its own, but the
- * redirect and header exchange before either — a `fetch` against a server that
- * accepts the connection and then says nothing — has none, and a run that
- * never ends is worse than a failed one: the state it leaves behind says an
- * install is in flight, and the single-flight gate then refuses every later
- * attempt for the life of the process. The ceiling sits above the sum of the
- * per-phase budgets — ten minutes of download plus fifteen of package
- * collections, plus the expansion between them — so it only ever cuts a run
- * the phases could not.
+ * A whole-run ceiling must also cover silent redirect/header waits between phase budgets. Otherwise
+ * a hung fetch leaves single-flight installation stuck forever. Set it above combined legitimate
+ * phase budgets so it catches only otherwise-unbounded work.
  */
 const INSTALL_TIMEOUT = "45 minutes";
 /** Progress is republished per megabyte; a poll every 1.5s cannot see finer. */
@@ -157,11 +139,8 @@ function managedInstallFailureDetail(detail: string): string {
 }
 
 /**
- * Why this URL may not be fetched, or `null` when it may be. Artifact URLs are
- * compile-time constants from the manifest, so this is a guard against a bad
- * pin rather than against user input. A loopback origin is allowed so the
- * whole install path can be exercised against a local server; the pinned
- * manifest is HTTPS, and its own test holds it to that.
+ * Validate manifest pins rather than user URLs. Allow loopback only for end-to-end local
+ * installation fixtures; the shipped manifest remains HTTPS and is checked separately.
  */
 export function artifactUrlRejection(
   rawUrl: string,
@@ -477,15 +456,9 @@ export const make = Effect.gen(function* () {
   });
 
   /**
-   * Moves the finished tree beside any earlier one and records it as current.
-   *
-   * The earlier install is never touched. Removing it to reuse its path is how
-   * a working installation gets destroyed: an engine running out of that tree
-   * holds its files open, the removal gets halfway, the rename onto the
-   * wreckage fails, and what was a working TeX is now neither. So each install
-   * lands in a directory of its own and the state file — one atomic write, the
-   * only thing discovery reads — is the single moment the switch happens.
-   * Best-effort cleanup runs only after this commit point.
+   * Never replace/remove a working tree in place: running engines can lock files and leave
+   * half-deleted installs. Promote into a fresh directory and switch discovery only through atomic
+   * state write; clean up best-effort afterward.
    */
   const promote = Effect.fn("LatexManagedToolchain.promote")(
     function* (input: { readonly payloadPath: string; readonly version: string }) {
@@ -519,24 +492,9 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * Removes managed install directories nothing points to any more.
-   *
-   * `promote` deliberately never deletes the tree it supersedes — the whole
-   * point of landing every install in a fresh directory is that an install
-   * which fails after this point leaves the previous, working tree
-   * untouched. But left alone forever, that same carefulness means every
-   * reinstall leaves one more copy of TinyTeX on disk, and nothing ever
-   * reclaims it. This is that reclaiming, run once a promotion has already
-   * succeeded and the state file already names the new tree as current: it
-   * lists what is actually on disk, keeps only the tree just promoted and
-   * whatever the state file names right now (read fresh, not merely trusted
-   * from this run, so a state file changed out from under this call is still
-   * honored), and best-effort removes everything else. A removal that fails
-   * — a locked `latexmk.exe` still running out of an old tree, a permissions
-   * hiccup, anything — is silently tolerated rather than surfaced: the whole
-   * reason `promote` never removed that tree itself is that a failed removal
-   * must never become this install's problem, and an orphaned directory left
-   * for the next cleanup to try again is a fully acceptable outcome.
+   * Reclaim only after successful promotion. Keep both the promoted tree and freshly reread
+   * current-state target so concurrent state changes survive. Failed removal is harmless orphan
+   * retention for a later sweep, never a failed install.
    */
   const cleanupSupersededInstalls = Effect.fn("LatexManagedToolchain.cleanupSupersededInstalls")(
     function* (promotedRoot: string) {
@@ -571,12 +529,9 @@ export const make = Effect.gen(function* () {
   );
 
   /**
-   * Fetches the collections an ordinary document needs, while the card still
-   * says the install is running. Everything here is best effort: the engine is
-   * already in place and every build resolves what it is missing on its own, so
-   * a repository that cannot be reached — an offline machine, a mirror having a
-   * bad day, a shutdown mid-fetch — costs a note on a finished install rather
-   * than the install itself. Answers the note, or `null` when there is none.
+   * Initial collection seeding is best-effort because the engine is already installed and builds
+   * resolve missing packages. Offline/mirror/shutdown failure becomes a note, not loss of the
+   * usable install.
    */
   const preinstallCollections = Effect.fn("LatexManagedToolchain.preinstallCollections")(
     function* (binDirectory: string) {

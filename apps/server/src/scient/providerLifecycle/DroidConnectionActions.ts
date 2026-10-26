@@ -1,10 +1,7 @@
 /**
- * Factory Droid account lifecycle over Droid's standard ACP transport.
- *
- * Droid owns browser launch, device pairing, credentials, and revocation.
- * Scient initializes the ACP peer, invokes only capabilities the exact
- * running binary advertises, and owns the child/fiber through the connection
- * attempt's scope. No terminal output or TUI wording is parsed here.
+ * Droid owns browser pairing, credentials, and revocation. Invoke only the exact binary's
+ * advertised ACP capabilities and scope the child to the attempt; never parse TUI wording as
+ * lifecycle authority.
  */
 import type { DroidSettings, ProviderConnectionMethod } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";

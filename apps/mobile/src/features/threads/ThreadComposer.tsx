@@ -23,10 +23,6 @@ import {
   type UsageLimitsReport,
 } from "@t3tools/contracts";
 import {
-  mergeEffectiveProviderSkills,
-  resolveProviderSkillsForCwd,
-} from "@t3tools/client-runtime/providerSkills";
-import {
   collectProviderUsageLimits,
   hasProviderUsageLimits,
   isUsageLimitsCommand,
@@ -94,8 +90,6 @@ import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/u
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
-import { useEnvironmentQuery } from "../../state/query";
-import { scientSkillsInventory } from "../../state/scientSkills";
 import { Menu } from "../../components/ui/Menu";
 import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
@@ -288,12 +282,9 @@ export interface ThreadComposerProps {
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
-// Android gets NO layout transition: the composer rides the keyboard via KeyboardStickyView
-// (frame-synced to the IME), and a time-based morph running alongside that translate reads as
-// jitter.
+// Android KeyboardStickyView tracks the IME; concurrent timed layout morphs cause jitter.
 export const COMPOSER_TRANSITION_DURATION_MS = 220;
-// Side panes already animate the dock's width. Nested horizontal layout
-// transitions would leave the surface trailing its toolbar's new position.
+// Side panes animate dock width; nested horizontal transitions would make the surface trail the toolbar.
 const composerHeightTransition: LayoutAnimationFunction = (values) => {
   "worklet";
   const timing = {
@@ -408,8 +399,7 @@ export function ComposerSurface(props: {
   }));
   const layoutTransition = shouldAnimate ? COMPOSER_LAYOUT_TRANSITION : undefined;
 
-  // Each native frame follows the same transition. Animating only the outer
-  // clip leaves the glass and content at their final height on the first frame.
+  // Animate every native frame or glass and content jump to final height inside the clip.
   return (
     <Animated.View
       className={
@@ -450,13 +440,7 @@ export function ComposerSurface(props: {
 export const THREAD_COMPOSER_BOTTOM_GUTTER = 6;
 
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
-  // SCIENT-FORK:START - projectless threads retain their composer.
-  const project = useProject(
-    props.selectedThread.projectId === null
-      ? null
-      : scopeProjectRef(props.environmentId, props.selectedThread.projectId),
-  );
-  // SCIENT-FORK:END
+  const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
@@ -481,17 +465,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
-  // SCIENT-FORK:START - a settings sheet can outlive a share-import lock transition.
-  const settingsOwnerRef = useRef({ key: composerDraftKey, locked: props.interactionLocked });
-  useLayoutEffect(() => {
-    settingsOwnerRef.current = { key: composerDraftKey, locked: props.interactionLocked };
-    return () => {
-      settingsOwnerRef.current = { key: composerDraftKey, locked: true };
-    };
-  }, [composerDraftKey, props.interactionLocked]);
-  const canChangeSettings = () =>
-    settingsOwnerRef.current.key === composerDraftKey && !settingsOwnerRef.current.locked;
-  // SCIENT-FORK:END
   const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
@@ -546,40 +519,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       ) ?? null
     );
   })();
-  // SCIENT-FORK:START - merge Scient skills into the selected workspace snapshot.
-  const scientSkills = useEnvironmentQuery(
-    scientSkillsInventory({
-      environmentId: props.environmentId,
-      input: {
-        ...(!props.isDraft ? { threadId: props.selectedThread.id } : {}),
-        ...(props.selectedThread.projectId ? { projectId: props.selectedThread.projectId } : {}),
-      },
-    }),
-  ).data;
-  const effectiveProviderSkills = selectedProviderStatus
-    ? mergeEffectiveProviderSkills({
-        provider: selectedProviderStatus.driver,
-        providerSkills: resolveProviderSkillsForCwd(selectedProviderStatus, props.projectCwd),
-        inventory: scientSkills,
-        includeContextualProviderSkills: true,
-      })
-    : [];
-  const effectiveSelectedProviderStatus = selectedProviderStatus
-    ? {
-        ...selectedProviderStatus,
-        skills: effectiveProviderSkills,
-        ...(selectedProviderStatus.workspaceSnapshots
-          ? {
-              workspaceSnapshots: selectedProviderStatus.workspaceSnapshots.map((snapshot) =>
-                snapshot.cwd === props.projectCwd
-                  ? { ...snapshot, skills: effectiveProviderSkills }
-                  : snapshot,
-              ),
-            }
-          : {}),
-      }
-    : null;
-  // SCIENT-FORK:END
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
     Keyboard.dismiss();
     navigation.navigate("ThreadAttachment", {
@@ -626,9 +565,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       : null,
     pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
     threadPullRequests: props.selectedThread.pullRequests,
-    // SCIENT-FORK:START — command suggestions include the effective skill inventory.
-    selectedProviderStatus: effectiveSelectedProviderStatus,
-    // SCIENT-FORK:END
+    selectedProviderStatus,
     hasThread: !props.isDraft,
     hasCompactableConversation: props.hasCompactableConversation,
     onChangeDraftMessage: props.onChangeDraftMessage,
@@ -761,13 +698,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     const sent = await settlePromise(() => onSendMessage(followUp, stillSendable));
     inFlightThreadIdsRef.current.delete(threadKey);
     if (AsyncResult.isFailure(sent)) {
-      // The composer state already surfaces send errors; only the lock needed releasing.
       console.error("[composer] send failed", squashAtomCommandFailure(sent));
       return;
     }
     if (sent.value === null) return;
-    // Armed after the send so its preference read and native Activity start don't contend
-    // with the queued-message feedback on the tap frame.
+    // Arm after send so preference reads and native Activity startup do not delay tap-frame feedback.
     armAgentAwarenessLiveActivityForLocalWork({
       environmentId: props.environmentId,
       threadTitle: props.selectedThread.title,
@@ -805,25 +740,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     providerGroups: threadProviderGroups,
     selectedModel: currentModelSelection,
     prompt: draftMessage,
-    // SCIENT-FORK:START - import rollback owns the locked draft and settings.
-    onPromptChange: (text) => {
-      if (canChangeSettings()) setComposerDraftText(composerDraftKey, text);
-    },
-    // SCIENT-FORK:END
+    onPromptChange: (text) => setComposerDraftText(composerDraftKey, text),
     reportedModelSelection: props.reportedModelSelection,
-    // SCIENT-FORK:START - callbacks already presented to the sheet read the live lock.
-    onSelectModel: (option) => {
-      if (canChangeSettings()) {
-        props.onUpdateModelSelection(withRememberedModelOptions(option.selection));
-      }
-    },
-    // SCIENT-FORK:END
+    onSelectModel: (option) =>
+      props.onUpdateModelSelection(withRememberedModelOptions(option.selection)),
     restoreSelection: withRememberedModelOptions,
     optionDescriptors: providerOptionDescriptors,
     onUpdateOptionSelections: (options) => {
-      // SCIENT-FORK:START - do not mutate remembered settings during import rollback.
-      if (!canChangeSettings()) return;
-      // SCIENT-FORK:END
       rememberModelOptions(
         currentModelSelection.instanceId,
         currentModelSelection.model,
@@ -832,16 +755,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       props.onUpdateModelSelection({ ...currentModelSelection, options });
     },
     runtimeMode: currentRuntimeMode,
-    // SCIENT-FORK:START - runtime changes share the same import lock.
-    onUpdateRuntimeMode: (mode) => {
-      if (canChangeSettings()) props.onUpdateRuntimeMode(mode);
-    },
-    // SCIENT-FORK:END
+    onUpdateRuntimeMode: props.onUpdateRuntimeMode,
   } satisfies ExistingThreadSettingsRouteSession;
   const openSettings = () => {
-    // SCIENT-FORK:START - importing a share locks settings as well as the editor.
-    if (!canChangeSettings()) return;
-    // SCIENT-FORK:END
     settingsRoutePresentation.present(settingsRouteSession);
     settingsSheetPresentation.open();
   };
@@ -873,8 +789,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
 
   useEffect(
     () =>
-      // UIKit's completion callback for the sheet dismissal, surfaced by the
-      // native-stack patch. This is when the queued keyboard restore runs.
+      // The native-stack patch exposes UIKit dismissal completion; restore the keyboard then.
       (navigation as unknown as NavigationWithFinishTransitioning).addListener(
         "finishTransitioning",
         settingsSheetPresentation.onStackTransitionsFinished,
@@ -931,9 +846,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const modelControl = (
     <View className="min-w-0 shrink">
       <ComposerModelControl
-        // SCIENT-FORK:START - shared draft chrome respects pending share imports.
-        disabled={props.interactionLocked}
-        // SCIENT-FORK:END
         size={hasSidebarTabBar ? "large" : "regular"}
         modelOption={currentModelOption}
         selection={currentModelSelection}
@@ -958,9 +870,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           Platform.OS === "android" ? themeColorWithAlpha(composerPanel, 1) : undefined,
       }}
     >
-      {/* The backdrop gradient lives on a plain View: Reanimated's Animated.View
-          silently drops experimental_backgroundImage on Android, which left this
-          strip fully transparent and the feed text legible through the composer. */}
+      {/* Use a plain View: Reanimated Animated.View drops experimental_backgroundImage on Android. */}
       <View
         className={
           Platform.OS === "android"

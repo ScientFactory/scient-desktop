@@ -43,7 +43,7 @@
     "apps/web/src/scient/rightPanel/useScientRightPanelOpeners.ts",
     "apps/web/src/state/analysis.ts",
     "apps/web/src/state/compute.ts",
-    "apps/web/src/routes/settings.scientific-computing.tsx",
+    "apps/web/src/routes/_chat.settings.scientific-computing.tsx",
     "packages/client-runtime/src/state/analysis.ts",
     "packages/client-runtime/src/state/compute.ts",
     "packages/contracts/src/scientAnalysis.ts",

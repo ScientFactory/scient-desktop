@@ -268,8 +268,7 @@ export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
 
 export const ProjectSearchContentsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  // Whitespace is significant in content queries (" foo", regex trailing
-  // spaces), so the query is deliberately not trimmed on the wire.
+  // Preserve whitespace because it is significant in content queries.
   query: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)),
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_CONTENTS_MAX_LIMIT)),
   caseSensitive: Schema.Boolean,
@@ -528,8 +527,7 @@ export class ProjectListDirectoryError extends Schema.TaggedError<ProjectListDir
 
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  // Workspace-relative, or an absolute host path for a file outside the
-  // workspace. Only workspace-relative paths can be written back.
+  // Workspace-relative or absolute host path; only workspace-relative paths are writable.
   relativePath: FilePathString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
   // Optional files can be absent without failing the read.
   allowMissing: Schema.optional(Schema.Boolean),
@@ -577,11 +575,8 @@ export const ProjectSubscribeFileChangesInput = ProjectReadFileInput;
 export type ProjectSubscribeFileChangesInput = typeof ProjectSubscribeFileChangesInput.Type;
 
 /**
- * A hint that the file may need an authoritative reread. Clients reread on
- * readiness to close the query-to-watcher race, and again on change instead of
- * treating either event as file contents. The only portable distinction is
- * watcher readiness versus "something changed"; create/update/remove and the
- * authoritative revision come from the subsequent read.
+ * Ready closes the query-to-watcher race; both readiness and changes require an authoritative reread.
+ * Watcher events cannot portably distinguish create/update/remove or supply the current revision.
  */
 export const ProjectFileWatchEvent = Schema.Union([
   Schema.TaggedStruct("watch-ready", {

@@ -1,11 +1,3 @@
-/**
- * Scient's additions to the Antigravity driver: routing legacy `agy`
- * configurations to the legacy driver, the managed ACP runtime actions and
- * the connection state they stamp onto the snapshot, and the assisted
- * account actions built on the official auth controller.
- *
- * @module provider/Drivers/ScientAntigravityDriver
- */
 import {
   type AntigravityAuthMethod,
   type AntigravitySettings,

@@ -1,11 +1,9 @@
 import type { ManagedRuntimeCatalogProvider } from "./managedRuntimeArtifact.ts";
 
 /**
- * Compatibility between a release feed and the installer shipped in Scient.
- * Bump only the affected family when new releases require changed installer
- * policy. Older apps reject that revision and retain their compatible runtime.
- * Historical revisions are readable by publication tooling, never relabeled
- * or published as current without native qualification.
+ * Bump installer compatibility only for the affected family so older apps retain compatible
+ * runtimes. Historical revisions are publication inputs, never current releases without native
+ * qualification.
  */
 export const MANAGED_RUNTIME_POLICY: Readonly<
   Record<

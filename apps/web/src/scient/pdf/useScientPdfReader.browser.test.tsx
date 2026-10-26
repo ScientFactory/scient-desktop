@@ -181,6 +181,29 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   vi.restoreAllMocks();
 }
 
+it("keeps zoom stable while scrolling pages and still accepts an explicit fit-width request", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+  await render(_fixture, "mixed-page-orientations");
+  await load(_fixture, 0);
+  await publish(_fixture, 0);
+  const runtime = _fixture.runtimes[0];
+  await act(() => _fixture.reader.setZoom(1.25));
+  runtime.refreshForContainerSize.mockClear().mockImplementation(() => {
+    runtime.viewer.currentScale = 0.55;
+  });
+  await act(() => {
+    runtime.viewer.currentPageNumber = 2;
+    runtime.emit("pagechanging", { pageNumber: 2 });
+  });
+  expect(_fixture.reader.state.page).toBe(2);
+  expect(runtime.viewer.currentScale).toBe(1.25);
+  expect(runtime.refreshForContainerSize).not.toHaveBeenCalled();
+  await act(() => _fixture.reader.setZoomMode("page-width"));
+  expect(runtime.viewer.currentScaleValue).toBe("page-width");
+});
+
 it("publishes the painted container and its source identity atomically after replacement readiness", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

@@ -20,11 +20,9 @@ export function scientMathMarkdownText(text: string): string {
 type ScientRemarkPlugins = NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 /**
- * The remark plugins for one message. When the message uses backslash math
- * delimiters, the refinement plugin needs the original text to recover each
- * pair's inline-versus-display intent (the length-preserving rewrite turns
- * both into `$$`); every other message keeps the shared static array, so the
- * common path allocates nothing.
+ * Backslash delimiters need original source to recover inline/display intent after the
+ * length-preserving rewrite. Reuse the static plugin array for other messages to avoid common-path
+ * allocation.
  */
 export function scientMathRemarkPlugins(
   basePlugins: ScientRemarkPlugins,

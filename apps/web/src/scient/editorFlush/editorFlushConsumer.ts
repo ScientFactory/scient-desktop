@@ -7,17 +7,9 @@ import type {
 import { AsyncResult, Atom } from "effect/reactivity";
 
 /**
- * One window's side of the editor flush for one environment, independent of
- * React renders.
- *
- * Every call names the connection it belongs to. Requests are answered on the
- * connection they arrived on, and only while it is still the window's latest
- * one: a replaced connection's late answer is dropped.
- *
- * The window says goodbye, once per connection, when it closes (`pagehide`)
- * or stops answering for this environment, so the server forgets it at once
- * instead of counting it as lost. A page kept in the back-forward cache keeps
- * its drafts, so it says no goodbye; restored, it registers again at once.
+ * Answer only on the request's still-current connection; discard late replaced-connection replies.
+ * Send one goodbye on actual close/environment exit, but none for back-forward-cache pages
+ * retaining drafts; register immediately on restoration.
  */
 export function createEditorFlushConsumerAtom<E>(options: {
   readonly requestsAtom: Atom.Atom<AsyncResult.AsyncResult<EditorFlushStreamEvent, E>>;

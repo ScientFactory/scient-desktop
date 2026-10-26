@@ -1,16 +1,6 @@
 /**
- * Scient migration 2: durable-provider-bootstrap.
- *
- * Adds provider bootstrap and baseline-identity columns to
- * `scient_thread_lineage`. These columns capture the provider injection mode,
- * bootstrap lifecycle, attachment-copy plan, and baseline turn/user/assistant
- * identifiers that the fork reactor and context bootstrap depend on.
- *
- * Uses conditional ALTER (check `PRAGMA table_info` first) so the migration is
- * safe on databases where the legacy `ensureScientForkSchema` already added
- * these columns.
- *
- * SCIENT-OWNED.
+ * Legacy ensureScientForkSchema may already have added these columns; check PRAGMA table_info
+ * before ALTER to preserve compatibility.
  */
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";

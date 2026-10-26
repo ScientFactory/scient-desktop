@@ -36,14 +36,9 @@ function parseUrl(value: string, base?: string | null): URL | null {
 }
 
 /**
- * Whether the renderer would contact a server other than Scient to load `source`, and if so
- * which. The source is resolved exactly as the browser resolves an image URL, so tabs and
- * newlines inside a scheme, uppercase schemes, backslashes, and network-path forms such as
- * `//host` or `/\host` are judged by where they actually lead.
- *
- * Local: `data:` and `blob:` bytes, the app's own scheme and host, and (in the desktop app) any
- * address on its private app scheme, which its protocol handler answers. Everything else is
- * remote, including an address the URL parser rejects, which is shown verbatim.
+ * Resolve image addresses exactly as the browser does, including scheme whitespace, backslashes,
+ * and network paths. Only app-origin/private desktop scheme and data/blob bytes are local; parser
+ * failures remain remote and display verbatim.
  */
 export function remoteImageAddress(
   source: string,

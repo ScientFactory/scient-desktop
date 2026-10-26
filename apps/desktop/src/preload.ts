@@ -49,8 +49,7 @@ if (clientPlatform !== "darwin") {
 // SCIENT-FORK:END
 
 if (clientPlatform === "darwin") {
-  // Native window buttons do not scale with Chromium zoom. Keep their reserved
-  // space in native points, including when a zoomed page is reloaded.
+  // Native buttons ignore Chromium zoom; reserve native points even after reload.
   const syncWindowControlInset = () => {
     document.documentElement.style.setProperty(
       "--desktop-window-controls-inset",
@@ -214,6 +213,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   pickProjectFavicon: (initialPath) =>
     ipcRenderer.invoke(IpcChannels.PICK_PROJECT_FAVICON_CHANNEL, initialPath),
   saveAssetCopy: (request) => ipcRenderer.invoke(IpcChannels.SAVE_ASSET_COPY_CHANNEL, request),
+  savePdfBytesCopy: (request) =>
+    ipcRenderer.invoke(IpcChannels.SAVE_PDF_BYTES_COPY_CHANNEL, request),
   revealSavedAsset: (path) => ipcRenderer.invoke(IpcChannels.REVEAL_SAVED_ASSET_CHANNEL, path),
   renderDocumentPagePdf: (input) =>
     ipcRenderer.invoke(IpcChannels.RENDER_DOCUMENT_PAGE_PDF_CHANNEL, input),

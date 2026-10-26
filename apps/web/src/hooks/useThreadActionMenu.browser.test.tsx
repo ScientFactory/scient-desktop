@@ -82,6 +82,7 @@ vi.mock("../state/threads", () => ({
 }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
 vi.mock("../state/vcs", () => ({ vcsEnvironment: {} }));
+vi.mock("../state/orchestration", () => ({ orchestrationEnvironment: {} }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
@@ -123,6 +124,7 @@ function Header({ onReady }: { onReady: (menu: ReturnType<typeof useThreadAction
     projectCwd: "/synthetic",
     onStartRename: vi.fn(),
     onRequestNewSection: vi.fn(),
+    canShareWithGuest: false,
   });
   useEffect(() => onReady(actions), [actions, onReady]);
   return null;

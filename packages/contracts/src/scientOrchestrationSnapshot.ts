@@ -303,12 +303,8 @@ export type OrchestrationShellStreamItem = typeof OrchestrationShellStreamItem.T
 
 export const OrchestrationSubscribeShellInput = Schema.Struct({
   /**
-   * When provided, the server skips the initial full shell snapshot and instead
-   * replays shell events after this sequence before streaming live events.
-   * Clients that already hold a cached (or HTTP-loaded) shell snapshot pass its
-   * sequence here so the subscription resumes without re-sending the entire
-   * projects/threads list (overlapping events are deduped by sequence on the
-   * client).
+   * Resume cached shell snapshots after their sequence without resending the whole list. Clients
+   * must deduplicate overlapping replay/live events by sequence.
    */
   afterSequence: Schema.optionalKey(NonNegativeInt),
   /**
@@ -324,11 +320,8 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
   /** Opt in to reasoning roles; older clients receive system messages instead. */
   reasoningMessages: Schema.optionalKey(Schema.Boolean),
   /**
-   * When provided, the server skips the initial snapshot frame and instead
-   * replays events after this sequence before streaming live events. Clients
-   * that load the snapshot over HTTP pass the snapshot's sequence here so the
-   * live subscription resumes without a gap (overlapping events are deduped by
-   * sequence on the client).
+   * Resume HTTP-loaded snapshots after their sequence so live subscription has no gap. Deduplicate
+   * overlap by sequence rather than assuming replay/live boundaries arrive disjointly.
    */
   afterSequence: Schema.optionalKey(NonNegativeInt),
   /**
@@ -337,24 +330,16 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
    */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /**
-   * When provided, the fallback snapshot frame (sent when `afterSequence` is
-   * missing or the catch-up gap is too large) is windowed to the last
-   * `turnLimit` user-anchored turns and carries `page` metadata. Absent means
-   * the fallback snapshot is the full thread, preserving pre-pagination client
-   * behavior. Live events are unaffected either way.
+   * Window only fallback snapshots, preserving full fallback for clients without turnLimit. Live
+   * events remain unchanged and windowed fallbacks must carry page metadata.
    */
   turnLimit: Schema.optionalKey(PositiveInt),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
 
 /**
- * Bounds a thread detail read to a window of recent turns. `turnLimit` counts
- * turns with a user pending message (subagent/fan-out turns between them ride
- * along), so the window always contains the last N user prompts. `beforeCursor`
- * requests the disjoint page of older turns strictly before a previously
- * returned cursor. Requests without a window get the full thread; pagination is
- * strictly opt-in so older clients keep today's behavior on both HTTP and the
- * WebSocket fallback snapshot.
+ * Count user-anchored turns, retaining intervening fan-out work. Cursors request strictly older
+ * disjoint pages; no window means full history for old HTTP and WebSocket clients.
  */
 export const OrchestrationThreadDetailWindow = Schema.Struct({
   turnLimit: Schema.optionalKey(PositiveInt),
@@ -363,24 +348,17 @@ export const OrchestrationThreadDetailWindow = Schema.Struct({
 export type OrchestrationThreadDetailWindow = typeof OrchestrationThreadDetailWindow.Type;
 
 /**
- * Page metadata for a windowed thread detail read. `beforeCursor` is opaque and
- * exclusive: passing it back returns the adjacent disjoint slice of older
- * turns. `null` means the thread is fully loaded below this page. The
- * `snapshotSequence` mirrors the top-level snapshot sequence so history pages
- * can be sequence-checked against live state before merging.
+ * Keep beforeCursor opaque/exclusive and pages adjacent/disjoint. Sequence-check history against
+ * live state before merge; a null cursor means no older page remains.
  */
 export const OrchestrationThreadDetailPage = Schema.Struct({
   beforeCursor: Schema.NullOr(TrimmedNonEmptyString),
   hasMore: Schema.Boolean,
   snapshotSequence: NonNegativeInt,
   /**
-   * Highest event sequence applied to THIS thread at page read time. The
-   * global `snapshotSequence` advances with every thread's events, so a
-   * client cannot wait for it via its per-thread subscription; this
-   * thread-scoped watermark is reachable. A client merging an older page
-   * must first have applied live events up to it — otherwise a streaming
-   * turn outside the loaded window could have deltas replayed on top of
-   * page content that already includes them, duplicating text.
+   * Wait for the page's thread-scoped watermark before merge or already-included streaming deltas
+   * may duplicate text. Global snapshotSequence may advance on other threads and is unreachable
+   * through this thread's subscription.
    */
   threadSequence: Schema.optionalKey(NonNegativeInt),
 });

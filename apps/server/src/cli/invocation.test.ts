@@ -317,8 +317,6 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HostProcess.Environment, { T3CODE_NPM_LAUNCHER_PATH: launcher }),
       );
-      // A launcher for another version is some other `t3` the server spawned
-      // (the variable is inherited), not the install this executable runs from.
       for (const [version, expected] of [
         ["0.0.1", null],
         [packageJson.version, { kind: "npm-global", prefix: canonicalPrefix }],

@@ -34,13 +34,9 @@ const ompInlineImageBytes = (image: OmpImageAttachment): number =>
 const OMP_IMAGES_ARRAY_BYTES = Buffer.byteLength(',"images":[]');
 
 /**
- * Decide which images travel inline and which as attached local files. Inline
- * images must fit, with the message, in the physical frame OMP advertised in
- * `ready.maxFrameBytes` (OMP reads commands unchunked). Images that do not fit
- * are listed as local files instead: OMP 18.3.1's `read` tool returns image
- * content for image files to image-capable models, which reaches the next
- * model request. Moving an image to a file lengthens the message, so the plan
- * is recomputed until it is stable.
+ * OMP reads commands unchunked, so inline images plus message must fit ready.maxFrameBytes.
+ * Overflow images become local files readable by its image-capable read tool; recompute until
+ * stable because each file reference lengthens the message.
  */
 export const planOmpImages = (input: {
   readonly buildMessage: (imageFiles: ReadonlyArray<string>) => string;

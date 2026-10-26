@@ -11,33 +11,20 @@ import {
   type SubagentWorkflowPhase,
 } from "./subagentRuntime.ts";
 
-// Agent-panel subsystem. A tolerant fold over persisted
-// task.* / tool.* thread activities into the same RuntimeSubagent shape
-// upstream projects from orchestration-v2 entities, plus the source-neutral
-// panel model every client renders. Deliberately legacy-bridge code: when
-// the v2 projection is available for a thread, deriveAgentPanelModel
-// prefers it (see the v2Projection parameter) and the fold is skipped; when
-// imported historical task observations can also reuse the pure fold; they
-// never grant provider execution or request-response authority.
-/*
- * Invariants encoded here trace to shipped bugs in the prior PRs (#4220,
- * #3650, #4662): reusable identity vs one-shot activations, idle as a real
- * nonterminal state, provider-specific usage merges, first-write terminal
- * timestamps, reactivation clearing terminal detail, and order-robust
- * folding (completion can create an agent; a late start only fills
- * metadata).
+// Prefer native V2 projections; the legacy activity fold also supports imported observations but
+// must never grant provider execution or request-response authority.
+/**
+ * Keep reusable identity distinct from activations; idle is nonterminal. Terminal timestamps are
+ * first-write, reactivation clears terminal detail, and late starts only enrich metadata.
+ * Completion may create an agent before its start arrives.
  */
 const RECENT_ACTIVITY_LIMIT = 6;
 const SUMMARY_CHAR_LIMIT = 180;
 const ROSTER_LIMIT = 100;
 
 /**
- * True when this activity's payload does NOT belong on the Agents surface.
- * Classification happens exactly once, server-side at ingestion
- * (classifyTaskAgentKind → the persisted agentKind stamp); the client only
- * reads it. Rows without a stamp — legacy threads, pre-stamp servers — are
- * background by definition: they render in the ordinary work log, exactly
- * as they did before this feature existed.
+ * Read the server's persisted agentKind stamp; unstamped legacy rows remain background work-log
+ * entries rather than becoming agents.
  */
 function isBackgroundTaskActivity(payload: Record<string, unknown>): boolean {
   return payload.agentKind !== "agent";
@@ -104,14 +91,9 @@ export function asUsage(value: unknown): SubagentUsage | undefined {
 }
 
 /**
- * Provider-specific usage merge (#4779 semantics, verbatim):
- * - max-merge (Codex-style cumulative frames): field-wise maximum, idempotent
- *   under duplicate or late frames. Cumulative totals never shrink.
- * - accumulate (Claude-style activation deltas): not needed at this layer —
- *   Claude's task_progress usage is itself cumulative per task, so the fold
- *   also max-merges. The distinction matters when v2 sums activations.
- * Field-wise: a terminal payload carrying only totalTokens must not wipe a
- * known breakdown.
+ * Max-merge cumulative usage so duplicates/late frames cannot shrink totals, including Claude
+ * task_progress. A terminal totalTokens-only payload must preserve known breakdowns; activation
+ * summing belongs to V2.
  */
 function mergeUsageMax(
   current: SubagentUsage | null,
@@ -270,11 +252,8 @@ function fillMetadata(agent: MutableAgent, payload: Record<string, unknown>): vo
   if (phaseTitle) agent.phaseTitle = phaseTitle;
   const attempt = asCount(payload.attempt);
   if (attempt !== undefined) {
-    // A new attempt on a workflow slot is a reactivation of the same
-    // identity: clear the previous attempt's terminal detail so the status
-    // transition (terminal → running, in applyStatus) reads as a fresh run.
-    // The activation bump lives ONLY in applyStatus — bumping here too
-    // counted every retry twice (review finding: two attempts read "run 3").
+    // Clear terminal detail on reactivation so it reads as a fresh run. Only applyStatus increments
+    // activations; incrementing here too double-counts retries.
     if (agent.attempt !== null && attempt > agent.attempt) {
       agent.result = null;
       agent.error = null;
@@ -378,15 +357,9 @@ function asRuntimeStatus(value: unknown): RuntimeSubagentStatus | undefined {
 }
 
 /**
- * Folds a thread's persisted activities into subagent state. Tolerant by
- * construction: malformed rows are skipped individually; unknown kinds are
- * ignored. Pure — memoize by activity-list identity at the atom layer.
- *
- * sessionLive=false derives interruption: background tasks die with their
- * provider session, so agents whose terminal rows were lost (server
- * restart, crash) must not read as running forever (review finding: a dead
- * session left a panel full of "Working" agents while the sidebar showed
- * nothing). Idle is preserved — a resumable Codex child stays resumable.
+ * A dead provider session cannot leave tasks running when terminal rows were lost. Derive
+ * interruption, but preserve idle because a Codex child can remain resumable. Skip
+ * malformed/unknown activities individually.
  */
 export function foldSubagentActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
@@ -411,13 +384,9 @@ export function foldSubagentActivities(
         if (isBackgroundTaskActivity(payload)) break;
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
-        // Order-robustness: a start row arriving after a terminal state is a
-        // late/out-of-order delivery and only fills metadata — it must not
-        // reopen the run. Reactivation comes exclusively from explicit
-        // status transitions (task.updated / progress status). Guard on the
-        // status itself, not activationCount: a task first seen via a
-        // terminal task.updated has zero activations but is still settled
-        // (review finding: a late start reopened a failed child).
+        // A late start may fill metadata but cannot reopen a terminal run. Guard on status, not
+        // activationCount: a task first seen through terminal task.updated can still have zero
+        // activations. Only explicit status transitions reactivate.
         if (agent.activationCount === 0 && !isTerminalSubagentStatus(agent.status)) {
           agent.activationCount = 1;
           agent.startedAt = agent.startedAt ?? at;
@@ -509,13 +478,9 @@ export function foldSubagentActivities(
         const agent = getOrCreate(agents, taskId, payload, at);
         fillMetadata(agent, payload);
         if (agent.activationCount === 0) agent.activationCount = 1;
-        // Already-terminal: status and timestamps are frozen (first write
-        // wins, duplicates must not slide them) but the completion still
-        // ENRICHES — Claude commonly emits terminal task.updated before
-        // task.completed, and the completion carries the result summary and
-        // final usage the update lacked (review finding: the early return
-        // dropped both). Fill-if-missing keeps duplicate completions from
-        // replacing the first result.
+        // Freeze terminal status/timestamps at first write, but allow completion to fill missing
+        // results and usage: Claude can send terminal task.updated first. Duplicate completions
+        // must not replace the first result.
         const summary = asString(payload.summary) ?? asString(payload.detail);
         if (isTerminalSubagentStatus(agent.status)) {
           if (summary) {
@@ -560,11 +525,8 @@ export function foldSubagentActivities(
     }
   }
 
-  // Consistency pass: when a workflow coordinator has settled, members that
-  // never received their own terminal row cannot still be in-flight — the
-  // run is over. Cascade the coordinator's outcome so stalled member rows
-  // don't read as working forever (live-test finding: statuses drifted
-  // whenever member terminal rows were lost or never emitted).
+  // A settled workflow coordinator means the run is over; cascade its outcome to members whose
+  // terminal rows were lost so they cannot remain working forever.
   for (const agent of agents.values()) {
     if (agent.kind !== "workflow" || !isTerminalSubagentStatus(agent.status)) {
       continue;

@@ -16,15 +16,9 @@ type IdleEntry = {
 };
 
 /**
- * Pending canonical starts per provider session id, owned by one live manager.
- *
- * Opening or reusing a session arms its idle timer before the start has
- * prepared history, handoffs and the run row; the first native turn only marks
- * the session busy at the very end. A start therefore reserves the session id
- * before it opens or looks up the session, and idle retirement declines while
- * any reservation is outstanding. The count is separate from turn busy
- * accounting, so no turn terminal or failed start can consume it. Explicit
- * releases (Stop, detach, logout, shutdown) never consult it.
+ * Idle timers arm before canonical starts finish preparation. Reserve the session ID before
+ * opening/lookup; keep that count separate from turn busy state so terminal events cannot consume
+ * it. Explicit Stop/detach/logout/shutdown must bypass the hold.
  */
 export interface StartupSessionReservations {
   readonly reserve: (
@@ -74,11 +68,9 @@ export const makeStartupSessionReservations = <Entry extends IdleEntry>(deps: {
   >();
 
   /**
-   * Re-arms only the exact runtime and idle generation whose retirement was
-   * declined; any later activity or replacement armed its own timer. The check
-   * claims the next generation in the same atomic step, so a replacement or
-   * new activity cannot slip in between, and the new timer is installed only
-   * while that claim is still current.
+   * Claim the next idle generation atomically with the exact runtime/generation check; install its
+   * timer only while that claim remains current, so replacement or activity cannot inherit a stale
+   * retirement.
    */
   const rearmDeclined = Effect.fn("StartupSessionHold.rearmDeclined")(
     function* (

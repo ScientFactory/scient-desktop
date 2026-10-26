@@ -119,13 +119,6 @@ export type SidebarSectionsOwnViewProps = Pick<
   | "onInteractionChange"
 >;
 
-/**
- * Everything the T3 sidebar needs for user-defined sections, kept out of
- * `Sidebar.tsx`: the Status/Sections mode, grouping, section management,
- * the Section submenu, and the background helpers (filing threads started
- * from a section, optional empty-section cleanup). The sidebar only renders
- * rows and shelves with its own components and forwards menu clicks here.
- */
 export function useSidebarSections(input: {
   /** Every thread shell, for membership. */
   readonly threads: readonly Shell[];

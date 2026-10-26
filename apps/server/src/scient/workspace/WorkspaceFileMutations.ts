@@ -998,11 +998,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       );
     }
   };
-  // Plain publication saves as main always did: revision and identity checks, then a flushed
-  // temporary file renamed into place, or linked for an exclusive create. No earlier version
-  // is retained. Hosts without native publication authority (Windows, Linux, no helper) use it
-  // for every mutation; native hosts use it to create a file where the volume cannot create it
-  // completely in one step. Overleaf retention always requires native publication.
+  // Plain publication retains no previous version and is the fallback without native authority or
+  // atomic native create support. Overleaf retention always requires native publication; ordinary
+  // revision/identity checks and flushed temporary writes still apply.
   /** Called right before a plain publishing call: from here every earlier epoch is stale. */
   const advancePlainEpoch = () => {
     plainRun.generation += 1;
@@ -3282,11 +3280,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     });
   /** Every mutation on a host without native publication authority, behind one lock. */
   function makePlainHostMethods(): WorkspaceFileMutationMethods {
-    // Ownership per workspace root, like native root leases: work on overlapping roots runs
-    // one at a time, unrelated roots run independently. A waiter is held back only by active
-    // overlapping work, never by an earlier waiter, so a held callback can always take an
-    // unrelated root. As with native leases, it must not wait for its own (or an overlapping)
-    // root.
+    // Serialize overlapping roots, not unrelated roots, and do not let queued waiters block
+    // unrelated nested acquisitions. A callback must never wait for its own or an overlapping root.
     const active = new Set<string>();
     const waiting: { readonly root: string; readonly start: () => void }[] = [];
     const overlaps = (a: string, b: string) => a === b || within(a, b) || within(b, a);

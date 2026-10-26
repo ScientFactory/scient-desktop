@@ -2,25 +2,8 @@ import type { Root, RootContent } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-// SCIENT-FORK:START — native projection retains the existing parser and generic source tools.
-import { remarkKeepWindowsPathDestinations } from "@t3tools/shared/markdownPipeline";
-import { createScientNativeMarkdownProjection } from "../native/ScientMarkdownProjection";
-// SCIENT-FORK:END
 
-const parser = unified()
-  .use(remarkParse)
-  .use(remarkGfm)
-  // SCIENT-FORK:START
-  .use(remarkKeepWindowsPathDestinations);
-// SCIENT-FORK:END
-// SCIENT-FORK:START — bind one projection to the same module-level parser and hoisted helpers.
-export const nativeMarkdownProjection = createScientNativeMarkdownProjection({
-  parse: (source) => parser.parse(source),
-  // md4c needs a blank line before a table that interrupts a paragraph.
-  withHtml: (source) => markdownWithTableBreaks(markdownWithHtml(source)),
-  decodeEntities: decodeHtmlEntities,
-});
-// SCIENT-FORK:END
+const parser = unified().use(remarkParse).use(remarkGfm);
 export type MarkdownNode = Root | RootContent;
 
 function decodeCodePoint(codePoint: number, entity: string): string {
@@ -319,7 +302,6 @@ function isTableDelimiterRow(line: string): boolean {
     .every((cell) => /^:?-+:?$/.test(cell.trim()));
 }
 
-// Cheap pre-check for a delimiter row two lines below text, so most messages skip the parse.
 function mayHaveTableUnderText(markdown: string): boolean {
   if (!markdown.includes("|")) return false;
   const lines = markdown.split(/\r\n|\r|\n/);
@@ -329,11 +311,7 @@ function mayHaveTableUnderText(markdown: string): boolean {
   return false;
 }
 
-/**
- * GFM lets a table interrupt a paragraph, but the native parser (md4c) only starts a table
- * on a paragraph's first line, so a table right under a line of text renders as one
- * run-on paragraph. Insert the blank line md4c needs before each such table.
- */
+/** md4c starts tables only at paragraph starts; insert breaks to match GFM. */
 export function markdownWithTableBreaks(markdown: string): string {
   if (!mayHaveTableUnderText(markdown)) return markdown;
   const lineStarts: number[] = [];
@@ -359,8 +337,7 @@ export function markdownWithTableBreaks(markdown: string): string {
   };
   visit(parser.parse(markdown));
   for (const lineStart of lineStarts.reverse()) {
-    // The header row may be a lazy line without its container markers (`>` or list indent),
-    // so copy the delimiter row's markers onto the blank line and the header row.
+    // Lazy headers can lack container markers; copy the delimiter's markers to the header and blank line.
     const [, header = "", cells = "", ending = "\n", markers = ""] =
       /^([ \t>]*)([^\r\n]*)(\r\n|\r|\n)([ \t>]*)/.exec(markdown.slice(lineStart)) ?? [];
     markdown =

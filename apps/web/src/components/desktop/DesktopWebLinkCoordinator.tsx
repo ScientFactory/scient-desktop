@@ -73,11 +73,8 @@ function threadShowingBrowser(
 }
 
 /**
- * Opens each link the OS hands Scient. Prompt and thread links, by registered Scient schemes
- * or as hosted-app pages, open in the app. Other web links and HTML files arrive
- * because Scient is the default browser (macOS): with a browser panel on screen
- * the page opens as a new tab there; otherwise it starts a thread without a
- * project, its browser panel maximized.
+ * OS web/file links need a browser surface even when no project exists.
+ * Prompt and thread links retain in-app routing; other links use a visible panel or a maximized new thread.
  */
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();

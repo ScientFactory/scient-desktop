@@ -2,13 +2,9 @@ import type { Options as ReactMarkdownOptions } from "react-markdown";
 import remarkMath from "remark-math";
 
 /**
- * remark-math with single-dollar parsing off: unguarded parser-level `$...$`
- * corrupts links, paths, shell identifiers, and prices, and no later pass can
- * repair structure the parser already destroyed. Single-dollar math is
- * instead recognized by `remarkScientSingleDollarMath`, a guarded micromark
- * construct that sees raw source (so `$a*b*c$` arrives whole before emphasis
- * runs) and rejects implausible spans during tokenization (so a rejected
- * candidate unwinds without corrupting anything).
+ * Parser-level single-dollar math corrupts links, paths, and prices irreparably. Recognize guarded
+ * spans during raw-source tokenization, before emphasis splits them, so rejection can unwind
+ * without changing surrounding structure.
  */
 export const remarkScientMath = [remarkMath, { singleDollarTextMath: false }] satisfies NonNullable<
   ReactMarkdownOptions["remarkPlugins"]
@@ -70,11 +66,8 @@ interface VFileLike {
 
 export interface ScientMathRefinementOptions {
   /**
-   * The message text before delimiter normalization. Normalization is
-   * length-preserving, so a math node's offsets address the same characters
-   * here; the original delimiter at a node's start offset tells whether the
-   * author asked for inline `\(...\)` or display `\[...\]` math, a
-   * distinction the uniform `$$` rewrite erases.
+   * Normalization preserves length but erases inline/display delimiter intent. Use original text at
+   * node offsets to distinguish authored backslash delimiters.
    */
   sourceText?: string;
 }
@@ -335,12 +328,8 @@ function guardMathNodes(node: MdastNode, source: string): void {
 }
 
 /**
- * The Scient math pass over the parsed tree, in three steps: downgrade
- * unclosed or oversized math to its literal source, break out `\[...\]`
- * equations as display math wherever they appear, then promote remaining
- * sole-`$$` paragraphs to display math unless the author wrote `\(...\)`.
- * Operating on the tree keeps code, links, and raw HTML structurally excluded
- * and never rewrites the source string.
+ * Operate on parsed nodes so code, links, and raw HTML remain excluded; preserve literal source for
+ * unclosed or oversized math and retain authored inline/display intent.
  */
 export function remarkScientMathRefinements(options?: ScientMathRefinementOptions) {
   const sourceText = options?.sourceText;

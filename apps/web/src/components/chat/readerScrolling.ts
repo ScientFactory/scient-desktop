@@ -30,11 +30,8 @@ import {
 type ReadingDisclosures = NonNullable<RememberedTimelinePosition["disclosures"]>;
 
 /**
- * Tracks the reader's own input on the timeline: clicks and keys that may
- * toggle content, and scrolling the reader does themselves, recorded in the
- * caller's refs. Idle end keeping and the per-frame bookkeeping read this
- * state; neither acts on the reader's own movement. Returns whether a click
- * or key just happened (interaction settling).
+ * Idle end-keeping and frame bookkeeping must respect recorded reader input rather than acting on
+ * the reader's own movement. Track click/key settling separately from autonomous follow.
  */
 export function useReaderScrollInput({
   listRef,
@@ -389,11 +386,8 @@ export interface ReadingHistoryPages {
 }
 
 /**
- * Where a saved reading position lands in the loaded rows: its message, else
- * the same run, else a neighbor message (readerScrollPolicy.resolveReadingRow).
- * A saved message that is not loaded yet pages in up to
- * MAX_READING_HISTORY_PAGES older pages first; after that a neighbor or the
- * end is used, so a revert or a deleted turn never loads the whole history.
+ * Page history only to the bounded limit before falling back to same-run/neighbor/end.
+ * Deleted/reverted targets must not force loading the entire conversation.
  */
 export function useReadingRestoreTarget({
   rows,
@@ -462,12 +456,8 @@ export function useReadingRestoreTarget({
 }
 
 /**
- * Restores a thread's saved reading position when its list opens: the saved
- * row and offset (also when it was saved at the end), back to a follow the
- * reader left, or the end when nothing was saved. Settles for up to 60
- * frames and gives up visibly (setAbandonedPositionKey). The reader's own
- * wheel, touch, press or scroll key cancels it, and ChatView cancels it
- * through cancelPositionRestoreRef.
+ * Bound restore settling and report abandonment visibly. Reader wheel/touch/press/scroll keys
+ * cancel restoration; use the caller's cancellation ref for thread/view ownership changes.
  */
 export function useReadingPositionRestore({
   listRef,

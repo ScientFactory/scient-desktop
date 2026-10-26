@@ -2,12 +2,8 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /**
- * Indexes for point reads of a fork's history by the fork and an item or
- * message, and for its turn starts (window selection). And the fork's
- * inherited activity: the latest times of the user messages it shows from its
- * history. History is frozen, so these are fixed when the fork is accepted
- * (`writeForkHistory`); shell and settlement reads look them up instead of
- * scanning the history.
+ * History is frozen at fork acceptance, so inherited activity timestamps are fixed there too; shell
+ * and settlement reads must use the stored values.
  */
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

@@ -1,4 +1,8 @@
-import { DesktopAssetCopyRequestSchema, DesktopAssetCopyResultSchema } from "@t3tools/contracts";
+import {
+  DesktopAssetCopyRequestSchema,
+  DesktopAssetCopyResultSchema,
+  DesktopPdfBytesCopyRequestSchema,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import * as DesktopAssetCopy from "../../scient/documentArtifacts/AssetCopy.ts";
@@ -11,6 +15,13 @@ export const saveAssetCopy = DesktopIpc.makeIpcMethod({
   payload: DesktopAssetCopyRequestSchema,
   result: DesktopAssetCopyResultSchema,
   handler: DesktopAssetCopy.saveAssetCopy,
+});
+
+export const savePdfBytesCopy = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SAVE_PDF_BYTES_COPY_CHANNEL,
+  payload: DesktopPdfBytesCopyRequestSchema,
+  result: DesktopAssetCopyResultSchema,
+  handler: DesktopAssetCopy.savePdfBytesCopy,
 });
 
 const SavedAssetPath = Schema.String.check(

@@ -295,11 +295,9 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   });
 
   const [retries, setRetries] = useState(0);
-  // The destination environment is the chosen project's. It is fixed once a
-  // file is sent there, or once the person picks a project. Until then the
-  // default project's environment is used. The file is never sent to a
-  // destination nobody chose: one that disappears stops the import, and so
-  // does losing its connection, which only "Try again" resumes.
+  // Fix the destination environment once a file is sent or a project explicitly chosen. A missing
+  // destination or lost connection stops import; only Try again resumes it, so bytes never go to an
+  // unchosen environment.
   const [destination, setDestination] = useState<EnvironmentId | null>(null);
   const destinationOption = environmentOptions.find(
     (option) => option.environmentId === destination,

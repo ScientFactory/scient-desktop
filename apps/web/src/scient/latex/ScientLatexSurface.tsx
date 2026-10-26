@@ -938,11 +938,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     revealRequested &&
     preferredMode === "visual" &&
     finishedVisualRevealRequestId !== revealRequestId;
-  // A reveal changes the rendered layout to Split. Keep Visual mounted for one
-  // transaction boundary so its layout effect can checkpoint the live
-  // textarea before React removes the interaction layer. This runs before
-  // paint, so the intermediate render is not visible to the user.
-  // The editor is an external system: finish it, then release the layout.
+  // Keep Visual mounted through one transaction boundary before switching to Split so its layout
+  // effect checkpoints the live textarea. Complete that external editor before React removes its
+  // interaction layer; the intermediate state stays before paint.
   const finishVisualForReveal = useStableCallback((requestId: number) => {
     finishVisualEditingRef.current?.();
     setFinishedVisualRevealRequestId(requestId);

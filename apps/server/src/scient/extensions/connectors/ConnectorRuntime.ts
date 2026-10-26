@@ -1,13 +1,7 @@
 /**
- * Connected services: the owner of connector records, credentials, sign-in,
- * live grants and the credential-swapping forward used by the proxy route.
- * See docs/internals/scient-extensions.md "Connected services".
- *
- * Lifecycle fencing: each connector has one lifecycle lock that serializes
- * refresh, sign-in commit and disconnect, and a lifetime signal that a
- * disconnect aborts. Disconnect tombstones the connector before anything
- * else, so work that was already in flight can never send, persist or keep a
- * grant afterwards; grants such work obtained anyway are revoked.
+ * Disconnect tombstones before other work and aborts the lifetime signal. Serialize
+ * refresh/sign-in/disconnect under one lifecycle lock so in-flight work cannot send, persist, or
+ * retain grants afterward; revoke grants obtained across the fence.
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -517,12 +511,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   });
 
   /**
-   * Status changes discovered while using a credential never fail the request.
-   * They belong to the credential generation of `record` (the snapshot the
-   * failing operation used): once a newer generation owns the connector (a
-   * sign-in committed meanwhile), a late failure of the old one is dropped.
-   * Losing the credential (a move out of `connected` or between needs-*
-   * states) starts a new auth revision; repeating the current status does not.
+   * Apply credential failures only to the generation that observed them; late old-key errors cannot
+   * overwrite a new sign-in. Status publication must not fail the request; auth revision changes
+   * only on credential loss/state transition, not repeated status.
    */
   const markStatus = (
     record: ConnectorRecord,
@@ -655,11 +646,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     session.expiresAt !== undefined && session.expiresAt - TOKEN_REFRESH_LEEWAY_MS <= at;
 
   /**
-   * Single-flight per connector under the lifecycle lock: callers holding the
-   * same stale token queue; the first refreshes, the rest see the new token.
-   * The caller's record may predate a sign-in, so the current record is read
-   * under the lock: it is the one the cached grant belongs to (sign-in commits
-   * publish both under this lock), and any loss is published for it.
+   * Re-read the current record under the lifecycle lock: callers may hold pre-sign-in tokens.
+   * Refresh single-flight there so queued callers reuse the new grant and any loss is published for
+   * the actual current credential.
    */
   const refreshSession = (snapshot: ConnectorRecord, staleAccessToken: string | undefined) =>
     lifecycle(snapshot.connectorId).withPermits(1)(

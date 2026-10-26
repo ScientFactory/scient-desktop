@@ -9,11 +9,8 @@ import {
 } from "./contracts.ts";
 
 /**
- * A place in a PDF: which document, which exact bytes when they are known,
- * and which text on which pages. A chat quote is a target plus a comment; a
- * saved annotation will be a target plus its own identity and history. The
- * schema is neutral (no pdf.js), so the shared serializer, the server,
- * mobile and a later annotation store can all read it.
+ * Keep PDF targets independent of pdf.js so server, clients, serialization, and future annotation
+ * storage share document/byte/text identity.
  */
 
 /** PDF.js text-layer text: raw item strings, a newline after `hasEOL` items. */

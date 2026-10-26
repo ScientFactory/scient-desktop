@@ -28,15 +28,9 @@ const INDICATOR_ROW_KINDS: ReadonlySet<MessagesTimelineRow["kind"]> = new Set([
 ]);
 
 /**
- * The row whose text marks the end of the conversation. While the latest
- * turn is unfinished (running, or it ended interrupted or with an error),
- * everything it produced after your latest message is new content, so the
- * end is its latest row (an answer as it streams, a note, a tool step), or
- * your message itself before anything arrives; busy indicators never count.
- * Once a turn completed normally, the end is its answer (the agent's message
- * or plan): what trails it (changed files, tool summaries, your own later
- * message, sent or queued) doesn't count as unread. Before any answer
- * exists, your latest message is the end. -1 when there is none.
+ * Unread content ends at an unfinished turn's latest content, excluding busy indicators. After
+ * normal completion it ends at the answer/plan; trailing tools, changed files, and later user
+ * messages must not keep it unread.
  */
 function readingEndRowIndex(rows: readonly MessagesTimelineRow[], turnUnfinished = false): number {
   if (turnUnfinished) {
@@ -134,11 +128,8 @@ export function readingEndGapOnScreen(
 }
 
 /**
- * The timeline state with its end at the reading end (readingEndRowIndex):
- * an unfinished turn's latest content, or the latest turn's answer. What trails
- * a finished answer (changed-file lists, tool groups, timestamps) and busy
- * indicators never decide whether the reader is at the bottom. Falls back to
- * the last row (excluding reserved anchor padding) while unmeasured.
+ * Only the reading end decides whether the reader is at bottom; trailing tools, changed files,
+ * timestamps, and busy indicators must not. Use the last non-padding row until measurements exist.
  */
 export function withReadingEnd<
   T extends TimelineListMeasurementState & {
@@ -205,11 +196,8 @@ export function canApplySendAnchor(input: {
 }
 
 /**
- * The run that owns a row. The timeline is keyed on runs: neither `ChatMessage`
- * nor any `MessagesTimelineRow` carries a turn id any more, so every grouping
- * below resolves a `runId`. The persisted position still spells the field
- * `turnId` — `timelineScrollAnchoring` owns that shape and reads it back
- * unchanged — so what is stored and compared here is a run id end to end.
+ * Persisted anchoring still calls the field turnId, but the timeline is keyed by runId. Store and
+ * compare run IDs consistently without changing that persisted shape.
  */
 function readingRowRunId(row: MessagesTimelineRow): string | undefined {
   if ("message" in row) return row.message.runId ?? undefined;
@@ -295,11 +283,9 @@ export function resolveReadingRow(
 }
 
 /**
- * Whether the latest prompt gets the same reveal as a send: a queued prompt
- * the server just delivered (V2 marks it so), as the latest prompt of the
- * same thread, while the reader was at the end before it arrived. It is
- * decided again when the latest prompt becomes a delivered one, so a
- * delivery seen before this window learned its own send was queued counts.
+ * Recheck reveal eligibility when the latest queued prompt becomes delivered: delivery can arrive
+ * before this window learns its send was queued. Require the same thread and a reader previously at
+ * the end.
  */
 export function shouldRevealArrivedPrompt(input: {
   previous: { threadKey: string | null; id: string | null; delivered: boolean } | null;

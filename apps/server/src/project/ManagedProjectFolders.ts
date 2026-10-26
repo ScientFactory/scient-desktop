@@ -1,12 +1,5 @@
-/**
- * ManagedProjectFolders - the project folders Scient makes for the user under
- * its data dir, rather than ones the user picks:
- *
- * - the configured Scratch root: the Scratch project ("No project"), with a folder of
- *   its own for each thread;
- * - `<baseDir>/projects/<slug>`: projects started from just a name, each a new
- *   Git repository with a README, an icon, and a first commit.
- *
+/** Managed folders use the configured Scratch root or <baseDir>/projects/<slug>.
+ * Each Scratch thread gets its own folder; named projects get a new Git repository.
  * @module ManagedProjectFolders
  */
 import { CommandId, ProjectId, type ThreadId } from "@t3tools/contracts";
@@ -129,10 +122,7 @@ export class ManagedProjectFolders extends Context.Service<
       readonly text: string;
     }) => Effect.Effect<Option.Option<string>, ScratchFolderError>;
     readonly namedProjectsRoot: string;
-    /**
-     * The folder is removed when the create fails or is cancelled before the
-     * project exists, never once another project owns it.
-     */
+    /** Removes failed/cancelled creations' folders only while no project owns them. */
     readonly createNamedProject: (input: { readonly name: string }) => Effect.Effect<
       {
         readonly projectId: ProjectId;
@@ -182,10 +172,7 @@ function escapeXml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-/**
- * It lives at `assets/icon.svg`, a path ProjectFaviconResolver already checks,
- * so every machine that clones the project shows the same icon.
- */
+// ProjectFaviconResolver finds assets/icon.svg on every clone.
 function namedProjectIconSvg(name: string): string {
   const words = name.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const initials =
@@ -239,10 +226,7 @@ const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabl
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
 
-  /**
-   * Each folder is created without `recursive`, so creating it is the claim: of
-   * two racers for one name, one gets AlreadyExists and moves on to the next.
-   */
+  // Non-recursive mkdir atomically claims a name; racers move on after AlreadyExists.
   const claimFreeFolder = Effect.fnUntraced(function* <E>(
     folderFor: (attempt: number) => Effect.Effect<Option.Option<string>, E>,
     onError: (folder: string, cause: PlatformError.PlatformError) => E,
@@ -342,8 +326,7 @@ const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabl
           workspaceRoot,
         })
         .pipe(
-          // bootstrap looks the root up before taking the workspace lock, so a
-          // racing create loses with a conflict that names the winner.
+          // bootstrap reads before locking; racing creates return the winner in a conflict.
           Effect.catchTags({
             ProjectConflictError: (conflict) =>
               Effect.succeed({
@@ -476,7 +459,7 @@ const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabl
       path.join(cwd, "assets", "icon.svg"),
       namedProjectIconSvg(name),
     );
-    // Named and forced so a global ignore rule (say `*.svg`) cannot drop one.
+    // Force explicit filenames so global ignore rules cannot drop them.
     yield* git.execute({
       operation: "ManagedProjectFolders.add",
       cwd,
@@ -524,11 +507,7 @@ const make = Effect.fnUntraced(function* (options: { readonly namedProjectsEnabl
         workspaceRoot,
       })
       .pipe(
-        // A rejected create leaves the folder unused, so remove it. An
-        // interrupt can land after the create is committed, and a conflict
-        // means another project owns the folder, so it stays then; the owner
-        // is checked again first, since deleting another project's files is
-        // never acceptable.
+        // Re-check ownership before deleting rejected creations; interruption after commit or conflicts can leave an owner.
         Effect.tapError((error) =>
           error._tag === "ProjectConflictError"
             ? Effect.void

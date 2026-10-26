@@ -1,11 +1,6 @@
 /**
- * Scient's own orchestration V2 wire schemas: the execution policy captured
- * with native work, Droid's held steer, subagent presentation, Scient
- * notification kinds, thread filing, and the server-only commands Scient
- * adds. orchestrationV2.ts re-exports them under the same names and places
- * the union members at their original positions.
- *
- * @module orchestrationV2Schemas
+ * Preserve original union positions and re-export names when shared orchestration schemas
+ * incorporate these additive Scient members.
  */
 import * as Schema from "effect/Schema";
 

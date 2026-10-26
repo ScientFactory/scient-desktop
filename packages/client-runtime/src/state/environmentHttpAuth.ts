@@ -3,8 +3,6 @@ import * as Option from "effect/Option";
 import {
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-  COMPACT_THREAD_SNAPSHOT_FORMAT,
-  THREAD_SNAPSHOT_FORMAT_HEADER,
 } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
@@ -38,21 +36,9 @@ export function withOrchestrationProtocolHeader(
   };
 }
 
-/** Opt into reference compression; the response codec also accepts older full responses. */
-export function withCompactThreadSnapshotHeaders(headers: EnvironmentHttpAuthHeaders) {
-  return {
-    ...withOrchestrationProtocolHeader(headers),
-    [THREAD_SNAPSHOT_FORMAT_HEADER]: COMPACT_THREAD_SNAPSHOT_FORMAT,
-  };
-}
-
 /**
- * Primary/local environments with no bearer or DPoP credential authenticate the
- * browser via a session cookie. A cross-origin `fetch` does not send cookies by
- * default, so those requests must opt into credentialed mode; bearer/DPoP
- * connections carry their credential in a header and need no cookies. Applied
- * per-request via `FetchHttpClient.RequestInit`, which the fetch client reads
- * from the fiber context at request time.
+ * Cookie-authenticated environments need credentialed mode for cross-origin fetches; bearer/DPoP uses headers.
+ * `FetchHttpClient` reads `RequestInit` from the fiber context per request.
  */
 const withEnvironmentCredentials = <A, E, R>(
   authorization: PreparedHttpAuthorization | null,

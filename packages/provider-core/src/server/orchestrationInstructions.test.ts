@@ -8,21 +8,6 @@ import {
 } from "./orchestrationInstructions.ts";
 
 describe("generic provider orchestration instructions", () => {
-  it("keeps the upstream T3 orchestration policy as its package default", () => {
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Use `delegate_task`");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "ordinary top-level T3 conversations");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "Never use them merely");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "cross-provider");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "call `delegate_task` again");
-    assert.include(
-      T3_CODE_ORCHESTRATION_INSTRUCTIONS,
-      "Do not use `t3_thread_send` on `childThreadId`",
-    );
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "structured object, never as JSON text");
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, '"everyMs":3600000');
-    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "bindToCurrentThread=false");
-  });
-
   it("injects first-run prompt fallback only with MCP on the first run", () => {
     const prompt = "Inspect the repository.";
     const injected = t3OrchestrationPromptForFirstRun({
@@ -55,7 +40,7 @@ describe("generic provider orchestration instructions", () => {
     const injected = t3AcpPromptWithInstructions({ prompt, state: defaultState });
 
     assert.include(injected, "T3 Code interaction mode: Default");
-    assert.include(injected, "T3 Code collaborative browser");
+    assert.include(injected, "T3 Code browser");
     assert.include(injected, "T3 Code orchestration");
     assert.include(injected, "<t3_code_instructions>");
     assert.include(injected, "preview_status");
@@ -79,28 +64,25 @@ describe("generic provider orchestration instructions", () => {
       previousState: defaultState,
     });
     assert.include(withoutMcp, "T3 Code interaction mode: Default");
-    assert.notInclude(withoutMcp, "T3 Code collaborative browser");
+    assert.notInclude(withoutMcp, "T3 Code browser");
     assert.notInclude(withoutMcp, "T3 Code orchestration");
   });
 
-  it("allows a host to override text without replacing shared prompt conditions", () => {
-    const prompt = "Continue.";
-    const content = {
-      wrapperElement: "host_instructions",
-      defaultMode: "Host default mode",
-      planMode: "Host plan mode",
-      browserTools: "Host browser help",
-      orchestration: "Host orchestration help",
-    };
+  it("allows a host to rewrite the shared text without replacing prompt conditions", () => {
+    const prompt = "Continue with T3 Code.";
     const injected = t3AcpPromptWithInstructions({
       prompt,
       state: { interactionMode: "default", hasT3Mcp: true },
-      content,
+      content: {
+        wrapperElement: "host_instructions",
+        rewrite: (text) => text.replaceAll("T3 Code", "Host"),
+      },
     });
     assert.include(injected, "<host_instructions>");
-    assert.include(injected, "Host default mode");
-    assert.include(injected, "Host browser help");
-    assert.include(injected, "Host orchestration help");
+    assert.include(injected, "Host interaction mode: Default");
+    assert.include(injected, "Host browser");
+    assert.include(injected, "acp-mcp-call");
+    assert.include(injected, `<user_request>\n${prompt}\n</user_request>`);
 
     const secondRun = t3OrchestrationPromptForFirstRun({
       prompt,
@@ -110,10 +92,5 @@ describe("generic provider orchestration instructions", () => {
       wrapperElement: "host_orchestration",
     });
     assert.equal(secondRun, prompt);
-    assert.equal(t3OrchestrationSystemPrompt(false, "Host orchestration help"), undefined);
-    assert.equal(
-      t3OrchestrationSystemPrompt(true, "Host orchestration help"),
-      "Host orchestration help",
-    );
   });
 });

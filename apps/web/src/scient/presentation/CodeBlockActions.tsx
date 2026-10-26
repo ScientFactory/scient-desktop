@@ -83,7 +83,7 @@ export function CodeBlockActions({
           render={
             <Button
               type="button"
-              // As upstream's code block (#13208): a wrapped block shows its toggle on.
+              // A wrapped block shows its toggle on.
               variant={wrapped ? "secondary" : "ghost-muted"}
               size="icon-xs"
               aria-pressed={wrapped}

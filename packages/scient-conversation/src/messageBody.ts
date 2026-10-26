@@ -1,17 +1,7 @@
 /**
- * Message bodies as they are written into one shared Markdown document, and
- * back. Writing a body makes it safe to place next to other bodies:
- *
- * - chat's line breaks become explicit hard breaks where chat shows them;
- * - raw HTML is escaped where chat shows it as text;
- * - the literal `<!-- scient:` is escaped outside code so it cannot be read
- *   as a structure marker;
- * - reference definitions, footnote labels, and explicit anchors are prefixed
- *   with a namespace so two bodies cannot collide;
- * - a body that ends inside an unclosed fence or HTML block is closed, so it
- *   cannot swallow what follows.
- *
- * Reading reverses only the namespacing; everything else is what a reader sees.
+ * Make adjacent bodies safe: preserve visible hard breaks, escape literal HTML/Scient markers
+ * outside code, namespace references/anchors, and close unclosed fences/HTML so one body cannot
+ * consume another. Reading reverses only namespacing.
  */
 import type { Definition, Html, ImageReference, Link, LinkReference, Root } from "mdast";
 

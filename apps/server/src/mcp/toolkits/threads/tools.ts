@@ -21,14 +21,8 @@ import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts"
 import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 
 /**
- * Scient's omitted-history reader uses V2's input fields, defaults and paging
- * semantics under the Scient-owned `scient_thread_read` name and read-only
- * grant. Orchestration's `scient_thread_inspect` also returns run metadata and
- * can acknowledge a delegated result, so it retains a separate capability.
- *
- * Upstream reference: pingdotgg/t3code PR #2829 at a3fbbe45315e (2026-09-27),
- * `packages/contracts/src/orchestratorMcp.ts` (`OrchestratorMcpThreadReadInput`)
- * and `apps/server/src/mcp/OrchestratorMcpService.ts` (defaults 50 / 20,000).
+ * Keep scient_thread_read read-only with V2 paging/defaults. scient_thread_inspect has run metadata
+ * and delegated-result acknowledgement, so it requires a separate capability.
  */
 export const THREAD_READ_DEFAULT_LIMIT = 50;
 export const THREAD_READ_DEFAULT_MAX_CHARS_PER_ITEM = 20_000;

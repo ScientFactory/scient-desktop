@@ -9,12 +9,8 @@ import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
-// A desktop install puts no `scient` on PATH, so commands the server asks a person
-// to run (`sudo scient browser setup`) had nothing to call. The app keeps a small
-// launcher for its bundled CLI in the Scient home, which is never on PATH and so
-// never shadows another command, and the server names it by absolute path in those
-// commands through T3CODE_CLI_PATH. An AppImage mounts somewhere new each run,
-// so its launcher mounts the AppImage itself instead of pointing into it.
+// A desktop install puts no scient on PATH; T3CODE_CLI_PATH must name its private bundled launcher.
+// AppImage mounts change each run; the launcher must mount the image itself.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
 // SCIENT-FORK: Keep this ownership marker stable so older Scient launchers remain recognizable.
@@ -35,13 +31,7 @@ export type CliShimTarget =
   | { readonly kind: "direct"; readonly executable: string; readonly entry: string }
   | { readonly kind: "windows"; readonly executable: string; readonly entry: string };
 
-/**
- * The launcher script. Electron runs the server as plain Node with
- * `ELECTRON_RUN_AS_NODE`, which reads the entry from inside the asar archive.
- * The launcher's own path and the app's Scient home are written in, so the command
- * the server shows is absolute and `sudo`, which clears the environment, still
- * runs against this install's home.
- */
+/** Embed this install's home and executable path so `sudo`, which clears the environment, uses the same install. */
 export const renderCliShim = (input: {
   readonly target: CliShimTarget;
   readonly shimPath: string;
@@ -58,9 +48,7 @@ export const renderCliShim = (input: {
       `rem ${MARKER}`,
       // Delayed expansion would rewrite `!name!` in paths and arguments.
       "setlocal EnableExtensions DisableDelayedExpansion",
-      // Only a non-ASCII path needs the console switched to UTF-8 to read it; a
-      // Ctrl-C that ends the batch skips the restore, so the switch is left out
-      // for the common all-ASCII install.
+      // Ctrl-C skips codepage restoration, so switch to UTF-8 only for non-ASCII install paths.
       ...(utf8
         ? [
             `for /f "tokens=2 delims=:." %%c in ('chcp') do set "t3_codepage=%%c"`,
@@ -111,8 +99,7 @@ export const renderCliShim = (input: {
     ...header,
     // Extract-and-run would make the runtime start the app instead of mounting it.
     "unset APPIMAGE_EXTRACT_AND_RUN",
-    // The AppImage runtime prints its mount point, then stays mounted until
-    // killed. Background jobs ignore Ctrl-C, so the traps unmount it on any exit.
+    // The runtime stays mounted until killed; traps unmount it because background jobs ignore Ctrl-C.
     "work=$(mktemp -d) || exit 1",
     '"$app" --appimage-mount >"$work/mount" 2>/dev/null &',
     "mounter=$!",

@@ -106,15 +106,9 @@ const DROPPED_ACTIVITY_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * One item per tool call: V1 stored a call as a started row, a row per
- * progress report and a completed row; V2 keeps one item per call. The folded
- * item takes the first row's id and place, ends at the last row, and keeps the
- * merged content of all of them. Telemetry rows are dropped.
- *
- * A thread an earlier build imported row by row, even partly, keeps that
- * shape: folding it would leave existing items without positions, or skip the
- * rest of a call whose first row was already imported. Folded items carry
- * `foldedRowCount`, so the two shapes are never confused.
+ * Fold V1 tool progress into one V2 item, but preserve row-wise shape for even partly imported
+ * threads or existing positions/rest-of-call data would be lost. foldedRowCount distinguishes the
+ * shapes.
  */
 const foldToolCalls = Effect.fnUntraced(function* (
   sql: SqlClient.SqlClient,

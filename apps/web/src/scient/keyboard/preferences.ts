@@ -11,17 +11,8 @@ import {
 export const KEYBOARD_PREFERENCES_KEY = "scient.authoringKeyboard.v1";
 const LEGACY_KEY = "scient.mathInputBindings.v1";
 /**
- * Raised whenever default shortcuts are added. Stored preferences from an
- * older preset keep every custom key; a new default that would collide with
- * one of them is switched off instead of invalidating the whole file.
- * 2: Inline code (mod+e) and Link (mod+k) in the LaTeX editor.
- * 3: the Markdown editor's keys for Text, the first three headings and the
- *    two lists, beside the key sequences.
- * 4: Select the current LaTeX editing scope, then each parent (mod+a).
- * 5: Open math Symbols with the Insert sequence (alt+i s).
- * 6: Table keys are checked against the LaTeX and math keys in their cells.
- *    A custom key saved before then is kept; where two custom keys meet, the
- *    table's steps aside, since the other one also works outside tables.
+ * Preset upgrades preserve custom keys and disable colliding new defaults. For legacy custom
+ * table-key collisions, table bindings yield because the other binding also works outside tables.
  */
 const WRITING_PRESET_VERSION = 6;
 export interface KeyboardPreferences {

@@ -1,11 +1,6 @@
 /**
- * Just enough of Pandoc's JSON document model (pandoc-types 1.23) for Scient
- * to shape and secure a document between Pandoc's read and write passes.
- *
- * Nodes are `{ t, c }` objects. Scient only builds and rewrites the node kinds
- * it understands; everything else passes through untouched, and the security
- * pass walks the tree generically so an unknown node kind cannot hide a raw
- * block or an image from it.
+ * Preserve unmodeled Pandoc nodes, but walk their JSON generically in the security pass so unknown
+ * kinds cannot hide raw blocks or images.
  */
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";

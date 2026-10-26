@@ -1,19 +1,7 @@
 /**
- * How Scient hands secrets to the extensions it generates for Oh My Pi.
- *
- * OMP runs on Bun, and its bash tool is a native shell that copies the
- * process's real OS environment. Deleting `process.env` entries inside an
- * extension does not remove them from that environment, and any child can
- * also read its parent's start-up environment (`ps -E`, `/proc`). So no
- * Scient secret travels in OMP's environment or arguments.
- *
- * Each extension instead gets a private (0600) bootstrap file. The extension
- * source names the file's path, which is not a secret; the extension reads
- * the file once while OMP loads it and deletes it before any agent turn can
- * run. OMP re-imports an extension module for every load and re-runs every
- * extension for its in-process subagents, after the file is gone, so the
- * first read is kept in one process-wide slot keyed by the bootstrap path.
- * Secrets then live only in extension closures.
+ * Bun shell children inherit the real OS environment even after process.env deletion; env/args
+ * cannot carry secrets. Read/delete a private 0600 bootstrap before turns. Cache the initializer
+ * result per process/path because extension reloads and in-process subagents run after deletion.
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -38,11 +26,8 @@ export class OmpExtensionFileError extends Schema.TaggedError<OmpExtensionFileEr
 }
 
 /**
- * Extension source prelude: `scientOnce(initialize)` reads and deletes the
- * bootstrap on the first call in this process, passes it to `initialize`
- * once, and returns that same result (or rethrows its error) on every later
- * call. Only the initializer's result is kept, so the parsed bootstrap does
- * not outlive it.
+ * Keep only the initializer result, not parsed bootstrap secrets. Repeated extension calls must
+ * return that same result or rethrow the first error after the one read/delete.
  */
 export const ompExtensionBootstrapPrelude = (target: OmpTarget, bootstrapPath: string): string => `
 import { readFileSync as scientReadFileSync, unlinkSync as scientUnlinkSync } from "node:fs";
@@ -172,16 +157,9 @@ export const ompExtensionProcessPrefix = (pid: number): string => `process-${pid
 const OMP_SESSION_EXTENSION_FILE = /^scient-extension-.+\.(?:mjs|bootstrap\.json)$/u;
 
 /**
- * Removes the extension files a crashed server left behind for one target: the
- * custom-model bridge's per-process directories under
- * `<stateDir>/<stateNamespace>/extensions` and the session extensions (and any
- * bootstrap still holding credentials) in `<stateDir>/<stateNamespace>-sessions/*`.
- * Normally each is removed with its process.
- *
- * Only files last changed before `startedAt`, this server's start, go: every
- * file this server writes is newer, so its running sessions keep theirs
- * whenever the sweep runs. A directory or session another live server holds
- * (by its pid, or its session lock) is kept however old it is. Best effort.
+ * Reclaim only files older than this server's start, and preserve directories/sessions owned by
+ * another live PID or lock. Otherwise a sweep could delete new or concurrently active
+ * extension/bootstrap credentials.
  */
 export const sweepStaleOmpExtensionFiles = Effect.fn("OmpExtensionBootstrap.sweepStale")(
   function* (input: {

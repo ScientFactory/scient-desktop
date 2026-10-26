@@ -1,15 +1,6 @@
-// Local "CI-like" slowness for browser tests.
-//
-// GitHub's ubuntu-24.04 runners execute layout-heavy browser tests several times slower
-// than a developer Mac (LaTeX template tests: 3-7x; most small files: about 1x). Timing
-// races that never show locally fail there. Set SCIENT_TEST_CPU_THROTTLE=<rate> (for
-// example 4) to have Chromium slow every test page's renderer main thread by that factor
-// through the DevTools Emulation.setCPUThrottlingRate call — the same control as the
-// DevTools Performance panel's "CPU throttling". Unset, 0 or 1 leaves pages untouched.
-//
-// Only the page under test is slowed. Vite's transforms, the Vitest main process and
-// Playwright still run at full speed, so this reproduces in-page timing races, not
-// shard wall time.
+// CI layout can be several times slower than a developer Mac. SCIENT_TEST_CPU_THROTTLE slows only
+// the tested renderer through DevTools; transforms, Vitest, and Playwright stay unthrottled, so
+// this probes page races rather than shard duration.
 
 import { defineBrowserCommand } from "vite-plus/test/browser-playwright";
 

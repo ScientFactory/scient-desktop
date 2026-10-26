@@ -177,11 +177,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    // Only touch the theme keys that are actually dirty, so a theme-storage
-    // failure cannot block restoring unrelated settings. Preferences are
-    // re-read after the confirmation dialog: they may have changed (another
-    // tab, an OS flip) while it was open, and rollback must restore the live
-    // values rather than the ones captured at render time.
+    // Restore only dirty theme keys so storage failure cannot block unrelated settings. Re-read
+    // after confirmation: another tab or OS change may have updated preferences, and rollback must
+    // preserve those live values.
     let previousTheme = theme;
     try {
       previousTheme = readThemePreference();

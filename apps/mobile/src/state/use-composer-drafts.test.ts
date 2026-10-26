@@ -3,6 +3,7 @@ import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state
 import {
   applyShellStreamEvent,
   createEnvironmentSnapshotAtom,
+  EMPTY_SHELL_STATE,
   type EnvironmentShellState,
   type EnvironmentShellStatus,
 } from "@t3tools/client-runtime/state/shell";
@@ -13,9 +14,6 @@ import {
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-// SCIENT-FORK:START — ids for the attachment admission cases at the end of this file.
-import { ChatAttachmentId, RunId } from "@t3tools/contracts";
-// SCIENT-FORK:END
 import {
   CommandId,
   ComposerContextId,
@@ -159,10 +157,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
 }));
 
-vi.mock("../lib/attachmentUpload", async (importOriginal) => ({
-  // SCIENT-FORK:START — admission uses the real attachment budget helpers.
-  ...(await importOriginal<typeof import("../lib/attachmentUpload")>()),
-  // SCIENT-FORK:END
+vi.mock("../lib/attachmentUpload", () => ({
   releasePendingAttachmentUploads: composerAttachmentCleanupMocks.releaseUploads,
 }));
 
@@ -176,10 +171,6 @@ import {
   formatComposerContextReference,
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
-// SCIENT-FORK:START — attachment admission cases at the end of this file.
-import { appendPreparedComposerDraftAttachments } from "./composer-attachment-admission";
-import { queuedEditDraftKey, queuedRunEditsAtom } from "./queued-run-edit";
-// SCIENT-FORK:END
 import { threadOutboxManager } from "./thread-outbox";
 import {
   appendComposerDraftAttachments,
@@ -294,9 +285,9 @@ function modelReconciliationHarness(
     ],
   };
   const shellStateAtom = Atom.make<EnvironmentShellState>({
+    ...EMPTY_SHELL_STATE,
     snapshot: Option.some(initialSnapshot),
     status: initialStatus,
-    error: Option.none(),
   });
   const shellResultAtom = Atom.map(shellStateAtom, AsyncResult.success);
   const snapshotAtom = createEnvironmentSnapshotAtom(() => shellResultAtom)(environmentId);
@@ -2593,151 +2584,3 @@ describe("mobile composer drafts", () => {
     expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalled();
   });
 });
-
-// SCIENT-FORK:START — Scient caps a draft's images at 80 MiB without losing the prior draft.
-describe("normalized attachment admission into the actual mobile draft store", () => {
-  const key = "environment-1:aggregate-thread";
-  const tenMiBDataUrl = `data:image/png;base64,${Buffer.alloc(10 * 1024 * 1024).toString("base64")}`;
-  const image = (index: number): DraftComposerAttachment => ({
-    type: "image",
-    id: `aggregate-${index}`,
-    name: `aggregate-${index}.png`,
-    mimeType: "image/png",
-    sizeBytes: 10 * 1024 * 1024,
-    fileUri: `file:///documents/t3-composer-attachments/aggregate-${index}.png`,
-    previewUri: `file:///documents/t3-composer-attachments/aggregate-${index}.png`,
-  });
-  afterEach(() => {
-    appAtomRegistry.set(queuedRunEditsAtom, {});
-    composerAttachmentCleanupMocks.remove.mockImplementation(async () => undefined);
-  });
-
-  it("commits eight normalized images but rejects an entire ninth-image/mixed-file batch without changing the prior draft", async () => {
-    setComposerDraftText(key, "Preserve this draft");
-    const eight = Array.from({ length: 8 }, (_, index) => image(index));
-    expect(appendPreparedComposerDraftAttachments(key, eight)).toEqual({
-      rejectedCount: 0,
-      limitError: null,
-    });
-    const before = getComposerDraftSnapshot(key);
-    const storedBefore = appAtomRegistry.get(composerDraftsAtom);
-    const ninth = image(8);
-    const pdf: DraftComposerAttachment = {
-      type: "file",
-      id: "new-pdf",
-      name: "new.pdf",
-      mimeType: "application/pdf",
-      sizeBytes: 3,
-      fileUri: "file:///documents/t3-composer-attachments/new.pdf",
-    };
-    const cleaned = Promise.withResolvers<void>();
-    composerAttachmentCleanupMocks.remove.mockImplementation(async () => {
-      if (composerAttachmentCleanupMocks.remove.mock.calls.length === 2) cleaned.resolve();
-    });
-    expect(appendPreparedComposerDraftAttachments(key, [ninth, pdf])).toEqual({
-      rejectedCount: 2,
-      limitError: expect.stringContaining("80 MiB"),
-    });
-    expect(getComposerDraftSnapshot(key)).toEqual(before);
-    expect(appAtomRegistry.get(composerDraftsAtom)).toBe(storedBefore);
-    expect(before.text).toBe("Preserve this draft");
-    await cleaned.promise;
-    expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(ninth.fileUri);
-    expect(composerAttachmentCleanupMocks.remove.mock.calls).toHaveLength(2);
-    expect(composerAttachmentCleanupMocks.remove).toHaveBeenCalledWith(pdf.fileUri);
-    for (const retained of eight)
-      expect(composerAttachmentCleanupMocks.remove).not.toHaveBeenCalledWith(retained.fileUri);
-  });
-
-  it("counts retained queued refs in the exact edit while leaving native queued metadata and ordinary drafts intact", () => {
-    const edit = {
-      runId: RunId.make("held"),
-      messageId: MessageId.make("queued"),
-      originalText: "Edit this",
-      existingAttachments: Array.from({ length: 8 }, (_, index) => ({
-        type: "image" as const,
-        id: ChatAttachmentId.make(`native-${index}`),
-        name: `native-${index}.png`,
-        mimeType: "image/png" as const,
-        sizeBytes: 10 * 1024 * 1024,
-      })),
-    };
-    const draftKey = queuedEditDraftKey(key, edit.runId);
-    appAtomRegistry.set(queuedRunEditsAtom, { [key]: edit });
-    appAtomRegistry.set(composerDraftsAtom, {
-      [key]: { text: "Ordinary draft", attachments: [] },
-      [draftKey]: { text: edit.originalText, attachments: [] },
-    });
-    const before = appAtomRegistry.get(composerDraftsAtom);
-    const inline: DraftComposerAttachment = {
-      type: "image",
-      id: "inline",
-      name: "inline.png",
-      mimeType: "image/png",
-      sizeBytes: 10 * 1024 * 1024,
-      dataUrl: tenMiBDataUrl,
-      previewUri: tenMiBDataUrl,
-    };
-    expect(appendPreparedComposerDraftAttachments(draftKey, [inline])).toEqual({
-      rejectedCount: 1,
-      limitError: expect.stringContaining("80 MiB"),
-    });
-    expect(appAtomRegistry.get(composerDraftsAtom)).toBe(before);
-    expect(appAtomRegistry.get(queuedRunEditsAtom)[key]).toBe(edit);
-  });
-
-  it("reads fresh stored bytes when a delayed picker finishes after another paste", async () => {
-    appAtomRegistry.set(composerDraftsAtom, {
-      [key]: {
-        text: "Keep me",
-        attachments: Array.from({ length: 7 }, (_, index) => image(index)),
-      },
-    });
-    const picker = Promise.withResolvers<DraftComposerAttachment>();
-    const pending = picker.promise.then((picked) =>
-      appendPreparedComposerDraftAttachments(key, [picked]),
-    );
-    expect(appendPreparedComposerDraftAttachments(key, [image(7)]).limitError).toBeNull();
-    const before = getComposerDraftSnapshot(key);
-    const storedBefore = appAtomRegistry.get(composerDraftsAtom);
-    picker.resolve({
-      type: "image",
-      id: "delayed",
-      name: "delayed.png",
-      mimeType: "image/png",
-      sizeBytes: 10 * 1024 * 1024,
-      dataUrl: tenMiBDataUrl,
-      previewUri: tenMiBDataUrl,
-    });
-    expect(await pending).toEqual({
-      rejectedCount: 1,
-      limitError: expect.stringContaining("80 MiB"),
-    });
-    expect(getComposerDraftSnapshot(key)).toEqual(before);
-    expect(appAtomRegistry.get(composerDraftsAtom)).toBe(storedBefore);
-  });
-
-  it("keeps recovery overflow uncapped and preserves every restored image when later new admission is refused", () => {
-    setComposerDraftText(key, "Recovery text");
-    const restored = Array.from({ length: 9 }, (_, index) => ({
-      type: "image" as const,
-      id: `recovered-${index}`,
-      name: `recovered-${index}.png`,
-      mimeType: "image/png",
-      sizeBytes: 10 * 1024 * 1024,
-      dataUrl: tenMiBDataUrl,
-      previewUri: tenMiBDataUrl,
-    }));
-    expect(appendComposerDraftAttachments(key, restored, { allowOverflow: true })).toBe(0);
-    const before = getComposerDraftSnapshot(key);
-    const storedBefore = appAtomRegistry.get(composerDraftsAtom);
-    expect(before.attachments).toEqual(restored);
-    expect(appendPreparedComposerDraftAttachments(key, [restored[0]!])).toEqual({
-      rejectedCount: 1,
-      limitError: expect.stringContaining("80 MiB"),
-    });
-    expect(getComposerDraftSnapshot(key)).toEqual(before);
-    expect(appAtomRegistry.get(composerDraftsAtom)).toBe(storedBefore);
-  });
-});
-// SCIENT-FORK:END

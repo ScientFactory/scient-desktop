@@ -1,11 +1,8 @@
 import * as Hex from "effect/encoding/Hex";
 /**
- * Captures a `ConversationSnapshotV1` from the durable projections: the thread
- * detail with its complete history, the projection sequence, and the thread's
- * latest event sequence are read in one SQL transaction, so the snapshot
- * reflects exactly one point in the event log. The transaction is released
- * before attachments are inspected or anything is rendered. The client's
- * timeline is never consulted.
+ * Read full detail and projection/event sequences in one SQL transaction so the snapshot represents
+ * one event-log point. Release it before inspecting attachments/rendering; client timeline state is
+ * not capture authority.
  */
 import {
   type ChatAttachment,

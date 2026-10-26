@@ -610,8 +610,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }),
         { flag: "wx", mode: 0o600 },
       );
-      // On Windows, Defender and kernel process rundown can briefly hold the
-      // verified codex.exe handle open right after `--version` exits.
+      // Windows Defender or process rundown may retain codex.exe handles briefly after --version exits.
       const renameRuntime = fs.rename(runtime, destination);
       yield* platform === "win32"
         ? renameRuntime.pipe(Effect.retry({ times: 10, schedule: Schedule.spaced("100 millis") }))
@@ -754,11 +753,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   );
 
   const initializeState = Effect.gen(function* () {
-    // Clear staging directories left behind by an interrupted install so they
-    // neither leak disk nor make an otherwise empty runtime look removable. Two
-    // servers can share a home, and writes below a staging directory do not
-    // refresh its mtime, so only directories far older than any real install
-    // (download is capped at 45 minutes) are treated as abandoned.
+    // Shared-home installs do not refresh parent mtimes; remove only staging directories far older than the 45-minute download cap.
     let canRemove = false;
     if (yield* fs.exists(managedDirectory)) {
       const entries = yield* fs
@@ -777,8 +772,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         if (now - modifiedAt < STAGING_STALE_AFTER_MS) continue;
         yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
       }
-      // The empty root itself stays: deleting it could race another server
-      // creating a staging directory inside. An unreadable root stays removable.
+      // Keep the empty root to avoid racing new staging directories; unreadable roots remain removable.
       const remaining = yield* fs.readDirectory(managedDirectory).pipe(Effect.option);
       canRemove = Option.isNone(remaining) || remaining.value.length > 0;
     }

@@ -19,6 +19,7 @@ import { warmBundledDevPlugin } from "../vite/warmBundledDev";
 const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
 
 // SCIENT-FORK:START — restore the original behavior guard.
+
 // regression: 72bdf1e658 perf(web): pre-bundle startup chunks when a shared dev server starts (#22210)
 it("warms the wanted lazy chunk chain and nothing else", async () => {
   const root = "/synthetic-startup";

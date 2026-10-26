@@ -70,11 +70,8 @@ describe("ChatMarkdown math seam", () => {
 });
 
 /**
- * The chat-shaped pipeline: ChatMarkdown's remark plugin order for math plus
- * the sanitize step that strips non-`language-*` classes. Inline math must
- * arrive as a bare `<code class="language-math">`; display math wrapped in
- * `<pre>`. `sourceText` mirrors the per-message hook: the pre-normalization
- * text the refinement plugin uses to recover authored intent.
+ * Chat sanitization strips classes except language-*; inline math must reach it as bare
+ * language-math code and display math inside pre. Preserve original source for delimiter intent.
  */
 function renderChatShapedPipeline(markdown: string, sourceText?: string): string {
   return renderToStaticMarkup(
