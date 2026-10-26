@@ -61,9 +61,15 @@ describe("Overleaf Git bytes", () => {
             ["bom.tex", bytes("\ufeffone\r\ntwo")],
             ["binary.dat", Uint8Array.from([0, 255, 128, 13, 10, 0, 42])],
           ]);
+          const stage = NodePath.join(
+            work,
+            ...Array.from({ length: 5 }, (_, index) => `${index}-${"long".repeat(12)}`),
+          );
+          yield* fs.makeDirectory(stage, { recursive: true });
+          expect(stage.length).toBeGreaterThan(260);
           const files: string[] = [];
           for (const [name, value] of samples) {
-            const file = NodePath.join(work, name);
+            const file = NodePath.join(stage, name);
             yield* fs.writeFile(file, value);
             files.push(file);
           }
