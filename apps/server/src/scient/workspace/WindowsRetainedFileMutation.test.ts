@@ -252,9 +252,13 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
         }
       }),
   );
-  it.each(["prepared", "checked"] as const)(
-    "does not publish a fenced create after a changed peer and process death at %s",
-    (point) =>
+  it.each(
+    (["prepared", "checked"] as const).flatMap((point) =>
+      [true, false].map((fenced) => ({ point, fenced })),
+    ),
+  )(
+    "does not publish a staged create after a changed peer and process death at $point, fenced: $fenced",
+    ({ point, fenced }) =>
       fixture(async (input, target) => {
         await NodeFSP.unlink(target);
         const peer = NodePath.join(input.cwd, "peer.tex");
@@ -264,7 +268,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
           kind: "create" as const,
           condition: "absent" as const,
           expectedRevision: null,
-          expectedMutationEpoch: "epoch",
+          ...(fenced ? { expectedMutationEpoch: "epoch" } : {}),
           peerGuards: [{ path: "peer.tex", revision: bytesRevision(Buffer.from("guard")) }],
         };
         const jobPath = NodePath.join(NodePath.dirname(input.cwd), "fenced-create.json");
@@ -582,6 +586,8 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
       expect(identity!.volume.startsWith("\\\\?\\Volume{")).toBe(true);
       expect(identity!.fileId).toMatch(/^[0-9a-f]{32}$/u);
       expect((await overleafFilesAvailability([cwd, target])).get(target)).toBe("available");
+      const blocked = NodePath.join(target, "child");
+      expect((await overleafFilesAvailability([blocked])).get(blocked)).toBe("available");
       const result = await mutateRetainedFile({ ...input, cwd }, target);
       expect(
         result.outcome,
