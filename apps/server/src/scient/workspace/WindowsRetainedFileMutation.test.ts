@@ -19,6 +19,8 @@ import {
   mutateRetainedFile,
   type RetainedMutationInput,
 } from "./RetainedFileMutation.ts";
+import { overleafFilesAvailability } from "../overleaf/overleafFileAvailability.ts";
+import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 import type { WindowsCrashJob } from "./WindowsRetainedFileMutation.crash-child.ts";
 import { windowsNativeFile } from "./WindowsNativeFile.ts";
 
@@ -192,19 +194,14 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
     fixture(async (input, target) => {
       const account = `Scient${NodeCrypto.randomBytes(5).toString("hex")}`;
       const password = `S!${NodeCrypto.randomBytes(5).toString("hex")}a7`;
-      NodeChildProcess.execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$password = ConvertTo-SecureString -AsPlainText $env:SCIENT_TEST_PASSWORD -Force; New-LocalUser -Name $env:SCIENT_TEST_ACCOUNT -Password $password -AccountNeverExpires | Out-Null",
-        ],
-        {
-          env: { ...process.env, SCIENT_TEST_ACCOUNT: account, SCIENT_TEST_PASSWORD: password },
-          stdio: "pipe",
-        },
-      );
+      const accountCommand = (operation: string) =>
+        JSON.parse(
+          NodeChildProcess.execFileSync(probe!, ["--windows=1", operation, "fixture"], {
+            encoding: "utf8",
+            env: { ...process.env, SCIENT_TEST_ACCOUNT: account, SCIENT_TEST_PASSWORD: password },
+          }),
+        ).code;
+      expect(accountCommand("add-account")).toBe(0);
       try {
         NodeChildProcess.execFileSync("icacls.exe", [target, "/grant", `${account}:(R,W)`]);
         const policy = await security(target);
@@ -263,7 +260,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
         expect(access(target)).toBe(0);
         expect(await security(target)).toBe(policy);
       } finally {
-        NodeChildProcess.execFileSync("net.exe", ["user", account, "/delete"], { stdio: "pipe" });
+        expect(accountCommand("delete-account")).toBe(0);
       }
     }));
   it.each(["stream", "hardlink"] as const)(
@@ -381,5 +378,48 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
       const before = await security(broad);
       await expect(ensureNativePrivateRetentionDirectory(helper!, broad)).rejects.toThrow();
       expect(await security(broad)).toBe(before);
+    }));
+});
+
+describe.skipIf(!windows)("Windows identity and file admission", () => {
+  it("uses the mount-manager GUID and the complete file ID beyond MAX_PATH", () =>
+    fixture(async (input) => {
+      const cwd = NodePath.join(
+        input.cwd,
+        ...Array.from({ length: 8 }, (_, index) => `${index}-${"long".repeat(10)}`),
+      );
+      await NodeFSP.mkdir(cwd, { recursive: true });
+      const target = NodePath.join(cwd, "main.tex");
+      await NodeFSP.writeFile(target, "original");
+      const identity = await platformFileIdentity.directory(cwd);
+      expect(identity).toMatchObject({ platform: "windows", version: 1 });
+      expect(identity!.volume.startsWith("\\\\?\\Volume{")).toBe(true);
+      expect(identity!.fileId).toMatch(/^[0-9a-f]{32}$/u);
+      expect((await overleafFilesAvailability([cwd, target])).get(target)).toBe("available");
+      const result = await mutateRetainedFile({ ...input, cwd }, target);
+      expect(
+        result.outcome,
+        await NodeFSP.readFile(NodePath.join(result.recordDirectory, "record.json"), "utf8"),
+      ).toBe("done");
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("incoming");
+    }));
+  it("stops on enumerated offline attributes before reading or displacing the file", () =>
+    fixture(async (input, target) => {
+      NodeChildProcess.execFileSync("attrib.exe", ["+O", target]);
+      try {
+        expect((await overleafFilesAvailability([target])).get(target)).toBe("online-only-file");
+        await expect(mutateRetainedFile(input, target)).rejects.toThrow("online-only-file");
+      } finally {
+        NodeChildProcess.execFileSync("attrib.exe", ["-O", target]);
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+    }));
+  it("refuses a different owner without changing its bytes or policy", () =>
+    fixture(async (input, target) => {
+      NodeChildProcess.execFileSync("icacls.exe", [target, "/setowner", "*S-1-5-32-544"]);
+      const policy = await security(target);
+      await expect(mutateRetainedFile(input, target)).rejects.toThrow("unsupported-file-owner");
+      expect(await security(target)).toBe(policy);
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
     }));
 });
