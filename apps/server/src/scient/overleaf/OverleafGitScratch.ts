@@ -37,13 +37,9 @@ export async function makeGitScratch(runtimeRoot: string, windows: boolean) {
         }),
       { mode: "exclusive" },
     );
-    if (
-      result.code !== 0 ||
-      result.destinationAfter?.type !== "directory" ||
-      (result.outcome === "applied" &&
-        (result.flush.sourceDirectory !== 0 || result.flush.destinationDirectory !== 0))
-    )
-      throw new Error("Private Git directory refused.");
+    // Scratch is disposable after a crash; only retained publication requires directory durability.
+    if (result.code !== 0 || result.destinationAfter?.type !== "directory")
+      throw new Error(`Private Git directory refused (${result.codeDomain}:${result.code}).`);
     return NodePath.join(canonicalParent, NodePath.basename(directory));
   };
   const root = await privateDirectory(runtimeRoot);
