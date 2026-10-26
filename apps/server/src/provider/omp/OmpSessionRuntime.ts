@@ -271,7 +271,10 @@ const subagentStatus = (event: OmpRpcEvent): "inProgress" | "completed" | "faile
 const subagentId = (event: OmpRpcEvent): string | undefined => {
   const payload = subagentPayload(event);
   const progress = payload && isRecord(payload.progress) ? payload.progress : undefined;
-  return text(payload?.id) ?? text(progress?.id) ?? text(event.subagentId) ?? text(event.id);
+  const id =
+    rawText(payload?.id) ?? rawText(progress?.id) ?? rawText(event.subagentId) ?? rawText(event.id);
+  // Persisted native refs trim values; reject IDs that would change identity.
+  return id !== undefined && id.trim() === id ? id : undefined;
 };
 
 const subagentTitle = (event: OmpRpcEvent): string | undefined => {
@@ -1296,7 +1299,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     // lifecycle closure to the spawning turn, including frames after turn settlement until
     // session_settled.
     if (event.type === "subagent_lifecycle" || event.type === "subagent_progress") {
-      const id = subagentId(event) ?? "activity";
+      const id = subagentId(event);
+      if (id === undefined) return;
       const status = subagentStatus(event);
       const previous = subagentStatuses.get(id);
       const terminal = previous !== undefined && previous !== "inProgress";

@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react"
 
 import {
   EMPTY_PLACEMENT,
+  displayedPlacementOrders,
   manuallyPlaceThread,
   readPlacement,
   reconcilePlacement,
@@ -55,6 +56,7 @@ export function useAutomaticPlacement(input: {
   readonly groups: readonly PlacementInput[];
   readonly openKey: string | null;
   readonly ready: boolean;
+  readonly paused?: boolean;
   readonly knownKeys?: readonly string[];
   /** Environments without a live thread list; their rows keep their last known state. */
   readonly frozenEnvironmentIds?: readonly string[];
@@ -65,7 +67,8 @@ export function useAutomaticPlacement(input: {
     key,
     state: load(key),
   }));
-  const [paused, setPaused] = useState(false);
+  const [interactionPaused, setPaused] = useState(false);
+  const paused = interactionPaused || input.paused === true;
   const [clock, setClock] = useState(() => Date.now());
   // Shell updates that do not change placement must not reset timers or write storage.
   const signature = JSON.stringify(input.groups);
@@ -82,6 +85,17 @@ export function useAutomaticPlacement(input: {
       frozen.size > 0 && frozen.has(parseScopedThreadKey(key)?.environmentId ?? "");
   })();
   const state = !enabled || saved.key !== storageKey ? EMPTY_PLACEMENT : saved.state;
+  // Reconciliation commits in a layout effect; render shows its result from the first commit.
+  const orders = enabled
+    ? displayedPlacementOrders(
+        state,
+        groups,
+        input.openKey,
+        clock,
+        isFrozen,
+        input.ready && !paused,
+      )
+    : new Map<string, readonly string[]>();
   const writes = useRef(new Map<string, { before: string | null; after: string }>());
   const moves = useRef(
     new Map<string, { before: string | null; after: string; row: PlacementRow }>(),
@@ -198,17 +212,21 @@ export function useAutomaticPlacement(input: {
     ) => {
       const current = latest.current;
       if (!current.enabled) return;
+      const listed = current.groups.flatMap((group) => group.rows);
+      const moved = movedRow ?? listed.find((row) => row.key === key);
       for (const [id, after] of orderKeys) {
-        const before = current.groups
-          .flatMap((group) => group.rows)
-          .find((row) => row.key === id)?.orderKey;
+        const before = (listed.find((row) => row.key === id) ?? (id === key ? moved : undefined))
+          ?.orderKey;
         if (before !== undefined && before !== after) writes.current.set(id, { before, after });
       }
       const source = current.groups.find((group) => group.rows.some((row) => row.key === key));
-      const moved =
-        movedRow ?? current.groups.flatMap((group) => group.rows).find((row) => row.key === key);
+      // Until its membership arrives, the bridged row already carries its assigned key.
       if (moved && source?.id !== groupId)
-        moves.current.set(key, { before: source?.id ?? null, after: groupId, row: moved });
+        moves.current.set(key, {
+          before: source?.id ?? null,
+          after: groupId,
+          row: { ...moved, orderKey: orderKeys.get(key) ?? moved.orderKey },
+        });
       // A frozen row is placed by its last known eligibility, not its stale copy's.
       const saved = current.isFrozen(key)
         ? current.state.groups.flatMap((group) => group.rows).find((row) => row.key === key)
@@ -225,11 +243,20 @@ export function useAutomaticPlacement(input: {
       }));
       // The drop alone places the moved row: reconciling without it (and before the new
       // keys) keeps it from counting as an arrival and its re-keyed neighbours as remote drops.
+      const previousKeys = new Map(
+        current.state.groups.flatMap((group) => group.rows.map((row) => [row.key, row.orderKey])),
+      );
       const reconciled = reconcilePlacement(
         current.state,
         current.groups.map((group) => ({
           ...group,
-          rows: group.rows.filter((row) => row.key !== key),
+          rows: group.rows
+            .filter((row) => row.key !== key)
+            .map((row) =>
+              previousKeys.has(row.key) && orderKeys.get(row.key) === row.orderKey
+                ? { ...row, orderKey: previousKeys.get(row.key)! }
+                : row,
+            ),
         })),
         current.openKey,
         Date.now(),
@@ -245,5 +272,5 @@ export function useAutomaticPlacement(input: {
     },
   );
 
-  return { enabled, state, onManualPlacement, onInteractionChange: setPaused };
+  return { enabled, state, orders, onManualPlacement, onInteractionChange: setPaused };
 }

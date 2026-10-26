@@ -536,7 +536,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Keep active threads near the top",
     to: "/settings/general",
     searchTerms: [
-      "sidebar sections automatic placement working monitoring unread done attention order",
+      "sidebar sections status inbox automatic placement working monitoring unread done attention order",
     ],
   },
   {
