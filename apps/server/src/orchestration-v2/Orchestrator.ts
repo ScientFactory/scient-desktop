@@ -223,7 +223,10 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
-import { makeScientTerminalQueueHold } from "../scient/orchestration/TerminalQueueHold.ts";
+import {
+  GOAL_COMMAND_STOP_REASON,
+  makeScientTerminalQueueHold,
+} from "../scient/orchestration/TerminalQueueHold.ts";
 import {
   isWorkflowMemberNode,
   isWorkflowMemberOwnedBy,
@@ -11706,7 +11709,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandId: command.commandId,
           threadId: command.threadId,
           runId: targetRunId,
-          reason: "Stopped to apply /goal",
+          reason: GOAL_COMMAND_STOP_REASON,
+          // SCIENT-FORK: Scient's Stop holds the queue by default; this stop exists to start the goal next.
+          holdQueue: false,
         },
         interruptEvents,
         interruptEffects,
