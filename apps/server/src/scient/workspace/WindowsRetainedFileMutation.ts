@@ -24,6 +24,7 @@ import {
   type MutationPoint,
 } from "./RetainedFileMutation.ts";
 import { windowsFileIdentity } from "./WindowsNativeFile.ts";
+import { overleafFilesAvailability } from "../overleaf/overleafFileAvailability.ts";
 import type {
   NativeFileBinding,
   NativeFileIdentity,
@@ -51,6 +52,17 @@ export async function runWindowsRetainedMutation(
 ): Promise<RetainedMutationResult> {
   const kind = input.kind ?? (input.bytes === null ? "delete" : "write");
   const condition = input.condition ?? (input.expectedRevision === null ? "absent" : "revision");
+  const paths = [
+    target,
+    NodePath.dirname(target),
+    ...(input.peerGuards ?? []).map((peer) => NodePath.join(input.cwd, peer.path)),
+  ];
+  if (input.destination) paths.push(input.destination, NodePath.dirname(input.destination));
+  const availability = await overleafFilesAvailability(paths);
+  for (const status of availability.values()) {
+    if (status !== "available")
+      throw new RetainedMutationError("unavailable", status, input.id, [], { refusal: status });
+  }
   const previous = await readRetainedRecord(directory).catch((error: unknown) => {
     if (!absent(error)) throw error;
     return null;
