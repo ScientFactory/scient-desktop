@@ -1126,6 +1126,7 @@ int platform_windows_main(int argc, char **argv) {
   if ((wcslen(path) == 3 && path[1] == L':') || (wcslen(path) == 7 && path[5] == L':')) {
     data.dwFileAttributes = GetFileAttributesW(path);
     error = data.dwFileAttributes == INVALID_FILE_ATTRIBUTES ? (int)GetLastError() : 0;
+    if (!error) data.dwFileAttributes &= ~0x00040000UL; /* Root metadata is not an enumeration result. */
   }
   if (!strcmp(argv[2], "flags")) {
     printf("{\"code\":%d,\"flags\":%lu}\n", error, (unsigned long)data.dwFileAttributes);
@@ -1210,6 +1211,7 @@ int platform_windows_flags(int argc, char **argv) {
       if ((wcslen(path) == 3 && path[1] == L':') || (wcslen(path) == 7 && path[5] == L':')) {
         flags = GetFileAttributesW(path);
         error = flags == INVALID_FILE_ATTRIBUTES ? GetLastError() : 0;
+        if (!error) flags &= ~0x00040000UL; /* This bit denotes EA outside enumeration. */
       }
       free(path);
     }
