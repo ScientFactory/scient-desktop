@@ -22,6 +22,7 @@ const Reply = Schema.Struct({
   code: Schema.Number,
   flags: Schema.Number,
   syncManaged: Schema.optionalKey(Schema.Boolean),
+  changeTime: Schema.optionalKey(Schema.String),
   identity: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
