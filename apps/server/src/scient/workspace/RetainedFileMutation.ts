@@ -147,6 +147,9 @@ export const WindowsJournal = Schema.Struct({
   stageName: Schema.String,
   originalSecurity: Schema.Literal("original-security"),
   originalDescriptor: Schema.NullOr(Schema.String),
+  nativeFailure: Schema.optionalKey(
+    Schema.Struct({ operation: Schema.String, code: Schema.Number, outcome: Schema.String }),
+  ),
 });
 export type WindowsRetainedRecord = typeof WindowsJournal.Type;
 export type AnyRetainedRecord =
