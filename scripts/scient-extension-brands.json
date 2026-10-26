@@ -217,6 +217,26 @@
     }
   },
   {
+    "key": "arxiv-community",
+    "names": ["arXiv", "arXiv (community)"],
+    "website": "https://arxiv.org",
+    "source": {
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/arxiv.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
+      "color": "#B31B1B",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://arxiv.org",
+      "rendering": "mark",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
+      "sourceFormat": "svg",
+      "outputBytes": 4208
+    }
+  },
+  {
     "key": "asana",
     "names": ["asana"],
     "website": "https://asana.com",
@@ -2423,6 +2443,22 @@
     }
   },
   {
+    "key": "oeis-community",
+    "names": ["OEIS", "OEIS (community)"],
+    "website": "https://oeis.org",
+    "source": {
+      "kind": "official",
+      "url": "https://oeis.org/favicon.svg?v=20260826",
+      "mode": "mark",
+      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "rendering": "mark",
+      "sourceWidth": 64,
+      "sourceHeight": 64,
+      "sourceFormat": "svg",
+      "outputBytes": 2506
+    }
+  },
+  {
     "key": "open-targets",
     "names": ["open targets"],
     "source": {
@@ -3868,6 +3904,26 @@
       "sourceHeight": 202,
       "sourceFormat": "svg",
       "outputBytes": 2730
+    }
+  },
+  {
+    "key": "wolfram",
+    "names": ["Wolfram"],
+    "website": "https://www.wolfram.com",
+    "source": {
+      "kind": "simple-icons",
+      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/wolfram.svg",
+      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
+      "color": "#DD1100",
+      "mode": "mark",
+      "background": "#ffffff",
+      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
+      "brandSource": "https://company.wolfram.com/press-center/wolfram-corporate",
+      "rendering": "mark",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
+      "sourceFormat": "svg",
+      "outputBytes": 9308
     }
   },
   {

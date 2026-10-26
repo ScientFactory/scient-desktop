@@ -17,6 +17,7 @@ export const CATALOG_CATEGORY_ORDER: ReadonlyArray<ExtensionCategory> = [
   "featured",
   "research",
   "biology",
+  "math-cs",
   "data",
   "code",
   "writing",
@@ -35,6 +36,10 @@ export const CATALOG_SECTIONS: Readonly<
   biology: {
     title: "Biology & genetics",
     description: "Genes, proteins, drug targets, preprints and clinical studies.",
+  },
+  "math-cs": {
+    title: "Math & computer science",
+    description: "Symbolic computation, research papers and integer sequences.",
   },
   data: { title: "Data", description: "Datasets, notebooks and databases." },
   code: { title: "Code", description: "Repositories, documentation and developer tools." },
@@ -254,6 +259,47 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["biology"],
     websiteUrl: "https://platform.opentargets.org",
     icon: CURATED_ICONS["open-targets"],
+  },
+
+  // ── Math & computer science ─────────────────────────────────────────────
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (3 tools); exact registry remote.
+    id: "wolfram",
+    displayName: "Wolfram",
+    tagline: "Compute integrals, solve equations and explore data",
+    description:
+      "Compute symbolic and numerical answers, evaluate Wolfram Language and query curated data through Wolfram Research's official server. Free without an account for limited personal, small-scale use; requests are stateless. Wolfram's terms restrict bulk extraction and AI training; other uses may require separate licensing.",
+    url: "https://agenttools.wolfram.com/mcp",
+    registry: { name: "com.wolfram/mcp", version: "1.0.1" },
+    categories: ["math-cs"],
+    websiteUrl: "https://www.wolfram.com/ai/mcp/cloud/",
+    icon: CURATED_ICONS["wolfram"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (4 tools); exact registry remote.
+    id: "arxiv-community",
+    displayName: "arXiv (community)",
+    tagline: "Find and read mathematics and computer science papers",
+    description:
+      "Search arXiv preprints by topic, author or category, retrieve paper metadata and read available full text. Community server maintained and hosted by Casey Hand; no account needed. Preprints may not be peer reviewed, and reuse follows each paper's licence.",
+    url: "https://arxiv.caseyjhand.com/mcp",
+    registry: { name: "io.github.cyanheads/arxiv-mcp-server", version: "1.8.0" },
+    categories: ["math-cs", "research"],
+    websiteUrl: "https://github.com/cyanheads/arxiv-mcp-server",
+    icon: CURATED_ICONS["arxiv-community"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (6 tools); exact registry remote.
+    id: "oeis-community",
+    displayName: "OEIS (community)",
+    tagline: "Identify integer sequences and find formulas and programs",
+    description:
+      "Identify sequences from their terms and explore formulas, programs, extended terms and related entries in the On-Line Encyclopedia of Integer Sequences. Community server maintained and hosted by Casey Hand; uncached lookups share one request every 10 seconds. OEIS data is CC BY-SA 4.0: credit OEIS with a link and share adaptations under the same licence.",
+    url: "https://oeis.caseyjhand.com/mcp",
+    registry: { name: "io.github.cyanheads/oeis-mcp-server", version: "0.1.3" },
+    categories: ["math-cs"],
+    websiteUrl: "https://github.com/cyanheads/oeis-mcp-server",
+    icon: CURATED_ICONS["oeis-community"],
   },
 
   // ── Data ────────────────────────────────────────────────────────────────

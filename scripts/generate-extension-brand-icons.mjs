@@ -147,6 +147,7 @@ const simple = JSON.parse(
 );
 const slug = (value) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 const simpleNames = {
+  "arxiv-community": "arxiv",
   "cloudflare-docs": "cloudflare",
   "hugging-face": "huggingface",
   "microsoft-learn": "microsoft",

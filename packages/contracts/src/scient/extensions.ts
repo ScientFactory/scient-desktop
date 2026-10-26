@@ -314,6 +314,7 @@ export const ExtensionCategory = Schema.Literals([
   "featured",
   "research",
   "biology",
+  "math-cs",
   "data",
   "code",
   "writing",
