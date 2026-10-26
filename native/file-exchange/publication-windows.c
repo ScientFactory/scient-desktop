@@ -268,6 +268,18 @@ static int current_user_security(PSECURITY_DESCRIPTOR *descriptor, wchar_t **sid
 done:
   free(user); CloseHandle(token); return (int)error;
 }
+static int inherited_user_security(PSECURITY_DESCRIPTOR *descriptor) {
+  PSECURITY_DESCRIPTOR private_descriptor = NULL; wchar_t *sid = NULL;
+  int error = current_user_security(&private_descriptor, &sid, 0);
+  if (!error) {
+    wchar_t owner[256];
+    if (swprintf(owner, 256, L"O:%ls", sid) < 0) error = ERROR_FILENAME_EXCED_RANGE;
+    else if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(owner, SDDL_REVISION_1, descriptor, NULL)) error = (int)GetLastError();
+  }
+  if (private_descriptor) LocalFree(private_descriptor);
+  if (sid) LocalFree(sid);
+  return error;
+}
 Context *platform_bind_parent(const char *root, const char *parent, int *error) {
   HMODULE library = GetModuleHandleW(L"ntdll.dll");
   /* memcpy avoids incompatible function-pointer casts under -Werror. */
@@ -856,13 +868,24 @@ static int windows_operation(Context *context, const char *operation, const char
       goto done;
     }
     PSECURITY_DESCRIPTOR descriptor = NULL;
-    if (!creation) error = save_policy(context, transaction.original, &descriptor);
+    error = creation ? inherited_user_security(&descriptor) : save_policy(context, transaction.original, &descriptor);
     if (!error && strcmp(operation, "win-prepare-delete")) {
-      transaction.stage = create_relative(context->parent, to,
+      SECURITY_DESCRIPTOR_CONTROL original_control = 0; DWORD revision = 0;
+      if (transaction.original && (!GetSecurityDescriptorControl(descriptor, &original_control, &revision) ||
+          !SetSecurityDescriptorControl(descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED))) error = (int)GetLastError();
+      if (!error) transaction.stage = create_relative(context->parent, to,
         GENERIC_READ | GENERIC_WRITE | DELETE | WRITE_DAC | FILE_WRITE_ATTRIBUTES | READ_CONTROL,
         2, FILE_ATTRIBUTE_NORMAL, descriptor, FILE_SHARE_READ);
       if (transaction.stage == INVALID_HANDLE_VALUE) { transaction.stage = NULL; error = (int)GetLastError(); }
       if (transaction.stage) *applied = -1;
+      if (!error && transaction.original) {
+        if (!SetSecurityDescriptorControl(descriptor, SE_DACL_PROTECTED, original_control & SE_DACL_PROTECTED)) error = (int)GetLastError();
+        else {
+          NTSTATUS result = nt_security(transaction.stage, DACL_SECURITY_INFORMATION |
+            ((original_control & SE_DACL_PROTECTED) ? PROTECTED_DACL_SECURITY_INFORMATION : UNPROTECTED_DACL_SECURITY_INFORMATION), descriptor);
+          if (result < 0) error = (int)nt_error(result);
+        }
+      }
       if (!error) error = supported_file(transaction.stage);
       HANDLE payload = INVALID_HANDLE_VALUE;
       if (!error) {
@@ -963,7 +986,7 @@ int platform_windows_main(int argc, char **argv) {
     NET_API_STATUS error = !strcmp(argv[2], "add-account") ? NetUserAdd(NULL, 1, (LPBYTE)&user, &parameter) : NetUserDel(NULL, account);
     printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
   }
-  if (argc == 4 && !strcmp(argv[2], "default-owner")) {
+  if (argc == 4 && (!strcmp(argv[2], "default-owner") || !strcmp(argv[2], "default-owner-admin"))) {
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)strtoul(argv[3], NULL, 10));
     HANDLE token = NULL; DWORD error = 0, length = 0;
     TOKEN_USER *user = NULL;
@@ -974,8 +997,13 @@ int platform_windows_main(int argc, char **argv) {
       if (!user) error = ERROR_NOT_ENOUGH_MEMORY;
       else if (!GetTokenInformation(token, TokenUser, user, length, &length)) error = GetLastError();
       else {
+        BYTE administrators[SECURITY_MAX_SID_SIZE]; DWORD size = sizeof(administrators);
         TOKEN_OWNER owner = { user->User.Sid };
-        if (!SetTokenInformation(token, TokenOwner, &owner, sizeof(owner))) error = GetLastError();
+        if (!strcmp(argv[2], "default-owner-admin")) {
+          if (!CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, administrators, &size)) error = GetLastError();
+          else owner.Owner = administrators;
+        }
+        if (!error && !SetTokenInformation(token, TokenOwner, &owner, sizeof(owner))) error = GetLastError();
       }
     }
     free(user); if (token) CloseHandle(token); if (process) CloseHandle(process);
