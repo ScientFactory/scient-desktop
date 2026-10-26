@@ -10,7 +10,7 @@ import {
   type AccountValueSource,
   type OnePasswordConnectInput,
 } from "@t3tools/contracts";
-import { Context, Effect, Layer, Redacted } from "effect";
+import { Context, Duration, Effect, Layer, Redacted } from "effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
@@ -22,6 +22,8 @@ import {
 } from "./KeychainCandidates.ts";
 
 const requireKeyring = NodeModule.createRequire(import.meta.url);
+const KEYCHAIN_PROMPT_TIMEOUT = Duration.minutes(2);
+
 export const onePasswordWriteFailure = (cause: unknown) =>
   new AccountsError({
     reason:
@@ -118,7 +120,18 @@ export const layer = Layer.effect(
             return Redacted.make(value);
           },
           catch: () => unavailable("Keychain item not found or unavailable."),
-        }),
+        }).pipe(
+          // macOS asks the user before an app reads another app's item; never wait forever.
+          Effect.timeoutOrElse({
+            duration: KEYCHAIN_PROMPT_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                unavailable(
+                  "The Keychain did not answer. Ask the user to allow Scient in the Keychain prompt, then try again.",
+                ),
+              ),
+          }),
+        ),
       ),
       writeKeychain: Effect.fn("AccountSources.writeKeychain")((source, value) =>
         Effect.tryPromise({
