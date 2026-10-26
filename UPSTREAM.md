@@ -599,14 +599,14 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
-`374e57d90bf9a646c16df654abbbdff1c988bfa4` is recorded in
+`dd5b5401e1f240f4314af29edf431369d182f386` is recorded in
 [the 2026-10-26 receipt](docs/internals/t3-upstream-sync-20261026-10629afaac.md).
 Literal merge `cd00c855fd6bc05f153e8390ee5dd9685e283186` retains the 192 official
 commits after `5b35402623`; owned-main catch-ups `2f5ac15cf3` and `421f6276e2`
 retain owned main through `b4966ac4eb916b183ca8c38a325e7ba5385d5fd1`; official
-extension `606c164fc9` retains the next 50 commits. Every package's typecheck,
-lint, seam checks and affected suites pass. Exact-head CI, owner visual acceptance, merge and release
-remain separate pending steps. The
+extensions `606c164fc9` (#672) and `c23258e6e7` retain the next 50 and 7
+commits. Typecheck, lint, seam checks and affected suites pass; exact-head CI
+qualifies each PR. Owner visual acceptance and release remain separate steps. The
 [previous receipt](docs/internals/t3-upstream-sync-20261025-5b35402623.md)
 retains its own boundaries and evidence. Native V2, scientific capabilities,
 immutable migrations, storage compatibility and cloud, telemetry, relay,
