@@ -13,6 +13,16 @@ const darwinUserTemp = () =>
     encoding: "utf8",
   }).trim();
 
+/** A database file's bytes, or null when another xcrun run replaced it since the listing. */
+const readXcrunFile = (path: string): Buffer | null => {
+  try {
+    return NodeFS.readFileSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+};
+
 /** xcrun's database files there, by name, with their size and change time. */
 const xcrunFiles = (temp: string) =>
   new Map(
@@ -73,14 +83,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
             // it): none of this executor's homes may appear there.
             for (const [name, stamp] of xcrunFiles(temp)) {
               if (before.get(name) === stamp) continue;
-              // Other processes' xcrun runs replace these files; one gone since the listing holds nothing.
-              let content: Buffer;
-              try {
-                content = NodeFS.readFileSync(NodePath.join(temp, name));
-              } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-                throw error;
-              }
+              const content = readXcrunFile(NodePath.join(temp, name));
+              if (content === null) continue;
               expect(content.includes(runtimeRoot)).toBe(false);
             }
           }),

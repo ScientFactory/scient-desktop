@@ -284,15 +284,16 @@ const refusedAfterProgress =
   (progress: OverleafSyncProgress) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.catch((error: E) =>
-        (progress.retried || progress.settled !== null) && isActionable(error)
-          ? Effect.succeed({
-              _tag: "refused" as const,
-              refusal: { reason: overleafRefusalReason(error) },
-              retried: progress.retried,
-              settled: progress.settled,
-            })
-          : Effect.fail(error),
+      Effect.catchIf(
+        (error: E): error is E & { readonly _tag: string } =>
+          (progress.retried || progress.settled !== null) && isActionable(error),
+        (error) =>
+          Effect.succeed({
+            _tag: "refused" as const,
+            refusal: { reason: overleafRefusalReason(error) },
+            retried: progress.retried,
+            settled: progress.settled,
+          }),
       ),
     );
 
@@ -1170,15 +1171,13 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
           linkedElsewhere,
           running,
         ).pipe(
-          Effect.catch((error) =>
-            isActionable(error)
-              ? Effect.succeed({
-                  _tag: "refused" as const,
-                  refusal: { reason: overleafRefusalReason(error) },
-                  retried: false,
-                  settled: null,
-                } satisfies OverleafSyncOutcome)
-              : Effect.fail(error),
+          Effect.catchIf(isActionable, (error) =>
+            Effect.succeed({
+              _tag: "refused" as const,
+              refusal: { reason: overleafRefusalReason(error) },
+              retried: false,
+              settled: null,
+            } satisfies OverleafSyncOutcome),
           ),
         );
         return { ...undone, sync: synced } satisfies OverleafUndoOutcome;
