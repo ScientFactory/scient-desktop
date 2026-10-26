@@ -88,6 +88,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
   it.effect("creates scratch and token files private even under a broadly inherited parent", () =>
     withExecutor(({ work }) =>
       Effect.gen(function* () {
+        NodeChildProcess.execFileSync(
+          NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"),
+          [work, "/grant", "*S-1-5-32-545:(OI)(CI)R"],
+        );
         const scratch = yield* Effect.promise(() =>
           makeGitScratch(NodePath.join(work, "runtime"), true),
         );
@@ -96,12 +100,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
         NodeFS.writeFileSync(token, "dummy-token-canary");
         const directoryAcl = acl(directory);
         expect(directoryAcl.protected).toBe(true);
-        expect(acl(work).rules.some((rule) => rule.sid !== directoryAcl.owner)).toBe(true);
+        expect(acl(work).rules.some((rule) => rule.sid === "S-1-5-32-545")).toBe(true);
         for (const security of [directoryAcl, acl(token)]) {
           expect(security.rules.length).toBeGreaterThan(0);
           expect(
             security.rules.every(
-              (rule) => rule.type === "Allow" && rule.sid === directoryAcl.owner,
+              (rule) =>
+                rule.type === "Allow" && [directoryAcl.owner, "S-1-5-18"].includes(rule.sid),
             ),
           ).toBe(true);
         }
