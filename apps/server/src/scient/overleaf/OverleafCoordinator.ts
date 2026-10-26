@@ -365,8 +365,8 @@ export type OverleafCoordinatorError =
 export interface OverleafCoordinatorOptions {
   /** `stateDir/overleaf`: repositories and scratch folders live here. */
   readonly stateRoot: string;
-  /** The host's exchange helper; null only for the declared development fallback. */
-  readonly exchangeHelper: string | null;
+  /** The host's publication helper; null only for the declared development fallback. */
+  readonly publicationHelper: string | null;
   /** Fetches Overleaf's branch into `repo`. Step 5 supplies the authenticated fetch. */
   readonly fetchRemote: (input: {
     readonly repo: string;
@@ -1239,7 +1239,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       environmentId: connection.environmentId,
       connectionId: connection.connectionId,
       checkoutRoot: connection.checkout.canonicalRoot,
-      exchangeHelper: options.exchangeHelper,
+      publicationHelper: options.publicationHelper,
       expected: connection.retention.vaultIdentity,
     });
     return yield* applier.fits({
@@ -1263,7 +1263,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       environmentId: connection.environmentId,
       connectionId: connection.connectionId,
       checkoutRoot: connection.checkout.canonicalRoot,
-      exchangeHelper: options.exchangeHelper,
+      publicationHelper: options.publicationHelper,
       expected: connection.retention.vaultIdentity,
     });
     const result = yield* applier.apply({
@@ -1978,7 +1978,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         environmentId: connection.environmentId,
         connectionId: connection.connectionId,
         checkoutRoot: connection.checkout.canonicalRoot,
-        exchangeHelper: options.exchangeHelper,
+        publicationHelper: options.publicationHelper,
         expected: connection.retention.vaultIdentity,
       })
       .pipe(Effect.map((retention) => retention.directory));

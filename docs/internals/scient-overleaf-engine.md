@@ -201,7 +201,7 @@ pnpm run build:file-exchange
 
 The macOS artifact pipeline compiles the requested arm64, x64 or universal slices
 from source and stages the protocol-1 helper outside ASAR at
-`Contents/Resources/file-exchange/scient-file-exchange`. The existing signing hook
+`Contents/Resources/file-exchange/scient-file-publication`. The existing signing hook
 signs it with hardened runtime and empty helper entitlements, and verifies its
 signature and team against the app. Final bundle validation checks its receipt,
 executable permissions, architecture and protocol on a compatible host.
@@ -209,16 +209,13 @@ executable permissions, architecture and protocol on a compatible host.
 Desktop supplies that absolute server-host path through its private bootstrap.
 The helper is never discovered from the workspace or PATH at runtime. Development
 uses the explicit `build:file-exchange` output. A separately launched server may
-set the absolute host-owned `SCIENT_FILE_EXCHANGE_PATH`; a client path cannot
+set the absolute host-owned `SCIENT_FILE_PUBLICATION_HELPER`; a client path cannot
 select the remote server's helper. A packaged macOS installation preserves the
 required path even when damaged, so a missing or incompatible helper fails
 visibly instead of silently falling back. Recovery resolves the current app's
 resource path rather than persisting an obsolete installation path; it preserves
 the journaled mechanism and refuses to downgrade an exchange-based record.
-Without a helper the primitive moves the old file aside and
-publishes a complete file through an exclusive hard link. Unsupported link
-volumes are refused before displacement. This fallback has a missing-path window
-and recovery may be needed to restore a path after a crash.
+Without a qualified publication helper, retained writes refuse before displacement.
 
 A direct writer's displaced file is compared after exchange. Mismatches are
 restored without overwrite-capable rename; a competing newer file is retained
@@ -369,7 +366,7 @@ and compare as the same objects. Linux and Windows identity shapes are defined,
 but those hosts remain refused until their resolvers and file mechanisms qualify. Once
 recorded, nothing is created: a missing folder (unplugged disk, deleted
 folder) or a different folder in its place is reported, never replaced.
-Before use, a probe exchanges two files through the host's exchange helper;
+Before use, a probe exchanges two files through the publication helper;
 a disk that cannot (exFAT and FAT among them) is refused. Without a helper,
 the declared development fallback requires hard links instead. Each refusal
 has its own reason: disk not connected, no volume UUID, unsupported file

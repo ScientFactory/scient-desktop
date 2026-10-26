@@ -245,8 +245,8 @@ export class OverleafStateStore extends Context.Service<
       readonly environmentId: string;
       readonly connectionId: string;
       readonly checkoutRoot: string;
-      /** The host's exchange helper; null only for the declared development fallback (D8). */
-      readonly exchangeHelper: string | null;
+      /** The host's publication helper; null only for the declared development fallback (D8). */
+      readonly publicationHelper: string | null;
       /** The connection's recorded location, or null when connecting for the first time. */
       readonly expected: OverleafVolumeFileIdentity | null;
     }) => Effect.Effect<
@@ -675,7 +675,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
             connectionId: input.connectionId,
             checkoutRoot: input.checkoutRoot,
             userId,
-            exchangeHelper: input.exchangeHelper,
+            publicationHelper: input.publicationHelper,
             expected: input.expected,
             volumeUuid: options.volumeUuid ?? platformFileIdentity.volume,
           });

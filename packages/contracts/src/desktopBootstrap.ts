@@ -29,8 +29,6 @@ export const DesktopBackendBootstrap = Schema.Struct({
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
   filePublicationHelperPath: Schema.optionalKey(TrimmedNonEmptyString),
   syncTexNavigatorPath: Schema.optionalKey(TrimmedNonEmptyString),
-  /** Host-owned native resource; never supplied by a renderer or a workspace. */
-  fileExchangePath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;

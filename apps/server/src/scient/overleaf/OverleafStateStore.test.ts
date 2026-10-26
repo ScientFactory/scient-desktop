@@ -25,11 +25,11 @@ import {
   locateOverleafRetention,
   type OverleafVolumeIdentityResolver,
 } from "./OverleafRetentionVault.ts";
-import { fileExchangeTestHelper } from "../workspace/fileExchange.testkit.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
 const fakeVolume: OverleafVolumeIdentityResolver = async () => VOLUME;
-const helper = await fileExchangeTestHelper();
+const helper = await filePublicationTestHelper();
 const diskImagesAvailable =
   HostProcess.Platform.defaultValue() === "darwin" &&
   NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
@@ -764,6 +764,31 @@ describe("OverleafStateStore", () => {
   );
 
   describe("prepareRetention", () => {
+    it.live("does not fall back when the configured publication helper is missing", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* temporaryRoot();
+          const checkout = NodePath.join(root, "paper");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+          const { store } = yield* openStore(NodePath.join(root, "state"), undefined, fakeVolume);
+          const result = yield* Effect.exit(
+            store.prepareRetention({
+              environmentId: "environment-1",
+              connectionId: "connection-1",
+              checkoutRoot: checkout,
+              publicationHelper: NodePath.join(root, "missing-helper"),
+              expected: null,
+            }),
+          );
+          expect(Exit.isFailure(result)).toBe(true);
+          expect(
+            yield* Effect.promise(() =>
+              NodeFSP.readdir(NodePath.join(root, "state", "retained", "connection-1")),
+            ),
+          ).toEqual([]);
+        }),
+      ),
+    );
     const prepare = (
       store: OverleafStateStore.OverleafStateStore["Service"],
       checkoutRoot: string,
@@ -773,7 +798,7 @@ describe("OverleafStateStore", () => {
         environmentId: "environment-1",
         connectionId: "connection-1",
         checkoutRoot,
-        exchangeHelper: helper ?? null,
+        publicationHelper: helper ?? null,
         expected,
       });
     const refusal = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
@@ -965,7 +990,7 @@ describe("OverleafStateStore", () => {
               connectionId: "connection-1",
               checkoutRoot: checkout,
               userId: process.getuid?.(),
-              exchangeHelper: helper ?? null,
+              publicationHelper: helper ?? null,
               expected: prepared.identity,
               volumeUuid: fakeVolume,
             }),
@@ -1113,7 +1138,7 @@ describe("OverleafStateStore", () => {
               environmentId: "environment-1",
               connectionId: "connection-1",
               checkoutRoot: checkout,
-              exchangeHelper: null,
+              publicationHelper: null,
               expected: null,
             });
             expect(fallback.directory).toBe(
@@ -1154,7 +1179,7 @@ describe("OverleafStateStore", () => {
                   environmentId: "environment-1",
                   connectionId: "connection-1",
                   checkoutRoot: checkout,
-                  exchangeHelper: null,
+                  publicationHelper: null,
                   expected: null,
                 }),
               ),
