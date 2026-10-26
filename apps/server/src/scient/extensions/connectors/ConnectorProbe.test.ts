@@ -110,6 +110,6 @@ it("retries only temporary handshake failures within the retry budget", () => {
   expect(connectorRetryDelay(503, "Thu, 01 Jan 1970 00:00:03 GMT", 0, 1000, 5000)).toBe(2000);
   expect(connectorRetryDelay(429, "60", 0, 0, 5000)).toBeUndefined();
   expect(connectorRetryDelay(429, "0", 2, 0, 5000)).toBeUndefined();
-  expect(connectorRetryDelay(503, null, 0, 0, 5000)).toBeUndefined();
+  expect(connectorRetryDelay(503, null, 0, 0, 5000)).toBe(500);
   expect(connectorRetryDelay(500, "1", 0, 0, 5000)).toBeUndefined();
 });

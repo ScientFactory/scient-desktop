@@ -129,8 +129,7 @@ export const probeConnector = async (input: {
         ? { type: "busy", message: "The service is busy right now." }
         : { type: "unreachable", message: describeEgressFailure(error) };
     }
-    temporary =
-      response.status === 429 || (response.status === 503 && response.headers.has("retry-after"));
+    temporary = response.status === 429 || response.status === 503;
     if (!temporary) break;
     const delay = connectorRetryDelay(
       response.status,
@@ -206,8 +205,7 @@ export function connectorRetryDelay(
   now: number,
   remainingMs: number,
 ): number | undefined {
-  if (attempt >= 2 || (status !== 429 && !(status === 503 && retryAfter !== null)))
-    return undefined;
+  if (attempt >= 2 || (status !== 429 && status !== 503)) return undefined;
   const seconds = retryAfter === null ? NaN : Number(retryAfter);
   const advertised =
     retryAfter === null

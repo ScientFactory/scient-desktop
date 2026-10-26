@@ -33,7 +33,7 @@ const handler = Effect.gen(function* () {
     status: outcome.outcome === "connected" ? 200 : 400,
     contentType: "text/html; charset=utf-8",
     headers: {
-      "content-security-policy": `default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src data:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'`,
+      "content-security-policy": `default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src data:; style-src 'nonce-${nonce}'`,
       "referrer-policy": "no-referrer",
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",

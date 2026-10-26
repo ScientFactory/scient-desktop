@@ -178,6 +178,9 @@ export function AddConnectorDialog({
   readonly callbackOrigin: string | null;
 }) {
   const github = entryNeedsToken(entry) === true;
+  const githubClientId = github
+    ? import.meta.env.VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID?.trim()
+    : undefined;
   const add = useAtomCommand(addConnector, { reportFailure: false });
   const startSignIn = useAtomCommand(startConnectorSignIn, { reportFailure: true });
   const [draft, setDraft] = useState(() => emptyDraft(entry));
@@ -195,16 +198,26 @@ export function AddConnectorDialog({
   const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
   const close = () => onOpenChange(false);
 
-  const submit = async () => {
-    if (submitting) return;
-    const invalid = FIELD_IDS.find(([field]) => errors[field] !== undefined);
+  const submit = async (githubOAuth = false) => {
+    if (submitting || (githubOAuth && !githubClientId)) return;
+    const sendingDraft = githubOAuth
+      ? {
+          ...draft,
+          authMode: "automatic" as const,
+          clientId: githubClientId!,
+          clientSecret: "",
+          value: "",
+        }
+      : draft;
+    const sendingErrors = validateAddConnectorDraft(sendingDraft, entry);
+    const invalid = FIELD_IDS.find(([field]) => sendingErrors[field] !== undefined);
     if (invalid) {
       setAttempted(true);
       document.getElementById(invalid[1])?.focus();
       return;
     }
-    const input = toAddInput(draft, entry);
-    const sentSecret = draft.value.length > 0 || draft.clientSecret.length > 0;
+    const input = toAddInput(sendingDraft, entry);
+    const sentSecret = sendingDraft.value.length > 0 || sendingDraft.clientSecret.length > 0;
     // Secrets leave the form as soon as they are sent, whatever the outcome.
     patch({ value: "", clientSecret: "" });
     setAttempted(false);
@@ -220,6 +233,7 @@ export function AddConnectorDialog({
     }
     if (result.value.nextStep === "sign-in-required") {
       setNeedsSignIn(result.value.connector);
+      if (githubOAuth) await signIn(result.value.connector);
       return;
     }
     toastManager.add({ type: "success", title: `${result.value.connector.displayName} connected` });
@@ -283,7 +297,9 @@ export function AddConnectorDialog({
             <DialogHeader>
               <DialogTitle>{entry ? `Add ${entry.title ?? entry.name}` : "Add by URL"}</DialogTitle>
               <DialogDescription>
-                A remote MCP server. Scient keeps its sign-in; agents never receive it.
+                {github
+                  ? "Connect GitHub to work with your repositories, issues and pull requests."
+                  : "A remote MCP server. Scient keeps its sign-in; agents never receive it."}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
@@ -295,7 +311,7 @@ export function AddConnectorDialog({
                   void submit();
                 }}
               >
-                {entry ? (
+                {github ? null : entry ? (
                   <div className="grid gap-1.5">
                     <Label htmlFor="connector-remote">Endpoint</Label>
                     <NativeSelect
@@ -326,15 +342,27 @@ export function AddConnectorDialog({
                     <FieldError id="connector-url-error" message={shownErrors.url} />
                   </div>
                 )}
-                <div className="grid gap-1.5">
-                  <Label htmlFor="connector-name">Name (optional)</Label>
-                  <Input
-                    id="connector-name"
-                    placeholder="Defaults to the server's name"
-                    value={draft.displayName}
-                    onChange={(event) => patch({ displayName: event.target.value })}
-                  />
-                </div>
+                {!github ? (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="connector-name">Name (optional)</Label>
+                    <Input
+                      id="connector-name"
+                      placeholder="Defaults to the server's name"
+                      value={draft.displayName}
+                      onChange={(event) => patch({ displayName: event.target.value })}
+                    />
+                  </div>
+                ) : null}
+                {githubClientId ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={submitting || callbackOrigin === null}
+                    onClick={() => void submit(true)}
+                  >
+                    Sign in with GitHub
+                  </Button>
+                ) : null}
                 {github ? (
                   <p className="text-sm text-muted-foreground">
                     Use a{" "}
@@ -349,26 +377,28 @@ export function AddConnectorDialog({
                     with access to the repositories you need.
                   </p>
                 ) : null}
-                <div className="grid gap-1.5">
-                  <Label htmlFor="connector-auth">Authentication</Label>
-                  <NativeSelect
-                    id="connector-auth"
-                    disabled={github}
-                    value={draft.authMode}
-                    onChange={(event) =>
-                      // A key typed for one mode never rides along with another.
-                      patch({
-                        authMode: event.target.value as AuthMode,
-                        value: "",
-                        clientSecret: "",
-                      })
-                    }
-                  >
-                    <option value="automatic">Sign in if the server asks</option>
-                    <option value="api-key">API key</option>
-                  </NativeSelect>
-                </div>
-                {draft.authMode === "automatic" ? (
+                {!github ? (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="connector-auth">Authentication</Label>
+                    <NativeSelect
+                      id="connector-auth"
+                      disabled={github}
+                      value={draft.authMode}
+                      onChange={(event) =>
+                        // A key typed for one mode never rides along with another.
+                        patch({
+                          authMode: event.target.value as AuthMode,
+                          value: "",
+                          clientSecret: "",
+                        })
+                      }
+                    >
+                      <option value="automatic">Sign in if the server asks</option>
+                      <option value="api-key">API key</option>
+                    </NativeSelect>
+                  </div>
+                ) : null}
+                {draft.authMode === "automatic" && entry === null ? (
                   <div className="grid gap-3">
                     <Button
                       type="button"
@@ -416,25 +446,29 @@ export function AddConnectorDialog({
                       </>
                     ) : null}
                   </div>
-                ) : (
+                ) : draft.authMode === "api-key" ? (
                   <div className="grid gap-3">
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="connector-strategy">Send as</Label>
-                      <NativeSelect
-                        id="connector-strategy"
-                        disabled={github}
-                        value={draft.strategy}
-                        onChange={(event) =>
-                          patch({ strategy: event.target.value as CredentialStrategy })
-                        }
-                      >
-                        {(Object.keys(STRATEGY_LABELS) as CredentialStrategy[]).map((strategy) => (
-                          <option key={strategy} value={strategy}>
-                            {STRATEGY_LABELS[strategy]}
-                          </option>
-                        ))}
-                      </NativeSelect>
-                    </div>
+                    {!github ? (
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="connector-strategy">Send as</Label>
+                        <NativeSelect
+                          id="connector-strategy"
+                          disabled={github}
+                          value={draft.strategy}
+                          onChange={(event) =>
+                            patch({ strategy: event.target.value as CredentialStrategy })
+                          }
+                        >
+                          {(Object.keys(STRATEGY_LABELS) as CredentialStrategy[]).map(
+                            (strategy) => (
+                              <option key={strategy} value={strategy}>
+                                {STRATEGY_LABELS[strategy]}
+                              </option>
+                            ),
+                          )}
+                        </NativeSelect>
+                      </div>
+                    ) : null}
                     {draft.strategy === "header" ? (
                       <div className="grid gap-1.5">
                         <Label htmlFor="connector-header-name">Header name</Label>
@@ -453,7 +487,11 @@ export function AddConnectorDialog({
                     ) : null}
                     <div className="grid gap-1.5">
                       <Label htmlFor="connector-key">
-                        {draft.strategy === "basic" ? "User and password" : "Key"}
+                        {github
+                          ? "Use a token"
+                          : draft.strategy === "basic"
+                            ? "User and password"
+                            : "Key"}
                       </Label>
                       <SecretInput
                         id="connector-key"
@@ -468,7 +506,7 @@ export function AddConnectorDialog({
                       </p>
                     </div>
                   </div>
-                )}
+                ) : null}
                 {serverError ? (
                   <p role="alert" className="text-sm text-destructive-foreground">
                     {serverError}
