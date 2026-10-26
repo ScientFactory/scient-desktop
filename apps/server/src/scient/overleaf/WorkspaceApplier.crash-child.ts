@@ -71,17 +71,27 @@ if (jobPath !== undefined) {
       default: { rename: typeof NodeFSP.rename; open: typeof NodeFSP.open };
     }
   ).default;
+  const matchesKillPath = (value: string) => {
+    if (!killIn) return false;
+    const windows = HostProcess.Platform.defaultValue() === "win32";
+    // Windows writes the private payload before its native sibling stage; macOS writes slot.
+    const suffix =
+      windows && killIn.operation === "open"
+        ? killIn.suffix.replace(/\/slot$/u, "/payload")
+        : killIn.suffix;
+    return (windows ? value.replaceAll("\\", "/") : value).endsWith(suffix);
+  };
   if (killIn?.operation === "rename") {
     const rename = MutableFSP.rename;
     MutableFSP.rename = async (from, to) => {
-      if (String(to).endsWith(killIn.suffix)) kill();
+      if (matchesKillPath(String(to))) kill();
       return rename(from, to);
     };
   } else if (killIn?.operation === "open") {
     const open = MutableFSP.open;
     MutableFSP.open = async (path, ...rest) => {
       const handle = await open(path, ...rest);
-      if (String(path).endsWith(killIn.suffix)) kill();
+      if (matchesKillPath(String(path))) kill();
       return handle;
     };
   }
