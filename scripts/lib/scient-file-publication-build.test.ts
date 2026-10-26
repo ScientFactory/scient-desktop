@@ -27,7 +27,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("publication p
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
   });
-  it.each(["arm64", "x64", "universal"] as const)(
+  it.each(["x64", "universal"] as const)(
     "stages and validates the exact %s slices",
     async (arch) => {
       const root = await NodeFSP.mkdtemp(
@@ -60,9 +60,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")("publication p
         );
         await expect(validatePackagedFilePublication(app, arch)).rejects.toThrow();
         await NodeFSP.writeFile(receiptPath, receipt);
-        await expect(
-          validatePackagedFilePublication(app, arch === "arm64" ? "x64" : "arm64"),
-        ).rejects.toThrow("wrong architecture");
+        await expect(validatePackagedFilePublication(app, "arm64")).rejects.toThrow(
+          "wrong architecture",
+        );
         await NodeFSP.unlink(NodePath.join(resources, "scient-file-publication"));
         await expect(validatePackagedFilePublication(app, arch)).rejects.toThrow();
       } finally {

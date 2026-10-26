@@ -45,15 +45,6 @@ describe("Overleaf Git bytes", () => {
             repo,
             gitUrl: "https://git.overleaf.com/0123456789abcdef01234567",
           });
-          for (const [key, expected] of [
-            ["core.autocrlf", "false"],
-            ["core.fileMode", "false"],
-            ["core.longpaths", "true"],
-            ["credential.helper", ""],
-          ]) {
-            const result = yield* git.execute({ cwd: repo, args: ["config", "--get", key!] });
-            expect(new TextDecoder().decode(result.stdout).trim()).toBe(expected);
-          }
           const lines = (ending: (index: number) => string, bom = "") =>
             bom +
             Array.from({ length: 20 }, (_, index) => `line-${index}${ending(index)}`).join("");

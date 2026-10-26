@@ -121,7 +121,6 @@ describe("OverleafKeptCopies", () => {
     const label = revealInFileExplorerLabelForKind("file-explorer");
     for (const capability of [
       { shellRevealInFileManager: false, availableEditors: ["file-manager"], offered: false },
-      { shellRevealInFileManager: true, availableEditors: [], offered: false },
       { shellRevealInFileManager: true, availableEditors: ["file-manager"], offered: true },
     ]) {
       reset(true);

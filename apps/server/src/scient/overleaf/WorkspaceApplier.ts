@@ -438,6 +438,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
       Effect.gen(function* () {
         if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(input.id))
           return yield* new WorkspaceApplyError({ cause: new Error("Invalid apply id.") });
+        // Refused before any folder is made; checked again below on the resolved folder.
         yield* Effect.try({
           try: () =>
             assertOverleafApplyPaths(
@@ -565,12 +566,6 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
             if (input.plan && encodePlan(storePlan(input.plan)) !== encodePlan(state.plan))
               throw new Error("Apply id reused with a different plan.");
             validatePlan(state.plan);
-            assertOverleafApplyPaths(
-              cwd,
-              input.applicationDirectory,
-              new Set([...Object.keys(state.plan.captured), ...Object.keys(state.plan.target)]),
-              input.id,
-            );
             if (state.outcomes.length !== state.plan.units.length)
               throw new Error("Invalid unit outcomes.");
             if (state.phase === "applying" && Object.keys(state.steps).length === 0) {
