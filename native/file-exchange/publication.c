@@ -56,6 +56,8 @@ static int sort_parents(const void *left, const void *right) {
 #ifdef _WIN32
 int platform_windows_main(int argc, char **argv);
 int platform_windows_flags(int argc, char **argv);
+int platform_windows_available(const char *root);
+void platform_windows_retire(void);
 #endif
 static int publication_main(int argc, char **argv);
 static int lease_main(int argc, char **argv) {
@@ -178,6 +180,9 @@ static int lease_main(int argc, char **argv) {
 done:
   if (error)
     printf("{\"version\":1,\"lease\":\"refused\",\"code\":%d,\"codeDomain\":\"%s\"}\n", error, platform_domain());
+#ifdef _WIN32
+  platform_windows_retire();
+#endif
   for (size_t i = count; i > 0; --i) {
     if (!parents[i - 1].context) continue;
     if (parents[i - 1].locked) platform_unlock_parent(parents[i - 1].context);
@@ -272,7 +277,7 @@ static int publication_main(int argc, char **argv) {
            "\"privateRetentionDirectory\":%s,\"sourceParentMkdir\":%s,\"codeDomain\":\"%s\"}\n",
            platform_strict_available() ? "true" : "false", platform_containment(),
 #ifdef _WIN32
-           "true",
+           platform_windows_available(argc == 4 ? argv[3] : NULL) ? "true" : "false",
 #else
            "false",
 #endif

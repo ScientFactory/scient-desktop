@@ -339,6 +339,7 @@ export async function runWindowsRetainedMutation(
         const reasons: Partial<Record<number, RetainedRefusal>> = {
           32: "file-busy",
           33: "file-busy",
+          536870919: "online-only-file",
           536870914: "encrypted-file",
           536870915: "multiple-hard-links",
           536870916: "alternate-data-streams",

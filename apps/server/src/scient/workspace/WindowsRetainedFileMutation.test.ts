@@ -64,7 +64,7 @@ describe.skipIf(!windows)("Windows capture and install", () => {
     }));
   it.each(["create", "replace"] as const)(
     "keeps another process’s %s at the target after capture",
-    (mode) => () =>
+    (mode) =>
       fixture(async (input, target) => {
         const result = await mutateRetainedFile(input, target, {
           at: async (point) => {

@@ -48,8 +48,9 @@ int platform_changed(void) { return ERROR_FILE_INVALID; }
 int platform_exchange_available(void) { return 0; }
 int platform_atomic_metadata_available(void) { return 0; }
 static int qualified_volume(HANDLE folder);
-int platform_atomic_create_available(const char *root) {
-  if (!root) return 0;
+int platform_atomic_create_available(const char *root) { (void)root; return 0; }
+int platform_windows_available(const char *root) {
+  if (!root) return 1;
   int error = 0;
   Context *context = platform_bind_parent(root, ".", &error);
   int available = context && !qualified_volume(context->parent);
@@ -344,7 +345,7 @@ static int cloud_filter_absent(HANDLE folder) {
     int found = 0;
     while (SUCCEEDED(result)) {
       INSTANCE_FULL_INFORMATION *info = (INSTANCE_FULL_INFORMATION *)buffer.bytes;
-      if (returned < sizeof(*info) || info->FilterNameBufferOffset + info->FilterNameLength > returned) { found = 1; break; }
+      if (returned < sizeof(*info) || (DWORD)info->FilterNameBufferOffset + info->FilterNameLength > returned) { found = 1; break; }
       if (info->FilterNameLength == 12 && !_wcsnicmp((PWSTR)(buffer.bytes + info->FilterNameBufferOffset), L"CldFlt", 6)) { found = 1; break; }
       result = next(search, InstanceFullInformation, buffer.bytes, sizeof(buffer.bytes), &returned);
     }
@@ -683,6 +684,7 @@ static void close_transaction(void) {
   if (transaction.stage) CloseHandle(transaction.stage);
   memset(&transaction, 0, sizeof(transaction));
 }
+void platform_windows_retire(void) { close_transaction(); }
 static int rename_handle(HANDLE file, HANDLE parent, const wchar_t *name) {
   size_t bytes = wcslen(name) * sizeof(wchar_t);
   size_t size = offsetof(FILE_RENAME_INFO, FileName) + bytes + sizeof(wchar_t);
@@ -769,6 +771,19 @@ static int restrict_policy(HANDLE file) {
   if (sid) LocalFree(sid);
   return error;
 }
+static int available_child(HANDLE parent, const wchar_t *name) {
+  wchar_t path[32768];
+  DWORD length = GetFinalPathNameByHandleW(parent, path, 32768, VOLUME_NAME_DOS);
+  size_t component = wcslen(name);
+  if (!length || length + component + 2 >= 32768) return ERROR_FILENAME_EXCED_RANGE;
+  if (path[length - 1] != L'\\') path[length++] = L'\\';
+  memcpy(path + length, name, (component + 1) * sizeof(wchar_t));
+  WIN32_FIND_DATAW data;
+  HANDLE find = FindFirstFileW(path, &data);
+  if (find == INVALID_HANDLE_VALUE) return (int)GetLastError();
+  FindClose(find);
+  return data.dwFileAttributes & (FILE_ATTRIBUTE_OFFLINE | 0x00040000UL | 0x00400000UL) ? 0x20000007 : 0;
+}
 static int windows_operation(Context *context, const char *operation, const char *source,
                             const char *destination, Entry *before, Entry *after_source,
                             Entry *after_destination, Flush *flush, int *applied) {
@@ -785,6 +800,8 @@ static int windows_operation(Context *context, const char *operation, const char
     transaction.parent_id = parent; transaction.record_id = record;
     int creation = !strcmp(operation, "win-prepare-create") || !strcmp(operation, "win-resume-stage");
     if (!creation) {
+      error = available_child(context->parent, from);
+      if (error) goto done;
       transaction.original = open_relative(context->parent, from,
         GENERIC_READ | DELETE | WRITE_DAC | READ_CONTROL, 0, FILE_SHARE_READ);
       if (transaction.original == INVALID_HANDLE_VALUE) { transaction.original = NULL; error = (int)GetLastError(); goto done; }

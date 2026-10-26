@@ -1592,7 +1592,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         intent.condition === "unguarded" &&
         (await fileIdentity(resolved.target)) === null);
     const qualified = creation
-      ? capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata
+      ? (capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata) ||
+        (capabilities.windowsMoveInstall === true && parentCapabilities.windowsMoveInstall === true)
       : capabilities.atomicExchange || capabilities.windowsMoveInstall === true;
     // Plain and native intents share mutation ids: a plain one claims its id before waiting,
     // and a native one refuses an id held for a different intent.

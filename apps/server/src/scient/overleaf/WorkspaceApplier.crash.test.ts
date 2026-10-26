@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 
 import {
   filePublicationTestHelper,
+  filePublicationProbeHelper,
   nativePublicationHost,
 } from "../workspace/fileExchange.testkit.ts";
 import { bytesRevision, type MutationPoint } from "../workspace/RetainedFileMutation.ts";
@@ -94,6 +95,9 @@ async function crashAt(
     cwd: h.cwd,
     owner: h.owner,
     helper: (await filePublicationTestHelper())!,
+    ...(HostProcess.Platform.defaultValue() === "win32"
+      ? { terminationHelper: (await filePublicationProbeHelper())! }
+      : {}),
     id: "crash",
     killAt,
     occurrence,
@@ -119,7 +123,7 @@ async function crashAt(
     encoding: "utf8",
     timeout: 60_000,
   });
-  if (HostProcess.Platform.defaultValue() === "win32") expect(run.status, run.stderr).not.toBe(0);
+  if (HostProcess.Platform.defaultValue() === "win32") expect(run.status, run.stderr).toBe(73);
   else expect(run.signal, run.stderr).toBe("SIGKILL");
 }
 type Harness = Parameters<Parameters<typeof fixture>[0]>[0];
