@@ -457,15 +457,6 @@ compose through the existing `scient/desktopUpdate/updateReadyNotice.tsx` single
 versions require current owned GitHub artifact availability from `serverReleaseAvailability.ts`,
 while the backend retains update permission, preflight, and installation authority.
 
-Mobile's generic `lib/markdownDocument.ts` retains its parser, HTML transform and
-entity decoder. A paired, module-level mount binds those existing tools to
-[`ScientMarkdownProjection.ts`](../../apps/mobile/src/native/ScientMarkdownProjection.ts),
-which owns canonical file/mention sources, native link occurrence mapping and
-entity projection. The existing `nativeMarkdownProjection` import remains the
-consumer surface. `native/EnrichedMarkdownText.tsx` supplies that projection to
-the native renderer; the reviewed Enriched dependency patch owns platform
-selection and clipboard handling. Stored message text remains authoritative.
-
 The map is source ownership evidence only. It does not replace public-codec, SQL/rollback, provider
 lifetime, packaging or manual UI acceptance evidence, and it does not turn source-text seam guards
 into behavior tests.
