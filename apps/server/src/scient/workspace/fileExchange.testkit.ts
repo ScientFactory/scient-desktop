@@ -29,6 +29,7 @@ import {
 import {
   ensureNativePrivateRetentionDirectory,
   nativeFilePublicationCapabilities,
+  hasNativeFileAuthority,
 } from "./NativeFilePublication.ts";
 
 const compiled = new Map<boolean, Promise<string | undefined>>();
@@ -79,13 +80,17 @@ export async function nativePublicationHost() {
   const helper = await filePublicationTestHelper();
   if (helper === undefined) return false;
   const capabilities = await nativeFilePublicationCapabilities(helper);
-  return (
-    capabilities.strictCurrentRoot &&
+  const admitted =
+    hasNativeFileAuthority(capabilities) &&
     capabilities.publicationLease &&
     capabilities.sharedPublicationLease &&
     capabilities.exclusiveMove &&
-    capabilities.exclusiveLink
-  );
+    capabilities.exclusiveLink;
+  if (HostProcess.Platform.defaultValue() === "linux" && !admitted)
+    throw new Error(
+      "Linux publication suites must run: Landlock ABI 3 and the native helper are required.",
+    );
+  return admitted;
 }
 
 /** Wraps the helper so it reports capabilities as unavailable, as the Windows helper does. */

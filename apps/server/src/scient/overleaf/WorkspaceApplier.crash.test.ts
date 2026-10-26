@@ -5,6 +5,7 @@
  * durable apply. A thrown hook cannot stand in for this: it runs the file
  * layer's failure handler, which a crash never does.
  */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -126,6 +127,27 @@ const editorReads = (h: Harness) =>
   h.run(h.files.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
 
 describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => {
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "recovers an unpublished destination stage after real process death",
+    () =>
+      fixture(async (h) => {
+        const added: Scenario = {
+          captured: { "guard.tex": "guard" },
+          target: { "a.tex": "new", "guard.tex": "guard" },
+        };
+        await crashAt(h, "create-staged", added);
+        expect(await read(h.cwd, "a.tex")).toBeNull();
+        await h.restart();
+        expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
+        expect(await read(h.cwd, "a.tex")).toBe("new");
+        expect(
+          (await NodeFSP.readdir(h.cwd)).filter((name) =>
+            name.startsWith(".scient-overleaf-apply-"),
+          ),
+        ).toEqual([]);
+      }),
+  );
+
   // Nothing was visible yet: the group's changed file must stop the staged write.
   it.live.each(["intent", "prepared"] as const)(
     "publishes nothing into a group changed after a crash at %s",
@@ -380,7 +402,11 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       await h.restart();
       await editorReads(h);
       const result = await h.apply("crash");
-      if (shape.point === "called" && "create" in shape) {
+      if (
+        shape.point === "called" &&
+        "create" in shape &&
+        HostProcess.Platform.defaultValue() !== "linux"
+      ) {
         expect(result.outcome).toBe("attention");
         expect(result.interrupted).toHaveLength(1);
         return;
@@ -554,14 +580,19 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     captured: { "guard.tex": "guard" },
     target: { "a.tex": "new", "guard.tex": "guard" },
   };
-  it.live("keeps an added file for review when its folder changed after a crash before it", () =>
+  it.live("classifies an interrupted create from its platform ownership evidence", () =>
     fixture(async (h) => {
       await crashAt(h, "checked", added);
       await put(h.cwd, { "other.tex": "other" });
       await h.restart();
       const result = await h.apply("crash");
-      expect(result.interrupted).toHaveLength(1);
-      expect(await read(h.cwd, "a.tex")).toBeNull();
+      if (HostProcess.Platform.defaultValue() === "linux") {
+        expect(result).toMatchObject({ outcome: "complete", matchesTarget: true });
+        expect(await read(h.cwd, "a.tex")).toBe("new");
+      } else {
+        expect(result.interrupted).toHaveLength(1);
+        expect(await read(h.cwd, "a.tex")).toBeNull();
+      }
     }),
   );
   it.live("does not add a file again once removed after a crash just after adding it", () =>

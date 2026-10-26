@@ -29,6 +29,12 @@ Context *platform_bind(const char *root, const char *parent, const char *record,
 void platform_close(Context *context);
 int platform_binding(Context *context, Entry *root, Entry *parent, Entry *record);
 int platform_strict_available(void);
+#ifndef _WIN32
+int platform_folder_object_available(void);
+#endif
+#ifdef __linux__
+int platform_linux_folder(const char *path, int directory_only);
+#endif
 int platform_policy(Context *context, const char *mode, const char *root, const char *record);
 Context *platform_bind_parent(const char *root, const char *parent, int *error);
 int platform_parent_binding(Context *context, Entry *root, Entry *parent);
