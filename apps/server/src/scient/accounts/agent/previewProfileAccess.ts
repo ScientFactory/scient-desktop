@@ -18,7 +18,10 @@ export const filterPreviewProfiles = Effect.fn("AccountsAgent.filterPreviewProfi
   status: PreviewAutomationStatus,
 ) {
   const accounts = yield* AccountsService;
-  const session = yield* accounts.forSession(scope);
+  const session = yield* accounts.forSession(
+    scope,
+    status.profiles?.map((profile) => profile.id),
+  );
   const allowed = (id: string) =>
     session.agentAccess &&
     session.profiles.some((profile) => profile.profileId === id && profile.access !== "off");
@@ -66,7 +69,10 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
         message:
           "This browser profile is unavailable to this session. Change its access in Settings → Accounts.",
       });
-    const session = yield* accounts.forSession(scope);
+    const session = yield* accounts.forSession(
+      scope,
+      status.profiles?.map((profile) => profile.id),
+    );
     const record =
       session.profiles.find((item) => item.profileId === profileId) ??
       defaultBrowserProfileRecord(profileId);

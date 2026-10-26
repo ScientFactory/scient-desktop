@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import { AccountsService } from "../AccountsService.ts";
+import { makeHarness } from "../AccountsTestkit.ts";
 import { fakeAccounts } from "./AccountsService.testkit.ts";
 import { authorizePreviewProfile, filterPreviewProfiles } from "./previewProfileAccess.ts";
 
@@ -113,4 +114,14 @@ it.effect(
         )).profiles,
       ).toEqual([]);
     }),
+);
+
+it.effect("keeps unrecorded named profiles from the browser inventory discoverable", () =>
+  Effect.gen(function* () {
+    const { service } = yield* makeHarness();
+    const filtered = yield* filterPreviewProfiles(scope, status).pipe(
+      Effect.provideService(AccountsService, service),
+    );
+    expect(filtered.profiles).toEqual(status.profiles);
+  }).pipe(Effect.scoped),
 );

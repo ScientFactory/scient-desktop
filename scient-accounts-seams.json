@@ -95,7 +95,7 @@
     },
     {
       "path": "apps/web/src/routeTree.gen.ts",
-      "anchor": "ChatSettingsAccountsRouteImport",
+      "anchor": "import { Route as ChatSettingsAccountsRouteImport }",
       "purpose": "Generated registration for Settings Accounts; regenerated from routes without hand edits or fork markers."
     },
     {
@@ -180,13 +180,18 @@
     },
     {
       "path": "packages/contracts/src/previewAutomation.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: internal account operations use the authenticated browser rail.",
+      "anchor": "Scient Accounts: internal account operations use the authenticated browser rail.",
       "purpose": "Internal account operations use the authenticated browser rail."
     },
     {
       "path": "apps/server/src/preview/ServerBrowser.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: execute account operations over server and desktop CDP sessions.",
       "purpose": "Execute account operations over server and desktop CDP sessions."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
+      "anchor": "Scient Accounts: provider sessions receive account tools.",
+      "purpose": "Expect the account capability in provider session grants."
     }
   ],
   "scientMounts": [
@@ -244,6 +249,26 @@
       "path": "scient-extensions-seams.json",
       "anchor": "Accounts reuses Extensions public-address validation and credential-response redaction.",
       "purpose": "Record the cross-feature mount for Accounts outbound policy reuse."
+    },
+    {
+      "path": "apps/server/src/scient/operations/AgentCapabilityBudget.test.ts",
+      "anchor": "actual41Bytes",
+      "purpose": "Include the five account tools in the eager schema inventory."
+    },
+    {
+      "path": "packages/scient-analytics/src/wireContract.ts",
+      "anchor": "\"accounts\",",
+      "purpose": "Accept Accounts as a settings section in analytics events."
+    },
+    {
+      "path": "apps/server/src/server.test.ts",
+      "anchor": "Scient Accounts: isolate account storage and key handling",
+      "purpose": "Provide a synthetic Accounts owner to the shared server test harness."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/worktree/registration.test.ts",
+      "anchor": "Scient Accounts: keep MCP fixtures away",
+      "purpose": "Provide an in-memory Accounts owner to MCP registration tests."
     }
   ]
 }

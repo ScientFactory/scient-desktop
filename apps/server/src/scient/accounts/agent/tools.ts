@@ -40,7 +40,7 @@ const list = metadata(
     ...common,
     description:
       "List accounts and browser profiles available to this session, with permitted ways to use them. Never returns values.",
-    parameters: Schema.Struct({}),
+    parameters: Tool.EmptyParams,
     success: Schema.Struct({
       accounts: Schema.Array(
         Schema.Struct({

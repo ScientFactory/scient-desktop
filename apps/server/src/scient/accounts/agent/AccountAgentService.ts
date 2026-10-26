@@ -76,7 +76,6 @@ export const accountAgentOperations = {
   scient_accounts_list: Effect.fn("AccountsAgent.list")(function* () {
     const accounts = yield* AccountsService;
     const scope = yield* accountSessionScope();
-    const session = yield* accounts.forSession(scope);
     const invocation = yield* AgentInvocationContext;
     const broker = yield* PreviewAutomationBroker;
     const browser = invocation.capabilities.has("preview")
@@ -89,6 +88,10 @@ export const accountAgentOperations = {
           })
           .pipe(Effect.orElseSucceed(() => undefined))
       : undefined;
+    const session = yield* accounts.forSession(
+      scope,
+      browser?.profiles?.map((profile) => profile.id),
+    );
     return {
       accounts: session.agentAccess
         ? session.accounts

@@ -175,9 +175,8 @@ export function PasswordStores({
               });
           } catch {
             toastManager.add({ type: "error", title: "Could not read password file" });
-          } finally {
-            setBusy(false);
           }
+          setBusy(false);
         }}
       />
     </SettingsSection>

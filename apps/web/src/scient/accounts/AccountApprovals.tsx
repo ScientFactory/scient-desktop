@@ -23,15 +23,12 @@ export function AccountApprovals({
   const run = async (approvalId: string, decision: AccountApprovalDecision) => {
     if (!canWrite || busy.has(approvalId)) return;
     setBusy((current) => new Set([...current, approvalId]));
-    try {
-      await respond({ approvalId, decision });
-    } finally {
-      setBusy((current) => {
-        const next = new Set(current);
-        next.delete(approvalId);
-        return next;
-      });
-    }
+    await respond({ approvalId, decision });
+    setBusy((current) => {
+      const next = new Set(current);
+      next.delete(approvalId);
+      return next;
+    });
   };
   return (
     <div className="grid gap-2">

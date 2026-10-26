@@ -82,12 +82,18 @@ function ProfilePicture({
   );
 }
 
-function SignedInSites({ profileId }: { profileId: string }) {
+function SignedInSites({
+  profileId,
+  environmentId,
+}: {
+  profileId: string;
+  environmentId: EnvironmentId;
+}) {
   const [sites, setSites] = useState<ReadonlyArray<{ domain: string }> | null>(null);
   useEffect(() => {
     let live = true;
     void window.desktopBridge?.accounts
-      ?.signedInSites(profileId)
+      ?.signedInSites(profileId, environmentId)
       .then((value) => {
         if (live) setSites(value);
       })
@@ -95,7 +101,7 @@ function SignedInSites({ profileId }: { profileId: string }) {
     return () => {
       live = false;
     };
-  }, [profileId]);
+  }, [profileId, environmentId]);
   return sites?.length ? (
     <Tooltip>
       <TooltipTrigger
@@ -197,10 +203,11 @@ export function BrowserImportDialog({
         }
       setSelected((current) => new Set([...current].filter((key) => !done.has(key))));
       if (done.size === selected.size) onClose();
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
+    } catch {
+      profileError();
     }
+    inFlight.current = false;
+    setBusy(false);
   };
   return (
     <Dialog
@@ -350,9 +357,8 @@ export function BrowserProfiles({
       setSiteRevision((revision) => revision + 1);
     } catch {
       profileError();
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
   const refresh = async (profileId: string, record: BrowserProfileRecord) => {
     if (!previewBridge || !record.source) return;
@@ -476,7 +482,11 @@ export function BrowserProfiles({
                       .join(" · ")}
                   </span>
                 ) : null}
-                <SignedInSites key={`${profile.id}:${siteRevision}`} profileId={profile.id} />
+                <SignedInSites
+                  key={`${profile.id}:${siteRevision}`}
+                  profileId={profile.id}
+                  environmentId={environmentId}
+                />
               </div>
             </div>
           }

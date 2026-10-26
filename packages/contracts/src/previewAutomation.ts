@@ -64,7 +64,7 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "hover",
   "select",
   "drag",
-  // SCIENT-FORK:START — Scient Accounts: internal account operations use the authenticated browser rail.
+  // SCIENT-FORK:START — Scient Accounts: server browser supports internal account operations.
   "accountCookies",
   "accountType",
   "accountWaitForLoad",

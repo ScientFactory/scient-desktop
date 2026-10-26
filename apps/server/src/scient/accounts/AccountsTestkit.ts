@@ -107,3 +107,8 @@ export const website = (value = syntheticValue()) => ({
 });
 export const secretEquals = (left: Redacted.Redacted<string> | undefined, right: string) =>
   left !== undefined && Redacted.value(left) === right;
+
+export const layer = Layer.effect(
+  AccountsService,
+  makeHarness().pipe(Effect.map(({ service }) => service)),
+);

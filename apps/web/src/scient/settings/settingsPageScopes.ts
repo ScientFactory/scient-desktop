@@ -16,7 +16,7 @@ const SINGLE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
 
 const SERVER_ONLY_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   "/settings/documents": true,
-  // SCIENT-FORK:START — Scient Accounts: scope account grants to one server.
+  // SCIENT-FORK:START — Scient Accounts: account settings ignore project scopes.
   "/settings/accounts": true,
   // SCIENT-FORK:END
   "/settings/extensions": true,

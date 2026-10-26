@@ -144,9 +144,8 @@ function DesktopBrowserAccountControls({
       }
     } catch {
       toastManager.add({ type: "error", title: "Could not fill sign-in" });
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
   };
   if (!data || !canWrite) return null;
   return (

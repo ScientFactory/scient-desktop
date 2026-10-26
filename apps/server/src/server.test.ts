@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: isolate account storage and key handling in server tests.
+import * as AccountsTestkit from "./scient/accounts/AccountsTestkit.ts";
+// SCIENT-FORK:END
 // @effect-diagnostics nodeBuiltinImport:off - HTTP router integration uses native transport boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
@@ -1265,6 +1268,9 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer
       .pipe(
+        // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses.
+        Layer.provide(AccountsTestkit.layer),
+        // SCIENT-FORK:END
         Layer.provide(CloudLink.layer),
         Layer.provide(
           Layer.mock(ConnectReachability.ConnectReachability)({

@@ -3,7 +3,7 @@
 Connect something once, and every agent can use it the way the user allows. Accounts covers website
 sign-ins, library access, API keys, databases, command-line logins and browser profiles. It owns
 Scient's encrypted store and the links to values kept in the system keychain, 1Password or Custom
-models. Settings → Accounts is its page; agents use it through `scient_account*` tools.
+models. Settings → Accounts is its page ([user guide](../user/accounts.md)); agents use it through `scient_account*` tools.
 
 Code: `apps/server/src/scient/accounts`, `apps/web/src/scient/accounts`,
 `apps/desktop/src/scient/accounts`, contracts in `packages/contracts/src/scient/accounts.ts`,
@@ -92,7 +92,7 @@ The store lives in the server, on the machine where agents run.
 ### Existing secrets
 
 - **Extensions connectors** (`connector-<uuid>`): Accounts provides the `ConnectorCredentialStore`
-  implementation. It keeps the agreed port and names, encrypts envelopes, and reads a legacy
+  implementation (`AccountsConnectorCredentials.ts`). It keeps the agreed port and names, encrypts envelopes, and reads a legacy
   plaintext envelope once, rewriting it encrypted. Extensions still owns connectors.
 - **Custom models keys** stay where Custom models keeps them, because its rotation and process
   lifetime rules depend on that store. An API key account links to a connection (`custom-model`
@@ -144,6 +144,9 @@ agent asks the user to finish in the browser.
 The pure parts (`signIn/` detection result → next action, origin matching, TOTP) are Node-tested;
 the detection script itself is exercised against fixture pages.
 
+The internal preview operations are `accountCookies`, `accountType` and `accountWaitForLoad`;
+they use the authenticated browser rail and are not exposed as agent tools.
+
 ### Sign-ins for scripts
 
 `scient_account_browser_session` reads the profile's cookies for the requested site through the
@@ -165,7 +168,8 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   and access. Nothing is kept unless the user saves.
 - **Autofill**: a key button appears in the browser toolbar when an account matches the page; it
   asks the server for that account's values (`accounts.fillValues`, refused unless the page origin
-  matches) and fills the form in the guest.
+  matches) and fills the form in the guest. The desktop advertises `originBoundFill`; the web sends
+  `expectedOrigin` so the guest rejects navigation races and cross-origin frames.
 - **Approval cards** appear above the composer of the thread that asked, and on the Accounts page.
 
 ## Cookie encryption
@@ -200,3 +204,6 @@ always need Touch ID or the Mac password. Nothing else in Accounts depends on th
   provider has one process per session.
 - General improvements (naming imported profiles after their source profile, carrying its picture)
   are offered upstream; see `UPSTREAM.md`.
+
+The analytics gateway must accept the `accounts` settings section before release; regenerate
+its wire contract using the [analytics deployment procedure](product-analytics.md).
