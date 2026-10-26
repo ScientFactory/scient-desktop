@@ -175,7 +175,8 @@ async function qualify() {
     "Pass AppImage, extracted root, report, baseline AppImage and extracted baseline root",
   );
   const { resources, archive } = inspectLinuxPayload(root);
-  qualifyPackagedOverleaf({ executable: image, electron: true });
+  // The probe cannot run through the AppImage file itself: its AppRun prepends
+  // --no-sandbox, which Electron-as-Node rejects before the probe's --eval.
   qualifyPackagedOverleaf({
     executable: NodePath.join(root, "scient"),
     electron: true,
