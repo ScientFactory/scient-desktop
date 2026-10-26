@@ -52,6 +52,11 @@ export async function windowsNativeFile(
 }
 
 export async function windowsFileIdentity(path: string) {
+  if (
+    path.startsWith("\\\\") &&
+    (!path.startsWith("\\\\?\\") || path.toUpperCase().startsWith("\\\\?\\UNC\\"))
+  )
+    throw new WindowsNativeFileError("network-filesystem");
   const info = await windowsNativeFile(path);
   if (info.code === 2 || info.code === 3) return null;
   if (info.code !== 0 || !info.identity)
