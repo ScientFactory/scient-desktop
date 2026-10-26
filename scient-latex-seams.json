@@ -46,6 +46,7 @@
   ],
   "latexDiffSignals": [
     "ScientLatex",
+    "ScientPreviewExportActions",
     "scientLatex",
     "(/|~)scient/latex",
     "scient_latex_",
@@ -119,6 +120,16 @@
       "path": "apps/web/src/components/ChatView.tsx",
       "anchor": "useScientRightPanelOpeners",
       "purpose": "Open a diagnostic or inverse-SyncTeX source at its reported line through the inherited right-panel store."
+    },
+    {
+      "path": "apps/web/src/components/preview/PreviewView.tsx",
+      "anchor": "<ScientPreviewExportActions",
+      "purpose": "Supply Scient-owned Open PDF and Save PDF actions to the preview more menu's extraItems slot, preserving live-tab export availability."
+    },
+    {
+      "path": "apps/web/src/components/preview/PreviewMoreMenu.tsx",
+      "anchor": "{extraItems}",
+      "purpose": "Mount optional Scient-owned menu items and keep their async action owners mounted while the preview menu closes."
     },
     {
       "path": "apps/web/src/components/files/filePreviewMode.ts",
