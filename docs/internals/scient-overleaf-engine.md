@@ -32,6 +32,20 @@ rewriting it on every command (it grew to 84 MB, with 22 GB of leftover partial
 copies) and costing about 0.1 s per command. A Git found earlier on `PATH`
 (Homebrew, `/usr/local`) is used as before.
 
+Windows discovery accepts only real `.exe` files and tries the next candidate
+when one cannot run or is older than Git 2.39. Linux uses PATH and system Git;
+the Homebrew fallback is macOS-only. Every command pins `core.autocrlf=false`,
+`core.fileMode=false` and `core.longpaths=true`, with an empty credential helper.
+Windows scratch directories are created with the publication helper's owner-only
+access list before any token is written. Executor startup sweeps abandoned
+`git-*` scratch directories on every platform.
+
+Cancellation terminates the owned Git process group on macOS/Linux and uses
+`taskkill /T /F` on Windows. There is no Windows Job Object launcher: Git can
+survive a server crash. A send attempt is recorded before Git starts, so recovery
+keeps an interrupted send unknown and never resends it; a leftover fetch does
+not publish anything.
+
 A review reads the blobs it needs in one `cat-file --batch` run each (small new
 blobs from Overleaf checked for LFS pointers, and the bytes of every file it
 would write), not one Git run per file; each blob and their total are held to
