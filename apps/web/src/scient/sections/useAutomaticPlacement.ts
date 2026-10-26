@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react"
 
 import {
   EMPTY_PLACEMENT,
-  displayedPlacementOrder,
+  displayedPlacementOrders,
   manuallyPlaceThread,
   readPlacement,
   reconcilePlacement,
@@ -85,16 +85,17 @@ export function useAutomaticPlacement(input: {
       frozen.size > 0 && frozen.has(parseScopedThreadKey(key)?.environmentId ?? "");
   })();
   const state = !enabled || saved.key !== storageKey ? EMPTY_PLACEMENT : saved.state;
-  // Reconciliation runs after commit; until then, unseen rows show where it will place them.
-  const orders = new Map(
-    groups.map((group) => [
-      group.id,
-      displayedPlacementOrder(
-        state.groups.find((entry) => entry.id === group.id),
-        group.rows,
-      ),
-    ]),
-  );
+  // Reconciliation commits in a layout effect; render shows its result from the first commit.
+  const orders = enabled
+    ? displayedPlacementOrders(
+        state,
+        groups,
+        input.openKey,
+        clock,
+        isFrozen,
+        input.ready && !paused,
+      )
+    : new Map<string, readonly string[]>();
   const writes = useRef(new Map<string, { before: string | null; after: string }>());
   const moves = useRef(
     new Map<string, { before: string | null; after: string; row: PlacementRow }>(),

@@ -203,34 +203,33 @@ export function reconcilePlacement(
 }
 
 /**
- * The order to show for complete `rows` (canonical order) before reconciliation has seen them
- * all: saved positions, with each unknown row placed where reconciliation will put it.
+ * Each group's order before the layout effect reconciles: the same reconciliation, with known
+ * rows' order keys held for the acknowledgement bridges, and every row held while not `live`.
  */
-export function displayedPlacementOrder(
-  group: PlacementGroup | undefined,
-  rows: readonly PlacementRow[],
-): string[] {
-  const keys = rows.map((row) => row.key);
-  if (group === undefined) {
-    const upper = rows.filter((row) => row.eligible).map((row) => row.key);
-    return [...upper, ...rows.filter((row) => !row.eligible).map((row) => row.key)];
-  }
-  const present = new Set(keys);
-  let order = group.order.filter((key) => present.has(key));
-  const known = new Set(order);
-  const upper = new Set(group.upper.filter((key) => present.has(key)));
-  let arrived = false;
-  for (const row of rows) {
-    if (known.has(row.key)) continue;
-    order = manualOrderForPlacement(order, keys, row.key);
-    if (!row.eligible) continue;
-    order = atBoundary(order, upper, row.key);
-    upper.add(row.key);
-    arrived = true;
-  }
-  return arrived
-    ? [...order.filter((key) => upper.has(key)), ...order.filter((key) => !upper.has(key))]
-    : order;
+export function displayedPlacementOrders(
+  state: PlacementState,
+  input: readonly PlacementInput[],
+  openKey: string | null,
+  now: number,
+  isFrozen: (key: string) => boolean,
+  live: boolean,
+): ReadonlyMap<string, readonly string[]> {
+  const saved = new Map(
+    state.groups.flatMap((group) => group.rows.map((row) => [row.key, row.orderKey] as const)),
+  );
+  const next = reconcilePlacement(
+    state,
+    input.map((group) => ({
+      ...group,
+      rows: group.rows.map((row) =>
+        saved.has(row.key) ? { ...row, orderKey: saved.get(row.key)! } : row,
+      ),
+    })),
+    openKey,
+    now,
+    live ? isFrozen : () => true,
+  );
+  return new Map(next.groups.map((group) => [group.id, group.order]));
 }
 
 /** `items` in placement order; items outside it keep their relative order at the end. */

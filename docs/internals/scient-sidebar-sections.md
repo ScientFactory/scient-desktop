@@ -230,9 +230,11 @@ section when un-settled or woken.
   prevent collisions. An arrival appends below existing upper members, then re-forms the
   upper group at the top; transitions that remain eligible keep their place. Departures
   prepend to inactive rows, with simultaneous departures preserving their visible order.
-  Reconciliation runs after commit, so both views render through `displayedPlacementOrder`:
-  saved positions, with rows it has not seen yet already where it will place them. An
-  arrival never renders at the bottom first, including before placement is ready.
+  Reconciliation commits in a layout effect, so both views render through
+  `displayedPlacementOrders`: the same reconciliation, run during render, with known rows'
+  order keys held for the acknowledgement bridges. Arrivals and transitions show in their
+  final places from the first commit. Before placement is ready, and while paused, saved
+  rows hold and an unseen row joins its canonical neighbours.
 - **Unsynchronized environments:** placement waits only until the catalog lists every
   environment (`frozenPlacementEnvironmentsKeyAtom`). After that, an enabled environment
   without a live thread list is frozen: its rows keep their saved eligibility and order

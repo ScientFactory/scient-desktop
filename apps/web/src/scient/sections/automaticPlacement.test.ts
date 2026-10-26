@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import {
   EMPTY_PLACEMENT,
-  displayedPlacementOrder,
+  displayedPlacementOrders,
   manuallyPlaceThread,
   manualOrderForPlacement,
   readPlacement,
@@ -164,24 +164,25 @@ it("projects only the dragged row onto saved manual order", () => {
     "c",
   ]);
 });
-it("shows rows reconciliation has not seen where it will place them", () => {
-  const state = update(EMPTY_PLACEMENT, ["a"]);
-  const next = rows(["n", "x", "a", "b", "c", "m"], ["a", "n"]);
-  expect(displayedPlacementOrder(state.groups[0], next[0]!.rows)).toEqual(
-    order(reconcilePlacement(state, next, null, 0)),
-  );
-  expect(displayedPlacementOrder(state.groups[0], next[0]!.rows)).toEqual([
-    "a",
-    "n",
-    "x",
-    "b",
-    "c",
-    "m",
-  ]);
-  const seed = rows(["x", "a", "b", "c"], ["b", "c"]);
-  expect(displayedPlacementOrder(undefined, seed[0]!.rows)).toEqual(
-    order(reconcilePlacement(EMPTY_PLACEMENT, seed, null, 0)),
-  );
+it("renders what reconciliation will commit, holding unacknowledged keys and paused rows", () => {
+  const state = update(EMPTY_PLACEMENT, []);
+  const shown = (input: PlacementInput[], live = true) =>
+    displayedPlacementOrders(state, input, null, 0, () => false, live).get("general");
+  // A known row's activation and an arrival in the same snapshot.
+  const batch = rows(["x", "a", "b", "c", "n"], ["b", "n"]);
+  expect(shown(batch)).toEqual(order(reconcilePlacement(state, batch, null, 0)));
+  expect(shown(batch)).toEqual(["b", "n", "x", "a", "c"]);
+  // A shell still carrying a pre-drop key is not a remote move.
+  const promoted = update(EMPTY_PLACEMENT, ["b"]);
+  const stale = rows(["x", "a", "b", "c"], ["b"]).map((group) => ({
+    ...group,
+    rows: group.rows.map((row) => (row.key === "b" ? { ...row, orderKey: "0" } : row)),
+  }));
+  expect(
+    displayedPlacementOrders(promoted, stale, null, 0, () => false, true).get("general"),
+  ).toEqual(["b", "x", "a", "c"]);
+  // Paused or not ready: known rows hold; an unseen row joins its canonical neighbours.
+  expect(shown(batch, false)).toEqual(["x", "a", "b", "c", "n"]);
 });
 it("judges a drop by the rows the user saw, not rows a filter hides", () => {
   const current = rows(["h", "x", "a"], ["a"]);

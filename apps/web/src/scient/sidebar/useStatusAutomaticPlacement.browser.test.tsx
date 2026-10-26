@@ -184,6 +184,19 @@ it("keeps a manual exception through project filtering, persistence and reload, 
   expect(new Set(fixture.commits.map((commit) => commit.join()))).toEqual(new Set(["b,c,x,a"]));
 });
 
+it("commits a batched activation and arrival in their reconciled places from the first commit", async () => {
+  using fixture = setup();
+  const quiet = [thread("x"), thread("a"), thread("b")];
+  await using screen = await render(
+    fixture.ui({ ...fixture.input, threads: quiet, activeThreads: quiet }),
+  );
+  expect(order(screen.container)).toEqual(["x", "a", "b"]);
+  const batch = [thread("x"), thread("a"), thread("b", true), thread("n", true)];
+  fixture.commits.length = 0;
+  await screen.rerender(fixture.ui({ ...fixture.input, threads: batch, activeThreads: batch }));
+  expect(new Set(fixture.commits.map((commit) => commit.join()))).toEqual(new Set(["b,n,x,a"]));
+});
+
 it("leaves the Working beta's order intact and stops invisible Status timers", async ({
   signal,
 }) => {
