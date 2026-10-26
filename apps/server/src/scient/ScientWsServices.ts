@@ -17,7 +17,15 @@ import * as ProviderConnectionManager from "./providerLifecycle/ProviderConnecti
 import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifecycleCoordinator.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
 
+// SCIENT-FORK:START — Scient Accounts: capture the shared owner for each client connection.
+import { AccountsService } from "./accounts/AccountsService.ts";
+import { accountsForRpc } from "./accounts/AccountsRpcHandlers.ts";
+// SCIENT-FORK:END
+
 export const captureScientWsServices = Effect.gen(function* () {
+  // SCIENT-FORK:START — Scient Accounts: preserve one owner across WebSocket connections.
+  const accounts = yield* accountsForRpc;
+  // SCIENT-FORK:END
   const analysis = yield* AnalysisService.AnalysisService;
   const compute = yield* ComputeSessionService.ComputeSessionService;
   const runtimePreferences = yield* ScientificRuntimePreferences;
@@ -28,6 +36,9 @@ export const captureScientWsServices = Effect.gen(function* () {
     yield* ProviderLifecycleCoordinator.ProviderLifecycleCoordinator;
   const providerRuntimeManager = yield* ProviderRuntimeManager.ProviderRuntimeManager;
   return Layer.mergeAll(
+    // SCIENT-FORK:START — Scient Accounts: reuse the captured owner.
+    Layer.succeed(AccountsService, accounts),
+    // SCIENT-FORK:END
     Layer.succeed(
       ProviderLifecycleCoordinator.ProviderLifecycleCoordinator,
       providerLifecycleCoordinator,

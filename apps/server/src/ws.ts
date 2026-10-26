@@ -9,6 +9,9 @@ import {
   // SCIENT-FORK:START — Scient extensions RPCs.
   WsExtensionsRpcGroup,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: typed RPC family.
+  WsAccountsRpcGroup,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as DocumentHostBroker from "./scient/documents/DocumentHostBroker.ts";
@@ -314,6 +317,9 @@ import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntime
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
+// SCIENT-FORK:START — Scient Accounts: service-backed transport.
+import { accountsForRpc, makeAccountsRpcHandlers } from "./scient/accounts/AccountsRpcHandlers.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions RPCs.
 import {
   ConnectorRuntime,
@@ -1414,6 +1420,9 @@ export const layerWsRpc = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      // SCIENT-FORK:START — Scient Accounts: share the server-lifetime account owner.
+      const accounts = yield* accountsForRpc;
+      // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient extensions services.
       const extensionServices = {
         connectorRuntime: yield* ConnectorRuntime,
@@ -3816,6 +3825,11 @@ export const layerWsRpc = (
         WsDeviceAndTelemetryRpcGroup.toLayer(handlers5),
         WsScientificRpcGroup.toLayer(handlers6),
         WsExtensionsRpcGroup.toLayer(handlers7),
+        // SCIENT-FORK:START — Scient Accounts: mount thin handlers.
+        WsAccountsRpcGroup.toLayer(
+          makeAccountsRpcHandlers({ accounts, observeRpcEffect, observeRpcStream }),
+        ),
+        // SCIENT-FORK:END
       );
       // SCIENT-FORK:END
     }),
