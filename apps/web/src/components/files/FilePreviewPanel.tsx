@@ -2645,6 +2645,7 @@ export default function FilePreviewPanel({
                     },
               }}
               origin="File"
+              embedded
               onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
             />
           ) : relativePath && file.error && file.data === null ? (
