@@ -136,17 +136,17 @@
     {
       "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
       "anchor": "/settings/extensions",
-      "purpose": "Link Settings → Extensions from the maintained Settings shell."
+      "purpose": "Link Settings \u2192 Extensions from the maintained Settings shell."
     },
     {
       "path": "apps/web/src/components/settings/settingsSearch.ts",
       "anchor": "/settings/extensions",
-      "purpose": "Make Settings → Extensions discoverable through Settings search."
+      "purpose": "Make Settings \u2192 Extensions discoverable through Settings search."
     },
     {
       "path": "apps/web/src/routeTree.gen.ts",
       "anchor": "SettingsExtensionsRouteImport",
-      "purpose": "Generated registration for the fork-owned Settings → Extensions routes. Regenerated from apps/web/src/routes, never hand-edited, so it intentionally carries no SCIENT-FORK markers."
+      "purpose": "Generated registration for the fork-owned Settings \u2192 Extensions routes. Regenerated from apps/web/src/routes, never hand-edited, so it intentionally carries no SCIENT-FORK markers."
     },
     {
       "path": "packages/client-runtime/src/rpc/client.ts",
@@ -283,7 +283,7 @@
     {
       "path": "apps/web/src/scient/settings/settingsPageScopes.ts",
       "anchor": "\"/settings/extensions\"",
-      "purpose": "Scope Settings → Extensions to one environment, like the other per-server settings pages."
+      "purpose": "Scope Settings \u2192 Extensions to one environment, like the other per-server settings pages."
     },
     {
       "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.wake.testkit.ts",
@@ -294,6 +294,11 @@
       "path": "apps/web/src/scient/accounts/AccountsPage.tsx",
       "anchor": "extensionsInventory",
       "purpose": "Read Extensions connector summaries as read-only Accounts rows linked to their owning Settings page."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/AccountsConnectorCredentials.ts",
+      "anchor": "AccountsConnectorCredentials.readOwned",
+      "purpose": "Keep the Extensions credential port on the Accounts encrypted-envelope implementation."
     }
   ]
 }

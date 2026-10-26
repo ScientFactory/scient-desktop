@@ -102,6 +102,36 @@
       "path": "packages/contracts/src/clientRpcPermissions.ts",
       "anchor": "Scient Accounts: recheck credential and settings authority at execution.",
       "purpose": "Require destination settings-write authorization for account mutations and credential reads."
+    },
+    {
+      "path": "apps/server/src/ws.ts",
+      "anchor": "Scient Accounts: service-backed transport.",
+      "purpose": "Mount the Accounts RPC handlers on the shared server service."
+    },
+    {
+      "path": "apps/server/src/server.ts",
+      "anchor": "Scient Accounts: encrypted store and shared account service.",
+      "purpose": "Provide one Accounts service for RPC and agent consumers."
+    },
+    {
+      "path": "apps/server/src/auth/RpcAuthorization.ts",
+      "anchor": "Scient Accounts: declare read and settings-write permissions.",
+      "purpose": "Require read or settings-write authority for every Accounts RPC."
+    },
+    {
+      "path": "apps/server/src/observability/RpcInstrumentation.ts",
+      "anchor": "Scient Accounts: instrument sensitive account RPCs without payloads.",
+      "purpose": "Label Accounts RPCs without capturing their sensitive inputs."
+    },
+    {
+      "path": "scripts/lib/cli-external-packages.ts",
+      "anchor": "Scient Accounts: the 1Password SDK loads WASM",
+      "purpose": "Keep 1Password native and WASM runtime dependencies on disk."
+    },
+    {
+      "path": "third-party-licenses.config.json",
+      "anchor": "\"name\": \"@1password/sdk\"",
+      "purpose": "Supply the SDK and SDK core notices omitted from their npm packages."
     }
   ],
   "scientMounts": [
@@ -109,6 +139,21 @@
       "path": "apps/web/src/scient/settings/settingsPageScopes.ts",
       "anchor": "Scient Accounts: scope account grants to one server.",
       "purpose": "Choose one environment for account state and project grant controls."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ExtensionsLayers.ts",
+      "anchor": "Scient Accounts: migrate and encrypt connector envelopes",
+      "purpose": "Replace plaintext connector credentials with the encrypted Accounts implementation."
+    },
+    {
+      "path": "apps/server/src/scient/ScientWsServices.ts",
+      "anchor": "Scient Accounts: capture the shared owner",
+      "purpose": "Capture the server-lifetime Accounts owner for all WebSocket connections."
+    },
+    {
+      "path": "apps/server/src/customModels.ts",
+      "anchor": "Scient Accounts: linked keys use Custom models' validation",
+      "purpose": "Expose the owning key resolver for Accounts links."
     }
   ]
 }

@@ -36,12 +36,12 @@ project file.
 Secret fields per kind are fixed (`ACCOUNT_SECRET_FIELDS`); a command-line login's secret fields
 are its secret variable names. Each field has a source:
 
-| Source         | Where the value lives                                                                                   | Read                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `scient`       | Scient's encrypted store                                                                                | Decrypted in the server when used                    |
-| `keychain`     | An existing macOS Keychain, Windows Credential Manager or Linux Secret Service item (service + account) | `@napi-rs/keyring`, when used                        |
-| `1password`    | An `op://` reference                                                                                    | `@1password/sdk`, cached per session for rate limits |
-| `custom-model` | A Custom models connection's key                                                                        | Custom models' own resolver; stored once             |
+| Source         | Where the value lives                                                                                   | Read                                                  |
+| -------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `scient`       | Scient's encrypted store                                                                                | Decrypted in the server when used                     |
+| `keychain`     | An existing macOS Keychain, Windows Credential Manager or Linux Secret Service item (service + account) | `@napi-rs/keyring`, when used                         |
+| `1password`    | An `op://` reference                                                                                    | `@1password/sdk`, cached per account for five minutes |
+| `custom-model` | A Custom models connection's key                                                                        | Custom models' own resolver; stored once              |
 
 Links are read when needed, so a value stays in one place. On macOS the user approves Scient once
 per keychain item ("Always Allow"). On Windows and Linux any program running as the user can read
@@ -61,6 +61,10 @@ session may use, and `preview_open` refuses an Off profile (or asks for an Ask o
 default profile when the agent names none. Tabs the user opened in an Off profile stay theirs; the
 check covers the agent's own open.
 
+The server cannot enumerate profiles kept in a client's settings. `forSession(scope, profileIds)`
+accepts the preview inventory's ids so profiles without records receive the same defaults; its
+one-argument form includes built-in profiles and stored records.
+
 ## Storage
 
 The store lives in the server, on the machine where agents run.
@@ -73,11 +77,17 @@ The store lives in the server, on the machine where agents run.
   additional authenticated data, so a blob cannot be swapped into another record. One master key
   with per-blob nonces is enough for this threat model; there is no key-per-record wrapping.
 - Blobs are written through `ServerSecretStore` (owner-only files, atomic and durable replace):
-  `accounts-state` (records, profiles, settings, approvals), `accounts-value-<id>` (one value each)
+  `accounts-state` (records, profiles and settings), `accounts-value-<id>` (one value each)
   and `accounts-activity` (the last 500 uses). Everything is encrypted, including usernames and
   sites.
 - A store whose key is missing or wrong fails closed with `AccountsError("unavailable")`; it is
-  never silently reset.
+  never silently reset. A versioned `accounts-vault` sentinel remembers the key location and
+  authenticates it before any data is read; fallback keys use `accounts-master-key` through
+  `ServerSecretStore`. Changing keychain availability never silently moves an established key.
+- A service-account token is a separate encrypted value blob; connection settings retain only its
+  random reference. Pending approvals belong to the requesting process and are removed on
+  cancellation, timeout or restart. A failed metadata write retains the old value blobs and any new
+  unreferenced blobs, because the durable outcome of a failed filesystem sync can be uncertain.
 
 ### Existing secrets
 

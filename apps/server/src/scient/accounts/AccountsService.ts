@@ -94,6 +94,7 @@ export interface AccountsServiceShape {
   // Agent surface (Scient MCP tools).
   readonly forSession: (
     scope: AccountSessionScope,
+    profileIds?: ReadonlyArray<BrowserProfileId>,
   ) => Effect.Effect<SessionAccounts, AccountsError>;
   /**
    * Allowed passes at once; Ask waits for the user's card (denied at once when

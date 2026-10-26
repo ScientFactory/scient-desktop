@@ -213,6 +213,9 @@ import {
   ScientSkillsLayerLive,
   WorkspaceBindingResolverLayerLive,
 } from "./scient/ScientServerLayers.ts";
+// SCIENT-FORK:START — Scient Accounts: encrypted store and shared account service.
+import { ScientAccountsLayerLive } from "./scient/accounts/AccountsLayers.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions.
 import { ScientExtensionsLayerLive } from "./scient/extensions/ExtensionsLayers.ts";
 import * as ConnectorProxyRoute from "./scient/extensions/connectors/ConnectorProxyRoute.ts";
@@ -675,6 +678,9 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerOrchestrationApplication),
   // SCIENT-FORK:START — Scient extensions: provider sessions read connectors and record receipts.
   Layer.provideMerge(ScientExtensionsLayerLive),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: account grants are shared by RPC and agent consumers.
+  Layer.provideMerge(ScientAccountsLayerLive),
   // SCIENT-FORK:END
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(ScientSkillsLayerLive),
