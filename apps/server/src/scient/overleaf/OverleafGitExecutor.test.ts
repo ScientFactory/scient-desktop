@@ -186,6 +186,19 @@ describe("OverleafGitExecutor", () => {
     ),
   );
 
+  it.effect("refuses unavailable private scratch without taking down the service layer", () =>
+    withExecutor(({ work }) =>
+      Effect.gen(function* () {
+        const runtimeRoot = NodePath.join(work, "not-a-directory");
+        NodeFS.writeFileSync(runtimeRoot, "untouched");
+        const unavailable = yield* make({ runtimeRoot });
+        const error = yield* unavailable.availability.pipe(Effect.flip);
+        expect(error.reason).toBe("runtime-failed");
+        expect(NodeFS.readFileSync(runtimeRoot, "utf8")).toBe("untouched");
+      }),
+    ),
+  );
+
   it.effect("reports a failing command with its exit code and Git's message", () =>
     withExecutor(({ git, work }) =>
       Effect.gen(function* () {
