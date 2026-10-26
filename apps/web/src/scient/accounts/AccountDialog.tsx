@@ -460,17 +460,17 @@ export function AccountDialog({
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const save = useAccountCommand(accountsState.save, environmentId);
-  const choose = (entry: CatalogueEntry | null) => {
+  const typedSite = query
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .split("/")[0]!
+    .toLowerCase();
+  const choose = (entry: CatalogueEntry | null, kind: "website" | "api-key" = "website") => {
+    const details = catalogueDetails(entry, entry ? "" : typedSite);
     setDetails(
-      catalogueDetails(
-        entry,
-        entry
-          ? ""
-          : query
-              .trim()
-              .replace(/^https?:\/\//, "")
-              .split("/")[0],
-      ),
+      !entry && kind === "api-key"
+        ? { kind: "api-key", sites: typedSite ? [typedSite] : [], auth: { type: "bearer" } }
+        : details,
     );
     setName(entry?.name ?? query.trim());
   };
@@ -540,6 +540,12 @@ export function AccountDialog({
                     title={query.trim() || "Any website"}
                     description={KIND_LABELS.website}
                     onClick={() => choose(null)}
+                  />
+                  <DiscoveryListRow
+                    icon={<ExtensionIcon name={query.trim() || "API key"} />}
+                    title={query.trim() || "Any API key"}
+                    description={KIND_LABELS["api-key"]}
+                    onClick={() => choose(null, "api-key")}
                   />
                 </DiscoveryList>
               </>

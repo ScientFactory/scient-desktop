@@ -15,6 +15,8 @@ import { AgentInvocationContext } from "../../operations/AgentInvocationContext.
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { signIn } from "../signIn/engine.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
+
+const isAccountsError = Schema.is(AccountsError);
 import { AccountCookies, netscapeCookieJar } from "./cookies.ts";
 import { AccountSessionFiles, credentialContents, shellQuote } from "./sessionFiles.ts";
 import { accountRequest } from "./request.ts";
@@ -224,7 +226,10 @@ export const accountAgentOperations = {
               Redacted.value(values.token!),
               signal,
             ),
-          catch: () => fail("denied", "The account request was refused or could not be completed."),
+          catch: (cause) =>
+            isAccountsError(cause)
+              ? cause
+              : fail("denied", "The account request could not be completed."),
         });
         if (response.text && response.bytes.byteLength <= 256 * 1024)
           return { status: response.status, body: new TextDecoder().decode(response.bytes) };

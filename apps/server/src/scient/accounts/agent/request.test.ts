@@ -9,15 +9,15 @@ it("limits methods, origins and literal network addresses before account use", (
   expect(
     checkAccountRequest("https://api.example.com/resource", ["example.com"], "head", true).hostname,
   ).toBe("api.example.com");
-  for (const [url, sites, method] of [
-    ["https://api.example.com", ["example.com"], "POST"],
-    ["https://example.com.attacker.test", ["example.com"], "GET"],
-    ["https://127.0.0.1", ["https://127.0.0.1"], "GET"],
-    ["https://10.0.0.1", ["https://10.0.0.1"], "GET"],
-    ["https://169.254.169.254", ["https://169.254.169.254"], "GET"],
-    ["https://[::1]", ["https://[::1]"], "GET"],
+  for (const [url, sites, method, reason] of [
+    ["https://api.example.com", ["example.com"], "POST", "read-only"],
+    ["https://example.com.attacker.test", ["example.com"], "GET", "only be used on example.com"],
+    ["https://127.0.0.1", ["https://127.0.0.1"], "GET", "private addresses"],
+    ["https://10.0.0.1", ["https://10.0.0.1"], "GET", "private addresses"],
+    ["https://169.254.169.254", ["https://169.254.169.254"], "GET", "private addresses"],
+    ["https://[::1]", ["https://[::1]"], "GET", "private addresses"],
   ] as const)
-    expect(() => checkAccountRequest(url, sites, method, true)).toThrow("refused");
+    expect(() => checkAccountRequest(url, sites, method, true)).toThrow(reason);
 });
 
 it("injects each API auth form and removes every raw or applied credential from text and binary response bytes", async () => {

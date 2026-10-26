@@ -32,12 +32,12 @@ export function checkAccountRequest(
   method: string,
   readOnly: boolean,
 ) {
-  if (
-    !URL.canParse(url) ||
-    !matchesAccountOrigin(url, sites) ||
-    (readOnly && !["GET", "HEAD"].includes(method.toUpperCase()))
-  )
-    throw failure();
+  const refuse = (message: string) => new AccountsError({ reason: "denied", message });
+  if (!URL.canParse(url)) throw refuse("The request URL is invalid.");
+  if (!matchesAccountOrigin(url, sites))
+    throw refuse(`This account may only be used on ${sites.join(", ")}.`);
+  if (readOnly && !["GET", "HEAD"].includes(method.toUpperCase()))
+    throw refuse("This account is read-only: only GET and HEAD requests are allowed.");
   const parsed = new URL(url);
   const host = parsed.hostname.replace(/^\[|\]$/g, "");
   if (
@@ -45,7 +45,7 @@ export function checkAccountRequest(
     host.endsWith(".localhost") ||
     (NodeNet.isIP(host) !== 0 && !isPublicAddress(host))
   )
-    throw failure();
+    throw refuse("Requests to local or private addresses are not allowed.");
   return parsed;
 }
 
