@@ -4,6 +4,11 @@ import * as NodeUtil from "node:util";
 import * as Schema from "effect/Schema";
 import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
 
+import {
+  ensureNativePrivateRetentionDirectory,
+  resolveNativeFilePublicationHelperPath,
+} from "./NativeFilePublication.ts";
+
 export class WindowsNativeFileError extends Error {
   readonly reason: ScientOverleafFilesystemRefusalReason;
   constructor(reason: ScientOverleafFilesystemRefusalReason) {
@@ -11,7 +16,6 @@ export class WindowsNativeFileError extends Error {
     this.reason = reason;
   }
 }
-import { resolveNativeFilePublicationHelperPath } from "./NativeFilePublication.ts";
 
 const run = NodeUtil.promisify(NodeChildProcess.execFile);
 const Reply = Schema.Struct({
@@ -72,4 +76,19 @@ export async function windowsFileIdentity(path: string) {
               : "identity-unavailable",
     );
   return info.identity;
+}
+
+/** Revalidate existing policy natively; only a missing directory needs creation leases. */
+export async function windowsPrivateDirectory(path: string, create: boolean, helper: string) {
+  const info = await windowsNativeFile(path, "private", helper);
+  if ((info.code === 2 || info.code === 3) && create) {
+    await ensureNativePrivateRetentionDirectory(helper, path);
+    return;
+  }
+  if (info.code || info.syncManaged || info.identity?.type !== "directory") {
+    const error = new Error(info.syncManaged ? "sync-managed-folder" : "unsafe-directory");
+    if (info.code === 2 || info.code === 3) Object.assign(error, { code: "ENOENT" });
+    else if (info.code === 5) Object.assign(error, { code: "EACCES" });
+    throw error;
+  }
 }
