@@ -14,6 +14,9 @@ export const ScientOverleafFilesystemRefusalReason = Schema.Literals([
   "network-filesystem",
   "volatile-filesystem",
   "file-busy",
+  "alternate-data-streams",
+  "encrypted-file",
+  "multiple-hard-links",
   "online-only-file",
   "path-too-long",
   "component-too-long",
@@ -30,6 +33,11 @@ const FILESYSTEM_REFUSAL_TEXT: Record<ScientOverleafFilesystemRefusalReason, str
     "Move the project from the network drive to a supported local disk, then relink it.",
   "volatile-filesystem": "Move the project to a permanent local disk, then relink it.",
   "file-busy": "Close the program using this file, then sync again.",
+  "alternate-data-streams":
+    "Remove alternate data streams or move an ordinary copy into the project, then sync again.",
+  "encrypted-file":
+    "Decrypt this file or move an unencrypted copy into the project, then sync again.",
+  "multiple-hard-links": "Replace this hard-linked file with an independent copy, then sync again.",
   "online-only-file": "Download this file from your cloud storage first, then sync again.",
   "path-too-long":
     "Move the project to a shorter path or shorten its folder names, then relink it.",

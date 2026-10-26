@@ -626,8 +626,8 @@ int platform_operation(Context *context, const char *operation, const char *sour
 int platform_policy(Context *context, const char *mode, const char *root, const char *record) {
   (void)mode; (void)root; (void)record;
   int error = qualified_volume(context->root);
-  if (!error) error = qualified_volume(context->record);
-  if (!error) error = cloud_managed(context->record);
+  if (!error && context->record) error = qualified_volume(context->record);
+  if (!error && context->record) error = cloud_managed(context->record);
   return error;
 }
 #ifdef SCIENT_PUBLICATION_PROBE
@@ -773,6 +773,7 @@ static int windows_operation(Context *context, const char *operation, const char
         GENERIC_READ | GENERIC_WRITE | DELETE | WRITE_DAC | FILE_WRITE_ATTRIBUTES | READ_CONTROL,
         2, FILE_ATTRIBUTE_NORMAL, descriptor, FILE_SHARE_READ);
       if (transaction.stage == INVALID_HANDLE_VALUE) { transaction.stage = NULL; error = (int)GetLastError(); }
+      if (transaction.stage) *applied = -1;
       HANDLE payload = INVALID_HANDLE_VALUE;
       if (!error) {
         payload = open_relative(context->record, L"payload", GENERIC_READ, 0, FILE_SHARE_READ);

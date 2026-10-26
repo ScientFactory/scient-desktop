@@ -20,6 +20,8 @@ const Reply = Schema.Struct({
   ),
 });
 
+const decodeReply = Schema.decodeUnknownSync(Schema.fromJsonString(Reply));
+
 export async function windowsNativeFile(
   path: string,
   operation: "info" | "flags" | "private" = "info",
@@ -33,7 +35,7 @@ export async function windowsNativeFile(
     windowsHide: true,
     maxBuffer: 65536,
   });
-  return Schema.decodeUnknownSync(Schema.fromJsonString(Reply))(stdout);
+  return decodeReply(stdout);
 }
 
 export async function windowsFileIdentity(path: string) {
