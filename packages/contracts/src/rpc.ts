@@ -451,6 +451,27 @@ import {
   WsProviderPluginsActRpc,
 } from "./scient/extensionRpcs.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Accounts RPCs.
+import {
+  SCIENT_ACCOUNT_WS_METHODS,
+  WsAccountsActivityRpc,
+  WsAccountsApprovalRespondRpc,
+  WsAccountsFillValuesRpc,
+  WsAccountsImportPasswordsRpc,
+  WsAccountsKeychainCandidatesRpc,
+  WsAccountsOnePasswordConnectRpc,
+  WsAccountsOnePasswordDisconnectRpc,
+  WsAccountsProfileRemoveRpc,
+  WsAccountsProfileUpdateRpc,
+  WsAccountsRemoveRpc,
+  WsAccountsSaveRpc,
+  WsAccountsSetAgentAccessRpc,
+  WsAccountsSetControlsRpc,
+  WsAccountsSnapshotRpc,
+  WsAccountsSubscribeChangesRpc,
+  WsAccountsTestRpc,
+} from "./scient/accountRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
 import {
   SCIENT_PROVIDER_CONNECTION_WS_METHODS,
@@ -534,6 +555,10 @@ export const WS_METHODS = {
 
   // SCIENT-FORK:START — Scient extensions methods.
   ...SCIENT_EXTENSION_WS_METHODS,
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient Accounts methods.
+  ...SCIENT_ACCOUNT_WS_METHODS,
   // SCIENT-FORK:END
 
   shellOpenInEditor: "shell.openInEditor",
@@ -2430,6 +2455,27 @@ export const WsExtensionsRpcGroup = RpcGroup.make(
 );
 // SCIENT-FORK:END
 
+// SCIENT-FORK:START — Scient Accounts group.
+export const WsAccountsRpcGroup = RpcGroup.make(
+  WsAccountsActivityRpc,
+  WsAccountsApprovalRespondRpc,
+  WsAccountsFillValuesRpc,
+  WsAccountsImportPasswordsRpc,
+  WsAccountsKeychainCandidatesRpc,
+  WsAccountsOnePasswordConnectRpc,
+  WsAccountsOnePasswordDisconnectRpc,
+  WsAccountsProfileRemoveRpc,
+  WsAccountsProfileUpdateRpc,
+  WsAccountsRemoveRpc,
+  WsAccountsSaveRpc,
+  WsAccountsSetAgentAccessRpc,
+  WsAccountsSetControlsRpc,
+  WsAccountsSnapshotRpc,
+  WsAccountsSubscribeChangesRpc,
+  WsAccountsTestRpc,
+);
+// SCIENT-FORK:END
+
 export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsServerManagementRpcGroup,
   WsRepositoryRpcGroup,
@@ -2439,5 +2485,8 @@ export const WsRpcGroup = WsConversationRpcGroup.merge(
   WsDeviceAndTelemetryRpcGroup,
   // SCIENT-FORK:START — Scient extensions group.
   WsExtensionsRpcGroup,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts group.
+  WsAccountsRpcGroup,
   // SCIENT-FORK:END
 ).middleware(RpcScopeAuthorization);

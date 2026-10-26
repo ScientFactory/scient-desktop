@@ -6,7 +6,6 @@
     "apps/web/src/testUtils/shardWeights.json",
     "packages/contracts/src/scient/extensions.ts",
     "packages/contracts/src/scient/extensionRpcs.ts",
-    "packages/contracts/src/scient/secrets.ts",
     "apps/web/src/routes/_chat.settings.extensions.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.all.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.category.$category.tsx",

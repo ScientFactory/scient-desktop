@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "owner": "ScientFactory",
+  "ownedRoots": [
+    "apps/server/src/scient/accounts",
+    "apps/web/src/scient/accounts",
+    "apps/desktop/src/scient/accounts"
+  ],
+  "ownedFiles": [
+    "packages/contracts/src/scient/accounts.ts",
+    "packages/contracts/src/scient/accountRpcs.ts",
+    "packages/contracts/src/scient/desktopAccountsBridge.ts",
+    "packages/contracts/src/scient/secrets.ts",
+    "apps/web/src/routes/_chat.settings.accounts.tsx"
+  ],
+  "accountsDiffSignals": [
+    "scient/accounts",
+    "SCIENT_ACCOUNT_WS_METHODS",
+    "WsAccounts",
+    "AccountsService",
+    "Scient Accounts",
+    "scient_accounts?_"
+  ],
+  "upstreamMounts": [],
+  "scientMounts": []
+}

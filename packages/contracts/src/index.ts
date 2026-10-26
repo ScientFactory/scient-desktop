@@ -90,6 +90,11 @@ export * from "./scientSkills.ts";
 export * from "./scient/secrets.ts";
 export * from "./scient/extensions.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Accounts contracts (new files, no upstream edits).
+export * from "./scient/accounts.ts";
+export * from "./scient/accountRpcs.ts";
+export * from "./scient/desktopAccountsBridge.ts";
+// SCIENT-FORK:END
 export * from "./scientLatex.ts";
 export * from "./latexPdfBuild.ts";
 export * from "./browserPdfExport.ts";
