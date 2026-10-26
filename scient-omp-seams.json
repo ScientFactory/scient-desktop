@@ -203,7 +203,7 @@
     {
       "path": "packages/scient-analytics/src/wireContract.ts",
       "anchor": "export const ANALYTICS_PROVIDER_KINDS",
-      "purpose": "Keep external Oh My Pi and Scient Agent as separate bounded provider categories in the shared revision-7 analytics contract; custom labels remain other."
+      "purpose": "Keep external Oh My Pi and Scient Agent as separate bounded provider categories in the shared analytics contract; custom labels remain other."
     },
     {
       "path": "packages/scient-analytics/src/conformance.ts",
@@ -214,6 +214,11 @@
       "path": "packages/scient-analytics/fixtures/contract-v7.json",
       "anchor": "\"provider\": \"omp\"",
       "purpose": "Retain external Oh My Pi attribution in the shared generated revision-7 analytics fixture without assigning the shared analytics package to this provider seam."
+    },
+    {
+      "path": "packages/scient-analytics/fixtures/contract-v8.json",
+      "anchor": "\"provider\": \"omp\"",
+      "purpose": "Retain external Oh My Pi attribution in the shared generated revision-8 analytics fixture while adding the fixed Synced folders settings category."
     },
     {
       "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
