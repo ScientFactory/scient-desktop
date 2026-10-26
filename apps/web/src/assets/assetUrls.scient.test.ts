@@ -24,6 +24,7 @@ vi.mock("react", () => ({
   useRef: <A>(initial: A) => ({ current: initial }),
   useState: <A>(initial: () => A) => [initial(), () => undefined],
   useLayoutEffect: (effect: () => void) => effect(),
+  useInsertionEffect: (effect: () => void) => effect(),
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomRefresh: () => state.refresh,
