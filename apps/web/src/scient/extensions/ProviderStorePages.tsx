@@ -46,7 +46,13 @@ function StoreInstall({
   readonly entry: ProviderStoreEntry;
   readonly refresh: () => void;
 }) {
-  const { environmentId } = useExtensionsEnvironment();
+  const { environmentId, providers } = useExtensionsEnvironment();
+  const target =
+    entry.kind === "shared" && provider.driver === "scient"
+      ? (providers.find((item) => item.enabled && item.driver === "claudeAgent") ?? provider)
+      : provider;
+  const installed =
+    entry.installed || target.plugins?.some((plugin) => plugin.name === entry.id) === true;
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
   const act = useAtomCommand(actOnProviderPlugin);
   const lock = useActionLock(JSON.stringify(["store", provider.instanceId, entry.id]));
@@ -55,14 +61,20 @@ function StoreInstall({
       <Button
         size="sm"
         variant="ghost-primary"
-        disabled={!allowed || lock.locked || entry.installed || Boolean(entry.disabledReason)}
+        disabled={!allowed || lock.locked || installed || Boolean(entry.disabledReason)}
         onClick={() =>
           void lock.run("install", async () => {
             const result = await act({
               environmentId,
               input: {
-                instanceId: provider.instanceId,
-                action: { type: "install", entryId: entry.id },
+                instanceId: target.instanceId,
+                action: {
+                  type: "install",
+                  entryId: entry.id,
+                  ...(target.instanceId !== provider.instanceId
+                    ? { sourceInstanceId: provider.instanceId }
+                    : {}),
+                },
               },
             });
             refresh();
@@ -72,11 +84,11 @@ function StoreInstall({
       >
         {lock.busy
           ? "Installing…"
-          : entry.installed
+          : installed
             ? "Installed"
-            : provider.driver === "codex"
+            : target.driver === "codex"
               ? "Install in Codex"
-              : provider.driver === "claudeAgent"
+              : target.driver === "claudeAgent"
                 ? "Install in Claude Code"
                 : "Install in Scient Agent"}
       </Button>
@@ -131,7 +143,6 @@ function StoreResults({
       (entry) =>
         (entry.kind !== "codex" || !preview || !curatedIds.has(entry.name)) &&
         !(
-          preview &&
           provider.driver === "scient" &&
           providers.some((item) => item.enabled && item.driver === "claudeAgent") &&
           entry.marketplace === "claude-plugins-official"
@@ -181,7 +192,7 @@ function StoreResults({
                 }}
                 audience={
                   entry.kind === "shared"
-                    ? { layer: "shared" }
+                    ? { layer: "shared", ownerInstanceId: provider.instanceId }
                     : {
                         layer: "agent",
                         driver: provider.driver,
@@ -330,7 +341,22 @@ function Store({ instanceId }: { readonly instanceId: string }) {
         ) : null}
         <ActionFeedback feedback={lock.feedback} />
         {provider ? (
-          <StoreResults key={query} provider={provider} query={query} preview={false} />
+          <>
+            {(provider.driver === "codex"
+              ? [provider]
+              : providers.filter(
+                  (item) =>
+                    item.enabled && (item.driver === "claudeAgent" || item.driver === "scient"),
+                )
+            ).map((target) => (
+              <StoreResults
+                key={`${target.instanceId}:${query}`}
+                provider={target}
+                query={query}
+                preview={false}
+              />
+            ))}
+          </>
         ) : (
           <MutedLine>This agent is no longer available.</MutedLine>
         )}
@@ -436,7 +462,7 @@ function StoreDetail({
               key="works-with"
               audience={
                 entry.kind === "shared"
-                  ? { layer: "shared" }
+                  ? { layer: "shared", ownerInstanceId: provider.instanceId }
                   : {
                       layer: "agent",
                       driver: provider.driver,

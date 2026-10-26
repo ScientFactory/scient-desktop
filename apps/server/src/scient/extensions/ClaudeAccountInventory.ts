@@ -18,7 +18,7 @@ const encodeServers = Schema.encodeSync(
   Schema.fromJsonString(Schema.Array(ServerProviderMcpServer)),
 );
 
-export const CLAUDE_CONNECTORS_URL = "https://claude.ai/settings/connectors";
+const CLAUDE_CONNECTORS_URL = "https://claude.ai/settings/connectors";
 
 export function accountConnectorOptions(
   executable: string,

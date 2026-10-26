@@ -1187,7 +1187,6 @@ export function ProviderInstanceCard({
   );
 
   // SCIENT-FORK:END
-
   return (
     <>
       <SettingsSection

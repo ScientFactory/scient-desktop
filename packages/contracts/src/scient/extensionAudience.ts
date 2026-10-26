@@ -5,7 +5,10 @@ import { TrimmedNonEmptyString } from "../baseSchemas.ts";
 
 export const ExtensionAudience = Schema.Union([
   Schema.Struct({ layer: Schema.Literal("scient") }),
-  Schema.Struct({ layer: Schema.Literal("shared") }),
+  Schema.Struct({
+    layer: Schema.Literal("shared"),
+    ownerInstanceId: Schema.optional(ProviderInstanceId),
+  }),
   Schema.Struct({
     layer: Schema.Literal("agent"),
     driver: ProviderDriverKind,

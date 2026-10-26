@@ -18,7 +18,12 @@ const Known = Schema.Record(
   Schema.Struct({
     installLocation: Schema.String,
     source: Schema.optional(
-      Schema.Struct({ source: Schema.String, repo: Schema.optional(Schema.String) }),
+      Schema.Struct({
+        source: Schema.String,
+        repo: Schema.optional(Schema.String),
+        url: Schema.optional(Schema.String),
+        path: Schema.optional(Schema.String),
+      }),
     ),
   }),
 );
@@ -77,9 +82,12 @@ const decodeMarkets = Schema.decodeUnknownEffect(AgentMarkets);
 const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
 const decodePlugin = Schema.decodeUnknownOption(Plugin);
 const decodeReviews = Schema.decodeUnknownEffect(Reviews);
+const decodeInstalledPath = Schema.decodeUnknownOption(
+  Schema.Struct({ name: Schema.String, path: Schema.String }),
+);
 const decodeRecord = Schema.decodeUnknownOption(Schema.Record(Schema.String, Schema.Unknown));
 const OFFICIAL = "claude-plugins-official";
-export const OFFICIAL_CLAUDE_STORE = "anthropics/claude-plugins-official";
+const OFFICIAL_CLAUDE_STORE = "anthropics/claude-plugins-official";
 
 export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function* (options: {
   readonly kind: "claude" | "scient";
@@ -109,6 +117,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
         catalog: path.join(entry.installLocation, ".claude-plugin", "marketplace.json"),
         repo: entry.source?.repo ? `https://github.com/${entry.source.repo}` : undefined,
         configured: options.kind === "claude",
+        uri: entry.source?.repo ?? entry.source?.url ?? entry.source?.path ?? entry.installLocation,
       }));
     if (options.agentRoot) {
       const raw = yield* optionalJson(path.join(options.agentRoot, "marketplaces.json"));
@@ -128,6 +137,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
             ? entry.sourceUri
             : `https://github.com/${entry.sourceUri}`,
           configured: true,
+          uri: entry.sourceUri,
         };
         if (existing >= 0) roots[existing] = source;
         else roots.push(source);
@@ -137,12 +147,22 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
   });
   const listing = Effect.fn("SharedPluginStore.listing")(function* () {
     const roots = yield* sources();
-    const installed = new Set((yield* options.installed()).plugins.map((item) => item.name));
+    const native = (yield* options.installed()).plugins;
+    const installed = new Set(native.map((item) => item.name));
+    const installedPaths = new Map(
+      native.flatMap((item): Array<readonly [string, string]> => {
+        const parsed = decodeInstalledPath(item);
+        return parsed._tag === "Some" && path.isAbsolute(parsed.value.path)
+          ? [[parsed.value.name, parsed.value.path]]
+          : [];
+      }),
+    );
     const entries: Array<{
       entry: ProviderStoreEntry;
       root: string;
       pluginDir?: string;
       repo?: string;
+      uri: string;
       relative?: string | undefined;
     }> = [];
     for (const source of roots) {
@@ -150,6 +170,8 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       if (raw === undefined) continue;
       const catalog = yield* decodeCatalog(raw);
       if (catalog.name !== source.name) continue;
+      if (catalog.plugins.length > 10_000 || entries.length + catalog.plugins.length > 20_000)
+        return yield* Effect.fail({ message: "The shared store exceeded its entry limit." });
       for (const rawPlugin of catalog.plugins.slice(0, 10_000)) {
         const parsed = decodePlugin(rawPlugin);
         if (parsed._tag === "None") continue;
@@ -160,10 +182,14 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
             ? path.join(catalog.metadata?.pluginRoot ?? "", plugin.source)
             : undefined;
         const candidate = relative === undefined ? undefined : path.resolve(source.root, relative);
-        const pluginDir =
-          candidate && candidate.startsWith(`${path.resolve(source.root)}${path.sep}`)
+        const relativeDir =
+          candidate &&
+          (candidate === path.resolve(source.root) ||
+            candidate.startsWith(`${path.resolve(source.root)}${path.sep}`))
             ? candidate
             : undefined;
+        const pluginDir = relativeDir ?? installedPaths.get(id);
+        const pluginRoot = relativeDir ? source.root : (installedPaths.get(id) ?? source.root);
         const repo =
           typeof plugin.source === "string"
             ? source.repo
@@ -171,7 +197,8 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
               ? `https://github.com/${plugin.source.repo}`
               : plugin.source.url;
         entries.push({
-          root: source.root,
+          root: pluginRoot,
+          uri: source.uri,
           ...(pluginDir ? { pluginDir, relative } : {}),
           ...(repo ? { repo } : {}),
           entry: {
@@ -237,7 +264,10 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       if (item.pluginDir) {
         const realRoot = yield* fs.realPath(item.root);
         const realPlugin = yield* fs.realPath(item.pluginDir).pipe(Effect.option);
-        if (realPlugin._tag === "Some" && realPlugin.value.startsWith(`${realRoot}${path.sep}`)) {
+        if (
+          realPlugin._tag === "Some" &&
+          (realPlugin.value === realRoot || realPlugin.value.startsWith(`${realRoot}${path.sep}`))
+        ) {
           for (const [dir, label] of [
             ["skills", "Skills"],
             ["commands", "Commands"],
@@ -274,10 +304,16 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
           }
         }
       }
-      const raw = yield* optionalJson(
+      const reviews = yield* optionalJson(
         path.join(options.claudeHome, "plugins", "plugin-directory-cache-v2.json"),
+      ).pipe(
+        Effect.flatMap((raw) =>
+          raw === undefined
+            ? Effect.succeed([])
+            : decodeReviews(raw).pipe(Effect.map((value) => value.listings)),
+        ),
+        Effect.orElseSucceed(() => []),
       );
-      const reviews = raw === undefined ? [] : (yield* decodeReviews(raw)).listings;
       const normalizeRepo = (url: string) =>
         url
           .replace(/\.git$/, "")
@@ -307,6 +343,46 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
   return {
     search,
     entry,
+    marketplaceSource: (id) =>
+      listing().pipe(
+        Effect.flatMap((value) => {
+          const item = value.entries.find((item) => item.entry.id === id);
+          return item
+            ? Effect.succeed(item.uri)
+            : Effect.fail({ message: "This marketplace is no longer configured." });
+        }),
+        Effect.mapError(() => ({ message: "Could not read the plugin's marketplace source." })),
+      ),
+    ...(options.kind === "claude"
+      ? {
+          ensureMarketplace: Effect.fn("SharedPluginStore.ensureMarketplace")(
+            function* ({ name, source }: { readonly name: string; readonly source: string }) {
+              const normalize = (value: string) =>
+                value
+                  .replace(/^https:\/\/github.com\//, "")
+                  .replace(/^git@github.com:/, "")
+                  .replace(/\.git\/?$/, "")
+                  .replace(/\/$/, "");
+              const existing = (yield* sources()).find(
+                (item) => item.name === name && item.configured,
+              );
+              if (existing) {
+                if (normalize(existing.uri) !== normalize(source))
+                  return yield* Effect.fail({
+                    message: "Claude Code has a different marketplace with this name.",
+                  });
+                return;
+              }
+              yield* options.run(["plugin", "marketplace", "add", source]);
+              if (!(yield* sources()).some((item) => item.name === name && item.configured))
+                return yield* Effect.fail({
+                  message: "Claude Code did not confirm the marketplace.",
+                });
+            },
+            Effect.mapError(() => ({ message: "Could not add this marketplace to Claude Code." })),
+          ),
+        }
+      : {}),
     install: (id) =>
       entry(id).pipe(
         Effect.flatMap((plugin) =>

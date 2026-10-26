@@ -4,7 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export const readPluginText = Effect.fn("readPluginText")(function* (
+const readPluginText = Effect.fn("readPluginText")(function* (
   path: string,
   maxBytes = 4 * 1024 * 1024,
 ) {
@@ -15,9 +15,14 @@ export const readPluginText = Effect.fn("readPluginText")(function* (
       if (!stat.isFile() || stat.size > maxBytes)
         throw new Error("Plugin metadata is too large or not a file.");
       const buffer = Buffer.alloc(maxBytes + 1);
-      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
-      if (bytesRead > maxBytes) throw new Error("Plugin metadata grew beyond its size limit.");
-      return buffer.subarray(0, bytesRead).toString("utf8");
+      let total = 0;
+      while (total < buffer.length) {
+        const { bytesRead } = await file.read(buffer, total, buffer.length - total, total);
+        if (!bytesRead) break;
+        total += bytesRead;
+      }
+      if (total > maxBytes) throw new Error("Plugin metadata grew beyond its size limit.");
+      return buffer.subarray(0, total).toString("utf8");
     } finally {
       await file.close();
     }

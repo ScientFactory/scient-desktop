@@ -98,10 +98,12 @@ const makeGeneration = Effect.fn("makeGeneration")(function* (
 const makeHarness = Effect.fn("ProviderPluginManagement.makeHarness")(function* (options: {
   readonly provider?: ServerProvider;
   readonly actions?: ProviderPluginActions | undefined;
+  readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly actionsByInstance?: ReadonlyMap<ProviderInstanceId, ProviderPluginActions>;
 }) {
-  const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>([
-    options.provider ?? baseProvider,
-  ]);
+  const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
+    options.providers ?? [options.provider ?? baseProvider],
+  );
   const refreshes = yield* Ref.make(0);
   const recorded = yield* Ref.make<ReadonlyArray<Recorded>>([]);
   const serviceScope = yield* Scope.make();
@@ -112,14 +114,17 @@ const makeHarness = Effect.fn("ProviderPluginManagement.makeHarness")(function* 
       getProviders: Ref.get(providersRef),
       refreshInstance: () =>
         Ref.update(refreshes, (count) => count + 1).pipe(Effect.andThen(Ref.get(providersRef))),
-      getProviderPluginActionsForInstance: () => Effect.succeed(options.actions),
+      getProviderPluginActionsForInstance: (instanceId) =>
+        Effect.succeed(options.actionsByInstance?.get(instanceId) ?? options.actions),
       recordProviderNativeInventory: (input) => {
         const plugins = input.inventory.plugins;
         return Ref.update(recorded, (calls) => [...calls, input]).pipe(
           Effect.andThen(
             input.inventory.cwd === undefined && plugins
               ? Ref.updateAndGet(providersRef, (providers) =>
-                  providers.map((provider) => ({ ...provider, plugins })),
+                  providers.map((provider) =>
+                    provider.instanceId === input.instanceId ? { ...provider, plugins } : provider,
+                  ),
                 )
               : Ref.get(providersRef),
           ),
@@ -820,3 +825,65 @@ describe("ProviderPluginManagement install", () => {
     ),
   );
 });
+
+it.effect("installs an agent-configured shared plugin through the preferred Claude instance", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const claudeId = ProviderInstanceId.make("claude");
+      const scientId = ProviderInstanceId.make("scient");
+      const installed = yield* Ref.make(false);
+      const operations: string[] = [];
+      const entry = {
+        id: "review@lab",
+        name: "review",
+        marketplace: "lab",
+        displayName: "Review",
+        description: "",
+        kind: "shared" as const,
+        installed: false,
+        includes: [],
+        apps: [],
+      };
+      const claude = yield* makeGeneration({
+        store: {
+          search: () => Effect.succeed({ entries: [], total: 0 }),
+          entry: () =>
+            Ref.get(installed).pipe(Effect.map((installed) => ({ ...entry, installed }))),
+          ensureMarketplace: ({ name, source }) =>
+            Effect.sync(() => {
+              operations.push(`ensure:${name}:${source}`);
+            }),
+          install: (id) =>
+            Effect.sync(() => {
+              operations.push(`install:${id}`);
+            }).pipe(Effect.andThen(Ref.set(installed, true))),
+        },
+        listPlugins: () => listing([{ ...linear, id: "claude:review", name: "review@lab" }]),
+      });
+      const scient = yield* makeGeneration({
+        store: {
+          search: () => Effect.succeed({ entries: [entry], total: 1 }),
+          entry: () => Effect.succeed(entry),
+          marketplaceSource: () => Effect.succeed("org/lab"),
+          install: () => Effect.die("must install through Claude"),
+        },
+      });
+      const { management, recorded } = yield* makeHarness({
+        providers: [
+          { ...baseProvider, instanceId: claudeId, driver: ProviderDriverKind.make("claudeAgent") },
+          { ...baseProvider, instanceId: scientId, driver: ProviderDriverKind.make("scient") },
+        ],
+        actionsByInstance: new Map([
+          [claudeId, claude.actions],
+          [scientId, scient.actions],
+        ]),
+      });
+      yield* management.act({
+        instanceId: claudeId,
+        action: { type: "install", sourceInstanceId: scientId, entryId: entry.id },
+      });
+      assert.deepStrictEqual(operations, ["ensure:lab:org/lab", "install:review@lab"]);
+      assert.strictEqual((yield* Ref.get(recorded))[0]?.instanceId, claudeId);
+    }),
+  ),
+);

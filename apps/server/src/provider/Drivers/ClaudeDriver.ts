@@ -321,6 +321,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
         return { plugins, sequence };
       },
       Effect.provideService(Path.Path, path),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.mapError(() => ({ message: "Could not read Claude Code’s installed plugins." })),
     );
     const store = yield* makeSharedPluginStore({

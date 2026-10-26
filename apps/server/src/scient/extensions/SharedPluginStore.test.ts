@@ -160,3 +160,38 @@ describe("shared marketplace store", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 });
+
+it.effect(
+  "adds an explicitly chosen source through Claude and refuses a conflicting marketplace name",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { home, clone, path, write } = yield* fixture;
+        const commands: ReadonlyArray<string>[] = [];
+        const store = yield* makeSharedPluginStore({
+          kind: "claude",
+          claudeHome: home,
+          installed: () => Effect.succeed({ sequence: 1, plugins: [] }),
+          run: (args) =>
+            Effect.gen(function* () {
+              commands.push(args);
+              yield* write(path.join(home, "plugins", "known_marketplaces.json"), {
+                lab: { installLocation: clone, source: { source: "github", repo: "org/lab" } },
+              });
+              return "";
+            }),
+        });
+        expect(
+          (yield* store.ensureMarketplace!({
+            name: "claude-plugins-official",
+            source: "someone/else",
+          }).pipe(Effect.result))._tag,
+        ).toBe("Failure");
+        expect(commands).toEqual([]);
+        yield* store.ensureMarketplace!({ name: "lab", source: "org/lab" });
+        expect(commands).toEqual([["plugin", "marketplace", "add", "org/lab"]]);
+        yield* store.ensureMarketplace!({ name: "lab", source: "https://github.com/org/lab.git" });
+        expect(commands).toHaveLength(1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);

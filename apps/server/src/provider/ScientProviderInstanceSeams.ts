@@ -73,6 +73,15 @@ export interface ProviderPluginActions {
   readonly store?:
     | {
         readonly changes?: Stream.Stream<void> | undefined;
+        readonly marketplaceSource?:
+          | ((entryId: string) => Effect.Effect<string, ProviderPluginActionFailure>)
+          | undefined;
+        readonly ensureMarketplace?:
+          | ((input: {
+              readonly name: string;
+              readonly source: string;
+            }) => Effect.Effect<void, ProviderPluginActionFailure>)
+          | undefined;
         readonly search: (
           input: Omit<ProviderStoreSearchInput, "instanceId">,
         ) => Effect.Effect<ProviderStorePage, ProviderPluginActionFailure>;

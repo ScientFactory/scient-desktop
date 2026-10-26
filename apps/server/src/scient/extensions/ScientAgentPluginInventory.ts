@@ -42,7 +42,7 @@ const Installed = Schema.Struct({
 });
 const decodeInstalled = Schema.decodeUnknownEffect(Schema.fromJsonString(Installed));
 
-export function scientAgentInstalledPlugins(
+function scientAgentInstalledPlugins(
   data: typeof Installed.Type,
 ): ReadonlyArray<ServerProviderPlugin & { readonly path: string }> {
   return [
@@ -83,7 +83,7 @@ export function scientAgentInstalledPlugins(
 
 const McpFile = Schema.Record(Schema.String, Schema.Unknown);
 const decodeMcp = Schema.decodeUnknownOption(McpFile);
-export const pluginMcpServers = Effect.fn("pluginMcpServers")(function* (
+const pluginMcpServers = Effect.fn("pluginMcpServers")(function* (
   plugin: ServerProviderPlugin & { readonly path: string },
 ) {
   const path = yield* Path.Path;
@@ -116,6 +116,10 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
       cwd: string | undefined,
     ) => Effect.Effect<
       ReadonlyArray<ServerProviderPlugin & { readonly path: string }>,
+      { readonly message: string }
+    > = () => Effect.succeed([]),
+    standalone: () => Effect.Effect<
+      ReadonlyArray<ServerProviderMcpServer>,
       { readonly message: string }
     > = () => Effect.succeed([]),
   ) {
@@ -177,9 +181,15 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
             const previous = yield* Ref.get(lastRead);
             if (!force && previous !== undefined && now - previous < 600_000) return;
             const listing = yield* list(undefined);
-            const mcpServers = (yield* Effect.forEach(listing.plugins, (plugin) =>
+            const pluginServers = (yield* Effect.forEach(listing.plugins, (plugin) =>
               pluginMcpServers(plugin).pipe(Effect.provideService(Path.Path, path)),
             )).flat();
+            const configured = yield* standalone();
+            const names = new Set(configured.map((server) => server.name));
+            const mcpServers = [
+              ...configured,
+              ...pluginServers.filter((server) => !names.has(server.name)),
+            ];
             yield* PubSub.publish(reports, {
               plugins: listing.plugins,
               mcpServers,

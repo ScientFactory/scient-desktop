@@ -112,7 +112,8 @@ export function useActionLock(item: string) {
     extensionItemOperation(extensionItemOperationKey(environmentId, item)),
   );
   const patch = operationPatch(registry, environmentId, item);
-  const locked = !canWrite || operation.busy !== null;
+  const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
+  const locked = !canWrite || !allowed || operation.busy !== null;
 
   /** Runs one command for this item; the item unlocks whatever happens. */
   const run = async <A>(

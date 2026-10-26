@@ -319,9 +319,17 @@ export function collectProviderExtensionGroups(
         !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
     );
     if (
+      selected &&
+      provider.instanceId !== selected.instanceId &&
+      visiblePlugins.length === 0 &&
+      mcpServers.length === 0
+    )
+      continue;
+    if (
       visiblePlugins.length === 0 &&
       mcpServers.length === 0 &&
       provider.driver !== "claudeAgent" &&
+      provider.driver !== "codex" &&
       provider.driver !== "scient"
     )
       continue;
@@ -379,12 +387,17 @@ export function providerExtensionAudience(
   provider: ServerProvider,
   entry: ServerProviderPlugin | ServerProviderMcpServer,
 ): ExtensionAudience {
-  if (
-    (provider.driver === "scient" && "marketplace" in entry && Boolean(entry.marketplace)) ||
-    (provider.driver === "claudeAgent" && !("scope" in entry && entry.scope === "claudeai"))
-  ) {
-    return { layer: "shared" };
-  }
+  const shared =
+    provider.driver === "claudeAgent"
+      ? "id" in entry ||
+        Boolean(entry.pluginId) ||
+        entry.scope === "plugin" ||
+        entry.name.startsWith("plugin:")
+      : provider.driver === "scient" &&
+        ("id" in entry
+          ? Boolean(entry.marketplace)
+          : Boolean(entry.pluginId?.includes("@") && !entry.pluginId.startsWith("npm:")));
+  if (shared) return { layer: "shared", ownerInstanceId: provider.instanceId };
   return {
     layer: "agent",
     driver: provider.driver,
@@ -396,9 +409,9 @@ export function providerExtensionAudience(
           ? "Claude"
           : providerLabel(provider),
     reason:
-      provider.driver === "codex"
+      provider.driver === "codex" && "source" in entry && entry.source === "remote"
         ? "Uses Codex's own ChatGPT account"
-        : provider.driver === "claudeAgent"
+        : provider.driver === "claudeAgent" && "scope" in entry && entry.scope === "claudeai"
           ? "Uses Claude's own Claude account"
           : "Managed by this agent",
   };
@@ -411,6 +424,7 @@ export function audienceReaches(audience: ExtensionAudience, provider: ServerPro
     case "shared":
       return (
         provider.driver === "claudeAgent" ||
+        provider.instanceId === audience.ownerInstanceId ||
         (provider.driver === "scient" &&
           supportsScientClaudePlugins(provider.version) &&
           provider.usesClaudePlugins === true)

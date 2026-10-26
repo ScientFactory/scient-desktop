@@ -259,6 +259,50 @@ export function makeProviderPluginManagement(
     const { actions } = yield* admit(input.instanceId);
     if (!actions?.store)
       return yield* failure("unsupported", "This agent cannot install plugins from Scient.");
+    if (
+      input.action.type === "install" &&
+      input.action.sourceInstanceId &&
+      input.action.sourceInstanceId !== input.instanceId
+    ) {
+      const source = yield* admit(input.action.sourceInstanceId);
+      if (!source.actions?.store?.marketplaceSource || !actions.store.ensureMarketplace)
+        return yield* failure("unsupported", "This agent cannot install from that marketplace.");
+      const sourceEntry = yield* untilRetired(
+        source.actions,
+        "reading the shared plugin",
+        source.actions.store.entry(entryId),
+      ).pipe(
+        Effect.mapError(() => failure("state-unavailable", "Could not read the source plugin.")),
+      );
+      if (sourceEntry.kind !== "shared")
+        return yield* failure(
+          "unsupported",
+          "Only shared plugins can be installed by another agent.",
+        );
+      const uri = yield* untilRetired(
+        source.actions,
+        "reading the marketplace",
+        source.actions.store.marketplaceSource(entryId),
+      ).pipe(
+        Effect.mapError(() =>
+          failure("state-unavailable", "Could not read the source marketplace."),
+        ),
+      );
+      yield* untilRetired(
+        actions,
+        "adding the marketplace",
+        actions.store.ensureMarketplace({ name: sourceEntry.marketplace, source: uri }),
+      ).pipe(
+        Effect.mapError(() =>
+          failure(
+            "provider-rejected",
+            "Claude Code could not confirm this marketplace. Refresh to check.",
+          ),
+        ),
+      );
+      if (yield* source.actions.isRetired)
+        return yield* retiredDuring("checking the source marketplace");
+    }
     const entry = yield* untilRetired(
       actions,
       "checking the plugin",

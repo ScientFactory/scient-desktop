@@ -54,8 +54,9 @@ import {
   makeScientAgentPluginInventory,
   runScientAgentPluginCommand,
 } from "../../scient/extensions/ScientAgentPluginInventory.ts";
+import { readScientAgentMcpServers } from "../../scient/extensions/ScientAgentMcpInventory.ts";
 import { makeSharedPluginStore } from "../../scient/extensions/SharedPluginStore.ts";
-import { readClaudeInstalledPlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
+import { readScientClaudePlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 
 const DRIVER_KIND = scientAgentTarget.driverKind;
@@ -119,6 +120,11 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       root,
       platform,
     });
+    const claudeHome = path.resolve(
+      processEnv.CLAUDE_CONFIG_DIR?.trim() ||
+        path.join(yield* HostProcess.HomeDirectory, ".claude"),
+    );
+    processEnv.CLAUDE_CONFIG_DIR = claudeHome;
     // A crashed server never removed its extension files, and a bootstrap
     // it left unread still holds credentials.
     yield* sweepStaleOmpExtensionFiles({
@@ -276,48 +282,36 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       ),
     );
     const executableGate = yield* OmpExecutableGate;
-    const claudeHome =
-      processEnv.CLAUDE_CONFIG_DIR?.trim() ||
-      path.join(yield* HostProcess.HomeDirectory, ".claude");
+    const runPluginCommand = (cwd: string | undefined, args: ReadonlyArray<string>) =>
+      runScientAgentPluginCommand(
+        launchConfig.binaryPath,
+        processEnv,
+        cwd ?? serverConfig.stateDir,
+        args,
+        effectiveConfig.useClaudePlugins,
+      ).pipe(
+        Effect.provideService(OmpExecutableGate, executableGate),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
     const native = yield* makeScientAgentPluginInventory(
-      (cwd, args) =>
-        runScientAgentPluginCommand(
-          launchConfig.binaryPath,
-          processEnv,
-          cwd ?? serverConfig.stateDir,
-          args,
+      runPluginCommand,
+      (cwd) =>
+        readScientClaudePlugins(
+          (args) => runPluginCommand(cwd, args),
+          claudeHome,
           effectiveConfig.useClaudePlugins,
+          cwd,
         ).pipe(
-          Effect.provideService(OmpExecutableGate, executableGate),
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         ),
-      (cwd) =>
-        effectiveConfig.useClaudePlugins
-          ? runScientAgentPluginCommand(
-              launchConfig.binaryPath,
-              processEnv,
-              serverConfig.stateDir,
-              ["--runtime-info"],
-              false,
-            ).pipe(
-              Effect.provideService(OmpExecutableGate, executableGate),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-              Effect.provideService(FileSystem.FileSystem, fs),
-              Effect.provideService(Path.Path, path),
-              Effect.flatMap((info) =>
-                supportsScientClaudePlugins(scientAgentTarget.identify(info)?.version)
-                  ? readClaudeInstalledPlugins(claudeHome, cwd).pipe(
-                      Effect.provideService(Path.Path, path),
-                    )
-                  : Effect.succeed([]),
-              ),
-              Effect.mapError(() => ({
-                message: "Could not read Claude Code's installed plugins.",
-              })),
-            )
-          : Effect.succeed([]),
+      () =>
+        readScientAgentMcpServers(root).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        ),
     ).pipe(Effect.provideService(Path.Path, path));
     const store = yield* makeSharedPluginStore({
       kind: "scient",

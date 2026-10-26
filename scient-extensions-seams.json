@@ -23,7 +23,9 @@
     "packages/contracts/src/scient/providerStore.ts",
     "apps/web/src/routes/_chat.settings.extensions_.store.$instanceId.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx",
-    "packages/contracts/src/scient/extensionIcon.ts"
+    "packages/contracts/src/scient/extensionIcon.ts",
+    "packages/contracts/src/scient/extensionsPermissions.ts",
+    "packages/contracts/src/scient/extensionsPermissions.test.ts"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",
@@ -251,7 +253,7 @@
     },
     {
       "path": "packages/contracts/src/clientRpcPermissions.ts",
-      "anchor": "WS_METHODS.providerPluginsAct",
+      "anchor": "SCIENT_EXTENSION_GUARDED_RPC_SCOPES",
       "purpose": "Require the destination settings grant for provider plugin commands."
     }
   ],

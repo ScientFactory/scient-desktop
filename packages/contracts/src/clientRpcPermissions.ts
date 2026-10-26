@@ -11,11 +11,14 @@ import {
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
+// SCIENT-FORK:START — Extensions mutations share the destination settings grant.
+import { SCIENT_EXTENSION_GUARDED_RPC_SCOPES } from "./scient/extensionsPermissions.ts";
+// SCIENT-FORK:END
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
-  [WS_METHODS.providerPluginsAct]: AuthSettingsWriteScope,
+  ...SCIENT_EXTENSION_GUARDED_RPC_SCOPES,
   // SCIENT-FORK:END
   [WS_METHODS.documentsExportServerBrowserPdf]: AuthPreviewOperateScope,
   [WS_METHODS.documentsNavigateServerBrowser]: AuthPreviewOperateScope,

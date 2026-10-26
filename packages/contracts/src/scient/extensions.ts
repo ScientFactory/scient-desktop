@@ -458,7 +458,11 @@ export const ProviderPluginActionInput = Schema.Struct({
       type: Schema.Literal("refresh-inventory"),
       connectionsOnly: Schema.optional(Schema.Boolean),
     }),
-    Schema.Struct({ type: Schema.Literal("install"), entryId: TrimmedNonEmptyString }),
+    Schema.Struct({
+      type: Schema.Literal("install"),
+      entryId: TrimmedNonEmptyString,
+      sourceInstanceId: Schema.optional(ProviderInstanceId),
+    }),
     Schema.Struct({ type: Schema.Literal("add-official-store") }),
     Schema.Struct({
       type: Schema.Literal("set-enabled"),

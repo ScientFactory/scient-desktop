@@ -25,7 +25,7 @@ const plugin = { id: "test", name: "test", enabled: true, source: "local" as con
 
 describe("extension audiences", () => {
   it("keeps account apps with their owning instance and explains other agents", () => {
-    const audience = providerExtensionAudience(codex, plugin);
+    const audience = providerExtensionAudience(codex, { ...plugin, source: "remote" });
     expect(audienceReaches(audience, codex)).toBe(true);
     expect(audienceReaches(audience, provider("codex", "second"))).toBe(false);
     expect(audienceSupport(audience, [codex, claude], [])[1]).toMatchObject({
@@ -60,4 +60,18 @@ describe("extension audiences", () => {
       { name: "gmail" },
     ]);
   });
+});
+
+it("keeps standalone Claude MCP servers private and retains a Scient-owned shared plugin when source sharing is off", () => {
+  const manual = providerExtensionAudience(claude, {
+    name: "private",
+    scope: "user",
+    status: "unknown",
+  });
+  expect(manual.layer).toBe("agent");
+  expect(audienceReaches(manual, scient)).toBe(false);
+  const own = { ...scient, usesClaudePlugins: false, version: "0.1.2" };
+  const shared = providerExtensionAudience(own, { ...plugin, marketplace: "official" });
+  expect(audienceReaches(shared, own)).toBe(true);
+  expect(audienceReaches(providerExtensionAudience(claude, plugin), own)).toBe(false);
 });
