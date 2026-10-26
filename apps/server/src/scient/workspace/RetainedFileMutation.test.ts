@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { hasNativeFileAuthority } from "./NativeFilePublication.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
@@ -386,7 +387,12 @@ describe("retained publication admission", () => {
         await NodeFSP.writeFile(target, "C");
         const foreign = await fileIdentity(target);
         const recovered = await mutateRetainedFile(creation, target);
-        expect(recovered.outcome).toBe("attention");
+        // Linux stages the create beside the target, so an unmoved stage proves the
+        // create never ran and the foreign file is a plain occupant. A clone create
+        // leaves no such evidence, so the same state stays ambiguous there.
+        expect(recovered.outcome).toBe(
+          HostProcess.Platform.defaultValue() === "linux" ? "skipped" : "attention",
+        );
         expect(await fileIdentity(target)).toEqual(foreign);
         expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
         expect(await NodeFSP.readFile(recovered.retainedPath!, "utf8")).toBe("C");
