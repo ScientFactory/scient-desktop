@@ -980,9 +980,9 @@ Automated tests cannot settle these; each is checked by hand before a release.
 - **Overleaf Cloud itself.** A local bare Git remote does not reproduce the Cloud Git
   bridge's history and acknowledgement behaviour. A disposable Cloud project is synced
   end to end, by a person and by an agent, from the app.
-- **Shipped builds.** The signed macOS app, the installed Windows app, the Linux AppImage
-  and the server tarball each run one synthetic sync in their packaging jobs; one real
-  sync from each precedes a release.
+- **Shipped builds.** The installed Windows app, the Linux AppImage and the server
+  tarball each run one synthetic sync in their packaging jobs; the signed macOS app has
+  no such job. One real sync from each, the signed macOS app included, precedes a release.
 - **Cloud-provider folders.** Dropbox, OneDrive, iCloud Drive and Google Drive are each
   checked with a real client: online-only files, and kept copies outside the provider.
 - **Overleaf Server Pro** (self-hosted) is not supported.
