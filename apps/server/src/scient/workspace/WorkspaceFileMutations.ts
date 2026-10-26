@@ -40,6 +40,7 @@ import {
   observedDirectoryBinding,
   ensureNativePrivateRetentionDirectory,
   nativeFilePublicationCapabilities,
+  hasNativeFileAuthority,
   withNativeFilePublicationLease,
   removeNativeRetainedEntry,
   type NativeFileBinding,
@@ -994,7 +995,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       !capturedParent ||
       resolved.traversesSymlink ||
       resolved.target !== resolved.requestedPath ||
-      !(await nativeFilePublicationCapabilities(helperFor())).strictCurrentRoot
+      !hasNativeFileAuthority(await nativeFilePublicationCapabilities(helperFor()))
     )
       return false;
     try {
@@ -1124,11 +1125,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           const rootCapabilities = await nativeFilePublicationCapabilities(helperFor(), root);
           const parentCapabilities = await nativeFilePublicationCapabilities(helperFor(), current);
           if (
-            !rootCapabilities.strictCurrentRoot ||
+            !hasNativeFileAuthority(rootCapabilities) ||
             !rootCapabilities.publicationLease ||
             !rootCapabilities.exclusiveMove ||
             !rootCapabilities.exclusiveLink ||
-            !parentCapabilities.strictCurrentRoot ||
+            !hasNativeFileAuthority(parentCapabilities) ||
             !parentCapabilities.publicationLease ||
             !parentCapabilities.exclusiveMove ||
             !parentCapabilities.exclusiveLink
@@ -1573,7 +1574,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     if (intent.kind !== "write" && intent.kind !== "create") return;
     const capabilities = await nativeFilePublicationCapabilities(helperFor(), resolved.root);
     if (
-      !capabilities.strictCurrentRoot ||
+      !hasNativeFileAuthority(capabilities) ||
       !capabilities.publicationLease ||
       !capabilities.exclusiveMove ||
       !capabilities.exclusiveLink
@@ -1780,7 +1781,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           );
         }
         if (
-          !capabilities.strictCurrentRoot ||
+          !hasNativeFileAuthority(capabilities) ||
           !capabilities.publicationLease ||
           !capabilities.exclusiveMove ||
           !capabilities.exclusiveLink
@@ -4052,8 +4053,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       retainedWriteFolders: () => Effect.succeed(0),
     };
   }
-  // Native publication needs every ownership primitive. Without them (Windows has no shared
-  // leases, Linux no strict current-root authority, or no helper) the host saves as main did.
+  // Retained publication needs the host's advertised authority and every ownership primitive.
+  // An unqualified helper leaves ordinary saves on the plain publication path.
   const capabilities =
     deps.nativePublicationHelper === undefined
       ? null
@@ -4062,7 +4063,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         );
   if (
     capabilities === null ||
-    !capabilities.strictCurrentRoot ||
+    !hasNativeFileAuthority(capabilities) ||
     !capabilities.publicationLease ||
     !capabilities.sharedPublicationLease ||
     !capabilities.exclusiveMove ||

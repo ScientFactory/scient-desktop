@@ -4,6 +4,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import { nativeLinuxFileIdentity } from "./NativeFilePublication.ts";
+
 const DecimalFileId = Schema.String.check(Schema.isPattern(/^\d{1,40}$/u));
 const MacFields = {
   volume: Schema.String.check(
@@ -46,7 +48,9 @@ const run = (file: string, args: string[]) =>
       (error, stdout) => resolve(error ? null : stdout),
     ),
   );
-const volumeIdentity: VolumeIdentityResolver = async (path) => {
+const volumeIdentity = async (path: string, helperPath?: string): Promise<string | null> => {
+  if (HostProcess.Platform.defaultValue() === "linux")
+    return (await nativeLinuxFileIdentity(path, false, helperPath))?.identity?.volume ?? null;
   if (HostProcess.Platform.defaultValue() !== "darwin") return null;
   const df = await run("/bin/df", ["-P", path]);
   const device = df?.split("\n")[1]?.split(/\s+/u)[0];
@@ -62,7 +66,10 @@ async function persistentIdentity(
   path: string,
   directoryOnly: boolean,
   volume: VolumeIdentityResolver,
+  helperPath?: string,
 ): Promise<PersistentFileIdentity | null> {
+  if (HostProcess.Platform.defaultValue() === "linux")
+    return (await nativeLinuxFileIdentity(path, directoryOnly, helperPath))?.identity ?? null;
   if (HostProcess.Platform.defaultValue() !== "darwin") return null;
   const stat = await NodeFSP.lstat(path, { bigint: true }).catch(() => null);
   if (
@@ -83,11 +90,11 @@ export const platformFileIdentity = {
     const stat = await NodeFSP.stat(path, { bigint: true });
     return `${stat.dev}:${stat.ino}`;
   },
-  persistent(path: string, volume = volumeIdentity) {
-    return persistentIdentity(path, false, volume);
+  persistent(path: string, volume: VolumeIdentityResolver = volumeIdentity, helperPath?: string) {
+    return persistentIdentity(path, false, volume, helperPath);
   },
-  directory(path: string, volume = volumeIdentity) {
-    return persistentIdentity(path, true, volume);
+  directory(path: string, volume: VolumeIdentityResolver = volumeIdentity, helperPath?: string) {
+    return persistentIdentity(path, true, volume, helperPath);
   },
   equal(left: StoredFileIdentity, right: StoredFileIdentity): boolean {
     const platform = (value: typeof left) => value.platform ?? "darwin";

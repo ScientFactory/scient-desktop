@@ -9,6 +9,7 @@ import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import {
   bindNativeFilePublicationParent,
   ensureNativePrivateRetentionDirectory,
+  checkNativePrivateRetentionDirectory,
   nativeFilePublicationCapabilities,
   observedDirectoryBinding,
   withNativeFilePublicationLease,
@@ -233,3 +234,28 @@ describe.skipIf(!posix)("helper answers that are reused", () => {
       }),
   );
 });
+
+it.skipIf(helper === undefined)(
+  "never creates a recorded private directory while checking it",
+  async () => {
+    const root = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-private-check-")),
+    );
+    const recorded = NodePath.join(root, "recorded");
+    try {
+      await expect(checkNativePrivateRetentionDirectory(helper!, recorded)).rejects.toThrow(
+        "refused",
+      );
+      await expect(NodeFSP.lstat(recorded)).rejects.toMatchObject({ code: "ENOENT" });
+      await ensureNativePrivateRetentionDirectory(helper!, recorded);
+      await checkNativePrivateRetentionDirectory(helper!, recorded);
+      await NodeFSP.rename(recorded, NodePath.join(root, "moved"));
+      await expect(checkNativePrivateRetentionDirectory(helper!, recorded)).rejects.toThrow(
+        "refused",
+      );
+      await expect(NodeFSP.lstat(recorded)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  },
+);

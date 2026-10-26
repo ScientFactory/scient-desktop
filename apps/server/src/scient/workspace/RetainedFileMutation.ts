@@ -14,6 +14,7 @@ import {
   bindNativeFilePublicationParent,
   observedDirectoryBinding,
   nativeFilePublicationCapabilities,
+  hasNativeFileAuthority,
   ensureNativePrivateRetentionDirectory,
   withNativeFilePublicationLease,
   type NativeFileBinding,
@@ -129,9 +130,16 @@ const Journal = Schema.Struct({
   reviewedRevision: Schema.NullOr(Schema.String),
   outcome: Schema.NullOr(Schema.Literals(["done", "skipped", "attention"])),
 });
-export type RetainedRecord = typeof Journal.Type;
+const StagedCreateJournal = Schema.Struct({
+  ...Journal.fields,
+  publication: Schema.Literal("staged-create"),
+  createStageName: Schema.String.check(Schema.isPattern(/^\.scient-overleaf-apply-[a-f0-9]{64}$/u)),
+  createStageIdentity: Schema.NullOr(Identity),
+});
+export type RetainedRecord = typeof Journal.Type | typeof StagedCreateJournal.Type;
+const validateRecord = Schema.decodeUnknownSync(Schema.Union([Journal, StagedCreateJournal]));
 export const decodeRetainedRecord = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Union([Journal, LegacyJournal])),
+  Schema.fromJsonString(Schema.Union([Journal, StagedCreateJournal, LegacyJournal])),
 );
 
 export type Identity = NativeFileIdentity;
@@ -192,6 +200,7 @@ export interface RetainedMutationResult {
 export type MutationPoint =
   | "intent"
   | "staged"
+  | "create-staged"
   | "prepared"
   | "checked"
   | "called"
@@ -614,7 +623,7 @@ export async function mutateRetainedFile(
     condition = input.condition ?? (input.expectedRevision === null ? "absent" : "revision");
   const capabilities = await nativeFilePublicationCapabilities(helper, input.cwd);
   if (
-    !capabilities.strictCurrentRoot ||
+    !hasNativeFileAuthority(capabilities) ||
     !capabilities.publicationLease ||
     !capabilities.exclusiveMove ||
     !capabilities.exclusiveLink
@@ -793,11 +802,13 @@ async function run(
       kind === "create" ||
       condition === "absent" ||
       (kind === "write" && condition === "unguarded" && entry === null)
-        ? "create"
+        ? HostProcess.Platform.defaultValue() === "linux"
+          ? "staged-create"
+          : "create"
         : kind === "write"
           ? "exchange"
           : "capture";
-    record = {
+    record = validateRecord({
       version: 2,
       mutationId: input.mutationId ?? input.id,
       target,
@@ -806,6 +817,12 @@ async function run(
       kind,
       condition,
       publication,
+      ...(publication === "staged-create"
+        ? {
+            createStageName: `.scient-overleaf-apply-${NodeCrypto.createHash("sha256").update(directory).digest("hex")}`,
+            createStageIdentity: null,
+          }
+        : {}),
       expected: input.expectedRevision,
       desired: input.bytes == null ? null : bytesRevision(input.bytes),
       executable: input.executable ?? false,
@@ -829,7 +846,7 @@ async function run(
       reviewedBinding: null,
       reviewedRevision: null,
       outcome: null,
-    };
+    });
     if (input.requestedDestination)
       record = { ...record, requestedDestination: input.requestedDestination };
     record = {
@@ -842,7 +859,7 @@ async function run(
   }
   const save = async (patch: Partial<RetainedRecord>) => {
     lease.assertHeld();
-    record = { ...record, ...patch, generation: record.generation + 1 };
+    record = validateRecord({ ...record, ...patch, generation: record.generation + 1 });
     await durableJson(journalPath, record);
   };
   const result = async (): Promise<RetainedMutationResult> => {
@@ -869,6 +886,32 @@ async function run(
     outcome: RetainedMutationResult["outcome"],
     failure: RetainedRecord["failure"] = null,
   ) => {
+    if (record.publication === "staged-create") {
+      const stage = NodePath.join(NodePath.dirname(target), record.createStageName);
+      const identity = await fileIdentity(stage);
+      if (identity !== null) {
+        if (!sameIdentity(identity, record.createStageIdentity)) {
+          outcome = "attention";
+          failure = "recovery";
+        } else {
+          const captured = await lease.run({
+            binding: input.binding,
+            operation: "capture",
+            sourceName: record.createStageName,
+            destinationName: "provisional",
+          });
+          if (
+            captured.code !== 0 ||
+            captured.outcome !== "applied" ||
+            Object.values(captured.flush).some((value) => value > 0) ||
+            !sameIdentity(captured.destinationAfter, record.createStageIdentity)
+          ) {
+            outcome = "attention";
+            failure = "recovery";
+          } else await save({ provisionalIdentity: captured.destinationAfter });
+        }
+      }
+    }
     await save({ phase: "done", outcome, failure });
     await point("done");
     return result();
@@ -894,7 +937,7 @@ async function run(
     input.binding.rootPath,
   );
   if (
-    !capabilities.strictCurrentRoot ||
+    !hasNativeFileAuthority(capabilities) ||
     !capabilities.publicationLease ||
     !capabilities.exclusiveMove ||
     !capabilities.exclusiveLink
@@ -905,7 +948,16 @@ async function run(
       input.id,
     );
   const command = async (
-    operation: "capture" | "create" | "exchange" | "link" | "restore" | "move" | "rmdir",
+    operation:
+      | "capture"
+      | "create"
+      | "stage-create"
+      | "staged-create"
+      | "exchange"
+      | "link"
+      | "restore"
+      | "move"
+      | "rmdir",
     sourceName: string,
     destinationName: string,
     binding = input.binding,
@@ -951,6 +1003,19 @@ async function run(
   };
   /** Whether a `publishing` record's call ran: false if not, the phase it reached if so, null if unknown. */
   const publicationRan = async (): Promise<false | Partial<RetainedRecord> | null> => {
+    if (record.publication === "staged-create") {
+      const stage = NodePath.join(NodePath.dirname(target), record.createStageName);
+      if (record.createStageIdentity === null) return null;
+      if (sameIdentity(await fileIdentity(stage), record.createStageIdentity)) return false;
+      return sameIdentity(await fileIdentity(target), record.createStageIdentity) &&
+        (await fileRevision(target)) === record.desired
+        ? {
+            phase: "installed",
+            publishedIdentity: record.createStageIdentity,
+            publishedRevision: record.desired,
+          }
+        : null;
+    }
     if (record.publication === "exchange") {
       // An exchange swaps the staged copy with the live file.
       const held = await fileIdentity(slot);
@@ -1127,7 +1192,8 @@ async function run(
     }
   }
   if (
-    (record.publication === "create" && !capabilities.atomicCreateMetadata) ||
+    ((record.publication === "create" || record.publication === "staged-create") &&
+      !capabilities.atomicCreateMetadata) ||
     (record.publication === "exchange" && !capabilities.atomicExchange)
   )
     return finish(record.sourceMutation === false ? "skipped" : "attention", "unavailable");
@@ -1247,7 +1313,12 @@ async function run(
       }
       if ((await fileIdentity(slot)) === null) {
         if (input.bytes == null) return finish("skipped", "unavailable");
-        const mode = record.publication === "create" ? (record.executable ? 0o777 : 0o666) : 0o600;
+        const mode =
+          record.publication === "create" || record.publication === "staged-create"
+            ? record.executable
+              ? 0o777
+              : 0o666
+            : 0o600;
         const handle = await NodeFSP.open(slot, "wx", mode);
         try {
           await handle.writeFile(input.bytes);
@@ -1272,6 +1343,52 @@ async function run(
     return finish("attention", "recovery");
   // Staging takes time; the group is checked again just before anything becomes visible.
   if (!(await peersIntact())) return finish("skipped", "revision");
+  if (record.publication === "staged-create") {
+    const name = record.createStageName;
+    const stage = NodePath.join(NodePath.dirname(target), name);
+    if (record.createStageIdentity === null) {
+      const reply = await command("stage-create", "slot", name);
+      if (!good(reply) || !reply.destinationAfter) return finish("attention", "recovery");
+      await save({ createStageIdentity: reply.destinationAfter });
+      await point("create-staged");
+    }
+    if (
+      !sameIdentity(await fileIdentity(stage), record.createStageIdentity) ||
+      (await fileRevision(stage)) !== record.desired
+    )
+      return finish("attention", "recovery");
+    await save({ phase: "publishing", sourceMutation: true });
+    await point("checked");
+    await point("install-intent");
+    const reply = await command("staged-create", name, NodePath.basename(target));
+    await point("called");
+    if (reply.outcome === "unchanged") {
+      await save({ sourceMutation: false });
+      const captured = await command("capture", name, "provisional");
+      if (!good(captured) || !sameIdentity(captured.destinationAfter, record.createStageIdentity))
+        return finish("attention", "recovery");
+      return finish("skipped", reply.code === 17 ? "exists" : "unavailable");
+    }
+    if (
+      !good(reply) ||
+      !sameIdentity(reply.sourceBefore, record.createStageIdentity) ||
+      reply.sourceAfter !== null ||
+      !sameIdentity(reply.destinationAfter, record.createStageIdentity)
+    )
+      return finish("attention", "recovery");
+    await save({
+      phase: "installed",
+      publishedIdentity: record.createStageIdentity,
+      publishedRevision: record.desired,
+    });
+    await point("installed");
+    if (
+      !sameIdentity(await fileIdentity(target), record.createStageIdentity) ||
+      (await fileRevision(target)) !== record.desired
+    )
+      return finish("attention", "recovery");
+    return finish("done");
+  }
   if (record.publication === "create") {
     await save({
       phase: "publishing",

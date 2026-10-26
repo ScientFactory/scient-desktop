@@ -46,6 +46,7 @@ const Result = Schema.Struct({
 const Capabilities = Schema.Struct({
   version: Schema.Literal(1),
   strictCurrentRoot: Schema.Boolean,
+  folderObjectAuthority: Schema.optionalKey(Schema.Boolean),
   containment: Containment,
   atomicExchange: Schema.Boolean,
   atomicPublicationMetadata: Schema.Boolean,
@@ -64,7 +65,14 @@ const decodeCapabilities = Schema.decodeSync(Schema.fromJsonString(Capabilities)
 export type NativeFileIdentity = typeof Identity.Type;
 export type NativeFilePublicationResult = typeof Result.Type;
 export type NativeFilePublicationCapabilities = typeof Capabilities.Type;
-export type NativeFileAuthority = "strict-current-root" | "bound-object";
+export type NativeFileAuthority = "strict-current-root" | "linux-held-root" | "bound-object";
+const nativeFileAuthority = (): NativeFileAuthority =>
+  HostProcess.Platform.defaultValue() === "linux" ? "linux-held-root" : "strict-current-root";
+export const hasNativeFileAuthority = (capabilities: NativeFilePublicationCapabilities) =>
+  capabilities.strictCurrentRoot ||
+  (HostProcess.Platform.defaultValue() === "linux" &&
+    capabilities.folderObjectAuthority === true &&
+    capabilities.containment === "linux-landlock-root-object");
 export interface NativeFileBinding {
   readonly rootPath: string;
   readonly parentRelativePath: string;
@@ -82,6 +90,8 @@ export interface NativeFilePublicationRequest {
     | "capture"
     | "exchange"
     | "create"
+    | "stage-create"
+    | "staged-create"
     | "move"
     | "link"
     | "restore"
@@ -276,7 +286,7 @@ function validatePaths(
 export async function bindNativeFilePublication(
   helperPath: string,
   paths: Pick<NativeFileBinding, "rootPath" | "parentRelativePath" | "recordPath">,
-  authority: NativeFileAuthority = "strict-current-root",
+  authority: NativeFileAuthority = nativeFileAuthority(),
 ): Promise<NativeFileBinding> {
   validatePaths(paths);
   const result = parseResult(
@@ -330,7 +340,7 @@ export async function bindNativeFilePublicationParent(
     await invoke(helperPath, [
       "--directory=1",
       "bind",
-      "strict-current-root",
+      nativeFileAuthority(),
       rootPath,
       parentRelativePath || ".",
       "-",
@@ -355,7 +365,7 @@ export async function bindNativeFilePublicationParent(
 
 export interface NativeFileDirectoryRequest {
   readonly binding: NativeFileLeaseBinding;
-  readonly operation: "private-create" | "mkdir";
+  readonly operation: "private-create" | "private-check" | "mkdir";
   readonly name: string;
 }
 
@@ -367,7 +377,7 @@ function directoryArguments({ binding, operation, name }: NativeFileDirectoryReq
   return [
     "--directory=1",
     operation,
-    "strict-current-root",
+    nativeFileAuthority(),
     binding.rootPath,
     binding.parentRelativePath || ".",
     binding.rootIdentity.dev,
@@ -437,9 +447,17 @@ async function alreadyPrivate(directory: string) {
 }
 
 /** Existing directory permissions are never repaired. Only newly missing host directories are made private. */
-export async function ensureNativePrivateRetentionDirectory(
+export function ensureNativePrivateRetentionDirectory(helperPath: string, absolutePath: string) {
+  return nativePrivateRetentionDirectory(helperPath, absolutePath, true);
+}
+/** Validate a recorded folder without ever authorizing its creation. */
+export function checkNativePrivateRetentionDirectory(helperPath: string, absolutePath: string) {
+  return nativePrivateRetentionDirectory(helperPath, absolutePath, false);
+}
+async function nativePrivateRetentionDirectory(
   helperPath: string,
   absolutePath: string,
+  create: boolean,
 ): Promise<string> {
   if (!NodePath.isAbsolute(absolutePath) || absolutePath.includes("\0"))
     throw new NativeFilePublicationError(
@@ -461,6 +479,7 @@ export async function ensureNativePrivateRetentionDirectory(
     canonicalParent = await NodeFSP.realpath(parent);
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    if (!create) throw error;
     canonicalParent = await ensureNativePrivateRetentionDirectory(helperPath, parent);
   }
   const binding = await observedDirectoryBinding(helperPath, canonicalParent);
@@ -480,7 +499,7 @@ export async function ensureNativePrivateRetentionDirectory(
     (lease) =>
       lease.runDirectory({
         binding,
-        operation: "private-create",
+        operation: create ? "private-create" : "private-check",
         name: NodePath.basename(destination),
       }),
     { mode: "exclusive" },
@@ -518,7 +537,7 @@ function nativeFilePublicationArguments(
   return [
     "--protocol=1",
     operation,
-    request.authority ?? "strict-current-root",
+    request.authority ?? nativeFileAuthority(),
     binding.rootPath,
     binding.parentRelativePath || ".",
     binding.recordPath,
@@ -859,4 +878,43 @@ export async function removeNativeRetainedEntry(
       "Retained folder moved during removal; journal settlement is pending.",
       result,
     );
+}
+
+const LinuxFolderInquiry = Schema.Struct({
+  version: Schema.Literal(1),
+  reason: Schema.NullOr(
+    Schema.Literals([
+      "unsupported-filesystem",
+      "network-filesystem",
+      "volatile-filesystem",
+      "volume-unavailable",
+      "no-volume-identity",
+    ]),
+  ),
+  identity: Schema.NullOr(
+    Schema.Struct({
+      version: Schema.Literal(1),
+      platform: Schema.Literal("linux"),
+      volume: Schema.String.check(
+        Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u),
+      ),
+      fileId: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),
+      subvolumeId: Schema.NullOr(Schema.String.check(Schema.isPattern(/^\d{1,40}$/u))),
+    }),
+  ),
+});
+const decodeLinuxFolderInquiry = Schema.decodeUnknownSync(
+  Schema.fromJsonString(LinuxFolderInquiry),
+);
+/** UUID, inode and admission are observed together through a natively held folder/file. */
+export async function nativeLinuxFileIdentity(
+  path: string,
+  directoryOnly: boolean,
+  helperPath?: string,
+) {
+  const helper = helperPath ?? (await resolveNativeFilePublicationHelperPath());
+  if (helper === undefined) return null;
+  return decodeLinuxFolderInquiry(
+    await invoke(helper, ["--linux-folder=1", path, directoryOnly ? "directory" : "entry"]),
+  );
 }

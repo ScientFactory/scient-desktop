@@ -150,7 +150,7 @@ static int lease_main(int argc, char **argv) {
         parent_covered && record_covered;
     }
     if (arguments == 11 && offset == length && !strcmp(command[1], "--directory=1") &&
-        (!strcmp(command[2], "private-create") || !strcmp(command[2], "mkdir"))) {
+        (!strcmp(command[2], "private-create") || !strcmp(command[2], "private-check") || !strcmp(command[2], "mkdir"))) {
       for (size_t i = 0; i < count; ++i) {
         if (parents[i].exclusive && matches(&parents[i].root, command[6], command[7]) &&
             matches(&parents[i].parent, command[8], command[9])) covered = 1;
@@ -182,18 +182,34 @@ done:
   free(parents);
   return ferror(stdout) ? 74 : 0;
 }
+static int admitted_authority(const char *mode) {
+  if (!strcmp(mode, "strict-current-root")) return platform_strict_available();
+#ifndef _WIN32
+  if (!strcmp(mode, "linux-held-root")) return platform_folder_object_available();
+#endif
+  return 0;
+}
 static int directory_main(int argc, char **argv) {
-  if (argc != 11 || (strcmp(argv[2], "bind") && strcmp(argv[2], "private-create") &&
-      strcmp(argv[2], "mkdir")) || strcmp(argv[3], "strict-current-root")) return 64;
+  if (argc != 11 || (strcmp(argv[2], "bind") && strcmp(argv[2], "private-create") && strcmp(argv[2], "private-check") &&
+      strcmp(argv[2], "mkdir")) || (strcmp(argv[3], "strict-current-root") && strcmp(argv[3], "linux-held-root"))) return 64;
   int error = 0, applied = 0;
   Entry root = {0}, parent = {0}, created = {0};
   Flush flush = {-1, -1, -1, -1};
-  int create = strcmp(argv[2], "bind") != 0;
-  int private_directory = !strcmp(argv[2], "private-create");
+  int create = strcmp(argv[2], "bind") != 0 && strcmp(argv[2], "private-check") != 0;
+  int private_directory = !strcmp(argv[2], "private-create") || !strcmp(argv[2], "private-check");
   Context *context = platform_bind_parent(argv[4], argv[5], &error);
   if (!context) goto result;
   error = platform_parent_binding(context, &root, &parent);
   if (error) goto result;
+  if (!create && private_directory) {
+    if (!name_valid(argv[10])) { error = platform_invalid(); goto result; }
+    if (!matches(&root, argv[6], argv[7]) || !matches(&parent, argv[8], argv[9])) {
+      error = platform_changed(); goto result;
+    }
+    error = platform_private_directory(context, argv[10], &created);
+    if (error) goto result;
+    goto recheck;
+  }
   if (create) {
     if (!name_valid(argv[10])) { error = platform_invalid(); goto result; }
     if (!matches(&root, argv[6], argv[7]) || !matches(&parent, argv[8], argv[9])) {
@@ -210,7 +226,7 @@ static int directory_main(int argc, char **argv) {
       if (error != ENOENT) goto result;
 #endif
     }
-    if (!platform_strict_available()) { error = platform_unsupported(); goto result; }
+    if (!admitted_authority(argv[3])) { error = platform_unsupported(); goto result; }
     error = platform_policy(context, argv[3], argv[4], argv[4]);
     if (error) goto result;
 #ifdef SCIENT_PUBLICATION_PROBE
@@ -251,6 +267,10 @@ result:
   return ferror(stdout) ? 74 : 0;
 }
 static int publication_main(int argc, char **argv) {
+#ifdef __linux__
+  if (argc == 4 && !strcmp(argv[1], "--linux-folder=1"))
+    return platform_linux_folder(argv[2], !strcmp(argv[3], "directory"));
+#endif
   if (argc > 1 && !strcmp(argv[1], "--lease=1")) return lease_main(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "--directory=1")) return directory_main(argc, argv);
   int error = 0, applied = 0;
@@ -259,16 +279,29 @@ static int publication_main(int argc, char **argv) {
   Flush flush = {-1, -1, -1, -1};
   if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--protocol=1") && !strcmp(argv[2], "capabilities")) {
     printf("{\"version\":1,\"strictCurrentRoot\":%s,\"containment\":\"%s\","
-           "\"atomicExchange\":%s,\"atomicPublicationMetadata\":%s,\"atomicCreateMetadata\":%s,\"exclusiveMove\":true,"
+           "\"folderObjectAuthority\":%s,\"atomicExchange\":%s,\"atomicPublicationMetadata\":%s,\"atomicCreateMetadata\":%s,\"exclusiveMove\":true,"
            "\"exclusiveLink\":true,\"publicationLease\":true,\"sharedPublicationLease\":%s,"
            "\"privateRetentionDirectory\":%s,\"sourceParentMkdir\":%s,\"codeDomain\":\"%s\"}\n",
            platform_strict_available() ? "true" : "false", platform_containment(),
+#ifdef _WIN32
+           "false",
+#else
+           platform_folder_object_available() ? "true" : "false",
+#endif
            platform_exchange_available() ? "true" : "false",
            platform_atomic_metadata_available() ? "true" : "false",
            platform_atomic_create_available(argc == 4 ? argv[3] : NULL) ? "true" : "false",
            platform_shared_lease_available() ? "true" : "false",
-           platform_strict_available() ? "true" : "false",
-           platform_strict_available() ? "true" : "false",
+           (platform_strict_available()
+#ifndef _WIN32
+            || platform_folder_object_available()
+#endif
+           ) ? "true" : "false",
+           (platform_strict_available()
+#ifndef _WIN32
+            || platform_folder_object_available()
+#endif
+           ) ? "true" : "false",
            platform_domain());
     return 0;
   }
@@ -276,14 +309,19 @@ static int publication_main(int argc, char **argv) {
   const char *op = argv[2], *mode = argv[3];
   int binding = !strcmp(op, "bind");
   if (!binding && strcmp(op, "capture") && strcmp(op, "exchange") &&
-      strcmp(op, "create") && strcmp(op, "move") && strcmp(op, "restore") && strcmp(op, "link") &&
+      strcmp(op, "create") && strcmp(op, "stage-create") && strcmp(op, "staged-create") && strcmp(op, "move") && strcmp(op, "restore") && strcmp(op, "link") &&
       strcmp(op, "metadata") && strcmp(op, "mkdir") && strcmp(op, "rmdir")) {
     error = platform_invalid(); goto result;
   }
   if (!strcmp(mode, "strict-current-root") && !platform_strict_available()) {
     error = platform_unsupported(); goto result;
   }
-  if (strcmp(mode, "bound-object") && strcmp(mode, "strict-current-root")) {
+#ifndef _WIN32
+  if (!strcmp(mode, "linux-held-root") && !platform_folder_object_available()) {
+    error = platform_unsupported(); goto result;
+  }
+#endif
+  if (strcmp(mode, "bound-object") && !admitted_authority(mode)) {
 #ifdef SCIENT_PUBLICATION_PROBE
     if (strcmp(mode, "probe-macos-sandbox") && strcmp(mode, "probe-linux-landlock"))
 #endif
@@ -296,7 +334,7 @@ static int publication_main(int argc, char **argv) {
       !platform_exchange_available()) {
     error = platform_unsupported(); goto result;
   }
-  if (!binding && !strcmp(op, "create") && !platform_atomic_create_available(argv[4])) {
+  if (!binding && (!strcmp(op, "create") || !strcmp(op, "stage-create") || !strcmp(op, "staged-create")) && !platform_atomic_create_available(argv[4])) {
     error = platform_unsupported(); goto result;
   }
   context = platform_bind(argv[4], argv[5], argv[6], &error);
@@ -309,7 +347,7 @@ static int publication_main(int argc, char **argv) {
     error = platform_changed(); goto result;
   }
 #ifdef SCIENT_PUBLICATION_PROBE
-  if (!strcmp(mode, "strict-current-root"))
+  if (admitted_authority(mode))
     error = platform_policy(context, mode, argv[4], argv[6]);
   else if (strcmp(mode, "bound-object"))
     error = platform_probe_policy(context, mode, argv[4], argv[6]);

@@ -1,3 +1,4 @@
+import { hasNativeFileAuthority } from "../workspace/NativeFilePublication.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import { fixture } from "./WorkspaceApplier.testkit.ts";
@@ -11,7 +12,7 @@ import { nativeFilePublicationCapabilities } from "../workspace/NativeFilePublic
 const helper = await filePublicationTestHelper();
 const capabilities = helper === undefined ? null : await nativeFilePublicationCapabilities(helper);
 const qualifiedReplacement =
-  capabilities?.strictCurrentRoot === true && capabilities.atomicExchange;
+  capabilities != null && hasNativeFileAuthority(capabilities) && capabilities.atomicExchange;
 const bytes = (text: string) => Buffer.from(text);
 const tree = (files: Record<string, string>) =>
   new Map(Object.entries(files).map(([name, text]) => [name, bytesRevision(bytes(text))]));
