@@ -62,6 +62,7 @@ export const layer = Layer.effect(
               reserved = true;
               continue;
             }
+            yield* fs.remove(`${path}.txt`, { force: true });
             yield* fs.remove(path, { force: true });
           }
           if (reserved)

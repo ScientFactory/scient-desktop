@@ -1,49 +1,70 @@
 import type { DesktopUpdateState } from "@t3tools/contracts";
-import { expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { SidebarProvider } from "../ui/sidebar";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
 
-const state = vi.hoisted(() => ({ update: null as DesktopUpdateState | null }));
-vi.mock(import("../../env"), async (original) => ({ ...(await original()), isElectron: true }));
-vi.mock(import("../../state/desktopUpdate"), async (original) => ({
-  ...(await original()),
-  useDesktopUpdateState: () => state.update,
+const mocks = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    update: null as DesktopUpdateState | null,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    notify: () => {
+      for (const listener of listeners) listener();
+    },
+  };
+});
+vi.mock("../../state/desktopUpdate", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/desktopUpdate")>()),
+  useDesktopUpdateState: (await import("react")).useSyncExternalStore.bind(
+    null,
+    mocks.subscribe,
+    () => mocks.update,
+  ),
 }));
-vi.mock(import("./useUpdateEverything"), async (original) => ({
-  ...(await original()),
-  useUpdateEverything: (() => ({
+// The pill only renders in the desktop app.
+vi.mock("../../env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../env")>()),
+  isElectron: true,
+}));
+vi.mock("./useUpdateEverything", () => ({
+  useUpdateEverything: () => ({
     hasUpdates: false,
-    otherServers: [],
     summary: "",
+    lines: [],
+    restarts: [],
+    otherServers: [],
     run: vi.fn(),
-  })) as never,
+  }),
 }));
-vi.mock(import("./updateEverythingRun"), async (original) => ({
-  ...(await original()),
+
+vi.mock("./updateEverythingRun", () => ({
   useUpdateEverythingRun: () => null,
+  clearSavedUpdateEverythingResult: vi.fn(),
+  saveUpdateEverythingResult: vi.fn(),
+  restartUpdateNow: vi.fn(),
 }));
-vi.mock(import("../../scient/desktopUpdate/SidebarOtherUpdates"), async (original) => ({
-  ...(await original()),
+vi.mock("../../scient/desktopUpdate/SidebarOtherUpdates", () => ({
   SidebarOtherUpdates: () => null,
 }));
 
-function setup(channel: "beta" | "latest") {
-  state.update = {
+function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
+  return {
     enabled: true,
     status: "available",
-    channel,
-    currentVersion: "0.6.23",
+    channel: "nightly",
+    currentVersion: "0.0.50-nightly.1",
     hostArch: "arm64",
     appArch: "arm64",
     runningUnderArm64Translation: false,
-    availableVersion: "0.6.24-beta.20261020.1",
+    availableVersion: "0.0.50-nightly.2",
     downloadedVersion: null,
-    releaseNotes: [
-      { version: "0.6.24-beta.20261020.1", items: ["A reviewed Beta change"], totalItems: 1 },
-    ],
+    releaseNotes,
     omittedReleaseCount: 0,
     downloadPercent: null,
     checkedAt: null,
@@ -53,10 +74,26 @@ function setup(channel: "beta" | "latest") {
   };
 }
 
-it.each(["beta", "latest"] as const)(
-  "opens release notes by native keyboard focus only on the Beta channel: %s",
-  async (channel) => {
-    setup(channel);
+const RELEASE_NOTES: DesktopUpdateState["releaseNotes"] = [
+  { version: "0.0.50-nightly.2", items: ["Faster sidebar."], totalItems: 1 },
+];
+
+function setup(update: DesktopUpdateState | null) {
+  mocks.update = update;
+}
+
+function publish(update: DesktopUpdateState | null) {
+  return act(() => {
+    mocks.update = update;
+    mocks.notify();
+  });
+}
+
+const releaseNotes = () => document.querySelector('[aria-label="Nightly update release notes"]');
+
+describe("SidebarUpdatePill release notes", () => {
+  it("closes when the release notes stop applying", async () => {
+    setup(nightlyUpdate(RELEASE_NOTES));
     await using screen = await render(
       <SidebarProvider>
         <button>Before updater</button>
@@ -67,9 +104,27 @@ it.each(["beta", "latest"] as const)(
     );
     await userEvent.click(screen.getByRole("button", { name: "Before updater" }));
     await userEvent.tab();
-    expect(document.activeElement?.getAttribute("aria-label")).toContain("Update");
-    if (channel === "beta") {
-      await vi.waitFor(() => expect(document.body.textContent).toContain("A reviewed Beta change"));
-    } else expect(document.body.textContent).not.toContain("A reviewed Beta change");
-  },
-);
+    await vi.waitFor(() => expect(releaseNotes()).not.toBeNull());
+
+    await publish(nightlyUpdate([]));
+    await vi.waitFor(() => expect(releaseNotes()).toBeNull());
+  });
+
+  it("opens when release notes arrive while the trigger has keyboard focus", async () => {
+    setup(nightlyUpdate([]));
+    await using screen = await render(
+      <SidebarProvider>
+        <button>Before updater</button>
+        <ul>
+          <SidebarUpdatePill />
+        </ul>
+      </SidebarProvider>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Before updater" }));
+    await userEvent.tab();
+    expect(releaseNotes()).toBeNull();
+
+    await publish(nightlyUpdate(RELEASE_NOTES));
+    await vi.waitFor(() => expect(releaseNotes()).not.toBeNull());
+  });
+});

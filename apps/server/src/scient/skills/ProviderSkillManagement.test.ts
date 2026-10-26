@@ -67,10 +67,10 @@ describe("provider skill management", () => {
         refreshInstance: () => Effect.sync(() => [snapshot]),
       });
 
-      yield* Effect.all(
-        snapshot.skills.map((skill) =>
+      yield* Effect.forEach(
+        snapshot.skills,
+        (skill) =>
           management.setEnabled({ instanceId, name: skill.name, path: skill.path, enabled: false }),
-        ),
         { concurrency: "unbounded" },
       );
 

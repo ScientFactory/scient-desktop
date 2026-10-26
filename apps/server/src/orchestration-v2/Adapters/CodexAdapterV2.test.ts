@@ -70,6 +70,10 @@ import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAda
 
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
+const decodeCodexReplayTranscript = Schema.decodeUnknownSync(
+  CodexReplay.CodexAppServerReplayTranscript,
+);
+
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
 const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
@@ -948,7 +952,7 @@ function makeCodexReplayTranscript(input: {
   readonly scenario: string;
   readonly entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>;
 }): CodexReplay.CodexAppServerReplayTranscript {
-  return Schema.decodeUnknownSync(CodexReplay.CodexAppServerReplayTranscript)(
+  return decodeCodexReplayTranscript(
     CodexAdapterV2Testkit.materializeScientClientIdentity({
       provider: "codex",
       protocol: "codex.app-server",

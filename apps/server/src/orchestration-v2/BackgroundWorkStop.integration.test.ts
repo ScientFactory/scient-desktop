@@ -901,19 +901,15 @@ const stopEarlierBackgroundWork = ({
           const original = yield* orchestrator.getThreadProjection(threadId);
           const childOriginal = yield* orchestrator.getThreadProjection(childThreadId);
           const siblingOriginal = yield* orchestrator.getThreadProjection(siblingThreadId);
-          const richOriginal = yield* Effect.all(
-            richFixtures.map(({ fixture }) =>
-              orchestrator.getThreadProjection(fixture.childThread.id),
-            ),
+          const richOriginal = yield* Effect.forEach(richFixtures, ({ fixture }) =>
+            orchestrator.getThreadProjection(fixture.childThread.id),
           );
           const richRowsOriginal = yield* orchestrator.getThreadProjection(
             mainFixture.childThread.id,
           );
           const protectedFixtures = [weakFixture, userFixture, ...richExecutionFixtures];
-          const protectedChildren = yield* Effect.all(
-            protectedFixtures.map((fixture) =>
-              orchestrator.getThreadProjection(fixture.childThread.id),
-            ),
+          const protectedChildren = yield* Effect.forEach(protectedFixtures, (fixture) =>
+            orchestrator.getThreadProjection(fixture.childThread.id),
           );
           const settle = {
             type: "thread.background-work.settle" as const,

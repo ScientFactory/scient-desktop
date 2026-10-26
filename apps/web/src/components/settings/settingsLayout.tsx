@@ -6,14 +6,7 @@ import { InfoIcon, Undo2Icon } from "lucide-react";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import {
-  createContext,
-  type ComponentPropsWithoutRef,
-  type ReactNode,
-  useContext,
-  useEffect,
-  useState,
-} from "react";
+import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
@@ -183,7 +176,9 @@ export function SettingsSearchTarget({
   );
 }
 
-export const SETTINGS_PICKER_TRIGGER_CLASSNAME = "min-w-0 max-w-none shrink-0";
+// Settings pickers reuse composer controls but match the bordered selects beside them.
+export const SETTINGS_PICKER_TRIGGER_CLASSNAME =
+  "min-w-0 max-w-none shrink-0 border-input bg-background font-normal text-foreground shadow-xs/5 hover:bg-accent/50 dark:bg-input/32 [&_svg[data-composer-control-chevron]]:stroke-[1.75] [&_svg[data-composer-control-chevron]]:opacity-70";
 
 export function PolicyTooltip({ children }: { readonly children: string }) {
   return (
@@ -199,15 +194,6 @@ export function PolicyTooltip({ children }: { readonly children: string }) {
       <TooltipPopup side="top">{children}</TooltipPopup>
     </Tooltip>
   );
-}
-
-export function useRelativeTimeTick(intervalMs = 1_000) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return nowMs;
 }
 
 export function SettingsSection({
@@ -475,7 +461,7 @@ export function SettingsRow({
       tabIndex={rowProps.id ? -1 : rowProps.tabIndex}
       data-slot="settings-row"
       className={cn(
-        "@container/settings-row rounded-xl px-3 sm:px-4 aria-disabled:opacity-50 aria-disabled:[&_*]:text-muted-foreground",
+        "group/settings-row @container/settings-row rounded-xl px-3 sm:px-4 aria-disabled:opacity-50 aria-disabled:[&_*]:text-muted-foreground",
         children ? "pt-3 pb-1" : "py-3",
         className,
       )}
@@ -485,7 +471,15 @@ export function SettingsRow({
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium tracking-subtle text-foreground">{title}</h3>
             {renderedInheritance ? (
-              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+              <span
+                className={cn(
+                  "inline-flex h-5 w-5 shrink-0 items-center justify-center",
+                  // Values set right here explain nothing new, so their marker waits for hover or focus.
+                  (inheritance.state === "default" || inheritance.state === "environment") &&
+                    overridingProjects.length === 0 &&
+                    "opacity-0 group-hover/settings-row:opacity-100 has-focus-visible:opacity-100 has-data-popup-open:opacity-100",
+                )}
+              >
                 {renderedInheritance}
               </span>
             ) : null}

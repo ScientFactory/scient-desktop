@@ -253,6 +253,79 @@ describe("reloadMainWindow", () => {
   });
 });
 // SCIENT-FORK:END scient-window-ipc
+describe("pickProjectFavicon", () => {
+  const pickerLayer = (
+    pickFiles: () => Effect.Effect<Array<string>>,
+    settings?: DesktopAppSettings.DesktopSettings,
+  ) =>
+    Layer.mergeAll(
+      Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
+      Layer.mock(ElectronWindow.ElectronWindow)({
+        focusedMainOrFirst: Effect.succeedNone,
+      }),
+      DesktopAppSettings.layerTest(settings),
+    );
+
+  // regression: 44e4a7071d feat(desktop): choose external project icons (#7823) - sole guard of the picker options
+  it.effect("opens a single-image picker from the project directory", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon
+        .handler("/project")
+        .pipe(Effect.provide(pickerLayer(pickFiles)));
+
+      assert.strictEqual(result, "/pictures/icon.png");
+      assert.deepEqual(pickFiles.mock.calls, [
+        [
+          {
+            owner: Option.none(),
+            defaultPath: Option.some("/project"),
+            multiple: false,
+            filters: [
+              {
+                name: "Images",
+                extensions: [
+                  "avif",
+                  "bmp",
+                  "gif",
+                  "ico",
+                  "heic",
+                  "heif",
+                  "jpeg",
+                  "jpg",
+                  "png",
+                  "svg",
+                  "tif",
+                  "tiff",
+                  "webp",
+                  "icns",
+                ],
+              },
+            ],
+          },
+        ],
+      ]);
+    }),
+  );
+
+  // regression: cba7dd7781 feat(desktop): allow disabling the local environment (#9194) - sole guard of the disabled-environment check
+  it.effect("does not open a picker while the local environment is off", () =>
+    Effect.gen(function* () {
+      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
+      const result = yield* pickProjectFavicon.handler("/project").pipe(
+        Effect.provide(
+          pickerLayer(pickFiles, {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+          }),
+        ),
+      );
+
+      assert.strictEqual(result, null);
+      assert.strictEqual(pickFiles.mock.calls.length, 0);
+    }),
+  );
+});
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "finds remote editors installed without PATH launchers",
@@ -368,65 +441,6 @@ describe("pasteAsText", () => {
         ),
       );
     },
-  );
-});
-
-describe("pickProjectFavicon", () => {
-  const pickerLayer = (
-    pickFiles: () => Effect.Effect<Array<string>>,
-    settings?: DesktopAppSettings.DesktopSettings,
-  ) =>
-    Layer.mergeAll(
-      Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
-      Layer.mock(ElectronWindow.ElectronWindow)({
-        focusedMainOrFirst: Effect.succeedNone,
-      }),
-      DesktopAppSettings.layerTest(settings),
-    );
-
-  // regression: 44e4a7071d feat(desktop): choose external project icons (#7823) - sole guard of the picker options
-  it.effect("opens a single-image picker from the project directory", () =>
-    Effect.gen(function* () {
-      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
-      const result = yield* pickProjectFavicon
-        .handler("/project")
-        .pipe(Effect.provide(pickerLayer(pickFiles)));
-
-      assert.strictEqual(result, "/pictures/icon.png");
-      assert.deepEqual(pickFiles.mock.calls, [
-        [
-          {
-            owner: Option.none(),
-            defaultPath: Option.some("/project"),
-            multiple: false,
-            filters: [
-              {
-                name: "Images",
-                extensions: ["avif", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp", "icns"],
-              },
-            ],
-          },
-        ],
-      ]);
-    }),
-  );
-
-  // regression: cba7dd7781 feat(desktop): allow disabling the local environment (#9194) - sole guard of the disabled-environment check
-  it.effect("does not open a picker while the local environment is off", () =>
-    Effect.gen(function* () {
-      const pickFiles = vi.fn(() => Effect.succeed(["/pictures/icon.png"]));
-      const result = yield* pickProjectFavicon.handler("/project").pipe(
-        Effect.provide(
-          pickerLayer(pickFiles, {
-            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-            localEnvironmentEnabled: false,
-          }),
-        ),
-      );
-
-      assert.strictEqual(result, null);
-      assert.strictEqual(pickFiles.mock.calls.length, 0);
-    }),
   );
 });
 // SCIENT-FORK:END restored-sole-guards

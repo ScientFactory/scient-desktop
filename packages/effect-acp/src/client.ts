@@ -325,7 +325,6 @@ function normalizeToolCallUpdate(update: AcpSchemaV2.ToolCallUpdate): AcpSchema.
 const isV1ConfigOption = Schema.is(AcpSchemaV1.SessionConfigOption);
 const isV1ConfigChoices = Schema.is(Schema.Array(AcpSchemaV1.SessionConfigSelectOption));
 const isV1ConfigGroups = Schema.is(Schema.Array(AcpSchemaV1.SessionConfigSelectGroup));
-const decodeMcpNotification = Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification);
 
 function normalizeConfigOption(
   option: AcpSchemaV1.SessionConfigOption | AcpSchemaV2.SessionConfigOption,
@@ -748,6 +747,7 @@ function normalizePermissionRequest(
     ...(request._meta === undefined ? {} : { _meta: request._meta }),
   };
 }
+const decodeMessageMcpNotification = Schema.decodeUnknownEffect(AcpSchemaV2.MessageMcpNotification);
 
 export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
   stdio: AcpProtocol.AcpStdio,
@@ -1302,7 +1302,7 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
     handleMcpNotification: (handler) =>
       Effect.sync(() => {
         extNotificationHandlers.set(CLIENT_METHODS.mcp_message, (params) =>
-          decodeMcpNotification(params).pipe(
+          decodeMessageMcpNotification(params).pipe(
             Effect.mapError(() => AcpError.AcpRequestError.invalidParams()),
             Effect.flatMap(handler),
           ),

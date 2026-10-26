@@ -297,9 +297,8 @@ export const makeAntigravityGeneration = Effect.fn("makeAntigravityGeneration")(
             detail: "Antigravity returned empty text generation output.",
           });
         }
-        return yield* Schema.decodeEffect(Schema.fromJsonString(input.outputSchema))(
-          extractJsonObject(rawResult),
-        ).pipe(
+        const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchema));
+        return yield* decodeOutput(extractJsonObject(rawResult)).pipe(
           Effect.mapError(
             (cause) =>
               new TextGenerationError({

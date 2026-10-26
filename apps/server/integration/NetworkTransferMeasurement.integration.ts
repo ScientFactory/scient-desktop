@@ -33,7 +33,7 @@ export interface HttpTransferMeasurement {
 /** Read-only gzip attribution for synthetic snapshots; hypothetical omissions are never sent. */
 export function attributeSnapshotTransfer(measurement: HttpTransferMeasurement) {
   const record = Schema.Record(Schema.String, Schema.Unknown);
-  const decoded = Schema.decodeUnknownSync(Schema.fromJsonString(record))(
+  const decoded = Schema.decodeSync(Schema.fromJsonString(record))(
     Buffer.from(measurement.decodedBody).toString("utf8"),
   );
   const projection = Schema.decodeUnknownSync(record)(decoded.projection);

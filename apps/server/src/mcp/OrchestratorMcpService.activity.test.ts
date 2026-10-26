@@ -791,7 +791,7 @@ it("sendToThread reports why the orchestrator refused the message", async () => 
       Layer.mergeAll(
         Layer.mock(ProviderSessionManagerV2)({
           resolveMcpInvocationPolicy: () =>
-            Effect.succeed(Option.some({ runtimeMode: "full-access", interactionMode: "default" })),
+            Effect.succeedSome({ runtimeMode: "full-access", interactionMode: "default" }),
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadShell: (threadId) =>

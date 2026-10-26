@@ -58,6 +58,7 @@ import { v2Projection, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts"
 const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 const encodeThreadTranscript = Schema.encodeSync(OrchestrationV2ThreadTranscript);
+const encodeShellSnapshot = Schema.encodeEffect(OrchestrationV2ShellSnapshotJson);
 
 const TARGET = new RelayConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -337,7 +338,7 @@ describe("authenticated environment HTTP requests", () => {
     "recovers shell authorization before deferring unreadable PR badges independently of rows",
     () =>
       Effect.gen(function* () {
-        const shell = yield* Schema.encodeEffect(OrchestrationV2ShellSnapshotJson)(v2ShellSnapshot);
+        const shell = yield* encodeShellSnapshot(v2ShellSnapshot);
         const link = {
           host: "github.com",
           repository: "ScientFactory/scient-desktop",

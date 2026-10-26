@@ -214,6 +214,7 @@ describe("managed Scient Agent activation", () => {
             Effect.provide(NodeServices.layer),
           );
           const executable = runtime.launchPath(artifact);
+          const services = yield* Effect.context<never>();
           const install = () =>
             Effect.promise(() =>
               runtime.install({
@@ -223,7 +224,7 @@ describe("managed Scient Agent activation", () => {
                   // The provider runtime manager's idle window runs before the hold.
                   events.push(
                     // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- beforeActivate is the managed runtime's Promise hook; the probe must run inside it.
-                    `window:plain=${await Effect.runPromise(canLease(gate, executable))}`,
+                    `window:plain=${await Effect.runPromiseWith(services)(canLease(gate, executable))}`,
                   );
                 },
               }),

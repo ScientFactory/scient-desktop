@@ -127,7 +127,7 @@ export function useSidebarSections(input: {
   readonly pinnedThreads: readonly Shell[];
   readonly activeThreads: readonly Shell[];
   readonly routeThreadKey: string | null;
-  readonly now?: string;
+  readonly now: string;
   readonly newThreadContext: ReturnType<typeof useHandleNewThread>;
   /** Closes the mobile sidebar before navigating to a new draft. */
   readonly onBeforeNewThread: () => void;
@@ -234,7 +234,7 @@ export function useSidebarSections(input: {
     ) as ReadonlyMap<string, SectionMachine>;
   })();
   const completeGroups = (() => {
-    const now = input.now ?? new Date().toISOString();
+    const now = input.now;
     // The rows the sidebar can show, regardless of project scope; hidden subagents never place.
     const active = filterSidebarV2VisibleThreads(input.threads, null).filter((thread) => {
       if (thread.pinnedAt != null) return false;
@@ -257,7 +257,7 @@ export function useSidebarSections(input: {
       return {
         key,
         orderKey: thread.activeOrderKey ?? null,
-        eligible: placementEligible(thread, visits[key], input.now ?? new Date().toISOString()),
+        eligible: placementEligible(thread, visits[key], input.now),
       };
     }),
   }));

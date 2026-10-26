@@ -49,6 +49,10 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "@t3tools/provider-core/server/attachmentPrompt";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import {
@@ -114,6 +118,7 @@ export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
 const DEFAULT_PI_SETTINGS = Schema.decodeSync(PiSettings)({});
 const PiToolNameMapJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const encodePiToolNameMapJson = Schema.encodeEffect(PiToolNameMapJson);
 
 // Inherit Pi's configured defaultProvider/defaultModel without calling set_model.
 const PI_INHERIT_MODEL_SLUG = "default";
@@ -554,7 +559,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const toolNameMapJson =
         options.toolNameMap === undefined
           ? undefined
-          : yield* Schema.encodeEffect(PiToolNameMapJson)(options.toolNameMap).pipe(
+          : yield* encodePiToolNameMapJson(options.toolNameMap).pipe(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterOpenSessionError({
@@ -2875,24 +2880,33 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return yield* protocolError("The selected Pi model has no image support.");
         }
         const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
-        const extraLines: Array<string> = [];
+        const message = yield* providerMessageTextWithAttachmentPaths({
+          text: expandedText,
+          attachments,
+          resolveAttachmentPath: host.resolveAttachmentPath,
+          resolveExtractedTextPath: host.resolveExtractedTextPath,
+          // SCIENT-FORK:START — preserve the complete context admitted by the host.
+          preserveOverflow: host.preserveAttachmentContext === true,
+          // SCIENT-FORK:END
+        });
         for (const attachment of attachments) {
           const path = host.resolveAttachmentPath(attachment);
-          if (path === null || !(yield* fileSystem.exists(path)))
+          // SCIENT-FORK:START — strict hosts refuse missing current-request material.
+          if (
+            host.preserveAttachmentContext === true &&
+            (path === null || !(yield* fileSystem.exists(path)))
+          )
             return yield* protocolError(`Pi attachment ${attachment.name} is unavailable.`);
-          if (attachment.mimeType.startsWith("image/")) {
+          // SCIENT-FORK:END
+          if (path !== null && isProviderNativeImageAttachment(attachment)) {
             const bytes = yield* fileSystem.readFile(path);
             images.push({
               type: "image",
               data: Buffer.from(bytes).toString("base64"),
               mimeType: attachment.mimeType,
             });
-          } else {
-            extraLines.push(`[Attachment saved at ${path}]`);
           }
         }
-        const message =
-          extraLines.length === 0 ? expandedText : `${expandedText}\n\n${extraLines.join("\n")}`;
         return { message, images };
       });
 

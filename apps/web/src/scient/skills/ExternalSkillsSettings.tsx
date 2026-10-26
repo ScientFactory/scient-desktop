@@ -60,18 +60,23 @@ export function ExternalSkillsSettings() {
     currentLocal = { environmentId, providers, pending: {} };
     setLocal(currentLocal);
   } else {
-    let pending = local.pending;
+    const pending = { ...local.pending };
+    let pendingChanged = false;
     for (const group of groups) {
       for (const skill of group.provider.skills) {
         const key = skillKey(environmentId, group.provider.instanceId, skill.path);
         if (pending[key]?.confirmed && pending[key]?.enabled === skill.enabled) {
-          pending = { ...pending };
           delete pending[key];
+          pendingChanged = true;
         }
       }
     }
-    if (local.providers !== providers || pending !== local.pending) {
-      currentLocal = { environmentId, providers, pending };
+    if (local.providers !== providers || pendingChanged) {
+      currentLocal = {
+        environmentId,
+        providers,
+        pending: pendingChanged ? pending : local.pending,
+      };
       setLocal(currentLocal);
     }
   }

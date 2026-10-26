@@ -43,6 +43,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DocumentText from "../provider/DocumentText.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -984,7 +985,7 @@ describe("orchestrator MCP toolkit", () => {
                 Layer.provide(layerOrchestration),
               ),
             ),
-            Layer.provide(NodeServices.layer),
+            Layer.provide(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
             Layer.provideMerge(McpProviderSessions.layer),
           );
 
@@ -2628,12 +2629,12 @@ describe("orchestrator MCP toolkit", () => {
                       Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
                         offer: (request) => Queue.offer(pendingOffers, request).pipe(Effect.asVoid),
                         take: Queue.take(pendingOffers).pipe(
-                          Effect.flatMap((request) =>
-                            request === undefined
-                              ? Deferred.succeed(offersConsumed, undefined).pipe(
-                                  Effect.andThen(Effect.never),
-                                )
-                              : Effect.succeed(request),
+                          Effect.filterOrElse(
+                            (request) => request !== undefined,
+                            () =>
+                              Deferred.succeed(offersConsumed, undefined).pipe(
+                                Effect.andThen(Effect.never),
+                              ),
                           ),
                         ),
                       }),

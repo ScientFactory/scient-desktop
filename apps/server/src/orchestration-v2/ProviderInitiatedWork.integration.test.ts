@@ -60,6 +60,8 @@ import { layerFromAdaptersEffect as makeLayerEffect } from "./ProviderAdapterReg
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
+const isProviderWorkDeferredError = Schema.is(OrchestratorProviderWorkDeferredError);
+
 const driver = ProviderDriverKind.make("pi");
 const instanceId = ProviderInstanceId.make("pi-initiated-fixture");
 const selection = { instanceId, model: "fixture-model" };
@@ -140,6 +142,7 @@ const withInitiatedWork = <A, E, R>(
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getInstance: () => Effect.succeed(undefined),
             }),
           ),
@@ -1120,7 +1123,7 @@ it.live.each(["complete", "stopped-generation", "foreign-owner", "replaced-owner
               }
               return dispatch.pipe(
                 Effect.tapError((cause) =>
-                  Schema.is(OrchestratorProviderWorkDeferredError)(cause)
+                  isProviderWorkDeferredError(cause)
                     ? Queue.offer(deferred, cause).pipe(Effect.asVoid)
                     : Effect.void,
                 ),

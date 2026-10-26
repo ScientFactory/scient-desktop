@@ -38,6 +38,7 @@ import {
 } from "@t3tools/shared/model";
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
@@ -719,6 +720,7 @@ export function ProviderInstanceCard({
 
   const urlAuthAction = liveProvider?.auth.action;
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
+  const redesign = useClientSettings((settings) => settings.redesignEnabled);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
       toastManager.add({
@@ -1041,7 +1043,7 @@ export function ProviderInstanceCard({
         data-slot="settings-row"
         className={cn(
           "group relative isolate flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
-          selected ? "bg-muted/45" : "hover:bg-muted/25",
+          selected ? "bg-muted/45 redesign:bg-foreground/[0.06]" : "hover:bg-muted/25",
         )}
       >
         <div
@@ -1136,7 +1138,8 @@ export function ProviderInstanceCard({
       <span
         inert={readOnly}
         aria-disabled={readOnly || undefined}
-        className={cn("inline-flex items-center gap-1", readOnly && "opacity-50")}
+        // Empty, it would still add a flex gap and pull the version off the column edge.
+        className={cn("inline-flex items-center gap-1 empty:hidden", readOnly && "opacity-50")}
       >
         {titleTailNode}
         {onDelete ? (
@@ -1153,6 +1156,43 @@ export function ProviderInstanceCard({
         ) : null}
       </span>
     </div>
+  );
+
+  // The New design gives provider status its own row instead of hanging it under the name field.
+  const statusContent = (
+    <>
+      <ProviderStatusDiagnostic detail={statusDiagnostic}>
+        <div
+          tabIndex={statusDiagnostic ? 0 : undefined}
+          className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
+        >
+          {editorStatusNode}
+        </div>
+      </ProviderStatusDiagnostic>
+      {urlAuthAction && onAcceptUrlAuth ? (
+        <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
+          <p>{urlAuthAction.message}</p>
+          <code className="break-all text-2xs">{urlAuthAction.url}</code>
+          <Button
+            render={
+              <a
+                href={urlAuthAction.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => onAcceptUrlAuth(urlAuthAction)}
+              />
+            }
+            size="xs"
+            variant="outline"
+            className="w-fit"
+            disabled={readOnly}
+          >
+            <ExternalLinkIcon />
+            Continue authentication
+          </Button>
+        </div>
+      ) : null}
+    </>
   );
 
   const runtimeFields = driverOption ? (
@@ -1188,41 +1228,13 @@ export function ProviderInstanceCard({
         headerAction={editorHeaderAction}
         variant="plain"
       >
-        <div className="px-3 text-xs text-muted-foreground sm:px-4">
-          <ProviderStatusDiagnostic detail={statusDiagnostic}>
-            <div
-              tabIndex={statusDiagnostic ? 0 : undefined}
-              className="flex min-w-0 flex-wrap items-baseline gap-x-1.5"
-            >
-              {editorStatusNode}
-            </div>
-          </ProviderStatusDiagnostic>
-          {/* SCIENT-FORK:START — ACP registry URL-auth handoff surfaced in the header. */}
-          {urlAuthAction && onAcceptUrlAuth ? (
-            <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
-              <p>{urlAuthAction.message}</p>
-              <code className="break-all text-2xs">{urlAuthAction.url}</code>
-              <Button
-                render={
-                  <a
-                    href={urlAuthAction.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onClick={() => onAcceptUrlAuth(urlAuthAction)}
-                  />
-                }
-                size="xs"
-                variant="outline"
-                className="w-fit"
-                disabled={readOnly}
-              >
-                <ExternalLinkIcon />
-                Continue authentication
-              </Button>
-            </div>
-          ) : null}
-          {/* SCIENT-FORK:END */}
-        </div>
+        {/* SCIENT-FORK:START — keep status and URL authentication above the models-first tabs. */}
+        {redesign ? (
+          <SettingsRow title="Status" status={statusContent} />
+        ) : (
+          <div className="px-3 text-xs text-muted-foreground sm:px-4">{statusContent}</div>
+        )}
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
       {/* Scient keeps the models-first view; configuration uses upstream settings rows. */}
       <div className="flex h-11 shrink-0 border-b border-border/70">

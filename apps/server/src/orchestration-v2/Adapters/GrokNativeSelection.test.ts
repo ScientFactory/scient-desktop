@@ -539,7 +539,7 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
       name,
       options,
     })),
-  )("$caseTitle", ({ name, options }) =>
+  )("$caseTitle", ({ name: _name, options }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const h = yield* harness(

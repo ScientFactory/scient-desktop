@@ -239,6 +239,7 @@ async function transfer(session: EditSession): Promise<EditSession> {
       composerSeparated: restored.separated,
     };
     register(complete);
+    // oxlint-disable-next-line oxc/no-accumulating-spread -- register/save retain these fixed-size snapshots across awaits; mutation would rewrite an earlier journal state.
     for (;;) {
       await save({ ...complete, transferred: false });
       const beforeStash =
@@ -704,6 +705,7 @@ export async function restoreQueueEditStash(
     composerSeparated: true,
   };
   try {
+    // oxlint-disable-next-line oxc/no-accumulating-spread -- An awaited save owns the previous fixed-size snapshot; later edits must not mutate it.
     for (;;) {
       await save(recovery);
       const latest = useComposerDraftStore.getState().getComposerDraft(target) ?? current;

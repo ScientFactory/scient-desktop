@@ -288,9 +288,7 @@ describe("Restored OrchestratorReplayFixtures.integration.test.ts", () => {
         const rest = entries.filter((_, index) => index !== toolIndex);
         return [...rest.slice(0, resultIndex), toolEntry, ...rest.slice(resultIndex)];
       };
-      // A subagent's foreground Bash run during the root's turn is tailed like a
-      // root call's, so the child's command row streams live.
-      const SUBAGENT_BASH_ID = "toolu_01JMN3SSQCHzUTNua9AWdkiH";
+
       // regression: a8c4802418 fix(server): a background Claude subagent's work shows while its parent is idle (#16486)
 
       it.effect.each(
@@ -419,10 +417,4 @@ describe("Restored OrchestratorReplayFixtures.integration.test.ts", () => {
       );
     }
   });
-
-  function undecodableEvent(entry: ProviderReplayEntry): ProviderReplayEntry {
-    if (entry.type !== "emit_inbound") return entry;
-    const frame = entry.frame as { readonly event: Record<string, unknown> };
-    return { ...entry, frame: { ...frame, event: { ...frame.event, durable: "not-an-envelope" } } };
-  }
 });

@@ -1,5 +1,4 @@
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
-import * as Option from "effect/Option";
 import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
@@ -68,9 +67,10 @@ export const fullAccessCapturedPolicyLayer = Layer.mock(
   ProviderSessionManager.ProviderSessionManagerV2,
 )({
   resolveMcpInvocationPolicy: () =>
-    Effect.succeed(
-      Option.some({ runtimeMode: "full-access" as const, interactionMode: "default" as const }),
-    ),
+    Effect.succeedSome({
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+    }),
 });
 export const liveThreadsLayer = Layer.merge(
   fullAccessCapturedPolicyLayer,

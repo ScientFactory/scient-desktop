@@ -329,8 +329,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     "preserves a damaged generation when repair %s fails",
     (stage) =>
       Effect.gen(function* () {
-        const h = yield* makeHarness({
-          ...(stage === "download"
+        const h = yield* makeHarness(
+          stage === "download"
             ? { body: Stream.make(new Uint8Array([0])) }
             : {
                 validate: () =>
@@ -340,8 +340,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
                       detail: "Fixture validation failed",
                     }),
                   ),
-              }),
-        });
+              },
+        );
         const asset = yield* releaseAsset();
         yield* writeRelease(h.installation.managedDirectory, asset);
         const harness = h.path.join(

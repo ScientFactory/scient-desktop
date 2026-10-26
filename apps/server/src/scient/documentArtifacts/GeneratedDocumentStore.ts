@@ -284,7 +284,7 @@ const makeStoreError = (
 
 const optionalOnNotFound = <A>(effect: Effect.Effect<A, PlatformError.PlatformError>) =>
   effect.pipe(
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catchTags({
       PlatformError: (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed(Option.none<A>()) : Effect.fail(error),

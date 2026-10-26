@@ -6,7 +6,6 @@ import {
   useRef,
   useState,
 } from "react";
-
 import {
   getPreviewPanelMaxWidth as getInlinePanelMaxWidth,
   type PreviewPanelInlineSize,

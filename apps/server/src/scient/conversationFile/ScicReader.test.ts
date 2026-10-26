@@ -410,9 +410,7 @@ describe("the .scic reader", () => {
 
   describe("rejects", () => {
     it.effect("a file that is not a ZIP", () =>
-      Effect.gen(function* () {
-        yield* expectRejected(encoder.encode("not a zip at all"), "corrupt-archive");
-      }),
+      Effect.suspend(() => expectRejected(encoder.encode("not a zip at all"), "corrupt-archive")),
     );
 
     it.effect("a missing, wrong, compressed, or misplaced mimetype", () =>

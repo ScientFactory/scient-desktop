@@ -127,7 +127,7 @@ export const prepareScientV2SkillScopeForSteer = (input: {
 
 /** Validates a steer's prepared text as current input, falling back to the
  * catalog-marker-free text when the marked text does not fit; `useFallback` receives
- * that text. Built synchronously, so the steer yields exactly the validation it did. */
+ * that text. Filesystem reads remain inside the returned validation effect. */
 export const validateScientV2SteerInput = (input: {
   readonly prepared: {
     readonly text: string;
@@ -138,13 +138,11 @@ export const validateScientV2SteerInput = (input: {
   readonly useFallback: (text: string) => void;
 }) => {
   const validateCurrent = (text: string) =>
-    Effect.fromResult(
-      validateProviderCurrentInput({
-        text,
-        attachments: input.attachments,
-        attachmentsDir: input.attachmentsDir,
-      }),
-    );
+    validateProviderCurrentInput({
+      text,
+      attachments: input.attachments,
+      attachmentsDir: input.attachmentsDir,
+    });
   return validateCurrent(input.prepared.text).pipe(
     Effect.catchTags({
       ProviderCurrentInputError: (cause) => {

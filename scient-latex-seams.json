@@ -214,6 +214,11 @@
       "path": "packages/shared/package.json",
       "anchor": "./pdfCitations",
       "purpose": "Export Scient's PDF quote link format and agent projection to web, mobile and export consumers."
+    },
+    {
+      "path": "scripts/effect-budget.json",
+      "anchor": "\"apps/web/src/scient/latex/LatexMathField.tsx\"",
+      "purpose": "The shared React effect budget records existing Scient latex lifecycle owners; new effects still require their own scoped justification and lint validation."
     }
   ]
 }

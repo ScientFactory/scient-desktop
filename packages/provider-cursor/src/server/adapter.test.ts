@@ -47,6 +47,7 @@ import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
+const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 describe("CursorAdapterV2", () => {
   it("maps native start failures to a standard receipt and preserves existing receipts", () => {
@@ -1499,7 +1500,7 @@ describe("CursorAdapterV2", () => {
         (yield* mcpSessions.read(threadId))?.authorizationHeader,
         mode === "missing" ? undefined : sendCredential.authorizationHeader,
       );
-      const logged = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+      const logged = yield* encodeJson({
         open: loggedCursorAgentOptions(opened[0]!.options),
         send: loggedCursorSendOptions(sent[0]!.options),
       });

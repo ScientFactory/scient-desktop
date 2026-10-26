@@ -212,9 +212,9 @@ describe("native V2 analytics", () => {
                       if (read === 1) {
                         yield* Deferred.succeed(initialEntered, undefined);
                         if (mode === "failed")
-                          return yield* Effect.fail(
-                            new EventSinkStreamError({ cause: "synthetic unavailable sink" }),
-                          );
+                          return yield* new EventSinkStreamError({
+                            cause: "synthetic unavailable sink",
+                          });
                         yield* Deferred.await(releaseInitial);
                       } else {
                         yield* Deferred.succeed(boundaryEntered, undefined);
@@ -239,7 +239,7 @@ describe("native V2 analytics", () => {
                   streamChanges: Stream.empty,
                 }),
                 Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.succeed(undefined),
+                  getInstance: () => Effect.sync(() => undefined),
                 }),
                 Layer.mock(ProjectionStoreV2)({}),
               ),
@@ -302,7 +302,7 @@ describe("native V2 analytics", () => {
                 streamChanges: Stream.empty,
               }),
               Layer.mock(ProviderInstanceRegistry)({
-                getInstance: () => Effect.succeed(undefined),
+                getInstance: () => Effect.sync(() => undefined),
               }),
               Layer.mock(ProjectionStoreV2)({}),
             ),
@@ -380,7 +380,7 @@ describe("native V2 analytics", () => {
                   streamChanges: Stream.empty,
                 }),
                 Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.succeed(undefined),
+                  getInstance: () => Effect.sync(() => undefined),
                 }),
                 Layer.mock(ProjectionStoreV2)({
                   getThreadShell: () =>

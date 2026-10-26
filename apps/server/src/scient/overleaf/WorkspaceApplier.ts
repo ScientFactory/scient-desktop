@@ -381,8 +381,9 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
 
 const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierHooks) {
   const files = yield* WorkspaceFileSystem;
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const settledRevision = (cwd: string, relativePath: string) =>
-    Effect.runPromise(
+    runPromise(
       files.withSettledFileRead({ cwd, relativePath }, (attention) =>
         attention
           ? Effect.fail(
@@ -718,10 +719,12 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                 try: () => hooks.at?.("after-step", name) ?? Promise.resolve(),
                 catch: (cause) => new WorkspaceApplyError({ cause }),
               });
-              state = {
-                ...state,
-                steps: Object.fromEntries([...Object.entries(state.steps), [name, outcome]]),
-              };
+              const nextState = { ...state };
+              nextState.steps = Object.fromEntries([
+                ...Object.entries(state.steps),
+                [name, outcome],
+              ]);
+              state = nextState;
               yield* save();
               yield* Effect.tryPromise({
                 try: () => hooks.at?.("step-recorded", name) ?? Promise.resolve(),
@@ -744,10 +747,11 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                 catch: (cause) => new WorkspaceApplyError({ cause }),
               }));
             const outcome = !failed ? "done" : touched ? "interrupted" : "skipped";
-            state = {
-              ...state,
-              outcomes: state.outcomes.map((old, index) => (index === unitIndex ? outcome : old)),
-            };
+            const nextState = { ...state };
+            nextState.outcomes = state.outcomes.map((old, index) =>
+              index === unitIndex ? outcome : old,
+            );
+            state = nextState;
             yield* save();
           }
         if (state.phase === "applying") {

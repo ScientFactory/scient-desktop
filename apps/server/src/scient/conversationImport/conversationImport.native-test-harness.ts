@@ -178,7 +178,7 @@ export function nativeImportRuntimeTestLayer(
   const runtimePolicyLayer = RuntimePolicy.layerFromProjectStore.pipe(
     Layer.provide(ProjectStore.layer.pipe(Layer.provide(database))),
     Layer.provide(
-      Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.succeed(undefined) }),
+      Layer.mock(ProviderInstanceRegistry)({ getInstance: () => Effect.sync(() => undefined) }),
     ),
     Layer.orDie,
   );

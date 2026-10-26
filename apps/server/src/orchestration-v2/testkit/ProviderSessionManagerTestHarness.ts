@@ -93,9 +93,7 @@ function failingReleaseEventSinkLayer(control: ReleaseWriteFailureControl) {
           return Effect.gen(function* () {
             if (yield* Ref.get(control.failing)) {
               yield* Deferred.succeed(control.attempted, undefined);
-              return yield* Effect.fail(
-                new EventSink.EventSinkWriteError({ eventCount: input.events.length }),
-              );
+              return yield* new EventSink.EventSinkWriteError({ eventCount: input.events.length });
             }
             const result = yield* delegate.write(input);
             yield* Deferred.succeed(control.persisted, undefined);

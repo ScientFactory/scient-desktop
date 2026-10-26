@@ -29,6 +29,7 @@ import type { OrchestrationV2ContextTransfer } from "@t3tools/contracts";
 import { ScanTextIcon } from "lucide-react";
 import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
 import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
+import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
@@ -65,6 +66,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type SyntheticEvent,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { type TimelineEntry } from "../../session-logic";
@@ -97,7 +99,6 @@ import {
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
-import type { ThreadFindPositionReader } from "./threadFind";
 import { TooltipScrollDismissArea } from "../ui/tooltip";
 import { WorktreeSetupCard } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
@@ -312,7 +313,6 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
   loadEarlier?: CitationHistoryPage | null;
-  findPositionReaderRef?: React.RefObject<ThreadFindPositionReader | null>;
   findExpanded?: boolean;
   findQuery?: string;
   activeFindMatch?: ThreadFindMatch | null;
@@ -361,7 +361,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   findQuery = "",
   activeFindMatch = null,
   findNavigationId = 0,
-  findPositionReaderRef,
   latestRun,
   announcedRun = null,
   detailBehindShell = false,
@@ -482,6 +481,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // still. No reduced-motion check and no settling identity: nothing glides to or pins the end.
   const [abandonedPositionKey, setAbandonedPositionKey] = useState<string | null>(null);
   // SCIENT-FORK:END
+  const [playingAudioRows, setPlayingAudioRows] = useState<ReadonlyMap<HTMLAudioElement, string>>(
+    () => new Map(),
+  );
   let paintedExpandedRunIds = expandedRunIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedAttemptIds = expandedAttemptIds;
@@ -493,6 +495,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ? timelineListStateFor(listIdentityKey)
     : listState;
   if (identityChanged) {
+    setPlayingAudioRows(new Map());
     setListState({ identity: listIdentityKey, rememberedPosition, workGroupViewState });
     setPositionedThreadKey(null);
     // SCIENT-FORK:START — a new thread's positioning starts over; no settling identity.
@@ -889,6 +892,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const alwaysRenderKeys = [
     ...(citationAlwaysRender?.keys ?? []),
     ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
+    ...new Set(
+      [...playingAudioRows].filter(([audio]) => audio.isConnected).map(([, rowId]) => rowId),
+    ),
   ];
   const alwaysRender =
     alwaysRenderIndices.length === 0 && alwaysRenderKeys.length === 0
@@ -1332,7 +1338,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   useThreadFindPositionReader({
-    findPositionReaderRef,
+    threadKey: listIdentityKey,
     timelineViewportElement,
     findFoldRunIds,
     timelineEntries,
@@ -1358,14 +1364,41 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
 
   // LegendList moves rows one commit late; per-row providers prevent thread context leaks.
+  const onAudioPlaybackChange = (rowId: string, event: SyntheticEvent) => {
+    const audio = event.target;
+    if (!(audio instanceof HTMLAudioElement)) return;
+    setPlayingAudioRows((current) => {
+      const playing = !audio.paused && !audio.ended;
+      if (playing === current.has(audio)) return current;
+      const next = new Map(current);
+      if (playing) next.set(audio, rowId);
+      else next.delete(audio);
+      return next;
+    });
+  };
+  const onAudioUnmount = useStableCallback((audio: HTMLAudioElement) => {
+    setPlayingAudioRows((current) => {
+      if (!current.has(audio)) return current;
+      const next = new Map(current);
+      next.delete(audio);
+      return next;
+    });
+  });
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
-      <div className="messages-timeline-row-frame">
+      <div
+        className="messages-timeline-row-frame"
+        onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
+        onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
+        onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
+      >
         <div
           className="@container/chat-lane chat-content-lane overflow-x-clip"
           data-timeline-root="true"
         >
-          <TimelineRowContent row={item} />
+          <AudioPreviewUnmountContext value={onAudioUnmount}>
+            <TimelineRowContent row={item} />
+          </AudioPreviewUnmountContext>
         </div>
       </div>
     </TimelineRowCtx>
@@ -1448,7 +1481,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 initialScrollAtEnd={false}
                 // SCIENT-FORK:END
                 // Legend needs a data refresh to mount new pins without a scroll event.
-                dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+                dataVersion={`${readyCitationRequest?.key ?? listIdentityKey}:${alwaysRenderKeys.join(",")}`}
                 {...(alwaysRender ? { alwaysRender } : {})}
                 // SCIENT-FORK:START — the same thread can temporarily lose its loaded rows.
                 // A remounted list must restore its latest receipt, not assume the old DOM
@@ -1495,7 +1528,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                   onManualNavigation();
                   void listRef.current?.scrollToIndex({
                     index: item.rowIndex,
-                    animated: true,
+                    animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
                     viewOffset: 24,
                   });
                 }}

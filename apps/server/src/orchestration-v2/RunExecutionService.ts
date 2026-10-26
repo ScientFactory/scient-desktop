@@ -45,6 +45,7 @@ import * as Stream from "effect/Stream";
 
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
+import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
@@ -64,6 +65,7 @@ import {
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 // SCIENT-FORK:START — owned finalization and private subscription lifetime.
 import {
+  abandonedCommittedRootTurn,
   isCommittedRootProviderTurn,
   makeOwnedRunFinalizer,
   makeRunEventSubscriptionLifetime,
@@ -659,6 +661,7 @@ export const layer: Layer.Layer<
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ServerSettings.ServerSettingsService
   | McpAppModelContext.McpAppModelContext
+  | PreviewAgentActivity.PreviewAgentActivity
   | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
   RunExecutionServiceV2,
@@ -670,6 +673,7 @@ export const layer: Layer.Layer<
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const previewAgentActivity = yield* PreviewAgentActivity.PreviewAgentActivity;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
     const threadDispatch = yield* ThreadCommandExecutor;
@@ -689,6 +693,7 @@ export const layer: Layer.Layer<
         readonly preserveProviderThread?: boolean;
         readonly pendingStartOwner?: EventSink.PendingStartOwner;
         readonly failedStartReceipt?: OrchestrationV2ProviderTurn;
+        readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
         // SCIENT-FORK:START — distinguish rejected ownership from a retained held lease.
@@ -701,6 +706,15 @@ export const layer: Layer.Layer<
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
+        const terminalProviderTurn =
+          input.abandonedProviderTurn ??
+          (input.failedStartReceipt === undefined
+            ? undefined
+            : {
+                ...input.failedStartReceipt,
+                status: "failed" as const,
+                completedAt,
+              });
         const finalizedAttempt: OrchestrationV2RunAttempt | null = {
           ...input.attempt,
           status: input.terminal.status,
@@ -817,7 +831,7 @@ export const layer: Layer.Layer<
                 ]
               : [],
           events: [
-            ...(input.failedStartReceipt === undefined
+            ...(terminalProviderTurn === undefined
               ? []
               : [
                   {
@@ -828,11 +842,7 @@ export const layer: Layer.Layer<
                     nodeId: input.rootNode.id,
                     providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
-                    payload: {
-                      ...input.failedStartReceipt,
-                      status: "failed" as const,
-                      completedAt,
-                    },
+                    payload: terminalProviderTurn,
                   },
                 ]),
             ...cascadedSubagentEvents,
@@ -1036,13 +1046,13 @@ export const layer: Layer.Layer<
               ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
             })
             .pipe(
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning(
-                      "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                      { runId: input.run.id },
-                    ),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (_cause) =>
+                  Effect.logWarning(
+                    "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                    { runId: input.run.id },
+                  ),
               ),
               // SCIENT-FORK:START — cancel only local preparation; retain native receipt safety.
               (capture) => input.prepareBeforeProviderTurn?.(capture) ?? capture,
@@ -1107,6 +1117,7 @@ export const layer: Layer.Layer<
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
+        const observedRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         const committedRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
         const routeIdentity: ProviderEventRouteIdentity = {
           threadId: input.run.threadId,
@@ -1386,7 +1397,7 @@ export const layer: Layer.Layer<
             }
           }
         });
-        const shouldStopProviderEventIngestion = Effect.gen(function* () {
+        const agentTurnsSettled = Effect.gen(function* () {
           if (!(yield* Ref.get(rootTerminalSeen))) {
             return false;
           }
@@ -1411,8 +1422,19 @@ export const layer: Layer.Layer<
             return false;
           }
           const childSubagents = yield* Ref.get(activeChildSubagents);
-          if (childSubagents.size > 0) {
+          return childSubagents.size === 0;
+        });
+        const shouldStopProviderEventIngestion = Effect.gen(function* () {
+          if (!(yield* agentTurnsSettled)) {
             return false;
+          }
+          const terminal = yield* Ref.get(terminalEvent);
+          if (
+            terminal !== null &&
+            terminal.status !== "completed" &&
+            !childTurnsContinue(terminal)
+          ) {
+            return true;
           }
           // Newly owned items depend on adapters emitting a non-terminal event before the root
           // terminal. Owner loss (a newer run claimed lastRunOrdinal) must not close this stream
@@ -1443,6 +1465,7 @@ export const layer: Layer.Layer<
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
+        const endPreviewActivity = yield* previewAgentActivity.begin(input.run.threadId);
         // SCIENT-FORK:START — a running fork reads this live root's streamed text.
         const runningForkText = makeRunningForkTextSnapshots({
           owner: textSnapshotOwner,
@@ -1499,6 +1522,16 @@ export const layer: Layer.Layer<
               // Separate filter/tap operators can process a whole chunk's
               // ownership transfers before tracking its earlier accepted rows.
               if (!accepted) return;
+              if (
+                event.type === "provider_turn.updated" &&
+                event.driver === input.session.driver &&
+                event.providerTurn.providerThreadId === input.providerThread.id &&
+                event.providerTurn.nodeId === input.rootNode.id &&
+                event.providerTurn.runAttemptId === input.attemptId
+              ) {
+                yield* Ref.set(observedRootProviderTurn, event.providerTurn);
+              }
+
               let storedEventCount = 0;
               let deliveredEvent = filterAssistantEvent(
                 event,
@@ -1619,6 +1652,12 @@ export const layer: Layer.Layer<
               yield* trackChildLifecycle(event, deliveredEvent !== null);
             }),
           ),
+          // Also after events this run does not accept, such as a child handed to another run.
+          Stream.tap(() =>
+            Effect.gen(function* () {
+              if (yield* agentTurnsSettled) yield* endPreviewActivity;
+            }),
+          ),
           Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),
           Stream.runDrain,
           Effect.mapError((cause) => new RunExecutionIngestError({ runId: input.run.id, cause })),
@@ -1667,30 +1706,37 @@ export const layer: Layer.Layer<
                   return;
                 const providerThread = yield* Ref.get(latestProviderThread);
                 const routing = yield* Ref.get(eventRouting);
-                // Native observations authorize stopping work, not inventing a committed receipt.
-                // The stored root below owns acceptance, usage and terminal-state preservation.
-                if (routing.rootProviderTurnId !== null && !routing.rootTurnEnded) {
-                  yield* input.session
-                    .interruptTurn({
-                      providerThread,
-                      providerTurnId: routing.rootProviderTurnId,
-                      requestRuntimeRestart: true,
-                      onlyIfActive: true,
-                    })
-                    .pipe(
-                      Effect.catchCauseIf(
-                        (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
-                        (interruptCause) =>
-                          Effect.logWarning(
-                            "orchestration V2 failed to interrupt turn after ingestion failure",
-                            { runId: input.run.id, cause: interruptCause },
+                // Native frames authorize interruption; only committed receipts authorize repair.
+                const interrupted =
+                  routing.rootProviderTurnId !== null && !routing.rootTurnEnded
+                    ? yield* input.session
+                        .interruptTurn({
+                          providerThread,
+                          providerTurnId: routing.rootProviderTurnId,
+                          requestRuntimeRestart: true,
+                          onlyIfActive: true,
+                        })
+                        .pipe(
+                          Effect.as(true),
+                          Effect.catchCauseIf(
+                            (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
+                            (interruptCause) =>
+                              Effect.logWarning(
+                                "orchestration V2 failed to interrupt turn after ingestion failure",
+                                { runId: input.run.id, cause: interruptCause },
+                              ).pipe(Effect.as(false)),
                           ),
-                      ),
-                    );
-                }
+                        )
+                    : false;
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
                 const receipt = yield* Ref.get(committedRootProviderTurn);
+                const abandonedProviderTurn = abandonedCommittedRootTurn({
+                  receipt,
+                  observed: yield* Ref.get(observedRootProviderTurn),
+                  interrupted,
+                  completedAt,
+                });
                 let nextRetryWarningAt = completedAt;
                 yield* writeOwnedFinalRunEvents({
                   run: input.run,
@@ -1698,9 +1744,7 @@ export const layer: Layer.Layer<
                   checkpointScope: input.checkpointScope,
                   providerThread,
                   attempt: input.attempt,
-                  ...(receipt === null || isTerminalProviderTurnStatus(receipt.status)
-                    ? {}
-                    : { failedStartReceipt: receipt }),
+                  ...(abandonedProviderTurn === undefined ? {} : { abandonedProviderTurn }),
                   writeIfRunCurrent: {
                     activeAttemptId: input.attemptId,
                     expectedStatus: "running",
@@ -1756,6 +1800,7 @@ export const layer: Layer.Layer<
                 );
               }),
           ),
+          Effect.ensuring(endPreviewActivity),
           Effect.ensuring(subscriptionLifetime.close),
           Effect.forkDetach,
         );

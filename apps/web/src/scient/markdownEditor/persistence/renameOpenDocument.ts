@@ -189,9 +189,7 @@ export async function renameOpenDocument(input: {
     if (destinationCopy !== "empty") return { kind: "legacy-required" };
     let intent: DocumentRenameIntent;
     try {
-      intent = await move.admitRename({
-        ...(input.removeEmptyFolders ? { removeEmptyFolders: true } : {}),
-      });
+      intent = await move.admitRename(input.removeEmptyFolders ? { removeEmptyFolders: true } : {});
       if (
         intent.destination.environmentId !== destination.environmentId ||
         intent.destination.cwd !== destination.cwd ||

@@ -182,6 +182,7 @@ describe.skipIf(!qualified)("host-configured file publication", () => {
         let stop = false,
           reads = 0;
         const reader = (async () => {
+          // oxlint-disable-next-line no-unmodified-loop-condition -- The concurrent publisher sets stop in finally before awaiting this reader.
           while (!stop) {
             expect(["old", "new"]).toContain(await NodeFSP.readFile(target, "utf8"));
             reads++;

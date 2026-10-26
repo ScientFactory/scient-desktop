@@ -1,0 +1,69 @@
+import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import { useEffect, useRef, useState } from "react";
+
+import { useAssetUrlState } from "~/assets/assetUrls";
+
+import { Button } from "~/components/ui/button";
+
+import { AudioPreview } from "./AudioPreview";
+
+export function InlineAudioPreview(props: {
+  readonly name: string;
+  readonly environmentId?: EnvironmentId;
+  readonly resource?: AssetResource;
+  readonly src?: string;
+  readonly copyMarkdown?: string;
+  readonly onOpen?: () => void;
+}) {
+  const container = useRef<HTMLSpanElement>(null);
+  const [visible, setVisible] = useState(false);
+  // SCIENT-FORK:START — remote media waits for an explicit load, like chat images.
+  const [loadedRemote, setLoadedRemote] = useState<string | null>(null);
+  const needsRemoteLoad = /^https?:/i.test(props.src ?? "") && loadedRemote !== props.src;
+  // SCIENT-FORK:END
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const asset = useAssetUrlState(
+    visible ? (props.environmentId ?? null) : null,
+    visible ? (props.resource ?? null) : null,
+  );
+  const src = visible ? (asset._tag === "Success" ? asset.url : props.src) : undefined;
+  const failed = asset._tag === "Failure" || (src !== undefined && failedSrc === src);
+
+  useEffect(() => {
+    const element = container.current;
+    if (!element) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <span ref={container} data-markdown-copy={props.copyMarkdown}>
+      {needsRemoteLoad ? (
+        <Button size="xs" variant="outline" onClick={() => setLoadedRemote(props.src ?? null)}>
+          Load audio {props.name}
+        </Button>
+      ) : (
+        <AudioPreview
+          compact
+          name={props.name}
+          src={src ?? ""}
+          revision={
+            props.resource
+              ? JSON.stringify([props.environmentId, props.resource])
+              : (props.src ?? null)
+          }
+          failed={failed}
+          onOpen={props.onOpen}
+          onRetry={() => setFailedSrc(null)}
+          onError={() => setFailedSrc(src ?? null)}
+        />
+      )}
+    </span>
+  );
+}

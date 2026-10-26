@@ -359,7 +359,7 @@ it.effect(
       const authority = yield* Authority.WorkspaceAuthorityProjection;
       const expected = yield* authority.getThreadContext(threadId);
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-      const compacted = yield* maintenance.compactEventStore;
+      const compacted = yield* maintenance.compactEventStore();
       assert.isTrue(compacted.deletedEventCount > 0);
       assert.deepEqual(yield* authority.getThreadContext(threadId), expected);
       yield* maintenance.rebuild;

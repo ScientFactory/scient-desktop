@@ -13,6 +13,8 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as PreviewBroker from "../../mcp/PreviewAutomationBroker.ts";
 
+const decodeDocumentHostRequest = Schema.decodeUnknownEffect(ScientDocumentHostRequest);
+
 const documentHostOperations = [
   "documentPdfRender",
   "documentPagePdfRender",
@@ -63,7 +65,7 @@ export const layer = Layer.effect(
               events.pipe(
                 Stream.mapEffect((event): Effect.Effect<ScientDocumentHostStreamEvent> => {
                   if (event.type === "connected") return Effect.succeed(event);
-                  return Schema.decodeUnknownEffect(ScientDocumentHostRequest)(event.request).pipe(
+                  return decodeDocumentHostRequest(event.request).pipe(
                     // Requests originate in decoded Scient document tools. A mismatched broker event
                     // is a broken server invariant and must never reach the document renderer.
                     Effect.orDie,

@@ -62,6 +62,11 @@ import {
 } from "../testkit/ProviderReplayHarness.ts";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+
+const isThreadPayload = Schema.is(Schema.Struct({ threadId: Schema.String }));
+const decodeProviderInstanceConfigMap = Schema.decodeEffect(ProviderInstanceConfigMap);
+const encodeForkEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
 function makeCodexReplayTurn(input: {
   readonly id: string;
   readonly status: "inProgress" | "completed" | "interrupted" | "failed";
@@ -799,8 +804,7 @@ it.live.each(
                     Effect.tap(() =>
                       method === "item/agentMessage/delta"
                         ? Deferred.succeed(
-                            Schema.is(Schema.Struct({ threadId: Schema.String }))(payload) &&
-                              payload.threadId === peerNativeThreadId
+                            isThreadPayload(payload) && payload.threadId === peerNativeThreadId
                               ? peerReceived
                               : receipts.filter((r) => r.method === "item/agentMessage/delta")
                                     .length === 1
@@ -815,7 +819,7 @@ it.live.each(
             } satisfies CodexClient.CodexAppServerClient["Service"];
           }),
       });
-      const configMap = yield* Schema.decodeUnknownEffect(ProviderInstanceConfigMap)({
+      const configMap = yield* decodeProviderInstanceConfigMap({
         codex: {
           driver: CodexAdapterV2.CODEX_DRIVER_KIND,
           config: { homePath: home },
@@ -1010,7 +1014,7 @@ it.live.each(
           yield* fs.makeDirectory(evidenceDirectory, { recursive: true });
           yield* fs.writeFileString(
             path.join(evidenceDirectory, `${mode}.json`),
-            yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(evidence),
+            yield* encodeForkEvidence(evidence),
           );
         }
       });

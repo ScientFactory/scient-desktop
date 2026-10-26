@@ -42,6 +42,7 @@ import { runCachePersistence } from "./cachePersistence.ts";
 import {
   isRpcClientError,
   request,
+  requestGuarded,
   runStream,
   subscribe,
   subscribeDynamicWithSession,
@@ -51,6 +52,7 @@ import type { RpcSession } from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 import {
   applyServerConfigProjection,
+  reuseUnchanged,
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "./serverConfigProjection.ts";
@@ -648,6 +650,19 @@ export function resolveServerConfigValue(
   return initialConfig ?? projection?.config ?? null;
 }
 
+// SCIENT-FORK:START — one cache owner serves on-demand chat and explicit Extensions discovery.
+import {
+  type FetchedWorkspaceSnapshot,
+  recordFetchedWorkspaceInventory,
+  recordFetchedWorkspaceSnapshot,
+  withFetchedWorkspaceSnapshots,
+} from "./providerWorkspaceSnapshots.ts";
+export {
+  recordFetchedWorkspaceSnapshot,
+  withFetchedWorkspaceSnapshots,
+} from "./providerWorkspaceSnapshots.ts";
+// SCIENT-FORK:END
+
 export function createServerEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<
     EnvironmentRegistry.EnvironmentRegistry | Persistence.EnvironmentCacheStore | R,
@@ -686,6 +701,12 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerConfig>;
   }) => configProjectionFamily(target.environmentId);
+  const fetchedWorkspaceSnapshotsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make<ReadonlyArray<FetchedWorkspaceSnapshot>>([]).pipe(
+      Atom.keepAlive,
+      Atom.withLabel(`environment-data:server:fetched-workspace-snapshots:${environmentId}`),
+    ),
+  );
   const emptyConfigAtom = Atom.make<ServerConfig | null>(null).pipe(
     Atom.withLabel("environment-data:server:config:empty"),
   );
@@ -693,14 +714,24 @@ export function createServerEnvironmentAtoms<R, E>(
     if (environmentId === null) {
       return emptyConfigAtom;
     }
+    let previousProviders: ServerConfig["providers"] | undefined;
     return Atom.make((get): ServerConfig | null => {
       const projection = Option.getOrNull(
         AsyncResult.value(get(configProjection({ environmentId, input: {} }))),
       );
-      return resolveServerConfigValue(
+      const config = resolveServerConfigValue(
         projection,
         get(options.initialConfigValueAtom(environmentId)),
       );
+      if (config === null) return null;
+      const merged = withFetchedWorkspaceSnapshots(
+        config,
+        get(fetchedWorkspaceSnapshotsAtom(environmentId)),
+      );
+      if (merged === config) return config;
+      // Keep provider identities stable across config events; the projection already reuses the rest.
+      previousProviders = reuseUnchanged(previousProviders, merged.providers);
+      return { ...merged, providers: previousProviders };
     }).pipe(Atom.withLabel(`environment-data:server:config:${environmentId}`));
   });
   const updateStateValueAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -1168,20 +1199,20 @@ export function createServerEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
       execute: (input, emit) =>
         request(WS_METHODS.serverGetUsageSummary, input).pipe(
-          Effect.flatMap((summary) =>
-            summary.sources.some((source) => source.refreshing === true)
-              ? emit(summary).pipe(
-                  Effect.andThen(
-                    request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
+          Effect.filterOrElse(
+            (summary) => !summary.sources.some((source) => source.refreshing === true),
+            (summary) =>
+              emit(summary).pipe(
+                Effect.andThen(
+                  request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
+                ),
+                Effect.catch((error) =>
+                  Effect.logWarning("Could not refresh slow usage sources.").pipe(
+                    Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+                    Effect.as(summary),
                   ),
-                  Effect.catch((error) =>
-                    Effect.logWarning("Could not refresh slow usage sources.").pipe(
-                      Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
-                      Effect.as(summary),
-                    ),
-                  ),
-                )
-              : Effect.succeed(summary),
+                ),
+              ),
           ),
         ),
     }),
@@ -1227,6 +1258,37 @@ export function createServerEnvironmentAtoms<R, E>(
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,
+      execute: (input) =>
+        requestGuarded(WS_METHODS.serverRefreshProviders, {
+          ...input,
+          workspaceSnapshotsOnDemand: input.workspaceSnapshotsOnDemand ?? true,
+          ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+        }),
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => {
+          if (input.workspaceSnapshotsOnDemand === false) {
+            registry.update(fetchedWorkspaceSnapshotsAtom(environmentId), (current) =>
+              recordFetchedWorkspaceInventory(
+                current,
+                result.providers,
+                registry.get(configValueAtom(environmentId))?.providers ?? [],
+              ),
+            );
+            return;
+          }
+          const { instanceId, cwd } = input;
+          if (instanceId === undefined || cwd === undefined) return;
+          registry.update(fetchedWorkspaceSnapshotsAtom(environmentId), (current) =>
+            recordFetchedWorkspaceSnapshot(
+              current,
+              { instanceId, cwd, fresh: input.fresh === true },
+              result.providers,
+              registry
+                .get(configValueAtom(environmentId))
+                ?.providers.find((provider) => provider.instanceId === instanceId),
+            ),
+          );
+        }),
       concurrency: {
         mode: "singleFlight",
         key: ({ environmentId, input }) =>
@@ -1237,6 +1299,7 @@ export function createServerEnvironmentAtoms<R, E>(
             input.fresh ?? false,
             input.refreshModels ?? false,
             input.refreshManagedRuntimeCatalog ?? false,
+            input.workspaceSnapshotsOnDemand ?? true,
           ]),
       },
     }),

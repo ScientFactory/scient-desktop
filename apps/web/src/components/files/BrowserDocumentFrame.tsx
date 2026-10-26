@@ -63,27 +63,18 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 /**
  * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
- * the app's session or storage. PDFs use the browser's native viewer.
+ * the app's session or storage. PDF routes belong to ScientPdfReader.
  */
 export function BrowserDocumentFrame(props: {
   readonly src: string;
   readonly title: string;
-  readonly pdf: boolean;
   readonly htmlRender?: boolean;
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
   readonly documentKey?: string | undefined;
 }) {
   const key = props.documentKey ?? props.src;
-  return props.pdf ? (
-    <embed
-      key={props.src}
-      src={props.src}
-      type="application/pdf"
-      title={props.title}
-      className="min-h-0 w-full flex-1 border-0"
-    />
-  ) : props.htmlRender ? (
+  return props.htmlRender ? (
     <HtmlRenderDocument
       key={key}
       src={props.src}

@@ -263,7 +263,7 @@ export const layerExecutor: Layer.Layer<
                         Cause.pretty(Cause.fail(cause)),
                       )
                     ) {
-                      return yield* Effect.fail(cause);
+                      return yield* cause;
                     }
                     // An adapter failure is not a stop receipt. A concurrent
                     // release can still prove that this child's producer is gone.
@@ -1195,7 +1195,3 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
   );
 
 export const runDaemon = runDaemonWithOptions();
-
-const layerDaemon: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
-  runDaemon.pipe(Effect.forkScoped),
-);

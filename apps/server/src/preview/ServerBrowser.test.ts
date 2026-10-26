@@ -45,6 +45,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
+import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
@@ -292,6 +293,7 @@ const desktopRenders = (tabId: string) => {
   return desktopTabs.has(tabId);
 };
 const releasedDesktopTabs: Array<string> = [];
+const desktopTurns = new NodeEvents.EventEmitter();
 const desktopConnections: Array<{ endpoint: string; context: ReturnType<typeof makeContext> }> = [];
 let managerEventsSubscribed = Promise.withResolvers<void>();
 let automationHostReady = Promise.withResolvers<void>();
@@ -424,7 +426,9 @@ const dependencies = Layer.mergeAll(
         }),
       ),
     pointer: () => Effect.void,
+    turn: (threadId, active) => Effect.sync(() => desktopTurns.emit("turn", threadId, active)),
   }),
+  PreviewAgentActivity.layer,
 ).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-server-browser-" })),
   Layer.provideMerge(NodeServices.layer),
@@ -589,6 +593,28 @@ it.live("an expired open still drains its initial navigation before human input"
       expect(events).toEqual(["navigation committed", "human typed"]);
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.live("tells the desktop once per thread when its agent turns start and end", () =>
+  Effect.gen(function* () {
+    yield* ServerBrowser.ServerBrowser;
+    const activity = yield* PreviewAgentActivity.PreviewAgentActivity;
+    const threadId = scope.threadId;
+    const turns = yield* Queue.unbounded<readonly [string, boolean]>();
+    const record = (id: string, active: boolean) => Queue.offerUnsafe(turns, [id, active]);
+    desktopTurns.on("turn", record);
+    yield* Effect.addFinalizer(() => Effect.sync(() => desktopTurns.off("turn", record)));
+    const endFirst = yield* activity.begin(threadId);
+    // An overlapping turn on the same thread neither starts nor ends focus on its own.
+    const endSecond = yield* activity.begin(threadId);
+    expect(yield* Queue.take(turns)).toEqual([threadId, true]);
+    yield* endFirst;
+    yield* endFirst;
+    expect(yield* activity.active(threadId)).toBe(true);
+    yield* endSecond;
+    expect(yield* Queue.take(turns)).toEqual([threadId, false]);
+    expect(yield* Queue.size(turns)).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(layer)),
 );
 
 it.live("preview_open reports its navigation timeout instead of the request budget", () =>

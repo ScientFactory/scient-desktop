@@ -1507,6 +1507,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           "connector_busy",
         );
       }
+      // @effect-diagnostics-next-line abortControllerInEffect:off - The returned body owns this exchange beyond the request fiber; release aborts it on body completion or cancellation.
       const exchange = new AbortController();
       let released = false;
       const release = Effect.suspend(() => {

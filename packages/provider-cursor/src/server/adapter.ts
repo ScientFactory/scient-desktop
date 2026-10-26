@@ -79,6 +79,7 @@ export { cursorSdkModelSelection } from "./sdkModel.ts";
 export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
 const DEFAULT_CURSOR_SETTINGS = Schema.decodeSync(CursorSettings)({});
+const isTurnStartError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
 
 export const CursorProviderCapabilitiesV2 = {
   sessions: {
@@ -911,7 +912,7 @@ export function cursorTurnStartError(
   turnIdentity: CursorTurnStartIdentity,
   cause: unknown,
 ): ProviderAdapter.ProviderAdapterTurnStartError {
-  if (Schema.is(ProviderAdapter.ProviderAdapterTurnStartError)(cause)) return cause;
+  if (isTurnStartError(cause)) return cause;
   return new ProviderAdapter.ProviderAdapterTurnStartError({
     driver: CursorAgentSdk.CURSOR_PROVIDER,
     threadId: turnIdentity.threadId,
@@ -2260,13 +2261,17 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           const userText = (
             adapterOptions.orchestrationPromptForFirstRun ?? t3OrchestrationPromptForFirstRun
           )({
-            prompt: providerMessageTextWithAttachmentPaths({
+            prompt: yield* providerMessageTextWithAttachmentPaths({
               text:
                 cursorSkillNames === undefined
                   ? rawText
                   : rewriteCursorSkillMentions(rawText, cursorSkillNames),
               attachments: turnInput.message.attachments,
               resolveAttachmentPath: host.resolveAttachmentPath,
+              resolveExtractedTextPath: host.resolveExtractedTextPath,
+              // SCIENT-FORK:START — preserve the complete context admitted by the host.
+              preserveOverflow: host.preserveAttachmentContext === true,
+              // SCIENT-FORK:END
             }),
             runOrdinal: turnInput.runOrdinal,
             hasT3Mcp: mcpServers !== undefined,

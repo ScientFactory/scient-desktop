@@ -328,6 +328,11 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
 export interface AcpAdapterV2Flavor {
   /** App-owned product policy and capability bridges for this provider flavor. */
   readonly application?: AcpAdapterV2ApplicationBridge;
+  readonly buildPrompt?: (input: {
+    readonly text: string;
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly promptCapabilities: EffectAcpSchema.AgentCapabilities["promptCapabilities"];
+  }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.ContentBlock>, EffectAcpErrors.AcpError>;
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
   readonly outputTruncationMessage?: (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -5641,13 +5646,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   Effect.ensuring(
                     runRuntimeCallbackAtGeneration(
                       generation,
-                      Effect.gen(function* () {
-                        yield* Ref.update(pendingRuntimeRequests, (current) => {
-                          const updated = new Map(current);
-                          updated.delete(String(requestId));
-                          droidSteer.setPendingRequestCount(updated.size);
-                          return updated;
-                        });
+                      Ref.update(pendingRuntimeRequests, (current) => {
+                        const updated = new Map(current);
+                        updated.delete(String(requestId));
+                        droidSteer.setPendingRequestCount(updated.size);
+                        return updated;
                       }),
                     ).pipe(Effect.asVoid),
                   ),
@@ -6336,13 +6339,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.ensuring(
                   runRuntimeCallbackAtGeneration(
                     handlerGeneration,
-                    Effect.gen(function* () {
-                      yield* Ref.update(pendingRuntimeRequests, (current) => {
-                        const updated = new Map(current);
-                        updated.delete(String(requestId));
-                        droidSteer.setPendingRequestCount(updated.size);
-                        return updated;
-                      });
+                    Ref.update(pendingRuntimeRequests, (current) => {
+                      const updated = new Map(current);
+                      updated.delete(String(requestId));
+                      droidSteer.setPendingRequestCount(updated.size);
+                      return updated;
                     }),
                   ).pipe(Effect.asVoid),
                 ),
@@ -7161,7 +7162,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           },
           ordinal: context.input.providerTurnOrdinal,
           status,
-          ...(flavor.application?.nativeTurnAcceptance?.(context) ?? {}),
+          ...flavor.application?.nativeTurnAcceptance?.(context),
           startedAt: context.startedAt,
           completedAt,
         });
@@ -7483,10 +7484,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       childProcessSpawner,
                     ),
                   );
-          const messageText = providerMessageTextWithAttachmentPaths({
+          const messageText = yield* providerMessageTextWithAttachmentPaths({
             text: userText,
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
+            resolveExtractedTextPath: host.resolveExtractedTextPath,
+            // SCIENT-FORK:START — preserve the complete context admitted by the host.
+            preserveOverflow: host.preserveAttachmentContext === true,
+            // SCIENT-FORK:END
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
           // SCIENT-FORK:START — select host copy without changing ACP prompt gates.
@@ -7519,7 +7524,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               detail: "ACP driver did not negotiate image prompt support",
             });
           }
-          for (const attachment of imageAttachments) {
+          if (flavor.buildPrompt) {
+            const setup = yield* Ref.get(activeSessionSetup);
+            const blocks = yield* flavor
+              .buildPrompt({
+                text,
+                attachments: turnInput.message.attachments,
+                promptCapabilities: setup?.initializeResult.agentCapabilities?.promptCapabilities,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver,
+                      detail: "Failed to build ACP attachment prompt",
+                      payload: cause,
+                    }),
+                ),
+              );
+            prompt.splice(0, prompt.length, ...blocks);
+          }
+          for (const attachment of flavor.buildPrompt ? [] : imageAttachments) {
             const path = host.resolveAttachmentPath(attachment as ChatAttachment);
             if (path === null) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({

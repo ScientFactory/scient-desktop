@@ -16,6 +16,7 @@ const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
 export function installThreadUndoShortcut(options: {
   keybindings: ResolvedKeybindingsConfig;
   noticeVisible: boolean;
+  enabled?: () => boolean;
   heldUndoKey: { current: string | null };
   getContext: () => Partial<ShortcutMatchContext>;
 }): () => void {
@@ -27,6 +28,7 @@ export function installThreadUndoShortcut(options: {
   const onKeyDown = (event: KeyboardEvent) => {
     // Capture runs before editors: honor explicit ownership before suppressing repeats, too.
     if (
+      options.enabled?.() === false ||
       event.defaultPrevented ||
       event.isComposing ||
       isCommandPaletteOpen() ||

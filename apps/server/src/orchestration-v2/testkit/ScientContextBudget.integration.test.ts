@@ -333,6 +333,7 @@ it.live.each(
     Effect.gen(function* () {
       const name = `scient-budget-${test.name}`;
       const currentInput = test.currentInput ?? defaultCurrentInput;
+      const fs = yield* FileSystem.FileSystem;
       const cwd = yield* checkpointWorkspace(name);
       const skillRegistry = test.skills
         ? Context.get(yield* Layer.build(skillRegistryLayer), McpSessionRegistry.McpSessionRegistry)
@@ -356,7 +357,6 @@ it.live.each(
         publishedThreads.filter((id) => id === threadId).length;
       if (test.skills) {
         yield* Effect.promise(() => initializeScientProject({ root: cwd }));
-        const fs = yield* FileSystem.FileSystem;
         const skillPath = `${cwd}/.scient/skills/project-method`;
         yield* fs.makeDirectory(skillPath, { recursive: true });
         yield* fs.writeFileString(
@@ -448,10 +448,10 @@ it.live.each(
                         offeredScopes.push(issued);
                       }
                       offers.push(
-                        formatScientCurrentInput({
+                        yield* formatScientCurrentInput({
                           ...input.message,
                           attachmentsDir: cwd,
-                        }),
+                        }).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
                       );
                       yield* publish({
                         type: "text",

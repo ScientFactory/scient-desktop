@@ -258,7 +258,7 @@ describe("File rename durable admission and recovery", () => {
       leases[0]!.change("C");
       // Freeze a clean rename before newer input is typed during transport.
       await leases[0]!.flush();
-      mocks.rename.mockImplementationOnce(async ({ input }: { input: { mutationId: string } }) => {
+      mocks.rename.mockImplementationOnce(async () => {
         leases[0]!.change("D");
         disk.set(destination.relativePath, disk.get(common.relativePath)!);
         disk.delete(common.relativePath);

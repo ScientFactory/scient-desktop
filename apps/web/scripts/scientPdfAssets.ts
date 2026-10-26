@@ -36,6 +36,9 @@ function contentType(path: string): string {
       return "font/ttf";
     case ".pfb":
       return "application/x-font-type1";
+    case ".js":
+    case ".mjs":
+      return "text/javascript";
     case ".wasm":
       return "application/wasm";
     default:

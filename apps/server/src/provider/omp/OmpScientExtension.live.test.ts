@@ -60,6 +60,16 @@ import {
   type OmpRpcProcessOptions,
 } from "./OmpRpcProcess.ts";
 
+const decodeSubagentLifecyclePayload = Schema.decodeUnknownOption(OmpSubagentLifecyclePayload);
+const decodeEchoReply = Schema.decodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      echoed: Schema.String,
+      sourceToolCallId: Schema.String,
+    }),
+  ),
+);
+
 const binary = ompQualifyBinary;
 const SCIENT_TOOL = "scient_fixture_echo";
 const TOKEN = "Bearer synthetic-scient-live-token";
@@ -801,6 +811,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                   connectors: [],
                 },
               }),
+            // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
             resolve: () => Effect.succeed(undefined),
             touch: () => Effect.void,
             replaceSkillScope: () => Effect.void,
@@ -839,7 +850,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                           notification._tag === "Event" &&
                           notification.event.type === "subagent_lifecycle"
                         ) {
-                          const receipt = Schema.decodeUnknownOption(OmpSubagentLifecyclePayload)(
+                          const receipt = decodeSubagentLifecyclePayload(
                             notification.event.payload,
                           );
                           if (Option.isSome(receipt)) nativeChildReceipts.push(receipt.value);
@@ -940,14 +951,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                   return false;
                 const output = text.match(/<output>\n([\s\S]*?)\n<\/output>/)?.[1];
                 if (!output) return false;
-                const result = Schema.decodeSync(
-                  Schema.fromJsonString(
-                    Schema.Struct({
-                      echoed: Schema.String,
-                      sourceToolCallId: Schema.String,
-                    }),
-                  ),
-                )(output);
+                const result = decodeEchoReply(output);
                 return result.echoed === value && result.sourceToolCallId === echoCallId;
               };
               const canonicalAnswer = terminal.messages.find(

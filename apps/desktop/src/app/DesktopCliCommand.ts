@@ -164,8 +164,13 @@ export const make = Effect.gen(function* () {
         installedPath: null,
         legacyInstalled: false,
         onPath: false,
+        launcherPath: null,
       } as const;
     }
+    // SCIENT-FORK:START — recovery commands must never recommend a foreign launcher.
+    const launcherPath = (yield* isOurLauncher(launcher)) ? launcher : null;
+    // SCIENT-FORK:END
+    // SCIENT-FORK:START — Windows removal owns only the recorded PATH entry.
     if (windows) {
       const recorded = yield* recordedWindowsPath;
       const owned =
@@ -177,8 +182,10 @@ export const make = Effect.gen(function* () {
         installedPath: installed ? launcher : null,
         legacyInstalled: owned && (yield* isOurLauncher(path.join(binDirectory, "t3.cmd"))),
         onPath: installed,
+        launcherPath,
       };
     }
+    // SCIENT-FORK:END
     const installed = yield* installedAt;
     const legacy = yield* legacyInstalled;
     const shadowedBy = yield* foreignFirstOnPath;
@@ -189,6 +196,7 @@ export const make = Effect.gen(function* () {
         installedPath: null,
         legacyInstalled: legacy,
         onPath: false,
+        launcherPath,
         ...shadow,
       };
     }
@@ -200,6 +208,7 @@ export const make = Effect.gen(function* () {
       installedPath: installed.value,
       legacyInstalled: legacy,
       onPath,
+      launcherPath,
       ...shadow,
     };
   }).pipe(
@@ -208,6 +217,7 @@ export const make = Effect.gen(function* () {
       installedPath: null,
       legacyInstalled: false,
       onPath: false,
+      launcherPath: null,
     })),
   );
 

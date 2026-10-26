@@ -729,8 +729,8 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           [instanceId]: {
             driver: ProviderDriverKind.make("claudeAgent"),
             enabled: true,
-            environment: [
-              ...(state === "ready"
+            environment:
+              state === "ready"
                 ? []
                 : [
                     {
@@ -741,8 +741,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
                       value: recovered,
                       sensitive: false,
                     },
-                  ]),
-            ],
+                  ],
             config: makeClaudeConfig({
               enabled: true,
               binaryPath: fixtures.claudeBinaryPath,
@@ -1241,11 +1240,9 @@ describe("ProviderInstanceRegistryLive — enabled resolution", () => {
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
     }).pipe(
-      Effect.provide(
-        Layer.succeed(
-          ProviderEventLoggers.ProviderEventLoggers,
-          ProviderEventLoggers.NoOpProviderEventLoggers,
-        ),
+      Effect.provideService(
+        ProviderEventLoggers.ProviderEventLoggers,
+        ProviderEventLoggers.NoOpProviderEventLoggers,
       ),
     ),
   );

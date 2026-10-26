@@ -7,6 +7,7 @@ import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import { identity } from "effect/Function";
@@ -417,7 +418,7 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
               ...input,
               params: normalizeBindings(input.params),
               cached,
-            });
+            }); // oxlint-disable-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
           } catch (cause) {
             pending.delete(id);
             if (pending.size === 0) worker.unref();
@@ -476,6 +477,7 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
         if (current === reader) current = undefined;
         void reader.worker.terminate();
       }
+      // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
       if (unavailable) return Effect.succeed(undefined);
       unavailable = true;
       return Effect.logWarning("SQLite reader worker unavailable; reads use the main connection", {
@@ -484,6 +486,7 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
     });
 
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
     if (unavailable) return Effect.succeed(undefined);
     let reader: NonNullable<typeof current>;
     try {
@@ -504,7 +507,8 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
       (startup): Effect.Effect<Connection | undefined> =>
         // A late ready event must not hand out a worker retired by another acquire timeout.
         unavailable || current !== reader
-          ? Effect.succeed(undefined)
+          ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - The connection result distinguishes undefined from void.
+            Effect.succeed(undefined)
           : Option.isSome(startup) && startup.value.type === "ready"
             ? Effect.succeed(reader.connection)
             : turnOff(
@@ -668,21 +672,23 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   }
   const frames = writer.prepare("PRAGMA wal_checkpoint(NOOP)");
   const sizeLimit = writer.prepare("PRAGMA journal_size_limit");
-  let worker: NodeWorkerThreads.Worker;
-  try {
-    worker = new NodeWorkerThreads.Worker(checkpointWorkerSource, {
-      eval: true,
-      workerData: {
-        filename,
-        frames: CHECKPOINT_FRAMES,
-        backpressureFrames: CHECKPOINT_BACKPRESSURE_FRAMES,
-        idleMs: CHECKPOINT_IDLE_MS,
-      },
-    });
-  } catch (cause) {
-    yield* warn(String(cause));
+  const started = yield* Effect.try(
+    () =>
+      new NodeWorkerThreads.Worker(checkpointWorkerSource, {
+        eval: true,
+        workerData: {
+          filename,
+          frames: CHECKPOINT_FRAMES,
+          backpressureFrames: CHECKPOINT_BACKPRESSURE_FRAMES,
+          idleMs: CHECKPOINT_IDLE_MS,
+        },
+      }),
+  ).pipe(Effect.result);
+  if (Result.isFailure(started)) {
+    yield* warn(String(started.failure.cause));
     return undefined;
   }
+  const worker = started.success;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   let stopped = false;
   let generation = 0;

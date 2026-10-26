@@ -28,13 +28,10 @@ import {
   ServerSettings,
   type ServerProvider,
   type ServerProviderSlashCommand,
-  type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
-import * as PlatformError from "effect/PlatformError";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -46,14 +43,17 @@ import { mergeProviderSnapshot, layer as ProviderRegistryLive } from "./Provider
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
-import { readProviderStatusCache } from "./providerStatusCache.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
-const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
-const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
+
+const defaultClaudeSettings: ClaudeSettings = decodeClaudeSettings({});
+const defaultCodexSettings: CodexSettings = decodeCodexSettings({});
 
 process.env.T3CODE_CURSOR_ENABLED = "1";
 
@@ -1005,44 +1005,19 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
 );
 
 describe("Restored ProviderRegistry.test.ts", () => {
-  const decodeServerSettings = Schema.decodeSync(ServerSettings);
+  encodeServerSettings(DEFAULT_SERVER_SETTINGS);
 
-  const encodeServerSettings = Schema.encodeSync(ServerSettings);
+  decodeClaudeSettings({});
 
-  const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
+  const defaultCodexSettings: CodexSettings = decodeCodexSettings({});
 
-  const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
-
-  const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
-
-  const decodeCodexSettings = Schema.decodeSync(CodexSettings);
-
-  const disabledCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({
+  decodeCodexSettings({
     enabled: false,
   });
-
-  const disabledDefaultProviderInstances = {
-    codex: { driver: "codex", enabled: false },
-    claudeAgent: { driver: "claudeAgent", enabled: false },
-    cursor: { driver: "cursor", enabled: false },
-    grok: { driver: "grok", enabled: false },
-    opencode: { driver: "opencode", enabled: false },
-  } as unknown as ContractServerSettings["providerInstances"];
 
   process.env.T3CODE_CURSOR_ENABLED = "1";
 
   // ── Test helpers ────────────────────────────────────────────────────
-
-  const encoder = new TextEncoder();
-
-  const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
-
-  const withBundledCompatibility = (snapshot: ServerProvider) =>
-    applyProviderCompatibility(
-      snapshot,
-      undefined,
-      ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-    );
 
   const TestHttpClientLive = Layer.merge(
     Layer.succeed(
@@ -1067,35 +1042,6 @@ describe("Restored ProviderRegistry.test.ts", () => {
     ),
   );
 
-  const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-    reportClientActivity: () => Effect.void,
-    removeRpcClient: () => Effect.void,
-    reportHostPowerState: () => Effect.void,
-    snapshot: Effect.succeed({
-      hostPower: {
-        source: "unknown",
-        idle: "unknown",
-        idleSeconds: null,
-        locked: "unknown",
-        suspended: false,
-        onBattery: "unknown",
-        lowPowerMode: "unknown",
-        thermalState: "unknown",
-        stale: true,
-        updatedAt: TEST_EPOCH,
-      },
-      leases: [],
-      activeForegroundLeaseCount: 0,
-      activeScopeKeys: [],
-      shouldRunOpportunisticWork: true,
-      updatedAt: TEST_EPOCH,
-    }),
-    streamChanges: Stream.empty,
-    hasDemand: () => Effect.succeed(true),
-    shouldRunScopeWork: () => Effect.succeed(true),
-    shouldRunOpportunisticWork: Effect.succeed(true),
-  });
-
   function selectDescriptor(
     id: string,
     label: string,
@@ -1118,124 +1064,6 @@ describe("Restored ProviderRegistry.test.ts", () => {
       label,
       type: "boolean" as const,
     };
-  }
-
-  type TestClaudeCapabilities = {
-    readonly email: string | undefined;
-    readonly subscriptionType: string | undefined;
-    readonly tokenSource: string | undefined;
-    readonly apiKeySource: string | undefined;
-    readonly apiProvider: string | undefined;
-    readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
-  };
-
-  function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
-    return () =>
-      Effect.succeed({
-        email: undefined,
-        subscriptionType: undefined,
-        tokenSource: undefined,
-        apiKeySource: undefined,
-        apiProvider: undefined,
-        slashCommands: [],
-        ...overrides,
-      });
-  }
-
-  const noClaudeCapabilities = () =>
-    Effect.sync(() => undefined as TestClaudeCapabilities | undefined);
-
-  function mockHandle(result: { stdout: string; stderr: string; code: number }) {
-    return ChildProcessSpawner.makeHandle({
-      pid: ChildProcessSpawner.ProcessId(1),
-      exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.code)),
-      isRunning: Effect.succeed(false),
-      kill: () => Effect.void,
-      unref: Effect.succeed(Effect.void),
-      stdin: Sink.drain,
-      stdout: Stream.make(encoder.encode(result.stdout)),
-      stderr: Stream.make(encoder.encode(result.stderr)),
-      all: Stream.empty,
-      getInputFd: () => Sink.drain,
-      getOutputFd: () => Stream.empty,
-    });
-  }
-
-  function mockSpawnerLayer(
-    handler: (args: ReadonlyArray<string>) => {
-      stdout: string;
-      stderr: string;
-      code: number;
-    },
-  ) {
-    return Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) => {
-        const cmd = command as unknown as { args: ReadonlyArray<string> };
-        return Effect.succeed(mockHandle(handler(cmd.args)));
-      }),
-    );
-  }
-
-  function recordingMockSpawnerLayer(
-    handler: (args: ReadonlyArray<string>) => {
-      stdout: string;
-      stderr: string;
-      code: number;
-    },
-  ) {
-    const commands: Array<{
-      readonly args: ReadonlyArray<string>;
-      readonly env: NodeJS.ProcessEnv | undefined;
-    }> = [];
-    const layer = Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) => {
-        const cmd = command as unknown as {
-          args: ReadonlyArray<string>;
-          options?: {
-            readonly env?: NodeJS.ProcessEnv;
-          };
-        };
-        commands.push({ args: cmd.args, env: cmd.options?.env });
-        return Effect.succeed(mockHandle(handler(cmd.args)));
-      }),
-    );
-    return { layer, commands };
-  }
-
-  function mockCommandSpawnerLayer(
-    handler: (
-      command: string,
-      args: ReadonlyArray<string>,
-    ) => { stdout: string; stderr: string; code: number },
-  ) {
-    return Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) => {
-        const cmd = command as unknown as {
-          command: string;
-          args: ReadonlyArray<string>;
-        };
-        return Effect.succeed(mockHandle(handler(cmd.command, cmd.args)));
-      }),
-    );
-  }
-
-  function failingSpawnerLayer(description: string) {
-    return Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() =>
-        Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description,
-          }),
-        ),
-      ),
-    );
   }
 
   function hangingScopedSpawnerLayer(killCalls: Ref.Ref<number>) {
@@ -1298,85 +1126,6 @@ describe("Restored ProviderRegistry.test.ts", () => {
       ...input,
     };
   }
-
-  function makeMutableServerSettingsService(
-    initial: ContractServerSettings = DEFAULT_SERVER_SETTINGS,
-  ) {
-    return Effect.gen(function* () {
-      const settingsRef = yield* Ref.make(initial);
-      const changes = yield* PubSub.unbounded<ContractServerSettings>();
-
-      return {
-        ...ServerSettingsModule.customModelsTestMethods,
-        committedCustomModels: () => Ref.getUnsafe(settingsRef).customModels,
-        start: Effect.void,
-        ready: Effect.void,
-        getSettings: Ref.get(settingsRef),
-        updateSettings: (patch) =>
-          Effect.gen(function* () {
-            const current = yield* Ref.get(settingsRef);
-            const next = applyServerSettingsPatch(current, patch);
-            encodeServerSettings(next);
-            yield* Ref.set(settingsRef, next);
-            yield* PubSub.publish(changes, next);
-            return next;
-          }),
-        updateProviderInstance: (mutation, patch = {}) =>
-          Effect.gen(function* () {
-            const current = yield* Ref.get(settingsRef);
-            const next = ServerSettingsModule.applyProviderInstanceMutation(
-              applyServerSettingsPatch(current, patch),
-              mutation,
-            );
-            encodeServerSettings(next);
-            yield* Ref.set(settingsRef, next);
-            yield* PubSub.publish(changes, next);
-            return next;
-          }),
-        removeProjectSettingsOverrides: () => Effect.die("Unexpected project settings removal"),
-        withSettingsSnapshot: (use) => Ref.get(settingsRef).pipe(Effect.flatMap(use)),
-        get streamChanges() {
-          return Stream.fromPubSub(changes);
-        },
-        get subscribeChanges() {
-          return PubSub.subscribe(changes).pipe(
-            Effect.map((subscription) => Stream.fromSubscription(subscription)),
-          );
-        },
-      } satisfies ServerSettingsModule.ServerSettingsService["Service"];
-    });
-  }
-
-  // Scient publishes live state before cache I/O. Observe the completed atomic
-  // rename, not the notification stream, to prove what was actually persisted.
-  const makeCacheWriteObserver = Effect.fn("makeCacheWriteObserver")(function* (
-    timestamps: ReadonlyArray<string>,
-  ) {
-    const fs = yield* FileSystem.FileSystem;
-    const completions = new Map(
-      yield* Effect.forEach(timestamps, (timestamp) =>
-        Effect.map(Deferred.make<void>(), (completion) => [timestamp, completion] as const),
-      ),
-    );
-    return {
-      fileSystem: FileSystem.FileSystem.of({
-        ...fs,
-        rename: (from, to) =>
-          fs.rename(from, to).pipe(
-            Effect.tap(() =>
-              Effect.gen(function* () {
-                const provider = yield* readProviderStatusCache(to).pipe(
-                  Effect.provideService(FileSystem.FileSystem, fs),
-                );
-                const completion = provider && completions.get(provider.checkedAt);
-                if (completion) yield* Deferred.succeed(completion, undefined);
-              }),
-            ),
-          ),
-      }),
-      wait: (timestamp: string) => Deferred.await(completions.get(timestamp)!),
-    };
-  });
 
   const TestNodeServices = Layer.mergeAll(
     NodeServices.layer,

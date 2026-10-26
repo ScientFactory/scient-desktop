@@ -32,13 +32,25 @@ describe("desktop CLI shortcut actions", () => {
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.container, router: false }),
     );
-    state = { supported: true, installedPath: null, onPath: false, legacyInstalled: true };
+    state = {
+      supported: true,
+      installedPath: null,
+      onPath: false,
+      launcherPath: null,
+      legacyInstalled: true,
+    };
     bridge.getState.mockImplementation(async () => state);
     bridge.install.mockImplementation(async () => {
       throw new Error("The canonical launcher is occupied by a foreign file.");
     });
     bridge.uninstall.mockImplementation(async () => {
-      state = { supported: true, installedPath: null, onPath: false, legacyInstalled: false };
+      state = {
+        supported: true,
+        installedPath: null,
+        onPath: false,
+        launcherPath: null,
+        legacyInstalled: false,
+      };
       return state;
     });
   }
@@ -69,7 +81,13 @@ describe("desktop CLI shortcut actions", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    state = { supported: true, installedPath: null, onPath: false, legacyInstalled: false };
+    state = {
+      supported: true,
+      installedPath: null,
+      onPath: false,
+      launcherPath: null,
+      legacyInstalled: false,
+    };
     bridge.install.mockImplementation(async () => {
       state = { ...state, installedPath: "/fixture/bin/scient", onPath: true };
       return state;

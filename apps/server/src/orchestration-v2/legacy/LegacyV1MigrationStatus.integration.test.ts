@@ -17,6 +17,8 @@ import * as EventStore from "../EventStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as Legacy from "./LegacyV1ThreadImporter.ts";
 
+const decodeMigrationPayload = Schema.decodeEffect(ServerLifecycleLegacyThreadMigrationPayload);
+
 const stores = Layer.mergeAll(
   Sqlite.layerMemory,
   EventStore.layer.pipe(Layer.provideMerge(Sqlite.layerMemory)),
@@ -55,10 +57,8 @@ const migrationPayload = Effect.gen(function* () {
   const event = snapshot.events.find((event) => event.type === "legacyThreadMigration");
   assert.isDefined(event);
   if (event?.type !== "legacyThreadMigration") throw new Error("Missing migration status");
-  yield* Schema.decodeUnknownEffect(previousMigrationPayload)(event.payload);
-  return yield* Schema.decodeUnknownEffect(ServerLifecycleLegacyThreadMigrationPayload)(
-    event.payload,
-  );
+  yield* Schema.decodeEffect(previousMigrationPayload)(event.payload);
+  return yield* decodeMigrationPayload(event.payload);
 });
 
 it.effect("never reports complete when the original V1 source could not be inspected", () =>

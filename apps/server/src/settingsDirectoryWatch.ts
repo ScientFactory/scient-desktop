@@ -111,7 +111,7 @@ export const acquireSettingsMetadataChanges = Effect.fnUntraced(function* (
         readFailed = false;
       }),
     ),
-    Effect.map(Option.some),
+    Effect.asSome,
     Effect.catch((error) =>
       Effect.gen(function* () {
         if (!readFailed) yield* Effect.logError(error);

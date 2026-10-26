@@ -6,6 +6,7 @@ import * as ServerConfig from "../../../config.ts";
 import { expect, it } from "@effect/vitest";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DocumentText from "../../../provider/DocumentText.ts";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Effect from "effect/Effect";
@@ -259,7 +260,7 @@ it.effect.each(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-worktree-mcp-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
-        NodeServices.layer,
+        DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
       ),
     ),
   ),

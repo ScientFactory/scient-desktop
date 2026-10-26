@@ -184,7 +184,10 @@ export const layer = Layer.effect(
                     } else deferred.push("Native recorded-path ownership is unresolved");
                     nativeOwned = true;
                   }
-                  if (!nativeOwned) yield* fs.remove(path, { force: true });
+                  if (!nativeOwned) {
+                    yield* fs.remove(`${path}.txt`, { force: true });
+                    yield* fs.remove(path, { force: true });
+                  }
                 }
                 if (deferred.length > 0)
                   return yield* new AttachmentRollbackPruneDeferred({

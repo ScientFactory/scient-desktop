@@ -251,6 +251,7 @@ export const layer: Layer.Layer<
                 const request = turnItems.find((item) => item.type === "run_interrupt_request");
                 return request?.type === "run_interrupt_request" ? request.message : undefined;
               }),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               Effect.catchCause(() => Effect.succeed(undefined)),
             ),
       };
@@ -579,14 +580,14 @@ export const layer: Layer.Layer<
                   path: worktreePath,
                 }),
               ),
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning("provider turn start failed to recreate worktree", {
-                      threadId: projection.thread.id,
-                      worktreePath,
-                      cause: Cause.pretty(cause),
-                    }),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("provider turn start failed to recreate worktree", {
+                    threadId: projection.thread.id,
+                    worktreePath,
+                    cause: Cause.pretty(cause),
+                  }),
               ),
             );
           }
@@ -844,6 +845,7 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = providerWork === undefined ? handoffs : [];
       let completedNativeFork = nativeForkTransfer;
+      let resumeFellBack = false;
       const loadedProviderThread = yield* Effect.gen(function* () {
         // Adoption consumes the existing generation; it cannot reload or replace its native owner.
         if (providerWork !== undefined) return providerThread;
@@ -1013,7 +1015,15 @@ export const layer: Layer.Layer<
           ),
           createdAt,
         });
-        effectiveHandoffs = [handoff, ...effectiveHandoffs];
+        // Delivery ranks later handoffs as newer history. Pending handoffs from
+        // earlier runs predate this summary; handoffs for this run (provider-switch
+        // delta, merge-back) are newer and must stay last.
+        effectiveHandoffs = [
+          ...effectiveHandoffs.filter((candidate) => candidate.targetRunId !== run.id),
+          handoff,
+          ...effectiveHandoffs.filter((candidate) => candidate.targetRunId === run.id),
+        ];
+        resumeFellBack = true;
         yield* eventSink.write({
           events: [
             {
@@ -1237,6 +1247,7 @@ export const layer: Layer.Layer<
       );
       const missedRuns = projection.runs.filter(
         (source) =>
+          !resumeFellBack &&
           source.ordinal < run.ordinal &&
           source.providerThreadId === providerThread.id &&
           (source.status === "failed" || source.status === "interrupted") &&
@@ -1422,14 +1433,12 @@ export const layer: Layer.Layer<
             ? preparedSkills.runtimeInstruction
             : undefined;
           const validateCurrent = (text: string) =>
-            Effect.fromResult(
-              validateProviderCurrentInput({
-                text,
-                attachments: message.attachments,
-                attachmentsDir: serverConfig.attachmentsDir,
-                ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
-              }),
-            );
+            validateProviderCurrentInput({
+              text,
+              attachments: message.attachments,
+              attachmentsDir: serverConfig.attachmentsDir,
+              ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
+            }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           let preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : userText;
           let currentInput = compact
             ? userText

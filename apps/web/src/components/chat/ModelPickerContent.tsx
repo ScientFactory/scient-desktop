@@ -57,6 +57,7 @@ import {
   shortcutLabelForCommand,
 } from "../../keybindings";
 import {
+  useClientSettings,
   useEnvironmentModelPreferences,
   useToggleEnvironmentModelFavorite,
 } from "~/hooks/useSettings";
@@ -362,8 +363,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   renderProviderFooter?: (entry: ProviderInstanceEntry) => ReactNode;
   onContinueInNewChat?: () => void;
   continueInNewChatDisabled?: boolean;
+  /** The owning popup moves focus here when it opens (its `initialFocus`). */
+  searchInputRef: RefObject<HTMLInputElement | null>;
 }) {
   const {
+    searchInputRef,
     keybindings: providedKeybindings,
     modelOptionsByInstance,
     instanceEntries,
@@ -372,7 +376,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     onToggleModel,
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
@@ -473,22 +476,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     });
   };
 
-  useLayoutEffect(() => {
-    focusSearchInput();
-    const frame = window.requestAnimationFrame(() => {
-      focusSearchInput();
-    });
-    const timeout = window.setTimeout(() => {
-      focusSearchInput();
-    }, 0);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timeout);
-    };
-  }, [focusSearchInput]);
-
-  const entryByInstanceId = (() =>
-    new Map(instanceEntries.map((entry) => [entry.instanceId, entry])))();
+  const entryByInstanceId = new Map(instanceEntries.map((entry) => [entry.instanceId, entry]));
   const matchesLockedProvider = (
     entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">,
   ): boolean => {
@@ -560,6 +548,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
+  // Inside one provider's tab the provider line repeats the selected rail icon on every row.
+  const redesign = useClientSettings((s) => s.redesignEnabled);
+  const rowsMixProviders = !redesign || isSearching || selectedInstanceId === "favorites";
   const lockedDisabledInstanceIds = (() => {
     if (!isLocked) {
       return undefined;
@@ -1146,8 +1137,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                             ? selectedModelKeySet.has(modelKey)
                             : modelKey === activeModelKey
                         }
-                        showSelection={selectedModelKeys !== undefined}
-                        showProvider
+                        showSelection={selectedModelKeys !== undefined || redesign}
+                        showProvider={rowsMixProviders || Boolean(model.subProvider)}
                         preferShortName={!isLocked}
                         useTriggerLabel={false}
                         showNewBadge={model.badge === "new"}
@@ -1165,7 +1156,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               size="compact"
               className={cn("empty:h-0", selectedSetupEntry && "hidden")}
             >
-              No models found
+              {selectedInstanceId === "favorites" && !isSearching
+                ? "No favorites yet"
+                : "No models found"}
             </ComboboxEmpty>
             {selectedFooterEntry && props.renderProviderFooter
               ? props.renderProviderFooter(selectedFooterEntry)

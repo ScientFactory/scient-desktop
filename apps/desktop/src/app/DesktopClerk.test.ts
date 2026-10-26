@@ -28,8 +28,6 @@ vi.mock("@clerk/electron", () => ({
 vi.mock("@clerk/electron/storage", () => ({
   storage: storageMock,
 }));
-
-import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -382,7 +380,7 @@ it.effect("deferred provider auth deep links do not navigate or start authentica
       }),
   } as unknown as ElectronApp.ElectronApp["Service"];
   const electronWindow = {
-    currentMainOrFirst: Effect.succeed(Option.some(window)),
+    currentMainOrFirst: Effect.succeedSome(window),
     reveal: () => Effect.sync(() => revealed.resolve()),
   } as unknown as ElectronWindow.ElectronWindow["Service"];
   return Effect.gen(function* () {
@@ -469,7 +467,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
         Effect.provideService(HostProcess.Arguments, entry === "startup" ? ["t3", link] : ["t3"]),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
         Effect.provideService(ElectronWindow.ElectronWindow, {
-          currentMainOrFirst: Effect.succeed(Option.none()),
+          currentMainOrFirst: Effect.succeedNone,
         } as ElectronWindow.ElectronWindow["Service"]),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
       );

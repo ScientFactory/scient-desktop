@@ -126,17 +126,17 @@ export function makeAntigravityInstanceConnectionActions<E>(input: {
     authMethod: input.authMethod,
     controller: authFlow.controller,
     stopSessions: authFlow.stopProcesses.pipe(
-      Effect.catchCause((cause) =>
-        Cause.hasInterruptsOnly(cause)
-          ? Effect.failCause(cause)
-          : Effect.fail(
-              new ProviderSetupError({
-                instanceId,
-                operation: "stopSessions",
-                detail: "Scient could not stop active Antigravity sessions.",
-                cause,
-              }),
-            ),
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.fail(
+            new ProviderSetupError({
+              instanceId,
+              operation: "stopSessions",
+              detail: "Scient could not stop active Antigravity sessions.",
+              cause,
+            }),
+          ),
       ),
     ),
     randomOwnerId: input.randomUUID.pipe(

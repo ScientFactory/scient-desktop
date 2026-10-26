@@ -108,7 +108,7 @@ it.live.each([false, true])(
           });
           yield* fs.writeFileString(attachmentPath, "keep");
         }
-        const sentPrompt = providerMessageTextWithAttachmentPaths({
+        const sentPrompt = yield* providerMessageTextWithAttachmentPaths({
           text: "Partial answer",
           attachments,
           resolveAttachmentPath: (attachment) =>

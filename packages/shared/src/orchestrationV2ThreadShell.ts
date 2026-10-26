@@ -46,21 +46,21 @@ export function threadShellFromProjection(
         (left, right) =>
           DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
       )[0] ?? null;
+  const runs = projection.runs.filter((run) => !isSilentRunForShell(run, projection));
   const latestRun =
     usageLimitRunPresentedAsLatest(
-      projection.runs,
+      runs,
       projection.turnItems,
       providerSession?.lastError ?? null,
-    ) ?? latestUnheldRun(projection.runs);
+    ) ?? latestUnheldRun(runs);
   const activeRun =
-    projection.runs
+    runs
       .filter(isInterruptibleRunForShell)
       .sort((left, right) => right.ordinal - left.ordinal)[0] ?? null;
   const activityRun =
-    projection.runs
-      .filter(isActivityRunForShell)
-      .sort((left, right) => right.ordinal - left.ordinal)[0] ?? null;
-  const liveRunIds = new Set(projection.runs.filter(isActivityRunForShell).map((run) => run.id));
+    runs.filter(isActivityRunForShell).sort((left, right) => right.ordinal - left.ordinal)[0] ??
+    null;
+  const liveRunIds = new Set(runs.filter(isActivityRunForShell).map((run) => run.id));
   const pendingRuntimeRequest =
     projection.runtimeRequests
       .filter((request) => request.status === "pending")
@@ -86,7 +86,7 @@ export function threadShellFromProjection(
         )
       : null;
   const userMessages = projection.messages
-    .filter((message) => message.role === "user")
+    .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
     .sort(
       (left, right) =>
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
@@ -97,7 +97,7 @@ export function threadShellFromProjection(
     providerThreads: projection.providerThreads,
     turnItems: projection.turnItems,
     activeProviderThreadId: projection.thread.activeProviderThreadId,
-    runs: projection.runs,
+    runs: runs,
     pullRequests: projection.thread.pullRequests,
   });
   return {
@@ -136,16 +136,6 @@ export function threadShellFromProjection(
       latestRun != null &&
       projection.turnItems.some(
         (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
-      ),
-    latestRunSilent:
-      latestRun != null &&
-      projection.messages.some(
-        (message) =>
-          message.id === latestRun.userMessageId && idleCompactionOf(message) !== undefined,
-      ) &&
-      !projection.turnItems.some(
-        (item) =>
-          item.runId === latestRun.id && item.type === "compaction" && item.status === "failed",
       ),
     activeRunId: activeRun?.id ?? null,
     blockedOnThreadWait: deriveBlockedOnThreadWait({
@@ -223,7 +213,7 @@ export function threadShellFromProjection(
     sectionId: projection.thread.sectionId ?? null,
     conversationImport: projection.thread.conversationImport ?? null,
     forkLineage: projection.thread.forkLineage ?? null,
-    latestCompletedAnswer: latestCompletedAnswerFromProjection(projection),
+    latestCompletedAnswer: latestCompletedAnswerFromProjection({ ...projection, runs }),
   };
 }
 
@@ -338,6 +328,21 @@ export function providerInstanceHistoryForShell(input: {
     }
   }
   return history;
+}
+
+function isSilentRunForShell(
+  run: OrchestrationV2ThreadProjection["runs"][number],
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems">,
+): boolean {
+  return (
+    run.status !== "failed" &&
+    projection.messages.some(
+      (message) => message.id === run.userMessageId && idleCompactionOf(message) !== undefined,
+    ) &&
+    !projection.turnItems.some(
+      (item) => item.runId === run.id && item.type === "compaction" && item.status === "failed",
+    )
+  );
 }
 
 function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {

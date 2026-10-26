@@ -296,9 +296,6 @@ describe("runProcess", () => {
     }),
   );
   // SCIENT-FORK:END
-
-  for (const wrapperExit of ["timeout", "success"] as const) {
-  }
 });
 
 describe("isWindowsCommandNotFound", () => {

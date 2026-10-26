@@ -1724,6 +1724,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const readMcpSession = (threadId: ThreadId | null) =>
+    // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
   const { clientFactory, crypto, fileSystem, path, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
@@ -3046,16 +3047,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         }
                       : null,
                   ),
-                  Effect.catch(() => Effect.succeed(null)),
-                  Effect.flatMap((response) =>
-                    response === null
-                      ? client.raw
-                          .request("thread/resume", {
-                            threadId: input.nativeThreadId,
-                            excludeTurns: true,
-                          })
-                          .pipe(Effect.flatMap(decodeCodexChildModel))
-                      : Effect.succeed(response),
+                  Effect.orElseSucceed(() => null),
+                  Effect.filterOrElse(
+                    (response) => !(response === null),
+                    (_response) =>
+                      client.raw
+                        .request("thread/resume", {
+                          threadId: input.nativeThreadId,
+                          excludeTurns: true,
+                        })
+                        .pipe(Effect.flatMap(decodeCodexChildModel)),
                   ),
                   Effect.timeout("5 seconds"),
                   Effect.flatMap((response) =>
@@ -3069,7 +3070,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         )
                       : Effect.void,
                   ),
-                  Effect.catch(() => Effect.void),
+                  Effect.ignore,
                   Effect.forkIn(scope),
                 );
             }
@@ -3233,14 +3234,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
           // SCIENT-FORK:START Scient trusted suffix and captured native input
           // SCIENT-FORK: preserve the structural trusted suffix after captured data.
-          const text = formatScientCurrentInput({
+          const text = yield* formatScientCurrentInput({
             text: codexSkillMentionText(turnInput.message.text),
             attachments: turnInput.message.attachments,
             attachmentsDir: serverConfig.attachmentsDir,
             ...(turnInput.message.runtimeInstruction === undefined
               ? {}
               : { runtimeInstruction: turnInput.message.runtimeInstruction }),
-          });
+          }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           // SCIENT-FORK:END Scient trusted suffix and captured native input
           if (text.length > 0) {
             inputItems.push({
@@ -7298,7 +7299,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 const terminationResults = yield* terminateTrackedTerminals(interruptTargets);
                 const failedTermination = terminationResults.find((result) => !result.success);
                 if (failedTermination !== undefined && !failedTermination.success) {
-                  return yield* Effect.fail(failedTermination.error);
+                  return yield* failedTermination.error;
                 }
                 yield* turnTerminalizationPermit.withPermits(1)(
                   Effect.gen(function* () {

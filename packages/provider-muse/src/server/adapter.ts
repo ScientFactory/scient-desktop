@@ -30,7 +30,6 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -1369,7 +1368,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 detail: null,
                 ...(notification ? { notification } : {}),
                 dispatchIfCurrent: (dispatch) =>
-                  wake === held ? Effect.map(dispatch, Option.some) : Effect.succeed(Option.none()),
+                  wake === held ? Effect.asSome(dispatch) : Effect.succeedNone,
                 clearIfCurrent: () =>
                   Effect.sync(() => {
                     if (wake === held) wake = undefined;
@@ -1945,10 +1944,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         message: ProviderAdapter.ProviderAdapterV2TurnMessage,
       ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
-        const text = providerMessageTextWithAttachmentPaths({
+        const text = yield* providerMessageTextWithAttachmentPaths({
           text: message.text,
           attachments: message.attachments,
           resolveAttachmentPath: providerHost.resolveAttachmentPath,
+          resolveExtractedTextPath: providerHost.resolveExtractedTextPath,
+          // SCIENT-FORK:START — preserve the complete context admitted by the host.
+          preserveOverflow: providerHost.preserveAttachmentContext === true,
+          // SCIENT-FORK:END
         });
         if (text) parts.push({ type: "text", text });
         for (const attachment of message.attachments)

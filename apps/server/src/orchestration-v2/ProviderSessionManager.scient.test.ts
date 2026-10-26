@@ -3238,6 +3238,7 @@ it.effect.each(["resume", "start"] as const)(
                 },
                 flush: () => {
                   let task: (() => void) | undefined;
+                  // oxlint-disable-next-line no-unmodified-loop-condition -- task() invokes shouldYield, which can set paused before the next task.
                   while (!paused && (task = tasks.shift()) !== undefined) task();
                 },
               };

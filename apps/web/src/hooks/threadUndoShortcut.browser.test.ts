@@ -10,7 +10,7 @@ import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import * as ThreadUndo from "./threadUndo";
 import { installThreadUndoShortcut } from "./threadUndoShortcut";
 
-function setup(noticeVisible = true) {
+function setup(noticeVisible = true, enabled?: () => boolean) {
   const stack = new DisposableStack();
   stack.use(fakeTimers());
   stack.use(vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel"));
@@ -24,6 +24,7 @@ function setup(noticeVisible = true) {
     installThreadUndoShortcut({
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
       noticeVisible,
+      ...(enabled ? { enabled } : {}),
       heldUndoKey,
       getContext: () => ({ terminalFocus: false, previewFocus: false }),
     });
@@ -175,3 +176,21 @@ it.each(["hidden", "expired"] as const)(
     expect(undo).not.toHaveBeenCalled();
   },
 );
+
+it("releases a held undo when a modal takes ownership and reads the live enabled guard", () => {
+  let enabled = true;
+  using app = setup(true, () => enabled);
+  const first = app.notice();
+  expect(press().defaultPrevented).toBe(true);
+  expect(first).toHaveBeenCalledOnce();
+  const next = app.notice("Archived");
+  enabled = false;
+  expect(press({ repeat: true }).defaultPrevented).toBe(false);
+  expect(press().defaultPrevented).toBe(false);
+  expect(next).not.toHaveBeenCalled();
+  enabled = true;
+  expect(press({ repeat: true }).defaultPrevented).toBe(false);
+  app.input.blur();
+  expect(press().defaultPrevented).toBe(true);
+  expect(next).toHaveBeenCalledOnce();
+});

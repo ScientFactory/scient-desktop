@@ -241,6 +241,7 @@ export default function(pi) {
           Layer.mergeAll(
             projectsLayer,
             Layer.mock(ProviderInstances.ProviderInstanceRegistry)({
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               getInstance: () => Effect.succeed(undefined),
             }),
           ),
@@ -409,6 +410,7 @@ export default function(pi) {
                     connectors: [],
                   },
                 }),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               resolve: () => Effect.succeed(undefined),
               touch: () => Effect.void,
               replaceSkillScope: () => Effect.void,
