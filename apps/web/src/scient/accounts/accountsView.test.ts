@@ -45,7 +45,7 @@ describe("Accounts decisions", () => {
     expect(siteMatchesUrl("example.com", "not a URL")).toBe(false);
   });
 
-  it("keeps autofill in the account's profile, including the implicit default", () => {
+  it("offers a site's accounts in any profile, the tab's own profile first", () => {
     const defaultAccount = website();
     const work = website("work");
     const api: AccountSummary = {
@@ -54,8 +54,6 @@ describe("Accounts decisions", () => {
     };
     expect(matchingAccounts([defaultAccount, work, api], "https://example.com", "work")).toEqual([
       work,
-    ]);
-    expect(matchingAccounts([defaultAccount, work], "https://example.com", "default")).toEqual([
       defaultAccount,
     ]);
     expect(matchingAccounts([work], "https://other.example.org", "work")).toEqual([]);
@@ -124,7 +122,7 @@ describe("Accounts decisions", () => {
       }),
     ).toEqual([]);
   });
-  it("updates a captured sign-in only for the same profile, site and username", () => {
+  it("updates the saved sign-in with the same site and username, in any profile", () => {
     const own = {
       ...website("work"),
       details: {
@@ -145,8 +143,8 @@ describe("Accounts decisions", () => {
     expect(
       capturedSignInInput({ ...capture, username: "someone-else" }, [own]).accountId,
     ).toBeUndefined();
-    expect(capturedSignInInput({ ...capture, profileId: "personal" }, [own]).details).toMatchObject(
-      { sites: ["https://example.com"], profileId: "personal" },
+    expect(capturedSignInInput({ ...capture, profileId: "personal" }, [own]).accountId).toBe(
+      own.accountId,
     );
   });
   it("accepts only inline profile pictures and validated source colours", () => {
@@ -169,7 +167,7 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
   const exact = {
     ...website("default"),
     accountId: AccountId.make("acc_exact001"),
-    details: { kind: "website" as const, sites: ["https://example.com"] },
+    details: { kind: "website" as const, sites: ["https://example.com"], profileId: "default" },
   };
   const older = {
     ...recent,

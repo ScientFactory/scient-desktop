@@ -36,27 +36,26 @@ export function matchingAccounts(
   url: string,
   profileId: string,
 ) {
+  const sameProfile = ({ details }: AccountSummary) =>
+    "profileId" in details && details.profileId === profileId ? 1 : 0;
+  const exact = ({ details }: AccountSummary) =>
+    "sites" in details &&
+    details.sites.some((site) => site.startsWith("https://") && siteMatchesUrl(site, url))
+      ? 1
+      : 0;
   return accounts
     .filter(
       ({ details }) =>
         (details.kind === "website" || details.kind === "library") &&
-        (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === profileId &&
         details.sites.some((site) => siteMatchesUrl(site, url)),
     )
-    .sort((a, b) => {
-      const exact = (account: AccountSummary) =>
-        "sites" in account.details &&
-        account.details.sites.some(
-          (site) => site.startsWith("https://") && siteMatchesUrl(site, url),
-        )
-          ? 1
-          : 0;
-      return (
+    .sort(
+      (a, b) =>
+        sameProfile(b) - sameProfile(a) ||
         exact(b) - exact(a) ||
         (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
-        a.accountId.localeCompare(b.accountId)
-      );
-    });
+        a.accountId.localeCompare(b.accountId),
+    );
 }
 
 export function mergeProfiles(
