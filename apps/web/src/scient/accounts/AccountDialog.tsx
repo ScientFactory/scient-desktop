@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   AccountSaveInput,
   type AccountDetails,
@@ -9,6 +10,7 @@ import {
   type AccountsSnapshot,
   type EnvironmentId,
   type KeychainCandidatesResult,
+  resolveBrowserProfiles,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
@@ -286,6 +288,9 @@ function DetailsFields({
   details: AccountDetails;
   onChange: (details: AccountDetails) => void;
 }) {
+  const profiles = resolveBrowserProfiles(
+    useClientSettings((settings) => settings.browserProfiles),
+  );
   return (
     <>
       {"sites" in details ? (
@@ -309,6 +314,24 @@ function DetailsFields({
               }}
               placeholder="Optional"
             />
+          </AccountField>
+          <AccountField label="Browser profile">
+            <NativeSelect
+              value={details.profileId ?? ""}
+              onChange={(event) => {
+                const { profileId: _, ...rest } = details;
+                onChange(event.target.value ? { ...details, profileId: event.target.value } : rest);
+              }}
+            >
+              <option value="">Default</option>
+              {profiles
+                .filter((profile) => profile.kind !== "incognito" && profile.id !== "default")
+                .map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+            </NativeSelect>
           </AccountField>
           {details.kind === "library" ? (
             <AccountField label="Library proxy">
