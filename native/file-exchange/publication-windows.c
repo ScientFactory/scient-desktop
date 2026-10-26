@@ -357,6 +357,10 @@ static HANDLE create_relative(HANDLE parent, const wchar_t *name, ACCESS_MASK ac
   if (code < 0) { SetLastError(nt_error(code)); return INVALID_HANDLE_VALUE; }
   return handle;
 }
+#ifdef SCIENT_PUBLICATION_PROBE
+static HRESULT probe_filter_status = E_UNEXPECTED;
+static DWORD probe_path_error;
+#endif
 static int cloud_filter_absent(HANDLE folder) {
   HMODULE library = LoadLibraryW(L"fltlib.dll");
   if (!library) return 0;
@@ -369,6 +373,9 @@ static int cloud_filter_absent(HANDLE folder) {
   address = GetProcAddress(library, "FilterVolumeInstanceFindClose"); memcpy(&close, &address, sizeof(close));
   wchar_t volume[32768];
   DWORD length = GetFinalPathNameByHandleW(folder, volume, 32768, VOLUME_NAME_NT);
+#ifdef SCIENT_PUBLICATION_PROBE
+  probe_path_error = length ? 0 : GetLastError();
+#endif
   int absent = 0;
   if (first && next && close && length && length < 32768 && !wcsncmp(volume, L"\\Device\\", 8)) {
     wchar_t *end = wcschr(volume + 8, L'\\');
@@ -383,6 +390,9 @@ static int cloud_filter_absent(HANDLE folder) {
       if (info->FilterNameLength == 12 && !_wcsnicmp((PWSTR)(buffer.bytes + info->FilterNameBufferOffset), L"CldFlt", 6)) { found = 1; break; }
       result = next(search, InstanceFullInformation, buffer.bytes, sizeof(buffer.bytes), &returned);
     }
+#ifdef SCIENT_PUBLICATION_PROBE
+    probe_filter_status = result;
+#endif
     absent = !found && result == HRESULT_FROM_WIN32(ERROR_NO_MORE_ITEMS);
     if (search != INVALID_HANDLE_VALUE) close(search);
   }
@@ -1113,7 +1123,8 @@ int platform_windows_main(int argc, char **argv) {
     }
     RevertToSelf(); if (token) CloseHandle(token);
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
-    free(path); printf("{\"code\":%lu}\n", (unsigned long)error); return 0;
+    free(path); printf("{\"code\":%lu,\"filterCode\":%lu,\"pathCode\":%lu}\n", (unsigned long)error,
+      (unsigned long)probe_filter_status, (unsigned long)probe_path_error); return 0;
   }
 #endif
 
