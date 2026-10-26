@@ -309,6 +309,11 @@
       "path": "apps/server/src/scient/accounts/AccountsService.ts",
       "anchor": "readonly resolveBound:",
       "purpose": "Expose the live account-token resolver and matching-account list consumed by Extensions bindings."
+    },
+    {
+      "path": "apps/web/src/scient/accounts/accountsView.ts",
+      "anchor": "curatedIcons.json",
+      "purpose": "Account logos reuse logos from the Extensions curated icon registry; the file only names that source."
     }
   ]
 }
