@@ -3,6 +3,8 @@
  * same views the app reads. Never Git's text, a commit or the token: only
  * counts, manuscript paths and fixed categories.
  */
+import { overleafFilesystemRefusalText } from "@t3tools/contracts";
+
 import type {
   ScientOverleafChange,
   ScientOverleafConnectionSummary,
@@ -245,6 +247,8 @@ const publicationLines = (
  * earlier attempt of the same sync did.
  */
 const refusalReason = (refusal: ScientOverleafRefusal): string => {
+  const filesystem = overleafFilesystemRefusalText(refusal.reason);
+  if (filesystem !== null) return filesystem;
   const at = refusal.path === undefined ? "" : ` (${refusal.path})`;
   switch (refusal.reason) {
     case "remote-file-limit":
@@ -260,7 +264,7 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
       return `Overleaf has content Scient will not write (a link, Git LFS pointer, repository or reserved name)${at}.`;
     case "path-alias":
     case "alias-rename":
-      return "two names differ only by letter case or Unicode spelling, which this Mac or Overleaf cannot hold apart. Rename one of them.";
+      return "two names differ only by letter case or Unicode spelling, which the project’s filesystem or Overleaf cannot distinguish. Rename one of them.";
     case "unreviewed-path":
     case "remote-collides-with-excluded":
       return `Overleaf has a file where this folder has something that is not synced${at}. Move or rename it here or on Overleaf.`;
@@ -623,7 +627,9 @@ const REASON_TEXT: Record<string, string> = {
 
 export const statusLines = (status: ScientOverleafStatus): string[] => {
   const lines = [connectionLine(status.connection)];
-  const reasons = status.reasons.map((reason) => REASON_TEXT[reason] ?? reason);
+  const reasons = status.reasons.map(
+    (reason) => REASON_TEXT[reason] ?? overleafFilesystemRefusalText(reason) ?? reason,
+  );
   switch (status.availability) {
     case "ready":
       lines.push("Ready to sync.");
@@ -642,7 +648,10 @@ export const statusLines = (status: ScientOverleafStatus): string[] => {
         : `Edits to send: ${changed} changed, ${deleted} deleted, ${added} new.`,
     );
   } else if (status.local?._tag === "unread")
-    lines.push(`The folder could not be read (${status.local.reason}).`);
+    lines.push(
+      overleafFilesystemRefusalText(status.local.reason) ??
+        `The folder could not be read (${status.local.reason}).`,
+    );
   if (status.markerPaths.length > 0) lines.push(markerLine(status.markerPaths));
   if (status.keptCopies > 0)
     lines.push(

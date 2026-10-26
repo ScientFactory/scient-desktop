@@ -21,6 +21,7 @@ import {
   type RetainedMutationResult,
 } from "../workspace/RetainedFileMutation.ts";
 import { NATIVE_LEASE_FOLDER_LIMIT } from "../workspace/NativeFilePublication.ts";
+import { assertOverleafApplyPaths, assertOverleafHostPath } from "./overleafHostPaths.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
 import { manuscriptTreeProblem, manuscriptPathProblem } from "./manuscriptPaths.ts";
 import {
@@ -284,7 +285,7 @@ function validatePlan(plan: StoredPlan) {
 }
 async function revision(cwd: string, name: string) {
   try {
-    const stat = await NodeFSP.lstat(NodePath.join(cwd, name));
+    const stat = await NodeFSP.lstat(assertOverleafHostPath(NodePath.join(cwd, name)));
     if (stat.isDirectory()) return null;
     return await fileRevision(NodePath.join(cwd, name));
   } catch (e) {
@@ -416,6 +417,19 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
       Effect.gen(function* () {
         if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(input.id))
           return yield* new WorkspaceApplyError({ cause: new Error("Invalid apply id.") });
+        yield* Effect.try({
+          try: () =>
+            assertOverleafApplyPaths(
+              input.cwd,
+              input.applicationDirectory,
+              new Set([
+                ...(input.plan?.captured.keys() ?? []),
+                ...(input.plan?.target.keys() ?? []),
+              ]),
+              input.id,
+            ),
+          catch: (cause) => new WorkspaceApplyError({ cause }),
+        });
         const prepareDirectory = (retentionDirectory: string) =>
           files
             .prepareRetainedDirectory({ cwd: input.cwd, retentionDirectory })
@@ -439,6 +453,15 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
         const begin = yield* Effect.tryPromise({
           try: async () => {
             const cwd = await NodeFSP.realpath(input.cwd);
+            assertOverleafApplyPaths(
+              cwd,
+              input.applicationDirectory,
+              new Set([
+                ...(input.plan?.captured.keys() ?? []),
+                ...(input.plan?.target.keys() ?? []),
+              ]),
+              input.id,
+            );
             const rootIdentity = await directoryIdentity(cwd);
             if ((await NodeFSP.stat(retentionDirectory)).dev !== (await NodeFSP.stat(cwd)).dev)
               throw new Error("Apply retention must be on manuscript filesystem.");
@@ -521,6 +544,12 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
             if (input.plan && encodePlan(storePlan(input.plan)) !== encodePlan(state.plan))
               throw new Error("Apply id reused with a different plan.");
             validatePlan(state.plan);
+            assertOverleafApplyPaths(
+              cwd,
+              input.applicationDirectory,
+              new Set([...Object.keys(state.plan.captured), ...Object.keys(state.plan.target)]),
+              input.id,
+            );
             if (state.outcomes.length !== state.plan.units.length)
               throw new Error("Invalid unit outcomes.");
             if (state.phase === "applying" && Object.keys(state.steps).length === 0) {
@@ -532,7 +561,9 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                   ...Object.keys(state.plan.captured),
                   ...Object.keys(state.plan.target),
                 ])) {
-                  const stat = await NodeFSP.lstat(NodePath.join(cwd, name)).catch((e) => {
+                  const stat = await NodeFSP.lstat(
+                    assertOverleafHostPath(NodePath.join(cwd, name)),
+                  ).catch((e) => {
                     if (["ENOENT", "ENOTDIR"].includes(e.code)) return null;
                     throw e;
                   });

@@ -1,4 +1,5 @@
 import {
+  overleafFilesystemRefusalText,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
@@ -53,7 +54,7 @@ const settledApplyView = (
 const operationError = (error: TaggedFailure) =>
   new ScientOverleafOperationError({
     reason: overleafRefusalReason(error),
-    message: error.message,
+    message: overleafFilesystemRefusalText(overleafRefusalReason(error)) ?? error.message,
     // An editor that could not save is named, so the screen can say which.
     ...(error._tag === "OverleafEditorUnsavedError"
       ? {
