@@ -13,7 +13,7 @@ import {
 import { Context, Duration, Effect, Layer, Redacted } from "effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { AccountsSecretStore } from "./AccountsSecretStore.ts";
 import { resolveCustomModelKey } from "../../customModels.ts";
 import {
   parseMacKeychain,
@@ -88,7 +88,7 @@ export const layer = Layer.effect(
   AccountSources,
   Effect.gen(function* () {
     const settings = yield* ServerSettingsService;
-    const secrets = yield* ServerSecretStore;
+    const secrets = yield* AccountsSecretStore;
     const current = settings.getSettings.pipe(
       Effect.mapError(() => unavailable("Accounts settings could not be read.")),
     );

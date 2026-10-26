@@ -145,9 +145,11 @@ and denied access appear in Accounts activity without values.
 - **Extensions connectors** (`connector-<uuid>`): Accounts provides the `ConnectorCredentialStore`
   implementation (`AccountsConnectorCredentials.ts`). It keeps the agreed port and names, encrypts envelopes, and reads a legacy
   plaintext envelope once, rewriting it encrypted. Extensions still owns connectors.
-- **Custom models keys** stay where Custom models keeps them, because its rotation and process
-  lifetime rules depend on that store. An API key account links to a connection (`custom-model`
-  source), so the key is stored once.
+- **Custom models keys** (`custom-model-<id>`) are sealed by the Accounts encrypted store under
+  their existing names. `AccountsSecretStore` preserves the `ServerSecretStore` interface and seals
+  legacy plaintext on its first read. Only Custom models uses this port; its rotation, removal and
+  process lifetime rules stay with Custom models. An API key account links to a connection
+  (`custom-model` source), so the key is stored once.
 - **`request_secret` values** (upstream, one use, 24 hours) and **sensitive provider environment
   variables** (upstream settings) stay as they are.
 - Server sign-in and session-signing material is never moved.

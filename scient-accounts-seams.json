@@ -192,6 +192,11 @@
       "path": "apps/server/src/orchestration-v2/ProviderSessionManager.test.ts",
       "anchor": "Scient Accounts: provider sessions receive account tools.",
       "purpose": "Expect the account capability in provider session grants."
+    },
+    {
+      "path": "apps/server/src/serverSettings.ts",
+      "anchor": "Scient Accounts: encrypt only Custom models credentials through the shared vault.",
+      "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
     }
   ],
   "scientMounts": [

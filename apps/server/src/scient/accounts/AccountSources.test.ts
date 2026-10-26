@@ -3,7 +3,7 @@ import { vi } from "vite-plus/test";
 import type { ItemCreateParams, ItemField } from "@1password/sdk";
 import { Effect, Layer, Redacted } from "effect";
 import { layerTest as settingsTestLayer } from "../../serverSettings.ts";
-import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { AccountsSecretStore } from "./AccountsSecretStore.ts";
 import { AccountSources, layer } from "./AccountSources.ts";
 import { syntheticValue, website } from "./AccountsTestkit.ts";
 
@@ -46,7 +46,7 @@ it.effect("reuses an external copy after its create response was not committed l
     const sources = yield* AccountSources.pipe(
       Effect.provide(
         layer.pipe(
-          Layer.provide(Layer.mergeAll(settingsTestLayer({}), Layer.mock(ServerSecretStore)({}))),
+          Layer.provide(Layer.mergeAll(settingsTestLayer({}), Layer.mock(AccountsSecretStore)({}))),
         ),
       ),
     );
