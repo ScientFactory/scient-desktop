@@ -80,7 +80,7 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
   let targetTabId = tabId;
   // SCIENT-FORK:START — Scient Accounts: recheck existing-tab profile access before every action.
-  const request = (resolvedTabId = tabId) =>
+  const request = () =>
     broker.invoke<A>({
       onTargetTab: (resolvedTabId) => {
         targetTabId = resolvedTabId;
@@ -89,7 +89,7 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
       operation,
       input,
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      ...(resolvedTabId === undefined ? {} : { tabId: resolvedTabId }),
+      ...(tabId === undefined ? {} : { tabId }),
     });
   const result = yield* operation === "status" || operation === "open"
     ? request()
@@ -102,8 +102,9 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
             updateCurrentTab: false,
             ...(tabId === undefined ? {} : { tabId }),
           });
-          const target = yield* authorizePreviewTab(accountScope, status, tabId);
-          return yield* request(target);
+          yield* authorizePreviewTab(accountScope, status, tabId);
+          // An omitted tab stays omitted, so the browser still resolves it the usual way.
+          return yield* request();
         }),
       );
   // SCIENT-FORK:END

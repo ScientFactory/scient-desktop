@@ -492,6 +492,10 @@ it.effect(
         ...website(parentValue),
         details: { kind: "website", sites: ["example.com"], username: "user" },
       });
+      yield* service.setControls({
+        target: { type: "account", accountId: parent.accountId },
+        access: "ask",
+      });
       const mailValue = syntheticValue();
       const wikiValue = syntheticValue();
       const content = `name,url,username,password,note\nMail,https://mail.example.com/login,user,${mailValue},\nWiki,https://wiki.example.com/login,user,${wikiValue},`;
@@ -510,6 +514,7 @@ it.effect(
           account.details.kind === "website" && account.details.sites.includes("wiki.example.com"),
       )!;
       expect(mail.accountId).not.toBe(wiki.accountId);
+      expect([mail.controls.access, wiki.controls.access]).toEqual(["ask", "ask"]);
       const next = syntheticValue();
       expect(
         yield* service.importPasswords({

@@ -47,7 +47,8 @@ A field has one read source and optional copies in other stores. Links are read 
 per keychain item ("Always Allow"). On Windows and Linux any program running as the user can read
 keychain items. Apple Passwords / iCloud Keychain items are not readable by other apps; their
 export file is the way in. Password imports retain the full hostname and update only an exact
-site-and-username match; sibling subdomains remain separate accounts.
+site-and-username match; sibling subdomains remain separate accounts. A new import takes the
+controls of an account whose site covers it with the same username, so it is never more open.
 
 ### Copies and password comparison
 

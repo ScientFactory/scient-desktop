@@ -822,8 +822,18 @@ export const layer = Layer.effect(
                   continue;
                 }
               }
+              // A new subdomain sign-in is never more open than the user's own account covering it.
+              const covering = existing
+                ? undefined
+                : state.accounts.find(
+                    (account) =>
+                      account.summary.details.kind === "website" &&
+                      (account.summary.details.username ?? "") === entry.username &&
+                      siteMatches(account.summary.details.sites, `https://${entry.site}`),
+                  );
               yield* save({
                 ...(existing ? { accountId: existing.summary.accountId } : {}),
+                ...(covering ? { controls: covering.summary.controls } : {}),
                 // An import refreshes values; the user's own name and sign-in address stay.
                 name: existing?.summary.name ?? entry.name,
                 details: {

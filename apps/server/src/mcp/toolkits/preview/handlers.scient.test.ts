@@ -58,6 +58,7 @@ it.effect(
       };
       const { service } = yield* makeHarness();
       let actions = 0;
+      const targets: Array<string | undefined> = [];
       const base = Layer.mergeAll(
         liveThreadsLayer,
         NodeServices.layer,
@@ -77,9 +78,12 @@ it.effect(
           },
         }),
         Layer.mock(PreviewAutomationBroker)({
-          invoke: <A>(request: { operation: string }) =>
+          invoke: <A>(request: { operation: string; tabId?: string }) =>
             Effect.sync(() => {
-              if (request.operation !== "status") actions++;
+              if (request.operation !== "status") {
+                actions++;
+                targets.push(request.tabId);
+              }
               return (request.operation === "click" ? {} : status) as A;
             }),
         }),
@@ -155,6 +159,8 @@ it.effect(
         Effect.provide(dependencies),
       );
       expect(actions).toBe(1);
+      // The check reads the current tab, but an unnamed tab stays unnamed for the browser.
+      expect(targets).toEqual([undefined]);
       for (const revoke of [
         service.setAgentAccess(false),
         service.setAgentAccess(true).pipe(

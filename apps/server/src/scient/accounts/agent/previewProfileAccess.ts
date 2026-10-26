@@ -42,7 +42,6 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
       message:
         "This browser profile is unavailable to this session. Change its access in Settings → Accounts.",
     });
-  return tab.tabId;
 });
 
 export const filterPreviewProfiles = Effect.fn("AccountsAgent.filterPreviewProfiles")(function* (
