@@ -721,6 +721,50 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
+  # SCIENT-FORK:START — Windows Overleaf evidence is mandatory, including exact queue reuse.
+  overleaf_windows:
+    name: Overleaf Windows
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+      - name: Resolve package cache path
+        id: package_cache_path
+        shell: pwsh
+        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
+      - name: Cache packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: overleaf-windows-packages-v1-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install
+        run: vp install
+      - name: Set adversarial global Git defaults
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf true
+          git config --global core.fileMode true
+          git config --global core.longpaths false
+          git config --global core.safecrlf true
+          git config --global core.attributesFile "$env:RUNNER_TEMP/overleaf-global-attributes"
+          Set-Content "$env:RUNNER_TEMP/overleaf-global-attributes" '* text eol=crlf' -Encoding utf8
+          git config --global credential.helper '!exit 91'
+      - name: Require every Overleaf platform file without skips
+        run: node .github/scripts/overleaf-platform-tests.cjs
+  # SCIENT-FORK:END
+
   # SCIENT-FORK:START — native qualification stays under the same required gate.
   compute_native:
     needs: [queue_ci, release_notes, changes]
@@ -774,7 +818,7 @@ jobs:
 
   qualification:
     name: Qualification receipt
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused]
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused]
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -809,7 +853,7 @@ jobs:
   check:
     name: Check
     if: ${{ always() }}
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, qualification]
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
