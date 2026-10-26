@@ -476,7 +476,9 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
       try {
         const binding = await bindNativeFilePublicationParent(helper!, input.cwd, "");
         await expect(
-          withNativeFilePublicationLease(helper!, [binding], async () => undefined),
+          withNativeFilePublicationLease(helper!, [binding], async () => undefined, {
+            mode: "exclusive",
+          }),
         ).rejects.toThrow();
         await expect(NodeFSP.lstat(NodePath.join(outside, "locks"))).rejects.toMatchObject({
           code: "ENOENT",
