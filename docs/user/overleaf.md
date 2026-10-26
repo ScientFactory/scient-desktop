@@ -25,9 +25,10 @@ is supported; a network-mounted folder is a different kind of storage.
 
 Cloud folders (OneDrive, Dropbox, iCloud and Google Drive) can hold the project,
 but download online-only files first. Scient keeps its state and kept copies
-outside detected cloud folders on the same disk, and refuses sync if it cannot
-find a safe location. Unknown sync tools cannot be detected; keep Scient's
-state and kept copies outside any folders those tools manage.
+outside detected cloud folders. Kept copies must be on the manuscript's disk,
+and sync is refused if a safe location is unavailable. Unknown sync tools cannot
+be detected; keep Scient's state and kept copies outside any folders those tools
+manage.
 
 Only Overleaf's own site (overleaf.com) is supported.
 
