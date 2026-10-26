@@ -1096,7 +1096,7 @@ int platform_windows_main(int argc, char **argv) {
     printf("HELD\n"); fflush(stdout); getchar();
     UnmapViewOfFile(view); CloseHandle(mapping); return 0;
   }
-  if (argc == 4 && !strcmp(argv[2], "as-account")) {
+  if (argc == 4 && (!strcmp(argv[2], "as-account") || !strcmp(argv[2], "as-account-cloud"))) {
     wchar_t user[256], password[256];
     GetEnvironmentVariableW(L"SCIENT_TEST_ACCOUNT", user, 256);
     GetEnvironmentVariableW(L"SCIENT_TEST_PASSWORD", password, 256);
@@ -1109,6 +1109,7 @@ int platform_windows_main(int argc, char **argv) {
       file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
       if (file == INVALID_HANDLE_VALUE) error = GetLastError();
+      else if (!strcmp(argv[2], "as-account-cloud")) error = (DWORD)cloud_managed(file);
     }
     RevertToSelf(); if (token) CloseHandle(token);
     if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
