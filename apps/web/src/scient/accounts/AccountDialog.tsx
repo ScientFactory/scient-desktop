@@ -168,31 +168,44 @@ function SecretField({
         />
       ) : source === "keychain" ? (
         candidates?.listed ? (
-          <NativeSelect
-            aria-label="Keychain item"
-            value={String(
-              candidates.candidates.findIndex(
-                (item) => item.service === service && item.account === account,
-              ),
-            )}
-            onChange={(event) => {
-              const item = candidates.candidates[Number(event.target.value)];
-              if (item) {
-                setService(item.service);
-                setAccount(item.account);
-                onChange({ type: "keychain", service: item.service, account: item.account });
-              }
-            }}
-          >
-            <option value="-1" disabled>
-              Choose an item
-            </option>
-            {candidates.candidates.map((item, index) => (
-              <option key={`${item.service}:${item.account}`} value={index}>
-                {item.label ?? `${item.service} · ${item.account}`}
+          <div className="grid gap-2">
+            <Input
+              type="search"
+              aria-label="Search keychain"
+              placeholder="Search keychain"
+              onChange={(event) => {
+                const query = event.target.value.trim();
+                void load(query ? { query } : {}).then((result) => {
+                  if (result.ok) setCandidates(result.value);
+                });
+              }}
+            />
+            <NativeSelect
+              aria-label="Keychain item"
+              value={String(
+                candidates.candidates.findIndex(
+                  (item) => item.service === service && item.account === account,
+                ),
+              )}
+              onChange={(event) => {
+                const item = candidates.candidates[Number(event.target.value)];
+                if (item) {
+                  setService(item.service);
+                  setAccount(item.account);
+                  onChange({ type: "keychain", service: item.service, account: item.account });
+                }
+              }}
+            >
+              <option value="-1" disabled>
+                Choose an item
               </option>
-            ))}
-          </NativeSelect>
+              {candidates.candidates.map((item, index) => (
+                <option key={`${item.service}:${item.account}`} value={index}>
+                  {item.label ?? `${item.service} · ${item.account}`}
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
             <Input
@@ -571,12 +584,14 @@ export function AccountDialog({
                     }
                   />
                 ))}
-                <SaveStores
-                  kept={account ? Object.values(account.secrets)[0] : undefined}
-                  stores={snapshot.stores}
-                  selected={saveTo}
-                  onChange={setSaveTo}
-                />
+                {Object.values(secrets).some((input) => input.type === "scient") ? (
+                  <SaveStores
+                    kept={account ? Object.values(account.secrets)[0] : undefined}
+                    stores={snapshot.stores}
+                    selected={saveTo}
+                    onChange={setSaveTo}
+                  />
+                ) : null}
               </>
             )}
             {error ? (
