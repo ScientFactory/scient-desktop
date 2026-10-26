@@ -27,6 +27,10 @@ const toasts = vi.hoisted(() => ({ add: vi.fn(() => "toast"), close: vi.fn() }))
 vi.mock("~/components/ui/toast", () => ({ toastManager: toasts }));
 // Only the Overleaf rows are under test, not the settings scope stores.
 vi.mock("~/components/settings/settingsLayout", () => ({
+  SettingsSearchTarget: (props: { children: ReactNode; className?: string }) => (
+    <div className={props.className}>{props.children}</div>
+  ),
+  useSettingsSearchTargetId: () => null,
   SettingsSection: (props: { title: ReactNode; children: ReactNode }) => (
     <section aria-label={typeof props.title === "string" ? props.title : undefined}>
       <h2>{props.title}</h2>
@@ -37,7 +41,7 @@ vi.mock("~/components/settings/settingsLayout", () => ({
 const projects = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock("~/state/entities", () => ({ useProjects: () => projects.list }));
 
-const { OverleafProjectSettingsSection, OverleafSourceControlRow } =
+const { OverleafProjectSettingsSection, OverleafSyncedFolderRow } =
   await import("./OverleafSettings");
 const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafFileDecision } =
   await import("./overleafStore");
@@ -67,7 +71,7 @@ function reset(tokenSaved: boolean) {
   projects.list = [];
 }
 
-describe("Settings ▸ Source Control ▸ Overleaf", () => {
+describe("Settings ▸ Synced folders ▸ Overleaf", () => {
   it("saves and removes the token, and lists every project's linked folders", async () => {
     reset(false);
     projects.list = [
@@ -85,28 +89,38 @@ describe("Settings ▸ Source Control ▸ Overleaf", () => {
     }));
     client.saveOverleafToken.mockResolvedValue({ saved: true });
     client.removeOverleafToken.mockResolvedValue({ saved: false });
-    await using _screen = await render(<OverleafSourceControlRow environmentId={environmentId} />);
+    await using _screen = await render(<OverleafSyncedFolderRow environmentId={environmentId} />);
 
-    await expect.element(page.getByText("No token")).toBeVisible();
+    await expect.element(page.getByText("No token saved")).toBeVisible();
     await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
     await expect
       .element(page.getByRole("link", { name: "Create a token on Overleaf" }))
       .toBeVisible();
     await page.getByLabelText("Git token").fill("olp_secret");
     await page.getByRole("button", { name: "Save" }).click();
-    await expect.element(page.getByText("Token saved")).toBeVisible();
+    await expect.element(page.getByText("Token saved", { exact: true })).toBeVisible();
     expect(client.saveOverleafToken).toHaveBeenCalledExactlyOnceWith(environmentId, "olp_secret");
 
     // Each project of this environment is asked for its links; only Thesis has one.
     await expect.element(page.getByText("paper")).toBeVisible();
+    await expect.element(page.getByText("No folder is linked.")).not.toBeInTheDocument();
     expect(client.listOverleafConnections.mock.calls.map((call) => call[1]).toSorted()).toEqual([
       "/work/grant",
       "/work/thesis",
     ]);
 
     await page.getByRole("button", { name: "Remove" }).click();
-    await expect.element(page.getByText("No token")).toBeVisible();
+    await expect.element(page.getByText("No token saved")).toBeVisible();
     expect(client.removeOverleafToken).toHaveBeenCalledOnce();
+  });
+
+  it("says no folder is linked once every project has been read", async () => {
+    reset(true);
+    projects.list = [{ environmentId, id: "p1", title: "Thesis", workspaceRoot: "/work/thesis" }];
+    client.listOverleafConnections.mockResolvedValue({ connections: [] });
+    await using _screen = await render(<OverleafSyncedFolderRow environmentId={environmentId} />);
+    await page.getByRole("button", { name: "Toggle Overleaf details" }).click();
+    await expect.element(page.getByText("No folder is linked.")).toBeVisible();
   });
 });
 
@@ -143,41 +157,5 @@ describe("Project Settings ▸ Overleaf", () => {
       requestId: "request-1",
     });
     await expect.element(page.getByText("paper")).toBeVisible();
-  });
-
-  it("links a typed folder, or brings a project in at the project's top", async () => {
-    reset(true);
-    client.listOverleafConnections.mockResolvedValue({ connections: [] });
-    client.connectOverleaf.mockResolvedValue({ _tag: "refused", reason: "folder-missing" });
-    await using _screen = await render(
-      <OverleafProjectSettingsSection
-        environmentId={environmentId}
-        workspaceRoot="/work/project"
-      />,
-    );
-    await expect.element(page.getByText("No folder is linked.")).toBeVisible();
-
-    await page.getByRole("button", { name: "Link a folder…" }).click();
-    await page.getByLabelText("Overleaf project").fill(ID);
-    await page.getByLabelText("Folder to link").fill("chapters/thesis/");
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await expect
-      .element(page.getByText("The folder isn't there, or its disk isn't connected."))
-      .toBeVisible();
-    expect(client.connectOverleaf).toHaveBeenCalledExactlyOnceWith(
-      environmentId,
-      expect.objectContaining({ folder: "chapters/thesis", create: false }),
-    );
-    await page.getByRole("button", { name: "Cancel" }).click();
-
-    await page.getByRole("button", { name: "Bring in an Overleaf project…" }).click();
-    await expect.element(page.getByLabelText("Folder name")).toHaveValue("paper");
-    await page.getByLabelText("Overleaf project").fill(ID);
-    await page.getByRole("button", { name: "Connect", exact: true }).click();
-    await expect.poll(() => client.connectOverleaf.mock.calls.length).toBe(2);
-    expect(client.connectOverleaf.mock.calls[1]).toEqual([
-      environmentId,
-      expect.objectContaining({ folder: "paper", create: true }),
-    ]);
   });
 });

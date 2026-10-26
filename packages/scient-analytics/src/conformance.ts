@@ -15,7 +15,7 @@ const representativeProperties = {
   reasoningTokens: 50,
   hasSubagents: false,
   category: "browser",
-  section: "providers",
+  section: "synced-folders",
   feature: "search",
   metric: "tokens",
   window: "7",

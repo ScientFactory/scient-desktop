@@ -37,6 +37,9 @@ export type SettingsPath =
   | "/settings/scheduled-tasks"
   | "/settings/scientific-computing"
   | "/settings/documents"
+  // SCIENT-FORK:START — Synced folders: Overleaf, and the services on the way
+  | "/settings/synced-folders"
+  // SCIENT-FORK:END
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
@@ -105,6 +108,9 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/documents": "Documents",
   "/settings/keybindings": "Shortcuts",
   "/settings/source-control": "Source Control",
+  // SCIENT-FORK:START — Synced folders, beside Source Control
+  "/settings/synced-folders": "Synced folders",
+  // SCIENT-FORK:END
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
   "/settings/beta": "Beta",
@@ -890,6 +896,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Skills",
     to: "/settings/skills",
   },
+  // SCIENT-FORK:START — Synced folders
+  {
+    id: "synced-folders",
+    title: "Synced folders",
+    to: "/settings/synced-folders",
+    searchTerms: ["sync folder cloud google drive onedrive dropbox external connect"],
+  },
+  {
+    id: "synced-folders-overleaf",
+    title: "Overleaf",
+    to: "/settings/synced-folders",
+    searchTerms: ["overleaf latex paper git token linked folders unlink sync"],
+  },
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Extensions
   {
     id: "extensions",
@@ -1271,6 +1291,9 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/scheduled-tasks": null,
   "/settings/scientific-computing": null,
   "/settings/documents": null,
+  // SCIENT-FORK:START — Synced folders
+  "/settings/synced-folders": null,
+  // SCIENT-FORK:END
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",

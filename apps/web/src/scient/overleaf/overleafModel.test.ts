@@ -14,6 +14,8 @@ import {
   resolvedConflictLines,
   folderNameProblem,
   newFolderPath,
+  workspaceFolderPath,
+  workspaceFolderProblem,
   OVERLEAF_REQUEST_FAILED,
   operationErrorText,
   overleafChipView,
@@ -127,6 +129,15 @@ describe("paths", () => {
     expect(folderNameProblem("a/b")).not.toBeNull();
     expect(folderNameProblem(".hidden")).not.toBeNull();
     expect(folderNameProblem("paper")).toBeNull();
+    // A picked or typed folder inside the workspace.
+    expect(workspaceFolderPath(" papers/2024/ ")).toBe("papers/2024");
+    expect(workspaceFolderPath("/")).toBe("");
+    expect(workspaceFolderProblem("")).toBeNull();
+    expect(workspaceFolderProblem("papers/2024")).toBeNull();
+    expect(workspaceFolderProblem("../outside")).not.toBeNull();
+    expect(workspaceFolderProblem("papers//x")).not.toBeNull();
+    expect(workspaceFolderProblem(".hidden")).not.toBeNull();
+    expect(workspaceFolderProblem("/abs/path")).not.toBeNull();
   });
 });
 
@@ -376,6 +387,26 @@ describe("refusalText", () => {
     expect(operationErrorText({ reason: "editor-unsaved", message: "x", paths: [] })).toContain(
       "didn't answer the request to save its editors",
     );
+    // A reason this screen has no words for shows the server's sentence, not its code.
+    expect(
+      operationErrorText({
+        _tag: "ScientOverleafOperationError",
+        reason: "volume-unavailable",
+        message: "The disk holding this project is not connected.",
+      }),
+    ).toBe("The disk holding this project is not connected.");
+    expect(
+      operationErrorText({
+        reason: "unrecognized-failure",
+        message: "https://host/private?token=secret",
+      }),
+    ).toBe("Sync stopped (unrecognized-failure).");
+    expect(
+      operationErrorText({
+        reason: "volume-unavailable",
+        message: "https://host/private?token=secret",
+      }),
+    ).toBe("The disk holding this project is not connected.");
     for (const raw of [
       new Error("Failed to fetch remote environment endpoint https://host:3773/api/x (TypeError)"),
       { reason: "https://host/x" },

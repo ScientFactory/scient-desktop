@@ -23,6 +23,26 @@ const client = vi.hoisted(() => ({
 }));
 vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }));
 
+// The folders of the workspace the picker suggests.
+const folders = vi.hoisted(() => ({
+  entries: [] as Array<{ path: string; kind: "directory" }>,
+}));
+vi.mock("~/state/queries", () => ({
+  useProjectPathSearch: ({ query }: { query: string | null }) => {
+    const searched = (query ?? "").trim().toLowerCase();
+    return {
+      entries: folders.entries.filter(
+        (entry) => searched === "" || entry.path.toLowerCase().includes(searched),
+      ),
+      error: null,
+      isPending: false,
+      searchedQuery: searched,
+      truncated: false,
+      refresh: vi.fn(),
+    };
+  },
+}));
+
 const { ConnectOverleafDialog } = await import("./ConnectOverleafDialog");
 const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafFileDecision } =
   await import("./overleafStore");
@@ -81,6 +101,11 @@ function reset(tokenSaved: boolean) {
   client.saveOverleafToken.mockResolvedValue({ saved: true });
   client.listOverleafConnections.mockResolvedValue({ connections: [] });
   client.syncOverleaf.mockResolvedValue(firstSync);
+  folders.entries = [
+    { path: "papers", kind: "directory" },
+    { path: "thesis", kind: "directory" },
+    { path: "archive/2024", kind: "directory" },
+  ];
 }
 
 describe("ConnectOverleafDialog", () => {
@@ -88,7 +113,7 @@ describe("ConnectOverleafDialog", () => {
     reset(false);
     client.connectOverleaf.mockResolvedValue({
       _tag: "done",
-      connection: summary("papers/paper"),
+      connection: summary("archive/2024/paper"),
     });
     const onClose = vi.fn();
     await using _screen = await render(
@@ -105,8 +130,19 @@ describe("ConnectOverleafDialog", () => {
     await expect
       .element(page.getByRole("link", { name: "Create a token on Overleaf" }))
       .toHaveAttribute("href", "https://www.overleaf.com/user/settings#git-integration");
-    // New folder is the default, named "paper" inside the selected folder.
-    await expect.element(page.getByLabelText("Folder name")).toHaveValue("paper");
+    // New folder is the default. Its name starts empty ("paper" is only the
+    // placeholder), and the full path shows once it is named.
+    await expect.element(page.getByLabelText("Folder name")).toHaveValue("");
+    await expect
+      .element(page.getByLabelText("Folder name"))
+      .toHaveAttribute("placeholder", "paper");
+    await expect.element(page.getByText("Goes in")).not.toBeInTheDocument();
+    await page.getByLabelText("Folder name").fill("paper");
+    await expect.element(page.getByText("/work/project/papers/paper")).toBeVisible();
+    // Another folder of this workspace can hold it instead.
+    await page.getByLabelText("Inside").fill("archive");
+    await page.getByRole("option", { name: "archive/2024" }).click();
+    await expect.element(page.getByText("/work/project/archive/2024/paper")).toBeVisible();
 
     await page.getByLabelText("Overleaf project").fill(`https://www.overleaf.com/project/${ID}`);
     await page.getByLabelText("Overleaf Git token").fill("olp_secret");
@@ -116,7 +152,7 @@ describe("ConnectOverleafDialog", () => {
     expect(client.saveOverleafToken).toHaveBeenCalledExactlyOnceWith(environmentId, "olp_secret");
     expect(client.connectOverleaf).toHaveBeenCalledExactlyOnceWith(environmentId, {
       workspaceRoot: "/work/project",
-      folder: "papers/paper",
+      folder: "archive/2024/paper",
       create: true,
       project: ID,
       requestId: "request-1",
@@ -158,6 +194,7 @@ describe("ConnectOverleafDialog", () => {
     await expect.element(page.getByLabelText("Overleaf Git token")).not.toBeInTheDocument();
 
     await page.getByRole("radio", { name: "Link thesis" }).click();
+    await expect.element(page.getByText("/work/project/thesis")).toBeVisible();
     await page.getByLabelText("Overleaf project").fill(ID);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
 
@@ -191,6 +228,7 @@ describe("ConnectOverleafDialog", () => {
     expect(client.connectOverleaf).not.toHaveBeenCalled();
 
     await page.getByLabelText("Overleaf project").fill(ID);
+    await page.getByLabelText("Folder name").fill("paper");
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await expect
       .element(page.getByText(/A folder with that name already has files/u))

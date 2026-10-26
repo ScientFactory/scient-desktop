@@ -24,7 +24,7 @@ is deleted on either side).
 | `overleaf/ConnectOverleafDialog.tsx`         | The one Connect dialog.                                                                                                                                                                                                                                                     |
 | `overleaf/OverleafFileChip.tsx`              | The chip next to "Saved".                                                                                                                                                                                                                                                   |
 | `overleaf/OverleafReviewPanel.tsx`           | The side-panel tab (`scient:overleaf-review:<cwd>:<connection>`).                                                                                                                                                                                                           |
-| `overleaf/OverleafSettings.tsx`              | Source Control ▸ Overleaf, Project Settings ▸ Overleaf.                                                                                                                                                                                                                     |
+| `overleaf/OverleafSettings.tsx`              | Synced folders ▸ Overleaf, Project Settings ▸ Overleaf.                                                                                                                                                                                                                     |
 | `overleaf/OverleafKeptCopies.tsx`            | Kept copies inside "Retained file versions".                                                                                                                                                                                                                                |
 | `overleaf/OverleafUndoDialog.tsx`            | Undo of one send, from the chip and the review tab.                                                                                                                                                                                                                         |
 | `overleaf/overleafPaletteItems.tsx`          | "Sync with Overleaf" in the command palette.                                                                                                                                                                                                                                |
@@ -34,8 +34,10 @@ is deleted on either side).
 
 Hooks in upstream files, each between `SCIENT-FORK` markers: `FileBrowserPanel.tsx` (Connect
 button, right-click **Connect to ▸ Overleaf…**, row marks, icon sprite), `FilePreviewPanel.tsx`
-(the chip), `CommandPalette.tsx` (palette items, Add project ▸ Overleaf project), `SourceControlSettings.tsx` and
-`ProjectSettingsPanel.tsx` (settings), `__root.tsx` (the new-project dialog's host). Scient-owned files changed in place: the right-panel
+(the chip), `CommandPalette.tsx` (palette items, Add project ▸ Overleaf project), `ProjectSettingsPanel.tsx`
+(settings), the settings registry (`settingsSearch.ts`, `SettingsSidebarNav.tsx`: the Synced folders
+page, beside Source Control, drawn by `scient/settings/SyncedFoldersSettings.tsx` and scoped to one
+computer in `settingsPageScopes.ts`), `__root.tsx` (the new-project dialog's host). Scient-owned files changed in place: the right-panel
 surface list, content and icon, `ScientFileVersionHistory.tsx`, `ScientLatexSurface.tsx`
 (conflict notice), `FileBrowserToolbarActions.tsx` and `useScientLazyWorkspaceTree.ts`.
 
@@ -187,15 +189,18 @@ again** is enabled once every conflict has a choice and sends them with the sync
 
 The dialog takes a link (`overleaf.com/project/<id>`, `git.overleaf.com/<id>`) or an ID, parsed
 client-side to the ID the server accepts. **Bring it in as a new folder** is the default: a name
-(default `paper`) inside the selected folder, or at the project's top. Overleaf's Git access does
-not expose the project's title, so the folder can't be named from it. **Link** uses the selected
-folder, or a typed one from Project Settings. Connect waits until the token's status is known. With
+inside a workspace folder chosen with **Inside**, or at the project's top. The name starts empty;
+`paper` is only a placeholder. Overleaf's Git access does not expose the project's title, so the
+folder can't be named from it. **Link** uses the workspace folder chosen with **Folder**. Both
+choices show the destination's full path. Connect (Add for a new project) waits until the token's status is known. With
 no token saved the dialog asks for it, saves it first (a token the server didn't save stops there),
 then connects and runs the first sync with `quiet`.
 
 **Add project ▸ Overleaf project** opens the same dialog with `newProject`: a project name, a
 location (Add project's starting folder, plus the system folder chooser on this computer) and the
-paper's folder name (default `paper`); no Link choice. Connect saves the token, makes the project
+paper's folder name (initially empty); no Link choice. The project's destination appears below
+its name, and **Change…** reveals the location and folder fields. A missing folder name reveals
+those fields before anything is created. Connect saves the token, makes the project
 (`createProjectForOverleaf`: the server resolves the root, the project is registered with
 `createWorkspaceRootIfMissing` as Add project does, Scient setup runs for an ordinary folder, and a
 folder that already is a project is used as it is), then connects with `create: true` into the
