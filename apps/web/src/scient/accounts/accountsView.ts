@@ -4,7 +4,6 @@ import {
   INCOGNITO_BROWSER_PROFILE_ID,
   type DesktopLoginForm,
   ProfileColor,
-  DEFAULT_BROWSER_PROFILE_ID,
   ACCOUNT_SECRET_FIELDS,
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,

@@ -816,17 +816,21 @@ export const layer = Layer.effect(
                 ({ summary: { details } }) =>
                   (details.kind === "website" || details.kind === "library") &&
                   details.username === input.username &&
-                  siteMatches(details.sites, input.origin) &&
-                  (input.profileId === undefined ||
-                    (details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === input.profileId),
+                  siteMatches(details.sites, input.origin),
               )
               .sort((a, b) => {
+                const sameProfile = (account: StoredAccount) =>
+                  "profileId" in account.summary.details &&
+                  account.summary.details.profileId === input.profileId
+                    ? 1
+                    : 0;
                 const exact = (account: StoredAccount) =>
                   "sites" in account.summary.details &&
                   account.summary.details.sites.includes(input.origin)
                     ? 1
                     : 0;
                 return (
+                  sameProfile(b) - sameProfile(a) ||
                   exact(b) - exact(a) ||
                   (b.summary.lastUsedAt ?? "").localeCompare(a.summary.lastUsedAt ?? "")
                 );

@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { KeyRoundIcon, XIcon } from "lucide-react";
+import { CheckIcon, KeyRoundIcon } from "lucide-react";
 import type {
   AccountSummary,
   AccountWriteStore,
@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuTrigger, MenuPopup, MenuItem } from "~/components/ui/menu";
+import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
@@ -41,8 +42,10 @@ function SaveSignIn({
   matching,
   comparison,
   stores,
+  anchor,
   onClose,
 }: {
+  anchor: HTMLElement | null;
   capture: DesktopCapturedSignIn;
   environmentId: EnvironmentId;
   matching: ReadonlyArray<AccountSummary>;
@@ -77,60 +80,62 @@ function SaveSignIn({
     if (result.ok) onClose();
   };
   return (
-    <div
-      className="absolute right-2 top-full z-30 mt-2 w-80 rounded-lg border bg-popover p-3 shadow-md"
-      role="dialog"
-      aria-label={comparison.result === "password-changed" ? "Update password?" : "Save sign-in?"}
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">
-          {comparison.result === "password-changed" ? "Update password?" : "Save sign-in?"}
-        </span>
-        <Button variant="ghost" size="icon-xs" aria-label="Dismiss sign-in" onClick={onClose}>
-          <XIcon />
-        </Button>
-      </div>
-      <div className="my-2 text-xs text-muted-foreground">
-        {new URL(origin).hostname} · {capture.username}
-      </div>
-      <div className="mb-3">
-        <SaveStores
-          kept={
-            matching.find((account) => account.accountId === comparison.accountId)?.secrets.password
+    <Popover open onOpenChange={(open) => !open && onClose()}>
+      <PopoverPopup anchor={anchor} align="end">
+        <div
+          className="w-72"
+          role="dialog"
+          aria-label={
+            comparison.result === "password-changed" ? "Update password?" : "Save sign-in?"
           }
-          stores={stores}
-          selected={selectedStores}
-          onChange={setSelectedStores}
-        />
-      </div>
-      <div className="flex items-center gap-2">
-        <Button
-          size="xs"
-          disabled={busy || selectedStores.length === 0}
-          onClick={() => void submit()}
         >
-          {comparison.result === "password-changed" ? "Update" : "Save"}
-        </Button>
-        <Button
-          size="xs"
-          variant="ghost"
-          disabled={busy}
-          onClick={() => {
-            try {
-              localStorage.setItem(
-                NEVER_KEY,
-                JSON.stringify([...new Set([...neverSaveSites(), origin])].slice(-500)),
-              );
-            } catch {
-              /* Storage may be disabled in the browser. */
-            }
-            onClose();
-          }}
-        >
-          Never for this site
-        </Button>
-      </div>
-    </div>
+          <div className="text-sm font-medium">
+            {comparison.result === "password-changed" ? "Update password?" : "Save sign-in?"}
+          </div>
+          <div className="my-2 text-xs text-muted-foreground">
+            {new URL(origin).hostname} · {capture.username}
+          </div>
+          <div className="mb-3">
+            <SaveStores
+              kept={
+                matching.find((account) => account.accountId === comparison.accountId)?.secrets
+                  .password
+              }
+              stores={stores}
+              selected={selectedStores}
+              onChange={setSelectedStores}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="xs"
+              disabled={busy || selectedStores.length === 0}
+              onClick={() => void submit()}
+            >
+              {comparison.result === "password-changed" ? "Update" : "Save"}
+            </Button>
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => {
+                try {
+                  localStorage.setItem(
+                    NEVER_KEY,
+                    JSON.stringify([...new Set([...neverSaveSites(), origin])].slice(-500)),
+                  );
+                } catch {
+                  /* Storage may be disabled in the browser. */
+                }
+                onClose();
+              }}
+            >
+              Never for this site
+            </Button>
+          </div>
+        </div>
+      </PopoverPopup>
+    </Popover>
   );
 }
 
@@ -199,6 +204,11 @@ function DesktopBrowserAccountControls({
     data && window.desktopBridge?.accounts?.originBoundFill === true
       ? matchingAccounts(data.accounts, url, profileId)
       : [];
+  const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
+  const filled =
+    filledAccount?.url === url
+      ? matches.find((account) => account.accountId === filledAccount.accountId)
+      : undefined;
   const fill = async (account: AccountSummary, form?: DesktopLoginForm) => {
     if (!canWrite || busy || window.desktopBridge?.accounts?.originBoundFill !== true) return;
     const requestedUrl = currentUrl.current;
@@ -260,56 +270,44 @@ function DesktopBrowserAccountControls({
   if (!data || !canWrite) return null;
   return (
     <>
-      {matches.length === 1 ? (
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Fill sign-in"
-          disabled={busy}
-          onClick={() => void fill(matches[0]!)}
-        >
-          <KeyRoundIcon />
-        </Button>
-      ) : matches.length > 1 ? (
-        <Menu>
-          <MenuTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Fill sign-in"
-                disabled={busy}
-              />
-            }
+      <span ref={setAnchor} className="flex">
+        {matches.length === 1 && !filled ? (
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Fill sign-in"
+            disabled={busy}
+            onClick={() => void fill(matches[0]!)}
           >
             <KeyRoundIcon />
-          </MenuTrigger>
-          <MenuPopup>
-            {matches.map((account) => (
-              <MenuItem key={account.accountId} onClick={() => void fill(account)}>
-                {signInLabel(account)}
-              </MenuItem>
-            ))}
-          </MenuPopup>
-        </Menu>
-      ) : null}
-      {filledAccount?.url === url &&
-      matches.some((account) => account.accountId === filledAccount.accountId) ? (
-        <Menu>
-          <MenuTrigger render={<Button size="xs" variant="ghost" />}>
-            {signInLabel(matches.find((account) => account.accountId === filledAccount.accountId)!)}
-          </MenuTrigger>
-          <MenuPopup>
-            {matches.map((account) => (
-              <MenuItem key={account.accountId} onClick={() => void fill(account)}>
-                {signInLabel(account)}
-              </MenuItem>
-            ))}
-          </MenuPopup>
-        </Menu>
-      ) : null}
+          </Button>
+        ) : matches.length > 0 ? (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant={filled ? "secondary" : "ghost"}
+                  aria-label={filled ? `Filled: ${signInLabel(filled)}` : "Fill sign-in"}
+                  disabled={busy}
+                />
+              }
+            >
+              <KeyRoundIcon />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              {matches.map((account) => (
+                <MenuItem key={account.accountId} onClick={() => void fill(account)}>
+                  <span className="flex-1">{signInLabel(account)}</span>
+                  {account.accountId === filled?.accountId ? <CheckIcon /> : null}
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
+        ) : null}
+      </span>
       {pending ? (
         <SaveSignIn
           key={`${pending.capture.tabId}:${pending.capture.url}:${pending.capture.username}`}
@@ -318,6 +316,7 @@ function DesktopBrowserAccountControls({
           stores={data.stores}
           environmentId={environmentId}
           matching={matchingAccounts(data.accounts, pending.capture.url, profileId)}
+          anchor={anchor}
           onClose={() => setPending(null)}
         />
       ) : null}

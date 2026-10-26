@@ -13,7 +13,7 @@ import { onePasswordWriteFailure } from "./AccountSources.ts";
 import { planSecretStores } from "./copyPlan.ts";
 
 it.effect(
-  "compares resolved passwords without returning them and isolates origins, usernames and profiles",
+  "compares resolved passwords without returning them, isolates origins and usernames, and matches across profiles",
   () =>
     Effect.gen(function* () {
       const password = syntheticValue();
@@ -45,12 +45,12 @@ it.effect(
         result: "password-changed",
         accountId,
       });
-      for (const overrides of [
-        { origin: "https://other.example.com" },
-        { username: "another" },
-        { profileId: "personal" },
-      ])
+      for (const overrides of [{ origin: "https://other.example.com" }, { username: "another" }])
         expect(yield* service.matchSignIn({ ...capture, ...overrides })).toEqual({ result: "new" });
+      expect(yield* service.matchSignIn({ ...capture, profileId: "personal" })).toEqual({
+        result: "same",
+        accountId,
+      });
     }),
 );
 
