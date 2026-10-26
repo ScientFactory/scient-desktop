@@ -410,9 +410,6 @@ export function ProviderPluginItem({
 
 export function mcpServerSummary(server: ServerProviderMcpServer): string {
   return [
-    server.status === "connected"
-      ? "Connected"
-      : (MCP_SERVER_STATUS_TEXT[server.status] ?? "Connection"),
     server.toolCount === undefined
       ? null
       : `${server.toolCount} ${server.toolCount === 1 ? "tool" : "tools"}`,

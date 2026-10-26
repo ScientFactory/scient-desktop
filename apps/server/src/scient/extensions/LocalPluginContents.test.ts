@@ -6,6 +6,7 @@ import { expect, it } from "@effect/vitest";
 import {
   codexSkillRoot,
   readContainedPluginText,
+  readContainedPluginIcon,
   readLocalPluginContents,
   readLocalPluginSkill,
 } from "./LocalPluginContents.ts";
@@ -119,4 +120,30 @@ it("parses multiline skill metadata and contained manifest references, skipping 
   expect(contents.mcpServers).toEqual([{ name: "search" }, { name: "inline" }]);
   expect(contents.commands).toEqual(["review.md"]);
   expect(contents.agents).toEqual(["review.md"]);
+});
+
+it("inlines contained, sniffed plugin images while rejecting symlink escapes and oversized files", async () => {
+  await using cleanup = new AsyncDisposableStack();
+  const temporary = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-plugin-icon-"));
+  cleanup.defer(() => NodeFSP.rm(temporary, { recursive: true, force: true }));
+  const root = NodePath.join(temporary, "plugin");
+  await NodeFSP.mkdir(root);
+  const png = Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    Buffer.alloc(80 * 1024),
+  ]);
+  await NodeFSP.writeFile(NodePath.join(root, "icon.bin"), png);
+  expect(await readContainedPluginIcon(root, "icon.bin")).toBe(
+    `data:image/png;base64,${png.toString("base64")}`,
+  );
+  await NodeFSP.writeFile(
+    NodePath.join(temporary, "outside.svg"),
+    '<svg xmlns="http://www.w3.org/2000/svg"/>',
+  );
+  await NodeFSP.symlink(NodePath.join(temporary, "outside.svg"), NodePath.join(root, "escape.svg"));
+  await expect(readContainedPluginIcon(root, "escape.svg")).rejects.toThrow("outside this plugin");
+  await NodeFSP.writeFile(NodePath.join(root, "large.png"), Buffer.alloc(256 * 1024 + 1));
+  await expect(readContainedPluginIcon(root, "large.png")).rejects.toThrow("256 KB");
+  await NodeFSP.writeFile(NodePath.join(root, "fake.png"), "not an image");
+  expect(await readContainedPluginIcon(root, "fake.png")).toBeUndefined();
 });

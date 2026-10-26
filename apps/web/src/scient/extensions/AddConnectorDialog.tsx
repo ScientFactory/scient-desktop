@@ -495,7 +495,13 @@ export function AddConnectorDialog({
                       </Label>
                       <SecretInput
                         id="connector-key"
-                        placeholder={draft.strategy === "basic" ? "user:password" : undefined}
+                        placeholder={
+                          github
+                            ? "Paste your GitHub token"
+                            : draft.strategy === "basic"
+                              ? "user:password"
+                              : undefined
+                        }
                         value={draft.value}
                         {...invalidProps("connector-key", shownErrors.value)}
                         onChange={(event) => patch({ value: event.target.value })}

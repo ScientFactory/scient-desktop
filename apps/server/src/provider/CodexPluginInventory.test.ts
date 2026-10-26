@@ -136,6 +136,7 @@ describe("parseCodexInstalledPlugins", () => {
       {
         id: "gitplug@openai-curated",
         name: "gitplug",
+        displayName: "Gitplug",
         marketplace: "OpenAI Curated",
         source: "remote",
         enabled: false,
@@ -144,6 +145,7 @@ describe("parseCodexInstalledPlugins", () => {
       {
         id: "mine@local",
         name: "mine",
+        displayName: "Mine",
         marketplace: "local",
         source: "local",
         enabled: true,
@@ -328,6 +330,7 @@ describe("makeCodexNativeInventory workspace listing", () => {
             {
               id: "a@home",
               name: "a",
+              displayName: "A",
               marketplace: "home",
               source: "local",
               enabled: true,

@@ -70,3 +70,21 @@ describe("Codex store icon cache", () => {
     }),
   );
 });
+
+it.effect("resolves Codex app asset paths only on ChatGPT's observed image route", () =>
+  Effect.gen(function* () {
+    const urls: string[] = [];
+    const icon = makeCodexStoreIcons(async (url) => {
+      urls.push(String(url));
+      return new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', {
+        headers: { "content-type": "image/svg+xml" },
+      });
+    });
+    const path = "/images/ecosystem/apps/github/icon.png";
+    expect(yield* icon(path)).toMatch(/^data:image\/svg\+xml;base64,/);
+    yield* icon(`https://chatgpt.com${path}`);
+    expect(yield* icon("https://chatgpt.com/backend-api/content")).toBeUndefined();
+    expect(yield* icon("//other.example/images/ecosystem/apps/github/icon.png")).toBeUndefined();
+    expect(urls).toEqual([`https://chatgpt.com${path}`]);
+  }),
+);

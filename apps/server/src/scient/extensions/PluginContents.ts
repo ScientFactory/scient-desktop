@@ -9,6 +9,7 @@ import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientPluginRegistryShape } from "./ExtensionsServices.ts";
 import { readLocalPluginContents, readLocalPluginSkill } from "./LocalPluginContents.ts";
 
+const isExtensionsError = Schema.is(ExtensionsError);
 const decodePath = Schema.decodeUnknownOption(Schema.Struct({ path: Schema.String }));
 const unavailable = (message: string) =>
   new ExtensionsError({ reason: "state-unavailable", message });
@@ -93,10 +94,19 @@ export function makePluginContents(
         ),
       );
     },
-    Effect.mapError(() =>
-      unavailable(
-        "Could not read this skill. Its file must stay inside the plugin and be at most 256 KB.",
-      ),
+    Effect.timeoutOrElse({
+      duration: "15 seconds",
+      orElse: () =>
+        Effect.fail(
+          unavailable("The skill document did not respond. Close the card and try again."),
+        ),
+    }),
+    Effect.mapError((cause) =>
+      isExtensionsError(cause)
+        ? cause
+        : unavailable(
+            "Could not read this skill. Its file must stay inside the plugin and be at most 256 KB.",
+          ),
     ),
   );
   return { read, document };

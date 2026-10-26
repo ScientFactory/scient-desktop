@@ -18,14 +18,17 @@ export type ExtensionSkillDocumentInput = typeof ExtensionSkillDocumentInput.Typ
 export const ExtensionPluginSkill = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
+  displayName: Schema.optional(Schema.String),
   description: Schema.String,
   documentAvailable: Schema.Boolean,
   enabled: Schema.Boolean,
+  userInvocable: Schema.optional(Schema.Boolean),
   releaseKey: Schema.optional(Schema.String),
   path: Schema.optional(TrimmedNonEmptyString),
 });
 export type ExtensionPluginSkill = typeof ExtensionPluginSkill.Type;
 export const ExtensionPluginContents = Schema.Struct({
+  deferred: Schema.optional(Schema.Boolean),
   apps: Schema.Array(ProviderStoreApp).check(Schema.isMaxLength(200)),
   mcpServers: Schema.Array(
     Schema.Struct({ name: TrimmedNonEmptyString, status: Schema.optional(Schema.String) }),

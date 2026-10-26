@@ -17,8 +17,12 @@ import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
-import { CURATED_SERVERS } from "./discover/curatedCatalog.ts";
-import { codexSkillRoot, readContainedPluginText } from "./LocalPluginContents.ts";
+import {
+  codexSkillRoot,
+  readContainedPluginText,
+  readContainedPluginIcon,
+} from "./LocalPluginContents.ts";
+import { sharedPluginDisplayName } from "./SharedPluginStore.ts";
 import { makeCodexStoreIcons } from "./CodexStoreIcons.ts";
 
 type Client = CodexClient.CodexAppServerClient["Service"];
@@ -30,9 +34,6 @@ type CachedPlugin = {
   readonly marketplacePath?: string;
 };
 const encodeKey = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
-const CURATED = new Set(
-  CURATED_SERVERS.flatMap((entry) => (entry.agentStores?.codex ? [entry.agentStores.codex] : [])),
-);
 const fail = (message: string) => Effect.fail({ message });
 
 export function codexStoreDisabledReason(plugin: Plugin, plan: string): string | undefined {
@@ -73,6 +74,8 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
 ) {
   const lifetime = yield* Effect.scope;
   const lock = yield* Semaphore.make(1);
+  const stateLock = yield* Semaphore.make(1);
+  const detailLocks = new Map<string, Semaphore.Semaphore>();
   const changes = yield* Effect.acquireRelease(PubSub.unbounded<void>(), PubSub.shutdown);
   const connection = yield* Ref.make<
     { readonly client: Client; readonly scope: Scope.Closeable } | undefined
@@ -80,15 +83,22 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const cache = yield* Ref.make<
     | {
         readonly key: string;
+        readonly details: Map<string, CodexSchema.V2PluginReadResponse__PluginDetail>;
         readonly at: number;
         readonly entries: ReadonlyArray<CachedPlugin>;
         readonly featured: ReadonlySet<string>;
+        readonly installedIds: ReadonlySet<string>;
+        readonly installedAt: number;
+        readonly complete: boolean;
       }
     | undefined
   >(undefined);
   const pendingAuth = new Map<
     string,
-    ReadonlyArray<CodexSchema.V2PluginInstallResponse__AppSummary>
+    {
+      readonly key: string;
+      readonly apps: ReadonlyArray<CodexSchema.V2PluginInstallResponse__AppSummary>;
+    }
   >();
   let appsFingerprint = "";
   const readApps = Effect.fn("CodexProviderStore.readApps")(function* (
@@ -114,6 +124,36 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     }
     return apps;
   });
+  const projectApps = Effect.fn("CodexProviderStore.projectApps")(function* (
+    client: Client,
+    references: ReadonlyArray<CodexSchema.V2PluginReadResponse__AppSummary>,
+  ) {
+    const selected = references.slice(0, 200);
+    const apps = new Map((yield* readApps(client, selected)).map((app) => [app.id, app]));
+    return yield* Effect.forEach(
+      selected,
+      Effect.fn("CodexProviderStore.app")(function* (reference) {
+        const app = apps.get(reference.id);
+        const url = codexAppInstallUrl(app?.installUrl ?? reference.installUrl);
+        const iconUrl = yield* icon(app?.logoUrl).pipe(
+          Effect.timeoutOption("1 second"),
+          Effect.map(Option.getOrUndefined),
+        );
+        return {
+          id: reference.id,
+          name: app?.name ?? reference.name,
+          ...(app?.description || reference.description
+            ? { description: app?.description ?? reference.description! }
+            : {}),
+          connected: app?.isAccessible === true,
+          enabled: app?.isEnabled !== false,
+          ...(iconUrl ? { iconUrl } : {}),
+          ...(url ? { installUrl: url } : {}),
+        };
+      }),
+      { concurrency: 4 },
+    );
+  });
   const getClient = Effect.fn("CodexProviderStore.getClient")(function* () {
     const current = yield* Ref.get(connection);
     if (current) return current.client;
@@ -136,99 +176,141 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     );
     yield* client.handleServerNotification("account/updated", () =>
       Ref.set(cache, undefined).pipe(
-        Effect.andThen(Effect.sync(() => pendingAuth.clear())),
+        Effect.andThen(
+          Effect.sync(() => {
+            pendingAuth.clear();
+          }),
+        ),
         Effect.andThen(PubSub.publish(changes, undefined)),
         Effect.asVoid,
       ),
     );
     yield* Ref.set(connection, { client, scope });
-    yield* Effect.sleep("60 seconds").pipe(
-      Effect.andThen(
-        lock.withPermits(1)(
-          Effect.gen(function* () {
-            if ((yield* Ref.get(connection))?.client !== client) return;
-            yield* Ref.set(connection, undefined);
-            yield* Scope.close(scope, Exit.void);
-          }),
-        ),
-      ),
-      Effect.forkIn(lifetime),
-    );
     return client;
   });
   const withClient = Effect.fn("CodexProviderStore.withClient")(
     function* <A, Err>(run: (client: Client) => Effect.Effect<A, Err>) {
-      return yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const client = yield* getClient();
-          return yield* run(client);
-        }).pipe(
-          Effect.timeout("35 seconds"),
-          Effect.onError(() =>
+      const client = yield* lock.withPermits(1)(getClient());
+      return yield* run(client).pipe(
+        Effect.onError(() =>
+          lock.withPermits(1)(
             Effect.gen(function* () {
+              if ((yield* Ref.get(connection))?.client !== client) return;
               const previous = yield* Ref.getAndSet(connection, undefined);
+              yield* Ref.set(cache, undefined);
               if (previous) yield* Scope.close(previous.scope, Exit.void);
             }),
           ),
         ),
       );
     },
+    Effect.timeout("15 seconds"),
     Effect.mapError(() => ({
       message: "Codex could not finish the store request. Refresh to try again.",
     })),
   );
-  const state = Effect.fn("CodexProviderStore.state")(function* (client: Client, refresh = false) {
-    const account = (yield* client.request("account/read", { refreshToken: false })).account;
-    if (account?.type !== "chatgpt") {
-      yield* Ref.set(cache, undefined);
-      pendingAuth.clear();
-      return undefined;
-    }
-    const now = yield* Clock.currentTimeMillis;
-    const key = encodeKey([account.email, account.planType]);
-    let store = yield* Ref.get(cache);
-    if (store?.key !== key) {
-      store = undefined;
-      pendingAuth.clear();
-    }
-    if (!store || refresh || now - store.at >= 3_600_000) {
-      const response = yield* client.request("plugin/list", { forceRefetch: refresh });
-      if (response.marketplaceLoadErrors?.length)
-        return yield* fail("Codex could not read all its marketplaces.");
-      const entries = response.marketplaces.flatMap((marketplace): CachedPlugin[] =>
-        marketplace.plugins.map((plugin) => ({
-          plugin,
-          marketplace: marketplace.name,
-          ...(marketplace.path ? { marketplacePath: marketplace.path } : {}),
-        })),
-      );
-      if (entries.length > 20_000) return yield* fail("The Codex store exceeded its entry limit.");
-      store = { key, at: now, entries, featured: new Set(response.featuredPluginIds ?? []) };
-      yield* Ref.set(cache, store);
-    }
-    const installed = yield* client.request("plugin/installed", {});
-    if (installed.marketplaceLoadErrors?.length)
-      return yield* fail("Codex did not list all installed plugins.");
-    const installedIds = new Set(
-      installed.marketplaces.flatMap((marketplace) =>
-        marketplace.plugins.filter((plugin) => plugin.installed).map((plugin) => plugin.id),
-      ),
+  const state = Effect.fn("CodexProviderStore.state")(function* (
+    client: Client,
+    refresh = false,
+    localOnly = false,
+  ) {
+    return yield* stateLock.withPermits(1)(
+      Effect.gen(function* () {
+        const account = (yield* client.request("account/read", { refreshToken: false })).account;
+        if (account?.type !== "chatgpt") {
+          yield* Ref.set(cache, undefined);
+          pendingAuth.clear();
+          return undefined;
+        }
+        const now = yield* Clock.currentTimeMillis;
+        const key = encodeKey([account.email, account.planType]);
+        let store = yield* Ref.get(cache);
+        if ((store && (store.key !== key || now - store.at >= 3_600_000)) || refresh) {
+          store = undefined;
+          pendingAuth.clear();
+        }
+        if (!store || (!localOnly && !store.complete)) {
+          const response = localOnly
+            ? undefined
+            : yield* client.request("plugin/list", { forceRefetch: refresh });
+          if (response?.marketplaceLoadErrors?.length)
+            return yield* fail("Codex could not read all its marketplaces.");
+          const entries =
+            response?.marketplaces.flatMap((marketplace): CachedPlugin[] =>
+              marketplace.plugins.map((plugin) => ({
+                plugin,
+                marketplace: marketplace.name,
+                ...(marketplace.path ? { marketplacePath: marketplace.path } : {}),
+              })),
+            ) ?? [];
+          if (entries.length > 20_000)
+            return yield* fail("The Codex store exceeded its entry limit.");
+          store = {
+            key,
+            details: store?.details ?? new Map(),
+            at: now,
+            entries,
+            featured: new Set(response?.featuredPluginIds ?? []),
+            installedIds: new Set<string>(),
+            installedAt: -Infinity,
+            complete: !localOnly,
+          };
+        }
+        if (now - store.installedAt >= 30_000) {
+          const installed = yield* client.request("plugin/installed", {});
+          if (installed.marketplaceLoadErrors?.length)
+            return yield* fail("Codex did not list all installed plugins.");
+          const installedIds = new Set(
+            installed.marketplaces.flatMap((marketplace) =>
+              marketplace.plugins.filter((plugin) => plugin.installed).map((plugin) => plugin.id),
+            ),
+          );
+          const known = new Set(store.entries.map(({ plugin }) => plugin.id));
+          const localEntries = installed.marketplaces.flatMap((marketplace) =>
+            marketplace.plugins
+              .filter((plugin) => !known.has(plugin.id))
+              .map((plugin) => ({
+                plugin,
+                marketplace: marketplace.name,
+                ...(marketplace.path ? { marketplacePath: marketplace.path } : {}),
+              })),
+          );
+          store = {
+            ...store,
+            entries: [...store.entries, ...localEntries],
+            installedIds,
+            installedAt: now,
+          };
+        }
+        yield* Ref.set(cache, store);
+        return { store, installedIds: store.installedIds, plan: account.planType };
+      }),
     );
-    const known = new Set(store.entries.map(({ plugin }) => plugin.id));
-    const localEntries = installed.marketplaces.flatMap((marketplace) =>
-      marketplace.plugins
-        .filter((plugin) => !known.has(plugin.id))
-        .map((plugin) => ({
-          plugin,
-          marketplace: marketplace.name,
-          ...(marketplace.path ? { marketplacePath: marketplace.path } : {}),
-        })),
+  });
+  const readDetail = Effect.fn("CodexProviderStore.readDetail")(function* (
+    client: Client,
+    item: CachedPlugin,
+    generation: Map<string, CodexSchema.V2PluginReadResponse__PluginDetail>,
+  ) {
+    let detailLock = detailLocks.get(item.plugin.id);
+    if (!detailLock) {
+      detailLock = Semaphore.makeUnsafe(1);
+      detailLocks.set(item.plugin.id, detailLock);
+    }
+    return yield* detailLock.withPermits(1)(
+      Effect.gen(function* () {
+        const cached = generation.get(item.plugin.id);
+        if (cached) return cached;
+        const detail = (yield* client.request("plugin/read", {
+          pluginName: item.plugin.name,
+          ...(item.marketplacePath
+            ? { marketplacePath: item.marketplacePath }
+            : { remoteMarketplaceName: item.marketplace }),
+        })).plugin;
+        generation.set(item.plugin.id, detail);
+        return detail;
+      }),
     );
-    return {
-      store: { ...store, entries: [...store.entries, ...localEntries] },
-      installedIds,
-      plan: account.planType,
-    };
   });
   const project = Effect.fn("CodexProviderStore.project")(function* (
     item: CachedPlugin,
@@ -239,7 +321,21 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   ) {
     const plugin = item.plugin;
     const info = plugin.interface;
-    const iconUrl = includeIcon ? yield* icon(info?.logoUrl) : undefined;
+    const root = plugin.source.type === "local" ? plugin.source.path : undefined;
+    const localIcon =
+      root && (info?.logo || info?.composerIcon) && includeIcon
+        ? yield* Effect.tryPromise(() =>
+            readContainedPluginIcon(root, (info?.logo || info?.composerIcon)!),
+          ).pipe(Effect.orElseSucceed(() => undefined))
+        : undefined;
+    const iconUrl =
+      localIcon ??
+      (includeIcon
+        ? yield* icon(info?.logoUrl).pipe(
+            Effect.timeoutOption("1 second"),
+            Effect.map(Option.getOrUndefined),
+          )
+        : undefined);
     const disabledReason = codexStoreDisabledReason(plugin, plan);
     const entryApps = apps.filter((app) =>
       app.pluginDisplayNames?.includes(info?.displayName ?? plugin.name),
@@ -248,7 +344,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       id: plugin.id,
       name: plugin.name,
       marketplace: item.marketplace,
-      displayName: info?.displayName?.trim() || plugin.name,
+      displayName: info?.displayName?.trim() || sharedPluginDisplayName(plugin.name),
       description: info?.shortDescription?.trim() || info?.longDescription?.trim() || "",
       kind: "codex",
       installed,
@@ -282,14 +378,8 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const query = (input.query ?? "").trim().toLowerCase();
         const terms = query.split(/\s+/).filter(Boolean);
         const matching = current.store.entries.filter(({ plugin }) => {
-          if (input.preview && CURATED.has(plugin.name)) return false;
-          if (
-            input.preview &&
-            !query &&
-            !current.store.featured.has(plugin.id) &&
-            !current.installedIds.has(plugin.id)
-          )
-            return false;
+          if (input.preview && current.installedIds.has(plugin.id)) return false;
+          if (input.preview && !query && !current.store.featured.has(plugin.id)) return false;
           return terms.every((term) =>
             `${plugin.name} ${plugin.interface?.displayName ?? ""} ${plugin.interface?.shortDescription ?? ""}`
               .toLowerCase()
@@ -332,50 +422,30 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const entry: NonNullable<ProviderPluginActions["store"]>["entry"] = (id) =>
     withClient(
       Effect.fn("CodexProviderStore.entry")(function* (client: Client) {
-        const current = yield* state(client);
-        const item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+        let current = yield* state(client, false, true);
+        let item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+        if (!item) {
+          current = yield* state(client);
+          item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+        }
         if (!current || !item) return yield* fail("This Codex plugin is no longer available.");
-        const detail = yield* client.request("plugin/read", {
-          pluginName: item.plugin.name,
-          ...(item.marketplacePath
-            ? { marketplacePath: item.marketplacePath }
-            : { remoteMarketplaceName: item.marketplace }),
-        });
+        const detail = yield* readDetail(client, item, current.store.details);
+        const pending = pendingAuth.get(id);
         const references = new Map(
-          [...detail.plugin.apps, ...(pendingAuth.get(id) ?? [])].map((app) => [app.id, app]),
+          [...detail.apps, ...(pending?.key === current.store.key ? pending.apps : [])].map(
+            (app) => [app.id, app],
+          ),
         );
-        const apps = yield* readApps(client, [...references.values()].slice(0, 200));
-        const indexedApps = new Map(apps.map((app) => [app.id, app]));
         const summary = yield* project(item, current.plan, current.installedIds.has(id));
         return {
           ...summary,
-          description: detail.plugin.description ?? summary.description,
+          description: detail.description ?? summary.description,
           includes: [
-            ...detail.plugin.skills.map((skill) => `Skill: ${skill.name}`),
-            ...detail.plugin.mcpServers.map((server) => `MCP server: ${server}`),
-            ...(detail.plugin.hooks.length ? ["Hooks"] : []),
+            ...detail.skills.map((skill) => `Skill: ${skill.name}`),
+            ...detail.mcpServers.map((server) => `MCP server: ${server}`),
+            ...(detail.hooks.length ? ["Hooks"] : []),
           ],
-          apps: yield* Effect.forEach(
-            [...references.values()].slice(0, 200),
-            Effect.fn("CodexProviderStore.app")(function* (reference) {
-              const app = indexedApps.get(reference.id);
-              const url = codexAppInstallUrl(app?.installUrl ?? reference.installUrl);
-              const iconUrl = yield* icon(app?.logoUrl).pipe(
-                Effect.timeoutOption("1 second"),
-                Effect.map(Option.getOrUndefined),
-              );
-              return {
-                id: reference.id,
-                ...(app?.description ? { description: app.description } : {}),
-                ...(iconUrl ? { iconUrl } : {}),
-                name: app?.name ?? reference.name,
-                connected: app?.isAccessible === true,
-                enabled: app?.isEnabled !== false,
-                ...(url ? { installUrl: url } : {}),
-              };
-            }),
-            { concurrency: 4 },
-          ),
+          apps: yield* projectApps(client, [...references.values()]),
         };
       }),
     );
@@ -393,7 +463,8 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
             ? { marketplacePath: item.marketplacePath }
             : { remoteMarketplaceName: item.marketplace }),
         });
-        pendingAuth.set(id, response.appsNeedingAuth);
+        yield* Ref.set(cache, undefined);
+        pendingAuth.set(id, { key: current.store.key, apps: response.appsNeedingAuth });
         yield* PubSub.publish(changes, undefined);
         return {
           authPolicy: response.authPolicy,
@@ -413,15 +484,14 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     client: Client,
     id: string,
   ) {
-    const current = yield* state(client);
-    const item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+    let current = yield* state(client, false, true);
+    let item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+    if (!item) {
+      current = yield* state(client);
+      item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+    }
     if (!current || !item) return yield* fail("This plugin is no longer available.");
-    const detail = (yield* client.request("plugin/read", {
-      pluginName: item.plugin.name,
-      ...(item.marketplacePath
-        ? { marketplacePath: item.marketplacePath }
-        : { remoteMarketplaceName: item.marketplace }),
-    })).plugin;
+    const detail = yield* readDetail(client, item, current.store.details);
     return { detail, installed: current.installedIds.has(id) };
   });
   const skillRoot = (detail: CodexSchema.V2PluginReadResponse__PluginDetail, file: string) => {
@@ -435,35 +505,38 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     );
   };
   const contents = (id: string) =>
-    entry(id).pipe(
-      Effect.flatMap((summary) =>
-        withClient(
-          Effect.fn("CodexProviderStore.contents")(function* (client: Client) {
-            const { detail, installed } = yield* detailFor(client, id);
-            return {
-              apps: summary.apps,
-              mcpServers: detail.mcpServers.slice(0, 200).map((name) => ({ name })),
-              skills: yield* Effect.forEach(
-                detail.skills.slice(0, 200),
-                Effect.fn("CodexProviderStore.skillSummary")(function* (skill) {
-                  const root = skill.path ? yield* skillRoot(detail, skill.path) : undefined;
-                  return {
-                    id: skill.name,
-                    ...(skill.path ? { path: skill.path } : {}),
-                    name: skill.name,
-                    description: skill.shortDescription ?? skill.description ?? "",
-                    enabled: installed && skill.enabled !== false,
-                    documentAvailable: root !== undefined,
-                  };
-                }),
-              ),
-              hooks: detail.hooks.slice(0, 200).map((hook) => hook.eventName),
-              commands: [],
-              agents: [],
-            } satisfies ExtensionPluginContents;
-          }),
-        ),
-      ),
+    withClient(
+      Effect.fn("CodexProviderStore.contents")(function* (client: Client) {
+        const { detail, installed } = yield* detailFor(client, id);
+        return {
+          apps: yield* projectApps(client, detail.apps),
+          mcpServers: detail.mcpServers.slice(0, 200).map((name) => ({ name })),
+          skills: yield* Effect.forEach(
+            detail.skills.slice(0, 200),
+            Effect.fn("CodexProviderStore.skillSummary")(function* (skill) {
+              const root = skill.path ? yield* skillRoot(detail, skill.path) : undefined;
+              return {
+                id: skill.name,
+                name: skill.name,
+                displayName:
+                  skill.interface?.displayName?.trim() ||
+                  sharedPluginDisplayName(skill.name.split(":").at(-1) ?? skill.name),
+                ...(skill.path ? { path: skill.path } : {}),
+                description:
+                  skill.interface?.shortDescription ??
+                  skill.shortDescription ??
+                  skill.description ??
+                  "",
+                enabled: installed && detail.summary?.enabled !== false && skill.enabled !== false,
+                documentAvailable: root !== undefined,
+              };
+            }),
+          ),
+          hooks: detail.hooks.slice(0, 200).map((hook) => hook.eventName),
+          commands: [],
+          agents: [],
+        } satisfies ExtensionPluginContents;
+      }),
     );
   const skillDocument = (id: string, skillId: string) =>
     withClient(
@@ -486,22 +559,16 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const enrichInstalled = (plugins: ReadonlyArray<ServerProviderPlugin>, refresh = false) =>
     withClient(
       Effect.fn("CodexProviderStore.enrichInstalled")(function* (client: Client) {
-        const account = (yield* client.request("account/read", { refreshToken: false })).account;
-        if (account?.type !== "chatgpt") return plugins;
-        const installed = yield* client.request("plugin/installed", {});
+        const cached = yield* Ref.get(cache);
+        if (cached) yield* Ref.set(cache, { ...cached, installedAt: -Infinity });
+        const current = yield* state(client, false, true);
+        if (!current) return plugins;
         const references = yield* Effect.forEach(
           plugins,
           Effect.fn("CodexProviderStore.installedApps")(function* (plugin) {
-            const marketplace = installed.marketplaces.find((entry) =>
-              entry.plugins.some((item) => item.id === plugin.id),
-            );
-            if (!marketplace) return [];
-            return (yield* client.request("plugin/read", {
-              pluginName: plugin.name,
-              ...(marketplace.path
-                ? { marketplacePath: marketplace.path }
-                : { remoteMarketplaceName: marketplace.name }),
-            })).plugin.apps;
+            const item = current.store.entries.find((item) => item.plugin.id === plugin.id);
+            if (!item) return [];
+            return (yield* readDetail(client, item, current.store.details)).apps;
           }),
         );
         const apps = yield* readApps(client, references.flat(), refresh);

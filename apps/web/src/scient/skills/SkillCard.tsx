@@ -19,6 +19,7 @@ import { ExtensionIcon } from "../extensions/ExtensionRow";
 
 export function SkillCard({
   name,
+  displayName,
   description,
   environmentId,
   instructions,
@@ -27,6 +28,7 @@ export function SkillCard({
   onTry,
 }: {
   readonly name: string;
+  readonly displayName?: string | undefined;
   readonly description: string;
   readonly environmentId: EnvironmentId;
   readonly instructions: string | null;
@@ -80,7 +82,7 @@ export function SkillCard({
             </div>
           </div>
           <DialogTitle>
-            {formatProviderSkillDisplayName({ name })}{" "}
+            {formatProviderSkillDisplayName({ name, displayName })}{" "}
             <span className="font-normal text-muted-foreground">Skill</span>
           </DialogTitle>
           <DialogDescription>{description}</DialogDescription>

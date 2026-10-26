@@ -1,4 +1,5 @@
 import type {
+  ExtensionPluginContents,
   ProviderStoreEntry,
   ProviderStorePage,
   ProviderStoreSearchInput,
@@ -9,6 +10,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { readLocalPluginContents, readLocalPluginSkill } from "./LocalPluginContents.ts";
+import { resolveBrandIcon } from "./BrandIcons.ts";
 import { readPluginJson } from "./LocalPluginFiles.ts";
 
 const Name = Schema.String.check(
@@ -53,32 +55,34 @@ const Plugin = Schema.Struct({
   description: Schema.optional(Schema.String),
   version: Schema.optional(Schema.String),
   homepage: Schema.optional(Schema.String),
+  mcpServers: Schema.optional(Schema.Unknown),
+  skills: Schema.optional(Schema.Unknown),
+  commands: Schema.optional(Schema.Unknown),
   author: Schema.optional(Schema.Struct({ name: Schema.String })),
 });
-const Reviews = Schema.Struct({
-  listings: Schema.Array(
+const Review = Schema.Struct({
+  name: Schema.String,
+  id: Schema.optional(Schema.String),
+  source: Schema.optional(
     Schema.Struct({
-      name: Schema.String,
-      source: Schema.optional(
-        Schema.Struct({
-          repository: Schema.optional(
-            Schema.Struct({ url: Schema.String, path: Schema.optional(Schema.String) }),
-          ),
-        }),
+      repository: Schema.optional(
+        Schema.Struct({ url: Schema.String, path: Schema.optional(Schema.String) }),
       ),
-      checks: Schema.optional(
+    }),
+  ),
+  checks: Schema.optional(
+    Schema.Struct({
+      review: Schema.optional(
         Schema.Struct({
-          review: Schema.optional(
-            Schema.Struct({
-              state: Schema.String,
-              by: Schema.optional(Schema.Struct({ type: Schema.String })),
-            }),
-          ),
+          state: Schema.String,
+          by: Schema.optional(Schema.Struct({ type: Schema.String })),
         }),
       ),
     }),
   ),
 });
+const Reviews = Schema.Struct({ listings: Schema.Array(Schema.Unknown) });
+const decodeReview = Schema.decodeUnknownOption(Review);
 const decodeKnown = Schema.decodeUnknownEffect(Known);
 const decodeMarkets = Schema.decodeUnknownEffect(AgentMarkets);
 const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
@@ -129,9 +133,53 @@ export function sharedPluginShelfRank(
   name: string,
   review?: { readonly state: string; readonly by?: { readonly type: string } | undefined },
 ): number {
-  if (review?.state === "done" && ["anthropic", "partner"].includes(review.by?.type ?? ""))
-    return 0;
-  return name.split(/[-_]+/).some((part) => BRANDS[part.toLowerCase()]) ? 1 : 2;
+  const tier =
+    review?.state === "done"
+      ? review.by?.type === "anthropic"
+        ? 0
+        : review.by?.type === "partner"
+          ? 1
+          : 2
+      : 2;
+  return tier * 2 + (resolveBrandIcon(name) ? 0 : 1);
+}
+
+function inlinePluginContents(plugin: typeof Plugin.Type): ExtensionPluginContents {
+  const names = (value: unknown): string[] => {
+    if (Array.isArray(value))
+      return value.slice(0, 200).flatMap((item) => {
+        if (typeof item === "string") {
+          const name = item.split(/[\\/]/).filter(Boolean).at(-1)?.replace(/\.md$/i, "").trim();
+          return name ? [name] : [];
+        }
+        const parsed = decodeRecord(item);
+        return parsed._tag === "Some" &&
+          typeof parsed.value.name === "string" &&
+          parsed.value.name.trim()
+          ? [parsed.value.name.trim()]
+          : [];
+      });
+    const record = decodeRecord(value);
+    return record._tag === "Some"
+      ? Object.keys(record.value)
+          .filter((name) => name.trim())
+          .slice(0, 200)
+      : [];
+  };
+  return {
+    deferred: true,
+    apps: [],
+    agents: [],
+    mcpServers: names(plugin.mcpServers).map((name) => ({ name })),
+    skills: names(plugin.skills).map((name) => ({
+      id: name,
+      name,
+      description: "",
+      enabled: false,
+      documentAvailable: false,
+    })),
+    commands: names(plugin.commands),
+  };
 }
 
 export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function* (options: {
@@ -153,7 +201,14 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       Effect.flatMap((raw) =>
         raw === undefined
           ? Effect.succeed([])
-          : decodeReviews(raw).pipe(Effect.map((value) => value.listings)),
+          : decodeReviews(raw).pipe(
+              Effect.map((value) =>
+                value.listings.flatMap((entry) => {
+                  const parsed = decodeReview(entry);
+                  return parsed._tag === "Some" ? [parsed.value] : [];
+                }),
+              ),
+            ),
       ),
       Effect.orElseSucceed(() => []),
     );
@@ -220,6 +275,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       uri: string;
       relative?: string | undefined;
       rank: number;
+      inline: ExtensionPluginContents;
     }> = [];
     for (const source of roots) {
       const raw = yield* optionalJson(source.catalog);
@@ -257,6 +313,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
         );
         entries.push({
           rank: sharedPluginShelfRank(plugin.name, directory?.checks?.review),
+          inline: inlinePluginContents(plugin),
           root: pluginRoot,
           uri: source.uri,
           ...(pluginDir ? { pluginDir, relative } : {}),
@@ -382,7 +439,14 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
         Effect.flatMap((raw) =>
           raw === undefined
             ? Effect.succeed([])
-            : decodeReviews(raw).pipe(Effect.map((value) => value.listings)),
+            : decodeReviews(raw).pipe(
+                Effect.map((value) =>
+                  value.listings.flatMap((entry) => {
+                    const parsed = decodeReview(entry);
+                    return parsed._tag === "Some" ? [parsed.value] : [];
+                  }),
+                ),
+              ),
         ),
         Effect.orElseSucceed(() => []),
       );
@@ -426,15 +490,16 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
     Effect.mapError(() => ({ message: "Could not read this plugin's local contents." })),
   );
   return {
-    contents: (id) =>
-      pluginRoot(id).pipe(
-        Effect.flatMap((root) =>
-          Effect.tryPromise({
-            try: () => readLocalPluginContents(root),
-            catch: () => ({ message: "Could not read this plugin's contents." }),
-          }),
-        ),
-      ),
+    contents: Effect.fn("SharedPluginStore.contents")(function* (id: string) {
+      const item = (yield* listing()).entries.find((item) => item.entry.id === id);
+      if (!item) return yield* Effect.fail({ message: "This plugin is no longer in the store." });
+      if (!item.pluginDir || !(yield* fs.exists(item.pluginDir))) return item.inline;
+      const root = yield* pluginRoot(id);
+      return yield* Effect.tryPromise({
+        try: () => readLocalPluginContents(root),
+        catch: () => ({ message: "Could not read this plugin's contents." }),
+      });
+    }),
     skillDocument: (id, skillId) =>
       pluginRoot(id).pipe(
         Effect.flatMap((root) =>
