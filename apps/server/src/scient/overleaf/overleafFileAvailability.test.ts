@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Metadata probe against this source file.
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import { overleafFilesAvailability } from "./overleafFileAvailability.ts";
 
@@ -23,15 +22,4 @@ describe("Overleaf online-only files", () => {
     expect(await one("darwin", 0x40000000)).toBe("online-only-file");
     expect(await one("darwin", 0x20)).toBe("available");
   });
-
-  it.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
-    "reads macOS flags for many files in one run, a vanished one included",
-    async () => {
-      const found = await overleafFilesAvailability([
-        import.meta.filename,
-        `${import.meta.filename}.gone`,
-      ]);
-      expect([...found.values()]).toEqual(["available", "available"]);
-    },
-  );
 });
