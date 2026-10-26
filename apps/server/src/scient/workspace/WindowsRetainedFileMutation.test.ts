@@ -98,6 +98,24 @@ describe.skipIf(!windows)("Windows capture and install", () => {
       expect(pruned.outcome).toBe("done");
       await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
     }));
+  it("preserves read-only and hidden attributes and removes the kept file by its held parent", () =>
+    fixture(async (input, target) => {
+      NodeChildProcess.execFileSync("attrib.exe", ["+R", "+H", target]);
+      const result = await mutateRetainedFile(input, target);
+      expect(result.outcome).toBe("done");
+      expect((await windowsNativeFile(target, "flags")).flags & 3).toBe(3);
+      expect((await windowsNativeFile(result.retainedPath!, "flags")).flags & 3).toBe(3);
+      const binding = await bindNativeFilePublicationParent(helper!, result.recordDirectory, "");
+      await withNativeFilePublicationLease(
+        helper!,
+        [binding],
+        async (lease) => {
+          await removeNativeRetainedEntry(lease, result.recordDirectory, "retained");
+        },
+        { mode: "exclusive" },
+      );
+      await expect(NodeFSP.lstat(result.retainedPath!)).rejects.toMatchObject({ code: "ENOENT" });
+    }));
   it.each(["create", "replace"] as const)(
     "keeps another process’s %s at the target after capture",
     (mode) =>
@@ -447,6 +465,27 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
         code: "ENOENT",
       });
     }));
+  it("refuses a junction ancestor of the lock-state root before creating a lock directory", () =>
+    fixture(async (input) => {
+      const outside = NodePath.join(NodePath.dirname(input.cwd), "outside-state");
+      const alias = NodePath.join(input.cwd, "state-link");
+      await NodeFSP.mkdir(outside);
+      await NodeFSP.symlink(outside, alias, "junction");
+      const previous = process.env.SCIENT_PUBLICATION_LOCK_ROOT;
+      process.env.SCIENT_PUBLICATION_LOCK_ROOT = NodePath.join(alias, "locks");
+      try {
+        const binding = await bindNativeFilePublicationParent(helper!, input.cwd, "");
+        await expect(
+          withNativeFilePublicationLease(helper!, [binding], async () => undefined),
+        ).rejects.toThrow();
+        await expect(NodeFSP.lstat(NodePath.join(outside, "locks"))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        if (previous === undefined) delete process.env.SCIENT_PUBLICATION_LOCK_ROOT;
+        else process.env.SCIENT_PUBLICATION_LOCK_ROOT = previous;
+      }
+    }));
   it("refuses an existing broad directory without changing its policy", () =>
     fixture(async (input) => {
       const broad = NodePath.join(input.cwd, "broad");
@@ -489,6 +528,15 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
         NodeChildProcess.execFileSync("attrib.exe", ["-O", target]);
       }
       expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+    }));
+  it("refuses an EFS-encrypted file before changing its bytes or policy", () =>
+    fixture(async (input, target) => {
+      NodeChildProcess.execFileSync("cipher.exe", ["/e", "/a", target]);
+      expect((await windowsNativeFile(target, "flags")).flags & 0x4000).toBe(0x4000);
+      const policy = await security(target);
+      await expect(mutateRetainedFile(input, target)).rejects.toThrow("encrypted-file");
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("original");
+      expect(await security(target)).toBe(policy);
     }));
   it("refuses a different owner without changing its bytes or policy", () =>
     fixture(async (input, target) => {

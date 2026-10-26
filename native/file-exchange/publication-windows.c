@@ -422,15 +422,17 @@ int platform_lock_parent(Context *context, int exclusive) {
   error = current_user_security(&descriptor, &sid, 1);
   HANDLE directory = INVALID_HANDLE_VALUE;
   if (!error) {
+    for (wchar_t *part = state; *part; ++part) if (*part == L'/') *part = L'\\';
     wchar_t *leaf = wcsrchr(state, L'\\');
     if (!leaf || !leaf[1]) error = ERROR_INVALID_NAME;
     else {
       *leaf++ = 0;
       int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, state, -1, NULL, 0, NULL, NULL);
-      char *parent_path = bytes ? malloc((size_t)bytes) : NULL;
+      char *parent_path = bytes ? malloc((size_t)bytes + 1) : NULL;
       if (!parent_path) error = ERROR_NOT_ENOUGH_MEMORY;
       else {
         WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, state, -1, parent_path, bytes, NULL, NULL);
+        if (bytes == 3 && parent_path[1] == ':') { parent_path[2] = '\\'; parent_path[3] = 0; }
         HANDLE parent_directory = absolute_directory(context, parent_path);
         free(parent_path);
         if (parent_directory == INVALID_HANDLE_VALUE) error = (int)GetLastError();
@@ -625,7 +627,7 @@ int platform_remove(Context *context, const char *name, int directory,
                     Entry *before, Flush *flush, int *applied) {
   wchar_t *component = wide(name);
   if (!component) return (int)GetLastError();
-  HANDLE child = open_relative(context->parent, component, DELETE | FILE_READ_ATTRIBUTES,
+  HANDLE child = open_relative(context->parent, component, DELETE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
     directory ? FILE_DIRECTORY_FILE : 0, FILE_SHARE_READ);
   free(component);
   if (child == INVALID_HANDLE_VALUE) {
@@ -635,9 +637,10 @@ int platform_remove(Context *context, const char *name, int directory,
   int error = identify(child, before);
   if (!error && directory != !strcmp(before->type, "directory")) error = ERROR_DIRECTORY;
   if (!error) {
-    FILE_DISPOSITION_INFO disposition = { TRUE };
-    if (!SetFileInformationByHandle(child, FileDispositionInfo, &disposition, sizeof(disposition)))
-      error = (int)GetLastError();
+    ULONG flags = 0x13; /* DELETE | POSIX_SEMANTICS | IGNORE_READONLY_ATTRIBUTE */
+    IO_STATUS_BLOCK status;
+    NTSTATUS code = nt_set(child, &status, &flags, sizeof(flags), 64 /* FileDispositionInformationEx */);
+    if (code < 0) error = (int)nt_error(code);
     else *applied = 1;
   }
   CloseHandle(child);
