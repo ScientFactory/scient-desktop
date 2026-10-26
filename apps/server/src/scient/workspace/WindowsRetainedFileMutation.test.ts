@@ -100,10 +100,13 @@ describe.skipIf(!windows)("Windows capture and install", () => {
     }));
   it("preserves read-only and hidden attributes and removes the kept file by its held parent", () =>
     fixture(async (input, target) => {
+      const oldTime = new Date("2000-01-01T00:00:00.000Z");
+      await NodeFSP.utimes(target, oldTime, oldTime);
       NodeChildProcess.execFileSync("attrib.exe", ["+R", "+H", target]);
       const result = await mutateRetainedFile(input, target);
       expect(result.outcome).toBe("done");
       expect((await windowsNativeFile(target, "flags")).flags & 3).toBe(3);
+      expect((await NodeFSP.stat(target)).mtimeMs).toBeGreaterThan(oldTime.getTime());
       expect((await windowsNativeFile(result.retainedPath!, "flags")).flags & 3).toBe(3);
       const binding = await bindNativeFilePublicationParent(helper!, result.recordDirectory, "");
       await withNativeFilePublicationLease(
@@ -275,6 +278,33 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
         expect(await NodeFSP.readFile(peer, "utf8")).toBe("later");
       }),
   );
+  it("keeps a create for attention when its parent gains an unplanned file after process death", () =>
+    fixture(async (input, target) => {
+      await NodeFSP.unlink(target);
+      const creation = {
+        ...input,
+        kind: "create" as const,
+        condition: "absent" as const,
+        expectedRevision: null,
+      };
+      const jobPath = NodePath.join(NodePath.dirname(input.cwd), "parent-change.json");
+      const job: WindowsCrashJob = { input: creation, target, point: "checked", probe: probe! };
+      await NodeFSP.writeFile(jobPath, JSON.stringify(job));
+      const killed = NodeChildProcess.spawnSync(
+        process.execPath,
+        [NodePath.join(import.meta.dirname, "WindowsRetainedFileMutation.crash-child.ts"), jobPath],
+        { encoding: "utf8" },
+      );
+      expect(killed.status, killed.stderr).toBe(73);
+      await NodeFSP.writeFile(NodePath.join(input.cwd, "other.tex"), "outside save");
+      expect((await mutateRetainedFile({ ...creation, bytes: undefined }, target)).outcome).toBe(
+        "attention",
+      );
+      await expect(NodeFSP.lstat(target)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await NodeFSP.readFile(NodePath.join(input.cwd, "other.tex"), "utf8")).toBe(
+        "outside save",
+      );
+    }));
   it("refuses a file held for writing by another process", () =>
     fixture(async (input, target) => {
       const holder = NodeChildProcess.spawn(probe!, ["--windows=1", "hold-write", target], {
