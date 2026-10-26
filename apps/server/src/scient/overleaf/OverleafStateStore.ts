@@ -4,10 +4,8 @@
  * wait/steal. Acquire lazily so overlap during old-server exit does not permanently disable writes.
  * Reads need no lease; preserve unreadable state as quarantine evidence.
  */
-import {
-  ensureNativePrivateRetentionDirectory,
-  resolveNativeFilePublicationHelperPath,
-} from "../workspace/NativeFilePublication.ts";
+import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
+import { windowsPrivateDirectory } from "../workspace/WindowsNativeFile.ts";
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
@@ -285,7 +283,7 @@ async function privateDirectory(directory: string, userId: number | undefined): 
       process.env.SCIENT_FILE_PUBLICATION_HELPER,
     );
     if (!helper) return false;
-    await ensureNativePrivateRetentionDirectory(helper, directory);
+    await windowsPrivateDirectory(directory, true, helper);
     return true;
   }
   // mkdir returns the first directory it created; sync each new entry's parent

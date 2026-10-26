@@ -2,7 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import { windowsNativeFile } from "../workspace/WindowsNativeFile.ts";
+import { windowsPrivateDirectory } from "../workspace/WindowsNativeFile.ts";
 import {
   ensureNativePrivateRetentionDirectory,
   resolveNativeFilePublicationHelperPath,
@@ -22,10 +22,7 @@ export async function windowsPrivateRetention(directory: string, create: boolean
     process.env.SCIENT_FILE_PUBLICATION_HELPER,
   );
   if (!helper) throw new Error("Windows retention requires the publication helper.");
-  if (create) await ensureNativePrivateRetentionDirectory(helper, directory);
-  const info = await windowsNativeFile(directory, "private", helper);
-  if (info.code || info.syncManaged)
-    throw new Error(info.syncManaged ? "sync-managed-folder" : "unsafe-directory");
+  await windowsPrivateDirectory(directory, create, helper);
 }
 
 /** Exercise capture and no-replace installation on the actual retention volume. */
