@@ -299,6 +299,11 @@
       "path": "apps/server/src/scient/accounts/AccountsConnectorCredentials.ts",
       "anchor": "AccountsConnectorCredentials.readOwned",
       "purpose": "Keep the Extensions credential port on the Accounts encrypted-envelope implementation."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/request.ts",
+      "anchor": "from \"../../extensions/connectors/ConnectorOutbound.ts\"",
+      "purpose": "Accounts reuses Extensions public-address validation and credential-response redaction."
     }
   ]
 }

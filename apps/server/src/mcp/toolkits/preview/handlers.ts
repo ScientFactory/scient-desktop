@@ -1,3 +1,11 @@
+// SCIENT-FORK:START — Scient Accounts: enforce profile grants at preview discovery and open.
+import {
+  authorizePreviewProfile,
+  filterPreviewProfiles,
+  withPreviewAccounts,
+  recordProfileUse,
+} from "../../../scient/accounts/agent/previewProfileAccess.ts";
+// SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -191,12 +199,38 @@ const handlers = {
   preview_dialog: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("dialog", input),
   ),
+  // SCIENT-FORK:START — Scient Accounts: enforce profile grants before opening the resolved profile.
   preview_status: McpToolAccess.readsAsCaller((input) =>
-    invokeTargeted<PreviewAutomationStatus>("status", input ?? {}),
+    Effect.gen(function* () {
+      const status = yield* invokeTargeted<PreviewAutomationStatus>("status", input ?? {});
+      return yield* withPreviewAccounts(Effect.succeed(status), (scope) =>
+        filterPreviewProfiles(scope, status),
+      );
+    }),
   ),
   preview_open: McpToolAccess.actsAsCaller((input) =>
-    invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
+    withPreviewAccounts(
+      invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
+      (scope) =>
+        Effect.gen(function* () {
+          const status = yield* invokeTargeted<PreviewAutomationStatus>(
+            "status",
+            input.tabId === undefined ? {} : { tabId: input.tabId },
+          );
+          const profile = yield* authorizePreviewProfile(scope, status, input);
+          const opened = yield* recordProfileUse(
+            scope,
+            profile.profileId,
+            invokeTargeted<PreviewAutomationStatus>(
+              "open",
+              normalizePreviewOpenInput({ ...input, profileId: profile.profileId }),
+            ),
+          );
+          return yield* filterPreviewProfiles(scope, opened);
+        }),
+    ),
   ),
+  // SCIENT-FORK:END
   preview_navigate: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("navigate", input, input.timeoutMs),
   ),
