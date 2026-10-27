@@ -118,14 +118,63 @@ const capabilitiesReply = (atomicExchange: boolean) =>
   `{"version":1,"strictCurrentRoot":true,"containment":"bound-object","atomicExchange":${atomicExchange},"atomicPublicationMetadata":true,"atomicCreateMetadata":false,"exclusiveMove":true,"exclusiveLink":true,"publicationLease":true,"sharedPublicationLease":true,"privateRetentionDirectory":true,"sourceParentMkdir":true,"codeDomain":"errno"}`;
 
 describe.skipIf(helper === undefined || !posix)("directory bindings observed in process", () => {
-  it("are the binding the helper gives", () =>
+  it.each(["", "folder"])(
+    "observes %j without a helper inquiry and matches the native binding",
+    (relative) =>
+      inScratch("scient-observed-binding-", async (root) => {
+        await NodeFSP.mkdir(NodePath.join(root, "folder"));
+        const refusing = await fakeHelper(root, "helper-refusing-bind", null);
+        const observed = await bindNativeFilePublicationParent(refusing.path, root, relative);
+        const native = JSON.parse(
+          NodeChildProcess.execFileSync(
+            helper!,
+            [
+              "--directory=1",
+              "bind",
+              HostProcess.Platform.defaultValue() === "darwin"
+                ? "strict-current-root"
+                : "bound-object",
+              root,
+              relative || ".",
+              "-",
+              "-",
+              "-",
+              "-",
+              "-",
+            ],
+            { encoding: "utf8" },
+          ),
+        );
+        expect(native.code).toBe(0);
+        expect(native.binding.root).toMatchObject(observed.rootIdentity);
+        expect(native.binding.parent).toMatchObject(observed.parentIdentity);
+        expect(await refusing.runs()).toBe(0);
+      }),
+  );
+
+  it.each(["root", "parent"])("refuses a nested observation after its %s is replaced", (replaced) =>
     inScratch("scient-observed-binding-", async (root) => {
       const folder = NodePath.join(root, "folder");
-      await NodeFSP.mkdir(folder);
-      const observed = await observedDirectoryBinding(helper!, folder);
-      const native = await bindNativeFilePublicationParent(helper!, folder, "");
-      expect(observed).toEqual(native);
-    }));
+      const parent = NodePath.join(folder, "parent");
+      await NodeFSP.mkdir(parent, { recursive: true });
+      const observed = await bindNativeFilePublicationParent(helper!, folder, "parent");
+      const target = replaced === "root" ? folder : parent;
+      await NodeFSP.rename(target, `${target}-moved`);
+      await NodeFSP.mkdir(parent, { recursive: true });
+      let entered = false;
+      await expect(
+        withNativeFilePublicationLease(
+          helper!,
+          [observed],
+          async () => {
+            entered = true;
+          },
+          { mode: "exclusive" },
+        ),
+      ).rejects.toThrow();
+      expect(entered).toBe(false);
+    }),
+  );
 
   it("leave a path through a link to the helper, which refuses it as before", () =>
     inScratch("scient-observed-binding-", async (root) => {

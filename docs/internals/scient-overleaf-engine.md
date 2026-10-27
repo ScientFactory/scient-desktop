@@ -100,11 +100,10 @@ record kept in the same folder):
 
 - A lease binds each directory it locks natively when it is taken, walking the
   path from `/` without following links, and is refused if any identity
-  differs. The bindings handed to it for a directory on itself (every ancestor
-  up to the volume's edge, each held record's folder, a retention folder) are
-  therefore observed in process on macOS and Linux: the path is canonical and
-  names a directory, not a link, with that device and inode. A path that is
-  not canonical, or Windows, still asks the helper.
+  differs. Root and parent directory identities are therefore observed in process
+  on macOS and Linux: both paths are canonical and name directories, not links,
+  with those devices and inodes. The lease and each namespace command still bind
+  them natively. A path that is not canonical, or Windows, still asks the helper.
 - The helper's capabilities are asked once per helper binary (path, device,
   inode, size, change time) and root (canonical path and volume); a replaced
   helper or a root on another volume asks again.
@@ -116,6 +115,11 @@ record kept in the same folder):
   or access list moves the change time. A folder seen for the first time, or
   changed since, goes through the helper as before; a folder that gains
   entries changes too, so a record store is asked about on each write.
+
+Retained-record discovery checks folders and journals afresh before and after
+ownership acquisition. POSIX scans read up to 16 independent records at a time,
+retiring the whole batch before propagating a failure and preserving record order.
+Windows retains serial discovery. Publication and recovery remain serialized.
 
 macOS journals and their publication order are unchanged. Linux creates use a separate
 `staged-create` record decoded beside the clone-create record. Before publication,
