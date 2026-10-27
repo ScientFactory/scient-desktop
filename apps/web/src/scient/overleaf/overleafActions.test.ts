@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const client = vi.hoisted(() => ({
@@ -15,8 +15,13 @@ vi.mock("./overleafStore", async (original) => ({
 }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn(), close: vi.fn() } }));
 
+vi.mock("~/rightPanelStore", () => ({
+  useRightPanelStore: { getState: () => ({ openScient: vi.fn() }) },
+}));
+const { seeOverleafChanges } = await import("./openOverleafReview");
 const { cancelOverleafRun, readOverleafChanges } = await import("./overleafActions");
-const { readOverleafWorkspace, resetOverleafStoreForTests } = await import("./overleafStore");
+const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafSyncing } =
+  await import("./overleafStore");
 
 const environmentId = EnvironmentId.make("local");
 const ROOT = "/work/project";
@@ -67,6 +72,47 @@ describe("overleafActions", () => {
     expect(after.previewNotes.get("c1")).toBe(
       "It first finished an interrupted sync, which wrote the folder.",
     );
+  });
+
+  it("See changes refreshes an existing unapplied review and waits while a sync runs", async () => {
+    client.previewOverleaf.mockReset().mockResolvedValue({
+      _tag: "review",
+      review: {
+        reviewId: "r",
+        digest: "d",
+        remoteTree: "a".repeat(40),
+        upToDate: true,
+        needsDecision: false,
+        incoming: [],
+        outgoing: [],
+        conflicts: [],
+        warnings: [],
+        unresolvedMarkers: [],
+        released: [],
+        collisions: [],
+        selectedAdditions: [],
+        additions: [],
+        localOnly: [],
+      },
+      settled: null,
+    });
+    const input = { environmentId, cwd: ROOT, connectionId: "c1", folder: "paper" };
+    const thread = { environmentId, threadId: ThreadId.make("t1") };
+    await readOverleafChanges(environmentId, ROOT, "c1");
+    const pending = Promise.withResolvers<never>();
+    client.previewOverleaf.mockReturnValueOnce(pending.promise);
+    seeOverleafChanges(thread, input);
+    expect(client.previewOverleaf).toHaveBeenCalledTimes(2);
+    expect(readOverleafWorkspace(environmentId, ROOT).previewing.has("c1")).toBe(true);
+    seeOverleafChanges(thread, input);
+    expect(client.previewOverleaf).toHaveBeenCalledTimes(2);
+    pending.reject(new Error("offline"));
+    await vi.waitFor(() =>
+      expect(readOverleafWorkspace(environmentId, ROOT).previewing.has("c1")).toBe(false),
+    );
+    setOverleafSyncing(environmentId, "c1", true);
+    seeOverleafChanges(thread, input);
+    expect(client.previewOverleaf).toHaveBeenCalledTimes(2);
   });
 
   it("every view reads again after a read of the changes, even a failed one", async () => {

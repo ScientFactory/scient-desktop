@@ -174,7 +174,9 @@ export function OverleafReviewPanel(props: {
   // store, so opening a file (which replaces this tab) keeps them; an applied sync clears them.
   const decideFile = (path: string, decision: OverleafFileDecision | null) =>
     setOverleafFileDecision(environmentId, connectionId, path, decision);
-  const review: ScientOverleafReview | null = shownState?.review ?? null;
+  const review: ScientOverleafReview | null = workspace.previewing.has(connectionId)
+    ? null
+    : (shownState?.review ?? null);
   const diffScope = JSON.stringify([environmentId, cwd, connectionId, review?.reviewId]);
   const [diffState, setDiffState] = useState<{
     scope: string;
