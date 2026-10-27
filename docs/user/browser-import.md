@@ -1,6 +1,6 @@
 # Import browser logins
 
-In the desktop app, open **Settings → Integrations → Browser profiles → Add profile**
+In the desktop app, open **Settings → Browser → Browser profiles → Add profile**
 and choose a browser under **Import from**. The import copies cookies into a Scient browser
 profile so you can use existing logins in the preview browser. Changes made afterward stay
 separate from the source browser.

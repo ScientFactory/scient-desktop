@@ -11,7 +11,10 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-executable-imports.ts";
+import { injectLinuxArm64Sea } from "../../../scripts/lib/linux-arm64-sea.ts";
 import rootPackageJson from "../../../package.json" with { type: "json" };
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
   ServerCliBuildAssetMissingError,
@@ -149,17 +152,20 @@ const buildExeCmd = Command.make(
       const serverDir = path.join(repoRoot, "apps/server");
 
       yield* Effect.log("[cli] Building single-executable...");
+      const target = Option.getOrUndefined(config.target);
+      // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
+      const linuxArm64 =
+        !target &&
+        (yield* HostProcess.Platform) === "linux" &&
+        (yield* HostProcess.Architecture) === "arm64";
       const spawnCommand = yield* resolveSpawnCommand("vp", ["pack"]);
       yield* runCommand(
         ChildProcess.make(spawnCommand.command, spawnCommand.args, {
           cwd: serverDir,
           env: {
             ...process.env,
-            T3CODE_PACK_EXE: "1",
-            ...Option.match(config.target, {
-              onNone: () => ({}),
-              onSome: (target) => ({ T3CODE_PACK_EXE_TARGET: target }),
-            }),
+            T3CODE_PACK_EXE: linuxArm64 ? "bundle" : "1",
+            T3CODE_PACK_EXE_TARGET: target ?? "",
           },
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
@@ -172,6 +178,16 @@ const buildExeCmd = Command.make(
       const specifiers = findEsmImportsOfExternalPackages(yield* fs.readFileString(bundlePath));
       if (specifiers.length > 0) {
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
+      }
+      // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
+      if (linuxArm64) {
+        yield* injectLinuxArm64Sea({
+          bundlePath,
+          // SCIENT-FORK: the executable carries Scient's CLI command name, as vite.config.ts names it.
+          outputPath: path.join(serverDir, "dist-exe", SCIENT_DESKTOP_IDENTITY.cliCommandName),
+          nodeVersion: rootPackageJson.engines.node,
+          verbose: config.verbose,
+        });
       }
       // SCIENT-FORK:START - Node worker threads can load sibling modules without a host Node binary.
       const workerCommand = yield* resolveSpawnCommand("vp", [
@@ -224,7 +240,7 @@ const buildExeCmd = Command.make(
     }),
 ).pipe(
   Command.withDescription(
-    `Build the server as a Node single-executable. Native builds require Node ${rootPackageJson.engines.node}; explicit cross-target builds need a Node 25.7+ host for --build-sea. The archive builder supplies the runtime externals beside the binary.`,
+    `Build the server as a Node single-executable. Native builds require Node ${rootPackageJson.engines.node}; explicit cross-target builds need a Node 25.7+ host for --build-sea. Linux ARM64 builds only on a Linux ARM64 host. The archive builder supplies the runtime externals beside the binary.`,
   ),
 );
 

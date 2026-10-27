@@ -114,30 +114,40 @@ it.effect(
             .pipe(Stream.unwrap, Stream.runDrain),
         () =>
           toolkit
-            .handle("preview_click", { selector: "button" })
+            .handle("preview_act", { action: "click", selector: "button" })
             .pipe(Stream.unwrap, Stream.runDrain),
         () =>
-          toolkit.handle("preview_type", { text: "query" }).pipe(Stream.unwrap, Stream.runDrain),
+          toolkit
+            .handle("preview_act", { action: "type", text: "query" })
+            .pipe(Stream.unwrap, Stream.runDrain),
         () =>
-          toolkit.handle("preview_press", { key: "Enter" }).pipe(Stream.unwrap, Stream.runDrain),
-        () => toolkit.handle("preview_scroll", { deltaY: 1 }).pipe(Stream.unwrap, Stream.runDrain),
+          toolkit
+            .handle("preview_act", { action: "press", key: "Enter" })
+            .pipe(Stream.unwrap, Stream.runDrain),
+        () =>
+          toolkit
+            .handle("preview_act", { action: "scroll", deltaY: 1 })
+            .pipe(Stream.unwrap, Stream.runDrain),
         () =>
           toolkit
             .handle("preview_evaluate", { tabId: "work-tab", expression: "document.title" })
             .pipe(Stream.unwrap, Stream.runDrain),
         () =>
           toolkit
-            .handle("preview_hover", { selector: "button" })
+            .handle("preview_act", { action: "hover", selector: "button" })
             .pipe(Stream.unwrap, Stream.runDrain),
         () =>
           toolkit
-            .handle("preview_select", { selector: "select", values: [] })
+            .handle("preview_act", { action: "select", selector: "select", values: [] })
             .pipe(Stream.unwrap, Stream.runDrain),
         () =>
           toolkit
-            .handle("preview_drag", { source: "#source", target: "#target" })
+            .handle("preview_act", { action: "drag", source: "#source", target: "#target" })
             .pipe(Stream.unwrap, Stream.runDrain),
-        () => toolkit.handle("preview_upload", { paths: [] }).pipe(Stream.unwrap, Stream.runDrain),
+        () =>
+          toolkit
+            .handle("preview_act", { action: "upload", paths: [] })
+            .pipe(Stream.unwrap, Stream.runDrain),
         () =>
           toolkit.handle("preview_dialog", { accept: true }).pipe(Stream.unwrap, Stream.runDrain),
         () =>
@@ -155,7 +165,7 @@ it.effect(
         () => snapshot.handle("preview_snapshot", {}).pipe(Stream.unwrap, Stream.runDrain),
       ];
       yield* service.setControls({ target: { type: "profile", profileId: "work" }, access: "ask" });
-      yield* run(toolkit.handle("preview_click", { selector: "button" })).pipe(
+      yield* run(toolkit.handle("preview_act", { action: "click", selector: "button" })).pipe(
         Effect.provide(dependencies),
       );
       expect(actions).toBe(1);
@@ -199,7 +209,9 @@ it.effect(
       const legacy = yield* PreviewStandardToolkit.pipe(
         Effect.provide(McpToolAccess.HandlersLayer.layer(layerStandard).pipe(Layer.provide(base))),
       );
-      yield* run(legacy.handle("preview_click", { selector: "button" })).pipe(Effect.provide(base));
+      yield* run(legacy.handle("preview_act", { action: "click", selector: "button" })).pipe(
+        Effect.provide(base),
+      );
       expect(actions).toBe(2);
     }).pipe(Effect.scoped),
 );

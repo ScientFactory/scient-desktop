@@ -98,7 +98,11 @@ export const subscribeThreadItems = Effect.fn("TransferBudget.subscribeThreadIte
     threadId: TRANSFER_THREAD_ID,
     afterSequence,
     requestCompletionMarker: true,
+    // The opt-ins current clients send (client-runtime state/threads.ts).
     acceptBoundedSnapshot: true,
+    acceptCompactTurnItems: true,
+    acceptCompactIds: true,
+    acceptDedupedBodies: true,
   }).pipe(
     Stream.runForEach((item) => Queue.offer(items, item).pipe(Effect.asVoid)),
     Scope.provide(measured.scope),

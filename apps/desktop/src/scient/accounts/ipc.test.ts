@@ -8,7 +8,7 @@ import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
 import { rememberAccountsSession } from "./sessionIdentity.ts";
-import { fill, forwardCapturedSignIn, signedInSites } from "./ipc.ts";
+import { cookieMetadata, fill, forwardCapturedSignIn, signedInSites } from "./ipc.ts";
 
 vi.mock("electron", () => ({
   BrowserWindow: {},
@@ -42,6 +42,7 @@ function fixture() {
     getURL: () => url,
     executeJavaScript: async () => true,
   } as unknown as Electron.WebContents;
+  let failCookies = false;
   let registered = true;
   const scopes: unknown[] = [];
   const layer = Layer.mergeAll(
@@ -54,9 +55,17 @@ function fixture() {
         scopes.push({ scope, persistent, namespace });
         return Effect.succeed({
           cookies: {
-            get: async () => [
-              { domain: ".example.test", value: NodeCrypto.randomBytes(16).toString("hex") },
-            ],
+            get: async () => {
+              if (failCookies) throw new Error("Synthetic cookie failure");
+              return [
+                {
+                  domain: ".example.test",
+                  expirationDate: 2000,
+                  httpOnly: true,
+                  value: NodeCrypto.randomBytes(16).toString("hex"),
+                },
+              ];
+            },
           },
         } as unknown as Electron.Session);
       },
@@ -69,6 +78,9 @@ function fixture() {
     }),
   );
   return {
+    failCookieRead: () => {
+      failCookies = true;
+    },
     guest,
     sent,
     scopes,
@@ -153,5 +165,18 @@ it.effect("accepts fill only from the application main frame and rejects invalid
     expect(yield* f.run(fill({ ...input, password: {} }, f.mainEvent))).toBe(false);
     rememberAccountsSession(f.guest.session, "synthetic", false);
     expect(yield* f.run(fill({ ...input, automatic: true }, f.mainEvent))).toBe(false);
+  }),
+);
+
+it.effect("returns only cookie metadata and distinguishes denied reads from empty profiles", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    expect(
+      yield* f.run(cookieMetadata({ profileId: "work", environmentId: "remote" }, f.mainEvent)),
+    ).toEqual([{ domain: ".example.test", httpOnly: true, expires: 2000 }]);
+    expect(yield* f.run(cookieMetadata({ profileId: "default" }, f.guestEvent))).toBeNull();
+    expect(yield* f.run(cookieMetadata({ profileId: "\u0000" }, f.mainEvent))).toBeNull();
+    f.failCookieRead();
+    expect(yield* f.run(cookieMetadata({ profileId: "work" }, f.mainEvent))).toBeNull();
   }),
 );

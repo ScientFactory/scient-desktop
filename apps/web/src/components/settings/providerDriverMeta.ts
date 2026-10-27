@@ -1,24 +1,18 @@
 import {
-  AntigravitySettings,
-  ClaudeSettings,
-  CodexSettings,
   DroidSettings,
   OmpSettings,
   ScientAgentSettings,
   compareProviderDriverKinds,
   ProviderDriverKind,
 } from "@t3tools/contracts";
-import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
+import { providerClients as upstreamProviderClients } from "@t3tools/client-runtime/provider-clients";
 import { makeProviderClientRegistry } from "@t3tools/provider-core/client";
 import type { ProviderClientDefinition as CoreProviderClientDefinition } from "@t3tools/provider-core/client";
-import { cursorClient } from "@t3tools/provider-cursor/client";
-import { grokClient } from "@t3tools/provider-grok/client";
-import { museClient } from "@t3tools/provider-muse/client";
-import { openCodeClient } from "@t3tools/provider-opencode/client";
-import { piClient } from "@t3tools/provider-pi/client";
 import type * as Schema from "effect/Schema";
+import { createElement, type SVGProps } from "react";
 
 import { ACPRegistryIcon, type Icon } from "../Icons";
+import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 
 type ProviderSettingsSchema = {
@@ -73,29 +67,9 @@ const localProviderClients: ReadonlyArray<CoreProviderClientDefinition> = [
   },
 ];
 
-/** The provider client definitions this web build supports. */
+/** The provider client definitions this web build supports: upstream's shared registry plus Scient's. */
 export const providerClients = makeProviderClientRegistry([
-  {
-    driverKind: ProviderDriverKind.make("codex"),
-    label: "Codex",
-    settingsSchema: CodexSettings,
-  },
-  {
-    driverKind: ProviderDriverKind.make("claudeAgent"),
-    label: "Claude",
-    settingsSchema: ClaudeSettings,
-  },
-  cursorClient,
-  grokClient,
-  openCodeClient,
-  {
-    driverKind: ProviderDriverKind.make("antigravity"),
-    label: "Antigravity",
-    settingsSchema: AntigravitySettings,
-  },
-  museClient,
-  piClient,
-  acpRegistryClient,
+  ...upstreamProviderClients.definitions,
   ...localProviderClients,
 ]);
 
@@ -133,9 +107,14 @@ const metadataByDriver: Readonly<
 const providerOptionsUnordered: readonly DriverOption[] = providerClients.definitions.map(
   (definition) => {
     const metadata = metadataByDriver[String(definition.driverKind)];
+    const packageIcon = definition.icon;
     const icon =
       PROVIDER_ICON_BY_PROVIDER[definition.driverKind] ??
-      (definition.driverKind === "acpRegistry" ? ACPRegistryIcon : undefined);
+      (definition.driverKind === "acpRegistry" ? ACPRegistryIcon : undefined) ??
+      (packageIcon
+        ? (props: SVGProps<SVGSVGElement>) =>
+            createElement(ProviderPackageIcon, { icon: packageIcon, ...props })
+        : undefined);
     if (!icon) {
       throw new Error(`Provider '${definition.driverKind}' has no client icon.`);
     }

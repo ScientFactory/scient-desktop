@@ -1733,10 +1733,6 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__scient__scient_thread_list",
   "mcp__scient__scient_thread_read",
   "mcp__scient__scient_thread_wait",
-  "mcp__scient__scient_pending_request_list",
-  "mcp__scient__scient_pending_request_read",
-  "mcp__scient__scient_thread_configuration",
-  "mcp__scient__scient_thread_transfers",
   "mcp__scient__scient_worktree_status",
   "mcp__scient__scient_worktree_list",
   "mcp__scient__scient_project_list",
@@ -1744,8 +1740,6 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__scient__scient_thread_search",
   "mcp__scient__scient_preview_list",
   "mcp__scient__scient_environment_read",
-  "mcp__scient__scient_queue_list",
-  "mcp__scient__scient_queue_read",
   "mcp__scient__html_preview",
   "mcp__scient__html_render",
 ];
@@ -7669,8 +7663,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         yield* Ref.get(awaitedBackgroundTasksByNativeThread),
                         nativeThreadId,
                       );
+                // A stopped turn that wrote to the transcript moved past the pinned head.
                 const clearConversationHead =
-                  input.status === "completed" &&
+                  (input.status === "completed" || input.context.nativeMessageCursor !== null) &&
                   input.context.input.providerThread.nativeConversationHeadRef !== null;
                 const goal =
                   nativeThreadId === null ? undefined : goalsByNativeThread.get(nativeThreadId);

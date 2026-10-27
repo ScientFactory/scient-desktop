@@ -303,6 +303,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       setDockedDraftHeroThreadKey: noop,
       setSetupQueueSendThreadKey: noop,
       setOptimisticUserMessages: noop,
+      optimisticBlobPreviews: { track: noop, release: noop },
       setFeedbackSubmissionsByThreadKey: noop,
       setThreadError: vi.fn(),
       setKeepFullHistory: noop,

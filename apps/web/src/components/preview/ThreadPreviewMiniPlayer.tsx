@@ -1,20 +1,21 @@
 import { FILL_PREVIEW_VIEWPORT, type ScopedThreadRef } from "@t3tools/contracts";
 import { previewPdfAssetUrl } from "@t3tools/shared/preview";
-import { useAtomValue } from "@effect/atom-react";
 import { useEnvironmentHttpBaseUrl } from "~/state/environments";
 import { PanelRightIcon, PictureInPicture2, XIcon } from "lucide-react";
 import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
-  useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { create } from "zustand";
+import { useAtomValue } from "@effect/atom-react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import { useChatCanvas } from "../chat/ChatCanvasContext";
+import type { ChatCanvasPreview } from "../chat/chatCanvasLayout";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
   findActiveBrowserRecordingRuntimeTabId,
@@ -23,7 +24,8 @@ import {
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import type { BrowserViewportResizeDirection } from "~/browser/browserViewportLayout";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { useRendersServerTabNatively } from "~/browser/previewRuntime";
+import { rendersServerTabNatively } from "~/browser/previewRuntime";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { type ServerBrowserHandle, ServerBrowserSurface } from "~/browser/ServerBrowserSurface";
 import {
   closeServerPictureInPicture,
@@ -49,7 +51,9 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { useDeviceState } from "~/state/device";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
-import { deviceStreamScreenAtom } from "../device/deviceStreamSession";
+import type { DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
+import { Atom } from "effect/reactivity";
+import { deviceScreenKey, deviceStreamScreenAtom } from "../device/deviceStreamSession";
 import type { PreviewStreamViewport } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
 // SCIENT-FORK:START
@@ -114,6 +118,99 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
+// What the stream reports about its source. It lives outside the player so the
+// chat canvas lays out the frame from the same source size the player uses. One
+// slot is enough, since only the shown thread renders a player, and it keeps the
+// store from collecting an entry for every tab a session ever streamed.
+const useStreamedSourceSize = create<{
+  readonly key: string;
+  readonly viewport: PreviewStreamViewport;
+} | null>(() => null);
+
+const NO_DEVICE_SCREEN_ATOM = Atom.make<DeviceScreenSize | null>(null).pipe(
+  Atom.withLabel("device-stream-screen:none"),
+);
+
+const streamedSourceKey = (threadRef: ScopedThreadRef, contentId: string) =>
+  `${scopedThreadKey(threadRef)}\u0000${contentId}`;
+
+// The mini player's device stream view, named so the canvas can read the
+// screen size that view reports.
+const miniPlayerDeviceViewId = (
+  threadRef: ScopedThreadRef,
+  source: Extract<PreviewMiniPlayerContent, { kind: "device" }>,
+) =>
+  `preview-mini-player\u0000${scopedThreadKey(threadRef)}\u0000${deviceScreenKey(threadRef.environmentId, source.hostId, source.deviceId)}`;
+
+function useBrowserMiniPlayerSource(
+  threadRef: ScopedThreadRef | null,
+  content: Extract<PreviewMiniPlayerContent, { kind: "browser" }> | null,
+) {
+  const tabId = content?.tabId ?? null;
+  const previewState = useThreadPreviewState(threadRef);
+  const snapshot = tabId === null ? null : (previewState.sessions[tabId] ?? null);
+  const runtimeTabId =
+    threadRef && tabId !== null
+      ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
+      : null;
+  const desktopOverlay = tabId === null ? null : (previewState.desktopByTabId[tabId] ?? null);
+  const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
+  const fittedSourceContent = useBrowserSurfaceStore((state) =>
+    runtimeTabId === null ? null : (state.byTabId[runtimeTabId]?.fittedSourceContent ?? null),
+  );
+  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
+  const serverTab =
+    threadRef !== null &&
+    snapshot?.runtime === "server" &&
+    !rendersServerTabNatively(threadRef.environmentId, primaryEnvironmentId, snapshot);
+  const streamViewport = useStreamedSourceSize((state) =>
+    threadRef && content !== null && state?.key === streamedSourceKey(threadRef, content.id)
+      ? state.viewport
+      : null,
+  );
+  const sourceSize: PreviewMiniPlayerSize =
+    serverTab && streamViewport
+      ? streamViewport
+      : resolvePreviewMiniPlayerSourceSize(
+          snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
+          fittedSourceContent,
+          layoutZoomFactor,
+        );
+  return { serverEpoch: previewState.serverEpoch, snapshot, desktopOverlay, serverTab, sourceSize };
+}
+
+/** The mini player as the chat canvas lays it out; null when no player renders. */
+export function useThreadPreviewCanvasSource(
+  threadRef: ScopedThreadRef | null,
+  miniPlayer: PreviewMiniPlayerState | null,
+): ChatCanvasPreview | null {
+  const content = miniPlayer?.content ?? null;
+  const browser = useBrowserMiniPlayerSource(
+    threadRef,
+    content?.kind === "browser" ? content : null,
+  );
+  const screen = useAtomValue(
+    threadRef && content?.kind === "device"
+      ? deviceStreamScreenAtom(miniPlayerDeviceViewId(threadRef, content))
+      : NO_DEVICE_SCREEN_ATOM,
+  );
+  if (!miniPlayer || !content) return null;
+  // SCIENT-FORK:START — static artifacts float in a portal and lay themselves out.
+  if (content.kind === "static-artifact") return null;
+  // SCIENT-FORK:END
+  if (content.kind === "browser" && !browser.snapshot) return null;
+  return {
+    key: content.id,
+    width: miniPlayer.size?.width ?? null,
+    position: miniPlayer.position,
+    lastInteraction: miniPlayer.lastInteraction,
+    source:
+      content.kind === "browser"
+        ? browser.sourceSize
+        : resolveDeviceMiniPlayerSourceSize(content.platform, screen),
+  };
+}
+
 /** Floats the thread's browser tab, device stream, or scientific artifact over chat. */
 export function ThreadPreviewMiniPlayer({
   threadRef,
@@ -163,32 +260,18 @@ function BrowserMiniPlayer({
   composerOverlayElement,
 }: Props & { readonly tabId: string }) {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
-  const previewState = useThreadPreviewState(threadRef);
-  const snapshot = previewState.sessions[tabId] ?? null;
-  const runtimeTabId = previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId);
+  const content = miniPlayer.content.kind === "browser" ? miniPlayer.content : null;
+  const { serverEpoch, snapshot, desktopOverlay, serverTab, sourceSize } =
+    useBrowserMiniPlayerSource(threadRef, content);
+  const runtimeTabId = previewRuntimeTabId(threadRef, serverEpoch, tabId);
   const recordingTabIds = useActiveBrowserRecordingTabIds();
   const recording =
     recordingTabIds.has(runtimeTabId) ||
     findActiveBrowserRecordingRuntimeTabId(threadRef, tabId) !== null;
-  const desktopOverlay = previewState.desktopByTabId[tabId] ?? null;
-  const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
-  const fittedSourceContent = useBrowserSurfaceStore(
-    (state) => state.byTabId[runtimeTabId]?.fittedSourceContent ?? null,
-  );
-  const nativeServerTab = useRendersServerTabNatively(threadRef.environmentId, snapshot);
-  const serverTab = snapshot?.runtime === "server" && !nativeServerTab;
-  const [streamViewport, setStreamViewport] = useState<PreviewStreamViewport | null>(null);
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
   const serverPictureInPicture =
     useServerPictureInPictureKey() === serverPictureInPictureKey(threadRef.threadId, tabId);
-  const sourceSize =
-    serverTab && streamViewport
-      ? streamViewport
-      : resolvePreviewMiniPlayerSourceSize(
-          snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT,
-          fittedSourceContent,
-          layoutZoomFactor,
-        );
+  const viewportKey = streamedSourceKey(threadRef, miniPlayer.content.id);
 
   const openInPanel = () => {
     usePreviewMiniPlayerStore.getState().close(threadRef);
@@ -281,7 +364,17 @@ function BrowserMiniPlayer({
               visible
               followSize={false}
               controlPosition="bottom"
-              onViewport={setStreamViewport}
+              onViewport={(viewport) =>
+                useStreamedSourceSize.setState(
+                  (state) =>
+                    state?.key === viewportKey &&
+                    state.viewport.width === viewport.width &&
+                    state.viewport.height === viewport.height
+                      ? state
+                      : { key: viewportKey, viewport },
+                  true,
+                )
+              }
               onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "floating")}
               className="size-full"
             />
@@ -316,7 +409,7 @@ function DeviceMiniPlayer({
   composerOverlayElement,
 }: Props & { readonly source: Extract<PreviewMiniPlayerContent, { kind: "device" }> }) {
   const { state: deviceState } = useDeviceState(threadRef.environmentId);
-  const viewId = useId();
+  const viewId = miniPlayerDeviceViewId(threadRef, source);
   const screen = useAtomValue(deviceStreamScreenAtom(viewId));
   const sourceSize = resolveDeviceMiniPlayerSourceSize(source.platform, screen);
   const device = deviceState.devices.find(
@@ -454,41 +547,10 @@ function MiniPlayerShell({
     document.addEventListener("pointerdown", dismiss, true);
     return () => document.removeEventListener("pointerdown", dismiss, true);
   }, [pillOpen]);
-  const reportPreview = canvas?.reportPreview;
-  const clearPreview = canvas?.clearPreview;
-
-  // Inside a chat canvas the canvas owns the lane geometry, so it also resolves
-  // the frame; a portaled or canvas-less player lays itself out.
-  const reportsToCanvas = !freeSize && !fixed;
+  // Inside a chat canvas the canvas owns the lane geometry (useThreadPreviewCanvasSource),
+  // so it also resolves the frame; a portaled or canvas-less player lays itself out.
   const canvasFrame =
-    reportsToCanvas && canvas?.previewKey === contentId ? canvas.layout.frame : null;
-  const reportableSize = miniPlayer.size;
-  const reportPosition = miniPlayer.position;
-  const reportLastInteraction = miniPlayer.lastInteraction;
-  useLayoutEffect(() => {
-    if (!reportsToCanvas) return;
-    reportPreview?.({
-      key: contentId,
-      width: reportableSize?.width ?? null,
-      position: reportPosition,
-      source: sourceSize,
-      lastInteraction: reportLastInteraction,
-    });
-  }, [
-    reportsToCanvas,
-    reportPreview,
-    contentId,
-    reportableSize,
-    reportPosition,
-    reportLastInteraction,
-    sourceSize,
-  ]);
-  useLayoutEffect(
-    () => () => {
-      if (reportsToCanvas) clearPreview?.(contentId);
-    },
-    [reportsToCanvas, clearPreview, contentId],
-  );
+    !freeSize && !fixed && canvas?.previewKey === contentId ? canvas.layout.frame : null;
 
   const container = canvasFrame ? (canvas?.container ?? null) : (layout?.container ?? null);
   const obstacles = canvasFrame ? NO_PREVIEW_MINI_PLAYER_OBSTACLES : (layout?.obstacles ?? null);

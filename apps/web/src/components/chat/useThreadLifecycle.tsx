@@ -1,4 +1,3 @@
-import { useThreadSnoozeClock } from "./useThreadSnoozeClock";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { Dispatch } from "react";
@@ -13,6 +12,7 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useNowAfter } from "../../hooks/useDeadline";
 import type { PendingThreadSendState } from "./usePendingThreadRequests";
 import {
   AuthOrchestrationOperateScope,
@@ -59,11 +59,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
-import {
-  backgroundWorkBannerItem,
-  childInputBannerItem,
-  goalBannerItem,
-} from "./ThreadActivityBanners";
+import { backgroundWorkNowItem, childInputNowItem, goalNowItem } from "./ThreadActivityBanners";
 import type { LocalDispatchActions } from "./useLocalDispatchState";
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
 
@@ -83,7 +79,7 @@ interface ThreadLifecycleInput {
   readonly serverConfig: EnvironmentServerConfig | null;
   readonly runtimeMode: RuntimeMode;
   readonly isWorking: boolean;
-  readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkBannerItem>[0]["tasks"];
+  readonly pendingBackgroundTasks: Parameters<typeof backgroundWorkNowItem>[0]["tasks"];
   readonly activePendingApproval: PendingThreadSendState["activePendingApproval"];
   readonly activePendingUserInput: PendingThreadSendState["activePendingUserInput"];
   readonly localCheckoutBranchMismatch: {
@@ -171,10 +167,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
   const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
-  const snoozeClock = useThreadSnoozeClock(
-    activeThreadShell,
-    activeThreadShell?.snoozedUntil ?? null,
-  );
+  // A clock read in render would stay frozen in the compiler's cache, so the
+  // snooze checks read a snapshot that moves when the wake time changes or passes.
+  const snoozeClock = new Date(
+    useNowAfter(Date.parse(activeThreadShell?.snoozedUntil ?? "") || null),
+  ).toISOString();
   const activeThreadSnoozed =
     activeThreadShell !== null &&
     supportsSnooze &&
@@ -434,7 +431,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
-  const childInputBanner = childInputBannerItem({
+  const childInputNow = childInputNowItem({
     childThreadInputs,
     parentAwaitingUser: Boolean(
       activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput,
@@ -512,9 +509,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const sendStandaloneCommandStable = useStableCallback(sendStandaloneCommand);
   const activeGoal = activeThreadShell?.goal ?? null;
-  const goalBanner =
+  const goalNow =
     activeThread && activeGoal !== null
-      ? goalBannerItem({
+      ? goalNowItem({
           threadId: activeThread.id,
           goal: activeGoal,
           isWorking,
@@ -522,8 +519,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         })
       : null;
 
-  const backgroundWorkBanner = activeThread
-    ? backgroundWorkBannerItem({
+  const backgroundWorkNow = activeThread
+    ? backgroundWorkNowItem({
         threadId: activeThread.id,
         tasks: activeBackgroundTasks,
         stopDisabled: !canOperateThread || isStoppingBackgroundWork,
@@ -604,9 +601,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     shortcuts,
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
-    backgroundWorkBanner,
-    childInputBanner,
-    goalBanner,
+    backgroundWorkNow,
+    childInputNow,
+    goalNow,
     handleSwitchCheckoutToThread,
     handleSwitchCheckoutToThreadStable,
     isRestoringThreadBranch,

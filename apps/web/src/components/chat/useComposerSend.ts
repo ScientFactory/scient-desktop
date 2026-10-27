@@ -256,6 +256,11 @@ export interface ComposerSendInput {
   readonly setDockedDraftHeroThreadKey: Dispatch<SetStateAction<string | null>>;
   readonly setSetupQueueSendThreadKey: Dispatch<SetStateAction<string | null>>;
   readonly setOptimisticUserMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  /** Takes ownership of, and later releases, an optimistic message's blob previews. */
+  readonly optimisticBlobPreviews: {
+    readonly track: (message: ChatMessage) => void;
+    readonly release: (message: ChatMessage) => void;
+  };
   readonly setFeedbackSubmissionsByThreadKey: Dispatch<
     SetStateAction<Record<string, ReadonlyArray<CodexFeedbackSubmission>>>
   >;
@@ -337,6 +342,7 @@ export function useComposerSend(input: ComposerSendInput) {
     setDockedDraftHeroThreadKey,
     setSetupQueueSendThreadKey,
     setOptimisticUserMessages,
+    optimisticBlobPreviews,
     setFeedbackSubmissionsByThreadKey,
     setThreadError,
     setKeepFullHistory,
@@ -1442,25 +1448,21 @@ export function useComposerSend(input: ComposerSendInput) {
             if (!previewQueueAdmission)
               frameSubmittedMessage(messageIdForSend, readingPositionAtSend);
             // SCIENT-FORK:END
-            setOptimisticUserMessages((existing) => [
-              ...existing,
-              {
-                id: messageIdForSend,
-                role: "user",
-                text: outgoingMessageText,
-                ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-                ...(outgoingMessageContext !== undefined
-                  ? { context: outgoingMessageContext }
-                  : {}),
-                runId: null,
-                createdAt: messageCreatedAt,
-                updatedAt: messageCreatedAt,
-                streaming: false,
-                ...(previewQueueAdmission
-                  ? { queueAdmission: { threadKey: routeThreadKey, accepted: false } }
-                  : {}),
-              },
-            ]);
+            const optimisticMessage: ChatMessage = {
+              id: messageIdForSend,
+              role: "user",
+              text: outgoingMessageText,
+              ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+              ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
+              runId: null,
+              createdAt: messageCreatedAt,
+              updatedAt: messageCreatedAt,
+              streaming: false,
+              ...(previewQueueAdmission
+                ? { queueAdmission: { threadKey: routeThreadKey, accepted: false } }
+                : {}),
+            };
+            setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
             setThreadError(threadIdForSend, null);
             if (expiredTerminalContextCount > 0) {
               const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -1744,6 +1746,12 @@ export function useComposerSend(input: ComposerSendInput) {
                 ) {
                   clearComposerDraftContent(composerDraftTarget);
                   flushComposerDraftPersistence();
+                  // The draft owns its blob previews until it is cleared here.
+                  if (currentRouteThreadKeyRef.current === routeThreadKey) {
+                    optimisticBlobPreviews.track(optimisticMessage);
+                  } else {
+                    optimisticBlobPreviews.release(optimisticMessage);
+                  }
                   if (queueContextKeyRef.current === activeThreadKey) {
                     promptRef.current = "";
                     composerRef.current?.resetCursorState();

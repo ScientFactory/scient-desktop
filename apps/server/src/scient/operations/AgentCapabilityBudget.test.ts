@@ -154,26 +154,19 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(42);
+      expect(scientTools).toHaveLength(35);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
-        "preview_click",
+        "preview_act",
         "preview_dialog",
-        "preview_drag",
         "preview_evaluate",
-        "preview_hover",
         "preview_navigate",
         "preview_open",
-        "preview_press",
         "preview_recording_start",
         "preview_recording_stop",
         "preview_resize",
-        "preview_scroll",
-        "preview_select",
         "preview_set_appearance",
         "preview_snapshot",
         "preview_status",
-        "preview_type",
-        "preview_upload",
         "preview_wait_for",
         "scient_account_browser_session",
         "scient_account_credentials",
@@ -201,7 +194,7 @@ it.live(
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",
-        actual42Bytes: Buffer.byteLength(encode(schemas)),
+        actual35Bytes: Buffer.byteLength(encode(schemas)),
         synthetic31Bytes: size(31),
         synthetic100Bytes: size(100),
         synthetic500Bytes: size(500),

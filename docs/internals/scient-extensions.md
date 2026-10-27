@@ -25,8 +25,8 @@ before the UI updates. The UI never predicts success.
 ## Product surface
 
 **Settings → Extensions** (`/settings/extensions`). "Connections" already means
-environments and "Integrations" means browser and devices, so neither name is
-reused. Every page reads one environment, chosen by the settings scope picker
+environments, and the browser and devices have their own pages, so none of those
+names is reused. Every page reads one environment, chosen by the settings scope picker
 ("Tools on …"); actions go to that environment and are gated on settings write
 access.
 
@@ -375,15 +375,15 @@ connector reaches sessions issued afterwards.
 
 Adapters map the list into their native formats:
 
-| Adapter                                         | Delivery                                                                                                                                                                                                                                                    |
-| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude                                          | additional `mcpServers` record entries (`type: "http"`)                                                                                                                                                                                                     |
-| Codex                                           | additional `config.mcp_servers.<name>` entries with `http_headers`                                                                                                                                                                                          |
-| Cursor                                          | additional `mcpServers` record entries                                                                                                                                                                                                                      |
-| OpenCode                                        | one `mcp.add` remote entry per connector                                                                                                                                                                                                                    |
-| ACP (Grok, Droid, Antigravity, registry agents) | one stdio bridge entry per connector, exactly like Scient's own entry, even when the agent advertises `mcpCapabilities.http` (some ACP agents, e.g. codex-acp and pi-acp, silently drop http servers, and a receipt must never claim a delivery that fails) |
-| Pi                                              | JSON list in the extension bootstrap; extension registers each server's tools as `<server>__<tool>`                                                                                                                                                         |
-| OMP                                             | bootstrap list; extension registers each server's tools as `<server>__<tool>`                                                                                                                                                                               |
+| Adapter                                             | Delivery                                                                                                                                                                                                                                                    |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude                                              | additional `mcpServers` record entries (`type: "http"`)                                                                                                                                                                                                     |
+| Codex                                               | additional `config.mcp_servers.<name>` entries with `http_headers`                                                                                                                                                                                          |
+| Cursor                                              | additional `mcpServers` record entries                                                                                                                                                                                                                      |
+| OpenCode                                            | one `mcp.add` remote entry per connector                                                                                                                                                                                                                    |
+| ACP (Grok, Droid, Antigravity, fx, registry agents) | one stdio bridge entry per connector, exactly like Scient's own entry, even when the agent advertises `mcpCapabilities.http` (some ACP agents, e.g. codex-acp and pi-acp, silently drop http servers, and a receipt must never claim a delivery that fails) |
+| Pi                                                  | JSON list in the extension bootstrap; extension registers each server's tools as `<server>__<tool>`                                                                                                                                                         |
+| OMP                                                 | bootstrap list; extension registers each server's tools as `<server>__<tool>`                                                                                                                                                                               |
 
 Pi and OMP register connector tools under names every supported model API
 accepts (`^[A-Za-z_][A-Za-z0-9_-]{0,63}$`): the tool name's other characters

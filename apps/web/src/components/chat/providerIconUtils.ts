@@ -1,9 +1,6 @@
 import { createElement, type SVGProps } from "react";
 import { ProviderDriverKind } from "@t3tools/contracts";
-import type { ProviderIcon } from "@t3tools/provider-core/client";
-import { grokClient } from "@t3tools/provider-grok/client";
-import { museClient } from "@t3tools/provider-muse/client";
-import { openCodeClient } from "@t3tools/provider-opencode/client";
+import { providerClients, resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
 import { ProviderPackageIcon } from "./ProviderPackageIcon";
 import {
   AntigravityIcon,
@@ -18,13 +15,15 @@ import {
 import type { Icon } from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 
-function iconFromPackage(icon: ProviderIcon): Icon {
-  return (props: SVGProps<SVGSVGElement>) => createElement(ProviderPackageIcon, { icon, ...props });
+function iconFromPackage(driverKind: ProviderDriverKind): Icon {
+  const icon = providerClients.get(driverKind)?.icon;
+  return (props: SVGProps<SVGSVGElement>) =>
+    icon ? createElement(ProviderPackageIcon, { icon, ...props }) : null;
 }
 
-const GrokPackageIcon = iconFromPackage(grokClient.icon);
-const MusePackageIcon = iconFromPackage(museClient.icon);
-const OpenCodePackageIcon = iconFromPackage(openCodeClient.icon);
+const GrokPackageIcon = iconFromPackage(ProviderDriverKind.make("grok"));
+const MusePackageIcon = iconFromPackage(ProviderDriverKind.make("muse"));
+const OpenCodePackageIcon = iconFromPackage(ProviderDriverKind.make("opencode"));
 
 export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
@@ -102,10 +101,10 @@ export function getProviderRowLabel(
   return `${providerDisplayName} · ${sub}`;
 }
 
-export function getTriggerDisplayModelName(model: ModelEsque): string {
-  return getDisplayModelName(model, { preferShortName: true });
-}
-
-export function getTriggerDisplayModelLabel(model: ModelEsque): string {
-  return getTriggerDisplayModelName(model);
+export function getTriggerDisplayModelName(
+  model: ModelEsque,
+  driverKind: ProviderDriverKind | null | undefined,
+): string {
+  const shortName = resolveModelShortName(model, driverKind);
+  return getDisplayModelName({ ...model, shortName }, { preferShortName: true });
 }

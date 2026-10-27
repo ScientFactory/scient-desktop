@@ -21,6 +21,7 @@ describe("provider ordering consumers", () => {
   it("keeps Settings and provider pickers on the canonical order with registry creation in Settings", () => {
     expect(DRIVER_OPTIONS.map((option) => option.value)).toEqual([
       ...existingOrder,
+      "fx",
       "acpRegistry",
       "muse",
     ]);

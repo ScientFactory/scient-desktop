@@ -10,6 +10,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as Electron from "electron";
+// SCIENT-FORK:START — Scient Accounts: allow only fixed password-store app targets.
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { openAccountStore } from "../scient/accounts/openStore.ts";
+// SCIENT-FORK:END
 
 // Remote editor deep links must reach the OS handler.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
@@ -64,8 +68,12 @@ export class ElectronShell extends Context.Service<
 
 /** @public */
 export const make = ElectronShell.of({
-  openExternal: Effect.fn("ElectronShell.openExternal")(function (rawUrl) {
-    return Option.match(parseSafeExternalUrl(rawUrl), {
+  // SCIENT-FORK:START — Scient Accounts: keep fixed app targets behind the existing external-link bridge.
+  openExternal: Effect.fn("ElectronShell.openExternal")(function* (rawUrl) {
+    const platform = yield* HostProcess.Platform;
+    const store = openAccountStore(rawUrl, platform);
+    if (store) return yield* Effect.promise(() => store);
+    return yield* Option.match(parseSafeExternalUrl(rawUrl), {
       onNone: () => Effect.succeed(false),
       onSome: (externalUrl) =>
         Effect.promise(() =>
@@ -76,6 +84,7 @@ export const make = ElectronShell.of({
         ),
     });
   }),
+  // SCIENT-FORK:END
   openSystemSettings: Effect.fn("ElectronShell.openSystemSettings")(function (pane) {
     return Effect.promise(() =>
       Electron.shell.openExternal(MAC_PERMISSION_SETTINGS_URLS[pane]).then(

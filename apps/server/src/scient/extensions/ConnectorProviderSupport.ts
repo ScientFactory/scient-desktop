@@ -21,6 +21,8 @@ const CONNECTOR_TRANSPORT_SUPPORT: Record<string, ConnectorTransportSupport> = {
   codex: { status: "supported" },
   cursor: { status: "supported" },
   droid: { status: "supported" },
+  // fx runs on the shared ACP adapter, which adds the same per-connector bridges.
+  fx: { status: "supported" },
   grok: { status: "supported" },
   muse: { status: "supported" },
   // The Scient extension registers each connector's tools as `<server>__<tool>`.

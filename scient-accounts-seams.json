@@ -198,6 +198,11 @@
       "path": "apps/server/src/serverSettings.ts",
       "anchor": "Scient Accounts: encrypt only Custom models credentials through the shared vault.",
       "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
+    },
+    {
+      "path": "apps/desktop/src/electron/ElectronShell.ts",
+      "anchor": "const store = openAccountStore(rawUrl, platform);",
+      "purpose": "Open only fixed password-store app targets through the existing shell bridge."
     }
   ],
   "scientMounts": [
@@ -268,8 +273,8 @@
     },
     {
       "path": "apps/server/src/scient/operations/AgentCapabilityBudget.test.ts",
-      "anchor": "actual42Bytes",
-      "purpose": "Include the five account tools in the eager schema inventory."
+      "anchor": "\"scient_accounts_list\"",
+      "purpose": "Include the six account tools in the eager schema inventory."
     },
     {
       "path": "packages/scient-analytics/src/wireContract.ts",

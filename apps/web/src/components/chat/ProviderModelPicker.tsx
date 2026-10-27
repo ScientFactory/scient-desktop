@@ -19,11 +19,7 @@ import { cn } from "~/lib/utils";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import {
-  ModelEsque,
-  getTriggerDisplayModelLabel,
-  getTriggerDisplayModelName,
-} from "./providerIconUtils";
+import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import {
   ComposerControl,
@@ -169,11 +165,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       : selectedModel;
   const triggerTitle =
     props.statusLabel ??
-    (triggerModel ? getTriggerDisplayModelName(triggerModel) : unresolvedTitle);
+    (triggerModel
+      ? getTriggerDisplayModelName(triggerModel, activeEntry?.driverKind)
+      : unresolvedTitle);
   const triggerLabel =
     props.statusLabel ??
     (triggerModel
-      ? `${getTriggerDisplayModelLabel(triggerModel)}${triggerModel.isUnavailable ? " (Unavailable)" : ""}`
+      ? `${getDisplayModelName(triggerModel)}${triggerModel.isUnavailable ? " (Unavailable)" : ""}`
       : triggerTitle);
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
@@ -203,12 +201,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       model: selection.model,
       options: props.modelOptionsByInstance.get(selection.instanceId) ?? [],
     });
+    const unavailable = model?.isUnavailable ? " (Unavailable)" : "";
     return {
       ...selection,
       entry,
       label: model
-        ? `${getTriggerDisplayModelName(model)}${model.isUnavailable ? " (Unavailable)" : ""}`
+        ? `${getTriggerDisplayModelName(model, entry?.driverKind)}${unavailable}`
         : selection.model,
+      fullLabel: model ? `${getDisplayModelName(model)}${unavailable}` : selection.model,
     };
   });
   const multipleLabel = selectedEntries
@@ -220,7 +220,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           .join(", ")}${selectedEntries.length > 2 ? `, ${selectedEntries.length - 2} more` : ""}`
     : undefined;
   const allModelNames = selectedEntries
-    ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
+    ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || "Choose models"
     : undefined;
   const triggerTooltipContent = shortcutLabel
     ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
@@ -245,9 +245,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               <ComposerControl
                 ref={pickerTriggerRef}
                 aria-label={
-                  props.triggerAriaLabel ??
-                  allModelNames ??
-                  (props.iconOnly ? triggerLabel : undefined)
+                  props.triggerAriaLabel ?? props.triggerLabel ?? allModelNames ?? triggerLabel
                 }
                 size={size}
                 data-chat-provider-model-picker="true"
