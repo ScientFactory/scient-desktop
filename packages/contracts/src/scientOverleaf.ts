@@ -240,6 +240,8 @@ export const ScientOverleafStatus = Schema.Struct({
   keptCopies: Schema.Number,
   busy: Schema.Boolean,
   linkedElsewhere: Schema.Boolean,
+  /** The link record's revision: it moves with every operation that changes the link. */
+  revision: Schema.Number,
 });
 export type ScientOverleafStatus = typeof ScientOverleafStatus.Type;
 

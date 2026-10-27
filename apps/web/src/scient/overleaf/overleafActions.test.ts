@@ -79,6 +79,9 @@ describe("overleafActions", () => {
   it("every view reads again when a cancel finds no sync running", async () => {
     client.cancelOverleafSync.mockReset().mockResolvedValueOnce({ _tag: "nothing-running" });
     await cancelOverleafRun(environmentId, ROOT, "c1");
-    expect(store.reloadOverleafWorkspaces).toHaveBeenCalledWith(environmentId, ROOT);
+    // Nothing of this window's ran, so a newer revision it reads is someone else's sync.
+    expect(store.reloadOverleafWorkspaces).toHaveBeenCalledWith(environmentId, ROOT, {
+      afterOwnOperation: false,
+    });
   });
 });

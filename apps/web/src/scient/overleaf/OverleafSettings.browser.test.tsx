@@ -39,7 +39,10 @@ vi.mock("~/components/settings/settingsLayout", () => ({
   ),
 }));
 const projects = vi.hoisted(() => ({ list: [] as unknown[] }));
-vi.mock("~/state/entities", () => ({ useProjects: () => projects.list }));
+vi.mock("~/state/entities", () => ({
+  useProjects: () => projects.list,
+  useQuietThreadShells: () => [],
+}));
 
 const { OverleafProjectSettingsSection, OverleafSyncedFolderRow } =
   await import("./OverleafSettings");

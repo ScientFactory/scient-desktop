@@ -102,6 +102,7 @@ describe("scientOverleafHttp", () => {
         keptCopies: 0,
         busy: false,
         linkedElsewhere: false,
+        revision: 3,
       });
       const status = yield* getEnvironmentOverleafStatus({
         prepared: PREPARED,

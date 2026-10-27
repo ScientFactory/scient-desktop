@@ -9,7 +9,7 @@ import type {
   ScientOverleafStatus,
   ScientOverleafSyncResult,
 } from "@t3tools/contracts";
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import { listOverleafConnections, readOverleafStatus, readOverleafToken } from "./client";
 import {
@@ -61,6 +61,11 @@ export interface OverleafWorkspaceSnapshot {
   readonly previewErrors: ReadonlyMap<string, string>;
   /** What the last read of a link's changes did first: an interrupted sync it finished. */
   readonly previewNotes: ReadonlyMap<string, string>;
+  /**
+   * Links another sync changed (an agent, another window) since this window's own last
+   * operation: the review shown then was dropped, and the review tab reads the changes again.
+   */
+  readonly outdated: ReadonlySet<string>;
   /** Conflict choices stay with the review they answer when the tab closes. */
   readonly conflictChoices: ReadonlyMap<
     string,
@@ -90,6 +95,7 @@ const EMPTY: OverleafWorkspaceSnapshot = {
   previewing: new Set(),
   previewErrors: new Map(),
   previewNotes: new Map(),
+  outdated: new Set(),
   conflictChoices: new Map(),
   fileDecisions: new Map(),
   submittedDecisions: new Map(),
@@ -122,6 +128,7 @@ const EMPTY_LIFECYCLE: Lifecycle = {
   previewing: new Set(),
   previewErrors: new Map(),
   previewNotes: new Map(),
+  outdated: new Set(),
   conflictChoices: new Map(),
   fileDecisions: new Map(),
   submittedDecisions: new Map(),
@@ -224,6 +231,7 @@ export async function refreshOverleafStatus(
       ...current,
       statuses: new Map(current.statuses).set(connectionId, status),
     }));
+    noteOverleafRevision(environmentId, connectionId, status.revision, read);
   } catch {
     // A status that can't be read keeps the last one; the chip still offers Sync.
   } finally {
@@ -231,6 +239,77 @@ export async function refreshOverleafStatus(
     if (left > 0) statusInflight.set(readKey, left);
     else statusInflight.delete(readKey);
   }
+}
+
+/**
+ * The link record revision this window's own operations left, by link. A status read that
+ * started after this window's last operation ended sets it; a later status with a higher
+ * revision means another sync changed the link (an agent, another window), and what this
+ * window shows from before is dropped.
+ */
+const knownRevisions = new Map<string, number>();
+/** Links whose next status read (one numbered above the value) sets the known revision. */
+const adoptRevisions = new Map<string, number>();
+
+function noteOverleafRevision(
+  environmentId: EnvironmentId,
+  connectionId: string,
+  revision: number,
+  read: number,
+): void {
+  const linkKey = reviewKeyOf(environmentId, connectionId);
+  const known = knownRevisions.get(linkKey);
+  const adoptAfter = adoptRevisions.get(linkKey);
+  if (known === undefined || (adoptAfter !== undefined && read > adoptAfter)) {
+    adoptRevisions.delete(linkKey);
+    knownRevisions.set(linkKey, Math.max(known ?? revision, revision));
+    return;
+  }
+  if (revision <= known) return;
+  knownRevisions.set(linkKey, revision);
+  markOverleafOutdated(environmentId, connectionId);
+}
+
+/** Another sync changed the link: the review, result and read notes from before go. */
+function markOverleafOutdated(environmentId: EnvironmentId, connectionId: string): void {
+  const versionKey = reviewKeyOf(environmentId, connectionId);
+  // A read of the changes already on its way may predate the other sync.
+  reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
+  updateLifecycle(environmentId, (current) => {
+    const without = <V>(map: ReadonlyMap<string, V>) => {
+      const next = new Map(map);
+      next.delete(connectionId);
+      return next;
+    };
+    return {
+      ...current,
+      reviews: without(current.reviews),
+      lastSync: without(current.lastSync),
+      previewErrors: without(current.previewErrors),
+      previewNotes: without(current.previewNotes),
+      outdated: new Set(current.outdated).add(connectionId),
+    };
+  });
+}
+
+/** The settled agent runs each workspace was last read after, as `noteOverleafAgentRuns` keys. */
+const agentRunKeys = new Map<string, string>();
+
+/**
+ * An agent's run in this workspace settled (or the set of settled runs changed): it may have
+ * synced, undone or restored through its tools, so the workspace's links are read again. Every
+ * view that watches calls this; only a change of `runs` reads, once.
+ */
+export function noteOverleafAgentRuns(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  runs: string,
+): void {
+  const key = keyOf(environmentId, workspaceRoot);
+  const previous = agentRunKeys.get(key);
+  agentRunKeys.set(key, runs);
+  if (previous === undefined || previous === runs) return;
+  void loadOverleafWorkspace(environmentId, workspaceRoot, { force: true });
 }
 
 /** Reads one link's status again shortly, once for any number of calls meanwhile. */
@@ -345,7 +424,16 @@ export function loadOverleafWorkspace(
 export function reloadOverleafWorkspaces(
   environmentId: EnvironmentId,
   workspaceRoot: string,
+  options: {
+    /** False when no operation of this window ran: then a newer revision is someone else's. */
+    readonly afterOwnOperation?: boolean;
+  } = {},
 ): Promise<void> {
+  // This window's operation just ended: the revision it left is what this window shows.
+  if (options.afterOwnOperation !== false) {
+    for (const linkKey of knownRevisions.keys())
+      if (environmentOf(linkKey) === environmentId) adoptRevisions.set(linkKey, readCounter);
+  }
   const own = keyOf(environmentId, workspaceRoot);
   const reloaded = loadOverleafWorkspace(environmentId, workspaceRoot, { force: true });
   for (const key of new Set([...snapshots.keys(), ...listeners.keys()])) {
@@ -489,6 +577,8 @@ export function recordOverleafSync(
     // A sync's own result says what it did first; a read's note no longer describes the tab.
     const previewNotes = new Map(current.previewNotes);
     previewNotes.delete(connectionId);
+    const outdated = new Set(current.outdated);
+    outdated.delete(connectionId);
     const next = {
       ...current,
       reviews,
@@ -497,6 +587,7 @@ export function recordOverleafSync(
       conflictChoices,
       submittedDecisions,
       previewNotes,
+      outdated,
       lastSync: new Map(current.lastSync).set(connectionId, { result, at }),
     };
     return result._tag === "needs-decision"
@@ -550,6 +641,7 @@ export function forgetOverleafConnection(environmentId: EnvironmentId, connectio
       lastSync: without(current.lastSync),
       previewErrors: without(current.previewErrors),
       previewNotes: without(current.previewNotes),
+      outdated: new Set([...current.outdated].filter((id) => id !== connectionId)),
     };
   });
 }
@@ -566,10 +658,11 @@ const reviewKeyOf = (environmentId: EnvironmentId, connectionId: string) =>
 
 /** A read of a link's changes starts; returns what its answer must still match. */
 export function beginOverleafPreview(environmentId: EnvironmentId, connectionId: string): number {
-  updateLifecycle(environmentId, (current) => ({
-    ...current,
-    previewing: new Set(current.previewing).add(connectionId),
-  }));
+  updateLifecycle(environmentId, (current) => {
+    const outdated = new Set(current.outdated);
+    outdated.delete(connectionId);
+    return { ...current, previewing: new Set(current.previewing).add(connectionId), outdated };
+  });
   return reviewVersions.get(reviewKeyOf(environmentId, connectionId)) ?? 0;
 }
 
@@ -636,60 +729,89 @@ export function useOverleafWorkspace(
   workspaceRoot: string | null,
 ): OverleafWorkspaceSnapshot {
   const key = environmentId && workspaceRoot ? keyOf(environmentId, workspaceRoot) : null;
-  const snapshot = useSyncExternalStore(
-    (listener) =>
-      environmentId && workspaceRoot
-        ? subscribeOverleafWorkspace(environmentId, workspaceRoot, listener)
-        : () => {},
-    () => (key === null ? EMPTY : viewOf(key)),
-  );
-  useEffect(() => {
-    if (environmentId === null || workspaceRoot === null) return;
+  // Being shown is what loads a view: subscribing reads it, and so does coming back to the
+  // window, which may mean edits elsewhere (at most every 10 s).
+  const subscribe = (listener: () => void) => {
+    if (environmentId === null || workspaceRoot === null) return () => {};
+    const unsubscribe = subscribeOverleafWorkspace(environmentId, workspaceRoot, listener);
     void loadOverleafWorkspace(environmentId, workspaceRoot);
-    // Coming back to the window may mean edits elsewhere: read again, at most every 10 s.
     const onFocus = () =>
       void loadOverleafWorkspace(environmentId, workspaceRoot, { maxAgeMs: 10_000 });
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [environmentId, workspaceRoot]);
-  return snapshot;
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      unsubscribe();
+    };
+  };
+  return useSyncExternalStore(subscribe, () => (key === null ? EMPTY : viewOf(key)));
+}
+
+/**
+ * Whether none of the projects has a link, once each project's links are read; false while
+ * any is still loading. Subscribing loads each project's links, like `useOverleafWorkspace`.
+ */
+export function useNoOverleafLinks(
+  environmentId: EnvironmentId,
+  workspaceRoots: ReadonlyArray<string>,
+): boolean {
+  const rootsKey = workspaceRoots.join("\u0000");
+  const subscribe = (listener: () => void) => {
+    const roots = rootsKey === "" ? [] : rootsKey.split("\u0000");
+    const unsubscribes = roots.map((root) =>
+      subscribeOverleafWorkspace(environmentId, root, listener),
+    );
+    for (const root of roots) void loadOverleafWorkspace(environmentId, root);
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+    };
+  };
+  return useSyncExternalStore(subscribe, () =>
+    workspaceRoots.every((root) => {
+      const view = viewOf(keyOf(environmentId, root));
+      return view.loaded && view.connections.length === 0;
+    }),
+  );
 }
 
 type TokenState = { readonly loaded: boolean; readonly saved: boolean };
 const tokens = new Map<EnvironmentId, TokenState>();
 const tokenListeners = new Set<() => void>();
 const UNKNOWN_TOKEN: TokenState = { loaded: false, saved: false };
+/** The latest token read or write by environment: an older read's answer is dropped. */
+const tokenReads = new Map<EnvironmentId, number>();
 
 export function setOverleafTokenSaved(environmentId: EnvironmentId, saved: boolean): void {
+  // A save or removal decides over a read that started before it.
+  tokenReads.set(environmentId, ++readCounter);
   tokens.set(environmentId, { loaded: true, saved });
   for (const listener of tokenListeners) listener();
 }
 
 /** Whether an Overleaf token is saved for this environment. */
 export function useOverleafTokenSaved(environmentId: EnvironmentId | null): TokenState {
-  const state = useSyncExternalStore(
-    (listener) => {
-      tokenListeners.add(listener);
-      return () => tokenListeners.delete(listener);
-    },
-    () => (environmentId === null ? UNKNOWN_TOKEN : (tokens.get(environmentId) ?? UNKNOWN_TOKEN)),
+  // Being shown reads the token's status again; the answer is shared by every view.
+  const subscribe = (listener: () => void) => {
+    tokenListeners.add(listener);
+    if (environmentId !== null) readTokenStatus(environmentId);
+    return () => tokenListeners.delete(listener);
+  };
+  return useSyncExternalStore(subscribe, () =>
+    environmentId === null ? UNKNOWN_TOKEN : (tokens.get(environmentId) ?? UNKNOWN_TOKEN),
   );
-  useEffect(() => {
-    if (environmentId === null) return;
-    let cancelled = false;
-    readOverleafToken(environmentId).then(
-      (status) => {
-        if (!cancelled) setOverleafTokenSaved(environmentId, status.saved);
-      },
-      () => {
-        if (!cancelled) setOverleafTokenSaved(environmentId, false);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [environmentId]);
-  return state;
+}
+
+function readTokenStatus(environmentId: EnvironmentId): void {
+  const read = ++readCounter;
+  tokenReads.set(environmentId, read);
+  readOverleafToken(environmentId).then(
+    (status) => {
+      if (tokenReads.get(environmentId) === read)
+        setOverleafTokenSaved(environmentId, status.saved);
+    },
+    () => {
+      if (tokenReads.get(environmentId) === read) setOverleafTokenSaved(environmentId, false);
+    },
+  );
 }
 
 /** Tests only: forget every workspace. */
@@ -709,4 +831,8 @@ export function resetOverleafStoreForTests(): void {
   staleWorkspaces.clear();
   inflight.clear();
   tokens.clear();
+  tokenReads.clear();
+  knownRevisions.clear();
+  adoptRevisions.clear();
+  agentRunKeys.clear();
 }

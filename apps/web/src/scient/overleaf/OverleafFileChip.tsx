@@ -26,6 +26,7 @@ import { openOverleafReview, seeOverleafChanges } from "./openOverleafReview";
 import { ensureOverleafSaveWatch } from "./overleafSaveWatch";
 import { revalidateOverleafStatus, useOverleafWorkspace } from "./overleafStore";
 import { OverleafUndoDialog } from "./OverleafUndoDialog";
+import { useOverleafAgentRunWatch } from "./useOverleafAgentRunWatch";
 
 /** A status read this recently is used as it is when a chip appears. */
 const STATUS_FRESH_MS = 5_000;
@@ -56,8 +57,10 @@ export function OverleafFileChip(props: {
   const connectionId = connection?.connectionId ?? null;
   const [undoing, setUndoing] = useState(false);
 
+  useOverleafAgentRunWatch(environmentId, cwd);
   // Saves are watched for the app's lifetime (overleafSaveWatch); a chip that mounts reads a
   // status a save made stale, or one older than a few seconds, again.
+  // oxlint-disable-next-line t3code/react-effect-budget -- A chip appearing re-reads the server's status if a save made it stale; the save watch starts with the first chip.
   useEffect(() => {
     ensureOverleafSaveWatch();
     if (connectionId !== null)
