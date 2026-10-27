@@ -201,8 +201,10 @@ describe("Add project ▸ Overleaf project", () => {
     await page.getByLabelText("Overleaf Git token").fill("olp_secret");
     await page.getByRole("button", { name: "Add", exact: true }).click();
 
-    await expect.element(page.getByText("2 files came in")).toBeVisible();
-    await expect.element(page.getByText("Linked Thesis/paper.")).toBeVisible();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(toastAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "2 files came in" }),
+    );
     expect(project.createProjectForOverleaf).toHaveBeenCalledExactlyOnceWith({
       environmentId,
       root: "~/Projects/Thesis",
@@ -228,9 +230,8 @@ describe("Add project ▸ Overleaf project", () => {
       client.connectOverleaf.mock.invocationCallOrder[0]!,
     );
 
-    await page.getByRole("button", { name: "Done" }).click();
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-    // Done lands in the new project.
+    // The successful first sync lands in the new project without another click.
     expect(openNewThread).toHaveBeenCalledExactlyOnceWith(projectRef);
   });
 
@@ -252,7 +253,7 @@ describe("Add project ▸ Overleaf project", () => {
       environmentId,
       expect.objectContaining({ folder: "My thesis", create: true }),
     );
-    await page.getByRole("button", { name: "Done" }).click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("says plainly when the link is refused after the project is made, and keeps the project", async () => {
@@ -291,7 +292,7 @@ describe("Add project ▸ Overleaf project", () => {
 
     // Trying again links into the same project; it is never made twice.
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect.element(page.getByText("Linked Thesis/paper.")).toBeVisible();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     expect(project.createProjectForOverleaf).toHaveBeenCalledTimes(2);
     expect(client.connectOverleaf).toHaveBeenCalledTimes(2);
     expect(client.connectOverleaf).toHaveBeenLastCalledWith(
@@ -318,7 +319,7 @@ describe("Add project ▸ Overleaf project", () => {
     expect(client.syncOverleaf).not.toHaveBeenCalled();
   });
 
-  it("Done opens a project that reached the sidebar late, and says where it is when it hasn't", async () => {
+  it("success opens a project that reached the sidebar late, and says where it is when it hasn't", async () => {
     reset(true);
     client.connectOverleaf.mockResolvedValue({ _tag: "done", connection: summary });
     // The project's 5 s wait for the sidebar ran out while it was made.
@@ -333,19 +334,21 @@ describe("Add project ▸ Overleaf project", () => {
     await using _screen = await render(<OverleafNewProjectDialogHost />);
     await chooseOverleafProject();
     await fillAndConnect();
-    await page.getByRole("button", { name: "Done" }).click();
-    // Closing waits for the project again, and opens it once it is there.
-    expect(projection.waitForProjectProjection).toHaveBeenCalledExactlyOnceWith(projectRef);
+    // Success waits for the project again, and opens it once it is there.
+    await vi.waitFor(() =>
+      expect(projection.waitForProjectProjection).toHaveBeenCalledExactlyOnceWith(projectRef),
+    );
     expect(openNewThread).not.toHaveBeenCalled();
     late.resolve(true);
     await vi.waitFor(() => expect(openNewThread).toHaveBeenCalledExactlyOnceWith(projectRef));
-    expect(toastAdd).not.toHaveBeenCalled();
+    expect(toastAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "2 files came in" }),
+    );
 
     // Still not there: it says so, and where the project is, instead of doing nothing.
     projection.waitForProjectProjection.mockResolvedValueOnce(false);
     await chooseOverleafProject();
     await fillAndConnect();
-    await page.getByRole("button", { name: "Done" }).click();
     await vi.waitFor(() =>
       expect(toastAdd).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -386,7 +389,7 @@ describe("Add project ▸ Overleaf project", () => {
 
     await page.getByLabelText("Overleaf Git token").fill("olp_secret");
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect.element(page.getByText("Linked Thesis/paper.")).toBeVisible();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     expect(client.saveOverleafToken).toHaveBeenCalledTimes(2);
     expect(client.saveOverleafToken.mock.invocationCallOrder[1]).toBeLessThan(
       project.createProjectForOverleaf.mock.invocationCallOrder[0]!,
