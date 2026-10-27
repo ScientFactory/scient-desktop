@@ -57,6 +57,11 @@ export interface ExtensionsEnvironment {
 
 const ExtensionsEnvironmentContext = createContext<ExtensionsEnvironment | null>(null);
 
+/** Null outside ExtensionsPage, e.g. in the Accounts dialogs that reuse extension icons. */
+export function useOptionalExtensionsEnvironment(): ExtensionsEnvironment | null {
+  return useContext(ExtensionsEnvironmentContext);
+}
+
 export function useExtensionsEnvironment(): ExtensionsEnvironment {
   const value = useContext(ExtensionsEnvironmentContext);
   if (value === null) throw new Error("Read extensions inside ExtensionsPage.");
