@@ -74,6 +74,11 @@ export interface ProviderMcpSignInAttempt {
 export interface ProviderPluginActions {
   readonly store?:
     | {
+        // SCIENT-FORK:START — server-only local root for Accounts-backed native MCP delivery.
+        readonly keyServerRoot?: (
+          id: string,
+        ) => Effect.Effect<string | undefined, ProviderPluginActionFailure>;
+        // SCIENT-FORK:END
         readonly contents?:
           | ((id: string) => Effect.Effect<ExtensionPluginContents, ProviderPluginActionFailure>)
           | undefined;

@@ -112,6 +112,23 @@ export function createExtensionsAtoms<R, E>(
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
     }),
+    pluginKeys: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:extensions:plugin-keys",
+      tag: WS_METHODS.extensionsPluginKeys,
+      staleTimeMs: 30_000,
+      idleTtlMs: 60_000,
+      refreshTrigger: changesOf,
+    }),
+    bindPluginKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:bind-plugin-key",
+      tag: WS_METHODS.extensionsPluginKeyBind,
+      ...mutationLane,
+    }),
+    unbindPluginKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:unbind-plugin-key",
+      tag: WS_METHODS.extensionsPluginKeyUnbind,
+      ...mutationLane,
+    }),
     pluginContents: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:extensions:plugin-contents",
       tag: WS_METHODS.extensionsPluginContents,
@@ -244,3 +261,7 @@ export const extensionsProviderStoreEntry = extensionsAtoms.providerStoreEntry;
 export const extensionsBrandIcon = extensionsAtoms.brandIcon;
 export const extensionsPluginContents = extensionsAtoms.pluginContents;
 export const extensionsSkillDocument = extensionsAtoms.skillDocument;
+
+export const extensionsPluginKeys = extensionsAtoms.pluginKeys;
+export const bindPluginKey = extensionsAtoms.bindPluginKey;
+export const unbindPluginKey = extensionsAtoms.unbindPluginKey;

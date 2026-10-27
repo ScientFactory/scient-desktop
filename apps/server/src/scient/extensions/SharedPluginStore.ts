@@ -534,10 +534,11 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       if (!item) return yield* Effect.fail({ message: "This plugin is no longer in the store." });
       if (!item.pluginDir || !(yield* fs.exists(item.pluginDir))) return item.inline;
       const root = yield* pluginRoot(id);
-      return yield* Effect.tryPromise({
+      const contents = yield* Effect.tryPromise({
         try: () => readLocalPluginContents(root),
         catch: () => ({ message: "Could not read this plugin's contents." }),
       });
+      return item.entry.installed ? contents : { ...contents, requiredKeys: undefined };
     }),
     skillDocument: (id, skillId) =>
       pluginRoot(id).pipe(

@@ -7,6 +7,9 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { providersIgnoringCheckedAtAtom } from "~/state/server";
+import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
 import { Link } from "@tanstack/react-router";
 import { KeyRoundIcon } from "lucide-react";
 import type {
@@ -15,6 +18,7 @@ import type {
   AccountSummary,
   AccountsSnapshot,
   EnvironmentId,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
   SettingsPageContainer,
@@ -47,7 +51,12 @@ import { BrowserProfiles, BrowserImportDialog } from "./BrowserProfiles";
 import { PasswordStores, OnePasswordDialog } from "./PasswordStores";
 import { AccountApprovals } from "./AccountApprovals";
 import { AccountLogo } from "./AccountLogo";
-import { KIND_LABELS, accountIconUrl, accountManagePage } from "./accountsView";
+import {
+  KIND_LABELS,
+  accountIconUrl,
+  accountManagePage,
+  providerManagedAccounts,
+} from "./accountsView";
 import { useWebsiteSessions } from "./useWebsiteSessions";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
 import { readLocalApi } from "~/localApi";
@@ -242,7 +251,8 @@ function ManagedAccountRow({
   row,
 }: {
   row: {
-    kind: "github" | "custom-model" | "extension";
+    kind: "github" | "custom-model" | "extension" | "claude" | "codex";
+    instanceId?: ProviderInstanceId;
     name: string;
     detail?: string | undefined;
     href: "/settings/source-control" | "/settings/custom-models" | "/settings/extensions/installed";
@@ -265,14 +275,24 @@ function ManagedAccountRow({
           {row.detail ? (
             <span className="truncate text-xs text-muted-foreground">{row.detail}</span>
           ) : null}
-          <Link to={row.href} className="shrink-0 text-xs text-muted-foreground hover:underline">
-            Managed in{" "}
-            {row.kind === "github"
-              ? "Source Control"
-              : row.kind === "custom-model"
-                ? "Custom models"
-                : "Extensions"}
-          </Link>
+          {row.instanceId ? (
+            <Link
+              to="/settings/extensions/store/$instanceId"
+              params={{ instanceId: row.instanceId }}
+              className="shrink-0 text-xs text-muted-foreground hover:underline"
+            >
+              Managed in {row.kind === "claude" ? "Claude" : "Codex"}
+            </Link>
+          ) : (
+            <Link to={row.href} className="shrink-0 text-xs text-muted-foreground hover:underline">
+              Managed in{" "}
+              {row.kind === "github"
+                ? "Source Control"
+                : row.kind === "custom-model"
+                  ? "Custom models"
+                  : "Extensions"}
+            </Link>
+          )}
         </span>
       }
     />
@@ -293,9 +313,18 @@ function AccountsContent({
   const [activity, setActivity] = useState<ReadonlyArray<AccountActivityEntry> | null>(null);
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
+  const providers = useAtomValue(providersIgnoringCheckedAtAtom(environmentId));
+  const providerInventory = useProviderInventory({
+    environmentId,
+    providers,
+    roots: [],
+    projectsKnown: true,
+    enabled: true,
+  });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
   const firstRun = snapshot.accounts.length === 0 && userProfiles.length === 0;
   const managedRows = [
+    ...providerManagedAccounts(providerInventory.providers),
     ...(snapshot.managedElsewhere ??
       snapshot.customModelKeys.map((connection) => ({
         kind: "custom-model" as const,

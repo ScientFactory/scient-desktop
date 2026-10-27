@@ -207,6 +207,16 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/server/src/scient/extensions/PluginKeySessionCache.ts",
+      "anchor": "bindingRevision",
+      "purpose": "Keep Redacted plugin keys in memory per credential, invalidate through the lock-free Accounts epoch and changes feed, and throttle allowed audit only."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/PluginKeyStdioSessions.ts",
+      "anchor": "makeSessionFiles",
+      "purpose": "Reuse Accounts private per-session directory, atomic 0600 writes and startup sweep for plugin-key launch envelopes."
+    },
+    {
       "path": "apps/web/src/scient/settings/settingsPageScopes.ts",
       "anchor": "Scient Accounts: scope account grants to one server.",
       "purpose": "Choose one environment for account state and project grant controls."
@@ -303,7 +313,7 @@
     },
     {
       "path": "apps/web/src/scient/extensions/AddConnectorDialog.tsx",
-      "anchor": "Use an existing account",
+      "anchor": "ApiKeyAccountPicker",
       "purpose": "Offer API-key accounts from the selected environment whose sites match the connector."
     },
     {
@@ -320,6 +330,16 @@
       "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
       "anchor": "apps/server/src/scient/accounts/AccountsSecretStore.ts",
       "purpose": "Void provider runtime publications when the store that seals Custom models keys changes."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/PluginKeyBindings.ts",
+      "anchor": "makePluginKeyBindings",
+      "purpose": "Resolve plugin bindings through Accounts without exposing credential values."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ExtensionsRpcHandlers.ts",
+      "anchor": "AccountsService",
+      "purpose": "Invalidate plugin eligibility after account authorization or token metadata changes, excluding usage-only events."
     }
   ]
 }

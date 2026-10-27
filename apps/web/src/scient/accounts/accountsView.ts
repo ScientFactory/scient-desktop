@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 import {
+  type ServerProvider,
+  type ProviderInstanceId,
   ProfilePictureDataUri,
   INCOGNITO_BROWSER_PROFILE_ID,
   type DesktopLoginForm,
@@ -389,4 +391,44 @@ export function toggleScope(
     ? [...new Set([...current, entry.projectId])]
     : current.filter((id) => id !== entry.projectId);
   return { type: "projects", projectIds: next };
+}
+
+type ProviderManagedAccount = {
+  kind: "claude" | "codex";
+  id: string;
+  instanceId: ProviderInstanceId;
+  name: string;
+  href: "/settings/extensions/installed";
+};
+
+export function providerManagedAccounts(providers: ReadonlyArray<ServerProvider>) {
+  return providers
+    .filter((provider) => provider.enabled && provider.installed)
+    .flatMap((provider): ReadonlyArray<ProviderManagedAccount> => {
+      if (provider.driver === "claudeAgent") {
+        return (provider.mcpServers ?? [])
+          .filter((server) => server.scope === "claudeai" && server.status === "connected")
+          .map((server) => ({
+            kind: "claude" as const,
+            id: JSON.stringify([provider.instanceId, server.name]),
+            instanceId: provider.instanceId,
+            name: server.name,
+            href: "/settings/extensions/installed" as const,
+          }));
+      }
+      if (provider.driver !== "codex") return [];
+      const apps = new Map(
+        (provider.plugins ?? [])
+          .flatMap((plugin) => plugin.apps ?? [])
+          .filter((app) => app.connected)
+          .map((app) => [app.id ?? app.name, app]),
+      );
+      return [...apps].map(([id, app]) => ({
+        kind: "codex" as const,
+        id: JSON.stringify([provider.instanceId, id]),
+        instanceId: provider.instanceId,
+        name: app.name,
+        href: "/settings/extensions/installed" as const,
+      }));
+    });
 }

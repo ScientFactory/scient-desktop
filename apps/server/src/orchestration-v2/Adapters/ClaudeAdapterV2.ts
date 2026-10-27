@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — native plugin key startup suppression.
+import { claudePluginKeyOptions } from "../../provider/Drivers/PluginKeyProviderConfig.ts";
+// SCIENT-FORK:END
 // @effect-diagnostics nodeBuiltinImport:off - prompt lineage uses the existing deterministic UUID adapter boundary.
 import {
   claudeWorkflowMemberDisplay,
@@ -1788,12 +1791,18 @@ export function claudeMcpQueryOverrides(input: {
       // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL)
       ...Object.fromEntries(
         session.connectors.map((connector) => [
-          connector.serverName,
+          session.pluginKeyServerNames?.[connector.serverName] ?? connector.serverName,
           {
             type: "http" as const,
             url: connector.url,
             headers: { Authorization: session.authorizationHeader },
           },
+        ]),
+      ),
+      ...Object.fromEntries(
+        (session.pluginKeyStdioServers ?? []).map(({ serverName, ...config }) => [
+          serverName,
+          { type: "stdio" as const, ...config, args: [...config.args] },
         ]),
       ),
       // SCIENT-FORK:END Scient Extensions connectors
@@ -2729,6 +2738,7 @@ export function claudeEffectiveQueryPolicyKey(
   queryPolicy: ClaudeRuntimeQueryPolicy,
   mcpOverrides: {
     readonly scientAwareness?: string;
+    readonly pluginKeyPolicies?: unknown;
     readonly allowedTools?: ReadonlyArray<string>;
     readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   },
@@ -2741,6 +2751,7 @@ export function claudeEffectiveQueryPolicyKey(
         : { allowedTools: mcpOverrides.allowedTools }),
     }),
     mcpServers: mcpOverrides.mcpServers,
+    pluginKeyPolicies: mcpOverrides.pluginKeyPolicies,
     scientAwareness: mcpOverrides.scientAwareness,
   });
 }
@@ -10182,7 +10193,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
+          const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, {
+            ...mcpOverrides,
+            pluginKeyPolicies: mcpSession?.pluginKeyPolicies,
+          });
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -10295,7 +10309,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const toolSearchOverride = yield* resolveToolSearchOverride(
               turnInput.runtimePolicy.cwd,
             );
-            const queryOptions = makeClaudeQueryOptions({
+            const baseQueryOptions = makeClaudeQueryOptions({
               modelSelection: turnInput.modelSelection,
               nativeThreadId,
               resume: shouldResume,
@@ -10333,6 +10347,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
               ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
             });
+            // SCIENT-FORK:START — suppress native discovery before the SDK can spawn a server.
+            const queryOptions = claudePluginKeyOptions(
+              baseQueryOptions,
+              mcpSession?.pluginKeyPolicies,
+            );
+            // SCIENT-FORK:END
             const querySession = yield* queryRunner
               .open({
                 threadId: turnInput.threadId,
@@ -10344,7 +10364,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ? {}
                   : {
                       yieldToNativeServers: {
-                        serverNames: mcpSession.connectors.map((connector) => connector.serverName),
+                        serverNames: mcpSession.connectors
+                          .filter(
+                            (connector) =>
+                              mcpSession.pluginKeyServerNames?.[connector.serverName] === undefined,
+                          )
+                          .map((connector) => connector.serverName),
                         beginRegistration:
                           mcpSession.beginConnectorRegistration ??
                           Effect.succeed(() => Effect.void),

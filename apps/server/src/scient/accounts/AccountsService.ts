@@ -119,10 +119,18 @@ export interface AccountsServiceShape {
     input: AccountMatchSignInInput,
   ) => Effect.Effect<AccountMatchSignInResult, AccountsError>;
 
+  /** Lock-free authorization epoch. Undefined while the state needs initialization. */
+  readonly bindingRevision?: Effect.Effect<number | undefined>;
+  readonly recordBoundDenial?: (
+    ref: VaultSecretRef,
+    consumer: AccountKeyConsumer,
+  ) => Effect.Effect<void>;
+
   // Extensions bindings: the saved binding is the user's approval for Ask access.
   readonly resolveBound: (
     ref: VaultSecretRef,
     consumer: AccountKeyConsumer,
+    options?: { readonly auditAllowed?: boolean },
   ) => Effect.Effect<Redacted.Redacted<string>, AccountsError>;
   /** Without an origin, every API-key account is offered. */
   readonly listBindable: (input: {

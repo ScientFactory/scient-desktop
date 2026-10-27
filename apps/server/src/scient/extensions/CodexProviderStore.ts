@@ -19,6 +19,7 @@ import type * as CodexSchema from "effect-codex-app-server/schema";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   codexSkillRoot,
+  readLocalPluginRequiredKeys,
   readContainedPluginText,
   readContainedPluginIcon,
 } from "./LocalPluginContents.ts";
@@ -598,11 +599,33 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       Effect.orElseSucceed(() => undefined),
     );
   };
+  const localKeyRoot = Effect.fn("CodexProviderStore.localKeyRoot")(function* (
+    detail: CodexSchema.V2PluginReadResponse__PluginDetail,
+    item: CachedPlugin,
+    installed: boolean,
+  ) {
+    if (!installed) return undefined;
+    const source = detail.summary?.source ?? item.plugin.source;
+    if ((source.type === "local" || source.type === "git") && source.path) return source.path;
+    for (const skill of detail.skills.slice(0, 200)) {
+      const root = skill.path ? yield* skillRoot(detail, skill.path) : undefined;
+      if (root) return root;
+    }
+    return undefined;
+  });
   const contents = (id: string) =>
     withClient(
       Effect.fn("CodexProviderStore.contents")(function* (client: Client) {
         const { detail, item, installed } = yield* detailFor(client, id);
+        const root = yield* localKeyRoot(detail, item, installed);
+        const requiredKeys =
+          installed && root
+            ? yield* Effect.tryPromise(() => readLocalPluginRequiredKeys(root)).pipe(
+                Effect.orElseSucceed(() => undefined),
+              )
+            : undefined;
         return {
+          ...(requiredKeys === undefined ? {} : { requiredKeys }),
           apps: yield* projectApps(client, detail.apps, true),
           mcpServers: detail.mcpServers.slice(0, 200).map((name) => ({ name })),
           skills: yield* Effect.forEach(
@@ -630,6 +653,13 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
           commands: [],
           agents: [],
         } satisfies ExtensionPluginContents;
+      }),
+    );
+  const keyServerRoot = (id: string) =>
+    withClient(
+      Effect.fn("CodexProviderStore.keyServerRoot")(function* (client: Client) {
+        const { detail, item, installed } = yield* detailFor(client, id);
+        return yield* localKeyRoot(detail, item, installed);
       }),
     );
   const skillDocument = (id: string, skillId: string) =>
@@ -700,6 +730,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     );
   return {
     contents,
+    keyServerRoot,
     skillDocument,
     search,
     entry,

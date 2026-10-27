@@ -447,6 +447,11 @@ import {
   WsExtensionsBrandIconRpc,
   WsExtensionsProviderStoreSearchRpc,
   WsExtensionsProviderStoreEntryRpc,
+  // SCIENT-FORK:START — plugin key bindings and authoritative eligibility.
+  WsExtensionsPluginKeysRpc,
+  WsExtensionsPluginKeyBindRpc,
+  WsExtensionsPluginKeyUnbindRpc,
+  // SCIENT-FORK:END
   WsExtensionsPluginContentsRpc,
   WsExtensionsSkillDocumentRpc,
   WsExtensionsListRpc,
@@ -2469,6 +2474,11 @@ export const WsExtensionsRpcGroup = RpcGroup.make(
   WsExtensionsBrandIconRpc,
   WsExtensionsProviderStoreSearchRpc,
   WsExtensionsProviderStoreEntryRpc,
+  // SCIENT-FORK:START — plugin key bindings and authoritative eligibility.
+  WsExtensionsPluginKeysRpc,
+  WsExtensionsPluginKeyBindRpc,
+  WsExtensionsPluginKeyUnbindRpc,
+  // SCIENT-FORK:END
   WsExtensionsPluginContentsRpc,
   WsExtensionsSkillDocumentRpc,
   WsExtensionsDiscoverCatalogRpc,

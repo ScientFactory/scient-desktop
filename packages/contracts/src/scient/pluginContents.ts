@@ -29,6 +29,11 @@ export const ExtensionPluginSkill = Schema.Struct({
 export type ExtensionPluginSkill = typeof ExtensionPluginSkill.Type;
 export const ExtensionPluginContents = Schema.Struct({
   deferred: Schema.optional(Schema.Boolean),
+  requiredKeys: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))).check(
+      Schema.isMaxLength(200),
+    ),
+  ),
   apps: Schema.Array(
     Schema.Struct({
       ...ProviderStoreApp.fields,

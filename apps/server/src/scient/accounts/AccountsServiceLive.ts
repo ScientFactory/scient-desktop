@@ -106,6 +106,7 @@ export const layer = Layer.effect(
     let state: AccountsState = emptyState;
     let recentActivity: ReadonlyArray<AccountActivityEntry> = [];
     let initialized = false;
+    let bindingRevision = 0;
     let protection: "keychain" | "file" = "file";
     let onePasswordClient: OnePasswordClient | undefined;
     const cache = new Map<
@@ -179,7 +180,8 @@ export const layer = Layer.effect(
         managedElsewhere,
       } satisfies AccountsSnapshot;
     });
-    const publish = Effect.gen(function* () {
+    const publish = Effect.fn("AccountsService.publish")(function* (invalidateKeys = true) {
+      if (invalidateKeys) bindingRevision++;
       yield* PubSub.publish(events, yield* snapshotNow);
     });
     const initialize = Effect.gen(function* () {
@@ -196,11 +198,16 @@ export const layer = Layer.effect(
       state = loaded;
       recentActivity = log.slice(-500);
       initialized = true;
-      yield* publish;
+      yield* publish();
     });
     const locked = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       writes.withPermits(1)(Effect.uninterruptible(initialize.pipe(Effect.andThen(effect))));
-    const commit = Effect.fn("AccountsService.commit")(function* (next: AccountsState) {
+    const commit = Effect.fn("AccountsService.commit")(function* (
+      next: AccountsState,
+      usageOnly = false,
+    ) {
+      // Invalidate before the first write: cache hits must not bypass an in-flight revocation.
+      if (!usageOnly) bindingRevision++;
       yield* persistence
         .write("accounts-state", yield* encodePrivateJson(AccountsState, next))
         .pipe(
@@ -211,7 +218,7 @@ export const layer = Layer.effect(
           ),
         );
       state = next;
-      yield* publish;
+      yield* publish(!usageOnly);
     });
     const appendActivity = Effect.fn("AccountsService.appendActivity")(function* (
       entry: Omit<AccountActivityEntry, "at">,
@@ -224,7 +231,7 @@ export const layer = Layer.effect(
       ].slice(-500);
       yield* persistence.write("accounts-activity", yield* encodePrivateJson(Activity, next));
       recentActivity = next;
-      yield* publish;
+      yield* publish(false);
     });
     const findAccount = (accountId: AccountId) =>
       state.accounts.find((account) => account.summary.accountId === accountId);
@@ -620,6 +627,20 @@ export const layer = Layer.effect(
 
     const service = AccountsService.of({
       snapshot: locked(snapshotNow),
+      recordBoundDenial: Effect.fn("AccountsService.recordBoundDenial")((ref, consumer) => {
+        const id = boundAccountId(ref);
+        return Option.isSome(id)
+          ? locked(
+              appendActivity({
+                target: { type: "account", accountId: id.value },
+                action: "request",
+                decision: "denied",
+                ...consumerActivity(consumer),
+              }),
+            ).pipe(Effect.ignore)
+          : Effect.void;
+      }),
+      bindingRevision: Effect.sync(() => (initialized ? bindingRevision : undefined)),
       changes: Stream.fromPubSub(events),
       save: Effect.fn("AccountsService.saveInput")((input) =>
         locked(
@@ -786,7 +807,7 @@ export const layer = Layer.effect(
         locked(
           Effect.gen(function* () {
             const result = yield* cliStores.command(input);
-            yield* publish;
+            yield* publish();
             return result;
           }),
         ),
@@ -1079,7 +1100,7 @@ export const layer = Layer.effect(
                 };
                 const answer = yield* Deferred.make<AccountApprovalDecision>();
                 pending.set(approval.approvalId, { approval, scope, answer });
-                yield* publish;
+                yield* publish();
                 return { kind: "pending" as const, approval, answer, audit };
               }),
             );
@@ -1113,7 +1134,7 @@ export const layer = Layer.effect(
                     Effect.uninterruptible(
                       Effect.gen(function* () {
                         pending.delete(prepared.approval.approvalId);
-                        yield* publish;
+                        yield* publish();
                       }),
                     ),
                   )
@@ -1135,7 +1156,7 @@ export const layer = Layer.effect(
           ),
         ),
       ),
-      resolveBound: Effect.fn("AccountsService.resolveBound")((ref, consumer) =>
+      resolveBound: Effect.fn("AccountsService.resolveBound")((ref, consumer, options) =>
         locked(
           Effect.gen(function* () {
             const { origin } = consumer;
@@ -1151,12 +1172,13 @@ export const layer = Layer.effect(
               agentAccessOff(state.agentAccess, controls.access) ||
               (consumer.kind === "plugin-key" && !inScope(controls.scope, consumer.projectId))
             ) {
-              yield* appendActivity({
-                target: { type: "account", accountId: accountId.value },
-                action: "request",
-                decision: "denied",
-                ...consumerActivity(consumer),
-              }).pipe(Effect.ignore);
+              if (consumer.kind !== "plugin-key")
+                yield* appendActivity({
+                  target: { type: "account", accountId: accountId.value },
+                  action: "request",
+                  decision: "denied",
+                  ...consumerActivity(consumer),
+                }).pipe(Effect.ignore);
               return yield* failure("denied", "The account is unavailable for this service.");
             }
             const values = yield* resolve(accountId.value, ["token"]);
@@ -1165,7 +1187,14 @@ export const layer = Layer.effect(
             return values.token;
           }),
         ).pipe(
+          Effect.tapError(() =>
+            consumer.kind === "plugin-key"
+              ? service.recordBoundDenial!(ref, consumer)
+              : Effect.void,
+          ),
           Effect.tap(() => {
+            if (consumer.kind === "plugin-key" && options?.auditAllowed === false)
+              return Effect.void;
             const accountId = boundAccountId(ref);
             return Option.isSome(accountId)
               ? service.recordUse({
@@ -1196,6 +1225,7 @@ export const layer = Layer.effect(
                       ...(entry.signInOutcome ? { lastSignInOutcome: entry.signInOutcome } : {}),
                     },
                   }),
+                  true,
                 );
             }
           }),

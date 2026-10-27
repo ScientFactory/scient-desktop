@@ -330,6 +330,9 @@ import {
   ProviderPluginManagement,
   ScientPluginRegistry,
 } from "./scient/extensions/ExtensionsServices.ts";
+// SCIENT-FORK:START — plugin key bindings RPC owner.
+import { PluginKeyBindings } from "./scient/extensions/PluginKeyBindings.ts";
+// SCIENT-FORK:END
 import {
   ExtensionsChangeFeed,
   makeExtensionsRpcHandlers,
@@ -1435,6 +1438,7 @@ export const layerWsRpc = (
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient extensions services.
       const extensionServices = {
+        pluginKeys: Option.getOrUndefined(yield* Effect.serviceOption(PluginKeyBindings)),
         connectorRuntime: yield* ConnectorRuntime,
         pluginRegistry: yield* ScientPluginRegistry,
         discover: yield* ExtensionsDiscover,
