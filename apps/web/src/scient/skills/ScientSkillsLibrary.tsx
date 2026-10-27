@@ -78,7 +78,7 @@ function SkillCategoryDisclosure(props: {
 export function ScientSkillsTitle() {
   return (
     <span className="inline-flex items-center gap-2.5">
-      <ScientSymbol className="size-6" weight="strong" />
+      <ScientSymbol className="size-5" weight="strong" />
       Scient skills
     </span>
   );
