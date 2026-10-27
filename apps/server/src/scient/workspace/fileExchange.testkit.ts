@@ -49,8 +49,8 @@ function compileFilePublicationTestHelper(probe: boolean) {
   const building = (async () => {
     const platform = HostProcess.Platform.defaultValue();
     if (platform !== "darwin" && platform !== "linux" && platform !== "win32") return undefined;
-    const directory = await NodeFSP.mkdtemp(
-      NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-"),
+    const directory = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-")),
     );
     afterAll(() => NodeFSP.rm(directory, { recursive: true, force: true }));
     const helper = NodePath.join(
@@ -106,21 +106,15 @@ function compileFilePublicationTestHelper(probe: boolean) {
       }
       return helper;
     }
-    NodeChildProcess.execFileSync("cc", [
-      "-O2",
-      "-Wall",
-      "-Wextra",
-      "-Werror",
-      "-fstack-protector-strong",
-      ...(probe ? ["-DSCIENT_PUBLICATION_PROBE"] : []),
-      NodePath.resolve(import.meta.dirname, "../../../../../native/file-exchange/publication.c"),
-      NodePath.resolve(
-        import.meta.dirname,
-        "../../../../../native/file-exchange/publication-posix.c",
-      ),
-      "-o",
-      helper,
-    ]);
+    NodeChildProcess.execFileSync(
+      process.execPath,
+      [
+        NodePath.resolve(import.meta.dirname, "../../../../../scripts/stage-file-exchange.ts"),
+        `--destination=${directory}`,
+        ...(probe ? ["--probe=true"] : []),
+      ],
+      { stdio: "inherit" },
+    );
     return helper;
   })();
   compiled.set(probe, building);
