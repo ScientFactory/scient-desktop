@@ -201,7 +201,10 @@ export function overleafChipView(
 }
 
 /** Plain words for a refusal or failure reason, from the engine's fixed categories. */
-export function refusalText(refusal: ScientOverleafRefusal): string {
+export function refusalText(
+  refusal: ScientOverleafRefusal,
+  action: "sync" | "connect" = "sync",
+): string {
   const filesystem = overleafFilesystemRefusalText(refusal.reason);
   if (filesystem !== null) return filesystem;
   const at = refusal.path ? ` (${refusal.path})` : "";
@@ -227,17 +230,18 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
     case "token-missing":
       return "No Overleaf token is saved. Add one in Settings ▸ Synced folders ▸ Overleaf.";
     case "access-denied":
-      return "Overleaf refused the token, or this account has no Git access to the project.";
     case "project-not-found":
-      return "Overleaf has no such project.";
+      return "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.";
     case "project-invalid":
       return "That isn't an Overleaf project link or ID.";
     case "unreachable":
-      return "Overleaf couldn't be reached. Check the connection and sync again.";
+      return action === "connect"
+        ? "Overleaf couldn't be reached. Check the connection. Try connecting again."
+        : "Overleaf couldn't be reached. Check the connection and sync again.";
     case "git-unavailable":
       return "Overleaf sync needs Git 2.39 or newer on this project's server.";
     case "git-failed":
-      return "Git failed while talking to Overleaf. Sync again.";
+      return `Git failed while talking to Overleaf. ${action === "connect" ? "Try connecting again." : "Sync again."}`;
     case "no-branch":
       return "The Overleaf project has no single main branch.";
     case "relink-needed":
@@ -350,7 +354,7 @@ const REASON = /^[a-z][a-z-]{0,63}$/u;
  * fixed reason, mapped to its words. Typed editor-save failures preserve the server's
  * explanation; anything else gets one fixed line.
  */
-export function operationErrorText(error: unknown): string {
+export function operationErrorText(error: unknown, action: "sync" | "connect" = "sync"): string {
   if (typeof error === "object" && error !== null && "reason" in error) {
     const { reason, paths } = error as { readonly reason: unknown; readonly paths?: unknown };
     if (
@@ -365,7 +369,7 @@ export function operationErrorText(error: unknown): string {
     // An editor that couldn't save is named by the first of the files the server lists.
     const path = Array.isArray(paths) && typeof paths[0] === "string" ? paths[0] : undefined;
     if (typeof reason === "string" && REASON.test(reason))
-      return refusalText({ reason, ...(path === undefined ? {} : { path }) });
+      return refusalText({ reason, ...(path === undefined ? {} : { path }) }, action);
   }
   return OVERLEAF_REQUEST_FAILED;
 }

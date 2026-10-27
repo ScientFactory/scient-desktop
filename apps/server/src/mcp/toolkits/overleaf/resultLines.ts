@@ -260,6 +260,9 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
   if (filesystem !== null) return filesystem;
   const at = refusal.path === undefined ? "" : ` (${refusal.path})`;
   switch (refusal.reason) {
+    case "access-denied":
+    case "project-not-found":
+      return "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.";
     case "remote-file-limit":
     case "candidate-file-limit":
       return "more than 2,000 files to sync. Choose a narrower folder.";

@@ -384,7 +384,9 @@ describe("refusalText", () => {
         reason: "access-denied",
         message: "Overleaf refused the token.",
       }),
-    ).toBe("Overleaf refused the token, or this account has no Git access to the project.");
+    ).toBe(
+      "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.",
+    );
     // The server saved the folder's editors first and names the files that couldn't save.
     expect(
       operationErrorText({

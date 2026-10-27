@@ -111,9 +111,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       case "project-invalid":
         return "That is not an Overleaf project link or ID.";
       case "access-denied":
-        return "Overleaf refused the token, or this account has no Git access to the project.";
       case "project-not-found":
-        return "Overleaf has no such project.";
+        return "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.";
       case "unreachable":
         return "Overleaf could not be reached.";
       case "git-unavailable":

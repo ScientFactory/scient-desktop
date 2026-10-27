@@ -66,12 +66,12 @@ const OVERLEAF_FAILURES = {
   "access-denied": () =>
     toolError(
       "overleaf-access-denied",
-      `Overleaf refused the token, or this account has no Git access to the project (Git access needs a paid Overleaf plan, the user's or the project owner's). To replace the token: ${SAVE_TOKEN}`,
+      "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.",
     ),
   "project-not-found": () =>
     toolError(
       "overleaf-project-not-found",
-      "Overleaf has no such project, or this account cannot see it.",
+      "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.",
     ),
   unreachable: () =>
     toolError("overleaf-unreachable", "Overleaf could not be reached. Try again later."),

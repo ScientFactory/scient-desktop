@@ -217,7 +217,7 @@ export function ConnectOverleafDialog(props: {
       });
       if (connected._tag === "refused") {
         setError(
-          `${projectMade ? MADE_NOT_LINKED : ""}${refusalText({ reason: connected.reason })}`,
+          `${projectMade ? MADE_NOT_LINKED : ""}${refusalText({ reason: connected.reason }, "connect")}`,
         );
         setPhase({ _tag: "form" });
         return;
@@ -256,7 +256,7 @@ export function ConnectOverleafDialog(props: {
         });
       }
     } catch (failure) {
-      setError(`${projectMade ? MADE_NOT_LINKED : ""}${operationErrorText(failure)}`);
+      setError(`${projectMade ? MADE_NOT_LINKED : ""}${operationErrorText(failure, "connect")}`);
       setPhase({ _tag: "form" });
     }
   };

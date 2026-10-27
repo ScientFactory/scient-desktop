@@ -438,6 +438,37 @@ describe("Overleaf tool handlers", () => {
     }),
   );
 
+  it.effect("explains inaccessible projects consistently for connect and sync", () =>
+    Effect.gen(function* () {
+      const message =
+        "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.";
+      const connected = yield* overleafConnectForInvocation({
+        project: summary.projectId,
+        folder: "paper",
+        mode: "new-folder",
+      }).pipe(
+        provide(
+          fakeOverleaf({
+            connect: () => Effect.succeed({ _tag: "refused", reason: "project-not-found" }),
+          }),
+        ),
+      );
+      expect(connected.lines).toEqual([`Nothing changed: ${message}`]);
+      expect(connected.firstSync).toBeNull();
+      const error = yield* Effect.flip(
+        overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
+          provide(
+            fakeOverleaf({
+              sync: () => Effect.fail(new OverleafSyncRefusedError({ reason: "access-denied" })),
+            }),
+          ),
+        ),
+      );
+      expect(error.code).toBe("overleaf-access-denied");
+      expect(error.message).toBe(message);
+    }),
+  );
+
   it.effect("maps failures to fixed categories, never Git's text", () =>
     Effect.gen(function* () {
       const failWith = (error: { readonly _tag: string; readonly message: string }) =>

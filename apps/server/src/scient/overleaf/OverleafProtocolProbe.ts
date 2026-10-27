@@ -92,11 +92,11 @@ export function classifyProbeGitFailure(error: OverleafGitError) {
   const category =
     error.reason === "timeout"
       ? "timeout"
-      : /authentication failed|invalid credentials|\b40[13]\b|access denied|permission denied/iu.test(
+      : /authentication failed|invalid credentials|\b40[13]\b|access denied|permission denied|not authori[sz]ed|\bforbidden\b/iu.test(
             detail,
           )
         ? "authentication-or-access-denied"
-        : /repository not found|project not found|\b404\b/iu.test(detail)
+        : /(?:repository|project)\b[^\r\n]*\bnot found\b|\b404\b/iu.test(detail)
           ? "project-not-found"
           : /certificate|\bssl\b|\btls\b|schannel/iu.test(detail)
             ? "tls"

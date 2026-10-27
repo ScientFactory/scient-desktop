@@ -216,6 +216,57 @@ describe("ConnectOverleafDialog", () => {
     );
   });
 
+  it.each(["project-not-found", "git-failed", "unreachable"])(
+    "keeps the connect form actionable after %s and allows a corrected link to connect",
+    async (reason) => {
+      reset(true);
+      client.connectOverleaf.mockResolvedValueOnce({ _tag: "refused", reason });
+      const onClose = vi.fn();
+      await using _screen = await render(
+        <ConnectOverleafDialog
+          environmentId={environmentId}
+          cwd="/work/project"
+          folder="papers"
+          onClose={onClose}
+        />,
+      );
+      await page.getByLabelText("Overleaf project").fill(ID);
+      await page.getByLabelText("Folder name").fill("paper");
+      await page.getByRole("button", { name: "Connect", exact: true }).click();
+      const error = page.getByRole("alert");
+      await expect.element(error).toBeVisible();
+      await expect.element(page.getByText(/sync again/iu)).not.toBeInTheDocument();
+      if (reason === "project-not-found")
+        await expect
+          .element(error)
+          .toHaveTextContent(
+            "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.",
+          );
+      else
+        await expect
+          .element(error)
+          .toHaveTextContent(
+            reason === "git-failed"
+              ? "Git failed while talking to Overleaf. Try connecting again."
+              : "Overleaf couldn't be reached. Check the connection. Try connecting again.",
+          );
+      expect(client.syncOverleaf).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      const corrected = "fedcba9876543210fedcba98";
+      await page.getByLabelText("Overleaf project").fill(corrected);
+      client.connectOverleaf.mockResolvedValueOnce({
+        _tag: "done",
+        connection: summary("papers/paper"),
+      });
+      await page.getByRole("button", { name: "Connect", exact: true }).click();
+      await expect.poll(() => onClose.mock.calls.length).toBe(1);
+      expect(client.connectOverleaf).toHaveBeenLastCalledWith(
+        environmentId,
+        expect.objectContaining({ project: corrected }),
+      );
+    },
+  );
+
   it("refuses a link that isn't Overleaf's, and shows the server's reason on the form", async () => {
     reset(true);
     client.connectOverleaf.mockResolvedValue({ _tag: "refused", reason: "folder-not-empty" });
