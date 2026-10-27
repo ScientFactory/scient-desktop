@@ -484,24 +484,21 @@ export function entryNeedsToken(entry: DiscoverEntry | null): boolean {
   );
 }
 
-/** The kinds the Extensions page can narrow to; no kind shows all of them. */
-export const EXTENSION_KINDS = ["plugins", "skills", "connectors"] as const;
+/** The Extensions page's two lists; an address without `?kind=` shows plugins. */
+export const EXTENSION_KINDS = ["plugins", "skills"] as const;
 export type ExtensionKind = (typeof EXTENSION_KINDS)[number];
 
 export const EXTENSION_KIND_LABELS: Readonly<Record<ExtensionKind, string>> = {
   plugins: "Plugins",
   skills: "Skills",
-  connectors: "Connectors",
 };
 
-/** `?kind=` from an Extensions address; anything else means all kinds. */
-export function extensionKindSearch(raw: Record<string, unknown>): { kind?: ExtensionKind } {
-  return EXTENSION_KINDS.find((kind) => kind === raw.kind) === undefined
-    ? {}
-    : { kind: raw.kind as ExtensionKind };
+/** `?kind=skills` from an Extensions address; anything else is the plugins list. */
+export function extensionKindSearch(raw: Record<string, unknown>): { kind?: "skills" } {
+  return raw.kind === "skills" ? { kind: "skills" } : {};
 }
 
-/** Whether a section of `kind` shows when the page is narrowed to `selected`. */
+/** Whether a section of `kind` shows on the list `selected` names. */
 export function showsKind(selected: ExtensionKind | undefined, kind: ExtensionKind): boolean {
-  return selected === undefined || selected === kind;
+  return (selected ?? "plugins") === kind;
 }

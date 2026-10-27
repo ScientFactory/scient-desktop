@@ -205,7 +205,7 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
       id={searchableSetting("extensions-discover").id}
       className="grid gap-10 outline-none"
     >
-      {!showsKind(kind, "connectors") ? null : catalogError ? (
+      {!showsKind(kind, "plugins") ? null : catalogError ? (
         <MutedLine>{catalogError}</MutedLine>
       ) : catalog === null ? (
         <MutedLine>Loading…</MutedLine>
@@ -273,7 +273,7 @@ function DiscoverSearchResults({
   const curated = useEnvironmentQuery(
     extensionsDiscoverPage({ environmentId, input: { scope: "curated", query } }),
   );
-  const connectors = (showsKind(kind, "connectors") ? (inventory?.connectors ?? []) : []).filter(
+  const connectors = (showsKind(kind, "plugins") ? (inventory?.connectors ?? []) : []).filter(
     (connector) =>
       matchesQuery(query, [
         connector.displayName,
@@ -305,7 +305,7 @@ function DiscoverSearchResults({
       {plugins.map((plugin) => (
         <PluginItem key={plugin.pluginId} plugin={plugin} />
       ))}
-      {showsKind(kind, "connectors") ? (
+      {showsKind(kind, "plugins") ? (
         <>
           <DiscoverPager input={{ scope: "curated", query }} hide={installedHere} />
           <DiscoverPager
@@ -343,16 +343,18 @@ function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
           tab="discover"
           kind={kind}
           aside={
-            <Link
-              to="/settings/extensions/all"
-              className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
-            >
-              Browse all MCP servers
-              <ChevronRightIcon
-                aria-hidden
-                className="size-3.5 transition-transform group-hover:translate-x-0.5"
-              />
-            </Link>
+            kind === "skills" ? null : (
+              <Link
+                to="/settings/extensions/all"
+                className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
+              >
+                Browse all MCP servers
+                <ChevronRightIcon
+                  aria-hidden
+                  className="size-3.5 transition-transform group-hover:translate-x-0.5"
+                />
+              </Link>
+            )
           }
         >
           <SearchField label="Search extensions" value={search} onChange={setSearch} />

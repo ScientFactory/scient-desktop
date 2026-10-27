@@ -205,17 +205,13 @@ export function ExtensionsTopBar({
           variant="pill"
           size="sm"
           className="-ms-3"
-          value={[kind ?? "all"]}
+          value={[kind ?? "plugins"]}
           onValueChange={(next) => {
             const value = next[0];
-            if (value === undefined || value === (kind ?? "all")) return;
-            show(
-              tab,
-              EXTENSION_KINDS.find((item) => item === value),
-            );
+            if (value === undefined || value === (kind ?? "plugins")) return;
+            show(tab, value === "skills" ? "skills" : undefined);
           }}
         >
-          <Toggle value="all">All</Toggle>
           {EXTENSION_KINDS.map((item) => (
             <Toggle key={item} value={item}>
               {EXTENSION_KIND_LABELS[item]}

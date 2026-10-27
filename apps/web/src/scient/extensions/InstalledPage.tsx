@@ -74,7 +74,7 @@ function ProviderSection({
         workspace={cwd}
       />
     )),
-    ...(showsKind(kind, "connectors") ? group.mcpServers : []).map((server) => (
+    ...(showsKind(kind, "plugins") ? group.mcpServers : []).map((server) => (
       <ProviderServerItem
         key={`server:${server.name}`}
         provider={group.provider}
@@ -84,7 +84,6 @@ function ProviderSection({
     )),
   ];
   const title = `From ${group.label}`;
-  if (kind !== undefined && rows.length === 0) return null;
   return (
     <ExtensionsSection
       title={title}
@@ -203,7 +202,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
         <MutedLine>This connection can view extensions but not change them.</MutedLine>
       ) : null}
 
-      {showsKind(kind, "connectors") ? (
+      {showsKind(kind, "plugins") ? (
         <ExtensionsSection
           id={searchableSetting("extensions-connected-services").id}
           title="Connected services"
