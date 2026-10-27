@@ -97,7 +97,7 @@ export function reconcilePlacement(
     ];
     const keys = rows.map((row) => row.key);
     const known = new Set(keys);
-    if (previous === undefined) {
+    if (previous === undefined || previous.rows.length === 0) {
       const upper = rows.filter((row) => row.eligible).map((row) => row.key);
       const upperKeys = new Set(upper);
       return {

@@ -58,6 +58,9 @@ const Capabilities = Schema.Struct({
   sourceParentMkdir: Schema.Boolean,
   codeDomain: Schema.Literals(["errno", "win32"]),
 });
+
+const decodeCapabilities = Schema.decodeSync(Schema.fromJsonString(Capabilities));
+
 export type NativeFileIdentity = typeof Identity.Type;
 export type NativeFilePublicationResult = typeof Result.Type;
 export type NativeFilePublicationCapabilities = typeof Capabilities.Type;
@@ -216,7 +219,7 @@ export async function nativeFilePublicationCapabilities(helperPath: string, root
     ...(rootPath === undefined ? [] : [rootPath]),
   ]);
   try {
-    return Schema.decodeUnknownSync(Schema.fromJsonString(Capabilities))(reply);
+    return decodeCapabilities(reply);
   } catch {
     throw new NativeFilePublicationError("Invalid native publication capability reply.", null);
   }
@@ -461,6 +464,8 @@ const CommandExit = Schema.Struct({
 });
 const LeaseMessage = Schema.Union([LeaseReply, CommandExit, Result]);
 
+const decodeLeaseMessage = Schema.decodeSync(Schema.fromJsonString(LeaseMessage));
+
 /** Cancellation can retire queued acquisition, never an acquired callback's native work. */
 export async function withNativeFilePublicationLease<T>(
   helperPath: string,
@@ -530,7 +535,7 @@ export async function withNativeFilePublicationLease<T>(
       const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
       try {
-        const message = Schema.decodeUnknownSync(Schema.fromJsonString(LeaseMessage))(line);
+        const message = decodeLeaseMessage(line);
         if ("lease" in message) {
           if (message.lease !== "acquired" || acquired || message.code !== 0) {
             failProtocol(`Native lease refused (${message.codeDomain}:${message.code}).`);
@@ -696,6 +701,7 @@ export async function withNativeFilePublicationLease<T>(
       protocolError ||
       (!(acquisitionCancelled && !acquired) && (exit.code !== 0 || exit.signal !== null))
     )
+      // oxlint-disable-next-line no-unsafe-finally -- Failed lease retirement must override the body result; publication cannot report success.
       throw (
         protocolError ??
         new NativeFilePublicationError("Native publication lease failed to retire.", null)

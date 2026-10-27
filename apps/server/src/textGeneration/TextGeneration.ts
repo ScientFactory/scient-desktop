@@ -101,32 +101,36 @@ export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   return TextGeneration.of({
-    generateCommitMessage: (input) =>
-      resolveGeneration(registry, "generateCommitMessage", input.modelSelection).pipe(
+    generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
+      return resolveGeneration(registry, "generateCommitMessage", input.modelSelection).pipe(
         Effect.flatMap(({ textGeneration, modelSelection }) =>
           textGeneration.generateCommitMessage({ ...input, modelSelection }),
         ),
-      ),
-    generatePrContent: (input) =>
-      resolveGeneration(registry, "generatePrContent", input.modelSelection).pipe(
+      );
+    }),
+    generatePrContent: Effect.fn("TextGeneration.generatePrContent")(function (input) {
+      return resolveGeneration(registry, "generatePrContent", input.modelSelection).pipe(
         Effect.flatMap(({ textGeneration, modelSelection }) =>
           textGeneration.generatePrContent({ ...input, modelSelection }),
         ),
-      ),
-    generateBranchName: (input) =>
-      resolveGeneration(registry, "generateBranchName", input.modelSelection).pipe(
+      );
+    }),
+    generateBranchName: Effect.fn("TextGeneration.generateBranchName")(function (input) {
+      return resolveGeneration(registry, "generateBranchName", input.modelSelection).pipe(
         Effect.flatMap(({ textGeneration, modelSelection }) =>
           textGeneration.generateBranchName({ ...input, modelSelection }),
         ),
-      ),
-    generateReviewGuide: (input) =>
-      resolveGeneration(registry, "generateReviewGuide", input.modelSelection).pipe(
+      );
+    }),
+    generateReviewGuide: Effect.fn("TextGeneration.generateReviewGuide")(function (input) {
+      return resolveGeneration(registry, "generateReviewGuide", input.modelSelection).pipe(
         Effect.flatMap(({ textGeneration, modelSelection }) =>
           textGeneration.generateReviewGuide({ ...input, modelSelection }),
         ),
-      ),
-    generateThreadTitle: (input) =>
-      resolveGeneration(registry, "generateThreadTitle", input.modelSelection).pipe(
+      );
+    }),
+    generateThreadTitle: Effect.fn("TextGeneration.generateThreadTitle")(function (input) {
+      return resolveGeneration(registry, "generateThreadTitle", input.modelSelection).pipe(
         Effect.flatMap(({ textGeneration, modelSelection }) =>
           Effect.gen(function* () {
             const linkedContext =
@@ -144,7 +148,8 @@ export const make = Effect.gen(function* () {
             });
           }),
         ),
-      ),
+      );
+    }),
   });
 });
 

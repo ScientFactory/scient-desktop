@@ -154,6 +154,7 @@ export default mergeConfig(
       // SCIENT-FORK:END
       setupFiles: [
         "./src/testUtils/gitConfig.setup.ts",
+        "./src/testUtils/managedServiceEnv.setup.ts",
         // SCIENT-FORK:START — Git cannot reach the source checkout from a test.
         "./src/testUtils/checkoutIsolation.setup.ts",
         // SCIENT-FORK:END

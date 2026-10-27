@@ -13,6 +13,8 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as PreviewBroker from "../../mcp/PreviewAutomationBroker.ts";
 
+const decodeDocumentHostRequest = Schema.decodeUnknownEffect(ScientDocumentHostRequest);
+
 const documentHostOperations = [
   "documentPdfRender",
   "documentPagePdfRender",
@@ -49,8 +51,8 @@ export const layer = Layer.effect(
     const broker = yield* PreviewBroker.make;
     const clientKey = (clientId: string) => `scient-documents:${clientId}`;
     return DocumentHostBroker.of({
-      connect: (host) =>
-        broker
+      connect: Effect.fn("DocumentHostBroker.connect")(function (host) {
+        return broker
           .connect({
             ...host,
             clientId: clientKey(host.clientId),
@@ -63,7 +65,7 @@ export const layer = Layer.effect(
               events.pipe(
                 Stream.mapEffect((event): Effect.Effect<ScientDocumentHostStreamEvent> => {
                   if (event.type === "connected") return Effect.succeed(event);
-                  return Schema.decodeUnknownEffect(ScientDocumentHostRequest)(event.request).pipe(
+                  return decodeDocumentHostRequest(event.request).pipe(
                     // Requests originate in decoded Scient document tools. A mismatched broker event
                     // is a broken server invariant and must never reach the document renderer.
                     Effect.orDie,
@@ -76,11 +78,14 @@ export const layer = Layer.effect(
                 }),
               ),
             ),
-          ),
-      respond: (response) =>
-        broker
+          );
+      }),
+      respond: Effect.fn("DocumentHostBroker.respond")(function (response) {
+        return broker
           .respond({ ...response, clientId: clientKey(response.clientId) })
-          .pipe(Effect.as({ accepted: true })),
+          .pipe(Effect.as({ accepted: true }));
+      }),
+      // @effect-diagnostics-next-line effectFnOpportunity:off - Effect.fn would erase the caller-selected result type.
       invoke: (input) =>
         Effect.suspend(() => {
           if (!documentHostOperations.some((operation) => operation === input.operation)) {

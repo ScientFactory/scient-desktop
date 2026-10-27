@@ -9,7 +9,7 @@ import {
   TYPE_TO_FOCUS_EDITABLE_SELECTOR,
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./composerFocusRedirect";
-import { type MessageId, type ThreadId } from "@t3tools/contracts";
+import { type MessageId } from "@t3tools/contracts";
 
 import {
   type SetStateAction,
@@ -48,7 +48,6 @@ interface TimelineFollowInput {
   readonly composerTimelineInset: number;
   readonly routeThreadKey: string;
   readonly activeThreadKey: string | null;
-  readonly activeThreadId: ThreadId | undefined;
   readonly isServerThread: boolean;
   readonly serverProjection: ThreadStructure | null;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;

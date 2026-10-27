@@ -149,16 +149,14 @@ describe("resolveProjectSettings", () => {
       providerInstances: { [codexWork]: { driver: ProviderDriverKind.make("codex"), config: {} } },
       projectSettingsOverrides: {
         [projectId]: {
-          providerInstances: {
-            // SCIENT-FORK:START — Scient enables more built-in drivers by default.
-            ...Object.fromEntries(
-              PROVIDER_DISPLAY_ORDER.map((driver) => [
-                defaultInstanceIdForDriver(driver),
-                { enabled: false },
-              ]),
-            ),
-            // SCIENT-FORK:END
-          },
+          // SCIENT-FORK:START — Scient enables more built-in drivers by default.
+          providerInstances: Object.fromEntries(
+            PROVIDER_DISPLAY_ORDER.map((driver) => [
+              defaultInstanceIdForDriver(driver),
+              { enabled: false },
+            ]),
+          ),
+          // SCIENT-FORK:END
         },
       },
     };

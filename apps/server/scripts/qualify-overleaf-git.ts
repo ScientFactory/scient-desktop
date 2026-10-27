@@ -21,6 +21,11 @@ import {
   type ProbeObservation,
 } from "../src/scient/overleaf/OverleafProtocolProbe.ts";
 
+const encodeProbeReport = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const encodePrettyProbeReport = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Unknown, { space: 2 }),
+);
+
 const isRepositoryError = Schema.is(Repository.OverleafRepositoryError);
 const isGitError = Schema.is(Executor.OverleafGitError);
 
@@ -52,7 +57,7 @@ const probe = Command.make(
     let secret = new Uint8Array();
     yield* fs.writeFileString(
       report,
-      yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+      yield* encodeProbeReport({
         version: 1,
         mode: cloud ? "cloud" : "local-rehearsal",
         prefix,
@@ -64,7 +69,7 @@ const probe = Command.make(
       observations.push(observation);
       yield* fs.writeFileString(
         report,
-        (yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))({
+        (yield* encodePrettyProbeReport({
           version: 1,
           mode: cloud ? "cloud" : "local-rehearsal",
           prefix,

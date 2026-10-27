@@ -104,31 +104,31 @@ it.layer(layer, { excludeTestServices: true })("native Pi unpublished startup ow
                           ...connection,
                           request: (record, timeout) =>
                             connection.request(record, timeout).pipe(
-                              Effect.flatMap((result) =>
-                                record.type !== "get_state"
-                                  ? Effect.succeed(result)
-                                  : witnessNativePid.pipe(
-                                      Effect.andThen(
-                                        Deferred.succeed(entered, String(input.args.at(-1))),
-                                      ),
-                                      Effect.andThen(
-                                        leg === "binding-failure"
-                                          ? Deferred.await(releaseBinding).pipe(
-                                              Effect.andThen(
-                                                Effect.fail(
-                                                  new PiRpcError({
-                                                    operation: "get_state",
-                                                    detail:
-                                                      "Controlled first-binding refusal after real native response",
-                                                  }),
-                                                ),
-                                              ),
-                                            )
-                                          : leg === "binding-cancellation"
-                                            ? Effect.never
-                                            : Effect.succeed(result),
-                                      ),
+                              Effect.filterOrElse(
+                                () => record.type !== "get_state",
+                                (result) =>
+                                  witnessNativePid.pipe(
+                                    Effect.andThen(
+                                      Deferred.succeed(entered, String(input.args.at(-1))),
                                     ),
+                                    Effect.andThen(
+                                      leg === "binding-failure"
+                                        ? Deferred.await(releaseBinding).pipe(
+                                            Effect.andThen(
+                                              Effect.fail(
+                                                new PiRpcError({
+                                                  operation: "get_state",
+                                                  detail:
+                                                    "Controlled first-binding refusal after real native response",
+                                                }),
+                                              ),
+                                            ),
+                                          )
+                                        : leg === "binding-cancellation"
+                                          ? Effect.never
+                                          : Effect.succeed(result),
+                                    ),
+                                  ),
                               ),
                             ),
                         }),

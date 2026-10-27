@@ -347,6 +347,7 @@ function keepWindowsPathEscape(this: EscapeCompileContext) {
  * and drive-path prose. Prose paths end at whitespace so later escapes still work.
  */
 function remarkKeepWindowsPaths(this: Processor) {
+  // oxlint-disable-next-line oxc/no-this-in-exported-function -- Unified invokes this plugin with its Processor as the receiver.
   const data = this.data();
   (data.fromMarkdownExtensions ??= []).push({
     exit: {

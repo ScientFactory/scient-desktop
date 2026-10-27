@@ -11,7 +11,8 @@ describe("built-in provider enablement policy", () => {
   it.each(BUILT_IN_DRIVERS.map((driver) => [driver.driverKind, driver] as const))(
     "keeps shared %s eligibility aligned with execution's schema default",
     (kind, driver) => {
-      const config = Schema.decodeUnknownSync(driver.configSchema)(driver.defaultConfig());
+      const decodeConfig = Schema.decodeUnknownSync(driver.configSchema);
+      const config = decodeConfig(driver.defaultConfig());
       const enabled = config.enabled ?? true;
       expect(resolveProviderInstanceEnabled({ driver: kind, config: {} })).toBe(enabled);
       expect(isUnconfiguredDefaultInstanceEnabled(defaultInstanceIdForDriver(kind))).toBe(

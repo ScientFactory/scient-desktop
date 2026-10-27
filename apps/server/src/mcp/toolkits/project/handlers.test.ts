@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 import * as Stream from "effect/Stream";
 
+import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
@@ -57,12 +58,10 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     const dependencies = Layer.mergeAll(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
-          Effect.succeed(
-            Option.some({
-              runtimeMode: "full-access" as const,
-              interactionMode: "default" as const,
-            }),
-          ),
+          Effect.succeedSome({
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+          }),
       }),
       ServerSettings.layerTest(),
       NodeCrypto.layer,
@@ -98,7 +97,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       Layer.mock(Project.ProjectService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-      NodeServices.layer,
+      DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-link-" }).pipe(
         Layer.provide(NodeServices.layer),
       ),
@@ -137,12 +136,10 @@ it.effect("launches a scratch thread into the Scratch project", () =>
     const dependencies = Layer.mergeAll(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
-          Effect.succeed(
-            Option.some({
-              runtimeMode: "full-access" as const,
-              interactionMode: "default" as const,
-            }),
-          ),
+          Effect.succeedSome({
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+          }),
       }),
       ServerSettings.layerTest(),
       NodeCrypto.layer,
@@ -186,7 +183,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
         ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-      NodeServices.layer,
+      DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-scratch-launch-" }).pipe(
         Layer.provide(NodeServices.layer),
       ),
@@ -247,12 +244,10 @@ it.effect("refuses name-only projects through the real service while the Scient 
     const dependencies = Layer.mergeAll(
       Layer.mock(ProviderSessionManagerV2)({
         resolveMcpInvocationPolicy: () =>
-          Effect.succeed(
-            Option.some({
-              runtimeMode: "full-access" as const,
-              interactionMode: "default" as const,
-            }),
-          ),
+          Effect.succeedSome({
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+          }),
       }),
       ServerSettings.layerTest(),
       NodeCrypto.layer,
@@ -286,7 +281,7 @@ it.effect("refuses name-only projects through the real service while the Scient 
       }),
       Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(false) }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-      NodeServices.layer,
+      DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-named-project-" }).pipe(
         Layer.provide(NodeServices.layer),
       ),
@@ -442,7 +437,7 @@ const projectLaunchHarness = (input: {
         ),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
-    NodeServices.layer,
+    DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),
     Layer.provideMerge(VcsProcess.layer),

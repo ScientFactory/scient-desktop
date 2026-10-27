@@ -99,7 +99,10 @@ to sign in. A bundle's page has an On/Off switch and **Uninstall**.
 
 Sections named **From Codex**, **From Claude**, and so on show plugins and MCP
 servers that each agent manages in its own configuration. Scient lists them so
-you can see everything in one place, but the agent remains in charge.
+you can see everything in one place, but the agent remains in charge. Project-scoped
+items include all known projects in the selected environment, even projects you have
+not opened recently. The list reports when inventory is still being checked or could
+not be fully read.
 **Uninstall** and **Sign in** appear only where that agent allows Scient to do
 them. A section shows six items at first; use **Show all** in its header to see
 the rest.

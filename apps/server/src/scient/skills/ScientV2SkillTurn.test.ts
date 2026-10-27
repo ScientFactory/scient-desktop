@@ -54,29 +54,28 @@ import * as ScientSkillSession from "./ScientSkillSession.ts";
 import { prepareScientSkillTurn } from "./ScientSkillInvocation.ts";
 import { prepareScientV2SkillScope, prepareScientV2SkillTurn } from "./ScientV2SkillTurn.ts";
 
-const registryLayer = McpSessionRegistry.layer
-  .pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        Layer.succeed(
-          HttpServer.HttpServer,
-          HttpServer.HttpServer.of({
-            address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
-            serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
-          }),
-        ),
-        Layer.succeed(
-          ServerEnvironment.ServerEnvironment,
-          ServerEnvironment.ServerEnvironment.of({
-            getEnvironmentId: Effect.succeed(EnvironmentId.make("empty-skill-scope-fixture")),
-            getDescriptor: Effect.die("No environment descriptor needed"),
-          }),
-        ),
+const registryLayer = McpSessionRegistry.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      NodeServices.layer,
+      Layer.succeed(
+        HttpServer.HttpServer,
+        HttpServer.HttpServer.of({
+          address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),
+          serve: (() => Effect.void) as HttpServer.HttpServer["Service"]["serve"],
+        }),
+      ),
+      Layer.succeed(
+        ServerEnvironment.ServerEnvironment,
+        ServerEnvironment.ServerEnvironment.of({
+          getEnvironmentId: Effect.succeed(EnvironmentId.make("empty-skill-scope-fixture")),
+          getDescriptor: Effect.die("No environment descriptor needed"),
+        }),
       ),
     ),
-  )
-  .pipe(Layer.provideMerge(McpProviderSessions.layer));
+  ),
+  Layer.provideMerge(McpProviderSessions.layer),
+);
 const emptyPolicy = { userSkills: [], projectSkills: [], trustedProjects: [] };
 const emptyPlanner = ScientSkillSession.layer.pipe(
   Layer.provide(
@@ -109,7 +108,7 @@ it.live.each(
 
     return { caseTitle: testName, driverName, testName };
   }),
-)("$caseTitle", ({ driverName, testName }) =>
+)("$caseTitle", ({ driverName, testName: _testName }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`empty-skills-${driverName}`);
@@ -186,10 +185,10 @@ it.live.each(
                   const scope = yield* registry.resolve(token);
                   assert.isDefined(scope);
                   yield* Queue.offer(offered, {
-                    text: providerMessageTextWithAttachmentPaths({
+                    text: yield* providerMessageTextWithAttachmentPaths({
                       ...turn.message,
                       attachmentsDir: cwd,
-                    }),
+                    }).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
                     token,
                     scope: scope!,
                   });

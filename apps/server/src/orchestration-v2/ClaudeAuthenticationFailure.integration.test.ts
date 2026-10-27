@@ -41,7 +41,7 @@ import * as ProviderAdapters from "./ProviderAdapterRegistry.ts";
 import * as ProviderSessions from "./ProviderSessionManager.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./testkit/ProviderReplayHarness.ts";
 
-const settings = Schema.decodeUnknownSync(ClaudeSettings)({});
+const settings = Schema.decodeSync(ClaudeSettings)({});
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,

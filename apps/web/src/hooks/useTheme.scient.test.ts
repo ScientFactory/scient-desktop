@@ -46,7 +46,8 @@ describe("theme failure handling", () => {
     vi.stubGlobal("window", {
       localStorage: storage,
     });
-    vi.doMock("react", () => ({
+    vi.doMock("react", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("react")>()),
       useEffect: vi.fn(),
       useSyncExternalStore: (
         _subscribe: unknown,

@@ -262,7 +262,7 @@ export function createControlledHtmlPdfRenderer(options: ControlledHtmlPdfRender
         Effect.tryPromise({
           try: cleanup,
           catch: (cause) => rendererError("renderHtmlPdf.cleanup", cause),
-        }).pipe(Effect.catch(() => Effect.void)),
+        }).pipe(Effect.ignore),
     );
   };
 }

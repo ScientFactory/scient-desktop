@@ -332,7 +332,10 @@ const makeReplayAdapter = (
 
 const layerReplayHost = TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer));
 
-const layerReplayHostWithAttachments = (attachmentsDir: string) =>
+const layerReplayHostWithAttachments = (
+  attachmentsDir: string,
+  resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>,
+) =>
   Layer.effect(
     ProviderHost.ProviderHost,
     Effect.gen(function* () {
@@ -342,6 +345,7 @@ const layerReplayHostWithAttachments = (attachmentsDir: string) =>
         paths: { ...host.paths, attachmentsDir },
         resolveAttachmentPath: (attachment) =>
           resolveAttachmentPath({ attachmentsDir, attachment }),
+        ...(resolveExtractedTextPath === undefined ? {} : { resolveExtractedTextPath }),
       });
     }),
   ).pipe(Layer.provide(layerReplayHost));
@@ -366,6 +370,7 @@ export const openCode2ReplayRuntime = (
     readonly beforeResponse?: (operation: string) => Promise<void>;
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;
+    readonly resolveExtractedTextPath?: (path: string) => Effect.Effect<string | undefined>;
     readonly fileSystem?: FileSystem.FileSystem;
   },
 ) =>
@@ -399,7 +404,10 @@ export const openCode2ReplayRuntime = (
       Layer.mergeAll(
         options?.attachmentsDir === undefined
           ? layerReplayHost
-          : layerReplayHostWithAttachments(options.attachmentsDir),
+          : layerReplayHostWithAttachments(
+              options.attachmentsDir,
+              options.resolveExtractedTextPath,
+            ),
         IdAllocator.layer,
         NodeServices.layer,
         McpProviderSessions.layer,

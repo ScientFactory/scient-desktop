@@ -20,7 +20,6 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Stream from "effect/Stream";
@@ -319,7 +318,7 @@ it.effect.each(storageCases)(
         forkThread: () => Effect.die("unused forkThread"),
       };
       const sessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
-        get: () => Effect.succeed(Option.some(runtime)),
+        get: () => Effect.succeedSome(runtime),
       });
       yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
@@ -375,7 +374,7 @@ it.effect.each(storageCases)(
               Layer.merge(
                 sessions,
                 ServerConfig.layerTest(process.cwd(), { prefix: "mandatory-input-service-" }).pipe(
-                  Layer.provide(NodeServices.layer),
+                  Layer.provideMerge(NodeServices.layer),
                 ),
               ),
             ),

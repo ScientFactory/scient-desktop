@@ -198,7 +198,7 @@ describe("CI workflow decisions", () => {
     );
     expect(workflow.jobs.lint!.name).toBe("Lint");
     expect(workflow.jobs.test_server).toMatchObject({
-      "timeout-minutes": 10,
+      "timeout-minutes": 15,
       strategy: { matrix: { shard: [1, 2, 3, 4, 5, 6, 7, 8] } },
     });
     expect(workflow.jobs.test_web).toMatchObject({

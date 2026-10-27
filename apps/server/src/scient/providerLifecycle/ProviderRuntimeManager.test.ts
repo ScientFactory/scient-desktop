@@ -185,10 +185,10 @@ function makeHarness(
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),
         ),
-      getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
+      getProviderConnectionActionsForInstance: () => Effect.sync(() => undefined),
       getProviderManagedRuntimeActionsForInstance: () => Ref.get(actionsRef),
-      getProviderSkillActionsForInstance: () => Effect.succeed(undefined),
-      getProviderPluginActionsForInstance: () => Effect.succeed(undefined),
+      getProviderSkillActionsForInstance: () => Effect.sync(() => undefined),
+      getProviderPluginActionsForInstance: () => Effect.sync(() => undefined),
       recordProviderNativeInventory: () => SubscriptionRef.get(providersRef),
       getVoiceTranscriptCorrectionForInstance: () =>
         // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.

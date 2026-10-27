@@ -31,6 +31,21 @@ export function requestDesktopReload(ignoreCache: boolean): void {
   else reload();
 }
 
+export function startDesktopReloadHandling(): void {
+  window.desktopBridge?.onMenuAction((action) => {
+    if (action === "reload-main" || action === "force-reload-main") {
+      requestDesktopReload(action === "force-reload-main");
+    }
+  });
+  window.desktopBridge?.onReloadBlocked?.(() => {
+    toastManager.add({
+      type: "warning",
+      title: "Reload paused",
+      description: "A file has pending changes. Save or resolve them, then try again.",
+    });
+  });
+}
+
 /** Reuses the same save barrier that protects file and route departure. */
 export function useDesktopReloadGuard(
   pendingSurfaceIds: ReadonlySet<string>,

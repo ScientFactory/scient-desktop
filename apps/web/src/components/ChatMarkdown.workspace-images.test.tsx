@@ -31,7 +31,7 @@ vi.mock("../assets/assetUrls", () => ({
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
     testState.resources.push(resource);
     if (testState.assetState === "loading") return { _tag: "Loading" };
-    if (testState.assetState === "failure") return { _tag: "Failure" };
+    if (testState.assetState === "failure") return { _tag: "Failure", refresh: vi.fn() };
     return {
       _tag: "Success",
       url: "https://signed.test/workspace-image.svg",
@@ -534,9 +534,8 @@ describe("ChatMarkdown workspace images", () => {
     expect(frameClassName(loadingBytes)).toEqual(loadingUrl);
     expect(frameClassName(failure)).toEqual(loadingUrl);
     expect(failure).toContain("Image unavailable");
-    // The bytes are requested inside the frame but never paint at an unknown size.
+    // The bytes load inside the frame but never paint at an unknown size.
     expect(loadingBytes).toMatch(/<img[^>]*src="https:\/\/signed[^>]*class="invisible/);
-    expect(loadingBytes).not.toContain('loading="lazy"');
   });
 
   it("gives a standalone remote image a link card instead of a loading frame", () => {

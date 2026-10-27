@@ -42,8 +42,8 @@ export const layer = Layer.effect(
     );
     const leases = new Set<symbol>();
     return ComputeHostCapacity.of({
-      acquire: () =>
-        Effect.suspend(() => {
+      acquire: Effect.fn("ComputeHostCapacity.acquire")(function () {
+        return Effect.suspend(() => {
           if (leases.size >= limit)
             return Effect.fail(
               new ComputeOperationError({
@@ -59,7 +59,8 @@ export const layer = Layer.effect(
               leases.delete(lease);
             }),
           );
-        }),
+        });
+      }),
     });
   }),
 );

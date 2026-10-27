@@ -428,9 +428,7 @@ export const makeAgySession = Effect.fn("makeAgySession")(function* (
           ).pipe(Effect.andThen(handleKnownEvent(decoded.event, decoded.raw)));
         case "Unknown":
           return (
-            input.onRawEvent
-              ? input.onRawEvent(decoded.raw).pipe(Effect.catchCause(() => Effect.void))
-              : Effect.void
+            input.onRawEvent ? input.onRawEvent(decoded.raw).pipe(Effect.ignoreCause) : Effect.void
           ).pipe(
             Effect.andThen(
               Effect.logDebug("Ignoring unknown Antigravity event.", {

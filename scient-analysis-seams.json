@@ -302,8 +302,28 @@
     },
     {
       "path": "apps/web/src/components/preview/useAgentOpenedPreviews.ts",
-      "anchor": "useScientBrowserPresentation",
-      "purpose": "Route agent-revealed browser previews and the floating player through Scient's presentation owner."
+      "anchor": "PreviewMiniPlayerState[\"content\"]",
+      "purpose": "The device-session hook consumes tagged mini-player content without taking browser reconciliation from the app-lifetime service or treating scientific figures as devices."
+    },
+    {
+      "path": "apps/web/src/components/preview/agentOpenedPreviews.ts",
+      "anchor": "applyScientBrowserHideRequests",
+      "purpose": "The sole app-lifetime browser service applies Scient hide requests and routes forced reveals through the active-file departure owner; service and departure tests cover these policies."
+    },
+    {
+      "path": "apps/web/src/components/files/PreviewImageContent.tsx",
+      "anchor": "MEDIA_FAILURE_COPY.image",
+      "purpose": "The shared image preview uses Scient failure copy and chrome while retaining the inherited image rendering and zoom owner."
+    },
+    {
+      "path": "apps/web/src/components/files/filePreviewMode.ts",
+      "anchor": "computeSourceLanguageForPath",
+      "purpose": "Keep Python and MATLAB source in the scientific file surface instead of the generic truncated-text fallback; filePreviewMode.scient.test.ts guards the deciding inputs."
+    },
+    {
+      "path": "scripts/effect-budget.json",
+      "anchor": "\"apps/web/src/scient/analysis/AnalysisArtifactStrip.tsx\"",
+      "purpose": "The shared React effect budget records existing Scient analysis lifecycle owners; new effects still require their own scoped justification and lint validation."
     }
   ]
 }

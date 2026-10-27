@@ -6,11 +6,7 @@ import {
   usePreviewMiniPlayerStore,
   type PreviewMiniPlayerState,
 } from "../../previewMiniPlayerStore";
-import type { ThreadPreviewState } from "../../previewStateStore";
-import { useRightPanelStore, type RightPanelSurface } from "../../rightPanelStore";
-// SCIENT-FORK:START — browser presentation intents (including hide requests) have one owner.
-import { useScientBrowserPresentation } from "../../scient/previewPresentation/useScientBrowserPresentation";
-// SCIENT-FORK:END
+import { useRightPanelStore } from "../../rightPanelStore";
 
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
@@ -19,26 +15,13 @@ export function useAgentOpenedPreviews(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly deviceState: DeviceServiceState;
   readonly deviceStateLoaded: boolean;
-  readonly previewState: ThreadPreviewState;
-
-  readonly serverBrowserAvailable: boolean;
-  readonly panelSurfaces: ReadonlyArray<RightPanelSurface>;
   // SCIENT-FORK:START — the floating player holds tagged content (browser, device or figure).
   readonly miniPlayerSource: PreviewMiniPlayerState["content"] | null;
   // SCIENT-FORK:END
   // Sheet layouts show neither floating previews nor auto-opened device tabs.
   readonly sheetLayout: boolean;
 }) {
-  const {
-    threadRef,
-    deviceState,
-    deviceStateLoaded,
-    previewState,
-    serverBrowserAvailable,
-    panelSurfaces,
-    miniPlayerSource,
-    sheetLayout,
-  } = input;
+  const { threadRef, deviceState, deviceStateLoaded, miniPlayerSource, sheetLayout } = input;
   const autoShowFloatingPreview = useClientSettings(selectAutoShowFloatingPreview);
   // Baseline sessions to preserve dismissals on reload; missing device summaries must remain eligible to open
   // later.
@@ -93,16 +76,6 @@ export function useAgentOpenedPreviews(input: {
     deviceState.sessions,
     deviceState.devices,
   ]);
-  // SCIENT-FORK:START — agent-revealed server browsers follow the Scient presentation owner, which
-  // also honours an agent asking to hide its browser.
-  useScientBrowserPresentation({
-    threadRef,
-    serverBrowserAvailable,
-    previewState,
-    autoShowFloatingPreview,
-    surfaces: panelSurfaces,
-  });
-  // SCIENT-FORK:END
 
   useEffect(() => {
     if (!threadRef || !deviceStateLoaded) return;

@@ -162,6 +162,7 @@ export function usePendingSurfaceDeparture(
 export function useActivePendingSurfaceDeparture(
   input: PendingSurfaceDepartureOptions & {
     readonly activeSurfaceId: string | null;
+    readonly getActiveSurfaceId?: () => string | null;
     readonly pendingSurfaceIds: ReadonlySet<string>;
   },
 ) {
@@ -170,23 +171,26 @@ export function useActivePendingSurfaceDeparture(
   useLayoutEffect(() => {
     inputRef.current = input;
   }, [input]);
-  return (targetSurfaceId: string | null, run: () => void) => {
+  return useStableCallback((targetSurfaceId: string | null, run: () => void) => {
     const input = inputRef.current;
+    const activeSurfaceId = input.getActiveSurfaceId
+      ? input.getActiveSurfaceId()
+      : input.activeSurfaceId;
     const pendingSurfaceIds = input.getPendingSurfaceIds?.() ?? input.pendingSurfaceIds;
     const blockedSurfaceIds =
       targetSurfaceId === null
-        ? input.activeSurfaceId !== null && pendingSurfaceIds.has(input.activeSurfaceId)
-          ? [input.activeSurfaceId]
+        ? activeSurfaceId !== null && pendingSurfaceIds.has(activeSurfaceId)
+          ? [activeSurfaceId]
           : []
         : pendingSurfaceBlocksActivation({
-              activeSurfaceId: input.activeSurfaceId,
+              activeSurfaceId,
               targetSurfaceId,
               pendingSurfaceIds,
             })
-          ? [input.activeSurfaceId!]
+          ? [activeSurfaceId!]
           : [];
     return runAfterPendingSave(blockedSurfaceIds, run);
-  };
+  });
 }
 
 /** Holds route and window departure while any file surface still owns local bytes. */

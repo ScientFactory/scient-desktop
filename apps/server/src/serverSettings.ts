@@ -1295,10 +1295,10 @@ const make = Effect.gen(function* () {
       getSettingsFromCache.pipe(
         Effect.flatMap((settings) =>
           materializeSettingsSecrets(settings).pipe(
-            Effect.catch((error) =>
-              options?.allowUnresolvedSecrets === true && error.operation === "read-secret"
-                ? Effect.succeed(settings)
-                : Effect.fail(error),
+            Effect.catchIf(
+              (error) =>
+                options?.allowUnresolvedSecrets === true && error.operation === "read-secret",
+              () => Effect.succeed(settings),
             ),
           ),
         ),

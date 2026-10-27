@@ -401,7 +401,6 @@ function GuestThread({
     composerTimelineInset: 0,
     routeThreadKey: threadKey,
     activeThreadKey: threadKey,
-    activeThreadId: undefined,
     // Not a server thread: new turns follow the end instead of anchoring near the top.
     isServerThread: false,
     serverProjection: null,

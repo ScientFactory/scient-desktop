@@ -296,11 +296,15 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter({
+  showUndoNotice = false,
+}: {
+  showUndoNotice?: boolean;
+}) {
   return (
     <SidebarFooter>
       <div className="contents group-data-[collapsible=icon]:hidden">
-        <SidebarThreadUndoNotice />
+        {showUndoNotice ? <SidebarThreadUndoNotice /> : null}
         <ScientReleaseNotes />
         <SidebarProviderUpdatePill />
         <SidebarUpdateArchitectureWarning />

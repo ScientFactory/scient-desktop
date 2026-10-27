@@ -24,7 +24,6 @@ const MAX_DIAGNOSTIC_FRAMES = 64;
 // IPython or rich; stripping them keeps the diagnostic readable and prevents
 // control characters from reaching durable storage or the UI.
 const ANSI_PATTERN =
-  // eslint-disable-next-line no-control-regex -- ANSI escape codes are the input we are cleaning.
   /(?:\u001B\[[0-9;]*[a-zA-Z])|(?:\u001B\][^\u0007]*(?:\u0007|\u001B\\))|(?:[\u0000-\u0008\u000B\u000C\u000E-\u001F])/g;
 
 const STANDARD_FRAME_PATTERN = /^\s*File\s+"([^"]+)",\s+line\s+(\d+)(?:,\s+in\s+(.+))?\s*$/;

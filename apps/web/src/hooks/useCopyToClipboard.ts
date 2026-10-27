@@ -69,6 +69,36 @@ function writeTextWithExecCommand(
   textarea.style.fontSize = "16px";
 
   const previouslyFocused = document.activeElement;
+  // SCIENT-FORK:START — the temporary textarea must not consume the reader's selection.
+  const selection = document.getSelection();
+  const documentSelection = selection && {
+    anchorNode: selection.anchorNode,
+    anchorOffset: selection.anchorOffset,
+    focusNode: selection.focusNode,
+    focusOffset: selection.focusOffset,
+    ranges: Array.from({ length: selection.rangeCount }, (_, index) => {
+      const range = selection.getRangeAt(index);
+      return {
+        startContainer: range.startContainer,
+        startOffset: range.startOffset,
+        endContainer: range.endContainer,
+        endOffset: range.endOffset,
+      };
+    }),
+  };
+  const inputSelection =
+    (previouslyFocused instanceof HTMLInputElement ||
+      previouslyFocused instanceof HTMLTextAreaElement) &&
+    previouslyFocused.selectionStart !== null &&
+    previouslyFocused.selectionEnd !== null
+      ? {
+          element: previouslyFocused,
+          start: previouslyFocused.selectionStart,
+          end: previouslyFocused.selectionEnd,
+          direction: previouslyFocused.selectionDirection,
+        }
+      : null;
+  // SCIENT-FORK:END
   const copy = (event: ClipboardEvent) => {
     if (!extraFlavors || !event.clipboardData) return;
     event.clipboardData.setData("text/plain", value);
@@ -88,10 +118,53 @@ function writeTextWithExecCommand(
   } finally {
     textarea.removeEventListener("copy", copy);
     textarea.remove();
-    const restoreFocus = (previouslyFocused as { focus?: unknown } | null)?.focus;
-    if (typeof restoreFocus === "function") {
-      restoreFocus.call(previouslyFocused);
-    }
+    // SCIENT-FORK:START
+    const connected = (node: Node | null): node is Node =>
+      node !== null && node.isConnected && node.ownerDocument === document;
+    try {
+      const restoreFocus = (previouslyFocused as { focus?: unknown } | null)?.focus;
+      if (connected(previouslyFocused) && typeof restoreFocus === "function") {
+        restoreFocus.call(previouslyFocused, { preventScroll: true });
+      }
+    } catch {}
+    try {
+      if (selection && documentSelection) {
+        const { anchorNode, anchorOffset, focusNode, focusOffset, ranges } = documentSelection;
+        if (ranges.length === 0) {
+          selection.removeAllRanges();
+        } else if (connected(anchorNode) && connected(focusNode)) {
+          if (ranges.length === 1) {
+            selection.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
+          } else if (
+            ranges.every(
+              ({ startContainer, endContainer }) =>
+                connected(startContainer) && connected(endContainer),
+            )
+          ) {
+            const restored = ranges.map(
+              ({ startContainer, startOffset, endContainer, endOffset }) => {
+                const range = document.createRange();
+                range.setStart(startContainer, startOffset);
+                range.setEnd(endContainer, endOffset);
+                return range;
+              },
+            );
+            selection.removeAllRanges();
+            for (const range of restored) selection.addRange(range);
+          }
+        }
+      }
+    } catch {}
+    try {
+      if (inputSelection && connected(inputSelection.element)) {
+        inputSelection.element.setSelectionRange(
+          inputSelection.start,
+          inputSelection.end,
+          inputSelection.direction ?? undefined,
+        );
+      }
+    } catch {}
+    // SCIENT-FORK:END
   }
 }
 

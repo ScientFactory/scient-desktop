@@ -450,13 +450,6 @@
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/routes/_chat.index.tsx",
-    "line": "? \"Enable T3 Connect on that machine, then open Connections here to sign in with the same account. You can also add the machine using a pairing link.\"",
-    "rules": ["t3-connect"],
-    "kind": "dormant-cloud",
-    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
-  },
-  {
     "path": "apps/web/src/scient/releaseNotes/catalog.ts",
     "line": "\"Scient connects to Factory Droid in early access, ships built-in SyncTeX navigation with every install, queues messages while your agent works, and continues to absorb workspace improvements from the maintained T3 foundation.\",",
     "rules": ["bare-t3"],
@@ -633,5 +626,12 @@
     "rules": ["bare-t3", "t3-connect"],
     "kind": "rewritten-agent-copy",
     "reason": "Upstream MCP schema descriptions kept verbatim; ScientMcpProtocol's tools/list rewrites them through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
+  },
+  {
+    "path": "apps/web/src/lib/diffRendering.ts",
+    "line": "/* The page sets --diff-modified-icon under the New design: a muted T3 blue, so the common case stays quiet. */",
+    "rules": ["bare-t3"],
+    "kind": "internal",
+    "reason": "Unchanged upstream CSS comment describes the donor theme colour; it is not rendered product copy. The alignment protocol preserves accurate upstream developer comments."
   }
 ]

@@ -61,6 +61,8 @@ import * as OverleafStateStore from "./OverleafStateStore.ts";
 import type { ConflictChoice } from "./syncRules.ts";
 import * as WorkspaceApplier from "./WorkspaceApplier.ts";
 
+const isKeptPath = Schema.is(KeptPath);
+
 /** Another operation holds this connection. Admission never queues. */
 export class OverleafOperationActiveError extends Schema.TaggedError<OverleafOperationActiveError>()(
   "OverleafOperationActiveError",
@@ -641,7 +643,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const keptAt = (path: string | null) => {
       const kept =
         path === null ? null : NodePath.relative(vault, path).split(NodePath.sep).join("/");
-      return kept !== null && Schema.is(KeptPath)(kept) ? kept : null;
+      return kept !== null && isKeptPath(kept) ? kept : null;
     };
     /**
      * One record per path this apply kept, naming every version the applier

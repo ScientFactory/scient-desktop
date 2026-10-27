@@ -140,9 +140,15 @@
   padding-inline-end: 5px;
 }
 
+/*
+ * PDF.js runs with removePageBorders, so its fit modes use the whole clientWidth and
+ * clientHeight. The transparent border is the reading margin: it narrows both without
+ * PDF.js's fixed 40px width allowance.
+ */
 .scient-pdf-viewer-container {
   position: absolute;
   inset: 0;
+  border: 8px solid transparent;
   overflow: auto;
   scrollbar-gutter: stable;
   background: color-mix(in srgb, var(--muted) 70%, var(--background));
@@ -180,13 +186,16 @@
 
 .scient-pdf-viewer-container .pdfViewer {
   --scale-factor: 1;
-  padding-block: 14px 28px;
 }
 
-.scient-pdf-viewer-container .pdfViewer .page {
-  margin: 0 auto 14px;
+.scient-pdf-viewer-container .pdfViewer.removePageBorders .page {
+  margin: 0 auto 8px;
   border: 0;
   box-shadow: 0 1px 5px rgb(0 0 0 / 16%);
+}
+
+.scient-pdf-viewer-container .pdfViewer.removePageBorders .page:last-child {
+  margin-bottom: 0;
 }
 
 .scient-pdf-viewer-container .pdfViewer .canvasWrapper .selection {
@@ -334,7 +343,8 @@
 
 @media (forced-colors: active) {
   .scient-pdf-viewer-container .pdfViewer .page {
-    border: 1px solid CanvasText;
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
   }
 }
 /* Controls overlay the existing thumbnail margins, so reading geometry is unchanged. */

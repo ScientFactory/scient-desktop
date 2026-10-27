@@ -133,16 +133,24 @@ async function _setupFixture0(_fixture: _Fixture) {
     page.className = "page";
     page.textContent = input.sourceUrl;
     input.viewerElement.append(page);
+    const viewer = {
+      container: input.container,
+      containerTopLeft: [0, 0],
+      currentPageNumber: 1,
+      currentScale: 1,
+      currentScaleValue: "1",
+      pagesRotation: 0,
+      scrollPageIntoView: vi.fn(),
+      getPageView: () => undefined,
+      // PDF.js rounds a scale factor to whole percents.
+      updateScale: ({ scaleFactor }: { scaleFactor: number }) => {
+        viewer.currentScale = Math.round(viewer.currentScale * scaleFactor * 100) / 100;
+        viewer.currentScaleValue = String(viewer.currentScale);
+      },
+    };
     const runtime = {
       document: documentProxy,
-      viewer: {
-        currentPageNumber: 1,
-        currentScale: 1,
-        currentScaleValue: "1",
-        pagesRotation: 0,
-        scrollPageIntoView: vi.fn(),
-        getPageView: () => undefined,
-      },
+      viewer,
       eventBus: {
         on: (name: string, fn: (event: any) => void) => listeners.set(name, fn),
         dispatch: vi.fn(),

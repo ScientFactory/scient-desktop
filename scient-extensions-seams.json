@@ -237,6 +237,11 @@
       "path": "apps/server/scripts/record-claude-agent-sdk-replay-fixture.ts",
       "anchor": "claude_mcp_tool_presentation",
       "purpose": "Upstream-owned and unchanged by Scient: its recording notes name the claude.ai Firecrawl connector, so upstream comment edits match the connector signal. Nothing Scient mounts here."
+    },
+    {
+      "path": "scripts/effect-budget.json",
+      "anchor": "\"apps/web/src/scient/extensions/extensionActions.ts\"",
+      "purpose": "The shared React effect budget records existing Scient extensions lifecycle owners; new effects still require their own scoped justification and lint validation."
     }
   ],
   "scientMounts": [

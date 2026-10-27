@@ -140,9 +140,7 @@ it.effect.each([false, true])(
       } finally {
         revisedSource.close();
       }
-      yield* Effect.gen(function* () {
-        yield* SqlClient.SqlClient;
-      }).pipe(Effect.provide(database));
+      yield* SqlClient.SqlClient.pipe(Effect.asVoid, Effect.provide(database));
       const latestSource = new NodeSqlite.DatabaseSync(sourcePath);
       try {
         latestSource.exec(

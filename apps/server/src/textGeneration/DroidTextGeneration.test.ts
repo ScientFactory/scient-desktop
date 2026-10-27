@@ -716,7 +716,7 @@ it.layer(DroidTextGenerationTestLayer)("DroidTextGeneration", (it) => {
       name,
       env,
     })),
-  )("$caseTitle", ({ name, env }) => {
+  )("$caseTitle", ({ name: _name, env }) => {
     const requestLogDir = NodeFS.mkdtempSync(
       NodePath.join(NodeOS.tmpdir(), "t3code-droid-text-unconfirmed-"),
     );

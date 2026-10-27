@@ -14,11 +14,14 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { makeProviderPluginManagement } from "../scient/extensions/ProviderPluginManagement.ts";
+import { mergeProviderInventory } from "../../../web/src/scient/extensions/providerInventory.ts";
 import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "./providerStatusCache.ts";
@@ -95,7 +98,9 @@ const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPol
   shouldRunOpportunisticWork: Effect.succeed(true),
 });
 
-const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(function* () {
+const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(function* (
+  actionOverrides: Partial<ProviderPluginActions> = {},
+) {
   const snapshotRef = yield* Ref.make(provider("2026-10-21T00:00:00.000Z"));
   const registryChanges = yield* PubSub.unbounded<void>();
 
@@ -110,9 +115,18 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
     // Workspace listings answer when the test opens this gate, after the scan.
     const workspaceListingGate = yield* Deferred.make<void>();
     const workspaceCalls: Array<string> = [];
+    const listingFibers = new Map<string, Fiber.Fiber<void>>();
+    const listingReadRef = yield* Ref.make<
+      (cwd: string) => Effect.Effect<ReadonlyArray<ServerProviderPlugin> | undefined>
+    >(() => Deferred.await(workspaceListingGate).pipe(Effect.as([linear])));
     /** Workspaces whose listing is queued or running. */
     const runningWorkspaceListings = new Set<string>();
     const workspaceInventory: ProviderWorkspaceInventory = {
+      awaitCurrent: (cwd) =>
+        Effect.suspend(() => {
+          const fiber = listingFibers.get(cwd);
+          return fiber ? Fiber.await(fiber).pipe(Effect.asVoid) : Effect.void;
+        }),
       cancel: (cwd) =>
         Ref.get(cancelGateRef).pipe(
           Effect.flatten,
@@ -122,29 +136,51 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
               runningWorkspaceListings.delete(cwd);
             }),
           ),
+          Effect.andThen(
+            Effect.suspend(() => {
+              const fiber = listingFibers.get(cwd);
+              listingFibers.delete(cwd);
+              return fiber ? Fiber.interrupt(fiber).pipe(Effect.asVoid) : Effect.void;
+            }),
+          ),
         ),
-      refresh: (cwd) =>
+      refresh: (cwd, publish) =>
         Effect.sync(() => {
           workspaceCalls.push(`refresh ${cwd}`);
           runningWorkspaceListings.add(cwd);
         }).pipe(
           Effect.andThen(
-            Deferred.await(workspaceListingGate).pipe(
-              Effect.andThen(PubSub.publish(liveInventory, { cwd, plugins: [linear] })),
+            Effect.gen(function* () {
+              const sequence = yield* nextInventoryReadSequence;
+              const read = yield* Ref.get(listingReadRef);
+              const plugins = yield* read(cwd);
+              if (plugins !== undefined) yield* publish({ cwd, plugins, sequence });
+            }).pipe(
               Effect.forkIn(harnessScope),
+              Effect.tap((fiber) =>
+                Effect.sync(() => {
+                  listingFibers.set(cwd, fiber);
+                }),
+              ),
             ),
           ),
           Effect.asVoid,
         ),
       retain: (current) =>
         current.pipe(
-          Effect.map((keep) => {
-            for (const cwd of [...runningWorkspaceListings]) {
-              if (keep.has(cwd)) continue;
-              runningWorkspaceListings.delete(cwd);
-              workspaceCalls.push(`stop ${cwd}`);
-            }
-          }),
+          Effect.flatMap((keep) =>
+            Effect.gen(function* () {
+              const runningListings = [...runningWorkspaceListings];
+              for (const cwd of runningListings) {
+                if (keep.has(cwd)) continue;
+                runningWorkspaceListings.delete(cwd);
+                workspaceCalls.push(`stop ${cwd}`);
+                const fiber = listingFibers.get(cwd);
+                listingFibers.delete(cwd);
+                if (fiber) yield* Fiber.interrupt(fiber);
+              }
+            }),
+          ),
         ),
     };
     const pluginActions: ProviderPluginActions = {
@@ -154,6 +190,7 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
       startMcpSignIn: () => Effect.die("unused"),
       isRetired: Effect.succeed(false),
       whenRetired: Effect.never,
+      ...actionOverrides,
     };
     const instance: ScientProviderInstance = {
       instanceId: INSTANCE_ID,
@@ -190,6 +227,7 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
       liveInventory,
       pluginActions,
       workspaceListingGate,
+      listingReadRef,
       workspaceCalls,
       runningWorkspaceListings,
     };
@@ -238,6 +276,7 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
     liveInventory: initial.liveInventory,
     pluginActions: initial.pluginActions,
     workspaceListingGate: initial.workspaceListingGate,
+    listingReadRef: initial.listingReadRef,
     workspaceCalls: initial.workspaceCalls,
     runningWorkspaceListings: initial.runningWorkspaceListings,
     scanGateRef,
@@ -289,6 +328,9 @@ describe("ProviderRegistry provider-native inventory", () => {
           // A probe never carries this inventory and never erases it.
           yield* Ref.set(snapshotRef, provider("2026-10-21T00:00:02.000Z"));
           const probed = (yield* registry.refreshInstance(INSTANCE_ID))[0];
+          const generation = partial?.nativeInventoryGeneration;
+          assert.isString(generation);
+          assert.strictEqual(probed?.nativeInventoryGeneration, generation);
           assert.deepStrictEqual(probed?.plugins, [linear]);
           assert.strictEqual(probed?.checkedAt, "2026-10-21T00:00:02.000Z");
           const cached = yield* readCache;
@@ -296,6 +338,7 @@ describe("ProviderRegistry provider-native inventory", () => {
           assert.strictEqual(cached.checkedAt, "2026-10-21T00:00:02.000Z");
           assert.strictEqual("plugins" in cached, false);
           assert.strictEqual("mcpServers" in cached, false);
+          assert.strictEqual("nativeInventoryGeneration" in cached, false);
 
           // A complete empty listing is authoritative.
           yield* PubSub.publish(liveInventory, { plugins: [] });
@@ -326,6 +369,8 @@ describe("ProviderRegistry provider-native inventory", () => {
         const { registry, instancesRef, registryChanges, makeInstance } = harness;
         yield* registry.refreshInstance(INSTANCE_ID);
         yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" });
+        const generation = (yield* registry.getProviders)[0]?.nativeInventoryGeneration;
+        assert.isString(generation);
         const retired = {
           liveInventory: harness.liveInventory,
           pluginActions: harness.pluginActions,
@@ -340,7 +385,10 @@ describe("ProviderRegistry provider-native inventory", () => {
           reportedBy: retired.pluginActions,
           inventory: { plugins: [linear] },
         });
-        for (let attempt = 0; attempt < 200; attempt++) yield* Effect.yieldNow;
+        yield* awaitProviders(
+          registry,
+          (current) => current?.nativeInventoryGeneration !== generation,
+        );
         assert.strictEqual(ignored[0]?.plugins, undefined);
         assert.strictEqual((yield* registry.getProviders)[0]?.plugins, undefined);
 
@@ -388,6 +436,351 @@ describe("ProviderRegistry provider-native inventory", () => {
         });
         assert.deepStrictEqual(rescanned[0]?.workspaceSnapshots?.[0]?.plugins, [linear]);
         assert.deepStrictEqual(harness.workspaceCalls.slice(2), ["cancel /repo", "refresh /repo"]);
+      }),
+    ),
+  );
+
+  it.effect("returns published listings for 40 serial full-inventory roots despite retention", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        const started = yield* Queue.unbounded<{ cwd: string; gate: Deferred.Deferred<void> }>();
+        yield* Ref.set(harness.listingReadRef, (cwd) =>
+          Effect.gen(function* () {
+            const gate = yield* Deferred.make<void>();
+            yield* Queue.offer(started, { cwd, gate });
+            yield* Deferred.await(gate);
+            return [{ ...linear, id: cwd }];
+          }),
+        );
+        const collected: string[] = [];
+        const scanning = Effect.gen(function* () {
+          for (let index = 0; index < 40; index++) {
+            const cwd = `/root-${index}`;
+            const reply = yield* registry.refreshWorkspaceSnapshot({
+              instanceId: INSTANCE_ID,
+              cwd,
+              awaitNativeInventory: true,
+            });
+            const plugins = reply[0]?.workspaceSnapshots?.find(
+              (snapshot) => snapshot.cwd === cwd,
+            )?.plugins;
+            // Removing the completion wait returns undefined here, before the controlled listing answers.
+            assert.deepStrictEqual(
+              plugins?.map((plugin) => plugin.id),
+              [cwd],
+            );
+            collected.push(...plugins!.map((plugin) => plugin.id));
+          }
+        });
+        const releaseListings = Effect.gen(function* () {
+          for (let index = 0; index < 40; index++) {
+            const listing = yield* Queue.take(started);
+            assert.strictEqual(listing.cwd, `/root-${index}`);
+            yield* Deferred.succeed(listing.gate, undefined);
+          }
+        });
+        yield* Effect.all([scanning, releaseListings], { concurrency: 2 });
+        assert.lengthOf(collected, 40);
+        assert.lengthOf((yield* registry.getProviders)[0]?.workspaceSnapshots ?? [], 16);
+      }),
+    ),
+  );
+
+  it.effect(
+    "reacquires an evicted page root before current-generation plugin action admission",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const installed = yield* Ref.make<ReadonlyArray<ServerProviderPlugin>>([linear]);
+          const validatedCwds: Array<string | undefined> = [];
+          const mutations: Array<string | undefined> = [];
+          const harness = yield* makeHarness({
+            listPlugins: ({ cwd }) =>
+              Effect.gen(function* () {
+                validatedCwds.push(cwd);
+                return {
+                  plugins: yield* Ref.get(installed),
+                  sequence: yield* nextInventoryReadSequence,
+                };
+              }),
+            uninstall: ({ cwd }) =>
+              Effect.sync(() => mutations.push(cwd)).pipe(
+                Effect.andThen(Ref.set(installed, [])),
+                Effect.asVoid,
+              ),
+          });
+          const { registry } = harness;
+          yield* registry.refreshInstance(INSTANCE_ID);
+          yield* Ref.set(harness.listingReadRef, () => Ref.get(installed));
+          const roots = new Set(Array.from({ length: 40 }, (_, index) => `/root-${index}`));
+          let page: ReadonlyArray<ServerProvider> = [];
+          for (const cwd of roots) {
+            const reply = yield* registry.refreshWorkspaceSnapshot({
+              instanceId: INSTANCE_ID,
+              cwd,
+              awaitNativeInventory: true,
+            });
+            page = mergeProviderInventory(page, reply, roots);
+          }
+          assert.lengthOf(page[0]?.workspaceSnapshots ?? [], 40);
+          assert.lengthOf((yield* registry.getProviders)[0]?.workspaceSnapshots ?? [], 16);
+          assert.isFalse(
+            (yield* registry.getProviders)[0]?.workspaceSnapshots?.some(
+              (snapshot) => snapshot.cwd === "/root-0",
+            ),
+          );
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          yield* Ref.set(harness.listingReadRef, (cwd) =>
+            Effect.gen(function* () {
+              assert.strictEqual(cwd, "/root-0");
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+              return yield* Ref.get(installed);
+            }),
+          );
+          const management = makeProviderPluginManagement(registry, yield* Effect.scope);
+          const action = yield* management
+            .act({
+              instanceId: INSTANCE_ID,
+              cwd: "/root-0",
+              action: { type: "uninstall", pluginId: linear.id },
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(entered);
+          assert.deepStrictEqual(validatedCwds, []);
+          assert.deepStrictEqual(mutations, []);
+          yield* Deferred.succeed(release, undefined);
+          const result = yield* Fiber.join(action);
+          assert.deepStrictEqual(validatedCwds, ["/root-0", "/root-0"]);
+          assert.deepStrictEqual(mutations, ["/root-0"]);
+          assert.deepStrictEqual(
+            result.providers[0]?.workspaceSnapshots?.find((snapshot) => snapshot.cwd === "/root-0")
+              ?.plugins,
+            [],
+          );
+          assert.lengthOf(result.providers[0]?.workspaceSnapshots ?? [], 16);
+        }),
+      ),
+  );
+
+  it.effect.each(["unreported", "removed", "evicted", "replaced"] as const)(
+    "refuses workspace uninstall when reacquisition is %s",
+    (outcome) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeHarness();
+          const { registry } = harness;
+          yield* registry.refreshInstance(INSTANCE_ID);
+          yield* Ref.set(harness.listingReadRef, () =>
+            Effect.succeed(
+              outcome === "unreported" ? undefined : outcome === "removed" ? [] : [linear],
+            ),
+          );
+          const management = makeProviderPluginManagement(
+            {
+              ...registry,
+              refreshWorkspaceSnapshot: Effect.fn("test.reacquireThenInterleave")(function* (
+                input: Parameters<
+                  ProviderRegistry.ProviderRegistryShape["refreshWorkspaceSnapshot"]
+                >[0],
+              ) {
+                const reply = yield* registry.refreshWorkspaceSnapshot(input);
+                if (outcome === "evicted") {
+                  for (let index = 0; index < 16; index++) {
+                    yield* registry.refreshWorkspaceSnapshot({
+                      instanceId: INSTANCE_ID,
+                      cwd: `/other-${index}`,
+                      awaitNativeInventory: true,
+                    });
+                  }
+                } else if (outcome === "replaced") {
+                  const replacement = yield* harness.makeInstance();
+                  yield* Ref.set(harness.instancesRef, [replacement.instance]);
+                }
+                return reply;
+              }),
+            },
+            yield* Effect.scope,
+          );
+          const error = yield* management
+            .act({
+              instanceId: INSTANCE_ID,
+              cwd: "/evicted",
+              action: { type: "uninstall", pluginId: linear.id },
+            })
+            .pipe(Effect.flip);
+          assert.strictEqual(
+            error.reason,
+            outcome === "removed" ? "not-found" : "state-unavailable",
+          );
+        }),
+      ),
+  );
+
+  it.effect("interrupts action reacquisition when its captured generation retires", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const retired = yield* Deferred.make<void>();
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          isRetired: Deferred.isDone(retired),
+          whenRetired: Deferred.await(retired),
+        });
+        yield* harness.registry.refreshInstance(INSTANCE_ID);
+        yield* Ref.set(harness.listingReadRef, () =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as([linear]),
+          ),
+        );
+        const management = makeProviderPluginManagement(harness.registry, yield* Effect.scope);
+        const action = yield* management
+          .act({
+            instanceId: INSTANCE_ID,
+            cwd: "/evicted",
+            action: { type: "uninstall", pluginId: linear.id },
+          })
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* Deferred.succeed(retired, undefined);
+        assert.strictEqual((yield* Fiber.join(action)).reason, "state-unavailable");
+        yield* Deferred.succeed(release, undefined);
+      }),
+    ),
+  );
+
+  it.effect("waits for a cached scan's native publication without owning its cancellation", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        const input = { instanceId: INSTANCE_ID, cwd: "/repo" };
+        const scanned = yield* registry.refreshWorkspaceSnapshot(input);
+        assert.isUndefined(scanned[0]?.workspaceSnapshots?.[0]?.plugins);
+        const first = yield* registry
+          .refreshWorkspaceSnapshot({ ...input, awaitNativeInventory: true })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        assert.isUndefined(first.pollUnsafe());
+        yield* Fiber.interrupt(first);
+        const next = yield* registry
+          .refreshWorkspaceSnapshot({ ...input, awaitNativeInventory: true })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        assert.isUndefined(next.pollUnsafe());
+        yield* Deferred.succeed(harness.workspaceListingGate, undefined);
+        assert.deepStrictEqual((yield* Fiber.join(next))[0]?.workspaceSnapshots?.[0]?.plugins, [
+          linear,
+        ]);
+        assert.strictEqual(yield* Ref.get(harness.scanCalls), 1);
+      }),
+    ),
+  );
+
+  it.effect("a forced scan replaces a pending listing without reviving its old result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        const started = yield* Deferred.make<void>();
+        const oldResult = yield* Deferred.make<void>();
+        yield* Ref.set(harness.listingReadRef, () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(oldResult)),
+            Effect.as([linear]),
+          ),
+        );
+        yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" });
+        yield* Deferred.await(started);
+        yield* Ref.set(harness.listingReadRef, () => Effect.succeed([]));
+        const reply = yield* registry.refreshWorkspaceSnapshot({
+          instanceId: INSTANCE_ID,
+          cwd: "/repo",
+          fresh: true,
+          awaitNativeInventory: true,
+        });
+        assert.deepStrictEqual(reply[0]?.workspaceSnapshots?.[0]?.plugins, []);
+        yield* Deferred.succeed(oldResult, undefined);
+        assert.deepStrictEqual(
+          (yield* registry.getProviders)[0]?.workspaceSnapshots?.[0]?.plugins,
+          [],
+        );
+        assert.strictEqual(yield* Ref.get(harness.scanCalls), 2);
+      }),
+    ),
+  );
+
+  it.effect("leaves an unsuccessful full-inventory listing unknown instead of empty", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.registry.refreshInstance(INSTANCE_ID);
+        // @effect-diagnostics-next-line effectSucceedWithVoid:off -- An unreported listing is undefined, not void.
+        yield* Ref.set(harness.listingReadRef, () => Effect.succeed(undefined));
+        const reply = yield* harness.registry.refreshWorkspaceSnapshot({
+          instanceId: INSTANCE_ID,
+          cwd: "/repo",
+          awaitNativeInventory: true,
+        });
+        assert.isUndefined(reply[0]?.workspaceSnapshots?.[0]?.plugins);
+      }),
+    ),
+  );
+
+  it.effect("does not apply a full-inventory completion from a replaced instance", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" });
+        const waiting = yield* registry
+          .refreshWorkspaceSnapshot({
+            instanceId: INSTANCE_ID,
+            cwd: "/repo",
+            awaitNativeInventory: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        const replacement = yield* harness.makeInstance();
+        yield* Ref.set(harness.instancesRef, [replacement.instance]);
+        yield* Deferred.succeed(harness.workspaceListingGate, undefined);
+        const reply = yield* Fiber.join(waiting);
+        assert.isUndefined(reply[0]?.workspaceSnapshots?.[0]?.plugins);
+      }),
+    ),
+  );
+
+  it.effect("releases an explicit inventory waiter when another scan evicts its listing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const { registry } = harness;
+        yield* registry.refreshInstance(INSTANCE_ID);
+        yield* registry.refreshWorkspaceSnapshot({ instanceId: INSTANCE_ID, cwd: "/repo" });
+        const waiting = yield* registry
+          .refreshWorkspaceSnapshot({
+            instanceId: INSTANCE_ID,
+            cwd: "/repo",
+            awaitNativeInventory: true,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        for (let index = 0; index < 16; index++) {
+          yield* registry.refreshWorkspaceSnapshot({
+            instanceId: INSTANCE_ID,
+            cwd: `/other-${index}`,
+          });
+        }
+        assert.isFalse(
+          (yield* Fiber.join(waiting))[0]?.workspaceSnapshots?.some(
+            (snapshot) => snapshot.cwd === "/repo",
+          ),
+        );
+        assert.include(harness.workspaceCalls, "stop /repo");
       }),
     ),
   );
@@ -621,7 +1014,7 @@ describe("ProviderRegistry provider-native inventory", () => {
   );
 
   it.effect(
-    "releases a workspace scan's claim when the scan is cancelled during listing cleanup",
+    "shares a workspace scan through caller cancellation during listing cleanup and releases its claim",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -643,20 +1036,35 @@ describe("ProviderRegistry provider-native inventory", () => {
           yield* Deferred.await(cleanupStarted);
           // The caller goes away while the old listing is still shutting down.
           yield* Fiber.interrupt(scan);
+          const waiter = yield* registry
+            .refreshWorkspaceSnapshot({
+              instanceId: INSTANCE_ID,
+              cwd: "/repo",
+              awaitNativeInventory: true,
+            })
+            .pipe(Effect.forkChild);
           yield* Deferred.succeed(cleanupGate, undefined);
-          assert.strictEqual(yield* Ref.get(harness.scanCalls), 0);
-
-          // An ordinary scan of the same workspace is admitted and runs.
-          yield* Ref.set(harness.cancelGateRef, Effect.void);
-          const scanned = yield* registry.refreshWorkspaceSnapshot({
-            instanceId: INSTANCE_ID,
-            cwd: "/repo",
-          });
+          yield* awaitProviders(
+            registry,
+            (provider) =>
+              provider?.workspaceSnapshots?.some((snapshot) => snapshot.cwd === "/repo") === true,
+          );
+          assert.isUndefined(waiter.pollUnsafe());
+          yield* Deferred.succeed(harness.workspaceListingGate, undefined);
+          const scanned = yield* Fiber.join(waiter);
+          assert.deepStrictEqual(scanned[0]?.workspaceSnapshots?.[0]?.plugins, [linear]);
           assert.strictEqual(yield* Ref.get(harness.scanCalls), 1);
           assert.include(
             scanned[0]?.workspaceSnapshots?.map((snapshot) => snapshot.cwd) ?? [],
             "/repo",
           );
+          yield* Ref.set(harness.cancelGateRef, Effect.void);
+          yield* registry.refreshWorkspaceSnapshot({
+            instanceId: INSTANCE_ID,
+            cwd: "/repo",
+            fresh: true,
+          });
+          assert.strictEqual(yield* Ref.get(harness.scanCalls), 2);
         }),
       ),
   );

@@ -19,6 +19,9 @@ import type { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.t
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { isAutomaticCompletionRun } from "../../orchestration-v2/QueuedRunOrder.ts";
 
+/** A run stopped for a sent `/goal` lets that goal and the queue behind it proceed. */
+export const GOAL_COMMAND_STOP_REASON = "Stopped to apply /goal";
+
 /** Bind the native terminal reaction once; reads and writes stay lazy under the caller's lock. */
 export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
   projectionStore,
@@ -56,7 +59,7 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
       {
         messageRoles: ["user", "system"],
         turnItemRunIds: [terminal.id],
-        turnItemTypes: ["error"],
+        turnItemTypes: ["error", "run_interrupt_request"],
       },
     );
     const run = projection.runs.find((candidate) => candidate.id === terminal.id);
@@ -66,8 +69,17 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
       run.activeAttemptId !== terminal.activeAttemptId
     )
       return;
+    const stoppedForGoal =
+      run.status === "interrupted" &&
+      projection.turnItems.some(
+        (item) =>
+          item.type === "run_interrupt_request" &&
+          item.runId === run.id &&
+          item.message === GOAL_COMMAND_STOP_REASON,
+      );
     const queued = projection.runs.filter(
       (candidate) =>
+        !stoppedForGoal &&
         candidate.status === "queued" &&
         candidate.queueHeld !== true &&
         !isAutomaticCompletionRun(projection, candidate),

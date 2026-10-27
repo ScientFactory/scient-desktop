@@ -158,7 +158,6 @@ function decodeUtf8(bytes: Uint8Array): string | null {
 function isSafeEntryPath(name: string): boolean {
   if (name.length === 0 || name.length > 512) return false;
   if (name.startsWith("/") || name.includes("\\") || /^[a-zA-Z]:/.test(name)) return false;
-  // oxlint-disable-next-line no-control-regex -- control characters are exactly what is refused.
   if (/[\u0000-\u001f\u007f]/u.test(name)) return false;
   return name.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }

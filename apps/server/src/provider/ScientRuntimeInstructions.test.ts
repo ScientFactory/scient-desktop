@@ -7,8 +7,9 @@ describe("Scient runtime instructions", () => {
   it.each(["Codex"])("keeps the Scient identity for the %s harness", (harness) => {
     const instructions = buildScientRuntimeInstructions({ harness });
     assert.include(instructions, `running in Scient through the ${harness} harness.`);
-    assert.include(instructions, "embed images and videos");
-    assert.include(instructions, "Markdown with absolute file paths");
+    assert.include(instructions, "embed images, video, and audio");
+    assert.include(instructions, "Markdown image syntax with absolute file paths");
+    assert.include(instructions, "open it in Scient's files viewer.");
     assert.notInclude(instructions, "undefined");
   });
 

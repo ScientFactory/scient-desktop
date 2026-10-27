@@ -9,7 +9,6 @@ class ScientVoiceRecorderProcessor extends AudioWorkletProcessor {
     super();
     this._buffer = new Float32Array(CHUNK_SAMPLES);
     this._offset = 0;
-    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- AudioWorklet MessagePort starts automatically through onmessage; addEventListener would also require an explicit start().
     this.port.onmessage = (event) => {
       const message = event.data;
       if (!message || message.type !== "flush") return;

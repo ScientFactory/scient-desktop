@@ -22,7 +22,6 @@ import {
   type PhysicalLatexSourceEdit,
   type VisualProjectDocument,
 } from "./latexProjectVisual";
-import { latexPackageInventory } from "./latexPackages";
 import { checkpointVisualDraft, confirmVisualDraft } from "./visualDrafts";
 import {
   createLatexEditorSourceSnapshot,

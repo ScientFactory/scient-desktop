@@ -339,29 +339,29 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
             { ...effectiveEnvironment, CURSOR_API_KEY: apiKey },
             auth.usesApiKey ? "api-key" : "browser",
           ).pipe(
-            Effect.flatMap((providerSnapshot) =>
-              effectiveConfig.enabled && providerSnapshot.installed
-                ? Effect.gen(function* () {
-                    const skills = yield* readMachineSkills;
-                    const usageLimits =
-                      providerSnapshot.auth.status === "authenticated"
-                        ? yield* host.settings.get.pipe(
-                            Effect.flatMap((settings) =>
-                              readCursorUsageLimits(
-                                effectiveConfig,
-                                { ...effectiveEnvironment, CURSOR_API_KEY: apiKey },
-                                settings.cursorKeychainUsageEnabled,
-                              ),
+            Effect.filterOrElse(
+              (providerSnapshot) => !(effectiveConfig.enabled && providerSnapshot.installed),
+              (providerSnapshot) =>
+                Effect.gen(function* () {
+                  const skills = yield* readMachineSkills;
+                  const usageLimits =
+                    providerSnapshot.auth.status === "authenticated"
+                      ? yield* host.settings.get.pipe(
+                          Effect.flatMap((settings) =>
+                            readCursorUsageLimits(
+                              effectiveConfig,
+                              { ...effectiveEnvironment, CURSOR_API_KEY: apiKey },
+                              settings.cursorKeychainUsageEnabled,
                             ),
-                          )
-                        : undefined;
-                    return {
-                      ...providerSnapshot,
-                      ...(skills === undefined ? {} : { skills }),
-                      ...(usageLimits === undefined ? {} : { usageLimits }),
-                    };
-                  })
-                : Effect.succeed(providerSnapshot),
+                          ),
+                        )
+                      : undefined;
+                  return {
+                    ...providerSnapshot,
+                    ...(skills === undefined ? {} : { skills }),
+                    ...(usageLimits === undefined ? {} : { usageLimits }),
+                  };
+                }),
             ),
           ),
         ),

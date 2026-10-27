@@ -222,9 +222,11 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         installedPath: null,
         legacyInstalled: false,
         onPath: false,
+        launcherPath: null,
       });
       const installed = yield* command.install;
       expect(installed.installedPath).toBe(link);
+      expect(installed.launcherPath).toBe(path.join(home, ".scient-next", "bin", "scient"));
       expect(yield* fs.readLink(link)).toBe(path.join(home, ".scient-next", "bin", "scient"));
       expect(yield* fs.exists(path.join(home, ".scient-next", "bin", "t3"))).toBe(false);
       expect((yield* command.install).installedPath).toBe(link);
@@ -314,6 +316,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         installedPath: null,
         legacyInstalled: true,
         onPath: false,
+        launcherPath: null,
       });
       expect((yield* command.uninstall).legacyInstalled).toBe(false);
       expect(yield* fs.exists(link)).toBe(false);
@@ -535,6 +538,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
               installedPath: null,
               legacyInstalled: false,
               onPath: false,
+              launcherPath: installed.launcherPath,
             });
             expect(yield* fs.exists(link)).toBe(false);
             expect(yield* fs.exists(legacyLink)).toBe(false);
@@ -750,6 +754,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         installedPath: null,
         legacyInstalled: true,
         onPath: false,
+        launcherPath: null,
       });
       expect((yield* command.install).installedPath).toBe(path.join(bin, "scient.cmd"));
       expect(registry.writes).toBe(0);
@@ -787,6 +792,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
         installedPath: null,
         legacyInstalled: false,
         onPath: false,
+        launcherPath: path.join(launcherDir, "scient.cmd"),
       });
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
@@ -819,6 +825,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           installedPath: null,
           legacyInstalled: false,
           onPath: false,
+          launcherPath: installed.launcherPath,
         });
         yield* command.uninstall;
         expect(registry.path).toBe(userAddedPath);
@@ -861,6 +868,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
           installedPath: null,
           legacyInstalled: true,
           onPath: false,
+          launcherPath: null,
         });
         registry.failReads = true;
         expect((yield* Effect.flip(command.uninstall)).message).toContain("left unchanged");
@@ -924,6 +932,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
             installedPath: null,
             legacyInstalled: false,
             onPath: false,
+            launcherPath: installed.launcherPath,
           });
           expect(registry.path).toBe("C:\\OtherApp");
         }

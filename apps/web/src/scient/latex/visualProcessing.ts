@@ -90,6 +90,7 @@ function pump() {
                 finish(null);
               }, 3000);
               try {
+                // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Dedicated Worker.postMessage accepts transfers, not a window target origin.
                 owner.postMessage({ id: active.id, input: active.input });
               } catch {
                 finish(null);
@@ -159,6 +160,7 @@ function pump() {
         ? visualChangeDelta(active.input, base.id, base.content)
         : null;
     active.delta = delta !== null;
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Dedicated Worker.postMessage accepts transfers, not a window target origin.
     worker.postMessage({ id: active.id, input: delta ?? active.input });
   } catch {
     finish(null);

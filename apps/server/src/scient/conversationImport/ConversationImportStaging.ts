@@ -34,6 +34,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -578,14 +579,11 @@ const makeEffect = Effect.fn("ConversationImportStaging.make")(function* (
       if (!secret || !timingSafeEqualBase64Url(signature, signPayload(payload, secret))) {
         return null;
       }
-      let decoded: Option.Option<ConversationImportUploadClaims>;
-      try {
-        decoded = decodeUploadClaims(base64UrlDecodeUtf8(payload));
-      } catch {
-        return null;
-      }
-      if (Option.isNone(decoded) || decoded.value.expiresAt <= (yield* now)) return null;
-      return decoded.value;
+      const decoded = Result.try(() => decodeUploadClaims(base64UrlDecodeUtf8(payload)));
+      if (Result.isFailure(decoded)) return null;
+      const claims = decoded.success;
+      if (Option.isNone(claims) || claims.value.expiresAt <= (yield* now)) return null;
+      return claims.value;
     });
 
   /** Streams the body into the area's package file; how the receive ended. */

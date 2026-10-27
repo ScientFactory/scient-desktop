@@ -18,16 +18,7 @@ import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
 import type * as Schema from "effect/Schema";
 
-import {
-  ACPRegistryIcon,
-  AntigravityIcon,
-  ClaudeAI,
-  DroidIcon,
-  type Icon,
-  OpenAI,
-  OhMyPiIcon,
-  ScientAgentIcon,
-} from "../Icons";
+import { ACPRegistryIcon, type Icon } from "../Icons";
 import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 
 type ProviderSettingsSchema = {

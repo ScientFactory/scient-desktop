@@ -199,7 +199,6 @@ import {
   LatexAlgorithmComment,
 } from "./LatexAlgorithmView";
 import { latexColorCss, latexDocumentColors, latexColorBoxOpening } from "./latexColorBoxes";
-import { LatexObjectMathField } from "./LatexObjectMathField";
 import { LatexInlineField } from "./LatexInlineField";
 import {
   latexEditingTarget,
@@ -209,7 +208,6 @@ import {
 import { LatexWritingKeys } from "./latexWritingKeys";
 import { LatexProseCompletion } from "./latexProseCompletion";
 import { LatexCommandContext } from "./LatexCompletionContext";
-import { latexTableMathCell, latexTableCellIsMath } from "./latexVisualDocument";
 import { LatexProsePreview } from "./LatexProsePreview";
 import { latexFigureSource } from "./figureSource";
 import { uploadLatexImage } from "./imageUpload";
@@ -1616,6 +1614,7 @@ function LatexMathView({
         <span className="scient-latex-equation-numbers" contentEditable={false}>
           {equationRows.map((row, index) => (
             <span
+              // oxlint-disable-next-line react/no-array-index-key -- These are layout slots aligned to math rows, including repeated unnumbered rows.
               key={index}
               data-latex-equation-row={index}
               aria-label={row.number ? `Equation ${row.number}` : undefined}
@@ -1970,38 +1969,40 @@ function LatexInlineCommandView({
       ) : citationTargets ? (
         <span className="scient-latex-citation">
           [
-          {citationTargets.map(({ key, target }, index) => (
-            <Fragment key={`${key}:${index}`}>
-              {index > 0 ? ", " : ""}
-              <ScientTooltip
-                content={
-                  target
-                    ? `Go to reference ${target.number ?? key} (${key})`
-                    : `Unresolved citation: ${key}`
-                }
-              >
-                <button
-                  type="button"
-                  disabled={!editable && !target}
-                  aria-label={
+          {withStableKeys(citationTargets, (entry) => entry.key).map(
+            ({ value: { key, target }, index, key: identity }) => (
+              <Fragment key={identity}>
+                {index > 0 ? ", " : ""}
+                <ScientTooltip
+                  content={
                     target
-                      ? `Go to reference ${target.number ?? key}`
-                      : `Edit unresolved citation ${key}`
+                      ? `Go to reference ${target.number ?? key} (${key})`
+                      : `Unresolved citation: ${key}`
                   }
-                  onClick={() => {
-                    const position = getPos();
-                    if (typeof position === "number") editor.commands.setNodeSelection(position);
-                    const liveTarget = latexEquationReferencesKey
-                      .getState(referenceEditor.state)
-                      ?.citations.get(key);
-                    if (liveTarget) navigateToEquation(referenceEditor.view, liveTarget);
-                  }}
                 >
-                  {target?.number ?? "?"}
-                </button>
-              </ScientTooltip>
-            </Fragment>
-          ))}
+                  <button
+                    type="button"
+                    disabled={!editable && !target}
+                    aria-label={
+                      target
+                        ? `Go to reference ${target.number ?? key}`
+                        : `Edit unresolved citation ${key}`
+                    }
+                    onClick={() => {
+                      const position = getPos();
+                      if (typeof position === "number") editor.commands.setNodeSelection(position);
+                      const liveTarget = latexEquationReferencesKey
+                        .getState(referenceEditor.state)
+                        ?.citations.get(key);
+                      if (liveTarget) navigateToEquation(referenceEditor.view, liveTarget);
+                    }}
+                  >
+                    {target?.number ?? "?"}
+                  </button>
+                </ScientTooltip>
+              </Fragment>
+            ),
+          )}
           {citation?.notes.length
             ? `, ${citation.notes.map((note) => metadataText(note) ?? note).join(", ")}`
             : ""}
@@ -3581,25 +3582,27 @@ function LatexRichPreviewView({
           </p>
         )}
         <ol>
-          {bibliographyItems.map((item, index) => (
-            <Fragment key={`${String(item.label ?? "")}:${index}`}>
-              <li
-                data-latex-bibliography-item={index}
-                onPointerDown={() => setDescriptionItem(index)}
-              >
-                <span className="scient-latex-bibliography-label">
-                  [{bibliographyPresentation?.labels[index] ?? "?"}]
-                </span>
-                <LatexProsePreview
-                  source={
-                    sourceMeta?.bibliographySource === true || external
-                      ? String(item.body ?? "")
-                      : escapeText(String(item.body ?? ""))
-                  }
-                />
-              </li>
-            </Fragment>
-          ))}
+          {withStableKeys(bibliographyItems, (item) => String(item.label ?? "")).map(
+            ({ value: item, index, key }) => (
+              <Fragment key={key}>
+                <li
+                  data-latex-bibliography-item={index}
+                  onPointerDown={() => setDescriptionItem(index)}
+                >
+                  <span className="scient-latex-bibliography-label">
+                    [{bibliographyPresentation?.labels[index] ?? "?"}]
+                  </span>
+                  <LatexProsePreview
+                    source={
+                      sourceMeta?.bibliographySource === true || external
+                        ? String(item.body ?? "")
+                        : escapeText(String(item.body ?? ""))
+                    }
+                  />
+                </li>
+              </Fragment>
+            ),
+          )}
         </ol>
       </NodeViewWrapper>
     );
@@ -3628,8 +3631,10 @@ function LatexRichPreviewView({
         </h2>
         {entries.length > 0 ? (
           <ol>
-            {entries.map((entry, index) => (
-              <Fragment key={index}>
+            {withStableKeys(entries, (entry) =>
+              JSON.stringify([entry.position, entry.kind, entry.level, entry.number, entry.title]),
+            ).map(({ value: entry, index, key }) => (
+              <Fragment key={key}>
                 <li
                   data-level={Number(entry.level ?? 1)}
                   data-unnumbered={!entry.number || undefined}
@@ -3776,6 +3781,7 @@ function LatexRichPreviewView({
               <MenuRadioGroup value={String(activePanel)}>
                 {panels.map((_panel, index) => (
                   <DockCommandRadioItem
+                    // oxlint-disable-next-line react/no-array-index-key -- Panel commands address fixed editor slots; image/label edits must retain the open menu item.
                     key={index}
                     value={String(index)}
                     size="compact"
@@ -3854,6 +3860,7 @@ function LatexRichPreviewView({
               const item = figureItems[index]!;
               const letter = figurePresentation?.panels[index] ?? null;
               return (
+                // oxlint-disable-next-line react/no-array-index-key -- The source model owns panel slots; content/offset keys would remount active caption editors while typing.
                 <Fragment key={index}>
                   {panel.rowBreakBefore ? (
                     <div aria-hidden="true" style={{ flexBasis: "100%", height: 0 }} />
@@ -8086,76 +8093,6 @@ function LatexVisualEditorReady(
     if (captureInsertion()) setBibliographyDialog({ open: true });
   };
 
-  const applyRichLayout = (source: string, textField: "body" | "title" = "body") => {
-    const node = projectLatexVisualDocument(source).content.content?.[0];
-    if (!node || !editor) return;
-    const selectedNode =
-      editor.state.selection instanceof NodeSelection ? editor.state.selection.node : null;
-    if (
-      selectedNode?.type.name === "latexRichPreview" &&
-      selectedNode.attrs.editable === true &&
-      !selectedNode.attrs.label &&
-      !(selectedNode.attrs.kind === "scientific" && selectedNode.attrs.title) &&
-      ["simple", "part", "abstract", "scientific"].includes(String(selectedNode.attrs.kind))
-    ) {
-      const content = String(selectedNode.attrs.body ?? selectedNode.attrs.title ?? "");
-      const replacement = content
-        ? {
-            ...node,
-            attrs:
-              node.attrs?.kind === "description"
-                ? { ...node.attrs, items: [{ label: "", body: content }] }
-                : node.attrs?.kind === "bibliography"
-                  ? { ...node.attrs, items: [{ label: "reference1", body: escapeText(content) }] }
-                  : { ...node.attrs, [textField]: content },
-          }
-        : node;
-      editor
-        .chain()
-        .focus()
-        .insertContentAt(
-          {
-            from: editor.state.selection.from,
-            to: editor.state.selection.to,
-          },
-          replacement,
-        )
-        .run();
-      return;
-    }
-    const { $from } = editor.state.selection;
-    if ($from.depth > 0) {
-      const block = $from.node(1);
-      if (
-        (block.type.name === "paragraph" || block.type.name === "heading") &&
-        !block.attrs.referenceLabel &&
-        block.content.content.every(
-          (child) => child.type.name === "text" && child.marks.length === 0,
-        )
-      ) {
-        const content = block.textContent;
-        const replacement = content
-          ? {
-              ...node,
-              attrs:
-                node.attrs?.kind === "description"
-                  ? { ...node.attrs, items: [{ label: "", body: content }] }
-                  : node.attrs?.kind === "bibliography"
-                    ? { ...node.attrs, items: [{ label: "reference1", body: escapeText(content) }] }
-                    : { ...node.attrs, [textField]: content },
-            }
-          : node;
-        editor
-          .chain()
-          .focus()
-          .insertContentAt({ from: $from.before(1), to: $from.after(1) }, replacement)
-          .run();
-        return;
-      }
-    }
-    editor.chain().focus().insertContent(node).run();
-  };
-
   const selectedRichText = () => {
     if (!editor || !(editor.state.selection instanceof NodeSelection)) return null;
     const selection = editor.state.selection;
@@ -9231,11 +9168,6 @@ function LatexVisualEditorReady(
   // Inline formatting acts on text; on an object (title, figure, equation) it is off.
   const editingPresentation = useLatexEditingPresentation(editor);
   const editingTarget = editingPresentation.editor;
-  const caretInText = Boolean(
-    editor &&
-    !(editor.state.selection instanceof NodeSelection) &&
-    editor.state.selection.$from.parent.isTextblock,
-  );
   const formattingAvailable = editingPresentation.formattingAvailable;
   const formatActions = [
     {
@@ -9660,14 +9592,6 @@ function LatexVisualEditorReady(
     commandScope: "latex",
   };
   const writingTextTools = <TextMenu {...writingTextContents} disabled={readOnly} />;
-  // Some places cannot hold a list (a statement's title, a selected figure).
-  const listsUnavailable =
-    !textReadOnly &&
-    listState !== null &&
-    listState !== undefined &&
-    listState.type === null &&
-    !listState.available.bulletList &&
-    !listState.available.orderedList;
   const writingListItems = (
     <>
       <MenuRadioGroup value={listState?.type ?? "none"}>

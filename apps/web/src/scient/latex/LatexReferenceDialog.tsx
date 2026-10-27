@@ -171,9 +171,17 @@ export const LatexReferenceDialog = memo(
       ? mergedInlineBibliographyChoices(props.source, props.setupSource)
       : [];
     const candidates = mode === "reference" ? documentObjects : [...inlineSources, ...references];
-    const choices = candidates.filter((entry) =>
-      `${entry.title} ${entry.key} ${entry.detail}`.toLowerCase().includes(query.toLowerCase()),
-    );
+    const occurrences = new Map<string, number>();
+    const choices = candidates
+      .map((entry) => {
+        const identity = JSON.stringify([entry.command, entry.key, entry.detail, entry.title]);
+        const occurrence = occurrences.get(identity) ?? 0;
+        occurrences.set(identity, occurrence + 1);
+        return { entry, identity: JSON.stringify([identity, occurrence]) };
+      })
+      .filter(({ entry }) =>
+        `${entry.title} ${entry.key} ${entry.detail}`.toLowerCase().includes(query.toLowerCase()),
+      );
     const insert = (command: string, key: string) => {
       pendingInsert.current = { command, key };
       props.onOpenChange(false);
@@ -226,10 +234,10 @@ export const LatexReferenceDialog = memo(
                 aria-label="Search references"
               />
               <div className="scient-writing-choices">
-                {choices.map((entry, index) => (
+                {choices.map(({ entry, identity }) => (
                   <button
                     type="button"
-                    key={`${entry.key}:${index}`}
+                    key={identity}
                     aria-pressed={selected.includes(entry.key)}
                     onClick={() =>
                       setSelected((current) =>

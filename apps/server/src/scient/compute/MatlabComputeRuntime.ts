@@ -314,6 +314,7 @@ export const matlabRuntimeBinding: Effect.Effect<
   const platform = yield* HostProcess.Platform;
   const arch = yield* HostProcess.Architecture;
   const recipeNetwork = yield* ComputeRecipeNetwork;
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const { environment } = sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
   const helper = yield* Effect.tryPromise({
     try: async () => {
@@ -336,7 +337,7 @@ export const matlabRuntimeBinding: Effect.Effect<
         platform,
         arch,
         selectedExecutable: () =>
-          Effect.runPromise(preferences.readRuntimeExecutablePath("matlab")).then(
+          runPromise(preferences.readRuntimeExecutablePath("matlab")).then(
             (value) => value.executablePath,
           ),
       });

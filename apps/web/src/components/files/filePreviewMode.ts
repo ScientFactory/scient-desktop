@@ -1,10 +1,14 @@
 import type { AssetResource, ProjectReadFileError, ScopedThreadRef } from "@t3tools/contracts";
+// SCIENT-FORK:START — compute source keeps its scientific surface.
+import { computeSourceLanguageForPath } from "~/scient/compute/computeSourceLanguage";
+// SCIENT-FORK:END
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { isHostPath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import {
   isWorkspaceImagePreviewPath,
   isWorkspacePdfPreviewPath,
   isWorkspaceVideoPreviewPath,
+  filePreviewKind,
 } from "@t3tools/shared/filePreview";
 
 export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {
@@ -12,7 +16,8 @@ export function resolveFilePreviewPath(path: string | null, cwd: string): string
   return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
 }
 
-export const isMarkdownPreviewFile = (path: string): boolean => /\.(?:md|mdx)$/i.test(path);
+export const isMarkdownPreviewFile = (path: string): boolean =>
+  /\.(?:md|mdx|markdown|mdown|mkd)$/i.test(path);
 
 export const isLatexPreviewFile = (path: string): boolean => /\.(?:tex|latex|ltx)$/i.test(path);
 
@@ -29,6 +34,26 @@ export function resolveFilePreviewKind(path: string | null): FilePreviewKind {
 export function shouldLoadFileAsText(path: string | null): boolean {
   return resolveFilePreviewKind(path) === "text";
 }
+
+// SCIENT-FORK:START — richer source and citation owners retain their bounded source view.
+export function shouldUseLargeTextPreview(input: {
+  readonly path: string | null;
+  readonly draft: boolean;
+  readonly truncated: boolean;
+  readonly citationRevealActive: boolean;
+}): boolean {
+  return (
+    input.path !== null &&
+    input.truncated &&
+    !input.draft &&
+    !input.citationRevealActive &&
+    filePreviewKind({ name: input.path }) === "text" &&
+    computeSourceLanguageForPath(input.path) === null &&
+    !isLatexPreviewFile(input.path) &&
+    !/\.bib$/i.test(input.path)
+  );
+}
+// SCIENT-FORK:END
 
 export function filePreviewReadErrorMessage(error: ProjectReadFileError): string {
   switch (error.failure) {
@@ -99,7 +124,7 @@ export function workspaceAssetResource(input: {
   readonly draft: boolean;
   readonly workspaceRoot: string;
   readonly absolutePath: string;
-}): AssetResource {
+}): Extract<AssetResource, { _tag: "workspace-file" | "media-file" | "draft-workspace-file" }> {
   if (input.draft) {
     return { _tag: "draft-workspace-file", cwd: input.workspaceRoot, path: input.absolutePath };
   }

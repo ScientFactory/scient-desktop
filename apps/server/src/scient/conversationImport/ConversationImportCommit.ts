@@ -400,7 +400,9 @@ export const layer = Layer.effect(
       ),
     );
     return ConversationImportCommit.of({
-      dispatch: (command) => executor.withLock(command.threadId, dispatch(command)),
+      dispatch: Effect.fn("ConversationImportCommit.dispatch")(function (command) {
+        return executor.withLock(command.threadId, dispatch(command));
+      }),
     });
   }),
 );
