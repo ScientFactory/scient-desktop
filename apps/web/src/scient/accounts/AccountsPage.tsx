@@ -268,9 +268,24 @@ function ManagedAccountRow({
   const domain =
     managedHost(row.detail) ??
     (row.kind === "github" ? "github.com" : row.kind === "claude" ? "claude.ai" : undefined);
+  // Our own logos first: the extension catalogue has no GitHub or Claude sign-in entries.
+  const logo = accountIconUrl(
+    row.kind === "claude"
+      ? ["anthropic.com"]
+      : row.kind === "codex"
+        ? ["openai.com"]
+        : domain
+          ? [domain]
+          : [],
+    name,
+  );
   const content = (
     <>
-      <ExtensionIcon name={name} environmentId={environmentId} />
+      {logo ? (
+        <AccountLogo src={logo} className="size-9 shrink-0 rounded-lg" />
+      ) : (
+        <ExtensionIcon name={name} environmentId={environmentId} />
+      )}
       <span className="grid min-w-0 flex-1 gap-1">
         <span className="truncate text-sm font-medium">{name}</span>
         {domain ? <span className="truncate text-xs text-muted-foreground">{domain}</span> : null}
@@ -403,18 +418,16 @@ function AccountsContent({
       >
         {!snapshot.accounts.length ? (
           <SettingsRow
-            title={
-              <span className="flex items-center gap-2">
-                No accounts{" "}
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={!canWrite}
-                  onClick={() => setDialog("add")}
-                >
-                  Add an account
-                </Button>
-              </span>
+            title="No accounts"
+            control={
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={!canWrite}
+                onClick={() => setDialog("add")}
+              >
+                Add an account
+              </Button>
             }
           />
         ) : null}

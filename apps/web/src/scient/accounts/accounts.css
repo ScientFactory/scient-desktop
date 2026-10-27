@@ -6,8 +6,14 @@
   border-color: var(--muted-foreground);
 }
 .scient-accounts-settings [data-slot="settings-row"] {
+  display: flex;
+  align-items: center;
   min-height: 60px;
   padding-block: 10px;
+}
+.scient-accounts-settings [data-slot="settings-row"] > :first-child {
+  flex: 1;
+  min-width: 0;
 }
 .scient-accounts-settings[data-agent-access="false"] [data-account-access] {
   opacity: 0.4;
