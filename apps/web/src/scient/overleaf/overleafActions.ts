@@ -225,7 +225,7 @@ export async function readOverleafChanges(
   connectionId: string,
 ): Promise<void> {
   const current = readOverleafWorkspace(environmentId, workspaceRoot);
-  if (current.previewing.has(connectionId)) return;
+  if (current.previewing.has(connectionId) || current.syncing.has(connectionId)) return;
   const startedAt = beginOverleafPreview(environmentId, connectionId);
   try {
     const result = await previewOverleaf(environmentId, { workspaceRoot, connectionId });
