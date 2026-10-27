@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: declare profile authorization dependencies and safe denials.
+import { AccountsError } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import { ProviderSessionManagerV2 } from "../../../orchestration-v2/ProviderSessionManager.ts";
 import {
   OrchestratorMcpFailure,
@@ -37,7 +40,13 @@ const dependencies = [
   PreviewAutomationBroker.PreviewAutomationBroker,
 ];
 
-const PreviewToolFailure = Schema.Union([PreviewAutomationError, OrchestratorMcpFailure]);
+// SCIENT-FORK:START — Scient Accounts: preserve safe profile denial messages.
+const PreviewToolFailure = Schema.Union([
+  PreviewAutomationError,
+  OrchestratorMcpFailure,
+  AccountsError,
+]);
+// SCIENT-FORK:END
 
 const presentationFields = { toolIcon: Schema.optional(ToolActivityIcon) };
 

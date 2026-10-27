@@ -18,7 +18,12 @@ const publicConfigDefine = {
       : "",
   ),
 };
-const preloadTests = ["src/scient/spelling/preloadSampler.test.ts"];
+const preloadTests = [
+  "src/scient/spelling/preloadSampler.test.ts",
+  // SCIENT-FORK:START — Scient Accounts: exercise login forms in the guest preload environment.
+  "src/scient/accounts/loginForm.test.ts",
+  // SCIENT-FORK:END
+];
 
 export default defineConfig({
   run: {

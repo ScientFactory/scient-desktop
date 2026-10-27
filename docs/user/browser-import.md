@@ -28,3 +28,5 @@ the import wizard afterward. You can revoke Full Disk Access once the import is 
 On Windows, import supports Firefox, Zen, and Helium profiles that use standard profile encryption.
 Other Chromium-based browsers use app-bound encryption and cannot be imported. Partitioned cookies
 are skipped on all platforms.
+
+Manage imported profiles and saved sign-ins in [Accounts](accounts.md).

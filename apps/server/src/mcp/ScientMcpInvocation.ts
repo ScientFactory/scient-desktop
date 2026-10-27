@@ -6,6 +6,9 @@ import type { McpCapability, McpThreadInvocationScope } from "./McpInvocationCon
 // Explicit projection: adding a host grant does not grant a Scient operation.
 // No credentials or provider runtime objects cross this boundary.
 const scientGrants: Record<OperationCapability, McpCapability> = {
+  // SCIENT-FORK:START — Scient Accounts: carry the MCP grant into Scient operations.
+  accounts: "accounts",
+  // SCIENT-FORK:END
   preview: "preview",
   "documents:build": "documents:build",
   "compute:inventory": "compute:inventory",

@@ -51,6 +51,7 @@ import { LatexBuildService } from "../scient/latex/LatexBuildService.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
+import { AccountsService } from "../scient/accounts/AccountsService.ts";
 // SCIENT-FORK:END
 
 // Registration only stores tool definitions, so the handlers' services are never called.
@@ -98,6 +99,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(WorkspaceBindingResolver)({}),
   Layer.mock(WorkspaceFileSystem)({}),
   Layer.mock(WorkspacePaths)({}),
+  Layer.mock(AccountsService)({}),
   // SCIENT-FORK:END
 ).pipe(Layer.provideMerge(NodeServices.layer));
 

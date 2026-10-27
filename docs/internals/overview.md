@@ -266,6 +266,7 @@ ready. The HTTP listener can exist while command readiness is still gated.
 - [Scient conversation-fork architecture and T3 divergence](./scient-fork-divergence.md)
 - [Mobile navigation headers](./mobile-navigation.md)
 - [Scient product analytics](./product-analytics.md)
+- [Scient Accounts](./scient-accounts.md)
 - [Scripts](./scripts.md), [CI gates](./ci.md)
 - [D4 bootstrap record](./scient-next-d4-bootstrap.md)
 

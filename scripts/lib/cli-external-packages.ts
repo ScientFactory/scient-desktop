@@ -19,6 +19,9 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "@yuuang/",
   "@ff-labs/",
   "@napi-rs/keyring",
+  // SCIENT-FORK:START — Scient Accounts: the 1Password SDK loads WASM and native libraries from disk.
+  "@1password/",
+  // SCIENT-FORK:END
   "@clerk/electron-passkeys",
   "@msgpackr-extract/",
   "msgpackr-extract",

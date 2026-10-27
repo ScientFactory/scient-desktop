@@ -15,6 +15,9 @@ import * as Fiber from "effect/Fiber";
 
 /** Authenticated external-provider transport grants, owned by the MCP host. */
 const ALL_MCP_CAPABILITIES = [
+  // SCIENT-FORK:START — Scient Accounts: grant account tools to authenticated provider sessions.
+  "accounts",
+  // SCIENT-FORK:END
   "preview",
   "orchestration",
   "worktree",

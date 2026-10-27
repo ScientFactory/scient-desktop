@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: keep MCP fixtures away from native credential stores.
+import * as AccountsTestkit from "../../../scient/accounts/Accounts.testkit.ts";
+// SCIENT-FORK:END
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../../../orchestration-v2/ProjectionStore.ts";
@@ -57,6 +60,9 @@ const layerRepositories = Layer.mock(SourceControlRepositoryService.SourceContro
 );
 
 const StubServicesLive = Layer.mergeAll(
+  // SCIENT-FORK:START — Scient Accounts: use an in-memory account owner.
+  AccountsTestkit.layer,
+  // SCIENT-FORK:END
   Layer.mock(PreviewBrowser.PreviewBrowser)({}),
   Layer.mock(ProviderSessionManagerV2)({
     resolveMcpInvocationPolicy: () => Effect.die("Tool listing cannot grant mutation authority."),

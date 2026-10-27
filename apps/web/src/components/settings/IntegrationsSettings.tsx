@@ -1,3 +1,7 @@
+// SCIENT-FORK:START — Scient Accounts: link the browser profile owner.
+import { importProfileName } from "~/scient/accounts/accountsView";
+import { AccountsSettingsLink } from "~/scient/accounts/AccountsSettingsLink";
+// SCIENT-FORK:END
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -194,11 +198,19 @@ export const importFailureReason = (cause: unknown): BrowserImportFailureReason 
   );
 };
 
-async function importBrowserCookiesIntoTarget(
-  bridge: NonNullable<typeof previewBridge>,
+// SCIENT-FORK:START — Scient Accounts: reuse the browser import and registration transaction.
+export async function importBrowserCookiesIntoTarget(
+  bridge: Pick<
+    NonNullable<typeof previewBridge>,
+    "importBrowserCookies" | "clearCookies" | "clearCache"
+  >,
   source: BrowserImportSource,
   environmentId: EnvironmentId,
-  input: { readonly sourceProfileDirectory: string; readonly target: WizardTarget },
+  input: {
+    readonly sourceProfileDirectory: string;
+    readonly target: WizardTarget;
+    readonly profileName?: string;
+  },
 ): Promise<ImportOutcome> {
   try {
     const result = await bridge.importBrowserCookies({
@@ -217,7 +229,7 @@ async function importBrowserCookiesIntoTarget(
     }
     let targetName: string;
     if (input.target.kind === "new") {
-      if (result.imported > 0) {
+      if (result.imported > 0 || input.profileName !== undefined) {
         try {
           const persisted = await persistClientSettingsUpdate((current) => {
             const existing = current.browserProfiles.find(
@@ -228,11 +240,10 @@ async function importBrowserCookiesIntoTarget(
             if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) {
               throw new ProfileLimitReachedError();
             }
-            const taken = new Set(
+            const name = importProfileName(
+              input.profileName ?? source.name,
               resolveBrowserProfiles(current.browserProfiles).map((profile) => profile.name),
             );
-            let name = source.name;
-            for (let index = 2; taken.has(name); index += 1) name = `${source.name} ${index}`;
             return {
               ...current,
               browserProfiles: [
@@ -271,6 +282,8 @@ async function importBrowserCookiesIntoTarget(
     return { kind: "blocked", reason: importFailureReason(cause) };
   }
 }
+
+// SCIENT-FORK:END
 
 const viewportSelectValue = (viewport: PreviewViewportSetting): string => {
   if (viewport._tag === "fill") return FILL_VALUE;
@@ -1599,6 +1612,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   );
 }
 
+// SCIENT-FORK:START — Scient Accounts: retain the upstream profile panel for older servers.
+export { BrowserProfilesSetting };
+// SCIENT-FORK:END
+
 export function BrowserSettingsPanel() {
   const desktopOnly = !isElectron;
   const desktopOnlyMessage = desktopOnly ? "Only available in the desktop app." : undefined;
@@ -1610,7 +1627,9 @@ export function BrowserSettingsPanel() {
       </SettingsSection>
       <SettingsSection id="browser" title="Browsing">
         <SettingsUnavailableGroup message={desktopOnlyMessage}>
-          <BrowserProfilesSetting disabled={desktopOnly} />
+          {/* SCIENT-FORK:START — Scient Accounts: profiles now live in Accounts. */}
+          <AccountsSettingsLink disabled={desktopOnly} />
+          {/* SCIENT-FORK:END */}
           <BrowserLinkTargetSetting disabled={desktopOnly} />
           <BrowserAutoShowFloatingPreviewSetting disabled={desktopOnly} />
         </SettingsUnavailableGroup>

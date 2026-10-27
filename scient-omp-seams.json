@@ -304,6 +304,11 @@
       "path": "apps/server/src/scientServerSettings.ts",
       "anchor": "const selection = fallbackScientTextGenerationModelSelection(",
       "purpose": "Keep Oh My Pi in automatic text-generation provider fallback while implicit Scient Agent remains the last resort."
+    },
+    {
+      "path": "apps/web/src/scient/accounts/accountIcons.json",
+      "anchor": "\"github.com\"",
+      "purpose": "Accounts-owned bundled logos; the OMP signal matches only inside their base64 image data. Nothing OMP mounts here."
     }
   ]
 }
