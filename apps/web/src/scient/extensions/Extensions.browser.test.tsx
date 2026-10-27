@@ -953,7 +953,7 @@ describe("Discover", () => {
     state.discoverOutcomes = { [curatedKey]: "pending" };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "note",
     );
     expect(fixture.section("Popular")).toBeNull();
@@ -994,7 +994,7 @@ describe("Discover", () => {
     state.discoverOutcomes = { [registryKey]: "pending" };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "granola",
     );
     const results = () => fixture.section("Search results");
@@ -1814,7 +1814,7 @@ describe("Detail pages", () => {
     };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "synapse",
     );
     expect(fixture.rowNames(fixture.section("Search results"))).toEqual(["Synapse"]);

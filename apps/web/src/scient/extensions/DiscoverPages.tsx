@@ -34,7 +34,7 @@ import {
   showsKind,
 } from "./extensionsView";
 import { AgentSkills } from "../skills/AgentSkills";
-import { ScientSkillsLibrary } from "../skills/ScientSkillsLibrary";
+import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLibrary";
 
 /** Search results that live on Installed; Discover forwards them there. */
 const INSTALLED_SEARCH_TARGETS: Readonly<Record<string, true>> = {
@@ -244,7 +244,7 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
       {showsKind(kind, "plugins") ? <ProviderStoreShelves /> : null}
       {showsKind(kind, "skills") ? (
         <>
-          <ExtensionsSection title="Scient skills">
+          <ExtensionsSection title={<ScientSkillsTitle />}>
             <ScientSkillsLibrary environmentId={environmentId} providers={providers} />
           </ExtensionsSection>
           <ExtensionsSection title="Agent skills">
@@ -323,9 +323,14 @@ function DiscoverSearchResults({
 function SkillSearchResults({ query }: { readonly query: string }) {
   const { environmentId, providers } = useExtensionsEnvironment();
   return (
-    <ExtensionsSection title="Scient skills">
-      <ScientSkillsLibrary environmentId={environmentId} providers={providers} query={query} />
-    </ExtensionsSection>
+    <>
+      <ExtensionsSection title={<ScientSkillsTitle />}>
+        <ScientSkillsLibrary environmentId={environmentId} providers={providers} query={query} />
+      </ExtensionsSection>
+      <ExtensionsSection title="Agent skills">
+        <AgentSkills environmentId={environmentId} providers={providers} query={query} />
+      </ExtensionsSection>
+    </>
   );
 }
 
@@ -357,7 +362,11 @@ function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
             )
           }
         >
-          <SearchField label="Search extensions" value={search} onChange={setSearch} />
+          <SearchField
+            label={kind === "skills" ? "Search skills" : "Search plugins"}
+            value={search}
+            onChange={setSearch}
+          />
         </ExtensionsTopBar>
       </SettingsSearchTarget>
       {query ? (

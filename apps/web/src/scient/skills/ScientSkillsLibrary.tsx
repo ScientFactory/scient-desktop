@@ -9,7 +9,7 @@ import { type ReactNode, useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsSourcePanel } from "../../components/settings/SettingsSourceStrip";
+import { ScientSymbol } from "../../components/ScientSymbol";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { scientSkillsInventory, setScientSkillUserActivation } from "./scientSkillsState";
 import { matchesQuery } from "../extensions/extensionsView";
@@ -45,7 +45,7 @@ function SkillCategoryDisclosure(props: {
   const [open, setOpen] = useState(props.defaultOpen ?? false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="group -mx-3 flex w-[calc(100%+1.5rem)] cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-3 px-3 py-4 text-left outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
         <span className="min-w-0 flex-1">
           <span className="block text-base font-semibold tracking-[-0.01em] text-foreground">
             {props.title}
@@ -63,11 +63,26 @@ function SkillCategoryDisclosure(props: {
         />
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        <div className="pt-1 pb-4">
-          <SettingsSourcePanel>{props.children}</SettingsSourcePanel>
+        {/* Softer than the lines between skills: inset, fading out at both ends. */}
+        <div
+          aria-hidden
+          className="mx-8 h-px bg-linear-to-r from-transparent via-border to-transparent"
+        />
+        <div className="[&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
+          {props.children}
         </div>
       </CollapsiblePanel>
     </Collapsible>
+  );
+}
+
+/** "◎ Scient skills": the section title wherever Scient's own skills are listed. */
+export function ScientSkillsTitle() {
+  return (
+    <span className="inline-flex items-center gap-2.5">
+      <ScientSymbol className="size-6" weight="strong" />
+      Scient skills
+    </span>
   );
 }
 
@@ -139,7 +154,7 @@ export function ScientSkillsLibrary({
               : "This Scient build does not publish any skills."}
         </p>
       ) : (
-        <div className="[&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/60">
           {groupSkillsByCategory(userSkills).map((group) => (
             <SkillCategoryDisclosure
               key={`${group.category}:${query === "" ? "browse" : "search"}`}

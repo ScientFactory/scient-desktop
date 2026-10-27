@@ -14,6 +14,7 @@ import {
 } from "./externalSkills";
 import { SkillCard } from "./SkillCard";
 import { OPENABLE_ROW_CLASS, openFromRow } from "./skillRowOpen";
+import { matchesQuery } from "../extensions/extensionsView";
 import { useEnvironmentQuery } from "../../state/query";
 import {
   type EnvironmentId,
@@ -42,15 +43,28 @@ export function AgentSkills({
   environmentId,
   providers,
   instanceId = null,
+  query = "",
 }: {
   readonly environmentId: EnvironmentId;
   readonly providers: ReadonlyArray<ServerProvider>;
   /** Only this agent's skills; null lists every agent. */
   readonly instanceId?: ProviderInstanceId | null;
+  /** Words every listed skill matches; agents with no match are left out. */
+  readonly query?: string;
 }) {
-  const groups = collectExternalSkillProviders(providers).filter(
-    ({ provider }) => instanceId === null || provider.instanceId === instanceId,
-  );
+  const groups = collectExternalSkillProviders(providers)
+    .filter(({ provider }) => instanceId === null || provider.instanceId === instanceId)
+    .map((group) =>
+      query === ""
+        ? group
+        : {
+            ...group,
+            skills: group.skills.filter(({ skill, displayName, description }) =>
+              matchesQuery(query, [displayName, skill.name, description]),
+            ),
+          },
+    )
+    .filter((group) => query === "" || group.skills.length > 0);
   const [selected, setSelected] = useState<{
     readonly iconUrl?: string | undefined;
     instanceId: ProviderInstanceId;
@@ -216,7 +230,9 @@ export function AgentSkills({
         />
       ) : null}
       {groups.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No agent reports its own skills yet.</p>
+        <p className="text-sm text-muted-foreground">
+          {query ? "No agent skills match." : "No agent reports its own skills yet."}
+        </p>
       ) : (
         <div>
           <SettingsSourceGroup

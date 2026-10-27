@@ -40,7 +40,7 @@ import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AgentSkills } from "../skills/AgentSkills";
 import { ProjectSkills } from "../skills/ProjectSkills";
-import { ScientSkillsLibrary } from "../skills/ScientSkillsLibrary";
+import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLibrary";
 
 /** Rows a provider section shows before "Show all". */
 const PROVIDER_PREVIEW_ROWS = 6;
@@ -289,7 +289,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
 
       {showsKind(kind, "skills") ? (
         <>
-          <ExtensionsSection title="Scient skills">
+          <ExtensionsSection title={<ScientSkillsTitle />}>
             <ScientSkillsLibrary environmentId={environmentId} providers={providers} onlyActive />
           </ExtensionsSection>
           <ExtensionsSection title="Agent skills">
