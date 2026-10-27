@@ -366,31 +366,51 @@ describe("AccountsService grants and approvals", () => {
         ).toBe("allowed");
       }),
   );
-  it.effect("grants once without changing controls, and stores project and always decisions", () =>
-    Effect.gen(function* () {
-      const { service } = yield* makeHarness();
-      const { accountId } = yield* service.save({
-        ...website(),
-        controls: { ...defaultAccountControls("website"), access: "ask" },
-      });
-      const target = { type: "account" as const, accountId };
-      for (const decision of ["once", "project", "always"] as const) {
-        if (decision === "always") yield* service.setControls({ target, access: "ask" });
-        const authorization = yield* service
-          .authorize(scope, target, "sign-in")
-          .pipe(Effect.forkChild);
-        const approval = yield* waitingApproval(service);
-        yield* service.respondApproval(approval.approvalId, decision);
-        expect(yield* Fiber.join(authorization)).toEqual({ decision: "allowed" });
-        const controls = (yield* service.snapshot).accounts[0]!.controls;
-        expect(controls.access).toBe(decision === "always" ? "allowed" : "ask");
-        if (decision === "project")
-          expect(
-            yield* service.authorize({ ...scope, unattended: true }, target, "sign-in"),
-          ).toEqual({ decision: "allowed" });
-      }
-      expect((yield* service.snapshot).approvals).toEqual([]);
-    }),
+  it.effect(
+    "grants conversation access without changing controls, and stores project and always decisions",
+    () =>
+      Effect.gen(function* () {
+        const { service } = yield* makeHarness();
+        const { accountId } = yield* service.save({
+          ...website(),
+          controls: { ...defaultAccountControls("website"), access: "ask" },
+        });
+        const target = { type: "account" as const, accountId };
+        for (const decision of ["once", "project", "always"] as const) {
+          const approvalScope = { ...scope, threadId: ThreadId.make(`approval-${decision}`) };
+          if (decision === "always") yield* service.setControls({ target, access: "ask" });
+          const authorization = yield* service
+            .authorize(approvalScope, target, "sign-in")
+            .pipe(Effect.forkChild);
+          const approval = yield* waitingApproval(service);
+          yield* service.respondApproval(approval.approvalId, decision);
+          expect(yield* Fiber.join(authorization)).toEqual({ decision: "allowed" });
+          if (decision === "once") {
+            expect(yield* service.authorize(approvalScope, target, "credentials")).toEqual({
+              decision: "allowed",
+            });
+            yield* service.setAgentAccess(false);
+            expect(yield* service.authorize(approvalScope, target, "request")).toEqual({
+              decision: "denied",
+              reason: "off",
+            });
+            yield* service.setAgentAccess(true);
+            yield* service.setControls({ target, access: "off" });
+            expect(yield* service.authorize(approvalScope, target, "request")).toEqual({
+              decision: "denied",
+              reason: "off",
+            });
+            yield* service.setControls({ target, access: "ask" });
+          }
+          const controls = (yield* service.snapshot).accounts[0]!.controls;
+          expect(controls.access).toBe(decision === "always" ? "allowed" : "ask");
+          if (decision === "project")
+            expect(
+              yield* service.authorize({ ...scope, unattended: true }, target, "sign-in"),
+            ).toEqual({ decision: "allowed" });
+        }
+        expect((yield* service.snapshot).approvals).toEqual([]);
+      }),
   );
   it.effect(
     "denies unattended Ask immediately and expires pending approvals after ten minutes",
@@ -424,6 +444,57 @@ describe("AccountsService grants and approvals", () => {
         ).toBe("not-found");
       }),
   );
+  it.effect(
+    "isolates conversation approval by thread and account, rechecks scope, and forgets it after restart",
+    () =>
+      Effect.gen(function* () {
+        const storage = memoryStore();
+        const { service } = yield* makeHarness({ storage });
+        const input = {
+          ...website(),
+          controls: { ...defaultAccountControls("website"), access: "ask" as const },
+        };
+        const { accountId } = yield* service.save(input);
+        const target = { type: "account" as const, accountId };
+        const authorization = yield* service
+          .authorize(scope, target, "sign-in")
+          .pipe(Effect.forkChild);
+        const approval = yield* waitingApproval(service);
+        yield* service.respondApproval(approval.approvalId, "once");
+        yield* Fiber.join(authorization);
+        expect(yield* service.authorize(scope, target, "credentials")).toEqual({
+          decision: "allowed",
+        });
+        expect(
+          yield* service.authorize(
+            { ...scope, threadId: ThreadId.make("another-thread"), unattended: true },
+            target,
+            "request",
+          ),
+        ).toEqual({ decision: "denied", reason: "declined" });
+        const other = yield* service.save(input);
+        expect(
+          yield* service.authorize(
+            { ...scope, unattended: true },
+            { type: "account", accountId: other.accountId },
+            "request",
+          ),
+        ).toEqual({ decision: "denied", reason: "declined" });
+        yield* service.setControls({
+          target,
+          scope: { type: "projects", projectIds: [ProjectId.make("other-project")] },
+        });
+        expect(yield* service.authorize(scope, target, "request")).toEqual({
+          decision: "denied",
+          reason: "out-of-scope",
+        });
+        yield* service.setControls({ target, scope: { type: "all-projects" } });
+        const restarted = yield* makeHarness({ storage });
+        expect(
+          yield* restarted.service.authorize({ ...scope, unattended: true }, target, "request"),
+        ).toEqual({ decision: "denied", reason: "declined" });
+      }),
+  );
   it.effect("revokes pending approvals and cleans up cancelled requests", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness();
@@ -444,6 +515,36 @@ describe("AccountsService grants and approvals", () => {
       yield* Fiber.interrupt(cancelled);
       expect((yield* service.snapshot).approvals).toEqual([]);
     }),
+  );
+  it.effect(
+    "records exact sign-in outcomes and clears rejection after success or password edit",
+    () =>
+      Effect.gen(function* () {
+        const { service } = yield* makeHarness();
+        const input = website();
+        const { accountId } = yield* service.save(input);
+        const target = { type: "account" as const, accountId };
+        for (const signInOutcome of ["password-rejected", "signed-in", "code-rejected"] as const) {
+          const recorded = yield* service.changes.pipe(
+            Stream.filter((snapshot) => snapshot.accounts[0]?.lastSignInOutcome === signInOutcome),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* service.recordUse({
+            target,
+            action: "sign-in",
+            outcome: signInOutcome === "signed-in" ? "ok" : "error",
+            signInOutcome,
+          });
+          yield* Fiber.join(recorded);
+          expect((yield* service.activity({ target }))[0]?.signInOutcome).toBe(signInOutcome);
+        }
+        yield* service.save({ ...input, accountId, secrets: {} });
+        expect((yield* service.snapshot).accounts[0]?.lastSignInOutcome).toBe("code-rejected");
+        yield* service.save({ ...input, accountId });
+        expect((yield* service.snapshot).accounts[0]?.lastSignInOutcome).toBeUndefined();
+      }),
   );
   it.effect("keeps denial local to the pending request and audits bounded, safe activity", () =>
     Effect.gen(function* () {

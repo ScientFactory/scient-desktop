@@ -6,6 +6,11 @@ const TypeInput = Schema.Struct({
   selector: Schema.String,
   text: Schema.String,
   clear: Schema.Literal(true),
+  /** Clearing only: leave the field alone unless it still holds what was typed. */
+  expected: Schema.optional(Schema.String),
+});
+const WaitInput = Schema.Struct({
+  settleMs: Schema.optional(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 5000 }))),
 });
 const CookiesInput = Schema.Struct({
   urls: Schema.Array(Schema.String).check(Schema.isMinLength(1), Schema.isMaxLength(16)),
@@ -14,14 +19,16 @@ const CookiesInput = Schema.Struct({
 const decodeType = Schema.decodeUnknownSync(TypeInput);
 const encodeType = Schema.encodeSync(Schema.fromJsonString(TypeInput));
 const decodeCookies = Schema.decodeUnknownSync(CookiesInput);
+const decodeWait = Schema.decodeUnknownSync(WaitInput);
 
 export async function typeAccountValue(page: Page, input: unknown) {
   try {
     const decoded = decodeType(input);
     const serialized = encodeType(decoded);
-    const filled = await page.evaluate(`(({ origin, selector, text }) => {
-      if (location.origin !== origin || location.protocol !== "https:") return false;
+    const filled = await page.evaluate(`(({ origin, selector, text, expected }) => {
+      if (location.origin !== origin || location.protocol !== "https:") return expected !== undefined;
       const field = document.querySelector(selector);
+      if (expected !== undefined && (!(field instanceof HTMLInputElement) || field.value !== expected)) return true;
       if (!(field instanceof HTMLInputElement) || field.disabled || field.readOnly || !field.getClientRects().length) return false;
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       if (!setter) return false;
@@ -36,6 +43,13 @@ export async function typeAccountValue(page: Page, input: unknown) {
   } catch {
     throw new Error("The sign-in field could not be filled on the allowed origin.");
   }
+}
+
+export async function waitForAccountPage(page: Page, input: unknown, timeoutMs: number) {
+  const { settleMs } = decodeWait(input ?? {});
+  await page.waitForLoadState("load", { timeout: timeoutMs });
+  if (settleMs) await page.waitForTimeout(settleMs);
+  return {};
 }
 
 export async function readAccountCookies(cdp: CDPSession, input: unknown) {

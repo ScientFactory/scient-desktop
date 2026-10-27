@@ -201,6 +201,14 @@ export const ACCOUNT_SECRET_FIELDS: Readonly<
 export const AccountStatus = Schema.Literals(["ready", "needs-attention"]);
 export type AccountStatus = typeof AccountStatus.Type;
 
+export const AccountSignInOutcome = Schema.Literals([
+  "signed-in",
+  "needs-user",
+  "password-rejected",
+  "code-rejected",
+  "failed",
+]);
+
 export const AccountSummary = Schema.Struct({
   accountId: AccountId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
@@ -210,6 +218,7 @@ export const AccountSummary = Schema.Struct({
   status: AccountStatus,
   /** Set only when something is wrong. */
   statusMessage: Schema.optional(TrimmedNonEmptyString),
+  lastSignInOutcome: Schema.optional(AccountSignInOutcome),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastUsedAt: Schema.optional(IsoDateTime),
@@ -279,6 +288,7 @@ export const AccountActivityEntry = Schema.Struct({
   action: AccountUseAction,
   decision: Schema.Literals(["allowed", "asked", "denied"]),
   outcome: Schema.optional(Schema.Literals(["ok", "error"])),
+  signInOutcome: Schema.optional(AccountSignInOutcome),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
   /** Safe summary such as a site or `GET api.example.com`; never values, queries or bodies. */

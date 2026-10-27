@@ -2,7 +2,13 @@ import { AccountsService } from "../AccountsService.ts";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AccountSessionFiles } from "./sessionFiles.ts";
-import { AccountId, AccountsError, BrowserProfileId, PreviewTabId } from "@t3tools/contracts";
+import {
+  AccountId,
+  AccountSignInOutcome,
+  AccountsError,
+  BrowserProfileId,
+  PreviewTabId,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../../mcp/ScientOperationTool.ts";
@@ -87,12 +93,12 @@ const signIn = metadata(
   Tool.make("scient_account_sign_in", {
     ...common,
     description:
-      "Sign in with a website or library account on your browser tab, including stored two-factor codes. Returns needs-user for CAPTCHA, passkey or device approval.",
+      "Sign in with a website or library account on your browser tab, including stored two-factor codes. Returns signed-in only after confirmation, password-rejected or code-rejected without repeating rejected credentials, needs-user for CAPTCHA, passkey or device approval, or failed.",
     parameters: Schema.Struct({ accountId: AccountId, tabId: Schema.optional(PreviewTabId) }),
     success: Schema.Struct({
-      outcome: Schema.Literals(["signed-in", "needs-user", "failed"]),
+      outcome: AccountSignInOutcome,
       message: Schema.optional(Schema.String),
-      tabId: PreviewTabId,
+      tabId: Schema.optional(PreviewTabId),
     }),
   }),
   "sign-in",
