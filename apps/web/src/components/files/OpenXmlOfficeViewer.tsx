@@ -3,9 +3,6 @@ import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
-// SCIENT-FORK:START — no details row: Scient's panel header already names the file.
-const ignoreDetails = () => undefined;
-// SCIENT-FORK:END
 const WordDocument = lazy(() => import("./office/WordDocument"));
 const Spreadsheet = lazy(() => import("./office/Spreadsheet"));
 const Presentation = lazy(() => import("./office/Presentation"));
@@ -40,6 +37,7 @@ export default function OfficeViewer(props: {
 }) {
   const [error, setError] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Extract<OfficeWorkerResult, { bytes: ArrayBuffer }>>();
+  const [details, setDetails] = useState("");
   const fail = useStableCallback((cause: unknown) =>
     setError(cause instanceof Error ? cause.message : "Could not render this Office document."),
   );
@@ -106,13 +104,20 @@ export default function OfficeViewer(props: {
     props.kind === "docx" ? WordDocument : props.kind === "xlsx" ? Spreadsheet : Presentation;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* SCIENT-FORK:START — no details row; the page count stays announced for assistive tech. */}
+      {details ? (
+        <span className="sr-only" aria-live="polite">
+          {details}
+        </span>
+      ) : null}
+      {/* SCIENT-FORK:END */}
       {prepared.truncated ? (
         <FileSurfaceNotice>
           Preview limited. Save it or open it in another app to read the full document.
         </FileSurfaceNotice>
       ) : null}
       <Suspense fallback={<FileSurfaceLoading />}>
-        <Viewer bytes={prepared.bytes} onDetails={ignoreDetails} onError={fail} />
+        <Viewer bytes={prepared.bytes} onDetails={setDetails} onError={fail} />
       </Suspense>
     </div>
   );
