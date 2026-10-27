@@ -48,16 +48,16 @@ it("clears the private unlock input after connecting and reflects disconnect", a
       status={undefined}
     />,
   );
-  await screen.getByRole("button", { name: "Manage" }).click();
-  await page.getByRole("menuitem", { name: "Connect…" }).click();
+  await screen.getByRole("button", { name: "Connect", exact: true }).click();
   const privateInput = page.getByLabelText("Bitwarden master password");
   await privateInput.fill("synthetic-master");
-  await screen.getByRole("button", { name: "Connect", exact: true }).click();
+  await screen.getByRole("button", { name: "Unlock", exact: true }).click();
   await expect.element(privateInput).toHaveValue("");
-  await expect.element(screen.getByText("unlocked · synthetic@example.invalid")).toBeVisible();
-  await screen.getByRole("button", { name: "Manage" }).click();
-  await page.getByRole("menuitem", { name: "Disconnect", exact: true }).click();
-  await expect.element(screen.getByText("not-connected · synthetic@example.invalid")).toBeVisible();
+  await expect.element(screen.getByText("Connected · synthetic@example.invalid")).toBeVisible();
+  await screen.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect
+    .element(screen.getByText("Connected · synthetic@example.invalid"))
+    .not.toBeInTheDocument();
   expect(state.inputs.find((input) => input.action === "connect")?.password).toBe(
     "synthetic-master",
   );

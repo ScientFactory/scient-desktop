@@ -1,5 +1,3 @@
-import { ChevronDownIcon } from "lucide-react";
-import { Menu, MenuTrigger, MenuPopup, MenuItem } from "~/components/ui/menu";
 import { useState } from "react";
 import type {
   CliPasswordStore,
@@ -16,6 +14,14 @@ import { accountsState } from "./accountsState";
 import { useAccountCommand, usePasswordStorePermission } from "./useAccounts";
 
 const cliStoreNames = { bitwarden: "Bitwarden", "proton-pass": "Proton Pass" };
+const STATUS_WORDS: Readonly<Record<CliPasswordStatus["state"], string | undefined>> = {
+  "not-connected": undefined,
+  "not-installed": "Not installed",
+  unauthenticated: "Signed out in its app",
+  locked: undefined,
+  unlocked: undefined,
+  unavailable: "Needs attention",
+};
 export function CliPasswordStoreRow({
   store,
   status,
@@ -46,43 +52,47 @@ export function CliPasswordStoreRow({
     if (result.ok) setCurrent(result.value.status);
     setBusy(false);
   };
+  const state = current?.state ?? "not-connected";
+  const connected = state === "unlocked";
   return (
     <>
       <SettingsRow
         title={cliStoreNames[store]}
-        description={[current?.state ?? "not-connected", current?.email, current?.serverUrl]
-          .filter(Boolean)
-          .join(" · ")}
+        description={
+          connected
+            ? ["Connected", current?.email].filter(Boolean).join(" · ")
+            : state === "locked"
+              ? ["Locked", current?.email].filter(Boolean).join(" · ")
+              : undefined
+        }
+        status={STATUS_WORDS[state]}
         control={
-          <Menu>
-            <MenuTrigger
-              render={
-                <Button size="xs" variant="outline" disabled={!canWrite || !permitted || busy} />
-              }
+          connected ? (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canWrite || !permitted || busy}
+              onClick={() => {
+                setExpanded(false);
+                setPassword("");
+                void act("disconnect");
+              }}
             >
-              Manage <ChevronDownIcon aria-hidden />
-            </MenuTrigger>
-            <MenuPopup align="end">
-              <MenuItem
-                onClick={() => {
-                  setExpanded(true);
-                  void act("status");
-                }}
-              >
-                Connect…
-              </MenuItem>
-              <MenuItem onClick={() => void act("status")}>Refresh status</MenuItem>
-              <MenuItem
-                onClick={() => {
-                  setExpanded(false);
-                  setPassword("");
-                  void act("disconnect");
-                }}
-              >
-                Disconnect
-              </MenuItem>
-            </MenuPopup>
-          </Menu>
+              Disconnect
+            </Button>
+          ) : expanded ? null : (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canWrite || !permitted || busy}
+              onClick={() => {
+                setExpanded(true);
+                void act("status");
+              }}
+            >
+              Connect
+            </Button>
+          )
         }
       />
       {expanded ? (
@@ -109,7 +119,7 @@ export function CliPasswordStoreRow({
               disabled={!canWrite || !permitted || busy}
               onClick={() => void act("connect")}
             >
-              Connect
+              {store === "bitwarden" ? "Unlock" : "Connect"}
             </Button>
             <Button
               size="xs"
