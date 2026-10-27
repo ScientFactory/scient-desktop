@@ -30,6 +30,16 @@ it("detects static login steps, refuses look-alike fills, and reads only the req
       clear: true,
     });
     expect(await page.locator("input[type=password]").inputValue()).toBe("synthetic-value");
+    // Cleanup after the page changed: the same selector now names a field the user typed in.
+    await page.setContent('<form><input name="note"><input value="user-text"></form>');
+    await typeAccountValue(page, {
+      origin: combined.origin,
+      selector: combined.password,
+      text: "",
+      clear: true,
+      expected: "synthetic-value",
+    });
+    expect(await page.locator("input[value]").inputValue()).toBe("user-text");
     await page.setContent('<form><input autocomplete="username"><button>Next</button></form>');
     expect(await detect()).toMatchObject({
       password: null,
