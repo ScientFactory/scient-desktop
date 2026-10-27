@@ -140,13 +140,20 @@ function OverleafProjectLinks(props: {
   readonly projectName?: string;
   /** Shown when the project has no links; nothing when absent. */
   readonly empty?: string;
+  /**
+   * Each link is its own row of the settings card it sits in (Project Settings), divided like
+   * every other settings row; otherwise a plain divided list inside another row's details.
+   */
+  readonly asSettingsRows?: boolean;
 }) {
-  const { environmentId, workspaceRoot } = props;
+  const { environmentId, workspaceRoot, asSettingsRows = false } = props;
   const workspace = useOverleafWorkspace(environmentId, workspaceRoot);
   const [unlinking, setUnlinking] = useState<string | null>(null);
   if (workspace.connections.length === 0) {
     return props.empty && workspace.loaded ? (
-      <p className="text-xs text-muted-foreground">{props.empty}</p>
+      <p className={cn("text-xs text-muted-foreground", asSettingsRows && "px-3 py-3 sm:px-4")}>
+        {props.empty}
+      </p>
     ) : null;
   }
   const unlink = async (connectionId: string) => {
@@ -181,68 +188,80 @@ function OverleafProjectLinks(props: {
       },
     );
   };
+  const Row = asSettingsRows ? "div" : "li";
+  const rows = workspace.connections.map((connection) => {
+    const syncing = workspace.syncing.has(connection.connectionId);
+    const view = overleafChipView(
+      workspace.statuses.get(connection.connectionId) ?? null,
+      syncing,
+      workspace.lastSync.get(connection.connectionId)?.result ?? null,
+    );
+    return (
+      <Row
+        key={connection.connectionId}
+        {...(asSettingsRows
+          ? {
+              "data-slot": "settings-row",
+              role: "group",
+              "aria-label": connection.folder === "" ? "Project's top folder" : connection.folder,
+            }
+          : {})}
+        className={cn(
+          "flex flex-col gap-2 sm:flex-row sm:items-center",
+          asSettingsRows ? "px-3 py-3 sm:px-4" : "py-2.5",
+        )}
+        data-overleaf-link={connection.connectionId}
+      >
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium tracking-subtle text-foreground">
+            {connection.folder === "" ? "Project's top folder" : connection.folder}
+          </p>
+          <p className="truncate text-xs text-muted-foreground">
+            {view.label} ·{" "}
+            {lastSyncLabel({
+              lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
+              completedSyncCount: connection.completedSyncCount,
+              updatedAt: connection.updatedAt,
+            })}
+            {connection.linkedHere ? "" : " · Another copy"}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-1.5">
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={syncing}
+            onClick={() => void runOverleafSync({ environmentId, workspaceRoot, connection })}
+          >
+            {syncing ? "Syncing…" : "Sync now"}
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => openOverleafProject(connection.projectId)}
+          >
+            Open in Overleaf
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={unlinking === connection.connectionId || syncing}
+            onClick={() => void unlink(connection.connectionId)}
+          >
+            Unlink
+          </Button>
+        </div>
+      </Row>
+    );
+  });
+  // Rows of the card itself: the settings group divides them like its other rows.
+  if (asSettingsRows) return <>{rows}</>;
   return (
-    <div className="grid gap-2" aria-label={props.projectName ?? "Linked folders"}>
+    <div className="grid gap-1" aria-label={props.projectName ?? "Linked folders"}>
       {props.projectName ? (
         <p className="text-xs font-medium text-muted-foreground">{props.projectName}</p>
       ) : null}
-      <ul className="grid gap-2">
-        {workspace.connections.map((connection) => {
-          const syncing = workspace.syncing.has(connection.connectionId);
-          const view = overleafChipView(
-            workspace.statuses.get(connection.connectionId) ?? null,
-            syncing,
-            workspace.lastSync.get(connection.connectionId)?.result ?? null,
-          );
-          return (
-            <li
-              key={connection.connectionId}
-              className="flex flex-col gap-2 rounded-lg border border-border/70 px-3 py-2 sm:flex-row sm:items-center"
-              data-overleaf-link={connection.connectionId}
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm">
-                  {connection.folder === "" ? "Project's top folder" : connection.folder}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {view.label} ·{" "}
-                  {lastSyncLabel({
-                    lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
-                    completedSyncCount: connection.completedSyncCount,
-                    updatedAt: connection.updatedAt,
-                  })}
-                  {connection.linkedHere ? "" : " · Another copy"}
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-1.5">
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={syncing}
-                  onClick={() => void runOverleafSync({ environmentId, workspaceRoot, connection })}
-                >
-                  {syncing ? "Syncing…" : "Sync now"}
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => openOverleafProject(connection.projectId)}
-                >
-                  Open in Overleaf
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={unlinking === connection.connectionId || syncing}
-                  onClick={() => void unlink(connection.connectionId)}
-                >
-                  Unlink
-                </Button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+      <ul className="divide-y divide-border/50">{rows}</ul>
     </div>
   );
 }
@@ -359,13 +378,12 @@ export function OverleafProjectSettingsSection(props: {
 }) {
   return (
     <SettingsSection title="Overleaf" icon={<OverleafMark aria-hidden className="size-4" />}>
-      <div className="grid gap-3 px-3 py-3 sm:px-4">
-        <OverleafProjectLinks
-          environmentId={props.environmentId}
-          workspaceRoot={props.workspaceRoot}
-          empty="No folder is linked."
-        />
-      </div>
+      <OverleafProjectLinks
+        environmentId={props.environmentId}
+        workspaceRoot={props.workspaceRoot}
+        empty="No folder is linked."
+        asSettingsRows
+      />
     </SettingsSection>
   );
 }

@@ -142,7 +142,8 @@ describe("Project Settings ▸ Overleaf", () => {
         workspaceRoot="/work/project"
       />,
     );
-    const slides = page.getByRole("listitem").filter({ hasText: "slides" });
+    // Each link is its own settings row, not a box inside the card.
+    const slides = page.getByRole("group", { name: "slides" });
     await expect.element(slides.getByRole("button", { name: "Sync now" })).toBeVisible();
     await expect.element(slides.getByRole("button", { name: "Open in Overleaf" })).toBeVisible();
     await expect.element(slides.getByText(/Not synced yet/u)).toBeVisible();
