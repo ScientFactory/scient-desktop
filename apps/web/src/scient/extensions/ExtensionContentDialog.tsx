@@ -73,7 +73,9 @@ export function ExtensionContentDialog({
           <DialogTitle>
             {name} <span className="font-normal text-muted-foreground">{kind}</span>
           </DialogTitle>
-          <DialogDescription className="whitespace-pre-line">{description}</DialogDescription>
+          <DialogDescription className={kind === "App" ? "whitespace-pre-line" : undefined}>
+            {kind === "App" ? description : <span className="line-clamp-3">{description}</span>}
+          </DialogDescription>
         </DialogHeader>
         {framed ? (
           <div className="mx-4 mb-4 flex min-h-0 flex-col overflow-hidden rounded-xl border bg-background">

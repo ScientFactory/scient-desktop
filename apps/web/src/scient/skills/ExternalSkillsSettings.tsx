@@ -48,6 +48,7 @@ export function ExternalSkillsSettings() {
   const providers = useAtomValue(primaryServerProvidersAtom);
   const groups = collectExternalSkillProviders(providers);
   const [selected, setSelected] = useState<{
+    readonly iconUrl?: string | undefined;
     instanceId: ProviderInstanceId;
     skill: ServerProviderSkill;
     displayName: string;
@@ -293,6 +294,7 @@ export function ExternalSkillsSettings() {
                             onClick={() =>
                               setSelected({
                                 instanceId: expandedGroup.provider.instanceId,
+                                iconUrl: expandedGroup.provider.iconUrl,
                                 skill,
                                 displayName,
                                 description: skill.description ?? description ?? "",
@@ -341,6 +343,7 @@ export function ExternalSkillsSettings() {
 function ExternalSkillCard({
   environmentId,
   instanceId,
+  iconUrl,
   skill,
   displayName,
   description,
@@ -348,6 +351,7 @@ function ExternalSkillCard({
 }: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
+  readonly iconUrl?: string | undefined;
   readonly skill: ServerProviderSkill;
   readonly displayName: string;
   readonly description: string;
@@ -363,6 +367,7 @@ function ExternalSkillCard({
     <SkillCard
       name={skill.name}
       displayName={displayName}
+      iconUrl={iconUrl}
       description={description}
       environmentId={environmentId}
       instructions={document.data?.unavailableReason ? null : (document.data?.instructions ?? null)}
