@@ -543,8 +543,10 @@ export function recordOverleafSync(
   updateLifecycle(environmentId, (current) => {
     const reviews = new Map(current.reviews);
     const syncedAt = new Map(current.syncedAt);
+    const previewErrors = new Map(current.previewErrors);
     // A result with its own review replaces the shown one; a cancel or refusal doesn't.
     if (result._tag === "synced" || result._tag === "needs-decision") {
+      previewErrors.delete(connectionId);
       const versionKey = reviewKeyOf(environmentId, connectionId);
       reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
     }
@@ -586,6 +588,7 @@ export function recordOverleafSync(
       fileDecisions,
       conflictChoices,
       submittedDecisions,
+      previewErrors,
       previewNotes,
       outdated,
       lastSync: new Map(current.lastSync).set(connectionId, { result, at }),

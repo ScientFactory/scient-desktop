@@ -189,9 +189,10 @@ export function OverleafReviewPanel(props: {
   // store, so opening a file (which replaces this tab) keeps them; an applied sync clears them.
   const decideFile = (path: string, decision: OverleafFileDecision | null) =>
     setOverleafFileDecision(environmentId, connectionId, path, decision);
-  const review: ScientOverleafReview | null = workspace.previewing.has(connectionId)
-    ? null
-    : (shownState?.review ?? null);
+  const reading = workspace.previewing.has(connectionId);
+  const readError = workspace.previewErrors.get(connectionId) ?? null;
+  const review: ScientOverleafReview | null =
+    reading || readError !== null ? null : (shownState?.review ?? null);
   const diffScope = JSON.stringify([environmentId, cwd, connectionId, review?.reviewId]);
   const [diffState, setDiffState] = useState<{
     scope: string;
@@ -222,6 +223,8 @@ export function OverleafReviewPanel(props: {
   // what the tab shows, so only the current read is shown.
   const resultView =
     last &&
+    !reading &&
+    readError === null &&
     !(review !== null && "review" in last.result && last.result.review.reviewId !== review.reviewId)
       ? overleafResultView(last.result)
       : null;
@@ -238,8 +241,6 @@ export function OverleafReviewPanel(props: {
     shownState,
     workspace.submittedDecisions.get(connectionId) ?? null,
   );
-  const reading = workspace.previewing.has(connectionId);
-  const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readNote = workspace.previewNotes.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
   useOverleafAgentRunWatch(environmentId, cwd);

@@ -641,7 +641,7 @@ describe("OverleafReviewPanel", () => {
     expect(composer.insertTextAtEnd).not.toHaveBeenCalled();
   });
 
-  it("checks again after an earlier sync, so new files can be decided before they are sent", async () => {
+  it("hides a past sync after a failed read, then shows the retry’s current review", async () => {
     reset();
     recordOverleafSync(environmentId, "c1", {
       ...applied,
@@ -651,7 +651,11 @@ describe("OverleafReviewPanel", () => {
     await using _screen = await render(panel());
     await expect.element(page.getByRole("region", { name: "Came in" })).toBeVisible();
 
-    // A failed read leaves the review that was shown.
+    await expect
+      .element(page.getByText("1 file came in, 1 was sent", { exact: true }))
+      .toBeVisible();
+
+    // A failed read supersedes the visible result and lists, but retains choices for retry.
     client.previewOverleaf.mockResolvedValueOnce({
       _tag: "refused",
       refusal: { reason: "unreachable" },
@@ -660,13 +664,20 @@ describe("OverleafReviewPanel", () => {
     await expect
       .element(page.getByText("Overleaf couldn't be reached. Check the connection and sync again."))
       .toBeVisible();
-    await expect.element(page.getByRole("region", { name: "Came in" })).toBeVisible();
+    await expect.element(page.getByRole("region", { name: "Came in" })).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("region", { name: "Sent", exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByText("1 file came in, 1 was sent", { exact: true }))
+      .not.toBeInTheDocument();
 
     client.previewOverleaf.mockResolvedValueOnce({
       _tag: "review",
       review: review({
         needsDecision: false,
         conflicts: [],
+        reviewId: "r-retry",
         additions: [{ path: "draft.tex", size: 10, selected: true, skippedBecause: null }],
       }),
     });
@@ -675,6 +686,16 @@ describe("OverleafReviewPanel", () => {
       .element(page.getByRole("button", { name: "Keep only here: draft.tex" }))
       .toBeVisible();
     await expect.element(page.getByRole("region", { name: "To bring in" })).toBeVisible();
+
+    client.previewOverleaf.mockResolvedValueOnce({
+      _tag: "refused",
+      refusal: { reason: "unreachable" },
+    });
+    await page.getByRole("button", { name: "Check again" }).click();
+    await expect.element(page.getByRole("alert")).toBeVisible();
+    await page.getByRole("button", { name: "Sync", exact: true }).click();
+    await expect.element(page.getByRole("region", { name: "Came in" })).toBeVisible();
+    await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
   });
 
   describe("per-file decisions", () => {
