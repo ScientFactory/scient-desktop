@@ -28,6 +28,8 @@ describe("Accounts client authorization", () => {
     };
     for (const method of [
       WS_METHODS.accountsSave,
+      WS_METHODS.accountsHandoffCancel,
+      WS_METHODS.accountsHandoffShow,
       WS_METHODS.accountsFillValues,
       WS_METHODS.accountsMatchSignIn,
     ]) {

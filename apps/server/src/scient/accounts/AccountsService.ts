@@ -4,6 +4,7 @@
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
 import type {
+  AccountHandoff,
   AccountMatchSignInInput,
   AccountMatchSignInResult,
   AccountActivityEntry,
@@ -75,6 +76,14 @@ export type AccountAuthorization =
     };
 
 export interface AccountsServiceShape {
+  readonly setHandoff: (
+    handoff: AccountHandoff,
+    reveal?: Effect.Effect<void, AccountsError>,
+  ) => Effect.Effect<void, AccountsError>;
+  readonly removeHandoff: (handoffId: string) => Effect.Effect<void>;
+  readonly handoffCancelled: (handoffId: string) => Effect.Effect<boolean>;
+  readonly showHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;
+  readonly cancelHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;
   // Client surface (RPC).
   readonly snapshot: Effect.Effect<AccountsSnapshot, AccountsError>;
   readonly changes: Stream.Stream<AccountsSnapshot>;

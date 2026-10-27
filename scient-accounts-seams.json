@@ -198,6 +198,11 @@
       "path": "apps/server/src/serverSettings.ts",
       "anchor": "Scient Accounts: encrypt only Custom models credentials through the shared vault.",
       "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
+    },
+    {
+      "path": "apps/web/src/components/ThreadNotificationCoordinator.tsx",
+      "anchor": "../scient/accounts/accountNotifications",
+      "purpose": "Present account approvals and sign-in hand-offs through the existing thread notification path."
     }
   ],
   "scientMounts": [

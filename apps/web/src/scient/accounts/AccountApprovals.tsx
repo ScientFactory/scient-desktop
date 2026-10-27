@@ -1,6 +1,8 @@
+import { XIcon } from "lucide-react";
 import { useState } from "react";
 import type {
   AccountApproval,
+  AccountHandoff,
   AccountApprovalDecision,
   EnvironmentId,
   ThreadId,
@@ -10,6 +12,78 @@ import { Button } from "~/components/ui/button";
 import { useClientSettings } from "~/hooks/useSettings";
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
+
+import { HandoffBrowser } from "./HandoffBrowser";
+import { handoffInstruction } from "./handoffInstruction";
+
+export function AccountHandoffs({
+  environmentId,
+  handoffs,
+  canWrite,
+}: {
+  environmentId: EnvironmentId;
+  handoffs: ReadonlyArray<AccountHandoff>;
+  canWrite: boolean;
+}) {
+  const show = useAccountCommand(accountsState.showHandoff, environmentId);
+  const cancel = useAccountCommand(accountsState.cancelHandoff, environmentId);
+  return (
+    <div className="grid gap-2">
+      {handoffs.map((handoff) => (
+        <div
+          key={handoff.handoffId}
+          className="mx-auto w-full max-w-2xl overflow-hidden rounded-lg border bg-card"
+        >
+          <div className="flex items-center gap-2 py-1 ps-3 pe-1 text-xs">
+            <span
+              aria-hidden
+              className="size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground motion-reduce:animate-none"
+            />
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">
+              <span className="font-medium text-foreground">{handoff.accountName}</span>
+              {" · "}
+              {handoffInstruction(handoff)}
+            </span>
+            {handoff.kind === "push" && handoff.number ? (
+              <span className="shrink-0 rounded bg-muted px-1.5 text-sm font-semibold tabular-nums text-foreground">
+                Tap {handoff.number}
+              </span>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Cancel sign-in"
+              disabled={!canWrite}
+              onClick={() => void cancel({ handoffId: handoff.handoffId })}
+            >
+              <XIcon />
+            </Button>
+          </div>
+          {handoff.tabId ? (
+            <HandoffBrowser
+              environmentId={environmentId}
+              threadId={handoff.threadId}
+              tabId={handoff.tabId}
+              className="h-96 border-t"
+              fallback={
+                <div className="border-t px-3 py-1.5">
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={!canWrite}
+                    onClick={() => void show({ handoffId: handoff.handoffId })}
+                  >
+                    Open browser
+                  </Button>
+                </div>
+              }
+            />
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const ACTION_LABELS: Readonly<Record<AccountApproval["action"], string>> = {
   "sign-in": "Sign in",
@@ -93,9 +167,11 @@ export function ThreadAccountApprovals({
   const { data, canWrite } = useAccounts(environmentId);
   if (!data) return null;
   const approvals = data.approvals.filter((approval) => approval.threadId === threadId);
-  return approvals.length ? (
+  const handoffs = (data.handoffs ?? []).filter((handoff) => handoff.threadId === threadId);
+  return approvals.length || handoffs.length ? (
     <div className="mb-2">
       <AccountApprovals environmentId={environmentId} approvals={approvals} canWrite={canWrite} />
+      <AccountHandoffs environmentId={environmentId} handoffs={handoffs} canWrite={canWrite} />
     </div>
   ) : null;
 }

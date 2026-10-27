@@ -1,6 +1,7 @@
 import {
   AccountsError,
   type AccountActivityEntry,
+  type AccountHandoff,
   type AccountSummary,
   type BrowserProfileRecord,
 } from "@t3tools/contracts";
@@ -18,6 +19,8 @@ export function fakeAccounts(
     values?: Readonly<Record<string, string>>;
   } = {},
 ) {
+  const handoffs = new Map<string, AccountHandoff>();
+  const cancelled = new Set<string>();
   const uses: Array<Omit<AccountActivityEntry, "at" | "decision">> = [];
   const calls: string[] = [];
   const unavailable = Effect.fail(
@@ -27,6 +30,21 @@ export function fakeAccounts(
     }),
   );
   const service = AccountsService.of({
+    setHandoff: (entry) =>
+      Effect.sync(() => {
+        handoffs.set(entry.handoffId, entry);
+      }),
+    removeHandoff: (id) =>
+      Effect.sync(() => {
+        handoffs.delete(id);
+        cancelled.delete(id);
+      }),
+    handoffCancelled: (id) => Effect.sync(() => cancelled.has(id)),
+    showHandoff: () => unavailable,
+    cancelHandoff: (id) =>
+      Effect.sync(() => {
+        cancelled.add(id);
+      }),
     snapshot: unavailable,
     changes: Stream.empty,
     save: () => unavailable,
@@ -75,5 +93,5 @@ export function fakeAccounts(
         uses.push(entry);
       }),
   });
-  return { service, calls, uses };
+  return { service, calls, uses, handoffs, cancelled };
 }

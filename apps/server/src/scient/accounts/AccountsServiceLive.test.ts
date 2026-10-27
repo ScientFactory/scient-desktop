@@ -666,3 +666,45 @@ it.effect(
       expect(secretEquals(next.totp, current)).toBe(true);
     }),
 );
+
+it.effect(
+  "publishes ephemeral hand-offs, reveals their tab, and prevents cancelled waits reappearing",
+  () =>
+    Effect.gen(function* () {
+      const storage = memoryStore();
+      const { service } = yield* makeHarness({ storage });
+      const { accountId } = yield* service.save(website());
+      let revealed = 0;
+      const entry = {
+        handoffId: "synthetic-handoff",
+        threadId: scope.threadId,
+        accountId,
+        accountName: "Synthetic",
+        site: "example.com",
+        kind: "push" as const,
+        number: "42",
+        startedAt: "2026-10-27T00:00:00Z",
+        expiresAt: "2026-10-27T00:03:00Z",
+      };
+      yield* service.setHandoff(
+        entry,
+        Effect.sync(() => {
+          revealed++;
+        }),
+      );
+      expect((yield* service.snapshot).handoffs).toEqual([entry]);
+      yield* service.showHandoff(entry.handoffId);
+      expect(revealed).toBe(1);
+      const restarted = yield* makeHarness({ storage });
+      expect((yield* restarted.service.snapshot).handoffs).toEqual([]);
+      yield* service.cancelHandoff(entry.handoffId);
+      expect(yield* service.handoffCancelled(entry.handoffId)).toBe(true);
+      yield* service.setHandoff({ ...entry, kind: "code" });
+      expect((yield* service.snapshot).handoffs).toEqual([]);
+      expect((yield* service.showHandoff(entry.handoffId).pipe(Effect.flip)).reason).toBe(
+        "not-found",
+      );
+      yield* service.removeHandoff(entry.handoffId);
+      expect(yield* service.handoffCancelled(entry.handoffId)).toBe(false);
+    }),
+);

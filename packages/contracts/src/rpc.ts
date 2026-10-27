@@ -456,6 +456,8 @@ import {
   SCIENT_ACCOUNT_WS_METHODS,
   WsAccountsActivityRpc,
   WsAccountsApprovalRespondRpc,
+  WsAccountsHandoffCancelRpc,
+  WsAccountsHandoffShowRpc,
   WsAccountsFillValuesRpc,
   WsAccountsMatchSignInRpc,
   WsAccountsImportPasswordsRpc,
@@ -2470,6 +2472,8 @@ export const WsExtensionsRpcGroup = RpcGroup.make(
 export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsActivityRpc,
   WsAccountsApprovalRespondRpc,
+  WsAccountsHandoffCancelRpc,
+  WsAccountsHandoffShowRpc,
   WsAccountsFillValuesRpc,
   WsAccountsMatchSignInRpc,
   WsAccountsImportPasswordsRpc,
