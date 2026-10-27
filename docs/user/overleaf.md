@@ -216,11 +216,13 @@ opens with each conflict and its choices:
 - **Use Overleaf's**
 - **Merge myself:** Scient writes both versions into the file between conflict
   marks (`<<<<<<< Scient`, `=======`, `>>>>>>> Overleaf`).
-- **Ask the agent:** Scient writes the marks, then puts a message in the chat
-  asking the agent to merge them and explain its choices. Send it as it is or
-  add to it. When your thread works in another worktree than the linked copy,
-  Scient opens a new thread on the linked copy with the message instead, since
-  that is where the marks are.
+- **Ask the agent:** after **Sync again** writes the marks, Scient sends a request
+  to this thread's agent to merge them and explain its choices, using your model
+  and access settings. If you already have an unsent draft, the thread is busy,
+  or you have moved to another thread, the request waits in the asking thread's
+  draft for you to send. Your existing draft is kept. When your thread works in
+  another worktree than the linked copy, Scient opens a new thread on the linked
+  copy with the request in its draft instead, since that is where the marks are.
 
 A conflict across several files (a rename on both sides, a file replaced by a
 folder) offers **Keep mine** or **Use Overleaf's** for the whole group.

@@ -351,10 +351,19 @@ export function OverleafReviewPanel(props: {
     }
     const message = askAgentMessage(paths);
     // The window may show another thread by now: write only to the one that asked.
-    if (sameThread(readShownThread(), threadRef)) {
-      const inserted = composer?.current?.insertTextAtEnd(message, { ensureLeadingBoundary: true });
+    if (threadRef && sameThread(readShownThread(), threadRef)) {
+      if (composer?.current?.sendMessageIfIdle?.(threadRef, message)) return;
+      const handle = composer?.current;
+      const inserted =
+        !handle?.getSendContext().answeringPendingUserInput &&
+        handle?.insertTextAtEnd(message, { ensureLeadingBoundary: true });
       if (inserted) {
         composer?.current?.focusAtEnd();
+        toastManager.add({
+          type: "info",
+          title: "The message for the agent is in your draft",
+          description: "Send it when you're ready.",
+        });
         return;
       }
     }
@@ -363,7 +372,7 @@ export function OverleafReviewPanel(props: {
       toastManager.add({
         type: "info",
         title: "The message for the agent is in the thread's draft",
-        description: "Go back to the thread that synced to send it.",
+        description: "Open this thread's draft to review and send it.",
       });
       return;
     }

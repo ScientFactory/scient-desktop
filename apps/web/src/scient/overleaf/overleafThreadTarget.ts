@@ -25,5 +25,5 @@ export function sameThread(left: ScopedThreadRef | null, right: ScopedThreadRef 
 export function appendToThreadDraft(threadRef: ScopedThreadRef, message: string): void {
   const store = useComposerDraftStore.getState();
   const existing = store.getComposerDraft(threadRef)?.prompt ?? "";
-  store.setPrompt(threadRef, existing.trim().length > 0 ? `${existing}\n\n${message}` : message);
+  store.setPrompt(threadRef, existing.length > 0 ? `${existing}\n\n${message}` : message);
 }

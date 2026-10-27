@@ -44,7 +44,12 @@ export async function askAgentOnLinkedCopy(
 ): Promise<boolean> {
   const opened = await startThreadOnLinkedCopy(input);
   if (opened === null) return false;
-  useComposerDraftStore.getState().setPrompt(opened.draftId, input.message);
+  const store = useComposerDraftStore.getState();
+  const existing = store.getComposerDraft(opened.draftId)?.prompt ?? "";
+  store.setPrompt(
+    opened.draftId,
+    existing.length > 0 ? `${existing}\n\n${input.message}` : input.message,
+  );
   return true;
 }
 

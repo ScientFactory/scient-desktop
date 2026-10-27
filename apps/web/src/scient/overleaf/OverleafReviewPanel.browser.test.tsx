@@ -58,7 +58,8 @@ vi.mock("./overleafThreadTarget", async (importOriginal) => ({
   useReadShownThread: () => () => shown.thread,
 }));
 
-const { useComposerDraftStore } = await import("~/composerDraftStore");
+const { createEmptyThreadDraft, useComposerDraftStore } = await import("~/composerDraftStore");
+const { sendPreparedComposerMessage } = await import("~/scient/chat/sendPreparedComposerMessage");
 const { useRightPanelStore } = await import("~/rightPanelStore");
 const { scopedThreadKey } = await import("@t3tools/client-runtime/environment");
 const { OverleafReviewPanel } = await import("./OverleafReviewPanel");
@@ -142,15 +143,45 @@ const applied: ScientOverleafSyncResult = {
 };
 
 function composerStub() {
-  const insertTextAtEnd = vi.fn(() => true);
+  const state = { ready: true, answering: false };
+  const sent: string[] = [];
+  const insertTextAtEnd = vi.fn((message: string) => {
+    const store = useComposerDraftStore.getState();
+    const prompt = store.getComposerDraft(threadRef)?.prompt ?? "";
+    store.setPrompt(threadRef, prompt ? `${prompt}\n\n${message}` : message);
+    return true;
+  });
   const focusAtEnd = vi.fn();
-  const ref = { current: { insertTextAtEnd, focusAtEnd } as unknown as ChatComposerHandle };
-  return { ref, insertTextAtEnd, focusAtEnd };
+  const sendMessageIfIdle = vi.fn<NonNullable<ChatComposerHandle["sendMessageIfIdle"]>>(
+    (target, message) =>
+      sendPreparedComposerMessage({
+        threadRef: target,
+        composerTarget: threadRef,
+        ready: state.ready,
+        prompt: useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "",
+        message,
+        insert: insertTextAtEnd,
+        submit: () => {
+          sent.push(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt ?? "");
+          useComposerDraftStore.getState().setPrompt(threadRef, "");
+        },
+      }),
+  );
+  const ref = {
+    current: {
+      insertTextAtEnd,
+      focusAtEnd,
+      sendMessageIfIdle,
+      getSendContext: () => ({ answeringPendingUserInput: state.answering }),
+    } as unknown as ChatComposerHandle,
+  };
+  return { ref, insertTextAtEnd, focusAtEnd, sendMessageIfIdle, sent, state };
 }
 
 function reset() {
   resetOverleafStoreForTests();
   shown.thread = threadRef;
+  useComposerDraftStore.getState().setPrompt(threadRef, "");
   for (const mock of Object.values(client)) mock.mockReset();
   toasts.add.mockClear();
   client.listOverleafConnections.mockResolvedValue({ connections: [connection] });
@@ -253,12 +284,12 @@ describe("OverleafReviewPanel", () => {
       // The choices answer these conflicts as they stood against this Overleaf tree.
       reviewedRemote: "a".repeat(40),
     });
-    // Then the chat gets a message asking the agent to merge main.tex only.
-    await expect.poll(() => composer.insertTextAtEnd.mock.calls.length).toBe(1);
-    const [message] = composer.insertTextAtEnd.mock.calls[0] as unknown as [string];
-    expect(message).toContain("- paper/main.tex");
-    expect(message).not.toContain("intro.tex");
-    expect(composer.focusAtEnd).toHaveBeenCalledOnce();
+    // The request is sent after the marks are written, without a third Send click.
+    await expect.poll(() => composer.sent.length).toBe(1);
+    expect(composer.sent[0]).toContain("- paper/main.tex");
+    expect(composer.sent[0]).not.toContain("intro.tex");
+    expect(composer.sendMessageIfIdle.mock.calls[0]?.[0]).toEqual(threadRef);
+    expect(composer.focusAtEnd).not.toHaveBeenCalled();
     // The result replaces the conflicts: marks hold the send back, and says so.
     await expect
       .element(
@@ -268,6 +299,60 @@ describe("OverleafReviewPanel", () => {
       )
       .toBeVisible();
   });
+
+  it.each(["new draft", "running turn", "pending answer"] as const)(
+    "keeps the request in the asking thread's draft when a %s appears during sync",
+    async (change) => {
+      reset();
+      recordOverleafSync(environmentId, "c1", {
+        ...decision,
+        review: review({ conflicts: [review().conflicts[0]!] }),
+      });
+      let finish!: (result: ScientOverleafSyncResult) => void;
+      client.syncOverleaf.mockReturnValue(
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      );
+      const composer = composerStub();
+      await using _screen = await render(
+        <ComposerHandleContext value={composer.ref}>{panel()}</ComposerHandleContext>,
+      );
+      await page.getByRole("button", { name: "Ask the agent" }).click();
+      await page.getByRole("button", { name: "Sync again" }).click();
+      await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+      expect(composer.sent).toEqual([]);
+      if (change === "new draft") {
+        useComposerDraftStore.getState().setPrompt(threadRef, "My unfinished request");
+      } else {
+        composer.state.ready = false;
+        composer.state.answering = change === "pending answer";
+      }
+      finish(applied);
+      await expect
+        .poll(() => useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt)
+        .toContain("- paper/main.tex");
+      if (change === "pending answer") {
+        expect(composer.insertTextAtEnd).not.toHaveBeenCalled();
+        expect(composer.focusAtEnd).not.toHaveBeenCalled();
+      } else {
+        expect(composer.focusAtEnd).toHaveBeenCalledOnce();
+      }
+      expect(composer.sent).toEqual([]);
+      const draft = useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt;
+      expect(draft).toContain("- paper/main.tex");
+      if (change === "new draft") expect(draft).toMatch(/^My unfinished request\n\n/u);
+      expect(toasts.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "info",
+          title:
+            change === "pending answer"
+              ? "The message for the agent is in the thread's draft"
+              : "The message for the agent is in your draft",
+        }),
+      );
+    },
+  );
 
   it("lists what came in and what is to send, and opens a file from the list", async () => {
     reset();
@@ -552,6 +637,7 @@ describe("OverleafReviewPanel", () => {
     expect(setPrompt.mock.calls[0]![0]).toEqual(threadRef);
     expect(setPrompt.mock.calls[0]![1]).toContain("- paper/main.tex");
     // The composer on screen belongs to the other thread: it is left alone.
+    expect(composer.sendMessageIfIdle).not.toHaveBeenCalled();
     expect(composer.insertTextAtEnd).not.toHaveBeenCalled();
   });
 
@@ -851,7 +937,7 @@ describe("OverleafReviewPanel", () => {
   });
 
   describe("Ask the agent from another worktree", () => {
-    function setupWorktree(checkoutRoot: string) {
+    function setupWorktree(checkoutRoot: string, existingPrompt = "") {
       reset();
       client.listOverleafConnections.mockResolvedValue({
         connections: [{ ...connection, checkoutRoot, linkedHere: false }],
@@ -861,9 +947,14 @@ describe("OverleafReviewPanel", () => {
       threads.handle.mockReset().mockResolvedValue({ draftId: "draft-1", threadId: "t-new" });
       const setPrompt = vi.fn();
       const getState = useComposerDraftStore.getState;
-      const spy = vi
-        .spyOn(useComposerDraftStore, "getState")
-        .mockImplementation(() => ({ ...getState(), setPrompt }));
+      const spy = vi.spyOn(useComposerDraftStore, "getState").mockImplementation(() => ({
+        ...getState(),
+        getComposerDraft: (target) =>
+          typeof target === "string"
+            ? { ...createEmptyThreadDraft(), prompt: existingPrompt }
+            : getState().getComposerDraft(target),
+        setPrompt,
+      }));
       return { setPrompt, [Symbol.dispose]: () => spy.mockRestore() };
     }
 
@@ -909,7 +1000,20 @@ describe("OverleafReviewPanel", () => {
       expect(draftId).toBe("draft-1");
       expect(message).toContain("- paper/main.tex");
       // This thread's composer is left alone: its agent can't see the linked copy's files.
+      expect(composer.sendMessageIfIdle).not.toHaveBeenCalled();
       expect(composer.insertTextAtEnd).not.toHaveBeenCalled();
+    });
+
+    it("keeps text typed into the linked copy's draft while its thread opens", async () => {
+      using worktree = setupWorktree("/work/project", "A request I started typing");
+      threads.projects = [{ environmentId, id: "p-main", workspaceRoot: "/work/project" }];
+      threads.shellProjectId = "p-main";
+      const composer = composerStub();
+      await askAboutMain(composer);
+      await expect.poll(() => worktree.setPrompt.mock.calls.length).toBe(1);
+      expect(worktree.setPrompt.mock.calls[0]?.[1]).toMatch(/^A request I started typing\n\n/u);
+      expect(worktree.setPrompt.mock.calls[0]?.[1]).toContain("- paper/main.tex");
+      expect(composer.sendMessageIfIdle).not.toHaveBeenCalled();
     });
 
     it("starts a thread in the linked worktree when the link is in another worktree", async () => {
