@@ -286,7 +286,7 @@ describe("Add project ▸ Overleaf project", () => {
     await expect
       .element(page.getByRole("alert"))
       .toHaveTextContent(
-        "The project is made, but Overleaf isn't linked yet. Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.",
+        "The project is made, but Overleaf isn't linked yet. Overleaf has no Git access to a project at this link. Check the link, that the project is shared with you, and that your Overleaf plan includes Git.",
       );
     await expect.element(page.getByLabelText("Project name")).toBeDisabled();
     await expect.element(page.getByLabelText("Location")).toBeDisabled();

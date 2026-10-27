@@ -96,7 +96,9 @@ export function classifyProbeGitFailure(error: OverleafGitError) {
             detail,
           )
         ? "authentication-or-access-denied"
-        : /(?:repository|project)\b[^\r\n]*\bnot found\b|\b404\b/iu.test(detail)
+        : // Overleaf answers "remote error: no git access" for a project that does not exist
+          // or has no Git access (found in a live check).
+          /(?:repository|project)\b[^\r\n]*\bnot found\b|\b404\b|\bno git access\b/iu.test(detail)
           ? "project-not-found"
           : /certificate|\bssl\b|\btls\b|schannel/iu.test(detail)
             ? "tls"
@@ -111,7 +113,7 @@ export function classifyProbeGitFailure(error: OverleafGitError) {
                   : /askpass|could not read username|could not read password/iu.test(detail)
                     ? "credential-prompt"
                     : // Overleaf's server answered, in words not listed above: it refused.
-                      /^remote: \S/mu.test(detail)
+                      /^(?:remote: \S|fatal: remote error:)/mu.test(detail)
                       ? "server-refused"
                       : "unclassified";
   return { reason: error.reason, exitCode: error.exitCode ?? -1, category };

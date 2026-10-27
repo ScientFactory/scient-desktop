@@ -3,7 +3,7 @@
 // project" opens it after making the Scient project, bringing the paper in as a subfolder.
 import type { EnvironmentId, ScientOverleafSyncResult } from "@t3tools/contracts";
 import { ExternalLinkIcon, FolderOpenIcon } from "lucide-react";
-import { Fragment, useState } from "react";
+import { useState } from "react";
 
 import { SecretInput } from "~/components/settings/SecretInput";
 import {
@@ -79,14 +79,16 @@ export interface OverleafNewProject {
   readonly create: (root: string) => Promise<string>;
 }
 
-/** A path that wraps after its slashes, not in the middle of a folder's name. */
+/**
+ * A path that wraps only after its slashes: each segment is one unit, so a hyphen or a
+ * single letter never starts a line; a segment wider than the line breaks inside itself.
+ */
 function WrappingPath(props: { readonly path: string }) {
   return props.path.split(/(?<=\/)/u).map((part, index) => (
     // oxlint-disable-next-line react/no-array-index-key -- path segments repeat and never reorder
-    <Fragment key={index}>
+    <span key={index} className="inline-block max-w-full [overflow-wrap:anywhere]">
       {part}
-      <wbr />
-    </Fragment>
+    </span>
   ));
 }
 

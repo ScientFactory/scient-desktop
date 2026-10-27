@@ -441,7 +441,7 @@ describe("Overleaf tool handlers", () => {
   it.effect("explains inaccessible projects consistently for connect and sync", () =>
     Effect.gen(function* () {
       const message =
-        "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.";
+        "Overleaf has no Git access to a project at this link. Check the link, that the project is shared with you, and that your Overleaf plan includes Git.";
       const connected = yield* overleafConnectForInvocation({
         project: summary.projectId,
         folder: "paper",
