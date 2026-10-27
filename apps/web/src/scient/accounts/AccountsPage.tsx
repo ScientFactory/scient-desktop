@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { KeyRoundIcon } from "lucide-react";
 import type {
+  ConnectorSummary,
   AccountActivityEntry,
   AccountSummary,
   AccountsSnapshot,
@@ -241,7 +242,8 @@ function AccountsContent({
         detail: connection.origin,
         href: "/settings/custom-models" as const,
       }))),
-    ...(inventory.data?.connectors.map((connector) => ({
+    // Only connectors you are signed in to; a key bound from Accounts is already its own row.
+    ...(inventory.data?.connectors.filter(holdsOwnSignIn).map((connector) => ({
       kind: "extension" as const,
       id: connector.connectorId,
       name: connector.displayName,
@@ -398,5 +400,13 @@ export function AccountsPage() {
         <AccountsEnvironment key={environmentId} environmentId={environmentId} />
       ) : null}
     </SettingsPageContainer>
+  );
+}
+
+function holdsOwnSignIn(connector: ConnectorSummary): boolean {
+  return (
+    connector.status === "connected" &&
+    (connector.auth.type === "oauth" ||
+      (connector.auth.type === "credential" && connector.auth.storage === "owned"))
   );
 }
