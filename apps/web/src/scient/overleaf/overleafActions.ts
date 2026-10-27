@@ -182,7 +182,7 @@ export async function runOverleafUndo(
 }
 
 /** The short message after a sync, with "See changes" when there is something to see. */
-function reportOverleafSync(
+export function reportOverleafSync(
   context: Pick<OverleafSyncContext, "openReview" | "connection">,
   result: ScientOverleafSyncResult,
 ): void {

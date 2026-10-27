@@ -31,13 +31,14 @@ import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjectPathSearch } from "~/state/queries";
 
 import { connectOverleaf, overleafRequestId, saveOverleafToken } from "./client";
-import { runOverleafSync } from "./overleafActions";
+import { reportOverleafSync, runOverleafSync } from "./overleafActions";
 import {
   folderNameProblem,
   newFolderPath,
   OVERLEAF_TOKEN_PAGE_URL,
   operationErrorText,
   overleafResultView,
+  overleafSyncSucceeded,
   parseOverleafProjectInput,
   refusalText,
   workspaceFolderPath,
@@ -226,7 +227,7 @@ export function ConnectOverleafDialog(props: {
       forgetOverleafConnection(environmentId, connection.connectionId);
       void reloadOverleafWorkspaces(environmentId, workspaceRoot);
       setPhase({ _tag: "working", step: "sync" });
-      // The first sync runs straight away; its result is shown here.
+      // The first sync runs straight away; only an unfinished result keeps the dialog open.
       try {
         const result = await runOverleafSync({
           environmentId,
@@ -234,6 +235,17 @@ export function ConnectOverleafDialog(props: {
           connection,
           quiet: true,
         });
+        if (result && overleafSyncSucceeded(result)) {
+          reportOverleafSync(
+            {
+              connection,
+              openReview: props.onSeeChanges ? () => props.onSeeChanges?.(connection) : undefined,
+            },
+            result,
+          );
+          onClose();
+          return;
+        }
         setPhase({ _tag: "done", connection, result, syncError: null });
       } catch (syncError) {
         setPhase({

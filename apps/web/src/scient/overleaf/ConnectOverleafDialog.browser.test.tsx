@@ -43,6 +43,9 @@ vi.mock("~/state/queries", () => ({
   },
 }));
 
+const toasts = vi.hoisted(() => ({ add: vi.fn(), close: vi.fn() }));
+vi.mock("~/components/ui/toast", () => ({ toastManager: toasts }));
+
 const { ConnectOverleafDialog } = await import("./ConnectOverleafDialog");
 const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafFileDecision } =
   await import("./overleafStore");
@@ -96,6 +99,7 @@ const firstSync: ScientOverleafSyncResult = {
 
 function reset(tokenSaved: boolean) {
   resetOverleafStoreForTests();
+  toasts.add.mockReset();
   for (const mock of Object.values(client)) mock.mockReset();
   client.readOverleafToken.mockResolvedValue({ saved: tokenSaved });
   client.saveOverleafToken.mockResolvedValue({ saved: true });
@@ -148,7 +152,10 @@ describe("ConnectOverleafDialog", () => {
     await page.getByLabelText("Overleaf Git token").fill("olp_secret");
     await page.getByRole("button", { name: "Connect", exact: true }).click();
 
-    await expect.element(page.getByText("2 files came in")).toBeVisible();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+    expect(toasts.add).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "2 files came in" }),
+    );
     expect(client.saveOverleafToken).toHaveBeenCalledExactlyOnceWith(environmentId, "olp_secret");
     expect(client.connectOverleaf).toHaveBeenCalledExactlyOnceWith(environmentId, {
       workspaceRoot: "/work/project",
@@ -166,7 +173,6 @@ describe("ConnectOverleafDialog", () => {
     expect(client.saveOverleafToken.mock.invocationCallOrder[0]).toBeLessThan(
       client.connectOverleaf.mock.invocationCallOrder[0]!,
     );
-    await page.getByRole("button", { name: "Done" }).click();
     expect(onClose).toHaveBeenCalledOnce();
   });
 
