@@ -35,7 +35,7 @@ import {
   Layers3Icon,
   PaletteIcon,
   // SCIENT-FORK:START — Scient Extensions
-  PuzzleIcon,
+  AtSignIcon,
   // SCIENT-FORK:END
   SearchIcon,
   ServerIcon,
@@ -126,7 +126,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/voice": Mic2Icon,
   "/settings/skills": Layers3Icon,
   // SCIENT-FORK:START — Scient Extensions
-  "/settings/extensions": PuzzleIcon,
+  "/settings/extensions": AtSignIcon,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: place Accounts next to Extensions.
   "/settings/accounts": KeyRoundIcon,

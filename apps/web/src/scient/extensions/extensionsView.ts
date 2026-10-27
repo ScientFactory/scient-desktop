@@ -23,7 +23,7 @@ import {
   FileTextIcon,
   type LucideIcon,
   MonitorSmartphoneIcon,
-  PuzzleIcon,
+  AtSignIcon,
 } from "lucide-react";
 
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
@@ -152,7 +152,7 @@ export function pluginGlyph(
   plugin: Pick<ScientPluginSummary, "pluginId" | "origin">,
 ): LucideIcon | undefined {
   if (plugin.origin !== "built-in") return undefined;
-  return BUILT_IN_PLUGIN_GLYPHS[plugin.pluginId] ?? PuzzleIcon;
+  return BUILT_IN_PLUGIN_GLYPHS[plugin.pluginId] ?? AtSignIcon;
 }
 
 export function isExtensionCategory(value: string): value is ExtensionCategory {

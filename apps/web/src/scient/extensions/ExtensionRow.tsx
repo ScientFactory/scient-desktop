@@ -1,6 +1,6 @@
 import { isExtensionIconDataUri, type ExtensionAudience } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { PuzzleIcon, type LucideIcon } from "lucide-react";
+import { AtSignIcon, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { extensionMarkLayout } from "./extensionIconLayout";
@@ -175,7 +175,7 @@ function ExtensionIconTile({
   const [sample, setSample] = useState<{ url: string; rendered: string }>();
   const rendered =
     image && (renderedIcons.get(image) ?? (sample?.url === image ? sample.rendered : image));
-  const Icon = Glyph ?? (image === undefined ? PuzzleIcon : undefined);
+  const Icon = Glyph ?? (image === undefined ? AtSignIcon : undefined);
   return (
     <span
       aria-hidden
