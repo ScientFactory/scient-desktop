@@ -174,10 +174,12 @@ Family `accounts`, capability `accounts`, granted to every provider session by
 | `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                    |
 
 Every call runs `AccountsService.authorize`. Allowed proceeds; Ask shows the user a card ("Allow
-once", "Always in this project", "Always") and waits up to ten minutes, and is denied at once for
-unattended runs; Off, out-of-scope targets and the global switch deny with a message the agent can
+in this conversation", "Always in this project", "Always") and waits up to ten minutes.
+Unattended runs cannot request approval; Off, out-of-scope targets and the global switch deny with a message the agent can
 relay. "Always in this project" adds the project to the target's `allowedProjects`, where Ask
-counts as Allowed; "Always" sets access Allowed. Every decision and outcome is recorded in the account's activity.
+counts as Allowed; "Always" sets access Allowed. Conversation approval covers the same target in
+the same thread until the server restarts; it is kept only in memory. Global access, Off, project scope and sites still apply on every use.
+Every decision and outcome is recorded in the account's activity.
 
 Per-session files live in `<secrets>/accounts-sessions/<thread key>/`, mode 0700/0600, rewritten
 on each call and removed after 24 hours. Readable values go through files rather than process
@@ -195,7 +197,13 @@ Each step evaluates a detection script that reports the visible login form: user
 one-time-code fields, a submit control, CAPTCHA or passkey prompts. Scient fills only when the
 page's origin matches one of the account's sites (a bare domain matches its subdomains), so a
 look-alike page never receives the password. It types with `clear`, submits, waits for the
-navigation, and repeats for multi-step SSO up to six steps. The 2FA code comes from the stored
+navigation, and repeats for multi-step SSO up to six submissions. A password field returning on
+the same origin after password submission returns `password-rejected` without resubmitting.
+A returning code field returns `code-rejected`; generated TOTP may retry once only after a new
+period starts. Static codes never retry. Non-success exits clear the fields Scient attempted to
+fill, using origin-bound browser operations; unavailable or navigated-away fields may prevent
+cleanup. The result tells the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-user`, `password-rejected`, `code-rejected` or `failed`
+and records that outcome in activity. The 2FA code comes from the stored
 `totp` field (`otpauth://` URI or base32 key) via `otpauth`, or from 1Password
 (`?attribute=otp`). CAPTCHAs, push approvals, passkeys and unknown forms return `needs-user`; the
 agent asks the user to finish in the browser.
@@ -237,6 +245,9 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   autofills. The toolbar chip identifies the filled sign-in and offers other matches; the key button
   remains available for manual filling. The desktop advertises `originBoundFill`; `expectedOrigin`
   and the isolated guest's document nonce reject navigation races, including same-origin reloads.
+- Website rows offer **Open <site>**, opening the first site in a new in-app browser tab in the
+  account's profile (or the default profile). Rejected passwords and codes show a short row status;
+  a later successful sign-in or editing the password clears it.
 - **Approval cards** appear above the composer of the thread that asked, and on the Accounts page.
 
 ## Cookie encryption

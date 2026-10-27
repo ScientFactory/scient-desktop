@@ -99,6 +99,13 @@ export const layer = Layer.effect(
       string,
       { until: number; values: Map<string, Redacted.Redacted<string>> }
     >();
+    const conversationGrants = new Set<string>();
+    const grantKey = (threadId: string, target: AccountTarget) =>
+      JSON.stringify([
+        threadId,
+        target.type,
+        target.type === "account" ? target.accountId : target.profileId,
+      ]);
     const pending = new Map<
       string,
       {
@@ -454,6 +461,9 @@ export const layer = Layer.effect(
             ? "needs-attention"
             : "ready",
         ...(warnings.length ? { statusMessage: warnings[0] } : {}),
+        ...(!input.secrets?.password && existing?.summary.lastSignInOutcome
+          ? { lastSignInOutcome: existing.summary.lastSignInOutcome }
+          : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,
         updatedAt: timestamp,
         ...(existing?.summary.lastUsedAt ? { lastUsedAt: existing.summary.lastUsedAt } : {}),
@@ -726,6 +736,12 @@ export const layer = Layer.effect(
                 entry.approval.target,
                 applyApprovalDecision(controls, decision, entry.scope.projectId),
               );
+            if (
+              decision === "once" &&
+              controls &&
+              authorizationDecision(state.agentAccess, controls, entry.scope).decision !== "denied"
+            )
+              conversationGrants.add(grantKey(entry.scope.threadId, entry.approval.target));
             yield* Deferred.succeed(entry.answer, decision);
           }),
         ),
@@ -989,7 +1005,15 @@ export const layer = Layer.effect(
               Effect.gen(function* () {
                 const controls = targetControls(target);
                 if (!controls) return yield* missing();
-                const decision = authorizationDecision(state.agentAccess, controls, scope);
+                const baseDecision = authorizationDecision(state.agentAccess, controls, {
+                  ...scope,
+                  unattended: false,
+                });
+                const decision =
+                  baseDecision.decision === "ask" &&
+                  conversationGrants.has(grantKey(scope.threadId, target))
+                    ? { decision: "allowed" as const }
+                    : authorizationDecision(state.agentAccess, controls, scope);
                 const audit = {
                   target,
                   action,
@@ -1124,7 +1148,11 @@ export const layer = Layer.effect(
                 yield* commit(
                   replaceAccount({
                     ...account,
-                    summary: { ...account.summary, lastUsedAt: yield* now },
+                    summary: {
+                      ...account.summary,
+                      lastUsedAt: yield* now,
+                      ...(entry.signInOutcome ? { lastSignInOutcome: entry.signInOutcome } : {}),
+                    },
                   }),
                 );
             }

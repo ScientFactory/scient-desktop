@@ -62,6 +62,8 @@ it.effect("handles sequential login steps and bounds retries without returning f
     let steps = 0;
     let stuck = false;
     let fills = 0;
+    let rejected = false;
+    const cleared: unknown[] = [];
     const broker = PreviewAutomationBroker.of({
       connect: () => Effect.succeed(Stream.empty),
       focusHost: () => Effect.void,
@@ -71,14 +73,17 @@ it.effect("handles sequential login steps and bounds retries without returning f
           expect(request.scope.threadId).toBe(scope.threadId);
           let result: unknown = {};
           if (request.operation === "status" || request.operation === "open") result = status;
-          if (request.operation === "accountType") fills++;
+          if (request.operation === "accountType") {
+            if ((request.input as { text: string }).text === "") cleared.push(request.input);
+            else fills++;
+          }
           if (request.operation === "evaluate") {
             const step = stuck ? 0 : steps;
             steps++;
             result = {
               origin: "https://login.example.com",
               username: step === 0 ? "#user" : null,
-              password: step === 1 ? "#password" : null,
+              password: rejected || step === 1 ? "#password" : null,
               otp: step === 2 ? "#otp" : null,
               submit: "button",
               challenge: null,
@@ -89,10 +94,10 @@ it.effect("handles sequential login steps and bounds retries without returning f
         }),
     });
     const fake = fakeAccounts({ profiles: [defaultBrowserProfileRecord(profileId)] });
-    const run = () =>
+    const run = (otp = "123456") =>
       signIn(scope, account, {
         password: Redacted.make("synthetic-password"),
-        totp: Redacted.make("123456"),
+        totp: Redacted.make(otp),
       }).pipe(
         Effect.provideService(AccountsService, fake.service),
         Effect.provideService(PreviewAutomationBroker, broker),
@@ -110,6 +115,24 @@ it.effect("handles sequential login steps and bounds retries without returning f
     stuck = true;
     steps = 0;
     expect((yield* run()).outcome).toBe("failed");
-    expect(steps).toBe(6);
+    expect(steps).toBe(7);
+    expect(cleared).toHaveLength(6);
+    cleared.length = 0;
+    stuck = false;
+    rejected = true;
+    steps = 0;
+    const before = fills;
+    expect((yield* run()).outcome).toBe("password-rejected");
+    expect(fills - before).toBe(2);
+    expect(steps).toBe(2);
+    expect(cleared).toEqual([
+      { origin: "https://login.example.com", selector: "#user", text: "", clear: true },
+      { origin: "https://login.example.com", selector: "#password", text: "", clear: true },
+    ]);
+    rejected = false;
+    steps = 0;
+    cleared.length = 0;
+    expect((yield* run("invalid:totp")).outcome).toBe("failed");
+    expect(cleared).toHaveLength(2);
   }),
 );

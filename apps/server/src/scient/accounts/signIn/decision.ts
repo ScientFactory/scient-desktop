@@ -36,3 +36,40 @@ export function decideSignIn(
     } as const;
   return { type: "fill", fields, submit: page.submit } as const;
 }
+
+export interface SignInSubmission {
+  origin: string;
+  fields: ReadonlyArray<"username" | "password" | "otp">;
+  otpPeriod: number | undefined;
+}
+
+export function decideSignInContinuation(
+  page: SignInDetection,
+  submissions: ReadonlyArray<SignInSubmission>,
+  step: number,
+  otpPeriod: number | undefined,
+) {
+  const sameOrigin = submissions.filter((entry) => entry.origin === page.origin);
+  if (page.password && sameOrigin.some((entry) => entry.fields.includes("password")))
+    return {
+      type: "password-rejected",
+      message:
+        "The site did not accept the saved password. Ask the user to check it in Settings → Accounts.",
+    } as const;
+  const codes = sameOrigin.filter((entry) => entry.fields.includes("otp"));
+  if (
+    page.otp &&
+    codes.length &&
+    (codes.length >= 2 ||
+      otpPeriod === undefined ||
+      otpPeriod <= (codes[0]!.otpPeriod ?? Number.POSITIVE_INFINITY))
+  )
+    return {
+      type: "code-rejected",
+      message:
+        "The site did not accept the sign-in code. Ask the user to check it in Settings → Accounts.",
+    } as const;
+  if (step >= 6)
+    return { type: "failed", message: "Sign-in did not finish after six steps." } as const;
+  return { type: "continue" } as const;
+}
