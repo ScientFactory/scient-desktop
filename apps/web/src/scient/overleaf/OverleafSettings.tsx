@@ -3,7 +3,7 @@
 // Overleaf holds one project's links.
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, ExternalLinkIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { Icon } from "~/components/Icons";
 import { SecretInput } from "~/components/settings/SecretInput";
@@ -40,6 +40,7 @@ import {
   reloadOverleafWorkspaces,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
+  useNoOverleafLinks,
   useOverleafWorkspace,
 } from "./overleafStore";
 
@@ -139,16 +140,10 @@ function OverleafProjectLinks(props: {
   readonly projectName?: string;
   /** Shown when the project has no links; nothing when absent. */
   readonly empty?: string;
-  /** Told the number of links once they're read, so a list of projects can say none are linked. */
-  readonly onCount?: (count: number) => void;
 }) {
-  const { environmentId, workspaceRoot, onCount } = props;
+  const { environmentId, workspaceRoot } = props;
   const workspace = useOverleafWorkspace(environmentId, workspaceRoot);
   const [unlinking, setUnlinking] = useState<string | null>(null);
-  const count = workspace.loaded ? workspace.connections.length : null;
-  useEffect(() => {
-    if (count !== null) onCount?.(count);
-  }, [count, onCount]);
   if (workspace.connections.length === 0) {
     return props.empty && workspace.loaded ? (
       <p className="text-xs text-muted-foreground">{props.empty}</p>
@@ -255,11 +250,10 @@ function OverleafProjectLinks(props: {
 function OverleafLinkedFolders(props: { readonly environmentId: EnvironmentId }) {
   const { environmentId } = props;
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const [counts, setCounts] = useState<ReadonlyMap<string, number>>(new Map());
-  const noneLinked =
-    projects.length === 0 ||
-    (projects.every((project) => counts.has(project.workspaceRoot)) &&
-      projects.every((project) => counts.get(project.workspaceRoot) === 0));
+  const noneLinked = useNoOverleafLinks(
+    environmentId,
+    projects.map((project) => project.workspaceRoot),
+  );
   return (
     <div className="grid gap-3">
       <p className="text-xs font-medium text-foreground">Linked folders</p>
@@ -270,13 +264,6 @@ function OverleafLinkedFolders(props: { readonly environmentId: EnvironmentId })
           environmentId={environmentId}
           workspaceRoot={project.workspaceRoot}
           projectName={project.title}
-          onCount={(count) =>
-            setCounts((previous) =>
-              previous.get(project.workspaceRoot) === count
-                ? previous
-                : new Map(previous).set(project.workspaceRoot, count),
-            )
-          }
         />
       ))}
     </div>

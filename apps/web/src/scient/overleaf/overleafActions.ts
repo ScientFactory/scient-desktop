@@ -271,7 +271,7 @@ export async function cancelOverleafRun(
     if (result._tag === "nothing-running") {
       toastManager.add({ type: "info", title: "No sync is running" });
       // A chip still on "Syncing…" read a busy status that has since ended.
-      void reloadOverleafWorkspaces(environmentId, workspaceRoot);
+      void reloadOverleafWorkspaces(environmentId, workspaceRoot, { afterOwnOperation: false });
     }
   } catch (error) {
     toastManager.add({

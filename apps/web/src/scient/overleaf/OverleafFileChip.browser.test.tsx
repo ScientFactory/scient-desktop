@@ -88,6 +88,7 @@ function status(overrides: Partial<ScientOverleafStatus> = {}): ScientOverleafSt
     reasons: [],
     local: { _tag: "read", changed: 1, deleted: 0, added: 0 },
     markerPaths: [],
+    revision: 1,
     unresolvedSends: 0,
     keptCopies: 0,
     busy: false,

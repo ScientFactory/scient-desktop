@@ -162,6 +162,7 @@ export function OverleafConflictActions<Annotation>(props: {
   } | null>(null);
   const hasBlocks = blocks.length > 0;
 
+  // oxlint-disable-next-line t3code/react-effect-budget -- Measures the editor's rendered conflict blocks and follows its DOM mutations to place the buttons beside them.
   useEffect(() => {
     if (!surface || !hasBlocks) return;
     const scroller = surface.querySelector(".file-preview-virtualizer") ?? surface;

@@ -37,6 +37,7 @@ const {
   finishOverleafPreview,
   recordOverleafSync,
   loadOverleafWorkspace,
+  noteOverleafAgentRuns,
   readOverleafWorkspace,
   refreshOverleafStatus,
   reloadOverleafWorkspaces,
@@ -69,6 +70,7 @@ const status = (busy: boolean): ScientOverleafStatus => ({
   keptCopies: 0,
   busy,
   linkedElsewhere: false,
+  revision: 1,
 });
 
 function deferred<T>() {
@@ -269,6 +271,73 @@ describe("overleafStore", () => {
       review: { reviewId: "new" },
       applied: false,
     });
+  });
+
+  it("drops the review shown when another sync changes the link, but not after its own", async () => {
+    resetOverleafStoreForTests();
+    const at = (revision: number) => ({ ...status(false), revision });
+    client.listOverleafConnections
+      .mockReset()
+      .mockResolvedValue({ connections: [{ ...link, linkedHere: true }] });
+    client.readOverleafStatus.mockReset().mockResolvedValueOnce(at(1));
+    await refreshOverleafStatus(environmentId, ROOT, "c1");
+    const synced = {
+      _tag: "synced" as const,
+      settled: null,
+      review: {
+        reviewId: "mine",
+        digest: "d",
+        remoteTree: "a".repeat(40),
+        upToDate: true,
+        needsDecision: false,
+        incoming: [],
+        outgoing: [],
+        conflicts: [],
+        warnings: [],
+        unresolvedMarkers: [],
+        released: [],
+        collisions: [],
+        selectedAdditions: [],
+        additions: [],
+        localOnly: [],
+      },
+      outcome: "complete",
+      interrupted: 0,
+      markerPaths: [],
+      publication: { _tag: "accepted" as const, attemptNumber: 1 },
+      retried: false,
+      activity: [],
+      linkedElsewhere: false,
+    };
+    // This window's sync moves the record to 2: its own refresh adopts that.
+    recordOverleafSync(environmentId, "c1", synced);
+    client.readOverleafStatus.mockResolvedValueOnce(at(2));
+    await reloadOverleafWorkspaces(environmentId, ROOT);
+    expect(readOverleafWorkspace(environmentId, ROOT).reviews.get("c1")?.review.reviewId).toBe(
+      "mine",
+    );
+    // An agent's sync moves it to 3: the review and result from before no longer describe it.
+    client.readOverleafStatus.mockResolvedValueOnce(at(3));
+    await refreshOverleafStatus(environmentId, ROOT, "c1");
+    let shown = readOverleafWorkspace(environmentId, ROOT);
+    expect(shown.reviews.has("c1")).toBe(false);
+    expect(shown.lastSync.has("c1")).toBe(false);
+    expect(shown.outdated.has("c1")).toBe(true);
+    // Reading the changes again settles it.
+    beginOverleafPreview(environmentId, "c1");
+    shown = readOverleafWorkspace(environmentId, ROOT);
+    expect(shown.outdated.has("c1")).toBe(false);
+  });
+
+  it("reads the links again once each time the settled agent runs change", async () => {
+    resetOverleafStoreForTests();
+    client.listOverleafConnections.mockReset().mockResolvedValue({ connections: [] });
+    noteOverleafAgentRuns(environmentId, ROOT, "t1:r1:completed");
+    noteOverleafAgentRuns(environmentId, ROOT, "t1:r1:completed");
+    expect(client.listOverleafConnections).not.toHaveBeenCalled();
+    noteOverleafAgentRuns(environmentId, ROOT, "t1:r2:completed");
+    noteOverleafAgentRuns(environmentId, ROOT, "t1:r2:completed");
+    expect(client.listOverleafConnections).toHaveBeenCalledTimes(1);
   });
 
   describe("pending decisions", () => {

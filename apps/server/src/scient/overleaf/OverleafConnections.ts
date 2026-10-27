@@ -154,6 +154,8 @@ export interface OverleafConnectionStatus {
   readonly keptCopies: number;
   /** Another operation holds the connection right now. */
   readonly busy: boolean;
+  /** The link record's revision: it moves with every operation that changes the link. */
+  readonly revision: number;
 }
 
 /** One Overleaf project ID: Overleaf's 24 hexadecimal digits. */
@@ -844,6 +846,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       unresolvedSends,
       keptCopies: document.retention.copies.length,
       busy,
+      revision: document.revision,
     };
     if (document.state === "archived")
       return {

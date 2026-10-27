@@ -16,7 +16,7 @@ import {
   RefreshCw,
   Undo2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
@@ -54,6 +54,7 @@ import {
   type OverleafReviewChoice,
   useOverleafWorkspace,
 } from "./overleafStore";
+import { useOverleafAgentRunWatch } from "./useOverleafAgentRunWatch";
 
 /** A person's choice: the engine's three, plus "Ask the agent", which writes the marks too. */
 export type { OverleafReviewChoice } from "./overleafStore";
@@ -184,6 +185,14 @@ export function OverleafReviewPanel(props: {
   const readError = workspace.previewErrors.get(connectionId) ?? null;
   const readNote = workspace.previewNotes.get(connectionId) ?? null;
   const readChanges = () => void readOverleafChanges(environmentId, cwd, connectionId);
+  useOverleafAgentRunWatch(environmentId, cwd);
+  // Another sync (an agent, another window) changed the link: its old review was dropped.
+  const outdated = workspace.outdated.has(connectionId);
+  // oxlint-disable-next-line t3code/react-effect-budget -- While the tab is on screen, a review another sync made outdated is read again from the server.
+  useEffect(() => {
+    if (outdated && !reading && !syncing)
+      void readOverleafChanges(environmentId, cwd, connectionId);
+  }, [outdated, reading, syncing, environmentId, cwd, connectionId]);
   const chosen = choiceState?.review === shownReview ? choiceState.choices : NO_CHOICES;
   const chooseAgain = chooseAgainFor !== null && chooseAgainFor === shownReview;
   const setChosen = (
