@@ -425,6 +425,12 @@ export const layerWithOptions = (
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
+      // SCIENT-FORK:START — expiry and external/global credential revocation clear plugin secrets too.
+      if (Option.isSome(pluginKeyBindings) && mcpSessionRegistry.onRevoke)
+        yield* mcpSessionRegistry.onRevoke((id, reason) =>
+          pluginKeyBindings.value.clearSession(id, reason === "expired"),
+        );
+      // SCIENT-FORK:END
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
@@ -833,6 +839,10 @@ export const layerWithOptions = (
               }
               dropMcpCredentialReservation(threadId, existing.providerSessionId);
             }
+            // SCIENT-FORK:START — release plugin keys with the exact MCP credential.
+            if (existing && Option.isSome(pluginKeyBindings))
+              yield* pluginKeyBindings.value.clearSession(existing.providerSessionId);
+            // SCIENT-FORK:END
             if (existing && pluginStdioFiles)
               yield* pluginStdioFiles.clear(existing.providerSessionId).pipe(Effect.orDie);
             yield* mcpSessionRegistry.revokeThread(threadId);
@@ -918,6 +928,10 @@ export const layerWithOptions = (
               Effect.tap(() =>
                 Effect.gen(function* () {
                   const session = yield* mcpSessions.read(threadId);
+                  // SCIENT-FORK:START — no cached plugin key outlives its credential.
+                  if (session && Option.isSome(pluginKeyBindings))
+                    yield* pluginKeyBindings.value.clearSession(session.providerSessionId);
+                  // SCIENT-FORK:END
                   if (session && pluginStdioFiles)
                     yield* pluginStdioFiles.clear(session.providerSessionId).pipe(Effect.orDie);
                   yield* mcpSessions.clear(threadId);
@@ -925,6 +939,13 @@ export const layerWithOptions = (
               ),
             )
           : mcpSessionRegistry.revokeProviderSession(mcpCredentialId).pipe(
+              // SCIENT-FORK:START — no cached plugin key outlives its credential.
+              Effect.tap(() =>
+                Option.isSome(pluginKeyBindings)
+                  ? pluginKeyBindings.value.clearSession(mcpCredentialId)
+                  : Effect.void,
+              ),
+              // SCIENT-FORK:END
               Effect.tap(() =>
                 pluginStdioFiles
                   ? pluginStdioFiles.clear(mcpCredentialId).pipe(Effect.orDie)

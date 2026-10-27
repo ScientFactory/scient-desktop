@@ -4,6 +4,9 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+// SCIENT-FORK:START — scoped credential revocation observers release plugin key caches.
+import type * as Scope from "effect/Scope";
+// SCIENT-FORK:END
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
@@ -56,6 +59,11 @@ export interface McpSessionRegistryShape {
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
+  // SCIENT-FORK:START — scoped credential revocation observers release plugin key caches.
+  readonly onRevoke?: (
+    handler: (sessionId: string, reason: "expired" | "revoked") => Effect.Effect<void>,
+  ) => Effect.Effect<void, never, Scope.Scope>;
+  // SCIENT-FORK:END
 }
 
 export class McpSessionRegistry extends Context.Service<
@@ -119,6 +127,18 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
+  // SCIENT-FORK:START — invalidate secrets on every credential exit, including expiry.
+  const revocationHandlers = new Set<
+    (sessionId: string, reason: "expired" | "revoked") => Effect.Effect<void>
+  >();
+  const notifyRevoked = (ids: ReadonlyArray<string>, reason: "expired" | "revoked" = "revoked") =>
+    Effect.forEach(
+      ids,
+      (id) =>
+        Effect.forEach(revocationHandlers, (handler) => handler(id, reason), { discard: true }),
+      { discard: true },
+    );
+  // SCIENT-FORK:END
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
   const endpoint = NetAddress.isInetAddress(httpServer.address)
@@ -196,11 +216,18 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       if (rawToken.length === 0) return undefined;
       const tokenHash = yield* hashToken(rawToken);
       const timestamp = yield* currentTimeMillis;
-      return yield* SynchronizedRef.modify(state, ({ records }) => {
+      // SCIENT-FORK:START — expiry is a credential exit, not just a failed lookup.
+      let expired: string | undefined;
+      const resolved = yield* SynchronizedRef.modify(state, ({ records }) => {
         const record = records.get(tokenHash);
-        if (!record || timestamp - record.lastAliveAt > livenessWindowMs) {
+        if (!record) return [undefined, { records }] as const;
+        if (timestamp - record.lastAliveAt > livenessWindowMs) {
+          expired = record.scope.thread.providerSessionId;
+          // Preserve touch-based revival of the authority record; only its cached
+          // secret material is discarded when the bearer is currently expired.
           return [undefined, { records }] as const;
         }
+        // SCIENT-FORK:END
         const next = new Map(records);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
         return [
@@ -221,6 +248,10 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           { records: next },
         ] as const;
       });
+      // SCIENT-FORK:START — release session-scoped key material before returning an expired lookup.
+      if (expired) yield* notifyRevoked([expired], "expired");
+      return resolved;
+      // SCIENT-FORK:END
     },
   );
 
@@ -265,10 +296,23 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     });
   });
 
-  const revokeWhere = (predicate: (record: CredentialRecord) => boolean) =>
-    SynchronizedRef.update(state, ({ records }) => ({
-      records: new Map(Array.from(records).filter(([, record]) => !predicate(record))),
-    }));
+  // SCIENT-FORK:START — revocation observers cover exact-token, thread and global release.
+  const revokeWhere = Effect.fn("McpSessionRegistry.revokeWhere")(function* (
+    predicate: (record: CredentialRecord) => boolean,
+  ) {
+    const removed = yield* SynchronizedRef.modify(state, ({ records }) => {
+      const next = new Map(records);
+      const ids: string[] = [];
+      for (const [token, record] of records)
+        if (predicate(record)) {
+          ids.push(record.scope.thread.providerSessionId);
+          next.delete(token);
+        }
+      return [ids, { records: next }] as const;
+    });
+    yield* notifyRevoked(removed);
+  });
+  // SCIENT-FORK:END
 
   return McpSessionRegistry.of({
     issue,
@@ -283,7 +327,18 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
       yield* revokeWhere((record) => record.scope.thread.threadId === threadId);
     }),
-    revokeAll: SynchronizedRef.set(state, { records: new Map() }),
+    // SCIENT-FORK:START — release cached keys before global revoke completes.
+    revokeAll: revokeWhere(() => true),
+    onRevoke: Effect.fn("McpSessionRegistry.onRevoke")((handler) =>
+      Effect.acquireRelease(
+        Effect.sync(() => revocationHandlers.add(handler)),
+        () =>
+          Effect.sync(() => {
+            revocationHandlers.delete(handler);
+          }),
+      ).pipe(Effect.asVoid),
+    ),
+    // SCIENT-FORK:END
   });
 });
 

@@ -74,7 +74,13 @@ export const preparePluginKeyHttpDelivery = Effect.fn("PluginKeyHttpDelivery.pre
       if (provider.driver === "codex" && isReservedConnectorServerName(server.name)) continue;
       const origin = new URL(server.url).origin;
       const originAllowed = yield* Effect.forEach(server.envNames, (envName) =>
-        bindings.resolveKey({ ...target, envName, origin, expectedRef: expectedRefs.get(envName) }),
+        bindings.resolveKey({
+          ...target,
+          envName,
+          origin,
+          expectedRef: expectedRefs.get(envName),
+          auditAllowed: false,
+        }),
       ).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),
@@ -106,7 +112,8 @@ export const preparePluginKeyHttpDelivery = Effect.fn("PluginKeyHttpDelivery.pre
           Parameters<NonNullable<ConnectorRuntimeShape["registerPluginKeyHttp"]>>[0]["authorize"]
         >[0],
       ) {
-        if (scope?.thread?.providerInstanceId !== input.agent) return yield* denied();
+        const thread = scope?.thread;
+        if (!thread || thread.providerInstanceId !== input.agent) return yield* denied();
         const actions = yield* providers.getProviderPluginActionsForInstance(input.agent);
         if (!actions || (yield* actions.isRetired)) return yield* denied();
         const current = (yield* actions.listPlugins(
@@ -120,12 +127,7 @@ export const preparePluginKeyHttpDelivery = Effect.fn("PluginKeyHttpDelivery.pre
             : yield* actions.store?.keyServerRoot?.(current.id) ?? Effect.void;
         if (currentRoot !== root) return yield* denied();
         const contents = yield* Effect.tryPromise(() => readLocalPluginContents(root));
-        const eligibility = yield* bindings.list(target, contents.requiredKeys);
-        if (
-          eligibility.status !== "ready" ||
-          fingerprint(eligibility.keys.map((key) => [key.envName, key.accountRef])) !==
-            bindingIdentity
-        )
+        if (!(yield* bindings.checkBindings(target, contents.requiredKeys, expectedRefs)))
           return yield* denied();
         const fresh = (yield* Effect.tryPromise(() => readLocalPluginKeyHttpServers(root))).find(
           (candidate) => candidate.name === server.name,
@@ -142,8 +144,17 @@ export const preparePluginKeyHttpDelivery = Effect.fn("PluginKeyHttpDelivery.pre
           ]) !== generation
         )
           return yield* denied();
+        // Check every required key, including declared settings not used by this server.
+        // The session cache serves only Redacted values and checks a lock-free Accounts epoch.
+        for (const envName of contents.requiredKeys ?? [])
+          yield* bindings.resolveForSession(thread.providerSessionId, {
+            ...target,
+            envName,
+            ...(fresh.envNames.includes(envName) ? { origin } : {}),
+            expectedRef: expectedRefs.get(envName),
+          });
         return yield* injectPluginKeyHeaders(fresh, (envName) =>
-          bindings.resolveKey({
+          bindings.resolveForSession(thread.providerSessionId, {
             ...target,
             envName,
             origin,

@@ -108,7 +108,19 @@ it.effect(
         details,
         secrets: { token: { type: "scient", value: original } },
       });
-      const bindings = yield* makePluginKeyBindings(root, service);
+      let listCalls = 0;
+      let resolveCalls = 0;
+      const bindings = yield* makePluginKeyBindings(root, {
+        ...service,
+        listBindable: (input) => {
+          listCalls++;
+          return service.listBindable(input);
+        },
+        resolveBound: (ref, consumer, options) => {
+          resolveCalls++;
+          return service.resolveBound(ref, consumer, options);
+        },
+      });
       const registrations: Registration[] = [];
       const runtime = {
         registerPluginKeyHttp: (registration: Registration) =>
@@ -152,6 +164,18 @@ it.effect(
       expect((yield* registered.authorize(scope)).headers).toEqual({
         Authorization: `Bearer ${original}`,
       });
+      const initialLists = listCalls;
+      const initialResolves = resolveCalls;
+      const warm = yield* Effect.forEach(
+        Array.from({ length: 20 }),
+        () => registered.authorize(scope),
+        { concurrency: "unbounded" },
+      );
+      expect(
+        warm.every((response) => response.headers.Authorization === `Bearer ${original}`),
+      ).toBe(true);
+      expect(listCalls).toBe(initialLists);
+      expect(resolveCalls).toBe(initialResolves);
       const replacement = syntheticValue();
       yield* service.save({
         accountId,

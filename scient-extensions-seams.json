@@ -3,6 +3,7 @@
   "owner": "ScientFactory",
   "ownedRoots": ["apps/server/src/scient/extensions", "apps/web/src/scient/extensions"],
   "ownedFiles": [
+    "apps/server/src/mcp/McpSessionRegistry.scient.test.ts",
     "apps/server/src/orchestration-v2/Adapters/PluginKeyOverrides.scient.test.ts",
     "apps/server/src/provider/Drivers/PluginKeyProviderConfig.ts",
     "apps/server/src/provider/Drivers/PluginKeyProviderConfig.test.ts",

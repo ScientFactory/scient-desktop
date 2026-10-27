@@ -77,8 +77,9 @@ native plugin subprocesses. Treat inherited credentials as possible; no live
 environment values were read to check this. In particular, never put a bound
 Accounts key into a provider's process environment.
 
-HTTP delivery must resolve the `plugin-key` consumer at each proxy request,
-using the original remote origin and current project. Stdio delivery needs its
+HTTP delivery checks current plugin-key eligibility on every proxy request,
+using a session-scoped Redacted cache authorized for the original remote origin
+and current project (see the cache lifecycle below). Stdio delivery needs its
 own scoped credential-file lifecycle. `accounts/agent/sessionFiles.ts` is the
 existing 0600 file owner pattern. A file readable by the same operating-system
 user is not isolation from arbitrary shell reads; the intended guarantee and
@@ -204,9 +205,10 @@ existing session credential. Only the Scient proxy URL and session bearer reach
 the adapter. The proxy uses the existing request/body limits, egress checks,
 redirect refusal, upstream MCP-session binding and response redaction. Its
 credential callback rechecks the provider generation, installed/enabled plugin,
-source path and template fingerprint, then calls `resolveBound` with the original
-origin, project, agent instance, plugin id and each variable name. Rotation is
-observed at the next request. Off, removal, missing bindings and source changes
+source path and template fingerprint, then uses session-scoped keys authorized by
+`resolveBound` for the original origin, project, agent instance, plugin id and
+variable name. Accounts edits and rotation invalidate those keys before the next
+request can use them. Off, removal, missing bindings and source changes
 refuse a request without falling back to any previously resolved value. A changed
 account binding produces a new connector id and denies the previous registration;
 resolution also pins the expected account ref across the authorization boundary,
@@ -302,9 +304,10 @@ cached agent per egress policy. Connections are pooled by origin; Scient does
 not deliberately repeat DNS/TLS setup on each request. DNS security checks still
 apply when establishing a new connection. Claude plugin eligibility reads the
 local installed-plugin index and contained manifest files; it does not spawn a
-CLI. Accounts availability and `resolveBound` are checked before fetching, so a
-slow external credential source or an account operation holding its lock can
-still delay that phase. Authorization is not cached across requests.
+CLI. On a cache miss, Accounts availability and `resolveBound` are checked before
+fetching, so a slow external credential source or an account operation holding
+its lock can delay the first resolution. Warm requests check the in-memory
+authorization revision instead of entering that lock.
 
 A plugin-bound key is not an OAuth grant. An upstream 401, with or without
 `WWW-Authenticate`, is never refreshed or replayed. The rejected exchange is
@@ -353,3 +356,60 @@ received HTTP 400 headers after 548 ms, with text/plain content and an auth
 challenge present. The response body and challenge value were not inspected.
 This single result neither reproduces the reported latency nor establishes a
 remote 401 baseline; it is not a vendor latency guarantee.
+
+## Session key cache and activity rate
+
+The HTTP credential callback never calls `listBindable`. It checks saved binding
+references in memory, then resolves each required key through a bounded server-only
+cache. A miss calls `resolveBound`; concurrent misses for the same session/plugin/
+variable share a lock. Values stay `Redacted` in memory. Cache identity includes
+the MCP credential, agent, plugin, variable, original remote origin, project and
+expected account ref. A value expires for use after three minutes, and at most
+4,096 entries are retained. Denials are never cached.
+
+Accounts exposes a lock-free authorization revision, advanced before configuration
+writes and on non-usage changes. Every cache hit checks it. This closes the gap
+before a queued `AccountsService.changes` subscriber has run: edits, rotation,
+removal, token clearing, Off, sites, project scope, source connection and global
+Agent-access changes cannot reuse an older cached value. The subscriber also
+drops stale entries. Binding changes clear values synchronously. Values obtained
+across an edit/rebind or session release are withheld rather than published.
+
+MCP credential release, thread/global revocation, observed credential expiry and
+service shutdown clear the corresponding keys and audit counters. Expired
+registry authority records retain their existing touch/revival behavior; a
+revived credential must resolve its keys again. Cache entries are never written
+to disk or exposed to the web/agent environment. External source changes that do
+not emit an Accounts change are discovered on the next three-minute refresh.
+
+An allowed use is recorded at most once per credential/plugin/variable in a
+three-minute window, independent of cache refreshes caused by edits. Status
+queries and delivery validation suppress allowed-use audit. Usage activity and
+lastUsedAt-only commits keep the same authorization revision, so a use cannot
+invalidate its own freshly resolved key. Account and binding denials, including
+removed accounts and unbound expected refs, are still recorded on every attempt.
+
+Accounts persistence writes were not moved out of the semaphore or debounced.
+The small Accounts changes are the revision port, plugin-only suppression of
+allowed-use audit, and an internal denial-recording port. Ordinary connector
+resolution/audit behavior is retained. Warm key delivery bypasses Accounts even
+while an unrelated usage writer holds the semaphore; cold resolution and denial
+audit still wait for it. Plugin enablement, root and manifest checks remain fresh.
+
+The reported live pre-change `credentialFor` times were 2,993 and 3,816 ms, with
+`listBindable` taking 924/1,796 ms and resolution 2,054/1,993 ms. A local synthetic
+measurement using `PluginKeyHttpDelivery.authorize` spans after this change found:
+
+| Calls                                         |   Median |      p95 |  Maximum |
+| --------------------------------------------- | -------: | -------: | -------: |
+| Cold (one sample, in-memory synthetic source) |  2.47 ms |  2.47 ms |  2.47 ms |
+| Warm sequential (50)                          |  0.99 ms |  1.37 ms |  1.64 ms |
+| Warm concurrent (20)                          | 13.76 ms | 14.58 ms | 14.58 ms |
+
+Warm calls made zero `listBindable` or `resolveBound` calls. These are local
+synthetic timings, not a post-change measurement of the live desktop account
+store. The live under-50-ms target still needs a rerun in the user's dev app.
+Tests prove single-flight behavior, audit throttling, progress with a blocked
+Accounts writer, origin/project/session separation, revocation and lookup races.
+Disabling the cache-hit or post-resolution revocation checks makes the associated
+regression tests fail.

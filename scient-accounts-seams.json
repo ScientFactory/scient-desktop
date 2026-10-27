@@ -202,6 +202,11 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/server/src/scient/extensions/PluginKeySessionCache.ts",
+      "anchor": "bindingRevision",
+      "purpose": "Keep Redacted plugin keys in memory per credential, invalidate through the lock-free Accounts epoch and changes feed, and throttle allowed audit only."
+    },
+    {
       "path": "apps/server/src/scient/extensions/PluginKeyStdioSessions.ts",
       "anchor": "makeSessionFiles",
       "purpose": "Reuse Accounts private per-session directory, atomic 0600 writes and startup sweep for plugin-key launch envelopes."
