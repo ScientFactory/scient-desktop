@@ -20,7 +20,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
-import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import {
+  AccountsSecretStore,
+  layer as accountsSecretStoreLayer,
+} from "../accounts/AccountsSecretStore.ts";
+import { OVERLEAF_TOKEN_SECRET } from "./OverleafToken.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import { ThreadManagementService } from "../../orchestration-v2/ThreadManagementService.ts";
@@ -357,8 +361,6 @@ export type OverleafUndoOutcome =
   /** Stopped on request after saving editors, before the undo applied anything. */
   | { readonly _tag: "cancelled" };
 
-/** The stored token's name: one token per Overleaf site (contract section 3). */
-const TOKEN_SECRET = `overleaf-git-token-${Buffer.from("www.overleaf.com", "utf8").toString("base64url")}`;
 /** Reviews rebuilt in one sync before it reports the folder as unsettled. */
 const STALE_ROUNDS = 3;
 /** Token use takes one permit; renewal and removal take them all, so they wait for use to end. */
@@ -394,7 +396,7 @@ export interface OverleafSyncOptions {
 }
 
 const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOptions) {
-  const secrets = yield* ServerSecretStore;
+  const secrets = yield* AccountsSecretStore;
   const resolver = yield* WorkspaceBindingResolver;
   const bindings = yield* WorkspaceBindingStore.WorkspaceBindingStore;
   const store = yield* OverleafStateStore;
@@ -414,7 +416,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     detail: CREDENTIAL_UNAVAILABLE,
   });
 
-  const readToken = secrets.get(TOKEN_SECRET).pipe(
+  const readToken = secrets.get(OVERLEAF_TOKEN_SECRET).pipe(
     Effect.map(Option.getOrNull),
     Effect.orElseSucceed(() => null),
   );
@@ -678,14 +680,14 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       return yield* new OverleafSyncRefusedError({ reason: "token-missing" });
     yield* credentialLock.withPermits(CREDENTIAL_PERMITS)(
       Effect.gen(function* () {
-        yield* secrets.set(TOKEN_SECRET, new TextEncoder().encode(trimmed));
+        yield* secrets.set(OVERLEAF_TOKEN_SECRET, new TextEncoder().encode(trimmed));
         credentialEpoch++;
       }),
     );
   });
   const removeToken = credentialLock.withPermits(CREDENTIAL_PERMITS)(
     Effect.gen(function* () {
-      yield* secrets.remove(TOKEN_SECRET);
+      yield* secrets.remove(OVERLEAF_TOKEN_SECRET);
       credentialEpoch++;
     }),
   );
@@ -1381,6 +1383,6 @@ export const layer = Layer.unwrap(
           disconnect: guard(service.disconnect),
         };
       }),
-    ).pipe(Layer.provide(engine));
+    ).pipe(Layer.provide(engine), Layer.provide(accountsSecretStoreLayer));
   }),
 );

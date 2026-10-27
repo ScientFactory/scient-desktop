@@ -6,7 +6,7 @@ import { ensureNativePrivateRetentionDirectory } from "../workspace/NativeFilePu
  * The step-5 service over a real local bare repository standing in for
  * Overleaf, shared by the service tests and the agent-tool tests: two
  * checkouts of one host project (`main` and a worktree), a third project, an
- * Overleaf per project ID with a collaborator clone, and a fake secret store.
+ * Overleaf per project ID with a collaborator clone, and an in-memory sealed secret store.
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -16,7 +16,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
+import { AccountsSecretStore, makeAccountsSecretStore } from "../accounts/AccountsSecretStore.ts";
+import { makeAccountVault } from "../accounts/AccountVault.ts";
+import { memoryStore, noKeychain } from "../accounts/Accounts.testkit.ts";
+import { OVERLEAF_TOKEN_SECRET } from "./OverleafToken.ts";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceBindingStore } from "../projectScope/WorkspaceBindingStore.ts";
@@ -230,15 +233,11 @@ export const overleafSyncWorld = (input?: {
               } as never);
         }),
     } as unknown as WorkspaceBindingStore["Service"];
-    const secretValues = new Map<string, Uint8Array>();
-    if (input?.withToken !== false) secretValues.set("token", new TextEncoder().encode(TOKEN));
-    const secrets = ServerSecretStore.of({
-      get: () => Effect.sync(() => Option.fromNullishOr(secretValues.get("token"))),
-      set: (_name, value) => Effect.sync(() => void secretValues.set("token", value)),
-      create: (_name, value) => Effect.sync(() => void secretValues.set("token", value)),
-      getOrCreateRandom: () => Effect.die("unused"),
-      remove: () => Effect.sync(() => void secretValues.delete("token")),
-    });
+    const tokenStorage = memoryStore();
+    if (input?.withToken !== false)
+      tokenStorage.blobs.set(OVERLEAF_TOKEN_SECRET, new TextEncoder().encode(TOKEN));
+    const tokenVault = yield* makeAccountVault(tokenStorage.store, stateRoot, noKeychain);
+    const secrets = yield* makeAccountsSecretStore(tokenStorage.store, tokenVault);
 
     // The editor-save request: every window saves, unless a test says otherwise.
     let editorResult: OverleafEditorSaveResult = { _tag: "saved" };
@@ -266,7 +265,7 @@ export const overleafSyncWorld = (input?: {
           : VOLUME,
       hooks: { at: (point) => input?.at?.(point) ?? Effect.void },
     }).pipe(
-      Effect.provideService(ServerSecretStore, secrets),
+      Effect.provideService(AccountsSecretStore, secrets),
       Effect.provideService(WorkspaceBindingResolver, resolver),
       Effect.provideService(WorkspaceBindingStore, bindingStore),
       Effect.provideService(OverleafStateStore.OverleafStateStore, store),

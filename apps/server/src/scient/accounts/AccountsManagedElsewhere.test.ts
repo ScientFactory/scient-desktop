@@ -77,3 +77,26 @@ it.effect("omits unavailable GitHub discovery and retains optional snapshot comp
     expect((yield* service.snapshot).managedElsewhere).toEqual([]);
   }),
 );
+
+it.effect("shows the Overleaf managed row only while a token is saved", () =>
+  Effect.gen(function* () {
+    let saved = false;
+    const { service } = yield* makeHarness({
+      sourceOverrides: {
+        overleafTokenSaved: Effect.sync(() => saved),
+      },
+    });
+    expect((yield* service.snapshot).managedElsewhere).toEqual([]);
+    saved = true;
+    expect((yield* service.snapshot).managedElsewhere).toEqual([
+      {
+        kind: "overleaf",
+        id: "www.overleaf.com",
+        name: "Overleaf Git token — www.overleaf.com",
+        href: "/settings/synced-folders",
+      },
+    ]);
+    saved = false;
+    expect((yield* service.snapshot).managedElsewhere).toEqual([]);
+  }),
+);

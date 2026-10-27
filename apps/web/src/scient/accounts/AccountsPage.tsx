@@ -228,14 +228,18 @@ function AccountRow({
   );
 }
 
-function ManagedAccountRow({
+export function ManagedAccountRow({
   row,
 }: {
   row: {
-    kind: "github" | "custom-model" | "extension";
+    kind: "github" | "custom-model" | "extension" | "overleaf";
     name: string;
     detail?: string | undefined;
-    href: "/settings/source-control" | "/settings/custom-models" | "/settings/extensions/installed";
+    href:
+      | "/settings/source-control"
+      | "/settings/custom-models"
+      | "/settings/extensions/installed"
+      | "/settings/synced-folders";
   };
 }) {
   const iconUrl = accountIconUrl(
@@ -261,7 +265,9 @@ function ManagedAccountRow({
               ? "Source Control"
               : row.kind === "custom-model"
                 ? "Custom models"
-                : "Extensions"}
+                : row.kind === "overleaf"
+                  ? "Overleaf"
+                  : "Extensions"}
           </Link>
         </span>
       }

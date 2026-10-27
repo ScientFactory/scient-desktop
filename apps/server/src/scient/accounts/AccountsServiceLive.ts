@@ -33,6 +33,7 @@ import {
   Semaphore,
   Stream,
 } from "effect";
+import { OVERLEAF_TOKEN_SITE } from "../overleaf/OverleafToken.ts";
 import { TOTP, URI } from "otpauth";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import {
@@ -129,6 +130,9 @@ export const layer = Layer.effect(
 
     const snapshotNow = Effect.gen(function* () {
       const customModelKeys = yield* sources.customModelKeys.pipe(Effect.orElseSucceed(() => []));
+      const overleafTokenSaved = yield* sources.overleafTokenSaved.pipe(
+        Effect.orElseSucceed(() => false),
+      );
       const providers = Option.isSome(sourceControl) ? yield* sourceControl.value.discover : [];
       const github = providers.find((provider) => provider.kind === "github");
       const githubAccounts =
@@ -147,6 +151,17 @@ export const layer = Layer.effect(
         });
       }
       const managedElsewhere: NonNullable<AccountsSnapshot["managedElsewhere"]> = [
+        ...(overleafTokenSaved
+          ? [
+              {
+                kind: "overleaf" as const,
+                id: OVERLEAF_TOKEN_SITE,
+                // oxlint-disable-next-line t3code/no-em-dash-copy -- Required Overleaf managed-row label.
+                name: `Overleaf Git token — ${OVERLEAF_TOKEN_SITE}`,
+                href: "/settings/synced-folders" as const,
+              },
+            ]
+          : []),
         ...githubAccounts.map((account) => ({
           kind: "github" as const,
           id: `${account.host}:${account.account}`,

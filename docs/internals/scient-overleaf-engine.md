@@ -799,8 +799,10 @@ coordinator's per-connection reservations.
   allowed only to the host project that owns the binding the connection
   recorded, found by its ID even when the old checkout is gone; unknown
   ownership refuses.
-- **The token.** One Overleaf Git token, in the server secret store
-  (`overleaf-git-token-<site>`). Saving or removing it advances the credential
+- **The token.** One Overleaf Git token per site, sealed through AccountsSecretStore / AccountVault
+  under `overleaf-git-token-<base64url site>`. Legacy plaintext migrates once on first
+  read under the same name. Settings ▸ Accounts shows its presence as a read-only
+  “Managed in Overleaf” row linking to Settings ▸ Synced folders. Saving or removing it advances the credential
   epoch, so reviews built before it are stale, and waits for fetches and pushes
   in progress. A push runs only with the token its review was built with; a
   missing or renewed token fails it before Git runs. The token is never

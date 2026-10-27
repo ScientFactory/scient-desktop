@@ -158,9 +158,14 @@ consumer's project. Activity names the plugin, variable and agent.
   plaintext envelope once, rewriting it encrypted. Extensions still owns connectors.
 - **Custom models keys** (`custom-model-<id>`) are sealed by the Accounts encrypted store under
   their existing names. `AccountsSecretStore` preserves the `ServerSecretStore` interface and seals
-  legacy plaintext on its first read. Only Custom models uses this port; its rotation, removal and
+  legacy plaintext on its first read. Custom models and Overleaf use this port; its rotation, removal and
   process lifetime rules stay with Custom models. An API key account links to a connection
   (`custom-model` source), so the key is stored once.
+- **Overleaf Git token** (`overleaf-git-token-<base64url site>`): Overleaf uses
+  `AccountsSecretStore` for every token read, save and removal. A legacy plaintext token is
+  sealed once on first read under its existing name. Accounts shows a read-only
+  “Overleaf Git token — <site> · Managed in Overleaf” row only while a token is saved,
+  linking to Settings → Synced folders, where Overleaf manages the token.
 - **`request_secret` values** (upstream, one use, 24 hours) and **sensitive provider environment
   variables** (upstream settings) stay as they are.
 - Server sign-in and session-signing material is never moved.

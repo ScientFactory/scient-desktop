@@ -371,11 +371,15 @@ export const AccountsSnapshot = Schema.Struct({
   managedElsewhere: Schema.optional(
     Schema.Array(
       Schema.Struct({
-        kind: Schema.Literals(["github", "custom-model"]),
+        kind: Schema.Literals(["github", "custom-model", "overleaf"]),
         id: TrimmedNonEmptyString,
         name: TrimmedNonEmptyString,
         detail: Schema.optional(TrimmedNonEmptyString),
-        href: Schema.Literals(["/settings/source-control", "/settings/custom-models"]),
+        href: Schema.Literals([
+          "/settings/source-control",
+          "/settings/custom-models",
+          "/settings/synced-folders",
+        ]),
       }),
     ),
   ),

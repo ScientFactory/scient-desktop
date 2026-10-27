@@ -15,7 +15,7 @@ export class AccountsSecretStore extends Context.Service<
   ServerSecretStore["Service"]
 >()("t3/scient/accounts/AccountsSecretStore") {}
 
-// Invalid UTF-8 distinguishes sealed records from legacy Custom models key text.
+// Invalid UTF-8 distinguishes sealed records from legacy credential text.
 const SEALED = 0xff;
 const resource = "encrypted secret";
 

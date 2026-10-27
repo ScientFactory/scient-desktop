@@ -10,7 +10,7 @@ import {
   type AccountValueSource,
   type OnePasswordConnectInput,
 } from "@t3tools/contracts";
-import { Context, Duration, Effect, Layer, Redacted } from "effect";
+import { Context, Duration, Effect, Layer, Option, Redacted } from "effect";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { AccountsSecretStore } from "./AccountsSecretStore.ts";
@@ -20,6 +20,8 @@ import {
   parseWindowsKeychain,
   selectKeychainCandidates,
 } from "./KeychainCandidates.ts";
+
+import { OVERLEAF_TOKEN_SECRET } from "../overleaf/OverleafToken.ts";
 
 const requireKeyring = NodeModule.createRequire(import.meta.url);
 const KEYCHAIN_PROMPT_TIMEOUT = Duration.minutes(2);
@@ -60,6 +62,7 @@ export class AccountSources extends Context.Service<
   {
     readonly platform: "macos" | "windows" | "linux";
     readonly profiles: Effect.Effect<ReadonlyArray<BrowserProfileId>, AccountsError>;
+    readonly overleafTokenSaved: Effect.Effect<boolean, AccountsError>;
     readonly customModelKeys: Effect.Effect<ReadonlyArray<AccountCustomModelKey>, AccountsError>;
     readonly keychain: (
       source: Extract<AccountValueSource, { type: "keychain" }>,
@@ -98,6 +101,10 @@ export const layer = Layer.effect(
     return AccountSources.of({
       platform,
       profiles: Effect.succeed(BUILT_IN_BROWSER_PROFILES.map((profile) => profile.id)),
+      overleafTokenSaved: secrets.get(OVERLEAF_TOKEN_SECRET).pipe(
+        Effect.map((value) => Option.isSome(value) && value.value.length > 0),
+        Effect.mapError(() => unavailable("Overleaf token status could not be read.")),
+      ),
       customModelKeys: current.pipe(
         Effect.map((value) =>
           value.customModels.connections

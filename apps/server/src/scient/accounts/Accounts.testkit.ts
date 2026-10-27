@@ -83,6 +83,7 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
     platform: "linux",
     profiles: Effect.succeed(BUILT_IN_BROWSER_PROFILES.map((profile) => profile.id)),
     customModelKeys: Effect.succeed([]),
+    overleafTokenSaved: Effect.succeed(false),
     keychain: () => Effect.fail(unavailable()),
     writeKeychain: () => Effect.fail(unavailable()),
     customModel: () => Effect.fail(unavailable()),

@@ -14,6 +14,7 @@ import {
   saveCustomModel,
   withCustomModelKeyHints,
 } from "../../customModels.ts";
+import { OVERLEAF_TOKEN_SECRET } from "../overleaf/OverleafToken.ts";
 import { makeAccountVault } from "./AccountVault.ts";
 import { makeAccountsSecretStore } from "./AccountsSecretStore.ts";
 import { memoryStore, noKeychain, syntheticValue } from "./Accounts.testkit.ts";
@@ -166,5 +167,42 @@ it.effect("preserves Custom models hints, retained keys, rotation, rollback and 
     );
     expect(f.blobs.has(keyName)).toBe(false);
     expect((yield* resolveCustomModels(catalog, pi, f.secrets))[0]?.apiKey).toBeNull();
+  }),
+);
+
+it.effect(
+  "migrates the Overleaf token once, retains it across restart, rotates and removes it",
+  () =>
+    Effect.gen(function* () {
+      const f = yield* make();
+      const name = OVERLEAF_TOKEN_SECRET;
+      const value = syntheticValue();
+      f.blobs.set(name, bytes(value));
+      expect(matches(yield* f.secrets.get(name), value)).toBe(true);
+      expect(Buffer.from(f.blobs.get(name)!).includes(value)).toBe(false);
+      const sealed = f.blobs.get(name)!.slice();
+      const restarted = yield* make(f);
+      expect(matches(yield* restarted.secrets.get(name), value)).toBe(true);
+      expect(Buffer.from(f.blobs.get(name)!).equals(Buffer.from(sealed))).toBe(true);
+      const replacement = syntheticValue();
+      yield* restarted.secrets.set(name, bytes(replacement));
+      expect(matches(yield* restarted.secrets.get(name), replacement)).toBe(true);
+      expect(Buffer.from(f.blobs.get(name)!).includes(replacement)).toBe(false);
+      yield* restarted.secrets.remove(name);
+      expect(Option.isNone(yield* restarted.secrets.get(name))).toBe(true);
+    }),
+);
+
+it.effect("retains the legacy Overleaf token when sealing cannot be persisted", () =>
+  Effect.gen(function* () {
+    const f = yield* make();
+    const value = syntheticValue();
+    f.blobs.set(OVERLEAF_TOKEN_SECRET, bytes(value));
+    f.failWritesTo(OVERLEAF_TOKEN_SECRET);
+    expect((yield* f.secrets.get(OVERLEAF_TOKEN_SECRET).pipe(Effect.result))._tag).toBe("Failure");
+    expect(matches(Option.fromUndefinedOr(f.blobs.get(OVERLEAF_TOKEN_SECRET)), value)).toBe(true);
+    f.failWritesTo(undefined);
+    expect(matches(yield* f.secrets.get(OVERLEAF_TOKEN_SECRET), value)).toBe(true);
+    expect(Buffer.from(f.blobs.get(OVERLEAF_TOKEN_SECRET)!).includes(value)).toBe(false);
   }),
 );
