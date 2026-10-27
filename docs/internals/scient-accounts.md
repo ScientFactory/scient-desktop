@@ -284,8 +284,21 @@ origin-bound browser operations; a hand-off leaves them for the user to finish. 
 the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-user`, `password-rejected`, `code-rejected` or `failed`
 and records that outcome in activity. The 2FA code comes from the stored
 `totp` field (`otpauth://` URI or base32 key) via `otpauth`, or from 1Password
-(`?attribute=otp`). CAPTCHAs, push approvals, passkeys and unknown forms return `needs-user`; the
-agent asks the user to finish in the browser.
+(`?attribute=otp`). When an attended sign-in needs a CAPTCHA, phone approval, passkey or missing information,
+Scient shows a centered card at the end of the conversation (it scrolls with the messages and
+scrolls itself into view once): one line (account, what to do, a close button) with the
+sign-in's own browser tab live underneath, fitted to the box. `HandoffBrowser` borrows the
+tab's surface and hands it back afterwards; the side panel does not open. The live page is a
+native layer, so it shows only while the card is wholly in view above the composer. The user finishes
+right there; Scient checks every two seconds for up to three minutes and continues
+automatically, including filling a stored authenticator code after phone approval. The line can
+show a confidently detected phone match number. A client with no view of the tab gets an
+"Open browser" button instead.
+Codes are never requested in chat. Unattended sign-ins return `needs-user` immediately.
+Hand-offs live only in memory and disappear on completion, cancellation, timeout or interruption;
+only the account name, host, challenge kind and optional match number reach the card.
+Account approvals and hand-offs use the thread notification settings, with desktop notifications
+when the app is unfocused; clicking opens the requesting thread.
 
 The pure parts (`signIn/` detection result → next action, origin matching, TOTP) are Node-tested;
 the detection script itself is exercised against fixture pages.

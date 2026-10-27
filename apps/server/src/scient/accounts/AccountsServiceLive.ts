@@ -9,6 +9,7 @@ import {
   defaultAccountControls,
   type AccountActivityEntry,
   type AccountApproval,
+  type AccountHandoff,
   type AccountApprovalDecision,
   type AccountControls,
   type AccountSecretSummary,
@@ -120,6 +121,9 @@ export const layer = Layer.effect(
         target.type,
         target.type === "account" ? target.accountId : target.profileId,
       ]);
+    const handoffs = new Map<string, AccountHandoff>();
+    const handoffReveals = new Map<string, Effect.Effect<void, AccountsError>>();
+    const cancelledHandoffs = new Set<string>();
     const pending = new Map<
       string,
       {
@@ -174,6 +178,7 @@ export const layer = Layer.effect(
           onePassword: state.onePasswordStatus,
           cli: cliStores.statuses(),
         },
+        handoffs: [...handoffs.values()],
         approvals: [...pending.values()].map((entry) => entry.approval),
         recentActivity,
         customModelKeys,
@@ -626,6 +631,47 @@ export const layer = Layer.effect(
     });
 
     const service = AccountsService.of({
+      setHandoff: Effect.fn("AccountsService.setHandoff")((handoff, reveal) =>
+        locked(
+          Effect.gen(function* () {
+            if (cancelledHandoffs.has(handoff.handoffId)) return;
+            handoffs.set(handoff.handoffId, handoff);
+            if (reveal) handoffReveals.set(handoff.handoffId, reveal);
+            yield* publish(false);
+          }),
+        ),
+      ),
+      removeHandoff: Effect.fn("AccountsService.removeHandoff")((handoffId) =>
+        locked(
+          Effect.gen(function* () {
+            handoffs.delete(handoffId);
+            handoffReveals.delete(handoffId);
+            cancelledHandoffs.delete(handoffId);
+            yield* publish(false);
+          }),
+        ).pipe(Effect.ignore),
+      ),
+      handoffCancelled: Effect.fn("AccountsService.handoffCancelled")((handoffId) =>
+        Effect.sync(() => cancelledHandoffs.has(handoffId)),
+      ),
+      showHandoff: Effect.fn("AccountsService.showHandoff")(function* (handoffId) {
+        const reveal = yield* locked(
+          Effect.sync(() => (handoffs.has(handoffId) ? handoffReveals.get(handoffId) : undefined)),
+        );
+        if (!reveal) return yield* failure("not-found", "The sign-in is no longer waiting.");
+        yield* reveal;
+      }),
+      cancelHandoff: Effect.fn("AccountsService.cancelHandoff")((handoffId) =>
+        locked(
+          Effect.gen(function* () {
+            if (!handoffs.has(handoffId))
+              return yield* failure("not-found", "The sign-in is no longer waiting.");
+            cancelledHandoffs.add(handoffId);
+            handoffs.delete(handoffId);
+            yield* publish(false);
+          }),
+        ),
+      ),
       snapshot: locked(snapshotNow),
       recordBoundDenial: Effect.fn("AccountsService.recordBoundDenial")((ref, consumer) => {
         const id = boundAccountId(ref);

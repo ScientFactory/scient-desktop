@@ -415,6 +415,23 @@ export const AccountCustomModelKey = Schema.Struct({
 });
 export type AccountCustomModelKey = typeof AccountCustomModelKey.Type;
 
+export const AccountHandoff = Schema.Struct({
+  handoffId: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  accountId: AccountId,
+  accountName: TrimmedNonEmptyString,
+  site: TrimmedNonEmptyString,
+  /** The sign-in's browser tab, shown live in the conversation. */
+  tabId: Schema.optional(TrimmedNonEmptyString),
+  kind: Schema.Literals(["push", "captcha", "passkey", "code", "other"]),
+  number: Schema.optional(Schema.String.check(Schema.isPattern(/^\d{1,3}$/))),
+  startedAt: IsoDateTime,
+  expiresAt: IsoDateTime,
+});
+export type AccountHandoff = typeof AccountHandoff.Type;
+
+export const AccountHandoffCancelInput = Schema.Struct({ handoffId: TrimmedNonEmptyString });
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
@@ -422,6 +439,7 @@ export const AccountsSnapshot = Schema.Struct({
   profiles: Schema.Array(BrowserProfileRecord),
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
+  handoffs: Schema.optional(Schema.Array(AccountHandoff)),
   recentActivity: Schema.Array(AccountActivityEntry),
   customModelKeys: Schema.Array(AccountCustomModelKey),
   managedElsewhere: Schema.optional(

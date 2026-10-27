@@ -100,3 +100,28 @@ it("detects static login steps, refuses look-alike fills, and reads only the req
     await browser.close();
   }
 });
+
+it("extracts only an unambiguous, visible local push match number", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    for (const [html, expected] of [
+      ["<div>Enter the number shown to sign in <strong>42</strong></div>", "42"],
+      ["<section>Verify with number: tap the number <span>7</span></section>", "7"],
+      ["<div>Matching number <b>123</b></div>", "123"],
+      ["<p>Approve sign-in on your phone</p><div>Invoice <b>42</b></div>", undefined],
+      ['<div>Number shown <b style="display:none">42</b></div>', undefined],
+      ["<div>Number shown <b>1234</b></div>", undefined],
+      ["<div>Tap the number <b>12</b><b>34</b></div>", undefined],
+    ] as const) {
+      await page.setContent(html);
+      const result = decodeDetection(await page.evaluate(signInDetectionScript));
+      expect(result.challenge).toBe("push");
+      expect(result.number).toBe(expected);
+    }
+    await page.setContent("<p>Use your passkey with Touch ID</p>");
+    expect(decodeDetection(await page.evaluate(signInDetectionScript)).challenge).toBe("passkey");
+  } finally {
+    await browser.close();
+  }
+});
