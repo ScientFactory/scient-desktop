@@ -1,3 +1,11 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { resolvePromptLinkModelSelection } from "@t3tools/client-runtime/prompt-links";
+import { AuthOrchestrationOperateScope, type ServerProvider } from "@t3tools/contracts";
+import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { useScratchProject } from "../../hooks/useScratchProject";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { useProjects } from "../../state/entities";
+import { useEnvironmentScope } from "../../state/session";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type {
   EnvironmentId,
@@ -66,4 +74,44 @@ export function openComposerSkill(
       title: formatProviderSkillDisplayName(skill),
     }),
   );
+}
+
+export const composerSkillPrompt = (name: string) => `$${name} `;
+
+export function useTryComposerSkill(
+  environmentId: EnvironmentId,
+  provider: ServerProvider | undefined,
+  name: string,
+  cwd?: string,
+) {
+  const projects = useProjects();
+  const newThread = useNewThreadHandler();
+  const { openScratchProject, scratchWorkspaceRootFor } = useScratchProject();
+  const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const selection = provider
+    ? resolvePromptLinkModelSelection([provider], {
+        provider: provider.driver.toLowerCase(),
+        model: null,
+      })?.selection
+    : undefined;
+  const project = cwd
+    ? projects.find((item) => item.environmentId === environmentId && item.workspaceRoot === cwd)
+    : undefined;
+  if (!canOperate || !selection || (cwd ? !project : !scratchWorkspaceRootFor(environmentId)))
+    return undefined;
+  return async () => {
+    const target = project ?? (await openScratchProject(environmentId));
+    if (!target) throw new Error("Could not open a project for this skill.");
+    const opened = await newThread(
+      scopeProjectRef(environmentId, target.id),
+      cwd ? { envMode: "local" as const } : {},
+    );
+    if (!opened) throw new Error("Could not open a new draft.");
+    const drafts = useComposerDraftStore.getState();
+    drafts.setModelSelection(opened.draftId, selection, { explicit: true, replaceOptions: true });
+    drafts.setPrompt(
+      opened.draftId,
+      composerSkillPrompt(name) + (drafts.getComposerDraft(opened.draftId)?.prompt ?? ""),
+    );
+  };
 }

@@ -429,6 +429,7 @@ import {
   WsSkillsSetProjectPreferenceRpc,
   WsSkillsSetUserActivationRpc,
   WsProviderSkillsSetEnabledRpc,
+  WsProviderSkillsReadDocumentRpc,
 } from "./scient/skillRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions RPCs.
@@ -443,6 +444,11 @@ import {
   WsExtensionsDiscoverCatalogRpc,
   WsExtensionsDiscoverEntryRpc,
   WsExtensionsDiscoverSearchRpc,
+  WsExtensionsBrandIconRpc,
+  WsExtensionsProviderStoreSearchRpc,
+  WsExtensionsProviderStoreEntryRpc,
+  WsExtensionsPluginContentsRpc,
+  WsExtensionsSkillDocumentRpc,
   WsExtensionsListRpc,
   WsExtensionsPluginInstallRpc,
   WsExtensionsPluginRemoveRpc,
@@ -2224,6 +2230,9 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsProviderSkillsSetEnabledRpc,
+  // SCIENT-FORK:START — external skill document RPC.
+  WsProviderSkillsReadDocumentRpc,
+  // SCIENT-FORK:END
   WsVoiceCorrectTranscriptRpc,
   WsProviderUploadFeedbackRpc,
   WsServerUpdateProviderRpc,
@@ -2457,6 +2466,11 @@ export const WsExtensionsRpcGroup = RpcGroup.make(
   WsExtensionsConnectorRemoveRpc,
   WsExtensionsConnectorTestRpc,
   WsExtensionsDiscoverSearchRpc,
+  WsExtensionsBrandIconRpc,
+  WsExtensionsProviderStoreSearchRpc,
+  WsExtensionsProviderStoreEntryRpc,
+  WsExtensionsPluginContentsRpc,
+  WsExtensionsSkillDocumentRpc,
   WsExtensionsDiscoverCatalogRpc,
   WsExtensionsDiscoverEntryRpc,
   WsExtensionsPluginInstallRpc,

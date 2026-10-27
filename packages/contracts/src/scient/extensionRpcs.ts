@@ -1,8 +1,13 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 
+import { ExtensionIconDataUri } from "./extensionIcon.ts";
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  ExtensionPluginContentsInput,
+  ExtensionPluginContents,
+  ExtensionSkillDocumentInput,
+  ExtensionSkillDocument,
   ConnectorAddInput,
   ConnectorAddResult,
   ConnectorRemoveInput,
@@ -22,6 +27,10 @@ import {
   ExtensionsError,
   ExtensionsInventory,
   ExtensionsListInput,
+  ProviderStoreSearchInput,
+  ProviderStoreEntryInput,
+  ProviderStorePage,
+  ProviderStoreEntry,
   ProviderPluginActionInput,
   ProviderPluginActionResult,
   ScientPluginInstallInput,
@@ -31,7 +40,12 @@ import {
 
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_EXTENSION_WS_METHODS = {
+  extensionsBrandIcon: "extensions.brandIcon",
+  extensionsProviderStoreSearch: "extensions.providerStore.search",
+  extensionsProviderStoreEntry: "extensions.providerStore.entry",
   extensionsList: "extensions.list",
+  extensionsPluginContents: "extensions.plugins.contents",
+  extensionsSkillDocument: "extensions.skills.document",
   extensionsSubscribeChanges: "extensions.subscribeChanges",
   extensionsConnectorAdd: "extensions.connectors.add",
   extensionsConnectorStartSignIn: "extensions.connectors.startSignIn",
@@ -143,3 +157,36 @@ export const WsProviderPluginsActRpc = Rpc.make(SCIENT_EXTENSION_WS_METHODS.prov
   success: ProviderPluginActionResult,
   error: ExtensionsRpcError,
 });
+
+export const WsExtensionsProviderStoreSearchRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsProviderStoreSearch,
+  { payload: ProviderStoreSearchInput, success: ProviderStorePage, error: ExtensionsRpcError },
+);
+export const WsExtensionsProviderStoreEntryRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsProviderStoreEntry,
+  { payload: ProviderStoreEntryInput, success: ProviderStoreEntry, error: ExtensionsRpcError },
+);
+
+export const WsExtensionsBrandIconRpc = Rpc.make(SCIENT_EXTENSION_WS_METHODS.extensionsBrandIcon, {
+  payload: Schema.Struct({
+    names: Schema.Array(Schema.String.check(Schema.isMaxLength(200))).check(Schema.isMaxLength(50)),
+  }),
+  success: Schema.Struct({ icons: Schema.Record(Schema.String, ExtensionIconDataUri) }),
+  error: ExtensionsRpcError,
+});
+export const WsExtensionsPluginContentsRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsPluginContents,
+  {
+    payload: ExtensionPluginContentsInput,
+    success: ExtensionPluginContents,
+    error: ExtensionsRpcError,
+  },
+);
+export const WsExtensionsSkillDocumentRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsSkillDocument,
+  {
+    payload: ExtensionSkillDocumentInput,
+    success: ExtensionSkillDocument,
+    error: ExtensionsRpcError,
+  },
+);

@@ -257,6 +257,9 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeComputeSessions]: "subscribe",
   [WS_METHODS.skillsList]: "skills",
   [WS_METHODS.skillsReadDocument]: "skills",
+  // SCIENT-FORK:START — external skill document reads.
+  [WS_METHODS.providerSkillsReadDocument]: "providerSkills",
+  // SCIENT-FORK:END
   [WS_METHODS.skillsSetProjectPreference]: "skills",
   [WS_METHODS.skillsSetUserActivation]: "skills",
   [WS_METHODS.providerSkillsSetEnabled]: "providerSkills",
@@ -290,6 +293,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.extensionsConnectorTest]: "extensions",
   [WS_METHODS.extensionsDiscoverSearch]: "extensions",
   [WS_METHODS.extensionsDiscoverCatalog]: "extensions",
+  [WS_METHODS.extensionsBrandIcon]: "extensions",
+  [WS_METHODS.extensionsProviderStoreSearch]: "extensions",
+  [WS_METHODS.extensionsPluginContents]: "extensions",
+  [WS_METHODS.extensionsSkillDocument]: "extensions",
+  [WS_METHODS.extensionsProviderStoreEntry]: "extensions",
   [WS_METHODS.extensionsDiscoverEntry]: "extensions",
   [WS_METHODS.extensionsPluginInstall]: "extensions",
   [WS_METHODS.extensionsPluginRemove]: "extensions",

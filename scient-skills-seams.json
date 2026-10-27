@@ -32,7 +32,11 @@
     "packages/contracts/src/scient/skillRpcs.ts",
     "apps/server/src/scient/ScientServerLayers.ts",
     "packages/contracts/src/scient/orchestrationV2Schemas.ts",
-    "scripts/scient-alignment-checks.json"
+    "scripts/scient-alignment-checks.json",
+    "apps/server/src/provider/Drivers/ScientClaudeSkillFiles.ts",
+    "apps/server/src/provider/Drivers/ClaudeSkills.scient.test.ts",
+    "apps/server/src/provider/scient/ScientAgentSkills.ts",
+    "apps/server/src/provider/scient/ScientAgentSkills.test.ts"
   ],
   "skillDiffSignals": [
     "@scientfactory/scient-skills",

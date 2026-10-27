@@ -106,6 +106,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverTestCustomModel]: AuthSettingsWriteScope,
   [WS_METHODS.skillsList]: AuthOrchestrationReadScope,
   [WS_METHODS.skillsReadDocument]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:START — external skill documents require read access.
+  [WS_METHODS.providerSkillsReadDocument]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:END
   [WS_METHODS.skillsSetProjectPreference]: AuthSettingsWriteScope,
   [WS_METHODS.skillsSetUserActivation]: AuthSettingsWriteScope,
   [WS_METHODS.providerSkillsSetEnabled]: AuthSettingsWriteScope,
@@ -134,6 +137,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.extensionsSubscribeChanges]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverSearch]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverCatalog]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsBrandIcon]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsProviderStoreSearch]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsPluginContents]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsSkillDocument]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsProviderStoreEntry]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDiscoverEntry]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsDeliveryReceipt]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsConnectorAdd]: AuthSettingsWriteScope,

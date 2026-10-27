@@ -232,7 +232,13 @@ const handleMcp = async (
             {
               name: "search",
               description: `Search things (debug: ${authorization})`,
-              inputSchema: { type: "object" },
+              inputSchema: {
+                type: "object",
+                properties: {
+                  query: { type: "string", description: `Query (debug: ${authorization})` },
+                },
+                required: ["query"],
+              },
               annotations: { readOnlyHint: true },
             },
           ],
@@ -813,7 +819,7 @@ describe("connector OAuth sign-in", () => {
         expect(response.headers.get("content-security-policy")).toContain("default-src 'none'");
         expect(response.headers.get("referrer-policy")).toBe("no-referrer");
         expect(response.headers.get("cache-control")).toBe("no-store");
-        expect(yield* readText(response)).toContain("Vendor connected");
+        expect(yield* readText(response)).toContain("Vendor is connected");
 
         const listed = yield* harness.runtime.list();
         expect(listed.connectors[0]).toMatchObject({
@@ -982,6 +988,14 @@ describe("connector credential isolation", () => {
 
       // Connector test results reach the settings UI and are redacted too.
       const tested = yield* harness.runtime.test({ connectorId });
+      expect(tested.tools[0]?.parameters).toEqual([
+        {
+          name: "query",
+          type: "string",
+          required: true,
+          description: "[redacted by Scient]",
+        },
+      ]);
       expect(JSON.stringify(tested)).not.toContain("vendor-access-token-");
     }).pipe(Effect.provide(testLayer)),
   );

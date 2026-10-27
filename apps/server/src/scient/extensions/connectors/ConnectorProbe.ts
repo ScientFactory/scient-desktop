@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off globalTimers:off -- Promise-based MCP transport owns a bounded handshake deadline and backoff.
 /**
  * Unauthenticated (or credentialed) MCP `initialize` probe: tells an open server
  * from one that needs OAuth, and reads the `WWW-Authenticate` hints
@@ -23,7 +24,8 @@ export type ConnectorProbeResult =
       readonly scope: string | undefined;
     }
   | { readonly type: "not-an-mcp-server"; readonly message: string }
-  | { readonly type: "unreachable"; readonly message: string };
+  | { readonly type: "unreachable"; readonly message: string }
+  | { readonly type: "busy"; readonly message: string };
 
 const PROBE_REQUEST_ID = 1;
 
@@ -98,27 +100,47 @@ export const probeConnector = async (input: {
   readonly headers?: Readonly<Record<string, string>>;
 }): Promise<ConnectorProbeResult> => {
   let response: Response;
-  try {
-    response = await input.fetch(input.url, {
-      method: "POST",
-      headers: {
-        ...input.headers,
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: PROBE_REQUEST_ID,
-        method: "initialize",
-        params: {
-          protocolVersion: LATEST_PROTOCOL_VERSION,
-          capabilities: {},
-          clientInfo: { name: "Scient", version: "1" },
+  const started = Date.now();
+  const signal = AbortSignal.timeout(5_000);
+  let temporary = false;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      response = await input.fetch(input.url, {
+        signal,
+        method: "POST",
+        headers: {
+          ...input.headers,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
         },
-      }),
-    });
-  } catch (error) {
-    return { type: "unreachable", message: describeEgressFailure(error) };
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: PROBE_REQUEST_ID,
+          method: "initialize",
+          params: {
+            protocolVersion: LATEST_PROTOCOL_VERSION,
+            capabilities: {},
+            clientInfo: { name: "Scient", version: "1" },
+          },
+        }),
+      });
+    } catch (error) {
+      return temporary
+        ? { type: "busy", message: "The service is busy right now." }
+        : { type: "unreachable", message: describeEgressFailure(error) };
+    }
+    temporary = response.status === 429 || response.status === 503;
+    if (!temporary) break;
+    const delay = connectorRetryDelay(
+      response.status,
+      response.headers.get("retry-after"),
+      attempt,
+      Date.now(),
+      5_000 - (Date.now() - started),
+    );
+    await response.body?.cancel().catch(() => undefined);
+    if (delay === undefined) return { type: "busy", message: "The service is busy right now." };
+    await new Promise<void>((resolve) => setTimeout(resolve, delay));
   }
   if (response.status === 401) {
     await response.body?.cancel().catch(() => undefined);
@@ -175,3 +197,22 @@ export const probeConnector = async (input: {
       typeof result.serverInfo?.version === "string" ? result.serverInfo.version : undefined,
   };
 };
+
+export function connectorRetryDelay(
+  status: number,
+  retryAfter: string | null,
+  attempt: number,
+  now: number,
+  remainingMs: number,
+): number | undefined {
+  if (attempt >= 2 || (status !== 429 && status !== 503)) return undefined;
+  const seconds = retryAfter === null ? NaN : Number(retryAfter);
+  const advertised =
+    retryAfter === null
+      ? NaN
+      : Number.isFinite(seconds)
+        ? seconds * 1000
+        : Date.parse(retryAfter) - now;
+  const delay = Number.isFinite(advertised) ? Math.max(0, advertised) : 500 * 2 ** attempt;
+  return delay + 250 < remainingMs ? delay : undefined;
+}

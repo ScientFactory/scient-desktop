@@ -18,6 +18,7 @@ import { searchableSetting } from "../../components/settings/settingsSearch";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { scientSkillsInventory, setScientSkillUserActivation } from "./scientSkillsState";
 import { collectExternalSkillProviders, summarizeExternalSkills } from "./externalSkills";
+import { ManagedSkillCard } from "./ManagedSkillCard";
 import { SkillSettingsRow } from "./SkillSettingsRow";
 
 function groupSkillsByCategory(skills: ReadonlyArray<ScientSkillCatalogItem>) {
@@ -80,6 +81,7 @@ export function ScientSkillsSettings() {
   const setActivation = useAtomCommand(setScientSkillUserActivation, {
     reportFailure: true,
   });
+  const [selectedSkill, setSelectedSkill] = useState<ScientSkillCatalogItem | null>(null);
   const [pendingReleaseKey, setPendingReleaseKey] = useState<string | null>(null);
 
   const updateSkill = async (
@@ -196,6 +198,7 @@ export function ScientSkillsSettings() {
                       pending={pending}
                       disabled={pendingReleaseKey !== null}
                       status="Built into Scient · Personal"
+                      onOpen={() => setSelectedSkill(skill)}
                       onUpdate={(patch) => void updateSkill(skill, patch)}
                     />
                   );
@@ -210,6 +213,25 @@ export function ScientSkillsSettings() {
           </p>
         ) : null}
       </SettingsSection>
+      {selectedSkill && environmentId ? (
+        <ManagedSkillCard
+          key={`${environmentId}:${selectedSkill.releaseKey}`}
+          environmentId={environmentId}
+          skill={
+            inventory.data?.skills.find(
+              (skill) => skill.releaseKey === selectedSkill.releaseKey,
+            ) ?? { ...selectedSkill, active: false }
+          }
+          provider={providers.find(
+            (provider) =>
+              provider.enabled &&
+              provider.installed &&
+              inventory.data?.supportedProviders.includes(provider.driver) &&
+              !provider.skills.some((skill) => skill.name === selectedSkill.name),
+          )}
+          onClose={() => setSelectedSkill(null)}
+        />
+      ) : null}
     </SettingsPageContainer>
   );
 }

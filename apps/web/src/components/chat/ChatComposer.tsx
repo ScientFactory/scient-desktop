@@ -5,7 +5,13 @@ import type {
 } from "@t3tools/contracts";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
 import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkills.ts";
-import { openComposerSkill, useScientComposerSkills } from "../../scient/skills/composerSkills.ts";
+// SCIENT-FORK:START — skill cards and the composer share invocation and document helpers.
+import {
+  composerSkillPrompt,
+  openComposerSkill,
+  useScientComposerSkills,
+} from "../../scient/skills/composerSkills.ts";
+// SCIENT-FORK:END
 import { applyVoiceTranscript } from "../../scient/voice/voiceComposerInsert.ts";
 import { useScientVoiceDraftOrigin } from "../../scient/voice/voiceDraftOrigin.ts";
 import { ProviderOnboardingPicker } from "../../scient/providerConnection/ProviderOnboardingPicker.tsx";
@@ -2151,7 +2157,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (item.type === "skill") {
-      const replacement = `$${item.skill.name} `;
+      // SCIENT-FORK:START — skill cards and the composer insert the same invocation token.
+      const replacement = composerSkillPrompt(item.skill.name);
+      // SCIENT-FORK:END
       const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
         snapshot.value,
         trigger.rangeEnd,

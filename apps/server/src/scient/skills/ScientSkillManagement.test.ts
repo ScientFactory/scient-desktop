@@ -161,6 +161,18 @@ describe("Scient skill management", () => {
           invocationPolicy: "automatic",
         });
 
+        const projectSkill = initial.skills.find((skill) => skill.name === "project-method")!;
+        expect(
+          (yield* management.readDocument(projectSkill.releaseKey, projectRoot)).instructions,
+        ).toBe("Follow project evidence.");
+        expect(
+          (yield* management.readDocument(projectSkill.releaseKey).pipe(Effect.flip)).operation,
+        ).toBe("readDocument");
+        expect(
+          (yield* management.readDocument(projectSkill.releaseKey, baseDir).pipe(Effect.flip))
+            .operation,
+        ).toBe("readDocument");
+
         const updated = yield* management.setProjectPreference({
           projectRoot,
           name: "project-method",
@@ -172,6 +184,16 @@ describe("Scient skill management", () => {
           invocationPolicy: "explicit",
         });
         expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(6);
+        yield* Effect.promise(() =>
+          NodeFSP.appendFile(
+            NodePath.join(projectRoot, ".scient", "skills", "project-method", "SKILL.md"),
+            "\nChanged since listing.\n",
+          ),
+        );
+        expect(
+          (yield* management.readDocument(projectSkill.releaseKey, projectRoot).pipe(Effect.flip))
+            .operation,
+        ).toBe("readDocument");
       }).pipe(Effect.provide(managementLayer));
     }),
   );

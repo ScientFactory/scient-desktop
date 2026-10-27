@@ -11,9 +11,15 @@ import {
 } from "./auth.ts";
 import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
+// SCIENT-FORK:START — Extensions mutations share the destination settings grant.
+import { SCIENT_EXTENSION_GUARDED_RPC_SCOPES } from "./scient/extensionsPermissions.ts";
+// SCIENT-FORK:END
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
+  ...SCIENT_EXTENSION_GUARDED_RPC_SCOPES,
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: recheck credential and settings authority at execution.
   [WS_METHODS.accountsSave]: AuthSettingsWriteScope,
   [WS_METHODS.accountsRemove]: AuthSettingsWriteScope,
