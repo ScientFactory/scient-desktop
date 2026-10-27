@@ -273,6 +273,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsSetAgentAccess]: "accounts",
   [WS_METHODS.accountsProfileUpdate]: "accounts",
   [WS_METHODS.accountsProfileRemove]: "accounts",
+  [WS_METHODS.accountsHandoffCancel]: "accounts",
+  [WS_METHODS.accountsHandoffShow]: "accounts",
   [WS_METHODS.accountsApprovalRespond]: "accounts",
   [WS_METHODS.accountsActivity]: "accounts",
   [WS_METHODS.accountsKeychainCandidates]: "accounts",

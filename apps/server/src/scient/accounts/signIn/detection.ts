@@ -7,6 +7,7 @@ export const SignInDetection = Schema.Struct({
   otp: Schema.NullOr(Schema.String),
   submit: Schema.NullOr(Schema.String),
   challenge: Schema.NullOr(Schema.Literals(["captcha", "passkey", "push"])),
+  number: Schema.optional(Schema.String),
   signedIn: Schema.Boolean,
 });
 export type SignInDetection = typeof SignInDetection.Type;
@@ -40,10 +41,22 @@ export const signInDetectionScript = String.raw`(() => {
   const submit = Array.from((form ?? document).querySelectorAll("button, input[type=submit]")).find(element => visible(element) && !element.hasAttribute("disabled") && (element instanceof HTMLInputElement || element.type === "submit"));
   const text = document.body?.innerText ?? "";
   const captcha = Array.from(document.querySelectorAll('[class*=captcha], [id*=captcha], iframe[src*=captcha]')).some(visible);
+  const push = /approve.*(phone|device)|check your (phone|device)|enter the number|number shown|tap the number|matching number|verification code shown|verify with (a )?number/i.test(text);
+  const numbers = new Set();
+  if (push) for (const element of document.querySelectorAll("p, div, span, section")) {
+    if (!visible(element) || !/enter the number|number shown|tap the number|matching number|verification code shown|verify with (a )?number/i.test(element.innerText ?? "")) continue;
+    // Only a small local prompt with a separate, visible numeric element is trusted.
+    if ((element.innerText ?? "").length > 240) continue;
+    for (const candidate of element.querySelectorAll("span, strong, b, p, div")) {
+      const value = candidate.innerText?.trim() ?? "";
+      if (visible(candidate) && /^\d{1,3}$/.test(value)) numbers.add(value);
+    }
+  }
   return {
+    ...(push && numbers.size === 1 ? { number: [...numbers][0] } : {}),
     origin: location.origin,
     username: path(username), password: path(password), otp: path(otp), submit: path(submit),
-    challenge: captcha ? "captcha" : /use (a |your )?passkey|touch id|security key/i.test(text) ? "passkey" : /approve.*(phone|device)|check your (phone|device)/i.test(text) ? "push" : null,
+    challenge: captcha ? "captcha" : /use (a |your )?passkey|touch id|security key/i.test(text) ? "passkey" : push ? "push" : null,
     signedIn: !username && !password && !otp && Array.from(document.querySelectorAll("a, button")).some(element => visible(element) && /^(sign out|log out|logout)$/i.test(element.textContent?.trim() ?? "")),
   };
 })()`;

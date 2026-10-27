@@ -1,5 +1,9 @@
 // SCIENT-FORK:START — Scient Accounts: mount approvals above the composer.
-import { ThreadAccountApprovals } from "~/scient/accounts/AccountApprovals";
+import {
+  ThreadAccountApprovals,
+  ThreadAccountHandoffs,
+  useThreadAccountHandoffs,
+} from "~/scient/accounts/AccountApprovals";
 // SCIENT-FORK:END
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { readThreadProjection } from "../state/entities";
@@ -908,6 +912,12 @@ function ChatViewContent(props: ChatViewProps) {
   const activeServerThread = serverThread;
   const isServerThread = activeServerThread !== null;
   const activeThread = activeServerThread ?? localDraftThread;
+  // SCIENT-FORK:START — Scient Accounts: sign-ins waiting for the user scroll with the conversation.
+  const accountHandoffs = useThreadAccountHandoffs(
+    activeThread?.environmentId ?? null,
+    activeThread?.id ?? null,
+  );
+  // SCIENT-FORK:END
   // SCIENT-FORK:END
   const serverLatestRun =
     serverProjection === null ? null : deriveLatestThreadRun(serverProjection);
@@ -3641,6 +3651,9 @@ function ChatViewContent(props: ChatViewProps) {
     !hasThreadNow &&
     threadStatusLine === null &&
     pendingGuestMessageCount === 0 &&
+    // SCIENT-FORK:START — Scient Accounts: sign-ins waiting for the user.
+    accountHandoffs.handoffs.length === 0 &&
+    // SCIENT-FORK:END
     !hasQueuedTurns ? null : (
       <>
         {pendingHandoff === null ? null : (
@@ -3660,6 +3673,15 @@ function ChatViewContent(props: ChatViewProps) {
           syncPhase={shownThreadSyncPhase}
           goal={goalNow}
         />
+        {/* SCIENT-FORK:START — Scient Accounts: sign-ins waiting for the user. */}
+        {activeThread ? (
+          <ThreadAccountHandoffs
+            environmentId={activeThread.environmentId}
+            handoffs={accountHandoffs.handoffs}
+            canWrite={accountHandoffs.canWrite}
+          />
+        ) : null}
+        {/* SCIENT-FORK:END */}
         {threadStatusLine}
         {pendingGuestMessageCount > 0 && isServerThread && activeThread ? (
           <GuestPendingMessages

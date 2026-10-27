@@ -11,6 +11,7 @@ import {
   AccountActivityEntry,
   AccountActivityInput,
   AccountApprovalRespondInput,
+  AccountHandoffCancelInput,
   AccountFillValues,
   AccountFillValuesInput,
   AccountRemoveInput,
@@ -43,6 +44,8 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSetAgentAccess: "accounts.setAgentAccess",
   accountsProfileUpdate: "accounts.profiles.update",
   accountsProfileRemove: "accounts.profiles.remove",
+  accountsHandoffShow: "accounts.handoffs.show",
+  accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
   accountsActivity: "accounts.activity",
   accountsKeychainCandidates: "accounts.keychain.candidates",
@@ -160,5 +163,16 @@ export const WsAccountsFillValuesRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
 export const WsAccountsMatchSignInRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsMatchSignIn, {
   payload: AccountMatchSignInInput,
   success: AccountMatchSignInResult,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsHandoffCancelRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsHandoffCancel,
+  { payload: AccountHandoffCancelInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsHandoffShowRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsHandoffShow, {
+  payload: AccountHandoffCancelInput,
+  success: Empty,
   error: AccountsRpcError,
 });
