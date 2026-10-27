@@ -47,6 +47,7 @@ function status(overrides: Partial<ScientOverleafStatus> = {}): ScientOverleafSt
     reasons: [],
     local: { _tag: "read", changed: 0, deleted: 0, added: 0 },
     markerPaths: [],
+    revision: 1,
     unresolvedSends: 0,
     keptCopies: 0,
     busy: false,
@@ -254,7 +255,7 @@ describe("overleafResultView", () => {
     );
     expect(view.lines).toEqual([
       "Renamed a.tex to b.tex. Overleaf drops comments and tracked changes on renamed files.",
-      "Sent older versions of 1 file.",
+      "Sent a version of c.tex that Overleaf had before.",
       "An earlier send never got an answer. Scient never retries it, and Overleaf still doesn't show whether it arrived; this sync may carry some of the same changes again.",
       "The project is bigger than Overleaf recommends.",
       "big.tex is too big to edit on Overleaf.",
