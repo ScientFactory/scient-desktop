@@ -76,3 +76,20 @@ it("remembers a possible manual session but never infers prior use from an empty
     )[0]?.signedOut,
   ).toBe(false);
 });
+
+it("treats a site's protected cookie as its session once seen, ignoring leftover analytics", () => {
+  const observed = new Set<string>();
+  const status = (cookies: ReadonlyArray<{ domain: string; httpOnly?: boolean }>) =>
+    websiteSessionStatus(
+      [{ ...account, lastSignInOutcome: "signed-in" as const }],
+      [{ profileId: "work", cookies }],
+      observed,
+      now,
+      "synthetic-desktop",
+    )[0]?.signedOut;
+  expect(
+    status([{ domain: "login.example.com", httpOnly: true }, { domain: ".login.example.com" }]),
+  ).toBe(false);
+  expect(status([{ domain: ".login.example.com", httpOnly: false }])).toBe(true);
+  expect(status([])).toBe(true);
+});

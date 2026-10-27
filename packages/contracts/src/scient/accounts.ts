@@ -554,7 +554,11 @@ export const AccountBrowserSessions = Schema.Array(
   Schema.Struct({
     profileId: Schema.String,
     cookies: Schema.Array(
-      Schema.Struct({ domain: Schema.String, expires: Schema.optional(Schema.Number) }),
+      Schema.Struct({
+        domain: Schema.String,
+        expires: Schema.optional(Schema.Number),
+        httpOnly: Schema.optional(Schema.Boolean),
+      }),
     ),
   }),
 );

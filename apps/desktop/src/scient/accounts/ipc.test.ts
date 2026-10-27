@@ -61,6 +61,7 @@ function fixture() {
                 {
                   domain: ".example.test",
                   expirationDate: 2000,
+                  httpOnly: true,
                   value: NodeCrypto.randomBytes(16).toString("hex"),
                 },
               ];
@@ -172,7 +173,7 @@ it.effect("returns only cookie metadata and distinguishes denied reads from empt
     const f = fixture();
     expect(
       yield* f.run(cookieMetadata({ profileId: "work", environmentId: "remote" }, f.mainEvent)),
-    ).toEqual([{ domain: ".example.test", expires: 2000 }]);
+    ).toEqual([{ domain: ".example.test", httpOnly: true, expires: 2000 }]);
     expect(yield* f.run(cookieMetadata({ profileId: "default" }, f.guestEvent))).toBeNull();
     expect(yield* f.run(cookieMetadata({ profileId: "\u0000" }, f.mainEvent))).toBeNull();
     f.failCookieRead();

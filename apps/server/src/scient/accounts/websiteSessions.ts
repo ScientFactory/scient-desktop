@@ -32,7 +32,7 @@ export function websiteSessionStatus(
     ]);
     const session = sessions.find((entry) => entry.profileId === profileId);
     if (!session || sites.length === 0) return account;
-    const present = session.cookies.some(
+    const live = session.cookies.filter(
       (cookie) =>
         (cookie.expires === undefined || cookie.expires === -1 || cookie.expires > now / 1000) &&
         hosts.some((host) => {
@@ -40,11 +40,18 @@ export function websiteSessionStatus(
           return host === domain || host.endsWith(`.${domain}`) || domain.endsWith(`.${host}`);
         }),
     );
+    // Sites keep analytics cookies after sign-out; once a site was seen with a protected
+    // (HttpOnly) cookie, that cookie alone stands for its session.
+    const protectedKey = `${key}|http-only`;
+    const present = live.length > 0;
+    const protectedPresent = live.some((cookie) => cookie.httpOnly === true);
+    if (protectedPresent) observed.add(protectedKey);
     if (present && sourceId) observed.add(key);
+    const sessionPresent = observed.has(protectedKey) ? protectedPresent : present;
     return {
       ...account,
       signedOut:
-        !present &&
+        !sessionPresent &&
         (account.lastSignInOutcome === "signed-in" ||
           (sourceId !== undefined && observed.has(key))),
     };

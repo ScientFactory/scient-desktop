@@ -144,6 +144,7 @@ export const cookieMetadata = Effect.fn("DesktopAccounts.cookieMetadata")(functi
           : [
               {
                 domain: cookie.domain,
+                httpOnly: cookie.httpOnly === true,
                 ...(cookie.expirationDate === undefined ? {} : { expires: cookie.expirationDate }),
               },
             ],
