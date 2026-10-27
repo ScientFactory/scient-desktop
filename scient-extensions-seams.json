@@ -349,7 +349,7 @@
       "purpose": "Read managed skill documents for the shared skill card."
     },
     {
-      "path": "apps/web/src/scient/skills/ScientSkillsSettings.tsx",
+      "path": "apps/web/src/scient/skills/ScientSkillsLibrary.tsx",
       "anchor": "ManagedSkillCard",
       "purpose": "Open managed skills in the same card as plugin skills."
     },
