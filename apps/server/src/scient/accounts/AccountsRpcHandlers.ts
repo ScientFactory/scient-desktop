@@ -1,5 +1,6 @@
 import { AccountsError, WS_METHODS, WsAccountsRpcGroup } from "@t3tools/contracts";
-import { Effect, Option, Stream } from "effect";
+import { Clock, Effect, Option, Stream } from "effect";
+import { websiteSessionStatus } from "./websiteSessions.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
 
@@ -10,12 +11,31 @@ export const makeAccountsRpcHandlers = ({
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
 }) => {
+  const observedSessions = new Set<string>();
   const attributes = { "rpc.aggregate": "accounts" };
   return WsAccountsRpcGroup.of({
     [WS_METHODS.accountsPasswordStore]: (input) =>
       observeRpcEffect(WS_METHODS.accountsPasswordStore, accounts.passwordStore(input), attributes),
-    [WS_METHODS.accountsSnapshot]: () =>
-      observeRpcEffect(WS_METHODS.accountsSnapshot, accounts.snapshot, attributes),
+    [WS_METHODS.accountsSnapshot]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSnapshot,
+        Effect.gen(function* () {
+          const snapshot = yield* accounts.snapshot;
+          const now = yield* Clock.currentTimeMillis;
+          return {
+            ...snapshot,
+            accounts: websiteSessionStatus(
+              snapshot.accounts,
+              input.browserSessions ?? [],
+              observedSessions,
+              now,
+              input.browserSessionSourceId,
+              input.defaultProfileId,
+            ),
+          };
+        }),
+        attributes,
+      ),
     [WS_METHODS.accountsSubscribeChanges]: () =>
       observeRpcStream(WS_METHODS.accountsSubscribeChanges, accounts.changes, attributes),
     [WS_METHODS.accountsSave]: (input) =>

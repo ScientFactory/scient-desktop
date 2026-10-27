@@ -3,6 +3,7 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  AccountBrowserSessions,
   CliPasswordStoreInput,
   CliPasswordStoreResult,
   AccountMatchSignInInput,
@@ -64,7 +65,12 @@ export const WsAccountsPasswordStoreRpc = Rpc.make(
 );
 
 export const WsAccountsSnapshotRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSnapshot, {
-  payload: Empty,
+  payload: Schema.Struct({
+    browserSessions: Schema.optional(AccountBrowserSessions),
+    browserSessionSourceId: Schema.optional(Schema.String.check(Schema.isMaxLength(80))),
+    /** The user's default browser profile, used by accounts that don't name one. */
+    defaultProfileId: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  }),
   success: AccountsSnapshot,
   error: AccountsRpcError,
 });

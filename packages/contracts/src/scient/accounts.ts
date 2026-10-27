@@ -271,6 +271,7 @@ export const AccountSummary = Schema.Struct({
   /** Set only when something is wrong. */
   statusMessage: Schema.optional(TrimmedNonEmptyString),
   lastSignInOutcome: Schema.optional(AccountSignInOutcome),
+  signedOut: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastUsedAt: Schema.optional(IsoDateTime),
@@ -603,3 +604,18 @@ export class AccountsError extends Schema.TaggedError<AccountsError>()("Accounts
   ]),
   message: TrimmedNonEmptyString,
 }) {}
+
+/** Value-free desktop session observations; missing profiles mean unknown. */
+export const AccountBrowserSessions = Schema.Array(
+  Schema.Struct({
+    profileId: Schema.String,
+    cookies: Schema.Array(
+      Schema.Struct({
+        domain: Schema.String,
+        expires: Schema.optional(Schema.Number),
+        httpOnly: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  }),
+);
+export type AccountBrowserSessions = typeof AccountBrowserSessions.Type;

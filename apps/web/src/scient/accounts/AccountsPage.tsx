@@ -48,9 +48,11 @@ import { PasswordStores, OnePasswordDialog } from "./PasswordStores";
 import { AccountApprovals } from "./AccountApprovals";
 import { AccountLogo } from "./AccountLogo";
 import { KIND_LABELS, accountIconUrl, accountManagePage } from "./accountsView";
+import { useWebsiteSessions } from "./useWebsiteSessions";
+import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
 import { readLocalApi } from "~/localApi";
 
-function AccountRow({
+export function AccountRow({
   account,
   environmentId,
   canWrite,
@@ -79,9 +81,11 @@ function AccountRow({
       ? "Password rejected"
       : account.lastSignInOutcome === "code-rejected"
         ? "Code rejected"
-        : null;
-  const openSite = async () => {
-    if (!site) return;
+        : account.signedOut
+          ? "Signed out"
+          : null;
+  const openSite = async (url = site) => {
+    if (!url) return;
     const project = await openScratchProject(environmentId, "Could not open the site");
     if (!project) return;
     const opened = await openThread(scopeProjectRef(project.environmentId, project.id));
@@ -90,7 +94,7 @@ function AccountRow({
     useRightPanelStore.getState().requestMaximize(threadRef);
     const result = await openUrlInPreview({
       threadRef,
-      url: site.startsWith("https://") ? site : `https://${site}`,
+      url: /^https?:\/\//.test(url) ? url : `https://${url}`,
       openPreview,
       ...(details.kind === "website" && details.profileId
         ? { profileId: BrowserProfileId.make(details.profileId) }
@@ -155,7 +159,13 @@ function AccountRow({
             disabled={!canWrite || busy}
           />
           <ControlsMenu disabled={!canWrite || busy}>
+            {account.signedOut && details.kind === "website" ? (
+              <MenuItem onClick={() => void openSite(details.loginUrl ?? site)}>
+                Sign in again
+              </MenuItem>
+            ) : null}
             {site ? <MenuItem onClick={() => void openSite()}>Open {site}</MenuItem> : null}
+            <AccountStoreMenuItems account={account} />
             <MenuItem onClick={onEdit}>Edit</MenuItem>
             <MenuItem
               onClick={async () => {
@@ -441,7 +451,8 @@ function AccountsContent({
 }
 
 function AccountsEnvironment({ environmentId }: { environmentId: EnvironmentId }) {
-  const { data, canWrite } = useAccounts(environmentId);
+  const { data: snapshot, canWrite } = useAccounts(environmentId);
+  const data = useWebsiteSessions(environmentId, snapshot);
   return data ? (
     <AccountsContent environmentId={environmentId} snapshot={data} canWrite={canWrite} />
   ) : null;

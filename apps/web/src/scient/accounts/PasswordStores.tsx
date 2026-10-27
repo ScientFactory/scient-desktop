@@ -162,6 +162,10 @@ export function PasswordStores({
           canWrite={canWrite}
         />
       ))}
+      <p className="text-xs text-muted-foreground">
+        Linked values are read when used; 1Password may cache them for five minutes, except one-time
+        codes. No manual refresh needed.
+      </p>
       <input
         ref={fileRef}
         type="file"

@@ -151,6 +151,30 @@ sign-in/settings guidance. Detection and discovery errors leave the normal previ
 page text is never included in the note. The discovery tool still checks every eligible profile
 up to its limit and returns its existing access labels, first match and skipped names.
 
+### Website session status
+
+When Accounts opens, regains focus, receives account changes or completes a profile-site sign-out,
+its desktop client reads cookie domains and expiry metadata using the same environment/profile
+partition mapping as the signed-in-sites view. No cookie names or values leave the native handler.
+The client supplies this display-only observation to `accounts.snapshot`; the server marks a website
+account Signed out only after an earlier `signed-in` outcome or a previously observed live cookie,
+and only when a successful read finds no unexpired cookies for any of its sites. Session cookies
+count as live; a cookie on a parent or child domain conservatively suppresses the label. Cookie
+presence does not prove authentication. Failed reads, older desktops and browser-only clients show
+no session status. There is no polling. Manual-session observations are isolated by renderer identity
+and last for the server RPC handler's lifetime; after reconnect/restart, an unobserved manual session remains unknown until observed again.
+These observations never grant access or change account controls.
+
+Signed out rows offer Sign in again first in their menu. It opens the account's sign-in address
+(or its first site) in the same account profile through the existing preview path and autofill.
+Linked values offer Open in 1Password or, on macOS desktops, Open Keychain Access through the
+existing external-link bridge. The bridge accepts only fixed store targets. `op://` references lack
+the 1Password account identity needed for a reliable private item link, so Scient opens the app
+without selecting an item. Keychain launch tries the current CoreServices location, the legacy
+Utilities location, then Passwords. Keychain links resolve on every use; 1Password values use the
+existing five-minute cache except one-time codes, which resolve every time. No manual refresh is
+needed, but ordinary 1Password edits can take up to five minutes to appear.
+
 ## Storage
 
 The store lives in the server, on the machine where agents run.
