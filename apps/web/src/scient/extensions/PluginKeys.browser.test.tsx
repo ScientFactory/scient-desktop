@@ -20,7 +20,10 @@ const state = vi.hoisted(() => ({
   unbind: vi.fn(),
   save: vi.fn(),
 }));
-vi.mock("../../hooks/useSettings", () => ({ useClientSettings: () => [] }));
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
+  useClientSettings: () => [],
+}));
 vi.mock("./ExtensionRow", () => ({ ExtensionIcon: () => null }));
 vi.mock("./ExtensionsPage", () => ({
   useExtensionsEnvironment: () => ({
@@ -76,6 +79,7 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("../accounts/useAccounts", () => ({
   useAccounts: () => ({ data: snapshot, canWrite: state.canWrite }),
   useAccountCommand: () => state.save,
+  usePasswordStorePermission: () => true,
 }));
 const snapshot: AccountsSnapshot = {
   agentAccess: true,

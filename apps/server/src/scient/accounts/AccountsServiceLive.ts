@@ -807,7 +807,7 @@ export const layer = Layer.effect(
         locked(
           Effect.gen(function* () {
             const result = yield* cliStores.command(input);
-            yield* publish;
+            yield* publish();
             return result;
           }),
         ),
