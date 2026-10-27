@@ -231,8 +231,8 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 
 - **Settings → Accounts**: the global switch, browser profile cards, accounts, password stores.
   Built from the existing settings components; labels say what a thing is and status appears only
-  when something is wrong. Profiles moved here from Integrations; the rest of the browser settings
-  stay in Integrations.
+  when something is wrong. It sits in the Agents group after Extensions. Profiles moved here from
+  the Browser page, which links to Accounts; the rest of the browser settings stay there.
 - **Logos** for known services live in `accountIcons.json` as square, opaque tiles: a brand tile
   as is, a transparent mark trimmed and centred at 70% on white. `AccountLogo` draws them with no
   padding, so each takes its frame's shape.
@@ -280,7 +280,7 @@ always need Touch ID or the Mac password. Nothing else in Accounts depends on th
 
 ## Alignment
 
-- Upstream `browserProfile.ts`, `BrowserImport/`, the Integrations page's `BrowserProfilesSetting`
+- Upstream `browserProfile.ts`, `BrowserImport/`, the Browser page's `BrowserProfilesSetting`
   and the preview tools remain upstream-owned. Scient changes them only at the seams in the
   manifest. `BrowserProfilesSetting` is no longer rendered; when upstream changes its behaviour
   (import, clear, remove), port the change to `apps/web/src/scient/accounts/BrowserProfiles*`.

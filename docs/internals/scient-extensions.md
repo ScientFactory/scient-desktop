@@ -21,8 +21,8 @@ before the UI updates. The UI never predicts success.
 ## Product surface
 
 **Settings → Extensions** (`/settings/extensions`). "Connections" already means
-environments and "Integrations" means browser and devices, so neither name is
-reused. Every page reads one environment, chosen by the settings scope picker
+environments, and the browser and devices have their own pages, so none of those
+names is reused. Every page reads one environment, chosen by the settings scope picker
 ("Tools on …"); actions go to that environment and are gated on settings write
 access.
 
