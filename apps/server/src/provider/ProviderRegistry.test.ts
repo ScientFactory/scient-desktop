@@ -3418,6 +3418,7 @@ it.layer(
               "droid",
               "omp",
               "scient",
+              "fx",
             ].map((instanceId) => [
               instanceId,
               { driver: "startup-fixture-unregistered", enabled: false },
@@ -3655,6 +3656,7 @@ it.layer(
               "codex",
               "cursor",
               "droid",
+              "fx",
               "grok",
               "muse",
               "omp",

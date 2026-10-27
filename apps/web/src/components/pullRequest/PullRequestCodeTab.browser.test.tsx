@@ -161,7 +161,8 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
 
 function pagedContainer() {
   const container = document.createElement("div");
-  container.className = "flex h-[500px] w-[900px]";
+  // SCIENT-FORK: Scient's CSS omits Tailwind classes used only in tests.
+  container.style.cssText = "display: flex; height: 500px; width: 900px;";
   return container;
 }
 
