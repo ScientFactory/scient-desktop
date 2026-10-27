@@ -51,7 +51,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
   it.effect(
     "ignores command shims, directories and broken or old executables before a working Git",
     () =>
-      withExecutor(({ runtimeRoot, work }) =>
+      withExecutor(({ runtimeRoot, work, publicationHelper }) =>
         Effect.gen(function* () {
           const directories = ["shim", "directory", "broken", "old"].map((name) =>
             NodePath.join(work, name),
@@ -73,7 +73,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
             PATH: [...directories, process.env.PATH ?? process.env.Path].join(";"),
             PATHEXT: ".CMD;.EXE",
           };
-          const git = yield* make({ runtimeRoot }).pipe(
+          const git = yield* make({ runtimeRoot, publicationHelper }).pipe(
             Effect.provideService(HostProcess.Environment, environment),
           );
           const found = yield* git.availability;
@@ -86,14 +86,14 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("Overleaf Git o
   );
 
   it.effect("creates scratch and token files private even under a broadly inherited parent", () =>
-    withExecutor(({ work }) =>
+    withExecutor(({ work, publicationHelper }) =>
       Effect.gen(function* () {
         NodeChildProcess.execFileSync(
           NodePath.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"),
           [work, "/grant", "*S-1-5-32-545:(OI)(CI)R"],
         );
         const scratch = yield* Effect.promise(() =>
-          makeGitScratch(NodePath.join(work, "runtime"), true),
+          makeGitScratch(NodePath.join(work, "runtime"), true, publicationHelper),
         );
         const directory = yield* Effect.promise(() => scratch.create());
         const token = NodePath.join(directory, "token");

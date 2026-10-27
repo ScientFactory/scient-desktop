@@ -50,6 +50,7 @@ if (phase === "refuse") {
   const program = Effect.gen(function* () {
     const git = yield* Git.make({
       runtimeRoot: NodePath.join(root, "git-runtime"),
+      publicationHelper: helper,
       allowLocalProtocols: true,
     });
     const repos = yield* Repositories.make.pipe(
