@@ -123,9 +123,6 @@ function ChangeList(props: {
                   path !== null && props.onOpenFile(workspacePathOf(props.folder, path))
                 }
               >
-                <span className="w-16 shrink-0 text-xs text-muted-foreground">
-                  {KIND_LABELS[change.kind]}
-                </span>
                 {change.kind === "renamed" ? (
                   <span className="min-w-0 truncate">{changeLabel(change)}</span>
                 ) : (
@@ -141,6 +138,10 @@ function ChangeList(props: {
                     ) : null}
                   </span>
                 )}
+                {/* Name first in every list; what happened sits at the end, like a row's action. */}
+                <span className="ms-auto shrink-0 ps-2 text-xs text-muted-foreground">
+                  {KIND_LABELS[change.kind]}
+                </span>
               </button>
             </li>
           );
