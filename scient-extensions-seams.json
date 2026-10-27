@@ -3,6 +3,10 @@
   "owner": "ScientFactory",
   "ownedRoots": ["apps/server/src/scient/extensions", "apps/web/src/scient/extensions"],
   "ownedFiles": [
+    "apps/server/src/mcp/McpSessionRegistry.scient.test.ts",
+    "apps/server/src/orchestration-v2/Adapters/PluginKeyOverrides.scient.test.ts",
+    "apps/server/src/provider/Drivers/PluginKeyProviderConfig.ts",
+    "apps/server/src/provider/Drivers/PluginKeyProviderConfig.test.ts",
     "apps/web/src/testUtils/shardWeights.json",
     "packages/contracts/src/scient/extensions.ts",
     "packages/contracts/src/scient/extensionRpcs.ts",
@@ -29,6 +33,7 @@
     "scripts/generate-extension-brand-icons.mjs",
     "scripts/scient-extension-brands.json",
     "packages/contracts/src/scient/pluginContents.ts",
+    "packages/contracts/src/scient/pluginKeys.ts",
     "apps/server/src/scient/extensions/brandIcons/NOTICE",
     "apps/server/src/provider/Drivers/ScientClaudeSkillFiles.ts"
   ],

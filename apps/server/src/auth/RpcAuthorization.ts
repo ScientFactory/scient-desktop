@@ -138,6 +138,11 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.extensionsDiscoverCatalog]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsBrandIcon]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsProviderStoreSearch]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:START — plugin keys obey destination environment permissions.
+  [WS_METHODS.extensionsPluginKeys]: AuthOrchestrationReadScope,
+  [WS_METHODS.extensionsPluginKeyBind]: AuthSettingsWriteScope,
+  [WS_METHODS.extensionsPluginKeyUnbind]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.extensionsPluginContents]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsSkillDocument]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsProviderStoreEntry]: AuthOrchestrationReadScope,

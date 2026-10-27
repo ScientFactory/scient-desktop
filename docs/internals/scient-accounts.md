@@ -292,3 +292,36 @@ always need Touch ID or the Mac password. Nothing else in Accounts depends on th
 
 The analytics gateway must accept the `accounts` settings section before release; regenerate
 its wire contract using the [analytics deployment procedure](product-analytics.md).
+
+### Provider-managed sign-ins
+
+Accounts also shows read-only “Managed in Claude” rows for connected `claudeai`
+MCP servers and “Managed in Codex” rows for accessible Codex apps. These come from
+Extensions' page-owned native inventory refresh and revision subscription; an
+installed plugin or an available app alone is not a sign-in. Apps shared by
+several plugins appear once per agent instance. Each row links to that agent's
+Extensions page. No credentials are imported, exposed, or stored by these rows.
+
+Plugin-key bindings use the same narrow Accounts port. Extensions persists only
+account token refs, and resolves each required key with its agent instance,
+plugin, variable name and selected project when computing eligibility. Revocation
+and token removal never fall back to a previous value. Status projections discard
+resolved `Redacted` values. Accounts usage-only events do not invalidate those
+projections; authorization and token-metadata changes do.
+
+HTTP plugin-key consumers also include the original declared remote origin.
+Eligibility checks every supported destination a key serves. HTTP plugin-key
+delivery caches Redacted values per MCP credential/plugin/variable, also binding
+origin, project and account reference. A lock-free Accounts revision is checked
+on every request and advances before configuration writes; the changes feed
+also drops stale entries. Account edits, token changes, scope/sites/Off/global
+access changes and binding changes invalidate cached keys. Concurrent misses
+share one resolution and entries refresh after three minutes. MCP revocation,
+observed expiry and shutdown clear the cache. Allowed plugin use is audited at
+most once per three-minute window per credential/plugin/variable; denials are
+recorded every time. Status checks do not record allowed use. Usage activity and
+lastUsedAt alone do not advance the authorization revision. Persistence writes
+retain their existing semaphore and ordering. The Accounts add form can be opened
+from a Keys row with its declared environment name and allowed origins, then
+Extensions binds the saved account id. There is no copy into plugin config or a
+provider environment. The existing proxy redacts reflected values in responses.

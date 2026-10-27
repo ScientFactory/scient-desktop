@@ -1,3 +1,4 @@
+import { usePluginKeys, pluginKeyStatusLabel } from "./PluginKeys";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import type {
   ConnectorSummary,
@@ -355,6 +356,12 @@ export function ProviderPluginItem({
   readonly workspace: string | undefined;
 }) {
   const actions = useProviderPluginActions(provider, label, plugin, workspace);
+  const keyState = usePluginKeys({
+    instanceId: provider.instanceId,
+    pluginId: plugin.id,
+    ...(workspace ? { cwd: workspace } : {}),
+  });
+  const keyStatus = pluginKeyStatusLabel(keyState.data, provider);
   const name = plugin.displayName ?? plugin.name;
   const target: ExtensionTarget = {
     kind: "provider-plugin",
@@ -373,13 +380,15 @@ export function ProviderPluginItem({
       status={
         !plugin.enabled
           ? "Off"
-          : plugin.apps?.length
-            ? plugin.apps.some((app) => !app.enabled)
-              ? "Disabled in Codex"
-              : plugin.apps.every((app) => app.connected)
-                ? "Connected"
-                : "Needs sign-in"
-            : null
+          : keyStatus
+            ? keyStatus
+            : plugin.apps?.length
+              ? plugin.apps.some((app) => !app.enabled)
+                ? "Disabled in Codex"
+                : plugin.apps.every((app) => app.connected)
+                  ? "Connected"
+                  : "Needs sign-in"
+              : null
       }
       trailing={
         <ItemMenu name={name} target={target}>

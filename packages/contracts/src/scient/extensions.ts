@@ -14,6 +14,7 @@ export {
 
 export * from "./providerStore.ts";
 export * from "./pluginContents.ts";
+export * from "./pluginKeys.ts";
 
 import { GrantScope, VaultSecretRef } from "./secrets.ts";
 

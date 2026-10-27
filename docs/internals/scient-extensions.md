@@ -861,3 +861,33 @@ Build the web client with `VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID` to offer
 It stays hidden when unset; registering the Scient OAuth app and configuring the
 provider's callback/client requirements remain prerequisites for live sign-in.
 Only user-added URLs expose custom OAuth client settings.
+
+## Plugin key detection
+
+Plugin contents can carry `requiredKeys`, a bounded list of variable or declared
+sensitive-setting names detected from contained manifests. It never contains
+values. Only installed local contents can establish this list; an unavailable
+local root leaves it unknown. Installed plugin pages use Scient-owned account bindings and authoritative
+eligibility for their Keys rows and Needs a key status. Native provider adapters
+generate suppression policies; supported HTTP-header servers are served through
+the existing connector proxy. Provider behavior remains unverified live, and
+stdio key delivery is unsupported. The
+[plugin-key implementation record](scient-plugin-keys.md) documents provider
+capabilities, security boundaries and the remaining delivery work.
+
+Settings → Accounts also displays connected Claude account connectors and
+accessible Codex apps as read-only rows linking to that agent's Extensions page.
+Installing a plugin or offering a sign-in does not create an Accounts row.
+
+### Native plugin key delivery
+
+Scient keeps key bindings separately from plugin-owned files. Keys rows reuse
+Accounts' API-key picker and add dialog. The proxy resolves the current bound
+account with the plugin-key consumer and original origin/project on each request;
+no account key appears in the provider's environment or MCP config. Detected
+key-bearing plugins receive provider-specific native-server suppression policies.
+Supported HTTP-header servers use the original native name at the adapter and
+Scient's existing connector proxy behind it. Stdio remains withheld. Claude and
+Codex configuration is unit-tested but unverified live; Scient Agent has no
+verified override and displays its unavailable message. See the
+[implementation and qualification record](scient-plugin-keys.md).

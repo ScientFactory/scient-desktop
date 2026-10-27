@@ -154,6 +154,7 @@ vi.mock("../../components/settings/SettingsScopeSentence", () => ({
 vi.mock("../../hooks/useSettings", () => ({
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE: "",
   usePrimarySettingsAvailable: () => true,
+  useClientSettings: () => [],
 }));
 vi.mock("../../components/settings/scopedSettings", () => ({
   isProjectScopedSettingKey: () => false,
@@ -190,6 +191,17 @@ vi.mock("../../state/query", async () => {
       useStateVersion();
       if (atom === null) return { data: null, error: null, failure: null, isPending: false };
       state.queryTargets.push(atom);
+      if (atom.kind === "plugin-keys")
+        return {
+          data: {
+            status: "ready",
+            keys: [],
+            accounts: [],
+            writable: true,
+            requirementsKnown: true,
+          },
+          error: null,
+        };
       if (atom.kind === "contents") {
         const plugin = state.inventory?.plugins.find(
           (item) => item.pluginId === atom.input?.pluginId,
@@ -261,6 +273,12 @@ vi.mock("./extensionsState", async () => {
   const storeAtom = Atom.family((key: string) => Object.assign(Atom.make(null), JSON.parse(key)));
   return {
     extensionsBrandIcon: () => null,
+    extensionsPluginKeys: (input: { environmentId: string; input: Record<string, unknown> }) => ({
+      kind: "plugin-keys",
+      ...input,
+    }),
+    bindPluginKey: { permissionAtom: () => Atom.make(true) },
+    unbindPluginKey: {},
     extensionsPluginContents: ({
       environmentId,
       input,

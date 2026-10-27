@@ -25,6 +25,7 @@ import { Label } from "../../components/ui/label";
 import { NativeSelect } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
 import { useEnvironmentQuery } from "../../state/query";
+import { ApiKeyAccountPicker } from "../accounts/ApiKeyAccountPicker";
 import { accountsState } from "../accounts/accountsState";
 import { siteMatchesUrl } from "../accounts/accountsView";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -513,21 +514,17 @@ export function AddConnectorDialog({
                     {matchingAccounts.length > 0 || draft.accountId ? (
                       <div className="grid gap-1.5">
                         <Label htmlFor="connector-account">Key</Label>
-                        <NativeSelect
+                        <ApiKeyAccountPicker
                           id="connector-account"
                           value={draft.accountId}
+                          emptyLabel="Enter a key"
+                          options={matchingAccounts.map((account) => ({
+                            value: account.accountId,
+                            name: account.name,
+                          }))}
                           {...invalidProps("connector-account", shownErrors.accountId)}
                           onChange={(event) => patch({ accountId: event.target.value, value: "" })}
-                        >
-                          <option value="">Enter a key</option>
-                          <optgroup label="Use an existing account">
-                            {matchingAccounts.map((account) => (
-                              <option key={account.accountId} value={account.accountId}>
-                                {account.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        </NativeSelect>
+                        />
                         <FieldError id="connector-account-error" message={shownErrors.accountId} />
                       </div>
                     ) : null}

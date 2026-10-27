@@ -4,6 +4,9 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { parseDocument } from "yaml";
 import * as Schema from "effect/Schema";
+import { pluginKeyHasSecretArgs, pluginKeyStdioServer } from "./PluginKeyStdioServers.ts";
+import { pluginKeyHttpServer } from "./PluginKeyHttpServers.ts";
+import { declaredPluginKeys, requiredServerKeys } from "./PluginRequiredKeys.ts";
 import { extensionIconData } from "./ExtensionIconData.ts";
 import type { ExtensionPluginContents } from "@t3tools/contracts";
 
@@ -91,6 +94,74 @@ function skillMetadata(text: string, fallback: string) {
   };
 }
 
+async function readLocalPluginMcpContents(root: string) {
+  const servers = new Set<string>();
+  const definitions = new Map<string, unknown>();
+  const duplicateNames = new Set<string>();
+  const requiredKeys = new Set<string>();
+  let keysKnown = true;
+  const addKeys = (names: ReadonlyArray<string>) => {
+    for (const name of names) {
+      if (requiredKeys.size < MAX_ENTRIES) requiredKeys.add(name);
+      else if (!requiredKeys.has(name)) keysKnown = false;
+    }
+  };
+  for (const file of [
+    ".mcp.json",
+    "mcp.json",
+    ".claude-plugin/plugin.json",
+    ".omp-plugin/plugin.json",
+    ".codex-plugin/plugin.json",
+    "plugin.json",
+  ]) {
+    const text = await readContainedPluginText(root, file).catch((error: unknown) => {
+      if (
+        !(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
+      )
+        keysKnown = false;
+      return undefined;
+    });
+    if (text === undefined) continue;
+    try {
+      const data = decodeRecord(JSON.parse(text));
+      addKeys(declaredPluginKeys(data));
+      const configured = data.mcpServers ?? (file.endsWith("mcp.json") ? data : {});
+      if (Array.isArray(configured) && configured.length > MAX_ENTRIES) keysKnown = false;
+      const sources = Array.isArray(configured) ? configured.slice(0, MAX_ENTRIES) : [configured];
+      for (const source of sources) {
+        try {
+          const manifest =
+            typeof source === "string"
+              ? decodeRecord(JSON.parse(await readContainedPluginText(root, source)))
+              : decodeRecord(source);
+          const record = decodeRecord(manifest.mcpServers ?? manifest);
+          if (Object.keys(record).length > MAX_ENTRIES) keysKnown = false;
+          for (const [name, settings] of Object.entries(record).slice(0, MAX_ENTRIES)) {
+            if (name.trim()) {
+              if (definitions.has(name)) duplicateNames.add(name);
+              definitions.set(name, settings);
+              addKeys(requiredServerKeys(settings));
+              if (servers.size < MAX_ENTRIES) servers.add(name);
+              else if (!servers.has(name)) keysKnown = false;
+            }
+          }
+        } catch {
+          keysKnown = false;
+          /* A missing or escaped server manifest contributes no names. */
+        }
+      }
+    } catch {
+      keysKnown = false;
+      /* Invalid manifests do not provide server names. */
+    }
+  }
+  return {
+    definitions: [...definitions].filter(([name]) => !duplicateNames.has(name)),
+    ...(keysKnown ? { requiredKeys: [...requiredKeys].sort() } : {}),
+    mcpServers: [...servers].map((name) => ({ name })),
+  };
+}
+
 export async function readLocalPluginContents(root: string): Promise<ExtensionPluginContents> {
   const skills: ExtensionPluginContents["skills"][number][] = [];
   for (const name of await entries(root, "skills")) {
@@ -109,41 +180,12 @@ export async function readLocalPluginContents(root: string): Promise<ExtensionPl
       /* Invalid metadata is not a skill. */
     }
   }
-  const servers = new Set<string>();
-  for (const file of [
-    ".mcp.json",
-    "mcp.json",
-    ".claude-plugin/plugin.json",
-    ".omp-plugin/plugin.json",
-    "plugin.json",
-  ]) {
-    const text = await readContainedPluginText(root, file).catch(() => undefined);
-    if (text === undefined) continue;
-    try {
-      const data = decodeRecord(JSON.parse(text));
-      const configured = data.mcpServers ?? (file.endsWith("mcp.json") ? data : {});
-      const sources = Array.isArray(configured) ? configured.slice(0, MAX_ENTRIES) : [configured];
-      for (const source of sources) {
-        try {
-          const manifest =
-            typeof source === "string"
-              ? decodeRecord(JSON.parse(await readContainedPluginText(root, source)))
-              : decodeRecord(source);
-          const record = decodeRecord(manifest.mcpServers ?? manifest);
-          for (const name of Object.keys(record).slice(0, MAX_ENTRIES))
-            if (servers.size < MAX_ENTRIES && name.trim()) servers.add(name);
-        } catch {
-          /* A missing or escaped server manifest contributes no names. */
-        }
-      }
-    } catch {
-      /* Invalid manifests do not provide server names. */
-    }
-  }
+  const mcp = await readLocalPluginMcpContents(root);
   return {
     apps: [],
+    ...(mcp.requiredKeys === undefined ? {} : { requiredKeys: mcp.requiredKeys }),
+    mcpServers: mcp.mcpServers,
     skills,
-    mcpServers: [...servers].map((name) => ({ name })),
     commands: await entries(root, "commands"),
     agents: await entries(root, "agents"),
   };
@@ -178,4 +220,39 @@ export async function codexSkillRoot(
   if (!realFile || !isPluginPathContained(realRoot, realFile)) return undefined;
   const stat = await NodeFSP.stat(realFile);
   return stat.isFile() && stat.size <= MAX_BYTES ? realRoot : undefined;
+}
+
+export async function readLocalPluginRequiredKeys(
+  root: string,
+): Promise<ReadonlyArray<string> | undefined> {
+  if (!NodePath.isAbsolute(root)) throw new Error("The plugin root must be absolute.");
+  if (!(await NodeFSP.stat(root)).isDirectory()) throw new Error("The plugin root is unavailable.");
+  return (await readLocalPluginMcpContents(root)).requiredKeys;
+}
+
+export async function readLocalPluginKeyHttpServers(root: string) {
+  if (!NodePath.isAbsolute(root)) throw new Error("The plugin root must be absolute.");
+  const contents = await readLocalPluginMcpContents(root);
+  if (contents.requiredKeys === undefined) return [];
+  return contents.definitions.flatMap(([name, definition]) => {
+    const server = pluginKeyHttpServer(name, definition);
+    return server ? [server] : [];
+  });
+}
+
+/** Private transport settings never enter plugin contents RPC responses. */
+export async function readLocalPluginKeyStdioServers(root: string) {
+  if (!NodePath.isAbsolute(root)) throw new Error("The plugin root must be absolute.");
+  const contents = await readLocalPluginMcpContents(root);
+  if (contents.requiredKeys === undefined) return [];
+  return contents.definitions.flatMap(([name, definition]) => {
+    const server = pluginKeyStdioServer(name, definition, root);
+    return server ? [server] : [];
+  });
+}
+
+export async function readLocalPluginKeyCommandLineBlocked(root: string) {
+  if (!NodePath.isAbsolute(root)) throw new Error("The plugin root must be absolute.");
+  const contents = await readLocalPluginMcpContents(root);
+  return contents.definitions.some(([, definition]) => pluginKeyHasSecretArgs(definition));
 }

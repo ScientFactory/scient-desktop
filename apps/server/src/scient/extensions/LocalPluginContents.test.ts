@@ -147,3 +147,56 @@ it("inlines contained, sniffed plugin images while rejecting symlink escapes and
   await NodeFSP.writeFile(NodePath.join(root, "fake.png"), "not an image");
   expect(await readContainedPluginIcon(root, "fake.png")).toBeUndefined();
 });
+
+it("detects keys in contained inline and referenced manifests without returning secret settings", async () => {
+  await using cleanup = new AsyncDisposableStack();
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-plugin-keys-"));
+  cleanup.defer(() => NodeFSP.rm(root, { recursive: true, force: true }));
+  await NodeFSP.mkdir(NodePath.join(root, ".claude-plugin"));
+  await NodeFSP.writeFile(
+    NodePath.join(root, ".claude-plugin/plugin.json"),
+    JSON.stringify({
+      userConfig: { api_token: { sensitive: true, default: "synthetic-private-value" } },
+      mcpServers: ["./servers.json", { local: { env: { LOCAL_KEY: "" }, args: ["${ARG_KEY}"] } }],
+    }),
+  );
+  await NodeFSP.writeFile(
+    NodePath.join(root, "servers.json"),
+    JSON.stringify({
+      mcpServers: {
+        remote: {
+          url: "https://example.com/mcp",
+          headers: { Authorization: "Bearer ${HTTP_KEY}" },
+        },
+      },
+    }),
+  );
+  const contents = await readLocalPluginContents(root);
+  expect(contents.requiredKeys).toEqual(["ARG_KEY", "HTTP_KEY", "LOCAL_KEY", "api_token"]);
+  expect(JSON.stringify(contents)).not.toContain("synthetic-private-value");
+  expect(JSON.stringify(contents)).not.toContain("Bearer");
+});
+
+it("keeps requirements unknown when a manifest is invalid, escapes containment, or exceeds the key bound", async () => {
+  await using cleanup = new AsyncDisposableStack();
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-plugin-key-bounds-"));
+  cleanup.defer(() => NodeFSP.rm(root, { recursive: true, force: true }));
+  const manifest = NodePath.join(root, ".mcp.json");
+  await NodeFSP.writeFile(manifest, "{invalid");
+  expect((await readLocalPluginContents(root)).requiredKeys).toBeUndefined();
+  await NodeFSP.writeFile(manifest, JSON.stringify({ mcpServers: "../escape.json" }));
+  expect((await readLocalPluginContents(root)).requiredKeys).toBeUndefined();
+  await NodeFSP.writeFile(
+    manifest,
+    JSON.stringify({
+      mcpServers: {
+        local: {
+          env: Object.fromEntries(Array.from({ length: 201 }, (_, i) => [`KEY_${i}`, ""])),
+        },
+      },
+    }),
+  );
+  expect((await readLocalPluginContents(root)).requiredKeys).toBeUndefined();
+  await NodeFSP.rm(manifest);
+  expect((await readLocalPluginContents(root)).requiredKeys).toEqual([]);
+});
