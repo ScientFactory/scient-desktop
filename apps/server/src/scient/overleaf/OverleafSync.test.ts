@@ -581,6 +581,12 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           }),
         ).toMatchObject({ _tag: "connected" });
         yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(w.main, "Papers", "child")));
+        const differentlyCasedExists = yield* Effect.promise(() =>
+          NodeFSP.access(NodePath.join(w.main, "papers", "child")).then(
+            () => true,
+            () => false,
+          ),
+        );
         expect(
           yield* w.service.connect({
             caller: w.at(w.main),
@@ -589,7 +595,11 @@ describe.skipIf(!canApply)("OverleafSync", () => {
             project: OTHER_PROJECT,
             requestId: "c2",
           }),
-        ).toMatchObject({ _tag: "refused", reason: "folder-overlaps" });
+        ).toMatchObject({
+          _tag: "refused",
+          // Case-sensitive volumes reject the absent spelling before checking overlap.
+          reason: differentlyCasedExists ? "folder-overlaps" : "folder-missing",
+        });
       }),
     ),
   );
