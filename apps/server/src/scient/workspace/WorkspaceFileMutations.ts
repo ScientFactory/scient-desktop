@@ -611,13 +611,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       throw e;
     }
     const records: Stored[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]{1,100}$/u.test(entry.name)) continue;
+    const readRecord = async (entry: (typeof entries)[number]): Promise<Stored | null> => {
+      if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]{1,100}$/u.test(entry.name)) return null;
       const indexed = NodePath.join(storage, entry.name);
       const known = finishedRecords.get(indexed);
       if (known && (await recordStand(indexed, known.stored.directory)) === known.stand) {
-        records.push(known.stored);
-        continue;
+        return known.stored;
       }
       await assertPrivateRetention(indexed, deps.nativePublicationHelper);
       const reference = await readOptional(
@@ -639,15 +638,15 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           );
           const refusal = await readOptional(refusalPath, (value) => decodeRefusalRecord(value));
           if (!refusal)
-            records.push({
+            return {
               directory,
               record: null,
               target: reference.target ?? null,
               requestedPath: reference.requestedPath ?? null,
               mutationId: reference.mutationId ?? entry.name,
-            });
+            };
         }
-        continue;
+        return null;
       }
       let record: Stored["record"] = null,
         header: typeof JournalHeader.Type = {};
@@ -673,9 +672,20 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             ? record.mutationId
             : (reference?.mutationId ?? header.mutationId ?? entry.name),
       };
-      records.push(stored);
       if (stand !== null && finished(stored)) finishedRecords.set(indexed, { stand, stored });
       else finishedRecords.delete(indexed);
+      return stored;
+    };
+    // Fresh checks on both sides of ownership, with bounded independent reads instead of serial round trips.
+    const batchSize = HostProcess.Platform.defaultValue() === "win32" ? 1 : 16;
+    for (let offset = 0; offset < entries.length; offset += batchSize) {
+      const batch = await Promise.allSettled(
+        entries.slice(offset, offset + batchSize).map(readRecord),
+      );
+      for (const result of batch) {
+        if (result.status === "rejected") throw result.reason;
+        if (result.value !== null) records.push(result.value);
+      }
     }
     return records;
   };

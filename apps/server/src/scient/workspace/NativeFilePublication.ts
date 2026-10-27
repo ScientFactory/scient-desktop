@@ -330,6 +330,26 @@ export async function bindNativeFilePublicationParent(
   parentRelativePath: string,
 ): Promise<Omit<NativeFileLeaseBinding, "mode">> {
   validatePaths({ rootPath, parentRelativePath, recordPath: rootPath });
+  if (HostProcess.Platform.defaultValue() !== "win32") {
+    const parentPath = NodePath.join(rootPath, parentRelativePath);
+    const observed = await Promise.all(
+      [rootPath, parentPath].map(async (directory) => {
+        if ((await NodeFSP.realpath(directory)) !== directory) return null;
+        const stat = await NodeFSP.lstat(directory, { bigint: true });
+        return stat.isDirectory() && !stat.isSymbolicLink()
+          ? { dev: String(stat.dev), ino: String(stat.ino) }
+          : null;
+      }),
+    ).catch(() => null);
+    // The native lease and every namespace command rebind these observations without following links.
+    if (observed?.[0] && observed[1])
+      return {
+        rootPath,
+        parentRelativePath,
+        rootIdentity: observed[0],
+        parentIdentity: observed[1],
+      };
+  }
   const result = parseResult(
     await invoke(helperPath, [
       "--directory=1",
