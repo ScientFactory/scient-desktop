@@ -21,6 +21,7 @@ export function ExtensionContentDialog({
   actions,
   footer,
   children,
+  framed = true,
   onOpenChange,
 }: {
   readonly name: string;
@@ -31,6 +32,8 @@ export function ExtensionContentDialog({
   readonly actions?: ReactNode;
   readonly footer?: ReactNode;
   readonly children: ReactNode;
+  /** Draws the scrolling content inside a bordered box (documents); off for lists. */
+  readonly framed?: boolean | undefined;
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const popupRef = useRef<HTMLDivElement>(null);
@@ -70,13 +73,19 @@ export function ExtensionContentDialog({
           <DialogTitle>
             {name} <span className="font-normal text-muted-foreground">{kind}</span>
           </DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
+          <DialogDescription className="whitespace-pre-line">{description}</DialogDescription>
         </DialogHeader>
-        <div className="mx-4 mb-4 flex min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
+        {framed ? (
+          <div className="mx-4 mb-4 flex min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
+            <DialogPanel padding="none" scrollFade={false}>
+              {children}
+            </DialogPanel>
+          </div>
+        ) : (
           <DialogPanel padding="none" scrollFade={false}>
             {children}
           </DialogPanel>
-        </div>
+        )}
         {footer}
       </DialogPopup>
     </Dialog>

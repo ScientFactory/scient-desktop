@@ -15,9 +15,12 @@ import {
 export function ConnectorToolsList({
   tools,
   environmentId,
+  embedded = false,
 }: {
   readonly tools: ReadonlyArray<ConnectorToolSummary>;
   readonly environmentId: EnvironmentId;
+  /** A plain list inside an already-labelled group: no heading, frame, icons or change badges. */
+  readonly embedded?: boolean | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<ConnectorToolSummary | null>(null);
@@ -32,11 +35,17 @@ export function ConnectorToolsList({
       ? `See ${names.join(", ")}, and ${hidden.length - 2} more`
       : `See ${names.join(" and ")}`;
   return (
-    <section className="grid gap-3" aria-label="Tools">
-      <h2 className={SECTION_HEADING_CLASS}>
-        Tools <span className="font-normal text-muted-foreground">{tools.length}</span>
-      </h2>
-      <div className="divide-y divide-border overflow-hidden rounded-xl border bg-card">
+    <section className={embedded ? undefined : "grid gap-3"} aria-label="Tools">
+      {embedded ? null : (
+        <h2 className={SECTION_HEADING_CLASS}>
+          Tools <span className="font-normal text-muted-foreground">{tools.length}</span>
+        </h2>
+      )}
+      <div
+        className={
+          embedded ? "pb-1" : "divide-y divide-border overflow-hidden rounded-xl border bg-card"
+        }
+      >
         {tools.length === 0 ? (
           <p className="px-4 py-3 text-sm text-muted-foreground">No tools reported.</p>
         ) : null}
@@ -45,16 +54,20 @@ export function ConnectorToolsList({
             key={tool.name}
             type="button"
             onClick={() => setSelected(tool)}
-            className="flex min-h-14 w-full items-center gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-foreground/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            className={
+              embedded
+                ? "flex w-full items-center gap-3 px-4 py-2 text-left outline-none transition-colors hover:bg-foreground/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                : "flex min-h-14 w-full items-center gap-3 px-4 py-3 text-left outline-none transition-colors hover:bg-foreground/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            }
           >
-            <ExtensionIcon name={tool.name} glyph={WrenchIcon} />
+            {embedded ? null : <ExtensionIcon name={tool.name} glyph={WrenchIcon} />}
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium">{toolDisplayName(tool)}</span>
               <span className="block truncate text-sm text-muted-foreground">
                 {toolSummary(tool.description)}
               </span>
             </span>
-            {toolMakesChanges(tool) ? (
+            {!embedded && toolMakesChanges(tool) ? (
               <span className="shrink-0 text-xs text-muted-foreground">Makes changes</span>
             ) : null}
           </button>
@@ -64,11 +77,15 @@ export function ConnectorToolsList({
             type="button"
             aria-expanded={expanded}
             onClick={() => setExpanded(true)}
-            className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            className={`flex w-full items-center gap-3 px-4 text-left text-sm text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${embedded ? "py-2" : "py-3"}`}
           >
-            <span className="flex size-10 shrink-0 items-center justify-center">
-              <ChevronDownIcon aria-hidden className="size-4" />
-            </span>
+            {embedded ? (
+              <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
+            ) : (
+              <span className="flex size-10 shrink-0 items-center justify-center">
+                <ChevronDownIcon aria-hidden className="size-4" />
+              </span>
+            )}
             <span>{more}</span>
           </button>
         ) : null}

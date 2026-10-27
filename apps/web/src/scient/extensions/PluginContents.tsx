@@ -231,6 +231,7 @@ function PluginContentsView({
         <ExtensionContentDialog
           name={appDialog.name}
           kind="App"
+          framed={false}
           iconUrl={appDialog.iconUrl}
           description={appDialog.description ?? ""}
           onOpenChange={(open) => {
@@ -257,45 +258,50 @@ function PluginContentsView({
             </DialogFooter>
           }
         >
-          <div className="space-y-3 p-4">
+          <div className="space-y-3 px-4 pb-4">
             {appDialog.toolSummaries ? (
               <>
                 <p className="text-sm text-muted-foreground">
                   The {appDialog.name} app contains {toolCounts.read + toolCounts.write} tools (
                   {toolCounts.write} write, {toolCounts.read} read)
+                  {appDialog.toolSummaries.length < toolCounts.read + toolCounts.write
+                    ? `. Showing the first ${appDialog.toolSummaries.length}.`
+                    : null}
                 </p>
-                {appDialog.toolSummaries.length < toolCounts.read + toolCounts.write ? (
-                  <p className="text-xs text-muted-foreground">
-                    Showing the first {appDialog.toolSummaries.length} tools.
-                  </p>
-                ) : null}
-                {[false, true].map((readOnly) => {
-                  const tools = appDialog.toolSummaries!.filter(
-                    (tool) => tool.isReadOnly === readOnly,
-                  );
-                  return (
-                    <Collapsible key={String(readOnly)}>
-                      <CollapsibleTrigger className="group flex w-full items-center gap-2 rounded-lg px-3 py-3 text-left text-sm outline-none hover:bg-muted/50 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
-                        {readOnly ? "Read" : "Write"}{" "}
-                        <span className="text-muted-foreground">
-                          {readOnly ? toolCounts.read : toolCounts.write}
-                        </span>
-                        <ChevronRightIcon className="ml-auto size-4 group-data-[panel-open]:rotate-90" />
-                      </CollapsibleTrigger>
-                      <CollapsiblePanel>
-                        <ConnectorToolsList
-                          environmentId={environmentId}
-                          tools={tools.map((tool) => ({
-                            name: tool.name,
-                            ...(tool.title ? { title: tool.title } : {}),
-                            description: tool.description,
-                            readOnly: tool.isReadOnly,
-                          }))}
-                        />
-                      </CollapsiblePanel>
-                    </Collapsible>
-                  );
-                })}
+                <div className="divide-y divide-border overflow-hidden rounded-xl border bg-card">
+                  {[false, true].map((readOnly) => {
+                    const tools = appDialog.toolSummaries!.filter(
+                      (tool) => tool.isReadOnly === readOnly,
+                    );
+                    if (tools.length === 0) return null;
+                    return (
+                      <Collapsible key={String(readOnly)}>
+                        <CollapsibleTrigger className="group flex w-full items-center gap-2 px-4 py-3 text-left text-sm outline-none transition-colors hover:bg-foreground/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+                          {readOnly ? "Read" : "Write"}{" "}
+                          <span className="text-muted-foreground">
+                            {readOnly ? toolCounts.read : toolCounts.write}
+                          </span>
+                          <ChevronRightIcon
+                            aria-hidden
+                            className="ml-auto size-4 text-muted-foreground transition-transform group-data-[panel-open]:rotate-90"
+                          />
+                        </CollapsibleTrigger>
+                        <CollapsiblePanel>
+                          <ConnectorToolsList
+                            embedded
+                            environmentId={environmentId}
+                            tools={tools.map((tool) => ({
+                              name: tool.name,
+                              ...(tool.title ? { title: tool.title } : {}),
+                              description: tool.description,
+                              readOnly: tool.isReadOnly,
+                            }))}
+                          />
+                        </CollapsiblePanel>
+                      </Collapsible>
+                    );
+                  })}
+                </div>
               </>
             ) : (
               <p className="text-sm text-muted-foreground">Tool details are not available.</p>
