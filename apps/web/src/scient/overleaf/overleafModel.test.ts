@@ -387,11 +387,12 @@ describe("refusalText", () => {
       operationErrorText({
         _tag: "ScientOverleafOperationError",
         reason: "editor-unsaved",
-        message: "Open editors were not all saved.",
-        paths: ["paper/main.tex", "paper/intro.tex"],
+        message:
+          "paper/main.tex was deleted while its editor held unsaved edits. Keep or discard those edits in the editor, then try again.",
+        paths: ["paper/main.tex"],
       }),
     ).toBe(
-      "paper/main.tex has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.",
+      "paper/main.tex was deleted while its editor held unsaved edits. Keep or discard those edits in the editor, then try again.",
     );
     // Only a window that didn't answer: no file to name.
     expect(operationErrorText({ reason: "editor-unsaved", message: "x", paths: [] })).toContain(

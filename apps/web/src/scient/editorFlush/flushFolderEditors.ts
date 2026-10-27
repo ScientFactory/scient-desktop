@@ -144,6 +144,7 @@ export async function flushFolderEditors(
         if (documentIsSettled(before) || (await lease.flushNow()))
           return void saved.add(nameOf(target));
         const snapshot = lease.getSnapshot();
+        if (documentIsSettled(snapshot)) return void saved.add(nameOf(target));
         if (snapshot.currentMissing || documentCurrentMissingReview(snapshot.error, target))
           return fail(
             target,
@@ -195,6 +196,7 @@ function documentIsSettled(snapshot: ReturnType<MarkdownPersistenceLease["getSna
   return (
     !snapshot.pending &&
     !snapshot.inFlight &&
+    !snapshot.reading &&
     snapshot.conflict === null &&
     snapshot.attention === null &&
     snapshot.publicationAttention === null &&
