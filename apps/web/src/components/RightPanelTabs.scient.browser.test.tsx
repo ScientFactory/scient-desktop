@@ -322,7 +322,7 @@ it.each(["touch", "mouse", undefined] as const)(
   async (pointerType) => {
     setup();
     menu.profiles = [
-      { id: "default", name: "Default" },
+      { id: "default", name: "Main" },
       { id: "work", name: "Work" },
     ];
     const openDefault = vi.fn();

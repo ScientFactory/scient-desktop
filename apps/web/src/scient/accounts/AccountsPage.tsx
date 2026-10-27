@@ -1,3 +1,4 @@
+import "./accounts.css";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { BrowserProfileId } from "@t3tools/contracts";
 import { openUrlInPreview } from "~/browser/openFileInPreview";
@@ -6,12 +7,12 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { previewEnvironment } from "~/state/preview";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { providersIgnoringCheckedAtAtom } from "~/state/server";
 import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
 import { Link } from "@tanstack/react-router";
-import { KeyRoundIcon } from "lucide-react";
+import { KeyRoundIcon, PlusIcon } from "lucide-react";
 import type {
   ConnectorSummary,
   AccountActivityEntry,
@@ -29,7 +30,7 @@ import { useOptionalSettingsScope } from "~/components/settings/SettingsScopeCon
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
-import { MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
+import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import {
   Dialog,
   DialogPopup,
@@ -37,7 +38,6 @@ import {
   DialogTitle,
   DialogPanel,
 } from "~/components/ui/dialog";
-import { useClientSettings } from "~/hooks/useSettings";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { previewBridge } from "~/components/preview/previewBridge";
@@ -117,30 +117,34 @@ export function AccountRow({
   return (
     <SettingsRow
       title={
-        <span className="flex min-w-0 items-baseline gap-2">
+        <span className="flex min-w-0 items-center gap-3">
           {iconUrl ? (
-            <AccountLogo src={iconUrl} className="size-6 self-center rounded-md" />
+            <AccountLogo src={iconUrl} className="size-9 self-center rounded-lg" />
           ) : (
-            <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <KeyRoundIcon className="size-4 text-muted-foreground" />
+            </span>
           )}
-          <button
-            type="button"
-            className="truncate text-left outline-none focus-visible:underline"
-            onClick={onEdit}
-          >
-            {account.name}
-          </button>
-          <span className="truncate text-xs text-muted-foreground">
-            {[
-              KIND_LABELS[details.kind],
-              "sites" in details
-                ? details.sites.join(", ")
-                : details.kind === "database"
-                  ? details.host
-                  : details.tool,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
+          <span className="grid min-w-0 gap-1">
+            <button
+              type="button"
+              className="truncate text-left outline-none focus-visible:underline"
+              onClick={onEdit}
+            >
+              {account.name}
+            </button>
+            <span className="truncate text-xs text-muted-foreground">
+              {[
+                KIND_LABELS[details.kind],
+                "sites" in details
+                  ? details.sites.join(", ")
+                  : details.kind === "database"
+                    ? details.host
+                    : details.tool,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
           </span>
           {rejection ? <span className="text-xs text-muted-foreground">{rejection}</span> : null}
           {account.status === "needs-attention" ? (
@@ -265,34 +269,43 @@ function ManagedAccountRow({
   return (
     <SettingsRow
       title={
-        <span className="flex min-w-0 items-baseline gap-2">
+        <span className="flex min-w-0 items-center gap-3">
           {iconUrl ? (
-            <AccountLogo src={iconUrl} className="size-6 self-center rounded-md" />
+            <AccountLogo src={iconUrl} className="size-9 self-center rounded-lg" />
           ) : (
-            <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <KeyRoundIcon className="size-4 text-muted-foreground" />
+            </span>
           )}
-          <span className="truncate">{row.name}</span>
-          {row.detail ? (
-            <span className="truncate text-xs text-muted-foreground">{row.detail}</span>
-          ) : null}
-          {row.instanceId ? (
-            <Link
-              to="/settings/extensions/store/$instanceId"
-              params={{ instanceId: row.instanceId }}
-              className="shrink-0 text-xs text-muted-foreground hover:underline"
-            >
-              Managed in {row.kind === "claude" ? "Claude" : "Codex"}
-            </Link>
-          ) : (
-            <Link to={row.href} className="shrink-0 text-xs text-muted-foreground hover:underline">
-              Managed in{" "}
-              {row.kind === "github"
-                ? "Source Control"
-                : row.kind === "custom-model"
-                  ? "Custom models"
-                  : "Extensions"}
-            </Link>
-          )}
+          <span className="grid min-w-0 gap-1">
+            <span className="truncate">{row.name}</span>
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              {row.detail ? (
+                <span className="truncate text-xs text-muted-foreground">{row.detail} ·</span>
+              ) : null}
+              {row.instanceId ? (
+                <Link
+                  to="/settings/extensions/store/$instanceId"
+                  params={{ instanceId: row.instanceId }}
+                  className="shrink-0 text-xs text-muted-foreground hover:underline"
+                >
+                  Managed in {row.kind === "claude" ? "Claude" : "Codex"}
+                </Link>
+              ) : (
+                <Link
+                  to={row.href}
+                  className="shrink-0 text-xs text-muted-foreground hover:underline"
+                >
+                  Managed in{" "}
+                  {row.kind === "github"
+                    ? "Source Control"
+                    : row.kind === "custom-model"
+                      ? "Custom models"
+                      : "Extensions"}
+                </Link>
+              )}
+            </span>
+          </span>
         </span>
       }
     />
@@ -311,7 +324,7 @@ function AccountsContent({
   const [dialog, setDialog] = useState<"add" | "import" | "1password" | null>(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [activity, setActivity] = useState<ReadonlyArray<AccountActivityEntry> | null>(null);
-  const userProfiles = useClientSettings((settings) => settings.browserProfiles);
+  const passwordFileRef = useRef<HTMLInputElement>(null);
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
   const providers = useAtomValue(providersIgnoringCheckedAtAtom(environmentId));
   const providerInventory = useProviderInventory({
@@ -322,7 +335,6 @@ function AccountsContent({
     enabled: true,
   });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
-  const firstRun = snapshot.accounts.length === 0 && userProfiles.length === 0;
   const managedRows = [
     ...providerManagedAccounts(providerInventory.providers),
     ...(snapshot.managedElsewhere ??
@@ -343,11 +355,12 @@ function AccountsContent({
     })) ?? []),
   ];
   return (
-    <div className="grid gap-8">
-      <SettingsSection title="Accounts" hideTitle>
+    <div className="scient-accounts-settings grid gap-8">
+      <SettingsSection title="Agent access">
         <SettingsRow
           id="accounts-agent-access"
           title="Agent access"
+          description="Agents can sign in and use keys from your accounts. Each account and profile has its own setting below."
           control={
             <Switch
               aria-label="Agent access"
@@ -365,61 +378,61 @@ function AccountsContent({
           canWrite={canWrite}
         />
       ) : null}
-      {firstRun ? (
-        <div className="flex flex-wrap gap-3">
-          {previewBridge ? (
-            <Button variant="outline" disabled={!canWrite} onClick={() => setDialog("import")}>
-              Import from your browser
-            </Button>
-          ) : null}
-          <Button variant="outline" disabled={!canWrite} onClick={() => setDialog("1password")}>
-            Connect 1Password
-          </Button>
-          <Button disabled={!canWrite} onClick={() => setDialog("add")}>
-            Add an account
-          </Button>
-        </div>
-      ) : null}
+      <SettingsSection
+        id="accounts-list"
+        title="Accounts"
+        headerAction={
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button size="icon-xs" variant="ghost" aria-label="Add" disabled={!canWrite} />
+              }
+            >
+              <PlusIcon />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              <MenuItem onClick={() => setDialog("add")}>Add an account…</MenuItem>
+              {previewBridge ? (
+                <MenuItem onClick={() => setDialog("import")}>Import from your browser…</MenuItem>
+              ) : null}
+              <MenuItem onClick={() => passwordFileRef.current?.click()}>
+                Import passwords…
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        }
+      >
+        {!snapshot.accounts.length && !managedRows.length ? (
+          <SettingsRow
+            title="No accounts yet"
+            description="Add an account or import your passwords."
+          />
+        ) : null}
+        {snapshot.accounts.map((account) => (
+          <AccountRow
+            key={account.accountId}
+            account={account}
+            environmentId={environmentId}
+            canWrite={canWrite}
+            onEdit={() => setEditing(account)}
+            onActivity={setActivity}
+          />
+        ))}
+        {managedRows.map((row) => (
+          <ManagedAccountRow key={`${row.kind}:${row.id}`} row={row} />
+        ))}
+      </SettingsSection>
       <BrowserProfiles
         environmentId={environmentId}
         snapshot={snapshot}
         canWrite={canWrite}
         onImport={() => setDialog("import")}
       />
-      {!firstRun || snapshot.accounts.length > 0 || managedRows.length ? (
-        <SettingsSection
-          id="accounts-list"
-          title="Accounts"
-          headerAction={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!canWrite}
-              onClick={() => setDialog("add")}
-            >
-              Add
-            </Button>
-          }
-        >
-          {snapshot.accounts.map((account) => (
-            <AccountRow
-              key={account.accountId}
-              account={account}
-              environmentId={environmentId}
-              canWrite={canWrite}
-              onEdit={() => setEditing(account)}
-              onActivity={setActivity}
-            />
-          ))}
-          {managedRows.map((row) => (
-            <ManagedAccountRow key={`${row.kind}:${row.id}`} row={row} />
-          ))}
-        </SettingsSection>
-      ) : null}
       <PasswordStores
         environmentId={environmentId}
         snapshot={snapshot}
         canWrite={canWrite}
+        fileRef={passwordFileRef}
         onConnect={() => setDialog("1password")}
       />
       {dialog === "add" || editing ? (

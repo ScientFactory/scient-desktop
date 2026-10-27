@@ -1,5 +1,5 @@
 import { CliPasswordStoreRow } from "./CliPasswordStores";
-import { useRef, useState } from "react";
+import { type RefObject, useState } from "react";
 import type { AccountsSnapshot, EnvironmentId } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -16,6 +16,9 @@ import { SettingsSection, SettingsRow } from "~/components/settings/settingsLayo
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
 import { useAccountCommand } from "./useAccounts";
+import { ControlsMenu } from "./AccountControls";
+import { MenuItem } from "~/components/ui/menu";
+import { StoreTitle } from "./StoreTitle";
 import { AccountField } from "./AccountDialog";
 
 export function OnePasswordDialog({
@@ -95,57 +98,65 @@ export function PasswordStores({
   snapshot,
   canWrite,
   onConnect,
+  fileRef,
 }: {
   environmentId: EnvironmentId;
   snapshot: AccountsSnapshot;
   canWrite: boolean;
   onConnect: () => void;
+  fileRef: RefObject<HTMLInputElement | null>;
 }) {
-  const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const disconnect = useAccountCommand(accountsState.disconnectOnePassword, environmentId);
   const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
   const status = snapshot.stores.onePassword;
   return (
-    <SettingsSection
-      title="Password stores"
-      id="accounts-password-stores"
-      headerAction={
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={!canWrite || busy}
-          onClick={() => fileRef.current?.click()}
-        >
-          Import passwords…
-        </Button>
-      }
-    >
+    <SettingsSection title="Password stores" id="accounts-password-stores">
       {snapshot.stores.scient.protection === "file" ? (
         <SettingsRow title="Scient" status="Store key protected by a local file" />
       ) : null}
       <SettingsRow
-        title="System keychain"
-        status={snapshot.stores.keychain.available ? undefined : "Unavailable"}
+        title={
+          <StoreTitle
+            name={
+              {
+                macos: "macOS Keychain",
+                windows: "Windows Credential Manager",
+                linux: "Secret Service",
+              }[snapshot.stores.keychain.platform]
+            }
+            status={snapshot.stores.keychain.available ? "Available" : "Unavailable"}
+            domain={snapshot.stores.keychain.platform === "macos" ? "apple.com" : undefined}
+          />
+        }
       />
       <SettingsRow
-        title="1Password"
-        description={status.state === "connected" ? `Connected · ${status.label}` : undefined}
-        status={status.state === "error" ? "Connection needs attention" : undefined}
+        title={
+          <StoreTitle
+            name="1Password"
+            domain="1password.com"
+            status={
+              status.state === "connected"
+                ? `Connected · ${status.label}`
+                : status.state === "error"
+                  ? "Connection needs attention"
+                  : "Not connected"
+            }
+          />
+        }
         control={
           status.state === "connected" ? (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!canWrite || busy}
-              onClick={async () => {
-                setBusy(true);
-                await disconnect({});
-                setBusy(false);
-              }}
-            >
-              Disconnect
-            </Button>
+            <ControlsMenu disabled={!canWrite || busy}>
+              <MenuItem
+                onClick={async () => {
+                  setBusy(true);
+                  await disconnect({});
+                  setBusy(false);
+                }}
+              >
+                Disconnect
+              </MenuItem>
+            </ControlsMenu>
           ) : (
             <Button size="xs" variant="outline" disabled={!canWrite} onClick={onConnect}>
               Connect
@@ -162,10 +173,6 @@ export function PasswordStores({
           canWrite={canWrite}
         />
       ))}
-      <p className="text-xs text-muted-foreground">
-        Linked values are read when used; 1Password may cache them for five minutes, except one-time
-        codes. No manual refresh needed.
-      </p>
       <input
         ref={fileRef}
         type="file"

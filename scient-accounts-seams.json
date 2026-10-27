@@ -25,6 +25,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "packages/contracts/src/browserProfile.ts",
+      "anchor": "SCIENT-FORK:START — distinguish original browser storage from the new-tab preference.",
+      "purpose": "Name the built-in original browser profile Main while preserving its default id."
+    },
+    {
       "path": "apps/desktop/src/preload.ts",
       "anchor": "accounts: makeDesktopAccountsBridge",
       "purpose": "Expose the desktop Accounts bridge to the application renderer."

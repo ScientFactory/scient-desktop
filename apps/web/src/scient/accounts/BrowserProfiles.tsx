@@ -16,7 +16,7 @@ import * as Option from "effect/Option";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { DraftInput } from "~/components/ui/draft-input";
-import { ChevronDownIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { Checkbox } from "~/components/ui/checkbox";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
@@ -491,14 +491,14 @@ export function BrowserProfiles({
           <MenuTrigger
             render={
               <Button
-                size="xs"
-                variant="outline"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Add profile"
                 disabled={disabled || settings.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT}
               />
             }
           >
-            Add profile
-            <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
+            <PlusIcon />
           </MenuTrigger>
           <MenuPopup>
             <MenuItem
@@ -539,7 +539,6 @@ export function BrowserProfiles({
           title={
             <div className="flex items-center gap-3">
               <ProfilePicture
-                size="sm"
                 name={profile.name}
                 picture={profile.record.picture}
                 color={profile.record.color}
@@ -567,7 +566,7 @@ export function BrowserProfiles({
               ) : (
                 <button
                   type="button"
-                  className="flex min-w-0 items-baseline gap-2 text-left outline-none focus-visible:underline"
+                  className="grid min-w-0 gap-1 text-left outline-none focus-visible:underline"
                   onClick={() => setViewingSites(profile.id)}
                 >
                   <span className="truncate text-sm text-foreground">{profile.name}</span>
@@ -582,6 +581,9 @@ export function BrowserProfiles({
           }
           control={
             <div className="flex items-center gap-2">
+              {settings.browserDefaultProfileId === profile.id ? (
+                <span className="text-xs text-muted-foreground">Opens new tabs</span>
+              ) : null}
               <AccessChip
                 environmentId={environmentId}
                 target={{ type: "profile", profileId: profile.id }}
