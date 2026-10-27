@@ -192,6 +192,7 @@ function OverleafProjectLinks(props: {
           const view = overleafChipView(
             workspace.statuses.get(connection.connectionId) ?? null,
             syncing,
+            workspace.lastSync.get(connection.connectionId)?.result ?? null,
           );
           return (
             <li

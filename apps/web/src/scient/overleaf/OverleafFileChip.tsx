@@ -70,7 +70,11 @@ export function OverleafFileChip(props: {
   if (!connection) return null;
   const status = workspace.statuses.get(connection.connectionId) ?? null;
   const syncing = workspace.syncing.has(connection.connectionId);
-  const view = overleafChipView(status, syncing);
+  const view = overleafChipView(
+    status,
+    syncing,
+    workspace.lastSync.get(connection.connectionId)?.result ?? null,
+  );
   const linkedElsewhere = !connection.linkedHere;
   const reviewInput = {
     environmentId,
