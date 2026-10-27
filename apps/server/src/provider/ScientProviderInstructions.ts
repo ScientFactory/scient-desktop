@@ -9,13 +9,13 @@ import {
 import { scientAgentCopy } from "./ScientAgentCopy.ts";
 
 /**
- * Scient keeps proactive visuals: upstream now renders HTML visuals only when
- * asked. Each section stays under Codex's 4,000-byte context entry cap.
+ * Scient chat renders chart and diagram fences inline, so upstream's chart rule
+ * yields to them. Each section stays under Codex's 4,000-byte context entry cap.
  */
 const SCIENT_ORCHESTRATION_ADDITIONS: ReadonlyArray<string> = [
   `### Scient visuals
 
-When a chart, table, diagram, image collage, or mockup would say more than prose, show it without being asked: check its HTML with \`html_preview\`, then publish it with \`html_render\` before your final reply. Do not announce or restate it.`,
+A chart or diagram that fits a fenced \`mermaid\`, \`vega-lite\`, or \`plotly\` block goes in your reply as that block instead of \`html_render\`. Show other visuals that say more than prose, such as rich tables, image collages, or mockups, without being asked.`,
 ];
 
 /** Upstream's orchestration rules in Scient's names, then Scient's additions; one Codex entry each. */

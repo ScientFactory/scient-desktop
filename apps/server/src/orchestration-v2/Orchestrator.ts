@@ -2669,7 +2669,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           run: deliveryRun,
           now,
         });
-        return;
+        return parentRun.id;
       }
       const message = completionDeliveryMessage(projection, delivery);
       if (message !== undefined) {
@@ -2693,6 +2693,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    return parentRun.id;
   });
 
   const disposeDelegatedCompletionCohort = Effect.fn(
@@ -12923,6 +12924,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       },
     });
+    return parentRun.id;
   });
 
   const dispatchUnsupported = (command: OrchestrationV2ServerCommand) =>
@@ -12946,6 +12948,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       // SCIENT-FORK: a new fork's inherited history, committed with it.
       readonly forkHistory?: ReadonlyArray<ForkHistoryEntry>;
+      readonly updateDelegatedCompletionOnlyRunId?: RunId;
     },
     OrchestratorV2Error
   > {
@@ -12965,6 +12968,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           readonly reason: string;
         }
       | undefined;
+    let updateDelegatedCompletionOnlyRunId: RunId | undefined;
     switch (command.type) {
       case "droid-steer.admission":
         yield* dispatchDroidSteerAdmission(command, events, effects);
@@ -13173,7 +13177,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // SCIENT-FORK:END
       }
       case "notification.delivery.accept":
-        yield* dispatchNotificationAccepted(command, events);
+        updateDelegatedCompletionOnlyRunId = yield* dispatchNotificationAccepted(command, events);
         break;
       case "prepared-run.release":
         yield* dispatchPreparedRunRelease(command, events, effects);
@@ -13399,7 +13403,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "delegated_task.completion-delivery.acknowledge":
       case "delegated_task.completion-delivery.dispose":
-        yield* dispatchDelegatedTaskCompletionDeliveryResolution(command, events);
+        updateDelegatedCompletionOnlyRunId =
+          yield* dispatchDelegatedTaskCompletionDeliveryResolution(command, events);
         break;
       case "thread.created.record":
         yield* dispatchCreatedThreadRecord(command, events);
@@ -13416,6 +13421,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(providerWorkOwner === undefined ? {} : { providerWorkOwner }),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
       ...(forkHistory === undefined ? {} : { forkHistory }),
+      ...(updateDelegatedCompletionOnlyRunId === undefined
+        ? {}
+        : { updateDelegatedCompletionOnlyRunId }),
     };
   });
 
@@ -13597,6 +13605,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),
         ...(plan.forkHistory === undefined ? {} : { forkHistory: plan.forkHistory }),
+        ...(plan.updateDelegatedCompletionOnlyRunId === undefined
+          ? {}
+          : { updateDelegatedCompletionOnlyRunId: plan.updateDelegatedCompletionOnlyRunId }),
       })
       .pipe(
         Effect.mapError(

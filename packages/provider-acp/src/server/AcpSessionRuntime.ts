@@ -1230,9 +1230,16 @@ export class AcpSessionRuntime extends Context.Service<
       modelId: string,
       meta?: EffectAcpSchema.SetSessionModelRequest["_meta"],
     ) => Effect.Effect<EffectAcpSchema.SetSessionModelResponse, EffectAcpErrors.AcpError>;
+    /**
+     * Writes a session configuration option. A select value the option does
+     * not list is refused unless `allowUnlistedValue` is set, for agents that
+     * take any value and judge it themselves (a custom model id the agent
+     * does not list).
+     */
     readonly setConfigOption: (
       configId: string,
       value: string | boolean,
+      options?: { readonly allowUnlistedValue?: boolean },
     ) => Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError>;
     readonly setModel: (model: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
     readonly request: (
@@ -1891,6 +1898,8 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ...options.clientCapabilities?.fs,
     },
     terminal: options.clientCapabilities?.terminal ?? false,
+    // ACP v1 agents send session notices only to clients that advertise them; v2 needs no capability.
+    session: { ...options.clientCapabilities?.session, notices: {} },
     ...(options.clientCapabilities?.auth ? { auth: options.clientCapabilities.auth } : {}),
     ...(options.clientCapabilities?.elicitation
       ? { elicitation: options.clientCapabilities.elicitation }
@@ -1914,6 +1923,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     function* (
       configId: string,
       value: string | boolean,
+      allowUnlistedValue: boolean,
     ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
       const snapshot = yield* Ref.get(configOptionsRef);
       const configOptions = options.resolveConfigOptions?.(snapshot) ?? snapshot;
@@ -1947,7 +1957,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         });
       }
       const allowedValues = collectSessionConfigOptionValues(configOption);
-      if (allowedValues.includes(value)) {
+      if (allowUnlistedValue || allowedValues.includes(value)) {
         return;
       }
       if (
@@ -2104,8 +2114,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const writeConfigOption = (
     configId: string,
     value: string | boolean,
+    writeOptions?: { readonly allowUnlistedValue?: boolean },
   ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
-    validateConfigOptionValue(configId, value).pipe(
+    validateConfigOptionValue(configId, value, writeOptions?.allowUnlistedValue === true).pipe(
       Effect.andThen(getStartedState),
       Effect.flatMap((started) =>
         Ref.get(configOptionsRef).pipe(
@@ -2176,8 +2187,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const setConfigOption = (
     configId: string,
     value: string | boolean,
+    writeOptions?: { readonly allowUnlistedValue?: boolean },
   ): Effect.Effect<EffectAcpSchema.SetSessionConfigOptionResponse, EffectAcpErrors.AcpError> =>
-    configWrites.serialize(writeConfigOption(configId, value));
+    configWrites.serialize(writeConfigOption(configId, value, writeOptions));
   // SCIENT-FORK:END
 
   const initializeOnce = Effect.gen(function* () {

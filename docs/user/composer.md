@@ -76,13 +76,13 @@ supported, or save the original file to open it elsewhere.
 
 ## Send while the agent is working
 
-On web and desktop, choose **Settings → General → Follow-up behavior** to queue
+On web and desktop, choose **Settings → Chat → Follow-up behavior** to queue
 new messages for a later turn or steer the running turn immediately. The setting
 applies to this client; already queued messages keep their place. Queued messages
-are saved on the server and can be edited, reordered, or removed above the composer.
+are saved on the server and can be edited, reordered, or removed before they send.
 
-On web and desktop, a message sent during a running turn appears in the queue
-above the composer. The server keeps its order across navigation and restarts,
+On web and desktop, a message sent during a running turn joins the queue at the
+end of the thread. The server keeps its order across navigation and restarts,
 then sends it after the current turn finishes successfully. Use **Steer** on a
 queued message to send it into the running turn, or edit, reorder, or delete it
 from the queue. **Stop**, interruptions, and failed starts hold the remaining
@@ -107,7 +107,7 @@ Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at t
 start of the composer to edit the most recently queued message. Change
 `thread.editQueuedMessage` in **Settings → Shortcuts** to use another shortcut.
 
-Mobile has the same choice under **Settings → Follow-ups**. While a turn is
+Mobile has the same choice under **Settings → Chat**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
 other action for a single message, or hold `Cmd` while sending from a hardware
 keyboard. The button only offers Steer when the running agent supports it.
@@ -136,7 +136,7 @@ On desktop and web, supported file attachments stay with the message when it is 
 Editing a fork from a sent message with file attachments is not supported yet;
 fork from a completed response to retain the conversation and its files.
 
-On web and desktop, **Settings → General → Collapse composer** defaults to **Never**,
+On web and desktop, **Settings → Chat → Collapse composer** defaults to **Never**,
 so the composer stays expanded. Saved preferences are preserved. You can enable **On unfocus**,
 **On scroll**, or both. With **On unfocus** enabled, an existing thread settles its composer into
 a single-line resting state when it loses focus. At wider sizes, **On scroll** also rests a focused composer,
@@ -328,10 +328,10 @@ Steer. Click it or press your send shortcut to use that action. Hold `Cmd` on ma
 Windows and Linux to switch the button to the opposite action, then click, or use the opposite-action
 shortcut described above.
 
-Queued messages appear above the composer under a **Queued** header with their count; click the
-header to fold or unfold the list. Rows show a thumbnail of any attached image alongside the text.
-Drag a row by its handle to reorder it, use the handle's arrow keys, use **Steer** to send it into
-the running turn, or remove it.
+On web and desktop, queued messages appear at the end of the thread under **Up next**, as dashed
+messages that have not been sent yet. On mobile they appear above the composer. Each shows its text
+and any attached images. Drag a message by its handle to reorder it, use the handle's arrow keys,
+use **Steer** to send it into the running turn, or remove it.
 
 After Stop, a failed turn, or a server restart, queued messages keep their order and are held.
 While the agent is idle, every held message shows **Send now**, on mobile too. Send starts that
@@ -341,10 +341,10 @@ empty composer continues the queue too. You can edit, reorder, or remove held me
 starting them. If the thread stopped at a usage limit, Send is not offered: use **Resume thread**
 in an empty composer on web or desktop to continue the thread, and the queue follows.
 
-The pencil on a queued row opens that message in the composer for editing. The original message
-stays in the queue until you save, and its row is highlighted while you edit. The message's
+The pencil on a queued message opens it in the composer for editing. The original message
+stays in the queue until you save, and it is highlighted while you edit. The message's
 attachments appear above the text with a remove control, and new images can be added the usual way.
-The checkmark saves the queued message in place; **Cancel** on its row leaves it unchanged. Whatever
+The checkmark saves the queued message in place; **Cancel** next to it leaves it unchanged. Whatever
 you had typed in the composer before starting the edit is restored afterwards. If the queued
 message starts or is removed while you are editing, the edit ends: changed content moves into the
 composer when it is empty, and is discarded otherwise.
@@ -355,8 +355,8 @@ Type `/` for commands or `$` to add a skill from the selected environment and
 provider. On mobile, both are also available before starting a thread on
 **New task**.
 
-The slash menu also includes skills unless you turn off **Settings → General →
-Show skills in slash menu**. Only skills enabled for the provider are listed.
+The slash menu also includes skills unless you turn off **Settings → Chat →
+Show skills in slash menu**, under Advanced. Only skills enabled for the provider are listed.
 
 After you add or change skills, plugins, or MCP servers, use **Restart agent
 session** in the command palette on web and desktop. The conversation continues,
@@ -376,7 +376,8 @@ Claude instances can also compact idle threads for you. See
 With Codex and Claude, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
 until it judges the goal met. The thread shows **Goal** while it works, and a
-row above the composer shows the goal and its progress.
+line at the end of the thread (above the composer on mobile) shows the goal and
+its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
 - Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
@@ -577,7 +578,7 @@ use the skills and commands from the selected environment and provider.
 In a thread with prior conversation context, send `/compact` to reduce context usage. Web and desktop also offer this action from the context meter, and the work log records token counts when the provider reports them.
 
 On web and desktop, new profiles leave **Show skills in slash menu** off. Type `$` to select a skill,
-or turn on this option in **Settings → General** to include skill aliases in `/` as well. Saved
+or turn on this option in **Settings → Chat** (under Advanced) to include skill aliases in `/` as well. Saved
 preferences are preserved. Provider-native slash commands are still shown when skill aliases are off.
 
 When enabled, skill results use the `/skill:Skill Name` label and add the

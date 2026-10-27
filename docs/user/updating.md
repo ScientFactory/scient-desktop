@@ -36,7 +36,7 @@ If the app restarts on its old version, Scient tells you the update did not
 apply. It does not install that version again on its own, even when another
 device asks. Use the update control on that machine to retry.
 
-Choose **Stable** or **Beta** in **Settings → General → Update track**. Existing
+Choose **Stable** or **Beta** in **Settings → About → Update track**. Existing
 Stable installations stay on Stable until you choose Beta. Beta offers previews
 from a separate release feed. Before the first Beta is published, choosing Beta
 simply reports no available update. Your choice is saved across restarts.
@@ -95,11 +95,10 @@ are ready. A server that is still restarting finishes on its own.
 
 ## Keep a connected server in sync
 
-If a connected environment uses a different server version, Scient shows the
-version warning above the composer and in **Settings → Connections**. Hiding
-the composer warning does not change either runtime.
+If a connected environment uses a different server version, the update control
+at the bottom of the sidebar and **Settings → Environments** offer to update it.
 
-**Settings → General → Continue threads after restarts** is off by default.
+**Settings → Maintenance → Continue threads after restarts** is off by default.
 When enabled, supported active threads can resume after an update, crash, or machine restart.
 Scient must start again on that machine; this does not enable automatic startup. Threads without
 saved provider resume state need a new message, and terminal commands may still be interrupted.

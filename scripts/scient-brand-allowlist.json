@@ -576,14 +576,14 @@
     "reason": "Upstream process-teardown diagnostic carried only in the internal termination error payload; users see the generic teardown error."
   },
   {
-    "path": "apps/web/src/components/settings/BetaSettingsPanel.tsx",
+    "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
     "line": "description=\"Share a thread with a guest who watches it live in their browser and sends messages you approve. Sign in to T3 Connect to use guest links.\"",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
-    "path": "apps/web/src/components/settings/BetaSettingsPanel.tsx",
+    "path": "apps/web/src/components/settings/LabsSettingsPanel.tsx",
     "line": "approve. Needs T3 Connect: sign in and link this machine in{\" \"}",
     "rules": ["t3-connect"],
     "kind": "dormant-cloud",
@@ -629,7 +629,7 @@
   },
   {
     "path": "apps/web/src/lib/diffRendering.ts",
-    "line": "/* The page sets --diff-modified-icon under the New design: a muted T3 blue, so the common case stays quiet. */",
+    "line": "/* The page sets --diff-modified-icon to a muted T3 blue, so the common case stays quiet. */",
     "rules": ["bare-t3"],
     "kind": "internal",
     "reason": "Unchanged upstream CSS comment describes the donor theme colour; it is not rendered product copy. The alignment protocol preserves accurate upstream developer comments."

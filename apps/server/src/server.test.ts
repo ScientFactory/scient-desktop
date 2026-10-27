@@ -184,6 +184,9 @@ import {
   THREAD_ID as transferV2ThreadId,
   LONG_TURN_THREAD_ID as TRANSFER_V2_LONG_TURN_THREAD_ID,
   longTurnThreadBatches as transferV2LongTurnThreadBatches,
+  shellFleetEvents as transferV2ShellFleetEvents,
+  SHELL_IDLE_SUBAGENTS as TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
+  SHELL_SETTLED_THREADS as TRANSFER_V2_SHELL_SETTLED_THREADS,
 } from "../integration/TransferBudgetV2Fixture.integration.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -14764,32 +14767,74 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                 // A long agent turn opens with a bounded first page (553203c57b).
                 for (const events of transferV2LongTurnThreadBatches(provider))
                   yield* app.v2.eventSink.write({ events });
-                const longTurnColdOpen = yield* measureHttpGet({
-                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
-                  headers: {
-                    cookie,
-                    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                  },
-                });
-                assert.equal(longTurnColdOpen.status, 200);
-                const longTurnOpen = yield* decodeTransferThreadSnapshot(
-                  Buffer.from(longTurnColdOpen.decodedBody).toString("utf8"),
+                const getTransferPath = (path: string) =>
+                  measureHttpGet({
+                    url: `${baseUrl}${path}`,
+                    headers: {
+                      cookie,
+                      [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+                    },
+                  }).pipe(Effect.tap((http) => Effect.sync(() => assert.equal(http.status, 200))));
+                const longTurnPath = `/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}`;
+                const readLongTurnColdOpen = (query: string) =>
+                  Effect.gen(function* () {
+                    const http = yield* getTransferPath(`${longTurnPath}/bounded?${query}`);
+                    const snapshot = yield* decodeTransferThreadSnapshot(
+                      Buffer.from(http.decodedBody).toString("utf8"),
+                    );
+                    return {
+                      http,
+                      rows: snapshot.projection.visibleTurnItems.length,
+                      cursor: snapshot.historyCursor,
+                    };
+                  });
+                const readLongTurnHistoryPage = (historyCursor: string, query: string) =>
+                  Effect.gen(function* () {
+                    const http = yield* getTransferPath(
+                      `${longTurnPath}/history?cursor=${encodeURIComponent(historyCursor)}&${query}`,
+                    );
+                    const page = yield* decodeTransferHistoryPage(
+                      Buffer.from(http.decodedBody).toString("utf8"),
+                    );
+                    assert.isTrue(page.hasMoreHistory);
+                    return { http, rows: page.items.length };
+                  });
+                const readFleetShell = (query: string) =>
+                  Effect.gen(function* () {
+                    const http = yield* getTransferPath(`/api/orchestration/shell?${query}`);
+                    const shell = yield* decodeTransferShellSnapshot(
+                      Buffer.from(http.decodedBody).toString("utf8"),
+                    );
+                    return { http, rows: shell.threads.length };
+                  });
+
+                const { cursor: _legacyCursor, ...longTurnColdOpenLegacy } =
+                  yield* readLongTurnColdOpen("compactTurnItems=1");
+                const { cursor: longTurnCursor, ...longTurnColdOpen } = yield* readLongTurnColdOpen(
+                  "compactTurnItems=1&dedupeBodies=1&compactIds=1",
                 );
-                const longTurnCursor = longTurnOpen.historyCursor;
                 if (longTurnCursor === null)
                   return yield* Effect.die("Expected older long-turn history");
-                const longTurnHistoryPage = yield* measureHttpGet({
-                  url: `${baseUrl}/api/orchestration/threads/${TRANSFER_V2_LONG_TURN_THREAD_ID}/history?cursor=${encodeURIComponent(longTurnCursor)}`,
-                  headers: {
-                    cookie,
-                    [ORCHESTRATION_PROTOCOL_HEADER]: ORCHESTRATION_PROTOCOL_VERSION_TEXT,
-                  },
-                });
-                assert.equal(longTurnHistoryPage.status, 200);
-                const longTurnPage = yield* decodeTransferHistoryPage(
-                  Buffer.from(longTurnHistoryPage.decodedBody).toString("utf8"),
+                const longTurnHistoryPageLegacy = yield* readLongTurnHistoryPage(
+                  longTurnCursor,
+                  "",
                 );
-                assert.isTrue(longTurnPage.hasMoreHistory);
+                const longTurnHistoryPage = yield* readLongTurnHistoryPage(
+                  longTurnCursor,
+                  "compactIds=1",
+                );
+
+                // The transfer thread plus the long-turn thread.
+                const earlierThreads = decodedShell.threads.length + 1;
+                yield* app.v2.eventSink.write({ events: transferV2ShellFleetEvents(provider) });
+                const fleetShellLegacy = yield* readFleetShell("");
+                const fleetShell = yield* readFleetShell("omitIdleSubagents=1&omitOlderSettled=1");
+                assert.equal(
+                  fleetShellLegacy.rows,
+                  earlierThreads +
+                    TRANSFER_V2_SHELL_SETTLED_THREADS +
+                    TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
+                );
 
                 return {
                   provider,
@@ -14809,14 +14854,12 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   },
                   measuredTurnSqlStatements,
                   reconnectSqlStatements,
-                  longTurnColdOpen: {
-                    http: longTurnColdOpen,
-                    rows: longTurnOpen.projection.visibleTurnItems.length,
-                  },
-                  longTurnHistoryPage: {
-                    http: longTurnHistoryPage,
-                    rows: longTurnPage.items.length,
-                  },
+                  longTurnColdOpenLegacy,
+                  longTurnColdOpen,
+                  longTurnHistoryPageLegacy,
+                  longTurnHistoryPage,
+                  fleetShellLegacy,
+                  fleetShell,
                 } satisfies TransferBudgetRun;
               }),
             );

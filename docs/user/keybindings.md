@@ -122,7 +122,7 @@ there is no separate shortcut list to maintain.
 
 ## Composer controls
 
-In **Settings → General → Send shortcut**, choose whether Enter sends, requires
+In **Settings → Chat → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
 inserts a new line. This applies to the web and desktop composer at desktop widths.
 
@@ -130,7 +130,7 @@ inserts a new line. This applies to the web and desktop composer at desktop widt
 `mod+Enter` to do the opposite for one message, even when the send shortcut
 requires a modifier. `mod+Alt+Enter` sends, keeps that thread running in the
 background, and opens a fresh new-thread composer. In a new thread, `mod+Enter`
-does the same. Change these shortcuts in **Settings → Keybindings** under
+does the same. Change these shortcuts in **Settings → Shortcuts** under
 **Composer: Opposite Queue or Steer Action**, **Composer: Start in Background**,
 or **Composer: Send and Start New Thread**. These bindings take priority over the
 send shortcut. Click the send button to use the configured follow-up behavior.
@@ -189,8 +189,8 @@ to show only actions.
 In a new thread, `Cmd+Shift+H` moves the draft to the next machine.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
-also sends. To make Return insert a new line instead, change the Return key
-behavior in Settings → Keyboard.
+also sends. To make Return insert a new line instead, change **Send shortcut** in
+Settings → Chat.
 
 Common searchable commands include opening the command palette, creating a
 thread, toggling the terminal or right panel, finding a project file, searching

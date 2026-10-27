@@ -10,25 +10,32 @@ import {
 import {
   ArchiveIcon,
   FlaskConicalIcon,
-  BlocksIcon,
   BotIcon,
   BrainCircuitIcon,
   createLucideIcon,
   CalendarClockIcon,
+  FileDiffIcon,
   FileTextIcon,
+  FolderTreeIcon,
   GitBranchIcon,
-  HardDriveIcon,
+  GlobeIcon,
+  InfoIcon,
+  MessageSquareTextIcon,
+  MessagesSquareIcon,
+  Mic2Icon,
   PanelsTopLeftIcon,
   KeyboardIcon,
   Layers3Icon,
-  Link2Icon,
-  Mic2Icon,
   PaletteIcon,
   // SCIENT-FORK:START — Scient Extensions
   PuzzleIcon,
   // SCIENT-FORK:END
   SearchIcon,
+  ServerIcon,
   Settings2Icon,
+  ShieldCheckIcon,
+  SmartphoneIcon,
+  WrenchIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -50,8 +57,8 @@ import {
 import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
-  isSettingsOverviewVisible,
   revealSettingsSearchTarget,
+  SETTINGS_NAV_GROUPS,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
@@ -100,42 +107,51 @@ const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
-  "/settings/diagnostics": Settings2Icon,
+  "/settings/diagnostics": WrenchIcon,
   "/settings/appearance": PaletteIcon,
+  "/settings/chat": MessageSquareTextIcon,
+  "/settings/diffs": FileDiffIcon,
   "/settings/projects": PanelsTopLeftIcon,
   "/settings/keybindings": KeyboardIcon,
   "/settings/snap-shot": SnapShotIcon,
   "/settings/providers": BotIcon,
   "/settings/custom-models": BrainCircuitIcon,
+  "/settings/voice": Mic2Icon,
   "/settings/skills": Layers3Icon,
   // SCIENT-FORK:START — Scient Extensions
   "/settings/extensions": PuzzleIcon,
   // SCIENT-FORK:END
-  "/settings/integrations": BlocksIcon,
-  "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/scientific-computing": ScientificComputingSidebarIcon,
   "/settings/documents": FileTextIcon,
+  "/settings/threads": MessagesSquareIcon,
+  "/settings/browser": GlobeIcon,
+  "/settings/devices": SmartphoneIcon,
+  "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,
-  "/settings/storage": HardDriveIcon,
-  "/settings/connections": Link2Icon,
-  "/settings/beta": FlaskConicalIcon,
+  "/settings/worktrees": FolderTreeIcon,
+  "/settings/connections": ServerIcon,
+  "/settings/access": ShieldCheckIcon,
+  "/settings/maintenance": WrenchIcon,
+  "/settings/labs": FlaskConicalIcon,
+  "/settings/about": InfoIcon,
   "/settings/archived": ArchiveIcon,
-  "/settings/voice": Mic2Icon,
 };
 
-const SETTINGS_NAV_ITEMS: ReadonlyArray<{
-  label: string;
-  to: SettingsPath;
-  icon: ComponentType<{ className?: string }>;
-}> = (Object.keys(SETTINGS_SECTION_LABELS) as SettingsPath[])
-  .filter((to) => to !== "/settings/diagnostics")
-  // SCIENT-FORK: Voice settings need the desktop app.
-  .filter((to) => isElectron || to !== "/settings/voice")
-  .map((to) => ({
-    to,
-    label: SETTINGS_SECTION_LABELS[to],
-    icon: SETTINGS_SECTION_ICONS[to],
-  }));
+// SCIENT-FORK:START — Voice settings need the desktop app.
+const SETTINGS_NAV_GROUPS_FOR_PLATFORM = SETTINGS_NAV_GROUPS.map((group) => ({
+  ...group,
+  paths: group.paths.filter((to) => isElectron || to !== "/settings/voice"),
+}));
+const SETTINGS_NAV_ITEMS = SETTINGS_NAV_GROUPS_FOR_PLATFORM.flatMap((group) =>
+  group.paths.map((to) => ({ to, label: SETTINGS_SECTION_LABELS[to] })),
+);
+// SCIENT-FORK:END
+
+// Detail pages without a nav entry highlight the page that links to them.
+const SETTINGS_DETAIL_PAGE_PARENTS: Readonly<Record<string, SettingsPath>> = {
+  "/settings/diagnostics": "/settings/maintenance",
+  "/settings/open-source-licenses": "/settings/about",
+};
 
 // Attached only to the highlighted result, so it runs whenever the highlight lands on a row.
 function scrollResultIntoView(row: HTMLElement | null) {
@@ -152,9 +168,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
-  const navItems = SETTINGS_NAV_ITEMS.filter(
-    (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
-  );
+  const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
@@ -375,45 +389,64 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 ))}
               </SidebarMenu>
             ) : (
-              <SidebarMenu>
+              <div className="flex flex-col gap-4">
                 {compactSearchOpen ? null : (
-                  <SidebarMenuItem className="md:hidden">
-                    <SidebarMenuButton
-                      aria-label="Search settings"
-                      onClick={() => setCompactSearchOpen(true)}
-                    >
-                      <SearchIcon />
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )}
-                {navItems.map((item) => {
-                  const Icon = item.icon;
-                  const isGeneralDetailPage =
-                    item.to === "/settings/general" &&
-                    pathname === "/settings/open-source-licenses";
-                  const isActive =
-                    isGeneralDetailPage ||
-                    pathname === item.to ||
-                    pathname.startsWith(`${item.to}/`);
-                  return (
-                    <SidebarMenuItem key={item.to}>
+                  <SidebarMenu className="md:hidden">
+                    <SidebarMenuItem>
                       <SidebarMenuButton
-                        isActive={isActive}
-                        onClick={() => handleSectionClick(item.to)}
+                        aria-label="Search settings"
+                        onClick={() => setCompactSearchOpen(true)}
                       >
-                        <Icon />
-                        <span className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}>
-                          {item.label}
-                        </span>
+                        <SearchIcon />
                       </SidebarMenuButton>
-                      {/* SCIENT-FORK: page section outline, hidden while the nav is an icon rail. */}
-                      <div className={cn("contents", !compactSearchOpen && "max-md:hidden")}>
-                        {renderPageSections(item)}
-                      </div>
                     </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
+                  </SidebarMenu>
+                )}
+                {SETTINGS_NAV_GROUPS_FOR_PLATFORM.map((group, index) => (
+                  <div
+                    key={group.heading ?? index}
+                    role="group"
+                    aria-label={group.heading ?? undefined}
+                    className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                  >
+                    {group.heading ? (
+                      <h3
+                        className={cn(
+                          "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
+                          !compactSearchOpen && "max-md:hidden",
+                        )}
+                      >
+                        {group.heading}
+                      </h3>
+                    ) : null}
+                    <SidebarMenu>
+                      {group.paths.map((to) => {
+                        const Icon = SETTINGS_SECTION_ICONS[to];
+                        const isActive = activePath === to || activePath.startsWith(`${to}/`);
+                        return (
+                          <SidebarMenuItem key={to}>
+                            <SidebarMenuButton
+                              isActive={isActive}
+                              onClick={() => handleSectionClick(to)}
+                            >
+                              <Icon />
+                              <span
+                                className={cn("truncate", !compactSearchOpen && "max-md:sr-only")}
+                              >
+                                {SETTINGS_SECTION_LABELS[to]}
+                              </span>
+                            </SidebarMenuButton>
+                            {/* SCIENT-FORK: page section outline, hidden while the nav is an icon rail. */}
+                            <div className={cn("contents", !compactSearchOpen && "max-md:hidden")}>
+                              {renderPageSections({ to, label: SETTINGS_SECTION_LABELS[to] })}
+                            </div>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </SidebarGroup>

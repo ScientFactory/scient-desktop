@@ -256,8 +256,8 @@ it.effect("an answered question reports already answered instead of not found", 
     const respond = (id: string) =>
       server
         .callTool({
-          name: "scient_pending_request_respond",
-          arguments: { requestId: id, answers: { size: "large" } },
+          name: "scient_pending_request",
+          arguments: { action: "respond", requestId: id, answers: { size: "large" } },
         })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
@@ -552,8 +552,8 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
     const server = yield* McpServer.McpServer;
     yield* server
       .callTool({
-        name: "scient_thread_fork",
-        arguments: { sourcePoint: { type: "latest_stable" } },
+        name: "scient_thread_transfer",
+        arguments: { action: "fork", sourcePoint: { type: "latest_stable" } },
       })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
@@ -562,7 +562,7 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
     const { event, properties } = yield* Deferred.await(recorded[0]!);
     expect(event).toBe("mcp.tool.invoked");
     expect(properties).toMatchObject({
-      tool: "t3_thread_fork",
+      tool: "t3_thread_transfer",
       outcome: "ok",
       callerProvider: "codex",
       callerModel: "gpt-5.5",
@@ -582,8 +582,13 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
     // Queue tools return only a sequence, so the receiving thread comes from the input.
     yield* server
       .callTool({
-        name: "scient_queue_edit",
-        arguments: { threadId: "mcp-core-other", queuedRunId: "mcp-core-queued", text: "secret" },
+        name: "scient_queue",
+        arguments: {
+          action: "edit",
+          threadId: "mcp-core-other",
+          queuedRunId: "mcp-core-queued",
+          text: "secret",
+        },
       })
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
@@ -591,7 +596,7 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
       );
     // The fork recorded a single event, so the next one is the queue edit.
     expect((yield* Deferred.await(recorded[1]!)).properties).toMatchObject({
-      tool: "t3_queue_edit",
+      tool: "t3_queue",
       outcome: "ok",
       callerProvider: "codex",
       targetProvider: "claudeAgent",
@@ -755,8 +760,8 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     });
 
     const forked = yield* call(
-      "scient_thread_fork",
-      { sourcePoint: { type: "latest_stable" } },
+      "scient_thread_transfer",
+      { action: "fork", sourcePoint: { type: "latest_stable" } },
       clientScope("auto"),
     );
     expect(declaredFailure(forked)).toMatchObject({ code: "target_required" });
@@ -802,7 +807,7 @@ it.effect("a read-only client reads threads and is refused every write before it
           Effect.provideService(McpSchema.McpServerClient, client),
         );
 
-    const configuration = yield* call("scient_thread_configuration", {
+    const configuration = yield* call("scient_thread_configure", {
       threadId: "other-project-thread",
     });
     expect(configuration.isError).toBe(false);
@@ -903,18 +908,20 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
           Effect.provideService(McpInvocationContext.McpInvocationContext, clientScope("auto")),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-    const update = yield* call("update_scheduled_task", {
+    const update = yield* call("schedule_task", {
       scheduledTaskId: "task-full-access",
       prompt: "Run something else",
     });
     expect(declaredFailure(update)).toMatchObject({ code: "runtime_mode_escalation_denied" });
     const remove = yield* call("delete_scheduled_task", { scheduledTaskId: "task-full-access" });
     expect(declaredFailure(remove)).toMatchObject({ code: "runtime_mode_escalation_denied" });
-    const allowed = yield* call("update_scheduled_task", {
+    const allowed = yield* call("schedule_task", {
       scheduledTaskId: "task-auto",
       enabled: false,
     });
     expect(allowed.isError).toBe(false);
+    const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
+    expect(declaredFailure(incomplete)).toMatchObject({ code: "invalid_request" });
   }).pipe(
     Effect.provide(
       layerOrchestratorToolkit.pipe(

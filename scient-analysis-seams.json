@@ -301,14 +301,9 @@
       "purpose": "Pass Scient's file-surface props (citations, presentation, renames, source links) to the file preview panel."
     },
     {
-      "path": "apps/web/src/components/preview/useAgentOpenedPreviews.ts",
-      "anchor": "PreviewMiniPlayerState[\"content\"]",
-      "purpose": "The device-session hook consumes tagged mini-player content without taking browser reconciliation from the app-lifetime service or treating scientific figures as devices."
-    },
-    {
       "path": "apps/web/src/components/preview/agentOpenedPreviews.ts",
       "anchor": "applyScientBrowserHideRequests",
-      "purpose": "The sole app-lifetime browser service applies Scient hide requests and routes forced reveals through the active-file departure owner; service and departure tests cover these policies."
+      "purpose": "The sole app-lifetime browser service applies Scient hide requests and routes forced reveals through the active-file departure owner; its device snapshot reads tagged mini-player content so scientific figures are never treated as devices. Service and departure tests cover these policies."
     },
     {
       "path": "apps/web/src/components/files/PreviewImageContent.tsx",

@@ -166,7 +166,7 @@ describe("presentConnectionDiagnosis", () => {
           }),
         ),
       );
-      expect(diagnosis?.steps).toContain("On Mac mini, check Settings > Connections.");
+      expect(diagnosis?.steps).toContain("On Mac mini, check Settings > Sharing & access.");
       expect(diagnosis?.steps.join(" ")).not.toMatch(
         /\bnpx\b|\bt3 connect\b|\bscient connect\b|turn .* on/i,
       );

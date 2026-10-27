@@ -59,7 +59,6 @@ export function tokenLimitBannerItems(input: {
         {
           id: `token-limit:${tokenLimitNoticeKey}`,
           variant: "info",
-          priority: "urgent",
           icon: <InfoIcon />,
           title: "Response stopped at a token limit.",
           dismissLabel: "Dismiss token limit notice",

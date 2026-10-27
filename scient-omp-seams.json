@@ -63,11 +63,6 @@
       "purpose": "Admit native child Stop, and settle one whose session was released, through the shared capability while retaining task and session ownership checks."
     },
     {
-      "path": "apps/web/src/session-logic.ts",
-      "anchor": "planDriver !== \"omp\" && planDriver !== \"scient\"",
-      "purpose": "Keep unfinished Oh My Pi and Scient Agent tasks visible between runs in their owning provider session."
-    },
-    {
       "path": "apps/server/src/testUtils/shardWeights.json",
       "anchor": "\"src/assets/AssetAccess.test.ts\":",
       "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."

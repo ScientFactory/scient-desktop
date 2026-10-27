@@ -40,16 +40,8 @@ const items: ReadonlyArray<{ to: SettingsPath; label: string }> = [
   { to: "/settings/appearance", label: "Appearance" },
   { to: "/settings/providers", label: "Providers" },
 ];
-const GENERAL_SECTION_IDS = [
-  "organization",
-  "behavior",
-  "projects-and-threads",
-  "confirmations",
-  "text-generation",
-  "about",
-  "legacy-features",
-];
-const APPEARANCE_SECTION_IDS = ["appearance", "appearance-interface", "motion", "typography"];
+const GENERAL_SECTION_IDS = ["notifications", "sidebar", "confirmations", "display"];
+const APPEARANCE_SECTION_IDS = ["appearance", "appearance-interface", "typography"];
 
 // A restart loop never settles inside act(), so starts past this bound are refused and the
 // test fails on the start count instead of hanging.
@@ -150,22 +142,16 @@ it("watches the open page once and highlights the sections in view as it scrolls
 
   await act(() => toggle(_fixture).click());
   await expect
-    .element(sectionButton(_fixture, "Organization"))
+    .element(sectionButton(_fixture, "Notifications"))
     .toHaveAttribute("data-visible", "true");
-  expect(sectionButton(_fixture, "Organization").element().classList).toContain("font-medium");
-  expect(sectionButton(_fixture, "Text generation").element().classList).not.toContain(
-    "font-medium",
-  );
-  expect(sectionButton(_fixture, "Text generation").element().getAttribute("data-visible")).toBe(
-    "false",
-  );
+  expect(sectionButton(_fixture, "Notifications").element().classList).toContain("font-medium");
+  expect(sectionButton(_fixture, "Display").element().classList).not.toContain("font-medium");
+  expect(sectionButton(_fixture, "Display").element().getAttribute("data-visible")).toBe("false");
 
-  pageScroll(_fixture).scrollTop = 450;
+  pageScroll(_fixture).scrollTop = 250;
+  await expect.element(sectionButton(_fixture, "Display")).toHaveAttribute("data-visible", "true");
   await expect
-    .element(sectionButton(_fixture, "Text generation"))
-    .toHaveAttribute("data-visible", "true");
-  await expect
-    .element(sectionButton(_fixture, "Organization"))
+    .element(sectionButton(_fixture, "Notifications"))
     .toHaveAttribute("data-visible", "false");
   expect(mocks.observe).toHaveBeenCalledOnce();
   expect(mocks.stopObserving).not.toHaveBeenCalled();
@@ -181,7 +167,7 @@ it("hands the watcher over to the next settings page", async () => {
   await open(_fixture, "/settings/general", GENERAL_SECTION_IDS);
   await act(() => toggle(_fixture).click());
   await expect
-    .element(sectionButton(_fixture, "Organization"))
+    .element(sectionButton(_fixture, "Notifications"))
     .toHaveAttribute("data-visible", "true");
 
   await open(_fixture, "/settings/appearance", APPEARANCE_SECTION_IDS);
@@ -207,7 +193,7 @@ it("does not carry a page's earlier results into a later visit to it", async () 
   await open(_fixture, "/settings/general", GENERAL_SECTION_IDS);
   await act(() => toggle(_fixture).click());
   await expect
-    .element(sectionButton(_fixture, "Organization"))
+    .element(sectionButton(_fixture, "Notifications"))
     .toHaveAttribute("data-visible", "true");
 
   await open(_fixture, "/settings/providers");
@@ -216,13 +202,13 @@ it("does not carry a page's earlier results into a later visit to it", async () 
   // Back on General before its page has mounted: nothing is in view yet.
   await open(_fixture, "/settings/general");
   expect(mocks.observe).toHaveBeenCalledTimes(2);
-  expect(sectionButton(_fixture, "Organization").element().getAttribute("data-visible")).toBe(
+  expect(sectionButton(_fixture, "Notifications").element().getAttribute("data-visible")).toBe(
     "false",
   );
 
   await render(_fixture, "/settings/general", GENERAL_SECTION_IDS);
   await expect
-    .element(sectionButton(_fixture, "Organization"))
+    .element(sectionButton(_fixture, "Notifications"))
     .toHaveAttribute("data-visible", "true");
   expect(mocks.observe).toHaveBeenCalledTimes(2);
 });
@@ -238,7 +224,7 @@ it("keeps the Settings page-root contract and scopes observer cleanup to navigat
   await render(_fixture, "/settings/general");
   expect(mocks.observe).toHaveBeenCalledWith({
     container: _fixture.container,
-    targetIds: expect.arrayContaining(["organization"]),
+    targetIds: expect.arrayContaining(["notifications"]),
     onChange: expect.any(Function),
   });
   mocks.resolvedPath = "/settings/appearance";
@@ -277,18 +263,18 @@ it("scrolls an existing section locally and falls back to hash navigation withou
   mocks.mobile = true;
   await render(_fixture, "/settings/general");
   await act(() => toggle(_fixture).click());
-  const organization = [..._fixture.container.querySelectorAll<HTMLButtonElement>("button")].find(
-    (button) => button.textContent === "Organization",
+  const notifications = [..._fixture.container.querySelectorAll<HTMLButtonElement>("button")].find(
+    (button) => button.textContent === "Notifications",
   )!;
-  await act(() => organization.click());
+  await act(() => notifications.click());
   expect(mocks.closeMobile).toHaveBeenCalledWith(false);
-  expect(mocks.scroll).toHaveBeenCalledWith("organization", { highlight: false });
+  expect(mocks.scroll).toHaveBeenCalledWith("notifications", { highlight: false });
   expect(mocks.navigate).not.toHaveBeenCalled();
   mocks.scroll.mockReturnValue(false);
-  await act(() => organization.click());
+  await act(() => notifications.click());
   expect(mocks.navigate).toHaveBeenCalledWith({
     to: "/settings/general",
-    hash: "organization",
+    hash: "notifications",
     replace: true,
     hashScrollIntoView: false,
     state: { settingsTargetHighlight: false },

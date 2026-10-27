@@ -7,18 +7,18 @@ import { toolOutcome } from "./ProviderDimensions.ts";
 describe("Scient MCP analytics input", () => {
   it("retains metric identifiers and decodes the declared JSON-text result", () => {
     const input = scientMcpAnalyticsInput(
-      "scient_thread_fork",
+      "scient_thread_transfer",
       new McpSchema.CallToolResult({
         content: [{ type: "text", text: '{"targetThreadId":"synthetic-child"}' }],
       }),
     );
-    expect(input.tool).toBe("t3_thread_fork");
+    expect(input.tool).toBe("t3_thread_transfer");
     expect(input.result?.structuredContent).toEqual({ targetThreadId: "synthetic-child" });
   });
 
   it("preserves failure codes without treating declared failures as successful handoffs", () => {
     const input = scientMcpAnalyticsInput(
-      "scient_queue_edit",
+      "scient_queue",
       new McpSchema.CallToolResult({
         isError: true,
         content: [

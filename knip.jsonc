@@ -66,7 +66,6 @@
         "scripts/qualify-omp-rpc.ts",
         "scripts/qualifyScientAgentManagedRuntime.ts",
         "scripts/qualify-muse-runtime.ts",
-        "scripts/evaluate-thread-titles.ts",
         "scripts/fetch-expo-schema.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",

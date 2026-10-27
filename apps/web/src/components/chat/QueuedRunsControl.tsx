@@ -7,7 +7,14 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { CornerUpRightIcon, GripVerticalIcon, ListOrderedIcon, PencilIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CornerUpRightIcon,
+  GripVerticalIcon,
+  ListOrderedIcon,
+  PencilIcon,
+  XIcon,
+} from "lucide-react";
 import { useId, useImperativeHandle, useRef, useState, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
@@ -16,8 +23,7 @@ import { useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
-import { ComposerBanner } from "./ComposerBanner";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 // SCIENT-FORK:START queue-scient-parts
 import { queuePreviewText } from "~/scient/threadQueue/queuePreviewText";
@@ -42,6 +48,8 @@ interface QueuedRowThumbnail {
 }
 
 const QUEUED_RUN_DRAG_TYPE = "application/x-t3code-queued-run";
+// A longer queue shows its first messages and a button that shows the rest.
+const QUEUE_VISIBLE_ROWS = 3;
 
 export interface QueuedRunsControlHandle {
   steerNext: (repeat: boolean) => boolean;
@@ -78,6 +86,8 @@ export function QueuedRunsControl({
     }
   >;
   readonly editingRunId: RunId | null;
+  /** Set while something else holds the composer, such as an open question. */
+  readonly editBlockedReason: string | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
   // SCIENT-FORK:START queue-scient-parts
@@ -91,7 +101,7 @@ export function QueuedRunsControl({
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
-  const [expanded, setExpanded] = useState(true);
+  const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const [dragState, setDragState] = useState<{
@@ -236,12 +246,13 @@ export function QueuedRunsControl({
         !latest ||
         latest.context?.guest !== undefined ||
         props.editingRunId !== null ||
+        props.editBlockedReason !== null ||
         busyRunId !== null
       ) {
         return false;
       }
       if (!repeat) {
-        setExpanded(true);
+        setShowAll(true);
         props.onEditQueuedRun({
           runId: latest.run.id,
           messageId: latest.run.userMessageId,
@@ -253,26 +264,27 @@ export function QueuedRunsControl({
     },
   }));
 
-  // SCIENT-FORK:START queue-scient-parts
-  const scientNotices = (
-    <ScientQueueNotices
-      parts={scient}
-      busy={busyRunId !== null}
-      onCancelEdit={props.onCancelEdit}
-    />
-  );
+  // SCIENT-FORK:START queue-scient-parts — notices and the detached-edit row lead the queue; the
+  // variable sizes their ComposerBanner rows outside a composer banner.
+  const scientNotices =
+    scient.notice === null && !scient.detachedEdit ? null : (
+      <div className="flex flex-col gap-1 text-xs [--composer-banner-icon-column:--spacing(6)]">
+        <ScientQueueNotices
+          parts={scient}
+          busy={busyRunId !== null}
+          onCancelEdit={props.onCancelEdit}
+        />
+      </div>
+    );
   if (items.length === 0) {
-    return scient.notice === null && !scient.detachedEdit ? null : (
-      <ComposerBanner.Attachment>
-        <ComposerBanner.Root
-          role="region"
-          aria-label="Queued messages"
-          data-chat-composer-collapsed-controls="true"
-          className="relative z-0"
-        >
-          {scientNotices}
-        </ComposerBanner.Root>
-      </ComposerBanner.Attachment>
+    return scientNotices === null ? null : (
+      <section
+        aria-label="Queued messages"
+        data-thread-queue="true"
+        className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
+      >
+        {scientNotices}
+      </section>
     );
   }
 
@@ -285,267 +297,299 @@ export function QueuedRunsControl({
     );
   // SCIENT-FORK:END queue-scient-parts
 
+  const collapsible = items.length > QUEUE_VISIBLE_ROWS;
+  const visibleItems = collapsible && !showAll ? items.slice(0, QUEUE_VISIBLE_ROWS - 1) : items;
+
   return (
-    <ComposerBanner.Attachment>
-      <ComposerBanner.Root
-        role="region"
-        aria-label={`${items.length} queued message${items.length === 1 ? "" : "s"}`}
-        aria-live="polite"
-        data-chat-composer-collapsed-controls="true"
-        className="relative z-0"
-      >
-        {/* SCIENT-FORK:START queue-scient-parts */}
-        {scientNotices}
-        {/* SCIENT-FORK:END queue-scient-parts */}
-        <ComposerBanner.Row
-          render={<button type="button" />}
-          aria-label={expanded ? "Collapse queued messages" : "Expand queued messages"}
-          aria-expanded={expanded}
-          aria-controls={queueListId}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <ComposerBanner.Icon>
-            <ListOrderedIcon />
-          </ComposerBanner.Icon>
-          <ComposerBanner.Content className="text-muted-foreground">Queued</ComposerBanner.Content>
-          <ComposerBanner.Actions>
-            <ComposerBanner.Count>{items.length}</ComposerBanner.Count>
-            <ComposerBanner.ToggleIcon expanded={expanded} />
-          </ComposerBanner.Actions>
-        </ComposerBanner.Row>
-        <ComposerBanner.Scroll className={cn("max-h-32", !expanded && "hidden")}>
-          <ComposerBanner.Children render={<ol />} id={queueListId}>
-            {items.map((item) => {
-              // SCIENT-FORK:START queue-scient-preview
-              const previewText = queuePreviewText(item.text, item.thumbnails.length > 0);
-              // SCIENT-FORK:END queue-scient-preview
-              const rowRunId = item.runId;
-              const rowServerIndex = item.serverIndex;
-              const isEditing = rowRunId !== null && rowRunId === props.editingRunId;
-              const rowDraggable =
-                rowRunId !== null && rowServerIndex !== null && canReorder && busyRunId === null;
-              return (
-                <ComposerBanner.Row
-                  render={<li />}
-                  key={item.key}
-                  aria-current={isEditing ? "true" : undefined}
-                  className={cn(
-                    "relative rounded-sm",
-                    isEditing && "bg-accent text-accent-foreground",
-                    dragState !== null && dragState.runId === item.runId && "opacity-50",
-                  )}
-                  draggable={rowDraggable}
-                  onDragStart={(event) => {
-                    if (item.runId === null || dragArmedRunIdRef.current !== item.runId) {
-                      event.preventDefault();
-                      return;
-                    }
-                    event.dataTransfer.setData(QUEUED_RUN_DRAG_TYPE, item.runId);
-                    event.dataTransfer.effectAllowed = "move";
-                    setDragState({ runId: item.runId, insertIndex: null });
-                  }}
-                  onDragEnd={() => {
-                    dragArmedRunIdRef.current = null;
-                    setDragState(null);
-                  }}
-                  onDragOver={(event) => {
-                    if (dragState === null || item.serverIndex === null) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    const insertIndex =
-                      event.clientY < rect.top + rect.height / 2
-                        ? item.serverIndex
-                        : item.serverIndex + 1;
-                    if (dragState.insertIndex !== insertIndex) {
-                      setDragState({ runId: dragState.runId, insertIndex });
-                    }
-                  }}
-                  onDrop={(event) => {
-                    if (dragState === null) return;
-                    event.preventDefault();
-                    completeDrag(dragState.runId, dragState.insertIndex);
-                  }}
-                >
-                  {item.serverIndex !== null && dragState?.insertIndex === item.serverIndex ? (
-                    <span
-                      aria-hidden
-                      className="pointer-events-none absolute inset-x-0 top-0 h-0.5 rounded bg-primary/70"
-                    />
-                  ) : null}
-                  {item.serverIndex === queued.length - 1 &&
-                  dragState?.insertIndex === queued.length ? (
-                    <span
-                      aria-hidden
-                      className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 rounded bg-primary/70"
-                    />
-                  ) : null}
-                  <ComposerBanner.Icon aria-hidden={false}>
-                    {canReorder && rowRunId !== null && rowServerIndex !== null ? (
-                      <Button
-                        size="icon-xs"
-                        variant="ghost-muted"
-                        aria-label="Reorder queued message (drag, or press the arrow keys)"
-                        className="cursor-grab active:cursor-grabbing disabled:cursor-default"
-                        disabled={busyRunId !== null}
-                        onPointerDown={() => {
-                          dragArmedRunIdRef.current = rowRunId;
-                        }}
-                        onKeyDown={(event) => {
-                          if (busyRunId !== null) return;
-                          if (event.key === "ArrowUp" && rowServerIndex > 0) {
-                            event.preventDefault();
-                            void move(rowRunId, queued[rowServerIndex - 1]?.run.id ?? null);
-                          }
-                          if (event.key === "ArrowDown" && rowServerIndex < queued.length - 1) {
-                            event.preventDefault();
-                            void move(rowRunId, queued[rowServerIndex + 2]?.run.id ?? null);
-                          }
-                        }}
+    <section
+      aria-label={`Up next: ${items.length} queued message${items.length === 1 ? "" : "s"}`}
+      data-thread-queue="true"
+      className="mx-auto flex w-full max-w-(--chat-content-max-width) flex-col gap-2 pb-4"
+    >
+      <h3 className="flex min-h-5 items-center gap-1.5 px-1 text-xs font-normal text-muted-foreground [&_svg]:size-3.5">
+        <ListOrderedIcon aria-hidden />
+        Up next
+        <span className="tabular-nums" aria-live="polite">
+          · {items.length} queued
+        </span>
+      </h3>
+      {/* SCIENT-FORK:START queue-scient-parts */}
+      {scientNotices}
+      {/* SCIENT-FORK:END queue-scient-parts */}
+      <ol className="flex flex-col items-end gap-3" id={queueListId}>
+        {visibleItems.map((item, position) => {
+          // SCIENT-FORK:START queue-scient-preview
+          const previewText = queuePreviewText(item.text, item.thumbnails.length > 0);
+          // SCIENT-FORK:END queue-scient-preview
+          const rowRunId = item.runId;
+          const rowServerIndex = item.serverIndex;
+          const isEditing = rowRunId !== null && rowRunId === props.editingRunId;
+          const rowDraggable =
+            rowRunId !== null && rowServerIndex !== null && canReorder && busyRunId === null;
+          return (
+            <li
+              key={item.key}
+              aria-label={`Queued message ${position + 1} of ${items.length}, not sent`}
+              aria-posinset={position + 1}
+              aria-setsize={items.length}
+              aria-current={isEditing ? "true" : undefined}
+              className={cn(
+                "group/queued relative flex w-full flex-col items-end gap-1 transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none",
+                dragState !== null && dragState.runId === item.runId && "opacity-50",
+              )}
+              draggable={rowDraggable}
+              onDragStart={(event) => {
+                if (item.runId === null || dragArmedRunIdRef.current !== item.runId) {
+                  event.preventDefault();
+                  return;
+                }
+                event.dataTransfer.setData(QUEUED_RUN_DRAG_TYPE, item.runId);
+                event.dataTransfer.effectAllowed = "move";
+                setDragState({ runId: item.runId, insertIndex: null });
+              }}
+              onDragEnd={() => {
+                dragArmedRunIdRef.current = null;
+                setDragState(null);
+              }}
+              onDragOver={(event) => {
+                if (dragState === null || item.serverIndex === null) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                const rect = event.currentTarget.getBoundingClientRect();
+                const insertIndex =
+                  event.clientY < rect.top + rect.height / 2
+                    ? item.serverIndex
+                    : item.serverIndex + 1;
+                if (dragState.insertIndex !== insertIndex) {
+                  setDragState({ runId: dragState.runId, insertIndex });
+                }
+              }}
+              onDrop={(event) => {
+                if (dragState === null) return;
+                event.preventDefault();
+                completeDrag(dragState.runId, dragState.insertIndex);
+              }}
+            >
+              {item.serverIndex !== null && dragState?.insertIndex === item.serverIndex ? (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 -top-1.5 h-0.5 rounded bg-primary/70"
+                />
+              ) : null}
+              {item.serverIndex === queued.length - 1 &&
+              dragState?.insertIndex === queued.length ? (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-x-0 -bottom-1.5 h-0.5 rounded bg-primary/70"
+                />
+              ) : null}
+              {/* Dashed and unfilled: a turn that has not been sent yet. */}
+              <div
+                className={cn(
+                  "flex min-w-0 max-w-[80%] flex-col gap-2 rounded-2xl border border-dashed px-3 py-2 text-sm",
+                  isEditing
+                    ? "border-primary/60 text-foreground"
+                    : "border-muted-foreground/40 text-muted-foreground",
+                )}
+              >
+                {item.thumbnails.length > 0 ? (
+                  <span className="flex flex-wrap items-center gap-1">
+                    {item.thumbnails.map((thumbnail) => (
+                      <span
+                        key={thumbnail.key}
+                        className="size-8 overflow-hidden rounded-md border border-border/70 bg-background"
                       >
-                        <GripVerticalIcon />
-                      </Button>
-                    ) : null}
-                  </ComposerBanner.Icon>
-                  <ComposerBanner.Content className="text-foreground/80">
-                    {isEditing ? <span className="sr-only">Editing queued message: </span> : null}
-                    {item.thumbnails.length > 0 ? (
-                      <span className="flex shrink-0 items-center gap-0.5">
-                        {item.thumbnails.map((thumbnail) => (
+                        {thumbnail.url ? (
+                          <img
+                            src={thumbnail.url}
+                            alt={thumbnail.name}
+                            className="size-full object-cover"
+                          />
+                        ) : (
                           <span
-                            key={thumbnail.key}
-                            className="size-4 overflow-hidden rounded border border-border/70 bg-background"
-                          >
-                            {thumbnail.url ? (
-                              <img
-                                src={thumbnail.url}
-                                alt={thumbnail.name}
-                                className="size-full object-cover"
-                              />
-                            ) : (
-                              <span
-                                aria-label={thumbnail.name}
-                                className="block size-full bg-muted/60"
-                              />
-                            )}
-                          </span>
-                        ))}
+                            aria-label={thumbnail.name}
+                            className="block size-full bg-muted/60"
+                          />
+                        )}
                       </span>
-                    ) : null}
+                    ))}
+                  </span>
+                ) : null}
+                {/* In full, like a sent turn: a queued message is read before it is sent. */}
+                {previewText ? (
+                  <p className="whitespace-pre-wrap wrap-anywhere">
                     {item.guestName === undefined ? null : (
-                      <span className="shrink-0 text-guest-foreground">{item.guestName}</span>
+                      <span className="text-guest-foreground">{item.guestName} </span>
                     )}
+                    {previewText}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
+                {items.length > 1 && canReorder && rowRunId !== null && rowServerIndex !== null ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost-muted"
+                    aria-label={`Reorder queued message ${position + 1} of ${items.length} (drag, or press the arrow keys)`}
+                    className="group/grip cursor-grab active:cursor-grabbing"
+                    // Not `disabled`: that drops keyboard focus mid-move and breaks repeated arrow presses.
+                    aria-disabled={busyRunId !== null || undefined}
+                    onPointerDown={() => {
+                      if (busyRunId === null) dragArmedRunIdRef.current = rowRunId;
+                    }}
+                    onKeyDown={(event) => {
+                      if (busyRunId !== null) return;
+                      if (event.key === "ArrowUp" && rowServerIndex > 0) {
+                        event.preventDefault();
+                        void move(rowRunId, queued[rowServerIndex - 1]?.run.id ?? null);
+                      }
+                      if (event.key === "ArrowDown" && rowServerIndex < queued.length - 1) {
+                        event.preventDefault();
+                        // Moving into the collapsed rows would unmount the focused grip.
+                        if (rowServerIndex + 1 >= visibleItems.length) setShowAll(true);
+                        void move(rowRunId, queued[rowServerIndex + 2]?.run.id ?? null);
+                      }
+                    }}
+                  >
+                    <span className="text-xs font-medium tabular-nums group-hover/queued:hidden group-focus-visible/grip:hidden">
+                      {position + 1}
+                    </span>
+                    <GripVerticalIcon className="hidden group-hover/queued:block group-focus-visible/grip:block" />
+                  </Button>
+                ) : items.length > 1 ? (
+                  <span className="px-1.5 font-medium tabular-nums">{position + 1}</span>
+                ) : null}
+                {/* SCIENT-FORK:START queue-scient-parts — "Queuing…" only when admission is slow. */}
+                {item.pending ? (
+                  <span className="px-1 empty:hidden">
+                    <QueueAdmissionStatus
+                      messageId={item.key}
+                      accepted={"accepted" in item && item.accepted}
+                    />
+                  </span>
+                ) : null}
+                {/* SCIENT-FORK:END queue-scient-parts */}
+                {isEditing ? (
+                  <>
+                    <span className="px-1 text-foreground">Editing in the composer</span>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      aria-label="Cancel editing queued message"
+                      onClick={props.onCancelEdit}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <>
                     <Tooltip>
-                      <TooltipTrigger render={<span className="min-w-0 flex-1 truncate" />}>
-                        {previewText}
+                      {/* The span keeps the tooltip, and its reason, on a disabled button. */}
+                      <TooltipTrigger render={<span className="flex shrink-0" />}>
+                        <Button
+                          size="icon-xs"
+                          variant="ghost-muted"
+                          aria-label="Edit queued message"
+                          disabled={
+                            item.runId === null ||
+                            !item.editable ||
+                            busyRunId !== null ||
+                            props.editBlockedReason !== null
+                          }
+                          onClick={() => {
+                            if (item.runId !== null && item.messageId !== null) {
+                              props.onEditQueuedRun({
+                                runId: item.runId,
+                                messageId: item.messageId,
+                                text: item.text,
+                                attachments: item.attachments,
+                              });
+                            }
+                          }}
+                        >
+                          <PencilIcon />
+                        </Button>
                       </TooltipTrigger>
-                      <TooltipPopup side="top" className="max-w-96 break-words">
-                        {previewText}
+                      <TooltipPopup>
+                        {props.editBlockedReason ??
+                          `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
                       </TooltipPopup>
                     </Tooltip>
-                    {/* SCIENT-FORK:START queue-scient-parts — "Queuing…" only when admission is slow. */}
-                    {item.pending ? (
-                      <QueueAdmissionStatus
-                        messageId={item.key}
-                        accepted={"accepted" in item && item.accepted}
-                      />
-                    ) : null}
-                    {/* SCIENT-FORK:END queue-scient-parts */}
-                  </ComposerBanner.Content>
-                  <ComposerBanner.Actions>
-                    {isEditing ? (
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        aria-label="Cancel editing queued message"
-                        onClick={props.onCancelEdit}
-                      >
-                        Cancel
-                      </Button>
-                    ) : (
-                      <>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                aria-label="Edit queued message"
-                                disabled={
-                                  item.runId === null || !item.editable || busyRunId !== null
-                                }
-                                onClick={() => {
-                                  if (item.runId !== null && item.messageId !== null) {
-                                    props.onEditQueuedRun({
-                                      runId: item.runId,
-                                      messageId: item.messageId,
-                                      text: item.text,
-                                      attachments: item.attachments,
-                                    });
-                                  }
-                                }}
-                              />
-                            }
-                          >
-                            <PencilIcon />
-                          </TooltipTrigger>
-                          <TooltipPopup>
-                            {`Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
-                          </TooltipPopup>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              // SCIENT-FORK:START queue-scient-parts — a refused held Send stays hidden.
-                              <span
-                                className="flex shrink-0"
-                                hidden={item.runId !== null && scient.sendRefused(item.runId)}
-                              />
-                              // SCIENT-FORK:END queue-scient-parts
-                            }
-                          >
-                            <Button
-                              size="xs"
-                              variant="ghost-muted"
-                              disabled={item.runId === null || busyRunId !== null || !canSend}
-                              onClick={() => {
-                                if (item.runId !== null) {
-                                  void sendQueuedMessage(item.runId);
-                                }
-                              }}
-                            >
-                              <CornerUpRightIcon />
-                              {workflow?.canSendNow ? "Send now" : "Steer"}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipPopup>
-                            {`${workflow?.canSendNow ? "Start a turn with this message" : "Send as a steer instead"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
-                          </TooltipPopup>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <ComposerBanner.Dismiss
-                                aria-label="Remove queued message"
-                                disabled={item.runId === null || busyRunId !== null}
-                                onClick={() => {
-                                  if (item.runId !== null) void remove(item.runId);
-                                }}
-                              />
-                            }
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          // SCIENT-FORK:START queue-scient-parts — a refused held Send stays hidden.
+                          <span
+                            className="flex shrink-0"
+                            hidden={item.runId !== null && scient.sendRefused(item.runId)}
                           />
-                          <TooltipPopup>Remove from queue</TooltipPopup>
-                        </Tooltip>
-                      </>
-                    )}
-                  </ComposerBanner.Actions>
-                </ComposerBanner.Row>
-              );
-            })}
-          </ComposerBanner.Children>
-        </ComposerBanner.Scroll>
-      </ComposerBanner.Root>
-    </ComposerBanner.Attachment>
+                          // SCIENT-FORK:END queue-scient-parts
+                        }
+                      >
+                        <Button
+                          size="xs"
+                          variant="ghost-muted"
+                          disabled={item.runId === null || busyRunId !== null || !canSend}
+                          onClick={() => {
+                            if (item.runId !== null) {
+                              void sendQueuedMessage(item.runId);
+                            }
+                          }}
+                        >
+                          <CornerUpRightIcon />
+                          {workflow?.canSendNow ? "Send now" : "Steer"}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipPopup>
+                        {`${workflow?.canSendNow ? "Start a turn with this message" : "Send as a steer instead"}${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                      </TooltipPopup>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="icon-xs"
+                            variant="ghost-muted"
+                            aria-label="Remove queued message"
+                            disabled={item.runId === null || busyRunId !== null}
+                            onClick={() => {
+                              if (item.runId !== null) void remove(item.runId);
+                            }}
+                          />
+                        }
+                      >
+                        <XIcon />
+                      </TooltipTrigger>
+                      <TooltipPopup>Remove from queue</TooltipPopup>
+                    </Tooltip>
+                  </>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+      {collapsible ? (
+        <div className="self-end pe-1 text-xs pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
+          <InlineButton
+            tone="muted"
+            aria-expanded={showAll}
+            aria-controls={queueListId}
+            // Keep the composer focused; keyboard activation still works.
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => setShowAll((value) => !value)}
+          >
+            {showAll ? "Show fewer" : `Show all ${items.length} queued`}
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+                showAll && "rotate-180",
+              )}
+            />
+          </InlineButton>
+        </div>
+      ) : null}
+    </section>
   );
 }

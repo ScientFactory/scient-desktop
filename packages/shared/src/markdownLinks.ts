@@ -19,7 +19,7 @@ const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 const RELATIVE_FILE_PATH_PATTERN =
   /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+){0,2})?$/u;
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/u;
+  /^[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
 const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;

@@ -182,6 +182,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
   if (workEntry.itemType === "approval_request") return "shield";
   if (workEntry.itemType === "user_input_request") return "message-circle";
   // SCIENT-FORK:END
+  if (workEntry.itemType === "todo_list") return "list-todo";
   if (workEntry.toolSurface) return workEntry.toolSurface;
   // SCIENT-FORK:START — an icon from what the action did (scient/presentation/traceIcons.ts).
   const override = traceIconOverride(workEntry);
