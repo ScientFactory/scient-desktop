@@ -69,6 +69,12 @@ import {
   newlyRequestedCodexSubscriptionSharing,
 } from "./scient/providerLifecycle/codexSubscriptionSharingPolicy.ts";
 import { makeCustomModelReasoning } from "./customModelReasoning.ts";
+// SCIENT-FORK:START — Scient Accounts: encrypt only Custom models credentials through the shared vault.
+import {
+  AccountsSecretStore,
+  layer as accountsSecretStoreLayer,
+} from "./scient/accounts/AccountsSecretStore.ts";
+// SCIENT-FORK:END
 import { withCustomModelKeyHints } from "./customModels.ts";
 // SCIENT-FORK:START — custom-model methods and text-generation fallback
 import {
@@ -734,6 +740,9 @@ const make = Effect.gen(function* () {
   const settingsMetadata = yield* SettingsFileMetadata;
   // SCIENT-FORK:END
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  // SCIENT-FORK:START — Scient Accounts: Custom models alone uses the encrypted secret-store port.
+  const customModelSecrets = yield* AccountsSecretStore;
+  // SCIENT-FORK:END
   const modelReasoning = makeCustomModelReasoning();
   const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
@@ -912,10 +921,12 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    // SCIENT-FORK:START — Scient Accounts: derive Custom models hints after decryption or legacy sealing.
     settings = {
       ...settings,
-      customModels: yield* withCustomModelKeyHints(settings.customModels, secretStore),
+      customModels: yield* withCustomModelKeyHints(settings.customModels, customModelSecrets),
     };
+    // SCIENT-FORK:END
     const legacyProjectRows =
       settings.projectSettingsFolded || !settingsFileTrusted
         ? []
@@ -1462,7 +1473,7 @@ const make = Effect.gen(function* () {
     ready: Deferred.await(startedDeferred),
     // SCIENT-FORK:START — custom-model catalog methods
     ...makeCustomModelSettingsMethods({
-      secretStore,
+      secretStore: customModelSecrets,
       modelReasoning,
       writeSemaphore,
       getSettingsFromCache,
@@ -1524,4 +1535,8 @@ const make = Effect.gen(function* () {
   } satisfies ServerSettingsService["Service"];
 });
 
-export const layer = Layer.effect(ServerSettingsService, make);
+// SCIENT-FORK:START — Scient Accounts: share encrypted Custom models storage without changing other secret-store users.
+export const layer = Layer.effect(ServerSettingsService, make).pipe(
+  Layer.provide(accountsSecretStoreLayer),
+);
+// SCIENT-FORK:END

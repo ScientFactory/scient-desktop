@@ -18,6 +18,7 @@ import type {
   DesktopDocumentPageRenderInput,
   DesktopDocumentPageRenderOutcome,
 } from "../scientDocumentExport.ts";
+import type { DesktopAccountsBridge } from "./desktopAccountsBridge.ts";
 import type { DesktopVoiceBridge } from "./desktopVoiceBridge.ts";
 
 export const DesktopAssetCopyRequestSchema = AssetCopyRequest;
@@ -75,4 +76,6 @@ export interface ScientDesktopBridge {
    * hosted by the Electron desktop build; web builds have `voice === undefined`.
    */
   voice?: DesktopVoiceBridge;
+  /** Scient Accounts: browser profile details, sign-in capture and fill. Desktop only. */
+  accounts?: DesktopAccountsBridge;
 }

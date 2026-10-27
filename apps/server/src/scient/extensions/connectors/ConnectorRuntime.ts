@@ -28,10 +28,12 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Redacted from "effect/Redacted";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { AccountsService } from "../../accounts/AccountsService.ts";
 import * as ServerConfig from "../../../config.ts";
 import { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import {
@@ -376,6 +378,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   options: ConnectorRuntimeOptions,
 ) {
   const credentials = yield* ConnectorCredentialStore;
+  const accounts = yield* Effect.serviceOption(AccountsService);
   const eligibility = yield* PluginConnectorEligibility;
   const projects = yield* ProjectStoreV2;
   const store = yield* makeConnectorStateStore(options.stateDir);
@@ -736,14 +739,32 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           secrets: [],
         } satisfies Credential;
       case "credential": {
-        const stored = yield* credentials
-          .readOwned(auth.credentialRef, { type: "connector", connectorId: record.connectorId })
-          .pipe(Effect.orElseSucceed(() => Option.none()));
+        const stored = yield* auth.storage === "bound"
+          ? Option.isSome(accounts)
+            ? accounts.value
+                .resolveBound(auth.credentialRef, {
+                  connectorId: record.connectorId,
+                  origin: new URL(record.url).origin,
+                })
+                .pipe(
+                  Effect.map((value) => Option.some(Redacted.value(value))),
+                  Effect.orElseSucceed(() => Option.none<string>()),
+                )
+            : Effect.succeed(Option.none<string>())
+          : credentials
+              .readOwned(auth.credentialRef, {
+                type: "connector",
+                connectorId: record.connectorId,
+              })
+              .pipe(
+                Effect.map(Option.map((value) => new TextDecoder().decode(value.material))),
+                Effect.orElseSucceed(() => Option.none<string>()),
+              );
         if (Option.isNone(stored)) {
           yield* markStatus(record, "needs-credential", "The stored credential is missing.");
           return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
         }
-        const value = new TextDecoder().decode(stored.value.material);
+        const value = stored.value;
         if (!enteredSecrets(auth.strategy, value).every(isProtectableCredential)) {
           yield* markStatus(
             record,
@@ -938,12 +959,6 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const add: ConnectorRuntimeShape["add"] = Effect.fn("ConnectorRuntime.add")(function* (input) {
     const policy = egressPolicyFor(input.target.url, { type: input.target.type });
     const url = yield* checkUrl(input.target.url, policy);
-    if (input.credential?.type === "bound") {
-      return yield* extensionsError(
-        "unsupported",
-        "Using a saved secret requires the Secrets vault, which is not available yet. Enter the credential for this service instead.",
-      );
-    }
     if (
       input.credential?.type === "entered" &&
       !enteredSecrets(input.credential.strategy, input.credential.value).every(
@@ -1000,26 +1015,51 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       const credentialAuth = {
         type: "credential",
         strategy: entered.strategy,
-        storage: "owned",
+        storage: entered.type === "bound" ? "bound" : "owned",
         ...(entered.headerName === undefined ? {} : { headerName: entered.headerName }),
       } as const;
+      const value =
+        entered.type === "bound"
+          ? Option.isSome(accounts)
+            ? Redacted.value(
+                yield* accounts.value
+                  .resolveBound(entered.secretRef, {
+                    connectorId,
+                    origin: new URL(url).origin,
+                  })
+                  .pipe(
+                    Effect.mapError(() =>
+                      extensionsError(
+                        "invalid-input",
+                        "This account key is unavailable for this service.",
+                      ),
+                    ),
+                  ),
+              )
+            : yield* extensionsError("unsupported", "Accounts is unavailable on this server.")
+          : entered.value;
+      if (
+        entered.type === "bound" &&
+        !enteredSecrets(entered.strategy, value).every(isProtectableCredential)
+      )
+        return yield* tooShort("credential");
       const probe = yield* Effect.promise(() =>
         probeConnector({
           url,
           fetch,
-          headers: credentialHeadersFor(credentialAuth, entered.value),
+          headers: credentialHeadersFor(credentialAuth, value),
         }),
       );
       if (probe.type === "auth-required") {
         return yield* extensionsError("sign-in-failed", "The service rejected this credential.");
       }
       if (probe.type !== "open") return yield* probeFailure(probe);
-      const credentialRef = yield* credentials.put(
-        owner,
-        entered.strategy,
-        new TextEncoder().encode(entered.value),
-        { label: `${displayName} credential` },
-      );
+      const credentialRef =
+        entered.type === "bound"
+          ? entered.secretRef
+          : yield* credentials.put(owner, entered.strategy, new TextEncoder().encode(value), {
+              label: `${displayName} credential`,
+            });
       auth = { ...credentialAuth, credentialRef };
       status = "connected";
     } else {
@@ -1078,7 +1118,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     // commit removes the credential so nothing is left unreferenced.
     const created = yield* commitNewRecord(record).pipe(
       Effect.tapError(() =>
-        "credentialRef" in auth && auth.credentialRef !== undefined
+        "credentialRef" in auth &&
+        auth.credentialRef !== undefined &&
+        !(auth.type === "credential" && auth.storage === "bound")
           ? credentials.remove(auth.credentialRef).pipe(Effect.ignore)
           : Effect.void,
       ),
@@ -1118,7 +1160,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           );
           publishOAuth(connectorId, undefined);
           yield* publishChange;
-          const ref = record.auth.type === "none" ? undefined : record.auth.credentialRef;
+          const ref =
+            record.auth.type === "none" ||
+            (record.auth.type === "credential" && record.auth.storage === "bound")
+              ? undefined
+              : record.auth.credentialRef;
           if (ref !== undefined) {
             yield* credentials
               .remove(ref)

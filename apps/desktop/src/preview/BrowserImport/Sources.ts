@@ -416,10 +416,19 @@ const listSafariProfiles = Effect.fnUntraced(function* (
 const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
+  // SCIENT-FORK:START — Scient Accounts: metadata discovery must not read cookie databases.
+  includeCookieCounts = true,
+  // SCIENT-FORK:END
 ): Effect.fn.Return<ReadonlyArray<BrowserImportSourceProfile>, never, FileSystem.FileSystem> {
   const fileSystem = yield* FileSystem.FileSystem;
   const root = definition.userDataDirectory(context);
   if (root === undefined) return [];
+  // SCIENT-FORK:START — Scient Accounts: discovery can omit cookie database reads.
+  const counted = (profiles: ReadonlyArray<BrowserImportSourceProfile>) =>
+    includeCookieCounts
+      ? withCookieCounts(definition, context, profiles)
+      : Effect.succeed(profiles);
+  // SCIENT-FORK:END
 
   if (definition.engine === "safari") {
     return yield* listSafariProfiles(context, root);
@@ -440,7 +449,9 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
       );
       const withDatabase = found.filter((profile) => profile !== undefined);
       if (withDatabase.length > 0) {
-        return yield* withCookieCounts(definition, context, withDatabase);
+        // SCIENT-FORK:START — Scient Accounts: respect metadata-only discovery.
+        return yield* counted(withDatabase);
+        // SCIENT-FORK:END
       }
     }
 
@@ -455,11 +466,9 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
         Effect.map((database) => (database === undefined ? undefined : { directory, name: entry })),
       );
     });
-    return yield* withCookieCounts(
-      definition,
-      context,
-      found.filter((profile) => profile !== undefined),
-    );
+    // SCIENT-FORK:START — Scient Accounts: respect metadata-only discovery.
+    return yield* counted(found.filter((profile) => profile !== undefined));
+    // SCIENT-FORK:END
   }
 
   const declared = yield* fileSystem.readFileString(context.path.join(root, "Local State")).pipe(
@@ -472,7 +481,9 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
     ),
     Effect.orElseSucceed(() => [] as ReadonlyArray<BrowserImportSourceProfile>),
   );
-  if (declared.length > 0) return yield* withCookieCounts(definition, context, declared);
+  // SCIENT-FORK:START — Scient Accounts: respect metadata-only discovery.
+  if (declared.length > 0) return yield* counted(declared);
+  // SCIENT-FORK:END
 
   const entries = yield* fileSystem
     .readDirectory(root)
@@ -484,20 +495,23 @@ const listSourceProfilesInDirectory = Effect.fnUntraced(function* (
       ),
     ),
   );
-  return yield* withCookieCounts(
-    definition,
-    context,
-    found.filter((profile) => profile !== undefined),
-  );
+  // SCIENT-FORK:START — Scient Accounts: respect metadata-only discovery.
+  return yield* counted(found.filter((profile) => profile !== undefined));
+  // SCIENT-FORK:END
 });
 
 /** Keep alternate-root profile paths absolute so cookie reads and locks use the correct installation. */
 export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProfiles")(function* (
   definition: BrowserImportSourceDefinition,
   context: BrowserImportPathContext,
+  // SCIENT-FORK:START — Scient Accounts: metadata discovery must not read cookie databases.
+  includeCookieCounts = true,
+  // SCIENT-FORK:END
 ): Effect.fn.Return<ReadonlyArray<BrowserImportSourceProfile>, never, FileSystem.FileSystem> {
   if (definition.engine !== "firefox" || context.platform !== "linux") {
-    return yield* listSourceProfilesInDirectory(definition, context);
+    // SCIENT-FORK:START — Scient Accounts: respect metadata-only discovery.
+    return yield* listSourceProfilesInDirectory(definition, context, includeCookieCounts);
+    // SCIENT-FORK:END
   }
 
   const root = definition.userDataDirectory(context);
@@ -508,6 +522,9 @@ export const listSourceProfiles = Effect.fn("BrowserImportSources.listSourceProf
     const found = yield* listSourceProfilesInDirectory(
       { ...definition, userDataDirectory: () => directory },
       context,
+      // SCIENT-FORK:START — Scient Accounts: respect metadata-only discovery.
+      includeCookieCounts,
+      // SCIENT-FORK:END
     );
     for (const profile of found) {
       const absolute = context.path.resolve(directory, profile.directory);

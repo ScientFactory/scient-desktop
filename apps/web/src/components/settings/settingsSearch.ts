@@ -33,6 +33,9 @@ export type SettingsPath =
   // SCIENT-FORK:START — Scient Extensions
   | "/settings/extensions"
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: register the Accounts page.
+  | "/settings/accounts"
+  // SCIENT-FORK:END
   | "/settings/integrations"
   | "/settings/scheduled-tasks"
   | "/settings/scientific-computing"
@@ -100,6 +103,9 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/skills": "Skills",
   // SCIENT-FORK:START — Scient Extensions
   "/settings/extensions": "Extensions",
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: name the Accounts section.
+  "/settings/accounts": "Accounts",
   // SCIENT-FORK:END
   "/settings/scientific-computing": "Scientific Computing",
   "/settings/documents": "Documents",
@@ -890,6 +896,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Skills",
     to: "/settings/skills",
   },
+  // SCIENT-FORK:START — Scient Accounts: index accounts and password stores.
+  {
+    id: "accounts-agent-access",
+    title: "Accounts",
+    to: "/settings/accounts",
+    searchTerms: ["passwords", "sign-in", "API keys", "keychain", "1Password", "browser profiles"],
+  },
+  {
+    id: "accounts-password-stores",
+    title: "Password stores",
+    to: "/settings/accounts",
+    searchTerms: ["CSV", "keychain", "1Password"],
+  },
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Extensions
   {
     id: "extensions",
@@ -959,14 +979,18 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "browser-profiles",
     title: "Browser profiles",
-    to: "/settings/integrations",
-    targetId: "browser",
+    // SCIENT-FORK:START — Scient Accounts: browser profile search follows its owner.
+    to: "/settings/accounts",
+    targetId: "accounts-browser-profiles",
+    // SCIENT-FORK:END
   },
   {
     id: "browser-default-profile",
     title: "Default browser profile",
-    to: "/settings/integrations",
-    targetId: "browser-profiles",
+    // SCIENT-FORK:START — Scient Accounts: default profile search follows its owner.
+    to: "/settings/accounts",
+    targetId: "accounts-browser-profiles",
+    // SCIENT-FORK:END
   },
   {
     id: "browser-default-viewport",
@@ -1266,6 +1290,9 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/skills": null,
   // SCIENT-FORK:START — Scient Extensions
   "/settings/extensions": null,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: accounts choose their server environment.
+  "/settings/accounts": null,
   // SCIENT-FORK:END
   "/settings/integrations": null,
   "/settings/scheduled-tasks": null,

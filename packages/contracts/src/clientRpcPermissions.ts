@@ -14,6 +14,22 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  // SCIENT-FORK:START — Scient Accounts: recheck credential and settings authority at execution.
+  [WS_METHODS.accountsSave]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsTest]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsApprovalRespond]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsOnePasswordConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsOnePasswordDisconnect]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsImportPasswords]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsFillValues]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMatchSignIn]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsKeychainCandidates]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
   [WS_METHODS.documentsExportServerBrowserPdf]: AuthPreviewOperateScope,
   [WS_METHODS.documentsNavigateServerBrowser]: AuthPreviewOperateScope,
   [WS_METHODS.previewClose]: AuthPreviewOperateScope,

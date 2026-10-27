@@ -1,6 +1,24 @@
 {
   "packageOverrides": [
     {
+      "name": "@1password/sdk",
+      "version": "0.5.0",
+      "sourceUrl": "https://github.com/1Password/onepassword-sdk-js/blob/main/LICENSE",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2024 1Password"]
+      }
+    },
+    {
+      "name": "@1password/sdk-core",
+      "version": "0.5.0",
+      "sourceUrl": "https://github.com/1Password/onepassword-sdk-js/blob/main/LICENSE",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2024 1Password"]
+      }
+    },
+    {
       "name": "franc",
       "sourceUrl": "https://github.com/wooorm/franc",
       "generatedNotice": {

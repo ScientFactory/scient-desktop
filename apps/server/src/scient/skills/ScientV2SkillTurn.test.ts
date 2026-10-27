@@ -277,6 +277,9 @@ it.live.each(
           "sources:read",
           "sources:write",
           "threads:read",
+          // SCIENT-FORK:START — Scient Accounts: retain account grants during skill-scope changes.
+          "accounts",
+          // SCIENT-FORK:END
         ] as const;
         const expectedCapabilities = new Set([
           ...genericCapabilities,

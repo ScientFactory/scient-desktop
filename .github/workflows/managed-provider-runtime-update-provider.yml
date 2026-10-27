@@ -289,6 +289,8 @@ jobs:
             apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
+            apps/server/src/scient/accounts/AccountVault.ts \
+            apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
             apps/server/src/scient/threadSections \
             apps/server/src/sourceControl/sourceControlDefinitions.ts \
@@ -345,6 +347,8 @@ jobs:
             apps/server/src/testUtils \
             packages/effect-acp \
             ':(glob)apps/server/src/*.ts' \
+            apps/server/src/scient/accounts/AccountVault.ts \
+            apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
             apps/server/src/background \
             apps/server/src/git \
@@ -399,6 +403,8 @@ jobs:
             apps/server/scripts/qualifyScientAgentManagedRuntime.ts \
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
+            apps/server/src/scient/accounts/AccountVault.ts \
+            apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
             apps/server/src/provider \
             apps/server/src/scient/providerLifecycle \
@@ -481,6 +487,8 @@ jobs:
             apps/server/src/modelReasoning.ts \
             apps/server/src/scientServerSettings.ts \
             apps/server/src/serverSettings.ts \
+            apps/server/src/scient/accounts/AccountVault.ts \
+            apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/settingsDirectoryWatch.ts \
             apps/server/src/settingsSecrets.ts \
             apps/server/src/statFingerprint.ts \

@@ -103,6 +103,9 @@ describe("selectCliRuntimeExternalDependencies", () => {
     assert.deepStrictEqual(
       Object.keys(selectCliRuntimeExternalDependencies(serverPackageJson.dependencies)).sort(),
       [
+        // SCIENT-FORK:START — Scient Accounts: the 1Password SDK stays on disk.
+        "@1password/sdk",
+        // SCIENT-FORK:END
         "@cursor/sdk",
         "@ff-labs/fff-node",
         "@napi-rs/canvas",
