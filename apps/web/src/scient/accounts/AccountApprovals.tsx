@@ -16,6 +16,27 @@ import { useAccountCommand, useAccounts } from "./useAccounts";
 import { HandoffBrowser } from "./HandoffBrowser";
 import { handoffInstruction } from "./handoffInstruction";
 
+const revealed = new Set<string>();
+
+/** Scrolls a new hand-off above the composer once; after that the user scrolls freely. */
+function revealOnce(element: HTMLElement | null, handoffId: string) {
+  if (!element || revealed.has(handoffId)) return;
+  revealed.add(handoffId);
+  requestAnimationFrame(() => {
+    let scroller = element.parentElement;
+    while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY))
+      scroller = scroller.parentElement;
+    if (!scroller) return;
+    const composer = document.querySelector('[data-chat-composer-stack="true"]');
+    const limit = Math.min(
+      scroller.getBoundingClientRect().bottom,
+      composer ? composer.getBoundingClientRect().top : Number.POSITIVE_INFINITY,
+    );
+    const overflow = element.getBoundingClientRect().bottom + 12 - limit;
+    if (overflow > 0) scroller.scrollBy({ top: overflow, behavior: "smooth" });
+  });
+}
+
 export function AccountHandoffs({
   environmentId,
   handoffs,
@@ -32,6 +53,7 @@ export function AccountHandoffs({
       {handoffs.map((handoff) => (
         <div
           key={handoff.handoffId}
+          ref={(element) => revealOnce(element, handoff.handoffId)}
           className="mx-auto w-full max-w-2xl overflow-hidden rounded-xl border bg-card shadow-sm"
         >
           <div className="flex items-center gap-2 py-1.5 ps-3 pe-1.5 text-xs">

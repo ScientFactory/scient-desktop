@@ -57,7 +57,7 @@ export function HandoffBrowser({
           />
           {/* The page is a native layer over the app, so it can't be half-hidden by scrolling. */}
           {inView ? null : (
-            <div className="absolute inset-0 flex items-center justify-center bg-muted/40 text-xs text-muted-foreground">
+            <div className="absolute inset-0 flex items-start justify-center bg-muted/40 pt-8 text-xs text-muted-foreground">
               Scroll to bring the page into view
             </div>
           )}
