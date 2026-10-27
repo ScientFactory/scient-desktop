@@ -11,10 +11,12 @@ export function websiteSessionStatus(
   observed: Set<string>,
   now: number,
   sourceId?: string,
+  defaultProfileId: string = DEFAULT_BROWSER_PROFILE_ID,
 ): ReadonlyArray<AccountSummary> {
   return accounts.map((account) => {
     if (account.details.kind !== "website") return account;
-    const { sites, profileId = DEFAULT_BROWSER_PROFILE_ID } = account.details;
+    // Without a named profile, sign-ins and "Open site" use the user's default profile.
+    const { sites, profileId = defaultProfileId } = account.details;
     const hosts = sites.flatMap((site) => {
       try {
         return [new URL(site.startsWith("https://") ? site : `https://${site}`).hostname];

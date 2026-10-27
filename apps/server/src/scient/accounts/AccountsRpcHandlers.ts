@@ -28,6 +28,7 @@ export const makeAccountsRpcHandlers = ({
               observedSessions,
               now,
               input.browserSessionSourceId,
+              input.defaultProfileId,
             ),
           };
         }),

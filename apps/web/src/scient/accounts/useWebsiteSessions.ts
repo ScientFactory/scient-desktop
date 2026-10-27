@@ -6,6 +6,7 @@ import {
   type AccountsSnapshot,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import { useClientSettings } from "~/hooks/useSettings";
 import { useEnvironmentQuery } from "~/state/query";
 import { randomUUID } from "~/lib/utils";
 import { accountsState } from "./accountsState";
@@ -17,10 +18,13 @@ export function useWebsiteSessions(
   snapshot: AccountsSnapshot | null | undefined,
 ) {
   const registry = useContext(RegistryContext);
+  const defaultProfileId =
+    useClientSettings((settings) => settings.browserDefaultProfileId) ?? DEFAULT_BROWSER_PROFILE_ID;
   const [observation, setObservation] = useState<{
     environmentId: EnvironmentId;
     snapshot: AccountsSnapshot;
     sessions: AccountBrowserSessions;
+    defaultProfileId: string;
   } | null>(null);
   // oxlint-disable-next-line t3code/react-effect-budget -- Read native cookie metadata on page open, account changes, focus and explicit sign-out; no polling.
   useEffect(() => {
@@ -34,7 +38,7 @@ export function useWebsiteSessions(
         ...new Set(
           snapshot.accounts.flatMap((account) =>
             account.details.kind === "website"
-              ? [account.details.profileId ?? DEFAULT_BROWSER_PROFILE_ID]
+              ? [account.details.profileId ?? defaultProfileId]
               : [],
           ),
         ),
@@ -50,10 +54,10 @@ export function useWebsiteSessions(
         registry.refresh(
           accountsState.websiteSnapshot({
             environmentId,
-            input: { browserSessions: sessions, browserSessionSourceId },
+            input: { browserSessions: sessions, browserSessionSourceId, defaultProfileId },
           }),
         );
-        setObservation({ environmentId, snapshot, sessions });
+        setObservation({ environmentId, snapshot, sessions, defaultProfileId });
       }
     };
     void refresh();
@@ -64,16 +68,22 @@ export function useWebsiteSessions(
       window.removeEventListener("focus", refresh);
       window.removeEventListener("scient-accounts-session-changed", refresh);
     };
-  }, [environmentId, snapshot, registry]);
+  }, [environmentId, snapshot, registry, defaultProfileId]);
   const current =
-    observation?.environmentId === environmentId && observation.snapshot === snapshot
+    observation?.environmentId === environmentId &&
+    observation.snapshot === snapshot &&
+    observation.defaultProfileId === defaultProfileId
       ? observation
       : null;
   const query = useEnvironmentQuery(
     current
       ? accountsState.websiteSnapshot({
           environmentId: current.environmentId,
-          input: { browserSessions: current.sessions, browserSessionSourceId },
+          input: {
+            browserSessions: current.sessions,
+            browserSessionSourceId,
+            defaultProfileId: current.defaultProfileId,
+          },
         })
       : null,
   );
