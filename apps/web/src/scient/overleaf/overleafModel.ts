@@ -407,7 +407,11 @@ function warningLines(review: ScientOverleafReview): string[] {
     );
   }
   const older = review.warnings.filter((warning) => warning.kind === "restores-older-version");
-  if (older.length > 0) lines.push(`Sent older versions of ${fileCount(older.length)}.`);
+  // Said with the files: an older version replaces collaborators' newer text on Overleaf.
+  if (older.length === 1 && older[0]?.path)
+    lines.push(`Sent a version of ${older[0].path} that Overleaf had before.`);
+  else if (older.length > 0)
+    lines.push(`Sent versions of ${fileCount(older.length)} that Overleaf had before.`);
   for (const warning of review.warnings) {
     if (warning.kind === "unresolved-publication") {
       lines.push(
