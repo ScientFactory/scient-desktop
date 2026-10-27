@@ -286,9 +286,10 @@ describe("OverleafReviewPanel", () => {
     await page.getByRole("button", { name: "Read changes" }).click();
     const incoming = page.getByRole("region", { name: "To bring in" });
     await expect.element(incoming.getByText("refs.bib")).toBeVisible();
-    await expect
-      .element(page.getByRole("region", { name: "To send" }).getByText("figures/plot.pdf"))
-      .toBeVisible();
+    // A row leads with the file's name; its folder follows, quieter.
+    const toSend = page.getByRole("region", { name: "To send" });
+    await expect.element(toSend.getByText("plot.pdf", { exact: true })).toBeVisible();
+    await expect.element(toSend.getByText("figures", { exact: true })).toBeVisible();
     // New files go by default; the review says how many.
     await expect
       .element(page.getByRole("region", { name: "New files" }).getByText("1 will be sent"))

@@ -126,7 +126,21 @@ function ChangeList(props: {
                 <span className="w-16 shrink-0 text-xs text-muted-foreground">
                   {KIND_LABELS[change.kind]}
                 </span>
-                <span className="min-w-0 truncate">{changeLabel(change)}</span>
+                {change.kind === "renamed" ? (
+                  <span className="min-w-0 truncate">{changeLabel(change)}</span>
+                ) : (
+                  // The name leads: long folder paths shorten without hiding which file it is.
+                  <span className="flex min-w-0 items-baseline gap-1.5">
+                    <span className="shrink-0">
+                      {change.path.slice(change.path.lastIndexOf("/") + 1)}
+                    </span>
+                    {change.path.includes("/") ? (
+                      <span className="min-w-0 truncate text-xs text-muted-foreground">
+                        {change.path.slice(0, change.path.lastIndexOf("/"))}
+                      </span>
+                    ) : null}
+                  </span>
+                )}
               </button>
             </li>
           );
@@ -204,7 +218,13 @@ export function OverleafReviewPanel(props: {
       );
     }
   };
-  const resultView = last ? overleafResultView(last.result) : null;
+  // A read of the changes after that sync replaced its review: its result no longer describes
+  // what the tab shows, so only the current read is shown.
+  const resultView =
+    last &&
+    !(review !== null && "review" in last.result && last.result.review.reviewId !== review.reviewId)
+      ? overleafResultView(last.result)
+      : null;
   // The review shown is what a sync here applied, rather than one still to run.
   const synced = shownState?.applied ?? false;
   const sent = shownState?.sent ?? false;
