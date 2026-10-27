@@ -1,9 +1,13 @@
 import type { ProviderInstanceId } from "@t3tools/contracts";
-import { FolderOpenIcon, PlusIcon } from "lucide-react";
-import { useState } from "react";
+import { FolderOpenIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { useRef, useState } from "react";
 
 import { SettingsSearchTarget } from "../../components/settings/settingsLayout";
 import { searchableSetting } from "../../components/settings/settingsSearch";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { actOnProviderPlugin } from "./extensionsState";
+import { openAuthorizationPage } from "./openAuthorizationPage";
+import { Button } from "../../components/ui/button";
 import { NativeSelect } from "../../components/ui/select";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import {
@@ -31,12 +35,24 @@ import {
 } from "./extensionsView";
 import { InstallBundleDialog } from "./InstallBundleDialog";
 import { providerInventoryMessage } from "./providerInventory";
+import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 /** Rows a provider section shows before "Show all". */
 const PROVIDER_PREVIEW_ROWS = 6;
 
 function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) {
   const [expanded, setExpanded] = useState(false);
+  const { environmentId, canWrite } = useExtensionsEnvironment();
+  const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
+  const waitingForConnection = useRef(false);
+  useWindowFocusRefresh(() => {
+    if (!waitingForConnection.current) return;
+    waitingForConnection.current = false;
+    void act({
+      environmentId,
+      input: { instanceId: group.provider.instanceId, action: { type: "refresh-inventory" } },
+    });
+  });
   const rows = [
     ...group.plugins.map(({ plugin, cwd }) => (
       <ProviderPluginItem
@@ -61,18 +77,53 @@ function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) 
     <ExtensionsSection
       title={title}
       action={
-        rows.length > PROVIDER_PREVIEW_ROWS ? (
-          <SectionShowAllToggle
-            total={rows.length}
-            expanded={expanded}
-            onExpandedChange={setExpanded}
-          />
-        ) : undefined
+        <div className="flex items-center gap-2">
+          <SectionAction
+            icon={RefreshCwIcon}
+            disabled={!canWrite}
+            onClick={() =>
+              void act({
+                environmentId,
+                input: {
+                  instanceId: group.provider.instanceId,
+                  action: { type: "refresh-inventory" },
+                },
+              })
+            }
+          >
+            Refresh
+          </SectionAction>
+          {rows.length > PROVIDER_PREVIEW_ROWS ? (
+            <SectionShowAllToggle
+              total={rows.length}
+              expanded={expanded}
+              onExpandedChange={setExpanded}
+            />
+          ) : null}
+        </div>
       }
     >
+      {group.provider.driver === "claudeAgent" && group.provider.accountAppsAvailable !== true ? (
+        <MutedLine>claude.ai connectors need a Claude account sign-in.</MutedLine>
+      ) : null}
+      {rows.length === 0 ? <MutedLine>None yet.</MutedLine> : null}
       <ExtensionGrid label={title}>
         {expanded ? rows : rows.slice(0, PROVIDER_PREVIEW_ROWS)}
       </ExtensionGrid>
+      {group.provider.driver === "claudeAgent" && group.provider.accountAppsAvailable === true ? (
+        <div>
+          <Button
+            variant="ghost-muted"
+            size="sm"
+            onClick={() => {
+              waitingForConnection.current = true;
+              void openAuthorizationPage(async () => "https://claude.ai/settings/connectors");
+            }}
+          >
+            Add more on claude.ai
+          </Button>
+        </div>
+      ) : null}
     </ExtensionsSection>
   );
 }

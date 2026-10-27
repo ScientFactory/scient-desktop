@@ -3,6 +3,18 @@ import * as Schema from "effect/Schema";
 import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "../baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 import { ServerProviders } from "../server.ts";
+import { ExtensionIconDataUri } from "./extensionIcon.ts";
+import { ProviderStoreApp } from "./providerStore.ts";
+import { ExtensionAgentStores } from "./extensionAudience.ts";
+export {
+  ExtensionAudience,
+  ExtensionAgentStores,
+  supportsScientClaudePlugins,
+} from "./extensionAudience.ts";
+
+export * from "./providerStore.ts";
+export * from "./pluginContents.ts";
+
 import { GrantScope, VaultSecretRef } from "./secrets.ts";
 
 /**
@@ -86,12 +98,7 @@ export type ConnectorStatus = typeof ConnectorStatus.Type;
  * icons travel only as base64 `data:` URIs of PNG, JPEG, WebP or SVG, at most
  * 64 KiB of image (about 87,400 base64 characters).
  */
-export const ExtensionIconDataUri = Schema.String.check(
-  Schema.isMaxLength(90_000),
-  Schema.isPattern(/^data:image\/(?:png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/u),
-);
-export type ExtensionIconDataUri = typeof ExtensionIconDataUri.Type;
-export const isExtensionIconDataUri = Schema.is(ExtensionIconDataUri);
+export { ExtensionIconDataUri, isExtensionIconDataUri } from "./extensionIcon.ts";
 
 export const ConnectorSummary = Schema.Struct({
   connectorId: ConnectorId,
@@ -278,6 +285,16 @@ export const ConnectorToolSummary = Schema.Struct({
   description: Schema.optional(Schema.String),
   readOnly: Schema.optional(Schema.Boolean),
   destructive: Schema.optional(Schema.Boolean),
+  parameters: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+        type: Schema.optional(Schema.String.check(Schema.isMaxLength(100))),
+        required: Schema.Boolean,
+        description: Schema.optional(Schema.String.check(Schema.isMaxLength(2_000))),
+      }),
+    ).check(Schema.isMaxLength(50)),
+  ),
 });
 export type ConnectorToolSummary = typeof ConnectorToolSummary.Type;
 
@@ -296,6 +313,8 @@ export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 export const ExtensionCategory = Schema.Literals([
   "featured",
   "research",
+  "biology",
+  "math-cs",
   "data",
   "code",
   "writing",
@@ -332,6 +351,8 @@ export const DiscoverRemote = Schema.Struct({
 export type DiscoverRemote = typeof DiscoverRemote.Type;
 
 export const DiscoverEntry = Schema.Struct({
+  agentStores: Schema.optional(ExtensionAgentStores),
+  accountRequired: Schema.optional(Schema.Boolean),
   name: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
@@ -447,6 +468,21 @@ export type ExtensionDeliveryReceiptResult = typeof ExtensionDeliveryReceiptResu
 export const ProviderPluginActionInput = Schema.Struct({
   instanceId: ProviderInstanceId,
   action: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("refresh-inventory"),
+      connectionsOnly: Schema.optional(Schema.Boolean),
+    }),
+    Schema.Struct({
+      type: Schema.Literal("install"),
+      entryId: TrimmedNonEmptyString,
+      sourceInstanceId: Schema.optional(ProviderInstanceId),
+    }),
+    Schema.Struct({ type: Schema.Literal("add-official-store") }),
+    Schema.Struct({
+      type: Schema.Literal("set-enabled"),
+      pluginId: TrimmedNonEmptyString,
+      enabled: Schema.Boolean,
+    }),
     Schema.Struct({ type: Schema.Literal("uninstall"), pluginId: TrimmedNonEmptyString }),
     Schema.Struct({ type: Schema.Literal("mcp-sign-in"), serverName: TrimmedNonEmptyString }),
   ]),
@@ -456,6 +492,8 @@ export const ProviderPluginActionInput = Schema.Struct({
 export type ProviderPluginActionInput = typeof ProviderPluginActionInput.Type;
 
 export const ProviderPluginActionResult = Schema.Struct({
+  appsNeedingAuth: Schema.optional(Schema.Array(ProviderStoreApp)),
+  authPolicy: Schema.optional(Schema.String),
   /** Provider-owned sign-in page to open in the user's browser. */
   authorizationUrl: Schema.optional(TrimmedNonEmptyString),
   providers: ServerProviders,

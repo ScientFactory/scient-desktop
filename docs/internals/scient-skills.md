@@ -335,6 +335,15 @@ checkout directly. Both surfaces expose the same three states: **Agent
 access**, **$name only**, and **Deactivated**. Project files remain ordinary
 workspace files; the UI stores only preferences and never rewrites a skill.
 
+Every skill row in Settings opens the shared read-only skill card. External
+skills use the agent's local SKILL.md when available, with front matter removed
+and a 256 KB read limit. Bundled skills without a local document still show
+their name, description, and a short explanation. Scient Agent reports its
+effective native inventory through `skill list --json`; Scient-managed skills
+remain in the Scient groups. Enable switches remain separate controls. Project document reads resolve the
+server-owned project root and require the exact current release key; changed
+or deleted skills require a fresh inventory.
+
 The web and mobile composers request inventory for the current project or
 thread worktree. Active project-owned skills appear only in that context. A
 provider-native project skill remains outside Scient's global menus, while an
