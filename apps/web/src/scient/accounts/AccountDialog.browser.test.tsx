@@ -10,6 +10,33 @@ import {
 import { render } from "../../../test/render";
 import { AccountDialog } from "./AccountDialog";
 
+it("opens the add-account picker outside the Extensions page", async () => {
+  const snapshot: AccountsSnapshot = {
+    agentAccess: true,
+    accounts: [],
+    profiles: [],
+    stores: {
+      scient: { protection: "keychain" },
+      keychain: { available: false, platform: "linux" },
+      onePassword: { state: "not-connected" },
+    },
+    approvals: [],
+    recentActivity: [],
+    customModelKeys: [],
+  };
+  await using _screen = await render(
+    <AccountDialog
+      environmentId={EnvironmentId.make("synthetic")}
+      snapshot={snapshot}
+      account={null}
+      canWrite
+      onClose={() => undefined}
+    />,
+  );
+  // regression: extension icons once required the Extensions page and crashed this dialog.
+  await expect.element(page.getByText("Any website")).toBeVisible();
+});
+
 it("preserves a site separator while the user enters another allowed site", async () => {
   const account: AccountSummary = {
     accountId: AccountId.make("acc_synthetic01"),

@@ -574,20 +574,36 @@ export function AccountDialog({
                     .map((entry) => (
                       <DiscoveryListRow
                         key={entry.name}
-                        icon={<CatalogueIcon name={entry.name} site={entry.site} />}
+                        icon={
+                          <CatalogueIcon
+                            name={entry.name}
+                            site={entry.site}
+                            environmentId={environmentId}
+                          />
+                        }
                         title={entry.name}
                         description={KIND_LABELS[entry.kind]}
                         onClick={() => choose(entry)}
                       />
                     ))}
                   <DiscoveryListRow
-                    icon={<ExtensionIcon name={query.trim() || "Website"} />}
+                    icon={
+                      <ExtensionIcon
+                        name={query.trim() || "Website"}
+                        environmentId={environmentId}
+                      />
+                    }
                     title={query.trim() || "Any website"}
                     description={KIND_LABELS.website}
                     onClick={() => choose(null)}
                   />
                   <DiscoveryListRow
-                    icon={<ExtensionIcon name={query.trim() || "API key"} />}
+                    icon={
+                      <ExtensionIcon
+                        name={query.trim() || "API key"}
+                        environmentId={environmentId}
+                      />
+                    }
                     title={query.trim() || "Any API key"}
                     description={KIND_LABELS["api-key"]}
                     onClick={() => choose(null, "api-key")}
@@ -654,14 +670,16 @@ export function AccountDialog({
 function CatalogueIcon({
   name,
   site,
+  environmentId,
 }: {
   readonly name: string;
   readonly site?: string | undefined;
+  readonly environmentId: EnvironmentId;
 }) {
   const iconUrl = accountIconUrl(site ? [site] : [], name);
   return iconUrl ? (
     <AccountLogo src={iconUrl} className="size-10 rounded-[25%]" />
   ) : (
-    <ExtensionIcon name={name} />
+    <ExtensionIcon name={name} environmentId={environmentId} />
   );
 }
