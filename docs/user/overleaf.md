@@ -167,6 +167,7 @@ The chip next to **Saved** shows the link's state without going online:
 | **Overleaf problem** | The folder moved, its disk isn't connected, or it couldn't be read.           |
 | **Syncing…**         | A sync is running.                                                            |
 
+Click the **Sync with Overleaf** button beside the chip to sync in one click.
 Its menu has **Sync now** (**Cancel sync** while one runs), **See changes**, when
 the folder last synced, **Open in Overleaf** and **Overleaf settings…**.
 

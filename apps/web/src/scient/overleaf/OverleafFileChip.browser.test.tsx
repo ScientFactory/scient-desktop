@@ -157,7 +157,7 @@ describe("OverleafFileChip", () => {
     expect(screen.container.querySelector("[data-overleaf-chip]")).toBeNull();
   });
 
-  it("syncs and reports the result; the server saves the open editors, not this window", async () => {
+  it("syncs with one click in the header; the server saves every window's open editors", async () => {
     reset();
     editors.entries = [
       {
@@ -176,11 +176,7 @@ describe("OverleafFileChip", () => {
       },
     ];
     await using _screen = await render(chip());
-    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
-    await expect.element(page.getByRole("menuitem", { name: "Open in Overleaf" })).toBeVisible();
-    await expect.element(page.getByRole("menuitem", { name: "Overleaf settings…" })).toBeVisible();
-    await expect.element(page.getByText(/^Last synced/u)).toBeVisible();
-    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await page.getByRole("button", { name: "Sync with Overleaf", exact: true }).click();
 
     await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
     // One shared path: the server asks every window, this one included, to save.
@@ -317,6 +313,12 @@ describe("OverleafFileChip", () => {
   it("in another worktree, says the link belongs to the main copy and offers to sync it", async () => {
     reset({ linkedHere: false });
     await using _screen = await render(chip());
+    await expect
+      .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Sync with Overleaf", exact: true }))
+      .not.toBeInTheDocument();
     await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
     await expect.element(page.getByText("This link belongs to the main copy.")).toBeVisible();
     await page.getByRole("menuitem", { name: "Sync the main copy" }).click();
@@ -340,6 +342,9 @@ describe("OverleafFileChip", () => {
     await using _screen = await render(chip());
     await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
     await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await expect
+      .element(page.getByRole("button", { name: "Syncing with Overleaf…" }))
+      .toBeDisabled();
     await page.getByRole("button", { name: "Overleaf: Syncing…" }).click();
     await expect.element(page.getByRole("menuitem", { name: "Sync now" })).not.toBeInTheDocument();
     await page.getByRole("menuitem", { name: "Cancel sync" }).click();

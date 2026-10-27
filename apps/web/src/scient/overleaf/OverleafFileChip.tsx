@@ -16,6 +16,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "~/components/ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -85,6 +86,8 @@ export function OverleafFileChip(props: {
   const openReview = threadRef ? () => openOverleafReview(threadRef, reviewInput) : undefined;
   const seeChanges = threadRef ? () => seeOverleafChanges(threadRef, reviewInput) : undefined;
   const attention = view.state === "decision" || view.state === "problem";
+  const syncNow = () =>
+    void runOverleafSync({ environmentId, workspaceRoot: cwd, connection, openReview });
 
   return (
     <>
@@ -132,11 +135,7 @@ export function OverleafFileChip(props: {
               Cancel sync
             </MenuItem>
           ) : (
-            <MenuItem
-              onClick={() =>
-                void runOverleafSync({ environmentId, workspaceRoot: cwd, connection, openReview })
-              }
-            >
+            <MenuItem onClick={syncNow}>
               <RefreshCw aria-hidden className="size-4 text-muted-foreground" />
               {linkedElsewhere ? "Sync the main copy" : "Sync now"}
             </MenuItem>
@@ -173,6 +172,35 @@ export function OverleafFileChip(props: {
           </MenuItem>
         </MenuPopup>
       </Menu>
+      {connection.linkedHere ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                aria-label={
+                  view.state === "syncing" ? "Syncing with Overleaf…" : "Sync with Overleaf"
+                }
+                disabled={view.state === "syncing"}
+                onClick={syncNow}
+              />
+            }
+          >
+            <RefreshCw
+              aria-hidden
+              className={cn(
+                "scient-quiet-icon size-4",
+                view.state === "syncing" && "animate-pulse",
+              )}
+              strokeWidth={1.75}
+            />
+          </TooltipTrigger>
+          <TooltipPopup>
+            {view.state === "syncing" ? "Syncing…" : "Sync with Overleaf"}
+          </TooltipPopup>
+        </Tooltip>
+      ) : null}
       {undoing ? (
         <OverleafUndoDialog
           environmentId={environmentId}
