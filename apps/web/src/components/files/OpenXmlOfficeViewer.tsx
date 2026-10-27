@@ -1,11 +1,7 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { lazy, Suspense, useEffect, useState } from "react";
-import {
-  FileSurfaceLoading,
-  FileSurfaceNotice,
-  FILE_SURFACE_SUBHEADER_CLASS,
-} from "./fileSurfaceChrome";
+import { FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
 const WordDocument = lazy(() => import("./office/WordDocument"));
 const Spreadsheet = lazy(() => import("./office/Spreadsheet"));
@@ -108,14 +104,13 @@ export default function OfficeViewer(props: {
     props.kind === "docx" ? WordDocument : props.kind === "xlsx" ? Spreadsheet : Presentation;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {/* SCIENT-FORK:START — no details row; the page count stays announced for assistive tech. */}
       {details ? (
-        <div className={FILE_SURFACE_SUBHEADER_CLASS}>
-          <span className="text-xs text-muted-foreground" aria-live="polite">
-            {details}
-            {props.kind !== "xlsx" ? " · Fit to width" : ""}
-          </span>
-        </div>
+        <span className="sr-only" aria-live="polite">
+          {details}
+        </span>
       ) : null}
+      {/* SCIENT-FORK:END */}
       {prepared.truncated ? (
         <FileSurfaceNotice>
           Preview limited. Save it or open it in another app to read the full document.
