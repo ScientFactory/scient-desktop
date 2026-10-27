@@ -242,8 +242,15 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
         if (staged.has(name)) continue;
         staged.add(name);
         const manifest = installed.get(name);
+        // SCIENT-FORK: the stage's package-manager install auto-installs peers, so a
+        // peer of a staged external is present without being a listed root. zod must
+        // stay bundleable: @factory/droid-sdk requires its own bundled zod v3.
         queue.push(
-          ...Object.keys({ ...manifest?.dependencies, ...manifest?.optionalDependencies }),
+          ...Object.keys({
+            ...manifest?.dependencies,
+            ...manifest?.optionalDependencies,
+            ...manifest?.peerDependencies,
+          }),
         );
       }
 
