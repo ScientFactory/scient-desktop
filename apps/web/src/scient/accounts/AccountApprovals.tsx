@@ -58,7 +58,7 @@ export function AccountApprovals({
           <div className="flex flex-wrap gap-2">
             {(
               [
-                ["once", "Allow once"],
+                ["once", "Allow in this conversation"],
                 ["project", "Always in this project"],
                 ["always", "Always"],
                 ["deny", "Deny"],

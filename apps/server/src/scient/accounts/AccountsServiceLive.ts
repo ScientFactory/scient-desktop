@@ -37,6 +37,7 @@ import { TOTP, URI } from "otpauth";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
 import {
   AccountsService,
+  type AccountKeyConsumer,
   type AccountSessionScope,
   type AccountAuthorization,
 } from "./AccountsService.ts";
@@ -76,9 +77,20 @@ const safeDetail = (detail: string | undefined) => {
   try {
     return new URL(detail).origin;
   } catch {
-    return /^[A-Z]{3,7} [a-z0-9.-]+(?::\d+)?$/.test(detail) ? detail.slice(0, 200) : undefined;
+    return /^[A-Z]{3,7} [a-z0-9.-]+(?::\d+)?$/.test(detail) || pluginKeyDetail.test(detail)
+      ? detail.slice(0, 200)
+      : undefined;
   }
 };
+const pluginKeyDetail = /^plugin [\w@./:-]{1,100} [A-Za-z_]\w{0,63} on [\w.-]{1,24}$/;
+/** Plugin keys name the plugin, variable and agent; connectors name the site. */
+const consumerActivity = (consumer: AccountKeyConsumer) =>
+  consumer.kind === "connector"
+    ? { detail: consumer.origin }
+    : {
+        detail: `plugin ${consumer.pluginId} ${consumer.envName} on ${consumer.agent}`,
+        ...(consumer.projectId ? { projectId: consumer.projectId } : {}),
+      };
 
 export const layer = Layer.effect(
   AccountsService,
@@ -99,6 +111,13 @@ export const layer = Layer.effect(
       string,
       { until: number; values: Map<string, Redacted.Redacted<string>> }
     >();
+    const conversationGrants = new Set<string>();
+    const grantKey = (threadId: string, target: AccountTarget) =>
+      JSON.stringify([
+        threadId,
+        target.type,
+        target.type === "account" ? target.accountId : target.profileId,
+      ]);
     const pending = new Map<
       string,
       {
@@ -454,6 +473,9 @@ export const layer = Layer.effect(
             ? "needs-attention"
             : "ready",
         ...(warnings.length ? { statusMessage: warnings[0] } : {}),
+        ...(!input.secrets?.password && !input.secrets?.totp && existing?.summary.lastSignInOutcome
+          ? { lastSignInOutcome: existing.summary.lastSignInOutcome }
+          : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,
         updatedAt: timestamp,
         ...(existing?.summary.lastUsedAt ? { lastUsedAt: existing.summary.lastUsedAt } : {}),
@@ -726,6 +748,12 @@ export const layer = Layer.effect(
                 entry.approval.target,
                 applyApprovalDecision(controls, decision, entry.scope.projectId),
               );
+            if (
+              decision === "once" &&
+              controls &&
+              authorizationDecision(state.agentAccess, controls, entry.scope).decision !== "denied"
+            )
+              conversationGrants.add(grantKey(entry.scope.threadId, entry.approval.target));
             yield* Deferred.succeed(entry.answer, decision);
           }),
         ),
@@ -989,7 +1017,15 @@ export const layer = Layer.effect(
               Effect.gen(function* () {
                 const controls = targetControls(target);
                 if (!controls) return yield* missing();
-                const decision = authorizationDecision(state.agentAccess, controls, scope);
+                const baseDecision = authorizationDecision(state.agentAccess, controls, {
+                  ...scope,
+                  unattended: false,
+                });
+                const decision =
+                  baseDecision.decision === "ask" &&
+                  conversationGrants.has(grantKey(scope.threadId, target))
+                    ? { decision: "allowed" as const }
+                    : authorizationDecision(state.agentAccess, controls, scope);
                 const audit = {
                   target,
                   action,
@@ -1064,16 +1100,18 @@ export const layer = Layer.effect(
         locked(
           Effect.sync(() =>
             state.accounts.flatMap(({ summary }) =>
-              summary.details.kind === "api-key" && siteMatches(summary.details.sites, origin)
+              summary.details.kind === "api-key" &&
+              (origin === undefined || siteMatches(summary.details.sites, origin))
                 ? [{ ref: accountTokenRef(summary.accountId), name: summary.name }]
                 : [],
             ),
           ),
         ),
       ),
-      resolveBound: Effect.fn("AccountsService.resolveBound")((ref, { origin }) =>
+      resolveBound: Effect.fn("AccountsService.resolveBound")((ref, consumer) =>
         locked(
           Effect.gen(function* () {
+            const { origin } = consumer;
             const accountId = boundAccountId(ref);
             if (Option.isNone(accountId))
               return yield* failure("invalid-input", "The account reference is invalid.");
@@ -1082,14 +1120,15 @@ export const layer = Layer.effect(
             const { details, controls } = account.summary;
             if (
               details.kind !== "api-key" ||
-              !siteMatches(details.sites, origin) ||
-              agentAccessOff(state.agentAccess, controls.access)
+              (origin !== undefined && !siteMatches(details.sites, origin)) ||
+              agentAccessOff(state.agentAccess, controls.access) ||
+              (consumer.kind === "plugin-key" && !inScope(controls.scope, consumer.projectId))
             ) {
               yield* appendActivity({
                 target: { type: "account", accountId: accountId.value },
                 action: "request",
                 decision: "denied",
-                detail: origin,
+                ...consumerActivity(consumer),
               }).pipe(Effect.ignore);
               return yield* failure("denied", "The account is unavailable for this service.");
             }
@@ -1105,7 +1144,7 @@ export const layer = Layer.effect(
               ? service.recordUse({
                   target: { type: "account", accountId: accountId.value },
                   action: "request",
-                  detail: origin,
+                  ...consumerActivity(consumer),
                 })
               : Effect.void;
           }),
@@ -1124,7 +1163,11 @@ export const layer = Layer.effect(
                 yield* commit(
                   replaceAccount({
                     ...account,
-                    summary: { ...account.summary, lastUsedAt: yield* now },
+                    summary: {
+                      ...account.summary,
+                      lastUsedAt: yield* now,
+                      ...(entry.signInOutcome ? { lastSignInOutcome: entry.signInOutcome } : {}),
+                    },
                   }),
                 );
             }
