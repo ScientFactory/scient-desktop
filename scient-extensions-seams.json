@@ -29,7 +29,8 @@
     "scripts/generate-extension-brand-icons.mjs",
     "scripts/scient-extension-brands.json",
     "packages/contracts/src/scient/pluginContents.ts",
-    "apps/server/src/scient/extensions/brandIcons/NOTICE"
+    "apps/server/src/scient/extensions/brandIcons/NOTICE",
+    "apps/server/src/provider/Drivers/ScientClaudeSkillFiles.ts"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",

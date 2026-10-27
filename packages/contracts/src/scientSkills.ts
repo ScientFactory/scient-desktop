@@ -50,6 +50,7 @@ export const ScientSkillListInput = Schema.Struct({
 
 export const ScientSkillReadDocumentInput = Schema.Struct({
   releaseKey: TrimmedNonEmptyString,
+  projectId: Schema.optional(ProjectId),
 });
 
 export const ScientSkillDocument = Schema.Struct({
@@ -87,7 +88,10 @@ export const ProviderSkillReadDocumentInput = Schema.Struct({
   path: TrimmedNonEmptyString,
 });
 export type ProviderSkillReadDocumentInput = typeof ProviderSkillReadDocumentInput.Type;
-export const ProviderSkillDocument = Schema.Struct({ instructions: Schema.String });
+export const ProviderSkillDocument = Schema.Struct({
+  instructions: Schema.String,
+  unavailableReason: Schema.optional(Schema.String),
+});
 
 /**
  * Mutate one provider-owned skill through the provider's reviewed native API.

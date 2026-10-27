@@ -35,6 +35,28 @@ function provider(canSetEnabled = true): ServerProvider {
 }
 
 describe("provider skill management", () => {
+  it.effect("opens reported virtual skills from other agents with an explanation", () =>
+    Effect.gen(function* () {
+      const snapshot = {
+        ...provider(false),
+        driver: ProviderDriverKind.make("pi"),
+        skills: [{ name: "review", path: "pi:skill:review", enabled: true }],
+      };
+      const management = makeProviderSkillManagement(makeProviderRegistryMock([snapshot]));
+      {
+        const document = yield* management.readDocument({
+          instanceId,
+          name: "review",
+          path: "pi:skill:review",
+        });
+        expect(document.instructions).toBe("");
+        expect(document.unavailableReason).toBe(
+          "This agent doesn't provide the full text of this skill.",
+        );
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "reads only a reported local skill and rejects missing, escaping, and oversized documents",
     () =>

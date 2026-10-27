@@ -40,7 +40,7 @@ export function SkillSettingsRow(props: {
           {props.onOpen ? (
             <button
               type="button"
-              className="cursor-pointer rounded-sm text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="cursor-pointer rounded-sm text-left outline-none hover:underline focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-ring"
               onClick={props.onOpen}
             >
               {displaySkillName(skill.name)}

@@ -1,4 +1,9 @@
-import type { EnvironmentId, ScientSkillCatalogItem, ServerProvider } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  ScientSkillCatalogItem,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { useEnvironmentQuery } from "../../state/query";
 import { scientSkillDocument } from "./scientSkillsState";
 import { SkillCard } from "./SkillCard";
@@ -8,15 +13,20 @@ export function ManagedSkillCard({
   environmentId,
   skill,
   provider,
+  projectId,
   onClose,
 }: {
   readonly environmentId: EnvironmentId;
   readonly skill: ScientSkillCatalogItem;
+  readonly projectId?: ProjectId | undefined;
   readonly provider?: ServerProvider | undefined;
   readonly onClose: () => void;
 }) {
   const document = useEnvironmentQuery(
-    scientSkillDocument({ environmentId, input: { releaseKey: skill.releaseKey } }),
+    scientSkillDocument({
+      environmentId,
+      input: { releaseKey: skill.releaseKey, ...(projectId ? { projectId } : {}) },
+    }),
   );
   const trySkill = useTryComposerSkill(
     environmentId,

@@ -113,7 +113,10 @@ export const makeSkillRpcHandlers = ({
     [WS_METHODS.skillsReadDocument]: (input) =>
       observeRpcEffect(
         WS_METHODS.skillsReadDocument,
-        scientSkillManagement.readDocument(input.releaseKey),
+        Effect.gen(function* () {
+          const projectRoot = yield* resolveScientSkillProjectRoot(input);
+          return yield* scientSkillManagement.readDocument(input.releaseKey, projectRoot);
+        }),
         { "rpc.aggregate": "skills" },
       ),
     [WS_METHODS.skillsSetProjectPreference]: (input) =>

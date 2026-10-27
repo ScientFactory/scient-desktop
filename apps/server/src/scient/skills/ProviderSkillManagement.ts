@@ -14,7 +14,11 @@ import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 export interface ProviderSkillManagementShape {
   readonly readDocument: (
     input: ProviderSkillReadDocumentInput,
-  ) => Effect.Effect<{ readonly instructions: string }, ProviderSkillManagementError, Path.Path>;
+  ) => Effect.Effect<
+    { readonly instructions: string; readonly unavailableReason?: string },
+    ProviderSkillManagementError,
+    Path.Path
+  >;
   readonly setEnabled: (
     input: ProviderSkillSetEnabledInput,
   ) => Effect.Effect<ProviderSkillSetEnabledResult, ProviderSkillManagementError>;
@@ -129,11 +133,13 @@ export function makeProviderSkillManagement(
       });
     const path = yield* Path.Path;
     if (!path.isAbsolute(skill.path) || path.basename(skill.path).toLowerCase() !== "skill.md")
-      return yield* failure({
-        ...input,
-        reason: "unsupported_provider",
-        message: "This agent does not report a readable SKILL.md document.",
-      });
+      return {
+        instructions: "",
+        unavailableReason:
+          provider.driver === "claudeAgent"
+            ? "Bundled with Claude Code; its full text isn't available."
+            : "This agent doesn't provide the full text of this skill.",
+      };
     const text = yield* Effect.tryPromise({
       try: () => readContainedPluginText(path.dirname(skill.path), skill.path),
       catch: () =>

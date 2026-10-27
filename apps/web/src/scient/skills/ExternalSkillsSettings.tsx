@@ -289,13 +289,13 @@ export function ExternalSkillsSettings() {
                         title={
                           <button
                             type="button"
-                            className="cursor-pointer rounded-sm text-left outline-none focus-visible:outline focus-visible:outline-ring"
+                            className="cursor-pointer rounded-sm text-left outline-none focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-ring"
                             onClick={() =>
                               setSelected({
                                 instanceId: expandedGroup.provider.instanceId,
                                 skill,
                                 displayName,
-                                description: description ?? "",
+                                description: skill.description ?? description ?? "",
                               })
                             }
                           >
@@ -365,8 +365,8 @@ function ExternalSkillCard({
       displayName={displayName}
       description={description}
       environmentId={environmentId}
-      instructions={document.data?.instructions ?? null}
-      error={document.error}
+      instructions={document.data?.unavailableReason ? null : (document.data?.instructions ?? null)}
+      error={document.data?.unavailableReason ?? document.error}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
