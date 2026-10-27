@@ -91,6 +91,10 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
           providerSettingsForm: { placeholder: "scient-agent", clearWhenEmpty: "omit" },
         }),
       ),
+      useClaudePlugins: Schema.Boolean.pipe(
+        Schema.withDecodingDefault(Effect.succeed(true)),
+        Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      ),
       customModels: Schema.Array(CustomModelSetting).pipe(
         Schema.withDecodingDefault(Effect.succeed([])),
         Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -155,6 +159,7 @@ export const OmpSettingsPatch = Schema.Struct({
   profile: Schema.optionalKey(TrimmedString),
 });
 export const ScientAgentSettingsPatch = Schema.Struct({
+  useClaudePlugins: Schema.optionalKey(Schema.Boolean),
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(TrimmedString),
 });

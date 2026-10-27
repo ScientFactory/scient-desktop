@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ConnectorId, VaultSecretRef, defaultAccountControls } from "@t3tools/contracts";
+import { ConnectorId, ProjectId, VaultSecretRef, defaultAccountControls } from "@t3tools/contracts";
 import { Effect, Stream } from "effect";
 import { accountTokenRef } from "./AccountBoundRef.ts";
 import { makeHarness, secretEquals, syntheticValue, website } from "./Accounts.testkit.ts";
 
 const consumer = {
+  kind: "connector" as const,
   connectorId: ConnectorId.make("con_synthetic01"),
   origin: "https://api.example.com",
 };
@@ -100,5 +101,61 @@ describe("Accounts connector bindings", () => {
       yield* service.setAgentAccess(false);
       expect((yield* service.resolveBound(ref, consumer).pipe(Effect.flip)).reason).toBe("denied");
     }),
+  );
+
+  it.effect(
+    "offers every key to a plugin without a site and still enforces Off and project scope",
+    () =>
+      Effect.gen(function* () {
+        const { service } = yield* makeHarness();
+        const input = { ...apiKey(), details: { ...apiKey().details, sites: [] } };
+        const { accountId } = yield* service.save({
+          ...input,
+          controls: { ...defaultAccountControls("api-key"), access: "ask" },
+        });
+        const ref = accountTokenRef(accountId);
+        expect(yield* service.listBindable({})).toEqual([{ ref, name: input.name }]);
+        expect(yield* service.listBindable({ origin: consumer.origin })).toEqual([]);
+        const project = ProjectId.make("project-synthetic");
+        const plugin = {
+          kind: "plugin-key" as const,
+          agent: "claudeAgent",
+          pluginId: "terraform@synthetic",
+          envName: "TFE_TOKEN",
+          projectId: project,
+        };
+        expect(
+          secretEquals(yield* service.resolveBound(ref, plugin), input.secrets.token.value),
+        ).toBe(true);
+        expect((yield* service.snapshot).approvals).toEqual([]);
+        const activity = yield* service.changes.pipe(
+          Stream.filter((snapshot) => snapshot.recentActivity.length > 0),
+          Stream.take(1),
+          Stream.runCollect,
+        );
+        expect(activity[0]?.recentActivity.at(-1)).toMatchObject({
+          target: { type: "account", accountId },
+          decision: "allowed",
+          detail: "plugin terraform@synthetic TFE_TOKEN on claudeAgent",
+          projectId: project,
+        });
+        yield* service.setControls({
+          target: { type: "account", accountId },
+          access: "ask",
+          scope: { type: "projects", projectIds: [ProjectId.make("project-other")] },
+        });
+        expect((yield* service.resolveBound(ref, plugin).pipe(Effect.flip)).reason).toBe("denied");
+        expect(
+          (yield* service
+            .resolveBound(ref, { ...plugin, projectId: ProjectId.make("project-x") })
+            .pipe(Effect.flip)).reason,
+        ).toBe("denied");
+        yield* service.setControls({
+          target: { type: "account", accountId },
+          access: "off",
+          scope: { type: "all-projects" },
+        });
+        expect((yield* service.resolveBound(ref, plugin).pipe(Effect.flip)).reason).toBe("denied");
+      }),
   );
 });

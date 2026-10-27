@@ -62,6 +62,10 @@ it.effect("handles sequential login steps and bounds retries without returning f
     let steps = 0;
     let stuck = false;
     let fills = 0;
+    let rejected = false;
+    let pending = 0;
+    let settles = 0;
+    const cleared: unknown[] = [];
     const broker = PreviewAutomationBroker.of({
       connect: () => Effect.succeed(Stream.empty),
       focusHost: () => Effect.void,
@@ -71,28 +75,37 @@ it.effect("handles sequential login steps and bounds retries without returning f
           expect(request.scope.threadId).toBe(scope.threadId);
           let result: unknown = {};
           if (request.operation === "status" || request.operation === "open") result = status;
-          if (request.operation === "accountType") fills++;
+          if (
+            request.operation === "accountWaitForLoad" &&
+            (request.input as { settleMs?: number }).settleMs
+          )
+            settles++;
+          if (request.operation === "accountType") {
+            if ((request.input as { text: string }).text === "") cleared.push(request.input);
+            else fills++;
+          }
           if (request.operation === "evaluate") {
             const step = stuck ? 0 : steps;
             steps++;
             result = {
               origin: "https://login.example.com",
               username: step === 0 ? "#user" : null,
-              password: step === 1 ? "#password" : null,
+              password:
+                rejected || step === 1 || (step === 2 && pending-- > 0) ? "#password" : null,
               otp: step === 2 ? "#otp" : null,
               submit: "button",
               challenge: null,
-              signedIn: step === 3,
+              signedIn: step === 3 && !rejected,
             };
           }
           return result as A;
         }),
     });
     const fake = fakeAccounts({ profiles: [defaultBrowserProfileRecord(profileId)] });
-    const run = () =>
+    const run = (otp = "123456") =>
       signIn(scope, account, {
         password: Redacted.make("synthetic-password"),
-        totp: Redacted.make("123456"),
+        totp: Redacted.make(otp),
       }).pipe(
         Effect.provideService(AccountsService, fake.service),
         Effect.provideService(PreviewAutomationBroker, broker),
@@ -110,6 +123,55 @@ it.effect("handles sequential login steps and bounds retries without returning f
     stuck = true;
     steps = 0;
     expect((yield* run()).outcome).toBe("failed");
-    expect(steps).toBe(6);
+    expect(steps).toBe(7);
+    expect(cleared).toHaveLength(1);
+    cleared.length = 0;
+    stuck = false;
+    rejected = true;
+    steps = 0;
+    const before = fills;
+    expect((yield* run()).outcome).toBe("password-rejected");
+    expect(fills - before).toBe(2);
+    // One inspection, then five more while the page settles.
+    expect(steps).toBe(7);
+    expect(settles).toBe(5);
+    expect(cleared).toEqual([
+      {
+        origin: "https://login.example.com",
+        selector: "#user",
+        text: "",
+        clear: true,
+        expected: "fixture-user",
+      },
+      {
+        origin: "https://login.example.com",
+        selector: "#password",
+        text: "",
+        clear: true,
+        expected: "synthetic-password",
+      },
+    ]);
+    rejected = false;
+    steps = 0;
+    cleared.length = 0;
+    expect((yield* run("invalid:totp")).outcome).toBe("failed");
+    expect(cleared).toEqual([
+      {
+        origin: "https://login.example.com",
+        selector: "#password",
+        text: "",
+        clear: true,
+        expected: "synthetic-password",
+      },
+    ]);
+    // A script-submitted password whose answer arrives after "load" is not a rejection.
+    steps = 0;
+    settles = 0;
+    pending = 1;
+    const beforeSlow = fills;
+    expect((yield* run()).outcome).toBe("signed-in");
+    expect(settles).toBe(1);
+    // The password was typed once, not resubmitted while the answer was pending.
+    expect(fills - beforeSlow).toBe(2);
   }),
 );

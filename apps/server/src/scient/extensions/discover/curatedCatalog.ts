@@ -16,6 +16,8 @@ export const CURATED_NAME_PREFIX = "scient.curated/";
 export const CATALOG_CATEGORY_ORDER: ReadonlyArray<ExtensionCategory> = [
   "featured",
   "research",
+  "biology",
+  "math-cs",
   "data",
   "code",
   "writing",
@@ -30,6 +32,14 @@ export const CATALOG_SECTIONS: Readonly<
   research: {
     title: "Research",
     description: "Literature, citations, models and biomedical knowledge.",
+  },
+  biology: {
+    title: "Biology & genetics",
+    description: "Genes, proteins, drug targets, preprints and clinical studies.",
+  },
+  "math-cs": {
+    title: "Math & computer science",
+    description: "Symbolic computation, research papers and integer sequences.",
   },
   data: { title: "Data", description: "Datasets, notebooks and databases." },
   code: { title: "Code", description: "Repositories, documentation and developer tools." },
@@ -58,10 +68,25 @@ export interface CuratedServer {
   readonly websiteUrl: string;
   /** Bundled logo: a `data:` URI that passes `isExtensionIconDataUri`. */
   readonly icon: string;
+  readonly agentStores?: DiscoverEntry["agentStores"];
+  readonly accountRequired?: boolean;
 }
 
 export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   // ── Research ────────────────────────────────────────────────────────────
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (7 tools).
+    id: "pubmed",
+    accountRequired: false,
+    displayName: "PubMed",
+    tagline: "Biomedical papers, abstracts and full text",
+    description:
+      "Search biomedical literature, read abstracts and find related papers. Anthropic's public connector also retrieves full text from PubMed Central when available; article reuse follows the publisher's licence.",
+    url: "https://pubmed.mcp.claude.com/mcp",
+    categories: ["research", "biology"],
+    websiteUrl: "https://pubmed.ncbi.nlm.nih.gov",
+    icon: CURATED_ICONS["pubmed"],
+  },
   {
     // open: 200 "Asta Scientific Corpus Tool" 1.9.4
     id: "semantic-scholar",
@@ -125,18 +150,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     icon: CURATED_ICONS["scite"],
   },
   {
-    // open: 200 Open Targets Platform 2026.7.1
-    id: "open-targets",
-    displayName: "Open Targets",
-    tagline: "Target–disease evidence for drug discovery",
-    description:
-      "Query the Open Targets Platform for targets, diseases, drugs and the evidence linking them. Agents can search entities and run GraphQL queries against the platform.",
-    url: "https://mcp.platform.opentargets.org/mcp",
-    categories: ["research"],
-    websiteUrl: "https://platform.opentargets.org",
-    icon: CURATED_ICONS["open-targets"],
-  },
-  {
     // sign-in: 401 OAuth
     id: "synapse",
     displayName: "Synapse",
@@ -172,6 +185,126 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["data", "research"],
     websiteUrl: "https://www.kaggle.com",
     icon: CURATED_ICONS["kaggle"],
+  },
+
+  // ── Biology & genetics ──────────────────────────────────────────────────
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (7 tools).
+    id: "biorxiv",
+    displayName: "bioRxiv & medRxiv",
+    tagline: "Biology and medicine before peer review",
+    description:
+      "Find preprints by topic, date or funder and follow their published versions. Anthropic's public connector searches both bioRxiv and medRxiv; these manuscripts have not yet been peer reviewed.",
+    url: "https://hcls.mcp.claude.com/biorxiv/mcp",
+    categories: ["biology"],
+    websiteUrl: "https://www.biorxiv.org",
+    icon: CURATED_ICONS["biorxiv"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (6 tools).
+    id: "clinical-trials",
+    displayName: "ClinicalTrials.gov",
+    tagline: "Find studies, eligibility rules and trial results",
+    description:
+      "Search registered clinical studies by condition, sponsor or eligibility and read their endpoints and results. Uses Anthropic's public connector to ClinicalTrials.gov; no account needed.",
+    url: "https://hcls.mcp.claude.com/clinical_trials/mcp",
+    categories: ["biology"],
+    websiteUrl: "https://clinicaltrials.gov",
+    icon: CURATED_ICONS["clinical-trials"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (6 tools).
+    id: "chembl",
+    displayName: "ChEMBL",
+    tagline: "Compounds, drug targets and measured activity",
+    description:
+      "Find bioactive compounds, protein targets and experimental activity measurements in EMBL-EBI's ChEMBL database. Anthropic's public connector also looks up drug mechanisms and molecular properties.",
+    url: "https://hcls.mcp.claude.com/chembl/mcp",
+    categories: ["biology"],
+    websiteUrl: "https://www.ebi.ac.uk/chembl",
+    icon: CURATED_ICONS["chembl"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (7 tools); exact registry remote.
+    id: "ensembl-community",
+    displayName: "Ensembl (community)",
+    tagline: "Genes, sequences, variants and related species",
+    description:
+      "Look up genes, retrieve DNA or protein sequences, predict variant consequences and find related genes across species. Community server maintained and hosted by Casey Hand, using the Ensembl REST API; no account needed.",
+    url: "https://ensembl.caseyjhand.com/mcp",
+    registry: { name: "io.github.cyanheads/ensembl-mcp-server", version: "0.6.2" },
+    categories: ["biology"],
+    websiteUrl: "https://github.com/cyanheads/ensembl-mcp-server",
+    icon: CURATED_ICONS["ensembl-community"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (6 tools); exact registry remote.
+    id: "uniprot-community",
+    displayName: "UniProt (community)",
+    tagline: "Protein functions, sequences and database IDs",
+    description:
+      "Search UniProtKB for proteins, read curated records, retrieve sequences and translate identifiers between biological databases. Community server maintained and hosted by Casey Hand, using UniProt's public API; no account needed.",
+    url: "https://uniprot.caseyjhand.com/mcp",
+    registry: { name: "io.github.cyanheads/uniprot-mcp-server", version: "0.3.0" },
+    categories: ["biology"],
+    websiteUrl: "https://github.com/cyanheads/uniprot-mcp-server",
+    icon: CURATED_ICONS["uniprot-community"],
+  },
+  {
+    // open: 200 Open Targets Platform 2026.7.1
+    id: "open-targets",
+    displayName: "Open Targets",
+    tagline: "Target–disease evidence for drug discovery",
+    description:
+      "Query the Open Targets Platform for targets, diseases, drugs and the evidence linking them. Agents can search entities and run GraphQL queries against the platform.",
+    url: "https://mcp.platform.opentargets.org/mcp",
+    categories: ["biology"],
+    websiteUrl: "https://platform.opentargets.org",
+    icon: CURATED_ICONS["open-targets"],
+  },
+
+  // ── Math & computer science ─────────────────────────────────────────────
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (3 tools); exact registry remote.
+    id: "wolfram",
+    accountRequired: false,
+    displayName: "Wolfram",
+    tagline: "Compute integrals, solve equations and explore data",
+    description:
+      "Compute symbolic and numerical answers, evaluate Wolfram Language and query curated data through Wolfram Research's official server. Free without an account for limited personal, small-scale use; requests are stateless. Wolfram's terms restrict bulk extraction and AI training; other uses may require separate licensing.",
+    url: "https://agenttools.wolfram.com/mcp",
+    registry: { name: "com.wolfram/mcp", version: "1.0.1" },
+    categories: ["math-cs"],
+    websiteUrl: "https://www.wolfram.com/ai/mcp/cloud/",
+    icon: CURATED_ICONS["wolfram"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (4 tools); exact registry remote.
+    id: "arxiv-community",
+    accountRequired: false,
+    displayName: "arXiv (community)",
+    tagline: "Find and read mathematics and computer science papers",
+    description:
+      "Search arXiv preprints by topic, author or category, retrieve paper metadata and read available full text. Community server maintained and hosted by Casey Hand; no account needed. Preprints may not be peer reviewed, and reuse follows each paper's licence.",
+    url: "https://arxiv.caseyjhand.com/mcp",
+    registry: { name: "io.github.cyanheads/arxiv-mcp-server", version: "1.8.0" },
+    categories: ["math-cs", "research"],
+    websiteUrl: "https://github.com/cyanheads/arxiv-mcp-server",
+    icon: CURATED_ICONS["arxiv-community"],
+  },
+  {
+    // Verified 2026-10-26: no auth, initialize + tools/list (6 tools); exact registry remote.
+    id: "oeis-community",
+    accountRequired: false,
+    displayName: "OEIS (community)",
+    tagline: "Identify integer sequences and find formulas and programs",
+    description:
+      "Identify sequences from their terms and explore formulas, programs, extended terms and related entries in the On-Line Encyclopedia of Integer Sequences. Community server maintained and hosted by Casey Hand; uncached lookups share one request every 10 seconds. OEIS data is CC BY-SA 4.0: credit OEIS with a link and share adaptations under the same licence.",
+    url: "https://oeis.caseyjhand.com/mcp",
+    registry: { name: "io.github.cyanheads/oeis-mcp-server", version: "0.1.3" },
+    categories: ["math-cs"],
+    websiteUrl: "https://github.com/cyanheads/oeis-mcp-server",
+    icon: CURATED_ICONS["oeis-community"],
   },
 
   // ── Data ────────────────────────────────────────────────────────────────
@@ -243,6 +376,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "github",
+    agentStores: { codex: "github" },
     displayName: "GitHub",
     tagline: "Repositories, issues and pull requests",
     description:
@@ -290,19 +424,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["code"],
     websiteUrl: "https://context7.com",
     icon: CURATED_ICONS["context7"],
-  },
-  {
-    // sign-in: 401 Bearer
-    id: "stack-overflow",
-    displayName: "Stack Overflow",
-    tagline: "Questions and answers from Stack Overflow",
-    description:
-      "Search Stack Overflow questions and answers from your agent. Answers keep their attribution and links.",
-    url: "https://mcp.stackoverflow.com",
-    registry: { name: "com.stackoverflow.mcp/mcp", version: "1.1.3" },
-    categories: ["code"],
-    websiteUrl: "https://stackoverflow.com",
-    icon: CURATED_ICONS["stack-overflow"],
   },
   {
     // sign-in: 401 OAuth
@@ -361,6 +482,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // sign-in: 401 OAuth
     id: "notion",
+    agentStores: { codex: "notion" },
     displayName: "Notion",
     tagline: "Pages, databases and lab notes",
     description:
@@ -395,35 +517,12 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     websiteUrl: "https://coda.io",
     icon: CURATED_ICONS["coda"],
   },
-  {
-    // sign-in: 401 OAuth
-    id: "box",
-    displayName: "Box",
-    tagline: "Search and read files in Box",
-    description:
-      "Search your Box content and read documents, including AI-assisted answers over files. Access follows your Box permissions.",
-    url: "https://mcp.box.com",
-    categories: ["writing"],
-    websiteUrl: "https://www.box.com",
-    icon: CURATED_ICONS["box"],
-  },
-  {
-    // sign-in: 401 OAuth
-    id: "dropbox",
-    displayName: "Dropbox",
-    tagline: "Search and read files in Dropbox",
-    description:
-      "Find and read files stored in your Dropbox. Access follows the account you authorize.",
-    url: "https://mcp.dropbox.com/mcp",
-    categories: ["writing"],
-    websiteUrl: "https://www.dropbox.com",
-    icon: CURATED_ICONS["dropbox"],
-  },
 
   // ── Communication ───────────────────────────────────────────────────────
   {
     // sign-in: 401 OAuth
     id: "linear",
+    agentStores: { codex: "linear" },
     displayName: "Linear",
     tagline: "Issues, projects and cycles",
     description:
@@ -433,30 +532,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     categories: ["featured", "communication"],
     websiteUrl: "https://linear.app",
     icon: CURATED_ICONS["linear"],
-  },
-  {
-    // sign-in: 401 OAuth
-    id: "slack",
-    displayName: "Slack",
-    tagline: "Search and post in your workspace",
-    description:
-      "Search Slack messages and channels, read threads and send messages. Access follows the workspace you authorize.",
-    url: "https://mcp.slack.com/mcp",
-    categories: ["communication"],
-    websiteUrl: "https://slack.com",
-    icon: CURATED_ICONS["slack"],
-  },
-  {
-    // sign-in: 401 OAuth
-    id: "asana",
-    displayName: "Asana",
-    tagline: "Tasks, projects and goals",
-    description:
-      "Search, create and update Asana tasks and projects. Access follows your Asana workspace permissions.",
-    url: "https://mcp.asana.com/v2/mcp",
-    categories: ["communication"],
-    websiteUrl: "https://asana.com",
-    icon: CURATED_ICONS["asana"],
   },
   {
     // sign-in: 401 OAuth
@@ -537,19 +612,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   },
   {
     // sign-in: 401 OAuth
-    id: "figma",
-    displayName: "Figma",
-    tagline: "Design files, components and variables",
-    description:
-      "Read Figma design files, components and variables so agents can build from real designs. Access follows your Figma account.",
-    url: "https://mcp.figma.com/mcp",
-    registry: { name: "com.figma.mcp/mcp", version: "1.0.3" },
-    categories: ["design"],
-    websiteUrl: "https://www.figma.com",
-    icon: CURATED_ICONS["figma"],
-  },
-  {
-    // sign-in: 401 OAuth
     id: "canva",
     displayName: "Canva",
     tagline: "Create and edit Canva designs",
@@ -599,18 +661,6 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
     websiteUrl: "https://www.mermaidchart.com",
     icon: CURATED_ICONS["mermaid-chart"],
   },
-  {
-    // sign-in: 401 OAuth
-    id: "gamma",
-    displayName: "Gamma",
-    tagline: "Presentations and documents from prompts",
-    description:
-      "Generate presentations, documents and web pages in Gamma from an outline. Access follows your Gamma account.",
-    url: "https://mcp.gamma.app/mcp",
-    categories: ["design"],
-    websiteUrl: "https://gamma.app",
-    icon: CURATED_ICONS["gamma"],
-  },
 ];
 
 /** A URL compared as a connector address: parsed, without a trailing path slash. */
@@ -638,6 +688,8 @@ export const curatedDiscoverEntry = (
   name: server.registry?.name ?? `${CURATED_NAME_PREFIX}${server.id}`,
   version: server.registry?.version ?? CATALOG_VERIFIED_ON,
   title: server.displayName,
+  ...(server.agentStores ? { agentStores: server.agentStores } : {}),
+  ...(server.accountRequired !== undefined ? { accountRequired: server.accountRequired } : {}),
   description: server.description,
   tagline: server.tagline,
   categories: [...server.categories],

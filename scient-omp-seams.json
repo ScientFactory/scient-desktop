@@ -316,6 +316,21 @@
       "purpose": "Keep Oh My Pi in automatic text-generation provider fallback while implicit Scient Agent remains the last resort."
     },
     {
+      "path": "apps/server/src/scient/extensions/ProviderPluginCommand.ts",
+      "anchor": "runScientAgentPluginCommand",
+      "purpose": "Keep native plugin one-shots under the shared executable lease, runtime identity gate, and version-gated Claude plugin source policy."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/brandIcons/brandIcons.json",
+      "anchor": "\"42crunch-api-security-testing\"",
+      "purpose": "Extensions-owned bundled brand icons; the OMP signal matches only inside their base64 image data. Nothing OMP mounts here."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/discover/curatedIcons.json",
+      "anchor": "\"airtable\"",
+      "purpose": "Extensions-owned curated catalog icons; the OMP signal matches only inside their base64 image data. Nothing OMP mounts here."
+    },
+    {
       "path": "apps/web/src/scient/accounts/accountIcons.json",
       "anchor": "\"github.com\"",
       "purpose": "Accounts-owned bundled logos; the OMP signal matches only inside their base64 image data. Nothing OMP mounts here."

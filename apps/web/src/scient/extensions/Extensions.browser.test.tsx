@@ -7,11 +7,13 @@ import {
   type DiscoverPage as DiscoverPageResult,
   ExtensionsError,
   type ExtensionsInventory,
+  type ExtensionPluginContents,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProvider,
+  type ProviderStoreEntry,
 } from "@t3tools/contracts";
 import type * as AtomReact from "@effect/atom-react";
 import type * as TanStackRouter from "@tanstack/react-router";
@@ -28,6 +30,11 @@ import {
   type Screen,
 } from "../../../test/render";
 import { page, userEvent } from "vite-plus/test/browser";
+
+vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
+vi.mock("../../components/ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <div>{text}</div>,
+}));
 
 const state = vi.hoisted(() => ({
   primaryEnvironmentId: "local" as string | null,
@@ -46,6 +53,8 @@ const state = vi.hoisted(() => ({
   discoverOutcomes: {} as Record<string, "pending" | { readonly error: string }>,
   /** `extensions.discover.entry` answers by name; catalog entries answer too. */
   entries: {} as Record<string, DiscoverEntry>,
+  storeEntry: null as ProviderStoreEntry | null,
+  contentApps: undefined as ExtensionPluginContents["apps"] | undefined,
   queryTargets: [] as unknown[],
   projects: [] as Array<{
     environmentId: string;
@@ -181,6 +190,32 @@ vi.mock("../../state/query", async () => {
       useStateVersion();
       if (atom === null) return { data: null, error: null, failure: null, isPending: false };
       state.queryTargets.push(atom);
+      if (atom.kind === "contents") {
+        const plugin = state.inventory?.plugins.find(
+          (item) => item.pluginId === atom.input?.pluginId,
+        );
+        return {
+          data: {
+            apps: state.contentApps ?? state.storeEntry?.apps ?? [],
+            mcpServers: [],
+            skills: (plugin?.components.filter((item) => item.type === "skill") ?? []).map(
+              (skill) => ({
+                id: skill.name,
+                name: skill.name,
+                description: skill.detail ?? "",
+                enabled: true,
+                documentAvailable: true,
+              }),
+            ),
+            commands: [],
+            agents: [],
+          },
+          error: null,
+        };
+      }
+      if (atom.kind === "skill-document")
+        return { data: { instructions: "Skill instructions" }, error: null };
+      if (atom.kind === "store-entry") return { data: state.storeEntry, error: null };
       if (atom.kind === "inventory") return { data: state.inventory, error: null };
       if (atom.kind === "catalog") return { data: state.catalog, error: null };
       if (atom.kind === "entry") {
@@ -223,7 +258,23 @@ vi.mock("./extensionsState", async () => {
     state.registry?.set(changes(environmentId), AsyncResult.success({ revision }));
   };
   const idle = { busy: null, error: null, blockedSignInUrl: null, signInStartedAt: null };
+  const storeAtom = Atom.family((key: string) => Object.assign(Atom.make(null), JSON.parse(key)));
   return {
+    extensionsBrandIcon: () => null,
+    extensionsPluginContents: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "contents", environmentId, input })),
+    extensionsSkillDocument: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "skill-document", environmentId, input })),
     extensionsChanges: ({ environmentId }: { environmentId: string }) => changes(environmentId),
     extensionsInventory: ({ environmentId }: { environmentId: string }) => ({
       kind: "inventory",
@@ -247,6 +298,20 @@ vi.mock("./extensionsState", async () => {
       environmentId: string;
       input: Record<string, unknown>;
     }) => ({ kind: "discover", environmentId, input }),
+    extensionsProviderStorePage: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "store", environmentId, input })),
+    extensionsProviderStoreEntry: ({
+      environmentId,
+      input,
+    }: {
+      environmentId: string;
+      input: Record<string, unknown>;
+    }) => storeAtom(JSON.stringify({ kind: "store-entry", environmentId, input })),
     // Real atoms: each test renders into its own registry, so nothing leaks between tests.
     extensionItemOperation: Atom.family((_key: string) => Atom.make(idle).pipe(Atom.keepAlive)),
     extensionItemOperationKey: (environmentId: string, item: string) =>
@@ -259,11 +324,12 @@ vi.mock("./extensionsState", async () => {
     installScientPlugin: "install",
     removeScientPlugin: "pluginRemove",
     setScientPluginEnabled: "pluginEnabled",
-    actOnProviderPlugin: "providerAct",
+    actOnProviderPlugin: { name: "providerAct", permissionAtom: () => Atom.make(true) },
   };
 });
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (command: keyof typeof state.commands) => state.commands[command],
+  useAtomCommand: (command: keyof typeof state.commands | { name: keyof typeof state.commands }) =>
+    state.commands[typeof command === "string" ? command : command.name],
 }));
 vi.mock("../../localApi", () => ({
   ensureLocalApi: () => ({
@@ -407,6 +473,7 @@ import {
   ProviderPluginDetailPage,
   ServerDetailPage,
 } from "./ExtensionDetailPages";
+import { ProviderStoreDetailPage } from "./ProviderStorePages";
 import { InstalledPage } from "./InstalledPage";
 
 const codex = ProviderInstanceId.make("codex");
@@ -593,6 +660,8 @@ function setup() {
   state.projectsKnown = true;
   state.registry = AtomRegistry.make();
   state.queryTargets = [];
+  state.storeEntry = null;
+  state.contentApps = undefined;
   state.hash = "";
   state.navigate.mockReset();
   for (const command of Object.values(state.commands)) command.mockReset();
@@ -796,7 +865,7 @@ describe("Discover", () => {
     );
   });
 
-  it("draws a letter tile for an icon that is not an allowed inline image", async () => {
+  it("draws a neutral tile for an icon that is not an allowed inline image", async () => {
     await using fixture = setup();
     const [popular] = catalog.sections;
     state.catalog = {
@@ -819,7 +888,7 @@ describe("Discover", () => {
     };
     await fixture.render(<DiscoverPage />);
     expect(fixture.row("Odd").querySelector("img")).toBeNull();
-    expect(fixture.row("Odd").querySelector("[data-extension-icon]")).toBeNull();
+    expect(fixture.row("Odd").querySelector('[data-extension-icon="glyph"]')).not.toBeNull();
     expect(fixture.row("Fine").querySelector('[data-extension-icon="image"] img')).not.toBeNull();
   });
 
@@ -1257,9 +1326,8 @@ describe("Installed", () => {
     const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
     state.providersByEnvironment = { local: [raw] };
     await fixture.render(<InstalledPage />);
-    await vi.waitFor(() =>
-      expect(fixture.section("From your agents").textContent).toContain("No agent plugins"),
-    );
+    // Codex keeps its own section, even empty, so its store stays one click away.
+    await vi.waitFor(() => expect(fixture.section("From Codex")).not.toBeNull());
     const before = state.refreshInventory.mock.calls.length;
     state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
     state.inventory = inventory({ revision: 99 });
@@ -1352,7 +1420,7 @@ describe("Installed", () => {
     const fromCodex = fixture.section("From Codex");
     expect(fixture.rowNames(fromCodex)).toHaveLength(6);
     const toggle = buttonIn(fromCodex, "Show all 8")!;
-    expect(toggle.parentElement?.querySelector("h2")?.textContent).toBe("From Codex");
+    expect(toggle.closest("section")?.querySelector("h2")?.textContent).toBe("From Codex");
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     await userEvent.click(toggle);
     expect(fixture.rowNames(fromCodex)).toHaveLength(8);
@@ -1488,17 +1556,17 @@ describe("Detail pages", () => {
     await fixture.render(<PluginDetailPage pluginId="scient.sources" />);
     expect(fixture.headerButtons()).toEqual([]);
     await fixture.render(<PluginDetailPage pluginId="lab-kit" />);
-    expect(fixture.headerButtons()).toEqual(["Turn off Lab kit", "Uninstall"]);
+    expect(fixture.headerButtons()).toEqual(["Turn off Lab kit", "Remove"]);
 
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    expect(fixture.headerButtons()).toEqual(["Uninstall"]);
+    expect(fixture.headerButtons()).toEqual(["Remove"]);
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
     );
     expect(fixture.headerButtons()).toEqual([]);
-    expect(fixture.header().textContent).toContain("Managed by Codex");
+    expect(fixture.header().textContent).toContain("Remove this plugin in Codex");
   });
 
   it("shows the connection with its sign-in, menu and On/Off switch", async () => {
@@ -1523,7 +1591,7 @@ describe("Detail pages", () => {
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     expect(fixture.section("Connection").textContent).toContain("Signed in");
     expect(buttonIn(fixture.section("Connection"), "Sign in")).toBeNull();
-    expect(buttonIn(fixture.section("Connection"), "Reconnect")).not.toBeNull();
+    expect(buttonIn(fixture.section("Connection"), "Reconnect")).toBeNull();
     const toggle = buttonIn(fixture.section("Connection"), "Turn on Linear")!;
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     await userEvent.click(toggle);
@@ -1785,8 +1853,12 @@ describe("Detail pages", () => {
   });
 
   const OPENCODE_REASON = "Only when Scient starts the OpenCode server";
-  const withLimitedOpenCode = () =>
-    inventory({
+  const withLimitedOpenCode = () => {
+    state.providersByEnvironment.local = [
+      ...(state.providersByEnvironment.local ?? []),
+      provider(ProviderInstanceId.make("opencode"), "opencode", {}),
+    ];
+    return inventory({
       providerSupport: [
         ...inventory().providerSupport,
         {
@@ -1798,8 +1870,9 @@ describe("Detail pages", () => {
         },
       ],
     });
+  };
   const agentsCard = () =>
-    document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents"]');
+    document.querySelector<HTMLElement>('[role="dialog"][aria-label="Agents"][data-open]');
   // A closed tooltip stays mounted until its exit transition ends, which fake
   // timers never finish; only an open popup counts as showing the reason.
   const reasonTooltip = () =>
@@ -1813,9 +1886,9 @@ describe("Detail pages", () => {
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     // Agents with limits count; Pi can't use connectors at all.
-    expect(fixture.aboutValue("Works with")).toBe("3 agents");
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
-    expect(trigger.textContent).toBe("3 agents");
+    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
+    expect(trigger.textContent).toBe("Works with all your agents");
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(fixture.section("About").querySelector("[data-support]")).toBeNull();
 
@@ -1852,7 +1925,7 @@ describe("Detail pages", () => {
     // A touch screen has no pointer resting anywhere: park the test's mouse
     // where no card or tooltip will open under it.
     await userEvent.hover(fixture.container.querySelector("h1")!);
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
     // A real tap: touch pointer events and a click with `detail: 1` (a click
     // with `detail: 0` reads as a keyboard press).
     const tap = async (target: HTMLElement) => {
@@ -1900,7 +1973,7 @@ describe("Detail pages", () => {
     await using fixture = setup();
     state.inventory = withLimitedOpenCode();
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    const trigger = buttonIn(fixture.section("About"), "Works with: 3 agents")!;
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
     for (let step = 0; step < 60 && document.activeElement !== trigger; step += 1) {
       await userEvent.tab();
     }
@@ -1918,7 +1991,7 @@ describe("Detail pages", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it("shows a plain count when none of the agents can use the connector", async () => {
+  it("explains unsupported agents in the works-with popover", async () => {
     await using fixture = setup();
     state.inventory = inventory({
       providerSupport: inventory().providerSupport.map((entry) => ({
@@ -1927,11 +2000,18 @@ describe("Detail pages", () => {
       })),
     });
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(fixture.aboutValue("Works with")).toBe("None of your agents");
-    expect(buttonIn(fixture.section("About"), "Works with: None of your agents")).toBeNull();
+    expect(fixture.aboutValue("Works with")).toBe("Works with all your agents");
+    const trigger = buttonIn(fixture.section("About"), "Works with: Works with all your agents")!;
+    await userEvent.click(trigger);
+    await expect.element(page.getByRole("dialog", { name: "Agents" })).toBeVisible();
+    expect(
+      [...agentsCard()!.querySelectorAll("[data-support]")].every(
+        (tile) => tile.getAttribute("data-support") === "unsupported",
+      ),
+    ).toBe(true);
   });
 
-  it("lists tools only after See tools, grouped by kind", async () => {
+  it("lists tools only after See tools and retains the result", async () => {
     await using fixture = setup();
     state.commands.test.mockResolvedValueOnce(
       toolResult(LINEAR, [
@@ -1949,19 +2029,11 @@ describe("Detail pages", () => {
       input: { connectorId: LINEAR },
     });
     const tools = fixture.section("Tools");
-    expect(
-      ["Write", "Read", "Other"].map((label) => groupTrigger(tools, label)?.textContent),
-    ).toEqual(["Write2", "Read1", "Other1"]);
-    await userEvent.click(groupTrigger(tools, "Read")!);
-    expect(tools.querySelector('[aria-label="Read"]')?.textContent).toBe("list_issuesList issues");
-    await userEvent.click(groupTrigger(tools, "Write")!);
-    expect(
-      [...tools.querySelectorAll('[aria-label="Write"] li')].map((item) => item.textContent),
-    ).toEqual(["delete_issue", "update_issue"]);
+    expect(groupTrigger(tools, "List issues")).not.toBeNull();
 
     // The result stays for this connector without testing again.
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
     expect(state.commands.test).toHaveBeenCalledOnce();
   });
 
@@ -1994,10 +2066,10 @@ describe("Detail pages", () => {
     );
     await fixture.render(<ConnectorDetailPage connectorId="con_linear0001" />);
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
 
     await fixture.render(<ConnectorDetailPage connectorId="con_notes00001" />);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(buttonIn(fixture.section("Tools"), "See tools")).not.toBeNull();
 
     // An answer for Linear that lands after moving to Notes is ignored.
@@ -2009,7 +2081,7 @@ describe("Detail pages", () => {
     await act(async () =>
       late.resolve(toolResult(LINEAR, [{ name: "late_tool", readOnly: true }])),
     );
-    expect(fixture.section("Tools").textContent).not.toContain("Read");
+    expect(fixture.section("Tools").textContent).not.toContain("Late tool");
     expect(buttonIn(fixture.section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
@@ -2026,20 +2098,20 @@ describe("Detail pages", () => {
     );
     await linearAt(0);
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
 
     // Another client signed in again, to the same issuer and scopes: only the
     // revision says so.
     await linearAt(1);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(buttonIn(fixture.section("Tools"), "See tools")).not.toBeNull();
 
     // connected → needs sign-in → connected never brings the old tools back.
     await userEvent.click(buttonIn(fixture.section("Tools"), "See tools")!);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).not.toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).not.toBeNull();
     await linearAt(2, { status: "needs-auth" });
     await linearAt(3);
-    expect(groupTrigger(fixture.section("Tools"), "Read")).toBeNull();
+    expect(groupTrigger(fixture.section("Tools"), "List issues")).toBeNull();
     expect(state.commands.test).toHaveBeenCalledTimes(2);
 
     // An answer that lands after the sign-in changed is dropped.
@@ -2050,11 +2122,11 @@ describe("Detail pages", () => {
     await act(async () =>
       late.resolve(toolResult(LINEAR, [{ name: "late_tool", readOnly: true }])),
     );
-    expect(fixture.section("Tools").textContent).not.toContain("Read");
+    expect(fixture.section("Tools").textContent).not.toContain("Late tool");
     expect(buttonIn(fixture.section("Tools"), "See tools")?.disabled).toBe(false);
   });
 
-  it("lists a plugin's parts under Includes and links its skills to the Skills page", async () => {
+  it("opens a plugin skill with its scoped document while retaining other contributed parts", async () => {
     await using fixture = setup();
     state.inventory = inventory({
       plugins: [
@@ -2069,9 +2141,16 @@ describe("Detail pages", () => {
     });
     await fixture.render(<PluginDetailPage pluginId="sources" />);
     const includes = fixture.section("Includes");
-    expect(groupTrigger(includes, "Skills")?.textContent).toBe("Skills1");
-    await userEvent.click(groupTrigger(includes, "Skills")!);
-    expect(linkIn(includes, "find-papers")?.getAttribute("href")).toBe("/settings/skills");
+    await userEvent.click(buttonIn(fixture.section("Skills 1"), "Find Papers")!);
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    expect(state.queryTargets).toContainEqual(
+      expect.objectContaining({
+        kind: "skill-document",
+        environmentId: "local",
+        input: { pluginId: "sources", skillId: "find-papers" },
+      }),
+    );
+    await userEvent.keyboard("{Escape}");
     await userEvent.click(groupTrigger(includes, "Tools")!);
     expect(includes.querySelector('[aria-label="Tools"]')?.textContent).toBe(
       "sources:readsources_search",
@@ -2114,7 +2193,7 @@ describe("Detail pages", () => {
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={workspace} />
     );
     await fixture.render(page("/work/a"));
-    await userEvent.click(buttonIn(fixture.header(), "Uninstall")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: {
@@ -2123,11 +2202,11 @@ describe("Detail pages", () => {
         cwd: "/work/a",
       },
     });
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(true);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(true);
     await fixture.render(page("/work/b"));
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
     await fixture.render(page(undefined));
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
 
     await act(async () => pending.resolve(extensionsError("Codex refused.")));
     await fixture.render(page("/work/a"));
@@ -2145,7 +2224,7 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    await userEvent.click(buttonIn(fixture.header(), "Uninstall")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { instanceId: codex, action: { type: "uninstall", pluginId: "plugin-1" } },
@@ -2153,4 +2232,107 @@ describe("Detail pages", () => {
     expect(fixture.container.querySelector('[role="alert"]')?.textContent).toBe("Codex refused.");
     expect(fixture.aboutValue("Managed by")).toBe("Codex");
   });
+});
+
+describe("Codex store connection", () => {
+  it("shows connection actions from the owner's verified installation and refreshed app state", async () => {
+    await using fixture = setup();
+    state.storeEntry = {
+      id: "sample",
+      name: "sample",
+      displayName: "Sample",
+      description: "Search documents",
+      marketplace: "remote",
+      kind: "codex",
+      installed: false,
+      includes: [],
+      apps: [],
+      authPolicy: "ON_INSTALL",
+    };
+    state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    state.storeEntry = {
+      ...state.storeEntry,
+      installed: true,
+      apps: [
+        {
+          name: "Sample",
+          connected: false,
+          enabled: true,
+          installUrl: "https://chatgpt.com/apps/sample/app",
+        },
+      ],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    await expect.element(page.getByRole("button", { name: "Added", exact: true })).toBeDisabled();
+    await expect
+      .element(page.getByRole("button", { name: "Connect Sample", exact: true }))
+      .toBeVisible();
+    state.storeEntry = {
+      ...state.storeEntry,
+      apps: [{ name: "Sample", connected: true, enabled: true }],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(fixture.section("Apps 1").textContent).toContain("Connected");
+    state.storeEntry = {
+      ...state.storeEntry,
+      apps: [{ name: "Sample", connected: true, enabled: false }],
+    };
+    await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+    expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
+    expect(fixture.section("Apps 1").textContent).toContain("Disabled");
+  });
+});
+
+it("groups app tools by read/write and opens their descriptions without installing", async () => {
+  await using fixture = setup();
+  state.storeEntry = {
+    id: "sample",
+    name: "sample",
+    displayName: "Sample",
+    description: "Search documents",
+    marketplace: "remote",
+    kind: "codex",
+    installed: false,
+    includes: [],
+    apps: [],
+  };
+  state.contentApps = [
+    {
+      name: "Sample",
+      connected: false,
+      enabled: true,
+      toolSummaries: [
+        {
+          name: "find",
+          title: "Find pages",
+          description: "Find a page",
+          isReadOnly: true,
+          isEnabled: true,
+        },
+        {
+          name: "create",
+          title: "Create page",
+          description: "Create a new page",
+          isReadOnly: false,
+          isEnabled: true,
+        },
+      ],
+    },
+  ];
+  await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+  await userEvent.click(buttonIn(fixture.section("Apps 1"), "View Sample app")!);
+  await expect
+    .element(page.getByText("The Sample app contains 2 tools (1 write, 1 read)"))
+    .toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Write 1", exact: true }));
+  await expect.element(page.getByRole("button", { name: /Create page/ })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Find pages/ })).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: /Create page/ }));
+  await expect.element(page.getByRole("heading", { name: "Create page Tool" })).toBeVisible();
+  expect(state.commands.providerAct).not.toHaveBeenCalled();
 });

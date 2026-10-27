@@ -4,12 +4,12 @@ import {
   type ConnectorStatus,
   type ConnectorSummary,
   type ConnectorTestResult,
-  type ConnectorToolSummary,
   type DiscoverCatalog,
   type DiscoverEntry,
   ExtensionCategory,
+  supportsScientClaudePlugins,
+  type ExtensionAudience,
   type ExtensionDeliverySkipReason,
-  type ProjectIconColor,
   type ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProvider,
@@ -30,7 +30,6 @@ import {
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
 import { normalizeSearchText } from "../../lib/utils";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
-import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 
 /** Shown after a row's name; healthy entries show nothing. */
 const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
@@ -75,7 +74,7 @@ export function connectorStatusText(connector: Pick<ConnectorSummary, "status" |
 }
 
 export interface ConnectorActions {
-  /** `reconnect` repeats sign-in for a connected OAuth connector. */
+  /** The primary action appears only when a grant is needed. */
   readonly signIn: "sign-in" | "reconnect" | null;
   readonly canTest: boolean;
 }
@@ -86,7 +85,7 @@ export interface ConnectorActions {
  */
 export function connectorActions(connector: Pick<ConnectorSummary, "status" | "auth">) {
   const actions: Readonly<Record<ConnectorStatus, ConnectorActions>> = {
-    connected: { signIn: connector.auth.type === "oauth" ? "reconnect" : null, canTest: true },
+    connected: { signIn: null, canTest: true },
     "needs-auth": { signIn: "sign-in", canTest: false },
     "needs-credential": { signIn: null, canTest: false },
   };
@@ -134,21 +133,6 @@ export function entrySourceLabel(entry: DiscoverEntry): string {
   return isCatalogOnlyEntry(entry) || entry.categories.length > 0
     ? "Scient catalog"
     : "MCP Registry";
-}
-
-export interface ToolGroups {
-  readonly read: ReadonlyArray<ConnectorToolSummary>;
-  readonly write: ReadonlyArray<ConnectorToolSummary>;
-  /** Tools whose server gave no read-only or destructive hint. */
-  readonly other: ReadonlyArray<ConnectorToolSummary>;
-}
-
-/** Read: read-only. Write: not read-only, or destructive. Other: no hint at all. */
-export function groupTools(tools: ReadonlyArray<ConnectorToolSummary>): ToolGroups {
-  const write = tools.filter((tool) => tool.destructive === true || tool.readOnly === false);
-  const read = tools.filter((tool) => tool.readOnly === true && tool.destructive !== true);
-  const other = tools.filter((tool) => tool.readOnly === undefined && tool.destructive !== true);
-  return { read, write, other };
 }
 
 /** `example.com` from `https://www.example.com/path`; null for anything unparsable. */
@@ -229,14 +213,9 @@ export function matchesQuery(query: string, texts: ReadonlyArray<string | undefi
   return words.every((word) => haystack.includes(word));
 }
 
-/** A stable tint per name, from the project icon palette. */
-export function iconTint(name: string): ProjectIconColor {
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return PROJECT_ICON_COLORS[Math.abs(hash) % PROJECT_ICON_COLORS.length]!.value;
-}
-
 function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {
+  if (provider.driver === "scient" && (!provider.displayName || provider.displayName === "Scient"))
+    return "Scient Agent";
   if (provider.displayName) return provider.displayName;
   return (
     AVAILABLE_PROVIDER_OPTIONS.find((option) => option.value === provider.driver)?.label ??
@@ -296,7 +275,6 @@ export function collectProviderExtensionGroups(
 ): ReadonlyArray<ProviderExtensionGroup> {
   const groups: ProviderExtensionGroup[] = [];
   for (const provider of providers) {
-    if (worksWith !== null && provider.instanceId !== worksWith) continue;
     const plugins: ProviderPluginEntry[] = (provider.plugins ?? []).map((plugin) => ({
       plugin,
       cwd: undefined,
@@ -309,9 +287,32 @@ export function collectProviderExtensionGroups(
         plugins.push({ plugin, cwd: snapshot.cwd });
       }
     }
-    const mcpServers = provider.mcpServers ?? [];
-    if (plugins.length === 0 && mcpServers.length === 0) continue;
-    groups.push({ provider, label: providerLabel(provider), plugins, mcpServers });
+    const selected = providers.find((candidate) => candidate.instanceId === worksWith);
+    const visiblePlugins = selected
+      ? plugins.filter(({ plugin }) =>
+          audienceReaches(providerExtensionAudience(provider, plugin), selected),
+        )
+      : plugins;
+    const mcpServers = (provider.mcpServers ?? []).filter(
+      (server) =>
+        !selected || audienceReaches(providerExtensionAudience(provider, server), selected),
+    );
+    if (
+      selected &&
+      provider.instanceId !== selected.instanceId &&
+      visiblePlugins.length === 0 &&
+      mcpServers.length === 0
+    )
+      continue;
+    if (
+      visiblePlugins.length === 0 &&
+      mcpServers.length === 0 &&
+      provider.driver !== "claudeAgent" &&
+      provider.driver !== "codex" &&
+      provider.driver !== "scient"
+    )
+      continue;
+    groups.push({ provider, label: providerLabel(provider), plugins: visiblePlugins, mcpServers });
   }
   return groups;
 }
@@ -359,4 +360,128 @@ export function callbackOriginOf(httpBaseUrl: string | null): string | null {
   } catch {
     return null;
   }
+}
+
+export function providerExtensionAudience(
+  provider: ServerProvider,
+  entry: ServerProviderPlugin | ServerProviderMcpServer,
+): ExtensionAudience {
+  const shared =
+    provider.driver === "claudeAgent"
+      ? "id" in entry ||
+        Boolean(entry.pluginId) ||
+        entry.scope === "plugin" ||
+        entry.name.startsWith("plugin:")
+      : provider.driver === "scient" &&
+        ("id" in entry
+          ? Boolean(entry.marketplace)
+          : Boolean(entry.pluginId?.includes("@") && !entry.pluginId.startsWith("npm:")));
+  if (shared) return { layer: "shared", ownerInstanceId: provider.instanceId };
+  return {
+    layer: "agent",
+    driver: provider.driver,
+    instanceId: provider.instanceId,
+    label:
+      provider.driver === "codex"
+        ? "Codex"
+        : provider.driver === "claudeAgent"
+          ? "Claude"
+          : providerLabel(provider),
+    reason:
+      provider.driver === "codex" && "source" in entry && entry.source === "remote"
+        ? "Uses Codex's own ChatGPT account"
+        : provider.driver === "claudeAgent" && "scope" in entry && entry.scope === "claudeai"
+          ? "Uses Claude's own Claude account"
+          : "Managed by this agent",
+  };
+}
+
+export function audienceReaches(audience: ExtensionAudience, provider: ServerProvider): boolean {
+  switch (audience.layer) {
+    case "scient":
+      return true;
+    case "shared":
+      return (
+        provider.driver === "claudeAgent" ||
+        provider.instanceId === audience.ownerInstanceId ||
+        (provider.driver === "scient" &&
+          supportsScientClaudePlugins(provider.version) &&
+          provider.usesClaudePlugins === true)
+      );
+    case "agent":
+      return provider.instanceId === audience.instanceId;
+  }
+}
+
+export function audienceLabel(audience: ExtensionAudience): string {
+  switch (audience.layer) {
+    case "scient":
+      return "Works with all your agents";
+    case "shared":
+      return "Works with Claude and Scient Agent";
+    case "agent":
+      return `${audience.label} only`;
+  }
+}
+
+export function audienceSupport(
+  audience: ExtensionAudience,
+  providers: ReadonlyArray<ServerProvider>,
+  connectorSupport: ReadonlyArray<ConnectorProviderSupport>,
+): ReadonlyArray<ConnectorProviderSupport> {
+  return providers.map((provider) => {
+    const supported = audienceReaches(audience, provider);
+    const connector = connectorSupport.find(
+      (entry) => entry.providerInstanceId === provider.instanceId,
+    );
+    if (audience.layer === "scient" && connector) return connector;
+    return {
+      providerInstanceId: provider.instanceId,
+      driver: provider.driver,
+      displayName: providerLabel(provider),
+      status: supported ? "supported" : "unsupported",
+      ...(!supported
+        ? {
+            reason:
+              audience.layer === "agent" ? audience.reason : "Uses Claude Code's plugin format",
+          }
+        : {}),
+    };
+  });
+}
+
+/**
+ * Agents shown in the works-with card. An agent-specific label ("Codex only") already names who can
+ * use the item, so other agents are left out; Scient connectors keep every agent, with the reason
+ * an agent can't use it.
+ */
+export function worksWithCardAgents(
+  audience: ExtensionAudience,
+  support: ReadonlyArray<ConnectorProviderSupport>,
+): ReadonlyArray<ConnectorProviderSupport> {
+  return audience.layer === "scient"
+    ? support
+    : support.filter((entry) => entry.status !== "unsupported");
+}
+
+export function preferCuratedStoreEntries<T extends { readonly name: string }>(
+  entries: ReadonlyArray<T>,
+  curated: ReadonlyArray<DiscoverEntry>,
+): ReadonlyArray<T> {
+  const aliases = new Set(
+    curated.flatMap((entry) => (entry.agentStores?.codex ? [entry.agentStores.codex] : [])),
+  );
+  return entries.filter((entry) => !aliases.has(entry.name));
+}
+
+export function providerServerDisplayName(
+  server: Pick<ServerProviderMcpServer, "name" | "scope">,
+): string {
+  return server.scope === "claudeai" ? server.name.replace(/^claude\.ai\s+/i, "") : server.name;
+}
+
+export function entryNeedsToken(entry: DiscoverEntry | null): boolean {
+  return (
+    entry?.remotes.some((remote) => remote.url === "https://api.githubcopilot.com/mcp/") === true
+  );
 }

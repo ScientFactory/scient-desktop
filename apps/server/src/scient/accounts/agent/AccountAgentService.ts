@@ -161,8 +161,14 @@ export const accountAgentOperations = {
         const account = yield* getAccount(scope, accountId);
         const values = yield* accounts.resolveSecrets(accountId, ["password", "totp"]);
         return yield* signIn(scope, account, values, tabId);
-      }),
-      (result) => result.outcome !== "failed",
+      }).pipe(
+        Effect.orElseSucceed(() => ({
+          outcome: "failed" as const,
+          message: "The browser sign-in could not be completed.",
+        })),
+      ),
+      (result) => result.outcome === "signed-in",
+      (result) => result.outcome,
     );
   }),
   scient_account_request: Effect.fn("AccountsAgent.request")(function* (

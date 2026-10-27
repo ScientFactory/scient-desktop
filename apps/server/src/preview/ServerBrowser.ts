@@ -56,6 +56,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import {
   readAccountCookies,
   typeAccountValue,
+  waitForAccountPage,
 } from "../scient/accounts/agent/browserOperations.ts";
 // SCIENT-FORK:END
 import { publishBrowserPdfExport } from "../scient/documentArtifacts/BrowserPdfExportPublication.ts";
@@ -1976,8 +1977,7 @@ const make = Effect.gen(function* () {
       case "accountType":
         return typeAccountValue(tab.page, input);
       case "accountWaitForLoad":
-        await tab.page.waitForLoadState("load", { timeout: request.timeoutMs });
-        return {};
+        return waitForAccountPage(tab.page, input, request.timeoutMs);
       // SCIENT-FORK:END
       case "navigate": {
         const navigateInput = input as PreviewAutomationNavigateInput;

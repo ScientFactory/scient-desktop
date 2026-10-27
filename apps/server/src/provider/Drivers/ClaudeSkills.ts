@@ -13,6 +13,7 @@ import { parse as parseYamlDocument } from "yaml";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 // SCIENT-FORK:START — skill activation controls and the SDK skill merge.
 import { claudeSkillEnabledControl, makeSetClaudeSkillEnabled } from "./ScientNativeSkills.ts";
+import { claudeSkillEntries, readClaudeSkillText } from "./ScientClaudeSkillFiles.ts";
 export { mergeClaudeReportedSkills } from "./ScientNativeSkills.ts";
 // SCIENT-FORK:END
 
@@ -496,19 +497,19 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       (yield* fileSystem
         .exists(path.join(root.directory, "SKILL.md"))
         .pipe(Effect.orElseSucceed(() => false)));
+    // SCIENT-FORK:START — Claude also loads nested (including synced) skill folders.
     const entries = singleSkill
       ? [path.basename(root.directory)]
-      : yield* fileSystem
-          .readDirectory(root.directory)
-          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      : yield* claudeSkillEntries(fileSystem, path, root.directory);
+    // SCIENT-FORK:END
 
     for (const entry of [...entries].sort()) {
       const skillPath = singleSkill
         ? path.join(root.directory, "SKILL.md")
         : path.join(root.directory, entry, "SKILL.md");
-      const contents = yield* fileSystem
-        .readFileString(skillPath)
-        .pipe(Effect.orElseSucceed(() => undefined));
+      // SCIENT-FORK:START — discovery and cards use the same bounded, contained read.
+      const contents = yield* readClaudeSkillText(fileSystem, skillPath);
+      // SCIENT-FORK:END
       if (contents === undefined) {
         continue;
       }
@@ -518,7 +519,9 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      const directoryName = entry.trim();
+      // SCIENT-FORK:START — nested skill names use the leaf folder, as the native loader does.
+      const directoryName = path.basename(entry).trim();
+      // SCIENT-FORK:END
       if (!directoryName) continue;
       let name = directoryName;
       if (root.prefix) {
@@ -527,7 +530,9 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         const unprefixedName = declaredName?.startsWith(`${root.prefix}:`)
           ? declaredName.slice(root.prefix.length + 1)
           : declaredName;
-        name = `${root.prefix}:${(unprefixedName || entry).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+        // SCIENT-FORK:START — namespace the leaf name of nested plugin skills.
+        name = `${root.prefix}:${(unprefixedName || directoryName).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+        // SCIENT-FORK:END
         // Advertise only exact native names the shared composer grammar can invoke.
         const [mention] = `$${name}`.matchAll(SKILL_MENTION_PATTERN);
         if (mention?.[2] !== name) continue;

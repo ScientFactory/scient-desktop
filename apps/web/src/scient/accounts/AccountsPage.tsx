@@ -1,3 +1,11 @@
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { BrowserProfileId } from "@t3tools/contracts";
+import { openUrlInPreview } from "~/browser/openFileInPreview";
+import { useScratchProject } from "~/hooks/useScratchProject";
+import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
+import { useRightPanelStore } from "~/rightPanelStore";
+import { previewEnvironment } from "~/state/preview";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { KeyRoundIcon } from "lucide-react";
@@ -55,6 +63,9 @@ function AccountRow({
   onEdit: () => void;
   onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
 }) {
+  const { openScratchProject } = useScratchProject();
+  const openThread = useNewThreadHandler();
+  const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const controls = useAccountCommand(accountsState.setControls, environmentId);
   const test = useAccountCommand(accountsState.test, environmentId);
   const remove = useAccountCommand(accountsState.remove, environmentId);
@@ -62,6 +73,32 @@ function AccountRow({
   const [busy, setBusy] = useState(false);
   const target = { type: "account", accountId: account.accountId } as const;
   const details = account.details;
+  const site = details.kind === "website" ? details.sites[0] : undefined;
+  const rejection =
+    account.lastSignInOutcome === "password-rejected"
+      ? "Password rejected"
+      : account.lastSignInOutcome === "code-rejected"
+        ? "Code rejected"
+        : null;
+  const openSite = async () => {
+    if (!site) return;
+    const project = await openScratchProject(environmentId, "Could not open the site");
+    if (!project) return;
+    const opened = await openThread(scopeProjectRef(project.environmentId, project.id));
+    if (!opened) return;
+    const threadRef = scopeThreadRef(project.environmentId, opened.threadId);
+    useRightPanelStore.getState().requestMaximize(threadRef);
+    const result = await openUrlInPreview({
+      threadRef,
+      url: site.startsWith("https://") ? site : `https://${site}`,
+      openPreview,
+      ...(details.kind === "website" && details.profileId
+        ? { profileId: BrowserProfileId.make(details.profileId) }
+        : {}),
+    });
+    if (result._tag === "Failure")
+      toastManager.add({ type: "error", title: "Could not open the site" });
+  };
   const iconUrl = accountIconUrl("sites" in details ? details.sites : [], account.name);
   const managePage = accountManagePage("sites" in details ? details.sites : []);
   return (
@@ -92,6 +129,7 @@ function AccountRow({
               .filter(Boolean)
               .join(" · ")}
           </span>
+          {rejection ? <span className="text-xs text-muted-foreground">{rejection}</span> : null}
           {account.status === "needs-attention" ? (
             <Tooltip>
               <TooltipTrigger
@@ -117,6 +155,7 @@ function AccountRow({
             disabled={!canWrite || busy}
           />
           <ControlsMenu disabled={!canWrite || busy}>
+            {site ? <MenuItem onClick={() => void openSite()}>Open {site}</MenuItem> : null}
             <MenuItem onClick={onEdit}>Edit</MenuItem>
             <MenuItem
               onClick={async () => {
@@ -386,7 +425,11 @@ function AccountsContent({
                 <div key={JSON.stringify(entry)} className="py-2 text-xs">
                   <time>{new Date(entry.at).toLocaleString()}</time> · {entry.action} ·{" "}
                   {entry.decision}
-                  {entry.outcome ? ` · ${entry.outcome}` : ""}
+                  {entry.signInOutcome
+                    ? ` · ${entry.signInOutcome}`
+                    : entry.outcome
+                      ? ` · ${entry.outcome}`
+                      : ""}
                 </div>
               ))}
             </DialogPanel>

@@ -5,7 +5,13 @@
  * absent keep pure T3 behaviour.
  */
 import type {
+  ExtensionPluginContents,
+  ExtensionSkillDocument,
   ModelSelection,
+  ProviderStoreInstallResult,
+  ProviderStoreEntry,
+  ProviderStorePage,
+  ProviderStoreSearchInput,
   ProviderAuthorizationUrlKind,
   ProviderConnectionMethod,
   ProviderManagedRuntimeAction,
@@ -18,6 +24,7 @@ import type {
   VoiceTranscriptCorrectionError,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
+import type * as Stream from "effect/Stream";
 import type * as Scope from "effect/Scope";
 
 /** Optional, tightly sandboxed one-shot cleanup for local voice transcripts. */
@@ -65,6 +72,47 @@ export interface ProviderMcpSignInAttempt {
  * changes the configuration that generation was created with.
  */
 export interface ProviderPluginActions {
+  readonly store?:
+    | {
+        readonly contents?:
+          | ((id: string) => Effect.Effect<ExtensionPluginContents, ProviderPluginActionFailure>)
+          | undefined;
+        readonly skillDocument?:
+          | ((
+              id: string,
+              skillId: string,
+            ) => Effect.Effect<ExtensionSkillDocument, ProviderPluginActionFailure>)
+          | undefined;
+        readonly changes?: Stream.Stream<void> | undefined;
+        readonly marketplaceSource?:
+          | ((entryId: string) => Effect.Effect<string, ProviderPluginActionFailure>)
+          | undefined;
+        readonly ensureMarketplace?:
+          | ((input: {
+              readonly name: string;
+              readonly source: string;
+            }) => Effect.Effect<void, ProviderPluginActionFailure>)
+          | undefined;
+        readonly search: (
+          input: Omit<ProviderStoreSearchInput, "instanceId">,
+        ) => Effect.Effect<ProviderStorePage, ProviderPluginActionFailure>;
+        readonly entry: (
+          entryId: string,
+        ) => Effect.Effect<ProviderStoreEntry, ProviderPluginActionFailure>;
+        readonly install: (
+          entryId: string,
+        ) => Effect.Effect<void | ProviderStoreInstallResult, ProviderPluginActionFailure>;
+        readonly addOfficialStore?:
+          | (() => Effect.Effect<void, ProviderPluginActionFailure>)
+          | undefined;
+      }
+    | undefined;
+  readonly refreshInventory?:
+    | ((input: {
+        readonly force: boolean;
+        readonly connectionsOnly?: boolean | undefined;
+      }) => Effect.Effect<void, ProviderPluginActionFailure>)
+    | undefined;
   /**
    * A fresh listing of the plugins this generation sees, in `cwd` when given.
    * Fails unless the provider listed every plugin source.
@@ -76,6 +124,13 @@ export interface ProviderPluginActions {
   readonly readMcpServer: (input: {
     readonly serverName: string;
   }) => Effect.Effect<ServerProviderMcpServer | undefined, ProviderPluginActionFailure>;
+  readonly setEnabled?:
+    | ((input: {
+        readonly pluginId: string;
+        readonly enabled: boolean;
+        readonly cwd?: string | undefined;
+      }) => Effect.Effect<void, ProviderPluginActionFailure>)
+    | undefined;
   readonly uninstall: (input: {
     readonly pluginId: string;
     /** Workspace whose provider inventory lists the plugin. */

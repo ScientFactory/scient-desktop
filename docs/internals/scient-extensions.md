@@ -8,11 +8,15 @@ Companion feature: **Accounts** (see [Secrets integration](#secrets-integration)
 One place where a user sees and manages everything that extends what Scient and
 its agents can do, regardless of who owns it:
 
-| Kind                                      | Owner                                    | Examples                                                                            | Mutable from Scient                                                    |
-| ----------------------------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **Connected service** (connector)         | Scient, per user                         | Linear, Notion, Hugging Face, any remote MCP server                                 | Yes: connect, sign in, reconnect, disconnect, per-project availability |
-| **Provider plugin / provider MCP server** | A provider instance (Codex, Claude, …)   | Codex marketplace plugins, Claude plugins, servers in `~/.codex/config.toml`        | Only where the provider exposes a verified mutation API                |
-| **Scient plugin**                         | Scient (built-in) or an installed bundle | Sources, Documents, Compute; a declarative bundle of skills + connector definitions | Built-ins: read-only description; bundles: install, enable, remove     |
+| Layer                                                   | Owner                                | Who can use it                                     |
+| ------------------------------------------------------- | ------------------------------------ | -------------------------------------------------- |
+| Scient connectors and Scient plugins                    | Scient                               | All agents, subject to connector transport support |
+| Claude Code-format shared plugins                       | The installing agent's plugin system | Claude Code and Scient Agent                       |
+| Account apps: Codex store apps and claude.ai connectors | The provider account                 | Codex only or Claude only                          |
+
+Discover prefers Scient's connector where the curated catalog's `agentStores`
+mapping identifies the same service in an agent store. Google's account apps
+remain in the account layer; Scient does not add Google's official MCP servers.
 
 The library is a **projection**, never a new owner. Each entry is read from its
 owning system, and every change is dispatched back to that owner and re-read
@@ -28,7 +32,7 @@ access.
 
 - **Discover** (`/settings/extensions`) — the curated catalog's sections, each
   showing a preview with its title linking to the category page, then the
-  built-in Scient plugins and a link to the full registry. Search replaces the
+  built-in Scient plugins, shared plugins, Codex store previews, and a link to the full registry. Store headings open searchable, paged store pages. Search replaces the
   sections with one grid: matching installed connectors and plugins first, then
   curated matches, then registry matches as they arrive (see
   [Discover](#discover-curated-catalog-and-mcp-registry)). A slow or failing
@@ -53,15 +57,22 @@ access.
   - **Tools** (connectors) — listed only on request ("See tools" runs Test);
     the result belongs to the connector's current sign-in generation and is
     discarded when it changes.
-  - **Includes** (plugins) — the plugin's contributed parts, with skills linking
-    to Settings → Skills.
+  - **Apps**, **MCP servers**, and **Skills** (plugins) — counted contents read on
+    demand from the owning agent or local plugin. Skills show five rows before
+    expanding; clicking one opens the same Markdown skill card as Settings → Skills.
+    “Try now” opens a draft with the composer's skill token when that agent can use it.
+    Remote plugins without a local copy show skill metadata until installation.
+    Local documents stay within the resolved plugin root and are limited to 256 KB;
+    listings include at most 200 skills. Commands, agents and hook events appear when present.
+    Other contributed parts remain under **Includes**.
   - **About** — provenance and facts the entry actually has; rows without data
     are omitted.
-- **Works with** — in About, a count of the provider instances that can use the
-  entry (conditional ones count; unsupported ones do not). Hovering or pressing
-  it opens a popover above it with each usable agent's logo; a conditional agent
-  carries a marker whose tooltip gives the reason. The popover is a labelled
-  disclosure reachable by keyboard and touch.
+- **Works with** — the existing line and popover express audience:
+  “Works with all your agents”, “Works with Claude and Scient Agent”, “Codex
+  only”, or “Claude only”. The popover includes unavailable agents and their
+  reasons. A shared plugin installed directly in Scient Agent remains usable
+  there when importing Claude Code's plugins is off. A standalone Claude MCP
+  server stays with Claude unless it is identified as plugin-provided.
 
 The extensions change feed also advances when provider instances are added,
 removed or change driver or name (not on health refreshes), so compatibility
@@ -74,6 +85,39 @@ In a thread, a compact **extensions receipt** shows what the current provider
 session actually received: delivered connectors and skipped ones with reasons
 ("needs sign-in", "transport unsupported by this agent", "disabled for this
 project", "name collides with native server").
+
+Extension images share one bundled name-based resolver across shelves, stores,
+Installed, details and avatars. An item's own inline icon takes precedence; a
+missing image falls back to Scient's bundled brand pack, independently of any
+provider installation, configuration or sign-in. Normalization removes a leading
+`claude.ai ` and marketplace suffix, replaces hyphens and underscores with spaces,
+and folds case and whitespace. Only exact names and explicit aliases match.
+Images stay outside provider snapshots and reach clients through the read-only
+`extensions.brandIcon` RPC (up to 50 names of 200 characters), cached for an hour
+in the client. Non-Codex items never fetch images at runtime. Codex store images
+use strict egress to `files.openai.com`, a 64 KiB limit and matching PNG, JPEG,
+WebP or SVG signatures; SVG additionally requires `image/svg+xml`.
+
+The checked-in source list is `scripts/scient-extension-brands.json`. Run
+`pnpm --dir scripts extensions:icons:generate` to rebuild the pack and aliases
+from its recorded sources and license notes. Both the brand pack and the existing
+`discover/curatedIcons.json` keys are regenerated as opaque 256×256 WebP tiles
+at quality 90, with a 25 KiB per-icon and 4 MB combined JSON budget. Raster inputs
+below 128 pixels on either side are rejected; SVG inputs are rendered at high
+resolution. Brand tiles retain their backgrounds; transparent marks are trimmed
+and centred at 68% on an opaque brand background or white. Recorded sources are
+pinned during regeneration; discovery only supplies uncatalogued brands.
+
+The generator writes `.logs/extension-brand-icons.html` and
+`.logs/extension-owner-examples.html` for visual review on light and dark
+backgrounds at row, large and round avatar sizes. Review every icon before
+committing; record rejected marks with `omitted` in the source list. Images fill
+the frame without padding when opaque. Runtime inline images use one cached,
+local canvas corner sample per URL; transparent marks retain white backing and
+padding. Generic and personal
+skills packs retain monograms; their inventory is `brandIcons/excluded.json`.
+The official vendor marks identify third-party services without affiliation or
+endorsement. The source URLs are development inputs only.
 
 ## Connected services
 
@@ -405,15 +449,132 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
                           authStatus?; pluginId?; toolCount?; scope?; error? }
 ```
 
-- **Codex**: `plugin/installed {cwds:[cwd]}` (workspace snapshot) and
-  `mcpServerStatus/list {detail:"toolsAndAuthOnly"}`, folded into the existing
-  app-server probe client. Mutations: `plugin/uninstall`, `mcpServer/oauth/login`
-  (opens the provider's own sign-in), validated against the latest snapshot and
-  followed by a refresh.
-- **Claude**: plugins and MCP status from the live session (`system/init`
-  `plugins`/`mcp_servers`, and `mcpServerStatus()` at turn end). The capabilities
-  probe stays isolated (`strictMcpConfig`, hooks off). Read-only.
-- **Others**: read-only, only where a verified listing API exists.
+- **Codex**: `plugin/installed` and paged `mcpServerStatus/list`, enriched outside
+  health checks. App summaries combine `app/installed` with targeted `app/read`
+  requests. The store keeps one app-server lease for its provider scope, caches
+  `plugin/read` for the catalog lifetime, and checks account identity on reads.
+  Installed plugin pages can load without decoding the full marketplace catalog.
+  Catalogs expire after an hour; installed membership refreshes after 30 seconds
+  or an inventory refresh. Account changes and explicit store refresh discard
+  plugin details. Icon downloads do not serialize plugin and skill reads.
+  Local logos and skill documents stay inside the real plugin source directory
+  and are capped at 256 KB. Skill reads fail visibly after 15 seconds.
+  Discover previews show featured, uninstalled Codex plugins; shared previews
+  rank Anthropic reviews, partner reviews, then other entries, preferring bundled
+  brand icons within each tier. Uncloned shared plugins show inline declarations
+  until installation makes their remaining contents available. Uninstall and
+  MCP OAuth retain the existing admit/mutate/verify path.
+- **Claude**: live session plugins/MCP status are combined with an on-demand,
+  promptless account connector probe. The probe disables hooks and user settings,
+  sets `ENABLE_CLAUDEAI_MCP_SERVERS=true`, and deliberately omits
+  `strictMcpConfig`. It polls once per second until nonempty `claudeai` results
+  repeat, with a 15-second deadline, then closes. No model call is made. The
+  ordinary health probe keeps account connectors disabled. Extensions opening,
+  Refresh, and return from sign-in trigger the account inventory; background
+  refreshes are throttled to ten minutes. Sign-in opens claude.ai's connector
+  settings. Local installed plugin metadata comes from the selected Claude home.
+- **Scient Agent**: bounded `plugin list --json` through the exact configured
+  executable and isolated root, plus `<root>/agent/mcp.json` and plugin MCP files.
+  Configuration proves a server is configured, not connected. Enable, disable,
+  and uninstall are re-read and verified. Foreign Claude installs are read-only
+  from this section. No configuration, environment, or credentials from an MCP
+  definition are projected into the UI.
+
+### Shared plugins and source preference
+
+“Use my Claude Code plugins in Scient Agent” defaults on. It appears only after
+runtime identity proves Scient Agent 0.1.3 or newer. The ordinary Scient Agent
+process factory and plugin commands inject
+`SCIENT_AGENT_ENABLE_SOURCES=claude-plugins` only on a supported version and when
+requested. Identity checks precede injection. The agent unions this source with
+its own enabled sources for discovery; its `disabledProviders` remains
+controlling. An explicit source enabled in the agent's configuration can still
+work when the desktop preference is off. No settings overlay replaces arrays.
+The desktop inventory checks those switches through `config get … --json` and
+honors Claude's user/project/local plugin enablement layers.
+
+The source home is `CLAUDE_CONFIG_DIR`, resolved on the server host, or the
+server user's `.claude` directory. It is not a union of every configured Claude
+profile. Existing sessions may need the agent's normal reload/restart procedure
+before newly installed hooks or modules become active.
+
+The shared shelf reads Claude's `plugins/known_marketplaces.json` and local
+`.claude-plugin/marketplace.json` clones, together with Scient Agent's
+`marketplaces.json` catalog paths. Reads are local, at most 4 MiB per metadata
+file, 64 marketplaces per source, 10,000 entries per catalog, and 20,000 entries
+in a combined listing. There is no per-entry discovery network request.
+Includes comes from the cloned or installed plugin directory. Review metadata
+is optional: only a completed `listings[].checks.review` matching the plugin's
+repository and path in `plugin-directory-cache-v2.json` produces “Reviewed by
+Anthropic” or “Reviewed by a partner”. Missing, unreadable, or unmatched review
+metadata produces no review claim.
+
+Installation uses an enabled Claude Code instance when available. For a store
+configured only in Scient Agent, the action obtains that source from the live
+owner, asks Claude Code to add it, re-reads Claude's marketplace registry, then
+installs. Conflicting marketplace names are refused. Otherwise it uses Scient
+Agent's own plugin CLI. Scient Agent's official Claude store is never added
+implicitly: Discover offers “Add Claude Code's store”, backed by
+`plugin marketplace add anthropics/claude-plugins-official` and a verifying read.
+Hooks, local MCP servers, and extension modules are installable through their
+native owner, as approved for this shared layer. Native installer restrictions
+still apply, such as Scient Agent's unsupported npm marketplace source.
+
+### Provider store RPCs and Codex cache
+
+`extensions.providerStore.search { instanceId, query?, cursor?, limit?, preview?,
+refresh? }` returns at most 50 entries. `extensions.providerStore.entry {
+instanceId, entryId }` reads one detail page. Both are read-authorized. They
+reuse the provider generation's optional store seam; they do not add store
+contents to provider snapshots. Store and detail routes are
+`/settings/extensions/store/<instanceId>` and
+`/settings/extensions/item/store/<instanceId>/<entryId>`.
+
+Each Codex instance owns one server-side `plugin/list` cache, refreshed after
+one hour of use or on Refresh. The verified catalog is about 8,115 entries and
+23 MB; only filtered pages cross the client boundary. Home previews contain
+featured and installed entries, or search matches, with curated duplicates
+removed before fetching icons. The full store page remains complete. An API
+key or other non-ChatGPT account receives a sign-in explanation instead.
+Account changes invalidate the catalog and pending app sign-ins. A partial
+marketplace response is refused rather than cached as complete.
+
+Signed `files.openai.com` logos are fetched only for visible entries, through
+`ConnectorOutbound`'s strict outbound policy, without redirects. Images are
+limited to 64 KiB, checked for PNG/JPEG/WebP signatures, converted to
+`ExtensionIconDataUri`, and cached (256 entries, one hour). A page's icon work
+has a five-second budget; a slow icon leaves the usual fallback tile. Signed
+logo URLs never reach the renderer.
+
+`providerPlugins.act` accepts `install` (entry id, with an optional source
+instance for shared stores), `add-official-store`, and the existing lifecycle
+operations. Codex installation calls `plugin/install { pluginName,
+remoteMarketplaceName }` (or the local marketplace path), then verifies the
+owner's installed listing before publishing. Results carry `appsNeedingAuth`
+and `authPolicy`. Connection buttons use `openAuthorizationPage` with validated
+ChatGPT app URLs. `ON_USE` says “Connects the first time Codex uses it”; plan,
+admin, and installation-policy restrictions disable the action with a reason.
+
+`app/list` is paged with cursor-cycle and page limits. `app/list/updated` causes
+an authoritative re-read and invalidates active store queries; window focus
+re-checks connection state. Installed snapshots carry only the installed apps'
+connection summaries. The store app-server lease closes after 60 seconds once
+in-flight bounded work settles, or immediately with its provider scope. A later
+query opens a fresh lease and re-reads state. Commands have time/output bounds;
+retirement interrupts mutations and only the same generation can verify them.
+All client mutations use the destination environment's settings grant.
+
+### Focused probes
+
+Tests next to the extensions owners cover the source/version gate with a real
+synthetic executable, promptless connector stabilization with a controlled
+clock, native plugin mutation verification, standalone MCP privacy, project
+source overrides, local catalog parsing and review provenance, preferred-owner
+installation, the large paged Codex cache, app notifications, icon limits,
+account changes, and policy refusals. The Extensions browser suite covers the
+verified install → connect → connected transition and the audience popover.
+Live provider installs, account sign-in, and desktop smoke remain separate
+qualification steps; mocked protocol tests do not establish them.
 
 ## Scient plugins
 
@@ -528,9 +689,9 @@ rejected with a named reason.
   next change; the connector stays denied meanwhile by grant-time eligibility.
   A bundle cannot declare itself active, consistent with the skills authority
   model.
-- **Code-bearing plugins are not supported.** Nothing from a bundle is executed:
-  no local MCP server processes, no scripts, no UI code. Supporting third-party
-  code requires a separate decision (see Open decisions).
+- **Scient bundles do not carry code.** Nothing from a bundle is executed:
+  no local MCP server processes, no scripts, no UI code. Shared native plugins
+  use the separate agent-owned path above.
 
 ## Discover: curated catalog and MCP Registry
 
@@ -575,8 +736,8 @@ starting `scient.curated/` never reach the registry.
 `installedConnectorId` is resolved live on every call, by registry name or by
 canonical connector URL (parsed, trailing path slash ignored).
 
-**Icons.** Clients never load remote images, and the server never fetches
-icons either. Every curated server ships with a bundled logo:
+**Icons.** Clients never load remote images. Registry icons are not fetched at runtime;
+Codex store logos use the bounded server-side path above. Every curated server ships with a bundled logo:
 `apps/server/src/scient/extensions/discover/curatedIcons.json` maps each
 catalog `id` to the vendor's official logo or app icon (a PNG of at most
 256 px, usually 128 px, or an SVG), inlined as a `data:` URI. It is imported as
@@ -680,9 +841,10 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 
 ## Open decisions
 
-- **Code-bearing third-party plugins** (local MCP server processes from the
-  registry, plugin UI): not supported until approved; requires consent,
-  pinned versions and a process lifecycle on the server host.
+- **Scient bundles and direct registry installs carrying code** remain outside
+  the shared native plugin path: local registry processes and plugin UI are
+  not supported. Shared plugins with hooks, MCP servers, or modules are approved
+  for native installation with the store review state shown when available.
 - **Writing provider-native config** (export a connector into
   `~/.codex/config.toml` for use outside Scient): not built; the proxy covers
   every in-Scient session. Revisit only for standalone CLI use.
@@ -690,7 +852,12 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 - **Multiple accounts per service**: one connector per canonical URL today;
   separate work and personal accounts would need distinct server names and an
   account label.
-- **Provider inventory beyond Codex and Claude**: Claude's inventory is known
-  only after a Claude session starts and is not persisted; other providers
-  report none. Reading provider configuration directly or persisting the last
-  report would make "From <agent>" sections complete.
+- **Other agents**: inventory still depends on each provider exposing a verified
+  owner interface. Codex, Claude, and Scient Agent have the paths above.
+
+GitHub uses a bearer personal access token by default, linked from its add dialog.
+Build the web client with `VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID` to offer
+“Sign in with GitHub” through the existing connector OAuth/PKCE flow and callback.
+It stays hidden when unset; registering the Scient OAuth app and configuring the
+provider's callback/client requirements remain prerequisites for live sign-in.
+Only user-added URLs expose custom OAuth client settings.

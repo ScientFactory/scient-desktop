@@ -36,6 +36,21 @@ import type * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import type * as Stream from "effect/Stream";
 
+/**
+ * Who uses a bound account key. A plugin key may have no site (local servers); then the
+ * site check is skipped and the project scope is checked against `projectId` instead.
+ */
+export type AccountKeyConsumer =
+  | { readonly kind: "connector"; readonly connectorId: ConnectorId; readonly origin: string }
+  | {
+      readonly kind: "plugin-key";
+      readonly agent: string;
+      readonly pluginId: string;
+      readonly envName: string;
+      readonly origin?: string;
+      readonly projectId?: ProjectId;
+    };
+
 /** Server-derived identity of the agent session using an account; never request-supplied. */
 export interface AccountSessionScope {
   readonly threadId: ThreadId;
@@ -99,13 +114,14 @@ export interface AccountsServiceShape {
     input: AccountMatchSignInInput,
   ) => Effect.Effect<AccountMatchSignInResult, AccountsError>;
 
-  // Extensions bindings: the saved connector is the user's approval for Ask access.
+  // Extensions bindings: the saved binding is the user's approval for Ask access.
   readonly resolveBound: (
     ref: VaultSecretRef,
-    consumer: { readonly connectorId: ConnectorId; readonly origin: string },
+    consumer: AccountKeyConsumer,
   ) => Effect.Effect<Redacted.Redacted<string>, AccountsError>;
+  /** Without an origin, every API-key account is offered. */
   readonly listBindable: (input: {
-    readonly origin: string;
+    readonly origin?: string;
   }) => Effect.Effect<
     ReadonlyArray<{ readonly ref: VaultSecretRef; readonly name: string }>,
     AccountsError

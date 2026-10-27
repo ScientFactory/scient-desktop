@@ -35,6 +35,20 @@ import { makeClaudeManagedRuntimeResolution } from "../../scient/providerLifecyc
 import { makeClaudeVoiceTranscriptCorrection } from "../../scient/voice/ClaudeVoiceTranscriptCorrection.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 // SCIENT-FORK:START — Scient Extensions: live-session provider-native inventory.
+import { makeSharedPluginStore } from "../../scient/extensions/SharedPluginStore.ts";
+import {
+  readClaudeInstalledPlugins,
+  uninstallClaudePlugin,
+} from "../../scient/extensions/ClaudeInstalledPlugins.ts";
+import { runProviderPluginCommand } from "../../scient/extensions/ProviderPluginCommand.ts";
+import { resolveClaudeSdkExecutablePath } from "./ClaudeExecutable.ts";
+import { nextInventoryReadSequence } from "../ProviderNativeInventory.ts";
+import {
+  makeClaudeAccountInventoryRefresh,
+  probeClaudeAccountServers,
+} from "../../scient/extensions/ClaudeAccountInventory.ts";
+import * as Deferred from "effect/Deferred";
+import type { ProviderPluginActions } from "../ScientProviderInstanceSeams.ts";
 import type { ProviderNativeInventory } from "../ScientProviderInstanceSeams.ts";
 // SCIENT-FORK:END
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -225,6 +239,31 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       PubSub.unbounded<ProviderNativeInventory>({ replay: 1 }),
       PubSub.shutdown,
     );
+    // Only MCP servers are merged (session reports omit account connectors); every
+    // report keeps its own fields and sequence so the registry orders it correctly.
+    const mcpServersState = yield* Ref.make<ProviderNativeInventory["mcpServers"]>([]);
+    const publishInventory = (incoming: ProviderNativeInventory, accountOnly = false) => {
+      const reported = incoming.mcpServers;
+      return (
+        reported
+          ? Ref.modify(mcpServersState, (current = []) => {
+              const mcpServers = [
+                ...current.filter((server) =>
+                  accountOnly
+                    ? server.scope !== "claudeai"
+                    : server.scope === "claudeai" &&
+                      !reported.some((entry) => entry.scope === "claudeai"),
+                ),
+                ...reported,
+              ];
+              return [{ ...incoming, mcpServers }, mcpServers] as const;
+            })
+          : Effect.succeed(incoming)
+      ).pipe(
+        Effect.flatMap((report) => PubSub.publish(nativeInventory, report)),
+        Effect.asVoid,
+      );
+    };
     // SCIENT-FORK:END
     const orchestrationAdapter = yield* createClaudeAdapterV2(
       {
@@ -241,8 +280,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
       {
         scopedLimitNames,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
-        onNativeInventory: (inventory) =>
-          PubSub.publish(nativeInventory, inventory).pipe(Effect.asVoid),
+        onNativeInventory: (inventory) => publishInventory(inventory),
       },
       // SCIENT-FORK:END
     ).pipe(
@@ -270,6 +308,69 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     // account-specific probes never share auth metadata across instances.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
+    // SCIENT-FORK:START — account connectors are probed only by Extensions, never health refreshes.
+    const retired = yield* Deferred.make<void>();
+    yield* Effect.addFinalizer(() => Deferred.succeed(retired, undefined));
+    const refreshInventory = yield* makeClaudeAccountInventoryRefresh(
+      Effect.suspend(() => resolveCapabilities).pipe(Effect.orElseSucceed(() => undefined)),
+      probeClaudeAccountServers(effectiveConfig, effectiveProcessEnv, serverConfig.stateDir).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
+      (mcpServers) => publishInventory({ mcpServers }, true),
+    );
+    const unsupported = Effect.fail({ message: "Claude manages this operation itself." });
+    const listPlugins: ProviderPluginActions["listPlugins"] = Effect.fn("ClaudeDriver.listPlugins")(
+      function* ({ cwd }: { readonly cwd?: string | undefined }) {
+        const sequence = yield* nextInventoryReadSequence;
+        const plugins = yield* readClaudeInstalledPlugins(configDir, cwd, true);
+        return { plugins, sequence };
+      },
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.mapError(() => ({ message: "Could not read Claude Code’s installed plugins." })),
+    );
+    const runPluginCommand = Effect.fn("ClaudeDriver.runPluginCommand")(
+      function* (args: ReadonlyArray<string>) {
+        const executable = yield* resolveClaudeSdkExecutablePath(
+          effectiveConfig.binaryPath,
+          effectiveProcessEnv,
+        );
+        return yield* runProviderPluginCommand(
+          executable,
+          { ...effectiveProcessEnv, CLAUDE_CONFIG_DIR: configDir },
+          serverConfig.stateDir,
+          args,
+        );
+      },
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
+    const store = yield* makeSharedPluginStore({
+      kind: "claude",
+      claudeHome: configDir,
+      installed: () => listPlugins({}),
+      run: runPluginCommand,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+    const pluginActions: ProviderPluginActions = {
+      store,
+      refreshInventory: (input) =>
+        listPlugins({}).pipe(
+          Effect.tap((listing) => publishInventory(listing)),
+          Effect.andThen(refreshInventory(input)),
+        ),
+      listPlugins,
+      readMcpServer: () => unsupported,
+      uninstall: (input) => uninstallClaudePlugin(listPlugins, runPluginCommand, input),
+      startMcpSignIn: () => unsupported,
+      isRetired: Deferred.isDone(retired),
+      whenRetired: Deferred.await(retired),
+    };
+    // SCIENT-FORK:END
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
         probeClaudeCapabilities(effectiveConfig, effectiveProcessEnv, serverConfig.stateDir).pipe(
@@ -355,6 +456,19 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
           ),
+          // SCIENT-FORK:START — account app access requires verified first-party subscription auth.
+          Effect.flatMap((provider) =>
+            Ref.get(lastGoodCapabilities).pipe(
+              Effect.map((account) => ({
+                ...provider,
+                accountAppsAvailable:
+                  provider.auth.status === "authenticated" &&
+                  account?.apiProvider === "firstParty" &&
+                  Boolean(account.subscriptionType),
+              })),
+            ),
+          ),
+          // SCIENT-FORK:END
           Effect.map(stampIdentity),
         ),
       ),
@@ -504,6 +618,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
             ),
       skillActions,
       // SCIENT-FORK:START — Scient Extensions: live-session provider-native inventory.
+      pluginActions,
       nativeInventoryChanges: Stream.fromPubSub(nativeInventory),
       // SCIENT-FORK:END
       orchestrationAdapter,
