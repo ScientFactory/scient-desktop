@@ -2,7 +2,7 @@
 
 Connect something once, and every agent can use it the way the user allows. Accounts covers website
 sign-ins, library access, API keys, databases, command-line logins and browser profiles. It owns
-Scient's encrypted store and the links to values kept in the system keychain, 1Password or Custom
+Scient's encrypted store and the links to values kept in the system keychain, 1Password, Bitwarden (including Vaultwarden), Proton Pass or Custom
 models. Settings → Accounts is its page ([user guide](../user/accounts.md)); agents use it through `scient_account*` tools.
 
 Code: `apps/server/src/scient/accounts`, `apps/web/src/scient/accounts`,
@@ -41,6 +41,8 @@ are its secret variable names. Each field has a source:
 | `scient`       | Scient's encrypted store                                                                                | Decrypted in the server when used                                                               |
 | `keychain`     | An existing macOS Keychain, Windows Credential Manager or Linux Secret Service item (service + account) | `@napi-rs/keyring`, when used                                                                   |
 | `1password`    | An `op://` reference                                                                                    | `@1password/sdk`, cached per account for five minutes except OTP references and OTP/TOTP fields |
+| `bitwarden`    | CLI identity, item ID and field                                                                         | User-installed `bw`; current TOTP through `get totp`, no cache                                  |
+| `proton-pass`  | CLI identity, share/item IDs and field                                                                  | User-installed `pass-cli`; stable `pass://` reference, no cache                                 |
 | `custom-model` | A Custom models connection's key                                                                        | Custom models' own resolver; stored once                                                        |
 
 A field has one read source and optional copies in other stores. Links are read when needed. On macOS the user approves Scient once
@@ -49,6 +51,52 @@ keychain items. Apple Passwords / iCloud Keychain items are not readable by othe
 export file is the way in. Password imports retain the full hostname and update only an exact
 site-and-username match; sibling subdomains remain separate accounts. A new import takes the
 controls of an account whose site covers it with the same username, so it is never more open.
+
+### CLI password stores
+
+Bitwarden and Proton Pass are read-only links through the user's installed `bw` and
+`pass-cli` binaries. Scient discovers PATH, Homebrew, `/usr/local/bin`, `~/.local/bin`
+and `~/.npm-global/bin`; it never bundles or imports either CLI. Install and log in on
+**the server host**, which may differ from the desktop running the Accounts page.
+Password stores → Manage shows CLI status; Connect authorizes that CLI identity for
+this server lifetime. Refresh status checks again. Disconnect drops Scient's session
+and connection; it does not log out the CLI or existing website sessions.
+
+For Bitwarden, run `bw login` in a terminal first. Configure Vaultwarden with
+`bw config server <URL>` before login. Unlock in Accounts with the private master
+password input. A terminal unlock does not transfer its session into Scient; inherited
+`BW_SESSION` is deliberately ignored. Scient sends the master password only in that unlock child's
+environment (`bw unlock --passwordenv SCIENT_BW_PASSWORD --raw`), clears the input
+after submission, and keeps the returned session only in `Redacted` memory. Quit,
+disconnect and failed unlock drop it. No master password or session key is persisted.
+
+For Proton Pass, run `pass-cli login` and, when configured, `pass-cli session unlock`
+in the terminal, then Connect. `info --output json` verifies session availability;
+CLI errors are reported as unavailable rather than guessing whether authentication,
+locking, networking or a changed CLI interface caused the failure.
+
+Use an existing value → Bitwarden item / Proton Pass item searches item names,
+then links a field. Bitwarden supports username, password, fresh TOTP and custom
+fields; Proton uses stable share/item IDs in `pass://` references, with an editable
+field name for custom or section-qualified fields. Discovery returns metadata only.
+Proton lists up to 50 accessible vaults; both pickers show up to 100 matches. Refine
+the search for larger collections. Proton's field choices are common names; field
+existence is checked at use time. No values are returned by discovery RPCs.
+
+Every use rechecks the connected CLI identity and resolves the selected field again;
+there is no secret or OTP cache and no fallback. Bitwarden identity includes its
+server URL and user ID. Proton identity includes the user ID, email and token label
+when supplied by the CLI. Reconnect after server restart. Existing links fail closed
+if the CLI account/server changes. Neither store is offered as a copy destination;
+linking drops prior copy intents, and entering a new raw value replaces the link.
+
+Child processes use explicit argv without a shell, closed stdin, a 15-second timeout
+per command, an 8 MiB output cap, cancellation, and a restricted environment. Raw
+stdout/stderr and process errors never enter Accounts activity, logs or public errors.
+The command protocol lives in `CliPasswordStores.ts`. Proton's interface is based on
+its [official command documentation](https://protonpass.github.io/pass-cli/commands/item/)
+and JSON structures in its official source; authenticated and cross-platform CLI
+interoperability still requires qualification with the user's installed versions.
 
 ### Copies and password comparison
 

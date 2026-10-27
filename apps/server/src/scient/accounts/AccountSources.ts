@@ -21,6 +21,8 @@ import {
   selectKeychainCandidates,
 } from "./KeychainCandidates.ts";
 
+import { makeCliPasswordStores } from "./CliPasswordStores.ts";
+
 const requireKeyring = NodeModule.createRequire(import.meta.url);
 const KEYCHAIN_PROMPT_TIMEOUT = Duration.minutes(2);
 
@@ -58,6 +60,7 @@ export interface OnePasswordClient {
 export class AccountSources extends Context.Service<
   AccountSources,
   {
+    readonly passwordStores: ReturnType<typeof makeCliPasswordStores>;
     readonly platform: "macos" | "windows" | "linux";
     readonly profiles: Effect.Effect<ReadonlyArray<BrowserProfileId>, AccountsError>;
     readonly customModelKeys: Effect.Effect<ReadonlyArray<AccountCustomModelKey>, AccountsError>;
@@ -95,7 +98,13 @@ export const layer = Layer.effect(
     const hostPlatform = yield* HostProcess.Platform;
     const platform =
       hostPlatform === "darwin" ? "macos" : hostPlatform === "win32" ? "windows" : "linux";
+    const passwordStores = makeCliPasswordStores({
+      env: yield* HostProcess.Environment,
+      platform: hostPlatform,
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => passwordStores.dispose()));
     return AccountSources.of({
+      passwordStores,
       platform,
       profiles: Effect.succeed(BUILT_IN_BROWSER_PROFILES.map((profile) => profile.id)),
       customModelKeys: current.pipe(

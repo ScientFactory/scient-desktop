@@ -276,6 +276,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsApprovalRespond]: "accounts",
   [WS_METHODS.accountsActivity]: "accounts",
   [WS_METHODS.accountsKeychainCandidates]: "accounts",
+  [WS_METHODS.accountsPasswordStore]: "accounts",
   [WS_METHODS.accountsOnePasswordConnect]: "accounts",
   [WS_METHODS.accountsOnePasswordDisconnect]: "accounts",
   [WS_METHODS.accountsImportPasswords]: "accounts",

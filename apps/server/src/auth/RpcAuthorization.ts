@@ -125,6 +125,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accountsApprovalRespond]: AuthSettingsWriteScope,
   [WS_METHODS.accountsActivity]: AuthOrchestrationReadScope,
   [WS_METHODS.accountsKeychainCandidates]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsPasswordStore]: AuthSettingsWriteScope,
   [WS_METHODS.accountsOnePasswordConnect]: AuthSettingsWriteScope,
   [WS_METHODS.accountsOnePasswordDisconnect]: AuthSettingsWriteScope,
   [WS_METHODS.accountsImportPasswords]: AuthSettingsWriteScope,

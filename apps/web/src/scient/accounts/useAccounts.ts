@@ -45,3 +45,7 @@ export function useAccountCommand<A, E, I>(
     return { ok: false };
   };
 }
+
+export function usePasswordStorePermission(environmentId: EnvironmentId) {
+  return useAtomValue(accountsState.passwordStore.permissionAtom(environmentId));
+}
