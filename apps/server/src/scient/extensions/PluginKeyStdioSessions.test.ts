@@ -226,6 +226,21 @@ it.effect("withholds unbound and disabled accounts and refuses secret-bearing ar
       ),
     ).toBeUndefined();
     expect(pluginKeyHasSecretArgs({ command: "server", args: ["--key=${TOKEN}"] })).toBe(true);
+    // A shell would expand the key into the server's argv.
+    const viaShell = {
+      command: "/bin/sh",
+      args: ["-c", 'exec server --token "$API_KEY"'],
+      env: { API_KEY: "" },
+    };
+    expect(pluginKeyStdioServer("api", viaShell, root)).toBeUndefined();
+    expect(pluginKeyHasSecretArgs(viaShell)).toBe(true);
+    expect(
+      pluginKeyHasSecretArgs({
+        command: "cmd",
+        args: ["/c", "server %API_KEY%"],
+        env: { API_KEY: "" },
+      }),
+    ).toBe(true);
     expect(
       pluginKeyStdioServer(
         "api",

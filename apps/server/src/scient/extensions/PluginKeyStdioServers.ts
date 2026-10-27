@@ -44,7 +44,7 @@ export function pluginKeyStdioServer(
     entries.map(([key, text]) => [key, expandRoot(text as string)]),
   );
   const envNames = requiredServerKeys(value);
-  if (!envNames.length) return;
+  if (!envNames.length || referencesKey([command, ...expandedArgs], envNames)) return;
   // Only known secret placeholders and plugin-root builtins can be expanded.
   for (const text of Object.values(configured)) {
     if (
@@ -59,11 +59,24 @@ export function pluginKeyStdioServer(
   return { name, command, args: expandedArgs, env: configured, envNames };
 }
 
+/** `$NAME`, `$env:NAME` or `%NAME%` lets a shell put the key into the server's argv. */
+function referencesKey(texts: ReadonlyArray<string>, names: ReadonlyArray<string>) {
+  return texts.some((text) =>
+    names.some((name) =>
+      new RegExp(`\\$(?:env:)?${name}(?![A-Za-z0-9_])|%${name}%`, "i").test(text),
+    ),
+  );
+}
+
 export function pluginKeyHasSecretArgs(input: unknown) {
   if (!input || typeof input !== "object") return false;
   const value = input as Record<string, unknown>;
+  if (typeof value.command !== "string") return false;
+  const texts = [value.command, ...(Array.isArray(value.args) ? value.args : [])].filter(
+    (text): text is string => typeof text === "string",
+  );
   return (
-    typeof value.command === "string" &&
+    referencesKey(texts, requiredServerKeys(value)) ||
     requiredServerKeys({
       args: Array.isArray(value.args)
         ? value.args.map((arg) =>
