@@ -159,5 +159,33 @@
     "color": "#FFBE00",
     "license": "CC0-1.0; trademarks remain with their owners.",
     "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:edge",
+    "name": "edge",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/microsoft-edge.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:arc",
+    "name": "arc",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/arc.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:helium",
+    "name": "helium",
+    "url": "https://raw.githubusercontent.com/imputnet/helium/main/resources/branding/product_logo.svg",
+    "license": "Brand-owned artwork used to identify the browser; trademarks remain with their respective owners. No open artwork license asserted.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:zen",
+    "name": "zen",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/zenbrowser.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
   }
 ]

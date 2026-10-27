@@ -16,11 +16,12 @@ import * as Option from "effect/Option";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { DraftInput } from "~/components/ui/draft-input";
-import { ArrowRightIcon, CheckIcon, PlusIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { QuitStep } from "~/components/settings/BrowserImportWizard";
 import { usePermissionStatus } from "~/components/permissions/usePermissionStatus";
 import { AccountLogo } from "./AccountLogo";
+import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "~/components/ui/collapsible";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
 import {
   Dialog,
@@ -313,7 +314,7 @@ export function BrowserImportDialog({
             <DialogHeader>
               <DialogTitle>Import from a browser</DialogTitle>
             </DialogHeader>
-            <DialogPanel>
+            <DialogPanel scrollAreaClassName="min-h-0 flex-1">
               <DiscoveryList>
                 {sources
                   .filter((source) => source.unavailable !== "notInstalled")
@@ -416,13 +417,36 @@ export function BrowserImportDialog({
                   <div className="px-3 py-3 text-sm text-muted-foreground">No browsers found</div>
                 ) : null}
                 {sources.some((source) => source.unavailable === "notInstalled") ? (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">
-                    Not found:{" "}
-                    {sources
-                      .filter((source) => source.unavailable === "notInstalled")
-                      .map((source) => source.name)
-                      .join(", ")}
-                  </div>
+                  <Collapsible>
+                    <CollapsibleTrigger
+                      render={
+                        <DiscoveryListRow
+                          icon={null}
+                          title={<span className="text-muted-foreground">More browsers</span>}
+                          description={null}
+                          action={
+                            <ChevronRightIcon className="size-4 text-muted-foreground in-data-panel-open:rotate-90" />
+                          }
+                        />
+                      }
+                    />
+                    <CollapsiblePanel animate={false}>
+                      {sources
+                        .filter((source) => source.unavailable === "notInstalled")
+                        .map((source) => (
+                          <div
+                            key={source.id}
+                            className="flex items-center gap-3 border-t border-border/60 px-3 py-3"
+                          >
+                            <BrowserLogo id={source.id} name={source.name} />
+                            <div className="flex min-w-0 flex-1 flex-col">
+                              <span className="truncate text-sm font-medium">{source.name}</span>
+                              <span className="text-xs text-muted-foreground">Not installed</span>
+                            </div>
+                          </div>
+                        ))}
+                    </CollapsiblePanel>
+                  </Collapsible>
                 ) : null}
               </DiscoveryList>
               {permission.error ? (

@@ -71,7 +71,16 @@ it("lists running-browser metadata and imports the selection only after quit and
   await expect
     .element(page.getByText("Chrome · open, quit to import", { exact: true }))
     .toBeVisible();
-  await expect.element(page.getByText("Not found: Edge, Brave", { exact: true })).toBeVisible();
+  const moreBrowsers = page.getByRole("button", { name: "More browsers" });
+  await expect.element(moreBrowsers).toHaveAttribute("aria-expanded", "false");
+  await expect.element(page.getByText("Edge", { exact: true })).not.toBeInTheDocument();
+  await moreBrowsers.click();
+  await expect.element(moreBrowsers).toHaveAttribute("aria-expanded", "true");
+  await expect.element(page.getByText("Edge", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Brave", { exact: true })).toBeVisible();
+  await expect.element(page.getByRole("checkbox")).toHaveLength(1);
+  await moreBrowsers.click();
+  await expect.element(page.getByText("Edge", { exact: true })).not.toBeInTheDocument();
   await page.getByRole("checkbox", { name: "Work · Chrome" }).click();
   await page.getByRole("button", { name: "Import (1)", exact: true }).click();
   await expect.element(page.getByRole("heading", { name: "Quit Chrome to import" })).toBeVisible();
