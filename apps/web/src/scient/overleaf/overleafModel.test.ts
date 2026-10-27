@@ -389,7 +389,9 @@ describe("refusalText", () => {
         message: "Open editors were not all saved.",
         paths: ["paper/main.tex", "paper/intro.tex"],
       }),
-    ).toBe("paper/main.tex couldn't be saved, so nothing was changed. Save it, then try again.");
+    ).toBe(
+      "paper/main.tex has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.",
+    );
     // Only a window that didn't answer: no file to name.
     expect(operationErrorText({ reason: "editor-unsaved", message: "x", paths: [] })).toContain(
       "didn't answer the request to save its editors",

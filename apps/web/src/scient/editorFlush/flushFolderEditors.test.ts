@@ -1,4 +1,8 @@
-import { EnvironmentId, type ProjectReadFileResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectReadFileError,
+  type ProjectReadFileResult,
+} from "@t3tools/contracts";
 import type { MarkdownSaveIntent } from "@scientfactory/scient-markdown";
 import { AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
@@ -53,6 +57,7 @@ function disk() {
   const writes: string[] = [];
   const hooks = new Map<string, () => Promise<void>>();
   let refuse: unknown = null;
+  let readFailure: unknown = null;
   const transport = (target: MarkdownPersistenceTarget): MarkdownPersistenceTransport => ({
     write: async (intent: MarkdownSaveIntent) => {
       if (refuse !== null) throw refuse;
@@ -60,7 +65,10 @@ function disk() {
       writes.push(`${target.cwd}/${target.relativePath}`);
       return { revision: `r${writes.length}:${intent.source}` };
     },
-    read: async () => ({ source: "A", revision: "rA" }),
+    read: async () => {
+      if (readFailure !== null) throw readFailure;
+      return { source: "A", revision: "rA" };
+    },
     classifyFailure: (error) => (error === "conflict" ? "conflict" : "terminal"),
     subscribe: () => () => {},
     project: () => {},
@@ -69,6 +77,9 @@ function disk() {
     transport,
     writes,
     beforeWrite: (relativePath: string, hook: () => Promise<void>) => hooks.set(relativePath, hook),
+    refuseRead: (error: unknown) => {
+      readFailure = error;
+    },
     refuse: (error: unknown) => {
       refuse = error;
     },
@@ -266,6 +277,38 @@ describe("flushFolderEditors", () => {
         message: "The visual editor holds input it could not turn into source yet.",
       },
     ]);
+  });
+
+  it("settles a clean deleted tab but blocks real unsaved edits to the same missing path", async () => {
+    const target = at("paper/deleted.tex");
+    const clean = window.openCleanDocument(target);
+    const missing = new ProjectReadFileError({
+      cwd: target.cwd,
+      relativePath: target.relativePath,
+      failure: "operation_failed",
+      reason: "not_found",
+      currentMissing: true,
+    });
+    window.documentDisk.refuseRead(missing);
+    expect(await clean.refresh()).toBe(false);
+    expect(clean.getSnapshot().error).toBe(missing);
+    expect(await flushFolderEditors(environmentId, window.editors, locate)).toEqual({
+      saved: ["paper/deleted.tex"],
+      failures: [],
+    });
+    expect(window.documentDisk.writes).toEqual([]);
+    expect(clean.change("unsaved edits", clean.getSnapshot().editVersion)).toBe(true);
+    const answer = await flushFolderEditors(environmentId, window.editors, locate);
+    expect(answer.saved).toEqual([]);
+    expect(answer.failures).toEqual([
+      {
+        path: "paper/deleted.tex",
+        reason: "save-failed",
+        message:
+          "This file was deleted while its editor held unsaved edits. Keep or discard those edits in the editor, then try again.",
+      },
+    ]);
+    expect(window.documentDisk.writes).toEqual([]);
   });
 
   it("names a document whose save failed", async () => {

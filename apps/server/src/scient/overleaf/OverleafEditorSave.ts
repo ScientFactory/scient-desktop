@@ -13,6 +13,7 @@ export interface OverleafEditorSaveFailure {
   readonly path: string;
   /** A fixed category from the window: `unconverted-input`, `composing`, `save-failed` or `conflict`. */
   readonly reason: string;
+  readonly message?: string;
 }
 
 /** A window that did not answer: it may hold unsaved text. */
@@ -83,7 +84,11 @@ export const layerFromEditorFlush = Layer.effect(
                           _tag: "failed",
                           failures: result.windows.flatMap((window) =>
                             window._tag === "Failed"
-                              ? window.failures.map(({ path, reason }) => ({ path, reason }))
+                              ? window.failures.map(({ path, reason, message }) => ({
+                                  path,
+                                  reason,
+                                  message,
+                                }))
                               : [],
                           ),
                           unanswered: result.windows.flatMap((window) =>

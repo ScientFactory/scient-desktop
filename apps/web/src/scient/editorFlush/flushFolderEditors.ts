@@ -17,6 +17,7 @@ import type {
   MarkdownPersistenceRegistry,
   MarkdownPersistenceTarget,
 } from "../markdownEditor/persistence/markdownPersistenceRegistry";
+import { documentCurrentMissingReview } from "../markdownEditor/persistence/documentFailureReason";
 import type { EditorCompositions } from "./editorComposition";
 
 /** The editors one window holds: every place its unsaved text can be. */
@@ -139,8 +140,16 @@ export async function flushFolderEditors(
         lease = await editors.documents.open(target);
         const pendingInput = lease.getPendingInput();
         if (pendingInput !== null) return fail(target, "unconverted-input", pendingInput.message);
-        if (await lease.flushNow()) return void saved.add(nameOf(target));
+        const before = lease.getSnapshot();
+        if (documentIsSettled(before) || (await lease.flushNow()))
+          return void saved.add(nameOf(target));
         const snapshot = lease.getSnapshot();
+        if (snapshot.currentMissing || documentCurrentMissingReview(snapshot.error, target))
+          return fail(
+            target,
+            "save-failed",
+            "This file was deleted while its editor held unsaved edits. Keep or discard those edits in the editor, then try again.",
+          );
         if (snapshot.conflict !== null) return fail(target, "conflict");
         return fail(target, "save-failed", snapshot.publicationAttention?.message);
       } catch {
@@ -181,6 +190,18 @@ export async function flushFolderEditors(
   }
 }
 
+function documentIsSettled(snapshot: ReturnType<MarkdownPersistenceLease["getSnapshot"]>): boolean {
+  // A failed freshness read does not make an unchanged editor an unsaved draft.
+  return (
+    !snapshot.pending &&
+    !snapshot.inFlight &&
+    snapshot.conflict === null &&
+    snapshot.attention === null &&
+    snapshot.publicationAttention === null &&
+    snapshot.publicationOutcome === null
+  );
+}
+
 function problemFailure(
   problem: WorkspaceFileSessionProblem,
 ): [EditorFlushFailureReason, string | undefined] {
@@ -212,7 +233,7 @@ function unsavedNow(
     const target = targetOf(document);
     if (!select(target)) continue;
     const snapshot = editors.documents.getTargetSnapshot(target);
-    if (!document.pending && !document.attention && snapshot?.inFlight !== true) continue;
+    if (!document.pending && snapshot && documentIsSettled(snapshot)) continue;
     if (snapshot?.conflict) found.push({ target, reason: "conflict" });
     else if (snapshot?.error != null || snapshot?.attention)
       found.push({
