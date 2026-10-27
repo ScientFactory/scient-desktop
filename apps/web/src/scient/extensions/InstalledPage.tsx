@@ -168,28 +168,26 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
   return (
     <>
       <ExtensionsTopBar tab="installed" kind={kind}>
-        {kind === "skills" ? null : (
-          <span className="w-56">
-            <NativeSelect
-              size="sm"
-              aria-label="Works with"
-              value={worksWith ?? ""}
-              onChange={(event) =>
-                setWorksWith(
-                  options.find((option) => option.instanceId === event.target.value)?.instanceId ??
-                    null,
-                )
-              }
-            >
-              <option value="">Works with any agent</option>
-              {options.map((option) => (
-                <option key={option.instanceId} value={option.instanceId}>
-                  {option.label}
-                </option>
-              ))}
-            </NativeSelect>
-          </span>
-        )}
+        <span className="w-56">
+          <NativeSelect
+            size="sm"
+            aria-label="Works with"
+            value={worksWith ?? ""}
+            onChange={(event) =>
+              setWorksWith(
+                options.find((option) => option.instanceId === event.target.value)?.instanceId ??
+                  null,
+              )
+            }
+          >
+            <option value="">Works with any agent</option>
+            {options.map((option) => (
+              <option key={option.instanceId} value={option.instanceId}>
+                {option.label}
+              </option>
+            ))}
+          </NativeSelect>
+        </span>
       </ExtensionsTopBar>
       {inventoryError ? <MutedLine>{inventoryError}</MutedLine> : null}
       {inventory?.diagnostics.map((diagnostic) => (
@@ -296,7 +294,11 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
             <ScientSkillsLibrary environmentId={environmentId} providers={providers} onlyActive />
           </ExtensionsSection>
           <ExtensionsSection title="Agent skills">
-            <AgentSkills environmentId={environmentId} providers={providers} />
+            <AgentSkills
+              environmentId={environmentId}
+              providers={providers}
+              instanceId={selected?.instanceId ?? null}
+            />
           </ExtensionsSection>
           <ExtensionsSection title="Project skills">
             <ProjectSkills environmentId={environmentId} />

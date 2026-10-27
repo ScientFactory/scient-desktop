@@ -162,10 +162,13 @@ export function ExtensionsTopBar({
   tab,
   kind,
   children,
+  aside,
 }: {
   readonly tab: ExtensionsTab;
   readonly kind: ExtensionKind | undefined;
   readonly children?: ReactNode;
+  /** A small link at the end of the kind row; the row keeps its height without one. */
+  readonly aside?: ReactNode;
 }) {
   const navigate = useNavigate();
   const show = (nextTab: ExtensionsTab, nextKind: ExtensionKind | undefined) =>
@@ -178,7 +181,8 @@ export function ExtensionsTopBar({
     });
   return (
     <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      {/* Fixed heights: the bar stays put whichever tab, kind or control is showing. */}
+      <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
         <ToggleGroup
           aria-label="Extensions"
           variant="segmented"
@@ -195,28 +199,31 @@ export function ExtensionsTopBar({
         </ToggleGroup>
         {children}
       </div>
-      <ToggleGroup
-        aria-label="Show"
-        variant="pill"
-        size="sm"
-        className="-ms-3"
-        value={[kind ?? "all"]}
-        onValueChange={(next) => {
-          const value = next[0];
-          if (value === undefined || value === (kind ?? "all")) return;
-          show(
-            tab,
-            EXTENSION_KINDS.find((item) => item === value),
-          );
-        }}
-      >
-        <Toggle value="all">All</Toggle>
-        {EXTENSION_KINDS.map((item) => (
-          <Toggle key={item} value={item}>
-            {EXTENSION_KIND_LABELS[item]}
-          </Toggle>
-        ))}
-      </ToggleGroup>
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
+        <ToggleGroup
+          aria-label="Show"
+          variant="pill"
+          size="sm"
+          className="-ms-3"
+          value={[kind ?? "all"]}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (value === undefined || value === (kind ?? "all")) return;
+            show(
+              tab,
+              EXTENSION_KINDS.find((item) => item === value),
+            );
+          }}
+        >
+          <Toggle value="all">All</Toggle>
+          {EXTENSION_KINDS.map((item) => (
+            <Toggle key={item} value={item}>
+              {EXTENSION_KIND_LABELS[item]}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+        {aside}
+      </div>
     </div>
   );
 }

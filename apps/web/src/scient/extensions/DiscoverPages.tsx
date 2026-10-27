@@ -1,6 +1,6 @@
 import type { DiscoverEntry, DiscoverSearchInput } from "@t3tools/contracts";
 import { Link, Navigate } from "@tanstack/react-router";
-import { SearchIcon } from "lucide-react";
+import { ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -20,7 +20,6 @@ import {
   ExtensionsSection,
   ExtensionsTopBar,
   MutedLine,
-  SECTION_HEADING_CLASS,
   SECTION_TITLE_LINK_CLASS,
   SectionTitleChevron,
   useExtensionsEnvironment,
@@ -34,6 +33,7 @@ import {
   matchesQuery,
   showsKind,
 } from "./extensionsView";
+import { AgentSkills } from "../skills/AgentSkills";
 import { ScientSkillsLibrary } from "../skills/ScientSkillsLibrary";
 
 /** Search results that live on Installed; Discover forwards them there. */
@@ -243,17 +243,14 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
       ) : null}
       {showsKind(kind, "plugins") ? <ProviderStoreShelves /> : null}
       {showsKind(kind, "skills") ? (
-        <ExtensionsSection title="Scient skills">
-          <ScientSkillsLibrary environmentId={environmentId} providers={providers} />
-        </ExtensionsSection>
-      ) : null}
-      {showsKind(kind, "connectors") ? (
-        <h2 className={SECTION_HEADING_CLASS}>
-          <Link to="/settings/extensions/all" className={SECTION_TITLE_LINK_CLASS}>
-            Browse all MCP servers
-            <SectionTitleChevron />
-          </Link>
-        </h2>
+        <>
+          <ExtensionsSection title="Scient skills">
+            <ScientSkillsLibrary environmentId={environmentId} providers={providers} />
+          </ExtensionsSection>
+          <ExtensionsSection title="Agent skills">
+            <AgentSkills environmentId={environmentId} providers={providers} />
+          </ExtensionsSection>
+        </>
       ) : null}
     </SettingsSearchTarget>
   );
@@ -323,6 +320,15 @@ function DiscoverSearchResults({
   );
 }
 
+function SkillSearchResults({ query }: { readonly query: string }) {
+  const { environmentId, providers } = useExtensionsEnvironment();
+  return (
+    <ExtensionsSection title="Scient skills">
+      <ScientSkillsLibrary environmentId={environmentId} providers={providers} query={query} />
+    </ExtensionsSection>
+  );
+}
+
 function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const searchTargetId = useSettingsSearchTargetId();
   const [search, setSearch] = useState("");
@@ -333,16 +339,30 @@ function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
   return (
     <>
       <SettingsSearchTarget id={searchableSetting("extensions").id} className="outline-none">
-        <ExtensionsTopBar tab="discover" kind={kind}>
-          {kind === "skills" ? null : (
-            <SearchField label="Search extensions" value={search} onChange={setSearch} />
-          )}
+        <ExtensionsTopBar
+          tab="discover"
+          kind={kind}
+          aside={
+            <Link
+              to="/settings/extensions/all"
+              className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
+            >
+              Browse all MCP servers
+              <ChevronRightIcon
+                aria-hidden
+                className="size-3.5 transition-transform group-hover:translate-x-0.5"
+              />
+            </Link>
+          }
+        >
+          <SearchField label="Search extensions" value={search} onChange={setSearch} />
         </ExtensionsTopBar>
       </SettingsSearchTarget>
-      {query && kind !== "skills" ? (
+      {query ? (
         <>
-          <DiscoverSearchResults query={query} kind={kind} />
+          {kind === "skills" ? null : <DiscoverSearchResults query={query} kind={kind} />}
           {showsKind(kind, "plugins") ? <ProviderStoreShelves query={query} /> : null}
+          {showsKind(kind, "skills") ? <SkillSearchResults query={query} /> : null}
         </>
       ) : (
         <DiscoverHome kind={kind} />

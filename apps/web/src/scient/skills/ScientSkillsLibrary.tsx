@@ -11,6 +11,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { scientSkillsInventory, setScientSkillUserActivation } from "./scientSkillsState";
+import { matchesQuery } from "../extensions/extensionsView";
 import { ManagedSkillCard } from "./ManagedSkillCard";
 import { SkillSettingsRow } from "./SkillSettingsRow";
 
@@ -37,9 +38,10 @@ function SkillCategoryDisclosure(props: {
   readonly title: string;
   readonly description: string;
   readonly skillCount: number;
+  readonly defaultOpen?: boolean;
   readonly children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(props.defaultOpen ?? false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 pt-4 pb-2 text-left outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
@@ -72,10 +74,13 @@ export function ScientSkillsLibrary({
   environmentId,
   providers,
   onlyActive = false,
+  query = "",
 }: {
   readonly environmentId: EnvironmentId;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly onlyActive?: boolean;
+  /** Words every listed skill matches; matching categories open. */
+  readonly query?: string;
 }) {
   const inventory = useEnvironmentQuery(scientSkillsInventory({ environmentId, input: {} }));
   const setActivation = useAtomCommand(setScientSkillUserActivation, {
@@ -108,7 +113,10 @@ export function ScientSkillsLibrary({
   };
 
   const userSkills = (inventory.data?.skills ?? []).filter(
-    (skill) => skill.scope === "user" && (!onlyActive || skill.active),
+    (skill) =>
+      skill.scope === "user" &&
+      (!onlyActive || skill.active) &&
+      matchesQuery(query, [skill.name, skill.description, skill.category]),
   );
 
   return (
@@ -119,15 +127,18 @@ export function ScientSkillsLibrary({
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : userSkills.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {onlyActive
-            ? "None turned on. Turn them on from Discover."
-            : "This Scient build does not publish any skills."}
+          {query
+            ? "No skills match."
+            : onlyActive
+              ? "None turned on. Turn them on from Discover."
+              : "This Scient build does not publish any skills."}
         </p>
       ) : (
         <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
           {groupSkillsByCategory(userSkills).map((group) => (
             <SkillCategoryDisclosure
-              key={group.category}
+              key={`${group.category}:${query === "" ? "browse" : "search"}`}
+              defaultOpen={query !== ""}
               title={group.category}
               description={group.description}
               skillCount={group.skills.length}

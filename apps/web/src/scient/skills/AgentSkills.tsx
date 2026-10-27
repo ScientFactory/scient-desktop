@@ -40,11 +40,16 @@ const skillKey = (environmentId: string | null, instanceId: string, path: string
 export function AgentSkills({
   environmentId,
   providers,
+  instanceId = null,
 }: {
   readonly environmentId: EnvironmentId;
   readonly providers: ReadonlyArray<ServerProvider>;
+  /** Only this agent's skills; null lists every agent. */
+  readonly instanceId?: ProviderInstanceId | null;
 }) {
-  const groups = collectExternalSkillProviders(providers);
+  const groups = collectExternalSkillProviders(providers).filter(
+    ({ provider }) => instanceId === null || provider.instanceId === instanceId,
+  );
   const [selected, setSelected] = useState<{
     readonly iconUrl?: string | undefined;
     instanceId: ProviderInstanceId;
