@@ -112,7 +112,7 @@ export class OverleafConnectionNotReadyError extends Schema.TaggedError<Overleaf
       case "archived":
         return "This Overleaf connection was disconnected.";
       case "folder-changed":
-        return "The project folder is not the one this connection recorded.";
+        return "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.";
       case "recovery-required":
         return "An earlier Overleaf sync in this project did not finish. Recover it first.";
       case "authority-changed":

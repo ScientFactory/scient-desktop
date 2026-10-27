@@ -575,11 +575,17 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
           checkoutRoot: read.document.checkout.canonicalRoot,
           folder: read.document.folder.relativePath,
         });
-        if (saved._tag === "failed")
+        if (saved._tag === "failed") {
+          if (saved.failures.some((failure) => failure.reason === "folder-unavailable"))
+            return yield* new OverleafCoordinator.OverleafConnectionNotReadyError({
+              connectionId,
+              reason: "folder-changed",
+            });
           return yield* new OverleafEditorUnsavedError({
             failures: saved.failures,
             unanswered: saved.unanswered,
           });
+        }
         return yield* body.pipe(
           Effect.provideService(OverleafCoordinator.OverleafReservationOwner, owner),
         );

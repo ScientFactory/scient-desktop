@@ -247,8 +247,10 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
     case "folder-invalid":
       return "That folder name can't be used.";
     case "folder-missing":
-    case "folder-unavailable":
       return "The folder isn't there, or its disk isn't connected.";
+    case "folder-changed":
+    case "folder-unavailable":
+      return "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.";
     case "folder-not-empty":
       return "A folder with that name already has files. Pick another name, or link it instead.";
     case "folder-outside-checkout":

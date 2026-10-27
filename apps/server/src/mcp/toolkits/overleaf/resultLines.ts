@@ -279,8 +279,9 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
       return `Overleaf has a file where this folder has something that is not synced${at}. Move or rename it here or on Overleaf.`;
     case "local-only-limit":
       return "too many files are kept only here. Choose a narrower folder.";
+    case "folder-changed":
     case "folder-unavailable":
-      return "the linked folder is missing or is not a folder. Relink it if it moved.";
+      return "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.";
     case "walk-limit":
       return "the folder has more than 5,000 entries. Choose a narrower folder.";
     case "managed-limit":

@@ -156,7 +156,9 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
             )
           : field("reason") === "authority-changed"
             ? toolError("connection-changed", error.message)
-            : toolError("connection-not-ready", `${error.message} ${LIST_LINKS}`),
+            : field("reason") === "folder-changed"
+              ? toolError("connection-not-ready", error.message)
+              : toolError("connection-not-ready", `${error.message} ${LIST_LINKS}`),
       );
     case "CheckoutRecoveryRequiredError":
       return Effect.succeed(

@@ -412,6 +412,32 @@ describe("Overleaf tool handlers", () => {
     }),
   );
 
+  it.effect("gives the folder repair for sync and preview instead of an editor-save error", () =>
+    Effect.gen(function* () {
+      const error = new OverleafConnectionNotReadyError({
+        connectionId: "c-1",
+        reason: "folder-changed",
+      });
+      const service = fakeOverleaf({
+        sync: () => Effect.fail(error),
+        preview: () => Effect.fail(error) as never,
+      });
+      for (const failure of [
+        yield* Effect.flip(
+          overleafSyncForInvocation({ connectionId: "c-1" }).pipe(provide(service)),
+        ),
+        yield* Effect.flip(
+          overleafPreviewForInvocation({ connectionId: "c-1" }).pipe(provide(service)),
+        ),
+      ]) {
+        expect(failure.code).toBe("connection-not-ready");
+        expect(failure.message).toBe(
+          "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.",
+        );
+      }
+    }),
+  );
+
   it.effect("maps failures to fixed categories, never Git's text", () =>
     Effect.gen(function* () {
       const failWith = (error: { readonly _tag: string; readonly message: string }) =>

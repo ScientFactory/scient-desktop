@@ -1661,6 +1661,58 @@ describe.skipIf(!canApply)("OverleafSync", () => {
   );
 
   it.live(
+    "reports a moved linked folder as a folder refusal and recovers after it is restored",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const caller = w.at(w.main);
+          const connected = yield* w.service.connect({
+            caller,
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const connectionId = connected.connection.connectionId;
+          const paper = NodePath.join(w.main, "paper");
+          const moved = NodePath.join(w.main, "moved");
+          yield* w.service.sync({ caller, connectionId, requestId: "s1" });
+          yield* Effect.promise(() => NodeFSP.rename(paper, moved));
+          w.setEditorSave({
+            _tag: "failed",
+            failures: [{ path: "paper", reason: "folder-unavailable" }],
+            unanswered: [],
+          });
+          expect(yield* w.service.status({ caller, connectionId })).toMatchObject({
+            reasons: ["folder-changed"],
+          });
+          for (const error of [
+            yield* Effect.flip(w.service.sync({ caller, connectionId, requestId: "s2" })),
+            yield* Effect.flip(w.service.preview({ caller, connectionId })),
+          ]) {
+            expect(error).toMatchObject({
+              _tag: "OverleafConnectionNotReadyError",
+              reason: "folder-changed",
+            });
+            expect(error.message).toBe(
+              "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.",
+            );
+            expect(error.message).not.toContain("folder-unavailable");
+          }
+          expect(yield* read(moved, "main.tex")).toBe("from Overleaf");
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf" });
+          yield* Effect.promise(() => NodeFSP.rename(moved, paper));
+          w.setEditorSave({ _tag: "saved" });
+          expect(yield* w.service.sync({ caller, connectionId, requestId: "s2" })).toMatchObject({
+            _tag: "synced",
+          });
+        }),
+      ),
+  );
+
+  it.live(
     "undo saves editors, puts back what a send changed, syncs it, and leaves a file edited since",
     () =>
       run(
