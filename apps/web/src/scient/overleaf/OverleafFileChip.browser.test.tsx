@@ -215,7 +215,7 @@ describe("OverleafFileChip", () => {
       expect.objectContaining({
         type: "error",
         description:
-          "paper/main.tex couldn't be saved, so nothing was changed. Save it, then try again.",
+          "paper/main.tex has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.",
       }),
     ]);
   });

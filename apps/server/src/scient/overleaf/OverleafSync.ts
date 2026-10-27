@@ -133,7 +133,13 @@ export class OverleafEditorUnsavedError extends Schema.TaggedError<OverleafEdito
   "OverleafEditorUnsavedError",
   {
     /** Files that could not be saved, relative to the checkout, with the window's reason. */
-    failures: Schema.Array(Schema.Struct({ path: Schema.String, reason: Schema.String })),
+    failures: Schema.Array(
+      Schema.Struct({
+        path: Schema.String,
+        reason: Schema.String,
+        message: Schema.optional(Schema.String),
+      }),
+    ),
     /** Windows that did not answer: they may hold unsaved text. */
     unanswered: Schema.Array(Schema.Struct({ window: Schema.String, reason: Schema.String })),
   },
@@ -141,7 +147,7 @@ export class OverleafEditorUnsavedError extends Schema.TaggedError<OverleafEdito
   override get message(): string {
     const files = this.failures
       .slice(0, 12)
-      .map((failure) => `${failure.path} (${failure.reason})`);
+      .map((failure) => `${failure.path} (${failure.message ?? failure.reason})`);
     const windows = this.unanswered
       .slice(0, 12)
       .map((window) => `window ${window.window} (${window.reason})`);

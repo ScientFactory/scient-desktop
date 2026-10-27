@@ -323,7 +323,7 @@ export function refusalText(refusal: ScientOverleafRefusal): string {
       return "Scient can't read its Overleaf link records, so nothing was linked or changed.";
     case "editor-unsaved":
       return refusal.path
-        ? `${refusal.path} couldn't be saved, so nothing was changed. Save it, then try again.`
+        ? `${refusal.path} has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.`
         : "An open Scient window didn't answer the request to save its editors, so nothing was changed. Try again.";
     case "overleaf-moved":
       return "Overleaf kept changing while the conflicts were shown. Sync again.";
