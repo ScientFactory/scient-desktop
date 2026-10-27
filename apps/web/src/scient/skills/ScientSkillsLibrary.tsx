@@ -63,11 +63,8 @@ function SkillCategoryDisclosure(props: {
         />
       </CollapsibleTrigger>
       <CollapsiblePanel>
-        {/* Set apart from the lines between skills: inset slightly, fading only at its very ends. */}
-        <div
-          aria-hidden
-          className="mx-2 h-px bg-[linear-gradient(to_right,transparent,var(--color-border)_3%,var(--color-border)_97%,transparent)]"
-        />
+        {/* Set apart from the lines between skills: inset slightly from the card's edges. */}
+        <div aria-hidden className="mx-2 h-px bg-border" />
         <div className="[&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
           {props.children}
         </div>
