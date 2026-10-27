@@ -143,8 +143,12 @@ changed.
 The result is a short message, such as "3 files came in, 2 were sent · See
 changes". **See changes** opens the Overleaf tab in the side panel with the files
 that came in and the files that were sent; click a file to open it, or **Show in
-Diff** for the project's Diff tab. **Check again** there (or **See changes** in the
-chip's menu) reads what the next sync would bring in and send.
+Diff** to see line changes inside this tab. **From Overleaf** shows changes since
+the last sync; **To Overleaf** shows the combined version this sync would send,
+compared with the last sync. Binary files and files beyond the preview limits
+are listed without their contents. If the review is no longer current, **Check
+again** reads a fresh one. After a sync, use **Check again** (or **See changes** in
+the chip's menu) to read what the next sync would bring in and send.
 
 ### The chip
 

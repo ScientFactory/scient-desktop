@@ -20,6 +20,7 @@ const client = vi.hoisted(() => ({
   connectOverleaf: vi.fn(),
   syncOverleaf: vi.fn(),
   previewOverleaf: vi.fn(),
+  readOverleafDiff: vi.fn(),
   listOverleafConnections: vi.fn(),
   readOverleafStatus: vi.fn(),
   listOverleafKeptCopies: vi.fn(),
@@ -167,6 +168,47 @@ const panel = (onOpenFile: (path: string) => void = () => {}) => (
 );
 
 describe("OverleafReviewPanel", () => {
+  it("shows Overleaf line changes in the review and asks to check again for a stale review", async () => {
+    reset();
+    recordOverleafSync(environmentId, "c1", decision);
+    client.readOverleafDiff.mockResolvedValueOnce({
+      _tag: "diff",
+      reviewId: "r1",
+      incoming: [
+        {
+          _tag: "text",
+          path: "refs.bib",
+          before: "old reference\n",
+          after: "incoming reference\n",
+        },
+      ],
+      outgoing: [
+        { _tag: "text", path: "main.tex", before: "old text\n", after: "outgoing text\n" },
+        { _tag: "not-shown", path: "plot.pdf", reason: "binary" },
+      ],
+    });
+    await using _screen = await render(panel());
+    await page.getByRole("button", { name: "Show in Diff" }).click();
+    const incoming = page.getByRole("region", { name: "From Overleaf" });
+    const outgoing = page.getByRole("region", { name: "To Overleaf" });
+    await expect.element(incoming.getByText("incoming reference", { exact: true })).toBeVisible();
+    await expect.element(outgoing.getByText("outgoing text", { exact: true })).toBeVisible();
+    await expect
+      .element(outgoing.getByText("plot.pdf: Binary file; diff not shown."))
+      .toBeVisible();
+    expect(client.readOverleafDiff).toHaveBeenCalledWith(environmentId, {
+      workspaceRoot: "/work/project",
+      connectionId: "c1",
+      reviewId: "r1",
+    });
+    client.readOverleafDiff.mockResolvedValueOnce({ _tag: "stale", reason: "check-again" });
+    await page.getByRole("button", { name: "Show in Diff" }).click();
+    await expect
+      .element(page.getByText("This review is no longer current. Check again to see its diff."))
+      .toBeVisible();
+    await expect.element(incoming).not.toBeInTheDocument();
+  });
+
   it("offers four choices per file conflict and two for a group, then syncs again with them", async () => {
     reset();
     recordOverleafSync(environmentId, "c1", decision);

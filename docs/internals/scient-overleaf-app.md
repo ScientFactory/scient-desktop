@@ -134,9 +134,14 @@ still to run (a read, or a conflict waiting); the toast's **See changes** shows 
 It lists what came in and what is or was sent; a file opens in its editor (for a link in another
 copy of the project, the linked copy's file in its normal editor, in a new thread on that copy
 started the way Ask the agent starts one, so its conflict marks can be settled and saved; never
-this checkout's file of the same name), and **Show in Diff**
-opens the thread's Diff tab. The engine exposes paths, not contents, so the tab doesn't draw a
-per-file Overleaf diff itself.
+this checkout's file of the same name). **Show in Diff** reads the current review's text
+inside the Overleaf tab using the shared Diff renderer, without needing a project Git repository.
+**From Overleaf** compares the sync base with the fetched tree; **To Overleaf** compares the base
+with the publication tree, including merged incoming changes and excluding held conflict marks.
+The read-only diff route requires `orchestration:read`, accepts a connection and review ID,
+and never fetches or recovers. A missing, replaced, consumed or expired review asks **Check again**.
+Preview text is capped at 1 MiB per before/after pair and 7,000,000 bytes across both groups;
+binary, invalid UTF-8 and oversized files have reason entries without contents.
 
 Per-file decisions (`OverleafNewFiles`): for a review still to run (a preview, or one waiting on a
 conflict), the tab lists the review's `additions`. A selected one offers **Keep only on this

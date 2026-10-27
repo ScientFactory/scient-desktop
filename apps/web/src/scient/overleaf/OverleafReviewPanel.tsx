@@ -6,6 +6,7 @@ import type {
   ScientOverleafChange,
   ScientOverleafConflictChoice,
   ScientOverleafReview,
+  ScientOverleafDiffResult,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import {
@@ -16,7 +17,7 @@ import {
   RefreshCw,
   Undo2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
@@ -24,7 +25,8 @@ import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { readOverleafDiff } from "./client";
+
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 
 import {
@@ -138,6 +140,10 @@ function newFilesLine(count: number, sent: boolean): string {
   return sent ? `${files} ${count === 1 ? "was" : "were"} sent.` : `${files} will be sent.`;
 }
 
+const OverleafReviewDiff = lazy(() =>
+  import("./OverleafReviewDiff").then((module) => ({ default: module.OverleafReviewDiff })),
+);
+
 const NO_CHOICES: ReadonlyMap<string, OverleafReviewChoice> = new Map();
 
 export function OverleafReviewPanel(props: {
@@ -168,6 +174,32 @@ export function OverleafReviewPanel(props: {
   const decideFile = (path: string, decision: OverleafFileDecision | null) =>
     setOverleafFileDecision(environmentId, connectionId, path, decision);
   const review: ScientOverleafReview | null = shownState?.review ?? null;
+  const diffScope = JSON.stringify([environmentId, cwd, connectionId, review?.reviewId]);
+  const [diffState, setDiffState] = useState<{
+    scope: string;
+    result: ScientOverleafDiffResult | null;
+    error: string | null;
+  } | null>(null);
+  const shownDiff = diffState?.scope === diffScope ? diffState : null;
+  const showDiff = async () => {
+    if (review === null) return;
+    const pending = { scope: diffScope, result: null, error: null };
+    setDiffState(pending);
+    try {
+      const result = await readOverleafDiff(environmentId, {
+        workspaceRoot: cwd,
+        connectionId,
+        reviewId: review.reviewId,
+      });
+      setDiffState((current) => (current === pending ? { ...pending, result } : current));
+    } catch {
+      setDiffState((current) =>
+        current === pending
+          ? { ...pending, error: "Couldn’t read the diff. Check again or try Show in Diff again." }
+          : current,
+      );
+    }
+  };
   const resultView = last ? overleafResultView(last.result) : null;
   // The review shown is what a sync here applied, rather than one still to run.
   const synced = shownState?.applied ?? false;
@@ -328,7 +360,8 @@ export function OverleafReviewPanel(props: {
           <span className="min-w-0 flex-1 truncate text-sm font-medium">
             {connection.folder === "" ? "This project" : connection.folder}
           </span>
-          {threadRef && review && (review.incoming.length > 0 || review.outgoing.length > 0) ? (
+          {/* Line changes of a review still to run; one a sync applied is no longer current. */}
+          {review && !synced && (review.incoming.length > 0 || review.outgoing.length > 0) ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -336,7 +369,10 @@ export function OverleafReviewPanel(props: {
                     size="icon-xs"
                     variant="ghost-muted"
                     aria-label="Show in Diff"
-                    onClick={() => useRightPanelStore.getState().open(threadRef, "diff")}
+                    disabled={
+                      shownDiff !== null && shownDiff.result === null && shownDiff.error === null
+                    }
+                    onClick={() => void showDiff()}
                   />
                 }
               >
@@ -443,6 +479,23 @@ export function OverleafReviewPanel(props: {
               {reading ? "Checking…" : "Check again"}
             </Button>
           )}
+          {shownDiff ? (
+            shownDiff.result ? (
+              <Suspense
+                fallback={
+                  <p role="status" className="px-1 text-sm text-muted-foreground">
+                    Reading line changes…
+                  </p>
+                }
+              >
+                <OverleafReviewDiff result={shownDiff.result} />
+              </Suspense>
+            ) : (
+              <p role="status" className="px-1 text-sm text-muted-foreground">
+                {shownDiff.error ?? "Reading line changes…"}
+              </p>
+            )
+          ) : null}
           {conflicts.length > 0 ? (
             <section className="flex flex-col gap-2" aria-label="Conflicts">
               <h3 className="px-1 text-xs font-medium text-muted-foreground">
