@@ -12,6 +12,13 @@ describe("extensions client grants", () => {
         action: { type: "install", entryId: "sample" },
       }),
     ).toEqual([AuthSettingsWriteScope]);
+    expect(clientRpcRequiredScopes(methods.extensionsPluginKeyBind, {})).toEqual([
+      AuthSettingsWriteScope,
+    ]);
+    expect(clientRpcRequiredScopes(methods.extensionsPluginKeyUnbind, {})).toEqual([
+      AuthSettingsWriteScope,
+    ]);
+    expect(clientRpcRequiredScopes(methods.extensionsPluginKeys, {})).toEqual([]);
     expect(clientRpcRequiredScopes(methods.extensionsProviderStoreSearch, {})).toEqual([]);
   });
 });

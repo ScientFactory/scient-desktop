@@ -103,13 +103,33 @@ unreadable, escaped or truncated manifests also leave requirements unknown rathe
 than publishing an apparently complete empty or partial list. Discovery
 does not install a plugin, run a server, create an account, or change delivery.
 
+## Bindings and authoritative eligibility
+
+`PluginKeyBindings` persists only `{ agent?, pluginId, envName, accountRef }` in
+`scient-plugin-keys.json` (format 1). It uses Extensions' atomic 0600 write/rename
+and directory-sync implementation, serialized updates, bounded no-follow reads,
+and refuses mutations when state is corrupt, newer, duplicated or oversized.
+The original unreadable file is preserved.
+
+`extensions.plugins.keys` discovers requirements from the installed plugin on
+the server and returns names, account references/labels, and computed eligibility.
+Bind and unbind require the destination environment's settings-write grant;
+read requires orchestration-read. Bind accepts only declared keys and API-key
+account token references from `listBindable({})`. No value is returned or copied.
+
+Every status read calls `resolveBound` with the plugin-key consumer and selected
+project. Missing tokens, removed accounts, account Off, project-scope rejection,
+and global Agent access Off become `needs-key`. Unknown manifest requirements
+or unreadable binding state also fail closed. Changes notify Extensions; Accounts
+activity/last-use-only events are excluded to prevent status refresh loops.
+This is credential eligibility, not a claim that a native server is suppressed
+or delivered; those adapter changes remain separate.
+
 ## Remaining implementation and qualification
 
 This foundation is not the complete plugin-key feature, including the smaller
 HTTP delivery milestone from the plan of record. Remaining work:
 
-1. A Scient-owned binding store keyed by agent instance, plugin id and key name;
-   guarded RPC mutations, persistence, change notifications and tests.
 2. Keys rows using `listBindable({})`, the existing Accounts add flow, and binding
    approval. Do not offer a binding as usable before delivery is available.
 3. Server-authoritative eligibility and “Needs a key” transitions on account

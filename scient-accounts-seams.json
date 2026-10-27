@@ -315,6 +315,16 @@
       "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
       "anchor": "apps/server/src/scient/accounts/AccountsSecretStore.ts",
       "purpose": "Void provider runtime publications when the store that seals Custom models keys changes."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/PluginKeyBindings.ts",
+      "anchor": "makePluginKeyBindings",
+      "purpose": "Resolve plugin bindings through Accounts without exposing credential values."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ExtensionsRpcHandlers.ts",
+      "anchor": "AccountsService",
+      "purpose": "Invalidate plugin eligibility after account authorization or token metadata changes, excluding usage-only events."
     }
   ]
 }

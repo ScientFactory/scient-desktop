@@ -263,7 +263,11 @@ const encodeState = (state: LoadedState): string =>
 
 const fitsStateLimit = (text: string) => Buffer.byteLength(text, "utf8") <= MAX_STATE_BYTES;
 
-const writeState = async (statePath: string, text: string, platform: NodeJS.Platform) => {
+export const writeExtensionState = async (
+  statePath: string,
+  text: string,
+  platform: NodeJS.Platform,
+) => {
   await NodeFSP.mkdir(NodePath.dirname(statePath), { recursive: true });
   const temporaryPath = `${statePath}.${NodeCrypto.randomUUID()}.tmp`;
   try {
@@ -329,7 +333,9 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
             "migrated connected services exceed the state size limit; the file was left unchanged",
             { path: statePath },
           ).pipe(Effect.as(loaded))
-        : yield* Effect.tryPromise(() => writeState(statePath, migratedText, platform)).pipe(
+        : yield* Effect.tryPromise(() =>
+            writeExtensionState(statePath, migratedText, platform),
+          ).pipe(
             Effect.as({ ...loaded, migrated: false }),
             Effect.catch(() =>
               Effect.logWarning("migrated connected services could not be saved yet", {
@@ -380,7 +386,7 @@ export const makeConnectorStateStore = Effect.fn("ConnectorStateStore.make")(fun
             });
           }
           yield* Effect.tryPromise({
-            try: () => writeState(statePath, text, platform),
+            try: () => writeExtensionState(statePath, text, platform),
             catch: () =>
               new ExtensionsError({
                 reason: "state-unavailable",

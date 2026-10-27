@@ -301,3 +301,10 @@ Extensions' page-owned native inventory refresh and revision subscription; an
 installed plugin or an available app alone is not a sign-in. Apps shared by
 several plugins appear once per agent instance. Each row links to that agent's
 Extensions page. No credentials are imported, exposed, or stored by these rows.
+
+Plugin-key bindings use the same narrow Accounts port. Extensions persists only
+account token refs, and resolves each required key with its agent instance,
+plugin, variable name and selected project when computing eligibility. Revocation
+and token removal never fall back to a previous value. Status projections discard
+resolved `Redacted` values. Accounts usage-only events do not invalidate those
+projections; authorization and token-metadata changes do.

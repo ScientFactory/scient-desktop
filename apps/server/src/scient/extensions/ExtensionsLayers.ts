@@ -15,6 +15,7 @@ import * as ExtensionDeliveryReceipts from "./ExtensionDeliveryReceipts.ts";
 import { changeFeedLayer } from "./ExtensionsRpcHandlers.ts";
 import * as PluginConnectorEligibility from "./plugins/PluginConnectorEligibility.ts";
 import * as ScientPluginRegistry from "./plugins/ScientPluginRegistry.ts";
+import * as PluginKeyBindings from "./PluginKeyBindings.ts";
 import * as ProviderPluginManagement from "./ProviderPluginManagement.ts";
 
 // One eligibility instance beneath both the runtime (which checks it) and the
@@ -28,6 +29,7 @@ const ConnectorCoreLive = Layer.merge(
 
 const ExtensionOwnersLive = Layer.mergeAll(
   ScientPluginRegistry.layer,
+  PluginKeyBindings.layer,
   ExtensionsDiscover.layer,
   ProviderPluginManagement.layer,
 ).pipe(Layer.provideMerge(ConnectorCoreLive));

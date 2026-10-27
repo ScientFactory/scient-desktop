@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 
+import {
+  PluginKeyTarget,
+  PluginKeyState,
+  PluginKeyBindInput,
+  PluginKeyUnbindInput,
+} from "./pluginKeys.ts";
 import { ExtensionIconDataUri } from "./extensionIcon.ts";
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
@@ -44,6 +50,9 @@ export const SCIENT_EXTENSION_WS_METHODS = {
   extensionsProviderStoreSearch: "extensions.providerStore.search",
   extensionsProviderStoreEntry: "extensions.providerStore.entry",
   extensionsList: "extensions.list",
+  extensionsPluginKeys: "extensions.plugins.keys",
+  extensionsPluginKeyBind: "extensions.plugins.keys.bind",
+  extensionsPluginKeyUnbind: "extensions.plugins.keys.unbind",
   extensionsPluginContents: "extensions.plugins.contents",
   extensionsSkillDocument: "extensions.skills.document",
   extensionsSubscribeChanges: "extensions.subscribeChanges",
@@ -189,4 +198,17 @@ export const WsExtensionsSkillDocumentRpc = Rpc.make(
     success: ExtensionSkillDocument,
     error: ExtensionsRpcError,
   },
+);
+
+export const WsExtensionsPluginKeysRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsPluginKeys,
+  { payload: PluginKeyTarget, success: PluginKeyState, error: ExtensionsRpcError },
+);
+export const WsExtensionsPluginKeyBindRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsPluginKeyBind,
+  { payload: PluginKeyBindInput, success: PluginKeyState, error: ExtensionsRpcError },
+);
+export const WsExtensionsPluginKeyUnbindRpc = Rpc.make(
+  SCIENT_EXTENSION_WS_METHODS.extensionsPluginKeyUnbind,
+  { payload: PluginKeyUnbindInput, success: PluginKeyState, error: ExtensionsRpcError },
 );
