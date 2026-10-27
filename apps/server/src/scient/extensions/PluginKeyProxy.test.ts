@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Fiber, Layer, Stream } from "effect";
 import {
   ConnectorId,
   EnvironmentId,
@@ -23,6 +23,9 @@ import * as PluginConnectorEligibility from "./plugins/PluginConnectorEligibilit
 const synthetic = vi.hoisted(() => ({
   token: "synthetic-plugin-proxy-token",
   headers: [] as string[],
+  reject: false,
+  cancelStarted: undefined as (() => void) | undefined,
+  cancelFinished: Promise.resolve(),
 }));
 vi.mock("./connectors/ConnectorOutbound.ts", async (original) => {
   const actual = await original<typeof import("./connectors/ConnectorOutbound.ts")>();
@@ -30,6 +33,22 @@ vi.mock("./connectors/ConnectorOutbound.ts", async (original) => {
     ...actual,
     proxyFetch: () => async (_url: string, init: RequestInit) => {
       synthetic.headers.push(new Headers(init.headers).get("authorization") ?? "");
+      if (synthetic.reject)
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            cancel: () => {
+              synthetic.cancelStarted?.();
+              return synthetic.cancelFinished;
+            },
+          }),
+          {
+            status: 401,
+            headers: {
+              "www-authenticate":
+                'Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"',
+            },
+          },
+        );
       return Response.json({
         jsonrpc: "2.0",
         id: 1,
@@ -118,9 +137,35 @@ it.effect(
       const text = Buffer.concat(body).toString("utf8");
       expect(synthetic.headers).toEqual([`Bearer ${synthetic.token}`]);
       expect(text).not.toContain(synthetic.token);
+      const cancelStarted = Promise.withResolvers<void>();
+      const cancelFinished = Promise.withResolvers<void>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          synthetic.reject = true;
+          synthetic.cancelStarted = cancelStarted.resolve;
+          synthetic.cancelFinished = cancelFinished.promise;
+        }),
+        () =>
+          Effect.sync(() => {
+            synthetic.reject = false;
+            synthetic.cancelStarted = undefined;
+            cancelFinished.resolve();
+          }),
+      );
+      const rejected = yield* Effect.forkChild(runtime.forward(request));
+      yield* Effect.promise(() => cancelStarted.promise);
+      // The cancellation receipt is issued synchronously. Auth rejection must have
+      // completed independently of the vendor's still-blocked disposal promise.
+      expect(rejected.pollUnsafe()).toBeDefined();
+      const denied = yield* Fiber.join(rejected);
+      const deniedText = Buffer.concat(yield* denied.body.pipe(Stream.runCollect)).toString("utf8");
+      expect(JSON.parse(deniedText).id).toBe(1);
+      expect(deniedText).toContain("rejected the key bound in Scient Accounts");
+      expect(deniedText).not.toContain("resource_metadata");
+      expect(synthetic.headers).toHaveLength(2);
       allowed = false;
       const refused = yield* runtime.forward(request);
       yield* refused.body.pipe(Stream.runDrain);
-      expect(synthetic.headers).toHaveLength(1);
+      expect(synthetic.headers).toHaveLength(2);
     }),
 );

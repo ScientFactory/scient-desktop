@@ -140,7 +140,8 @@ type SendOutcome =
       readonly secrets: ReadonlyArray<string | undefined>;
     }
   | { readonly type: "lost"; readonly message: string }
-  | { readonly type: "failed"; readonly message: string };
+  | { readonly type: "failed"; readonly message: string }
+  | { readonly type: "rejected"; readonly response: Response; readonly message: string };
 
 type RefreshOutcome =
   | { readonly type: "ok"; readonly session: ConnectorOAuthSession }
@@ -864,7 +865,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             signal,
           }),
         catch: (cause) => new ConnectorUpstreamError({ cause }),
-      }).pipe(Effect.exit);
+      }).pipe(
+        Effect.tap((response) =>
+          Effect.annotateCurrentSpan("http.response.status_code", response.status),
+        ),
+        Effect.withSpan("ConnectorRuntime.upstreamHeaders", {
+          attributes: { "http.request.method": request.method },
+        }),
+        Effect.exit,
+      );
     const gone = { type: "lost", message: lostGrantMessage(record) } satisfies SendOutcome;
 
     const credential = yield* credentialFor(record, scope);
@@ -883,6 +892,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         type: "response",
         response: first.value,
         secrets: credential.secrets,
+      } satisfies SendOutcome;
+    }
+    if (pluginHttp.has(record.connectorId)) {
+      // This transient registration has no persisted connector status and no OAuth grant.
+      // Hand the rejected exchange back without awaiting an untrusted response body's cancel.
+      return {
+        type: "rejected",
+        response: first.value,
+        message: `${record.displayName} rejected the key bound in Scient Accounts. Ask the user to update that account, then retry.`,
       } satisfies SendOutcome;
     }
     yield* cancelBody(first.value);
@@ -1462,6 +1480,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         applied.push(...outcome.secrets);
         return outcome.response;
       }
+      if (outcome.type === "rejected") {
+        void outcome.response.body?.cancel().catch(() => undefined);
+        throw new ConnectorUnavailableError("failed", outcome.message);
+      }
       throw new ConnectorUnavailableError(outcome.type, outcome.message);
     };
     const listed = yield* Effect.tryPromise({
@@ -1625,6 +1647,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       ).pipe(Effect.onInterrupt(() => release));
       if (outcome.type !== "response") {
         yield* release;
+        if (outcome.type === "rejected") {
+          // release aborts the socket before best-effort disposal. A vendor may leave its
+          // 401 body open; the agent's auth error must not wait for EOF or cancellation.
+          yield* Effect.sync(() => {
+            void outcome.response.body?.cancel().catch(() => undefined);
+          });
+        }
         yield* recordToolUse(outcome.type === "lost" ? "denied" : "allowed", "error");
         return connectorUnavailableResponse(request, outcome.message);
       }

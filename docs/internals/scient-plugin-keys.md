@@ -294,3 +294,62 @@ skill path remains unknown. The provider detail contract does not identify a
 verified manifest root for this case; guessing cache paths from display names or
 opaque ids would risk inspecting another plugin's files. No user plugin cache or
 credential/config values were inspected to qualify this gap.
+
+## HTTP response completion and rejected keys
+
+Plugin-key HTTP delivery uses the existing bounded Undici transport and its
+cached agent per egress policy. Connections are pooled by origin; Scient does
+not deliberately repeat DNS/TLS setup on each request. DNS security checks still
+apply when establishing a new connection. Claude plugin eligibility reads the
+local installed-plugin index and contained manifest files; it does not spawn a
+CLI. Accounts availability and `resolveBound` are checked before fetching, so a
+slow external credential source or an account operation holding its lock can
+still delay that phase. Authorization is not cached across requests.
+
+A plugin-bound key is not an OAuth grant. An upstream 401, with or without
+`WWW-Authenticate`, is never refreshed or replayed. The rejected exchange is
+aborted and its body disposed of best-effort, without waiting for EOF or for a
+body cancellation promise to settle. Transient plugin registrations do not
+attempt to update a persisted connector status they do not own. The agent gets
+a sanitized JSON-RPC auth error identifying Scient Accounts, with its request id
+preserved. As with the other connector refusals, POST uses HTTP 200 plus a
+JSON-RPC error rather than forwarding a vendor 401/OAuth challenge: the vendor's
+resource metadata must not start an OAuth flow against Scient's proxy. No vendor
+error body, credentials, or resource-metadata URL is forwarded. Scient-owned
+OAuth connectors retain their existing single-refresh behavior.
+
+`ConnectorRuntime.upstreamHeaders` measures only the outbound exchange until
+headers arrive and records its HTTP method and response status. It records no
+URL, header values or credentials. Compare it with the enclosing
+`PluginKeyHttpDelivery.authorize`/Accounts spans to separate local eligibility
+and credential-source latency from DNS, connection establishment and vendor
+response time. An interrupted header span without a response status means the
+client stopped waiting before upstream headers arrived. Rejected or cancelled
+exchanges may discard their connection; a client-aborted DNS/TLS handshake cannot
+leave a reusable socket. That cleanup is distinct from constructing a new agent
+on every request.
+
+The reported GitHub live trace had a first POST interrupted at the client's
+five-second limit and later POSTs taking roughly three to five seconds, with no
+GETs. That does not establish an SSE flush or OAuth-discovery failure. Local
+real-TCP tests complete initialize and tools/list for JSON and open SSE, reuse
+connections for sequential JSON calls, and reject synthetic keys after exactly
+one upstream request, including a 401 whose body stays open. A controlled
+cancellation test fails on the earlier implementation and passes when disposal
+is independent of the auth response.
+
+An isolated Claude Code 2.1.311 `--bare` probe used only temporary configuration,
+synthetic keys and local fake MCP/model servers. JSON and SSE loaded tools;
+401 with and without a metadata challenge made one `server/discover` and one
+`initialize` request, without a retry loop. No login, keychain/OAuth reads or
+live plugin profile were used. The GitHub five-second timeout was not reproduced
+locally. Remote GitHub latency remains unqualified; the new header span is needed
+to attribute a repeat precisely. Increasing Claude's timeout or retrying an
+invalid key is not part of this change.
+
+A single direct initialize probe on this host, using production `proxyFetch`
+with the strict egress policy and a synthetic bearer (no Accounts or proxy route),
+received HTTP 400 headers after 548 ms, with text/plain content and an auth
+challenge present. The response body and challenge value were not inspected.
+This single result neither reproduces the reported latency nor establishes a
+remote 401 baseline; it is not a vendor latency guarantee.
