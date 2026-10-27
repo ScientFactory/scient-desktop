@@ -11,6 +11,7 @@ import {
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
+  accountManagePage,
   capturedSignInInput,
   automaticSignIn,
   canAutomaticallyFill,
@@ -257,6 +258,11 @@ it("finds bundled logos by domain and parent domain, and none for unknown sites"
   expect(accountIconUrl([], "Postgres database")).toMatch(/^data:image\//);
   expect(accountIconUrl(["unknown.example"])).toBeUndefined();
   expect(accountIconUrl([])).toBeUndefined();
+  expect(accountManagePage(["api.openai.com"])).toEqual({
+    domain: "openai.com",
+    url: "https://platform.openai.com/api-keys",
+  });
+  expect(accountManagePage(["huggingface.co.attacker.test"])).toBeUndefined();
 });
 
 describe("toggleScope", () => {

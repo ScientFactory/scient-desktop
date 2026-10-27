@@ -39,7 +39,8 @@ import { BrowserProfiles, BrowserImportDialog } from "./BrowserProfiles";
 import { PasswordStores, OnePasswordDialog } from "./PasswordStores";
 import { AccountApprovals } from "./AccountApprovals";
 import { AccountLogo } from "./AccountLogo";
-import { KIND_LABELS, accountIconUrl } from "./accountsView";
+import { KIND_LABELS, accountIconUrl, accountManagePage } from "./accountsView";
+import { readLocalApi } from "~/localApi";
 
 function AccountRow({
   account,
@@ -62,6 +63,7 @@ function AccountRow({
   const target = { type: "account", accountId: account.accountId } as const;
   const details = account.details;
   const iconUrl = accountIconUrl("sites" in details ? details.sites : [], account.name);
+  const managePage = accountManagePage("sites" in details ? details.sites : []);
   return (
     <SettingsRow
       title={
@@ -134,6 +136,17 @@ function AccountRow({
             >
               Activity
             </MenuItem>
+            {managePage ? (
+              <MenuItem
+                onClick={() =>
+                  void readLocalApi()
+                    ?.shell.openExternal(managePage.url)
+                    .catch(() => undefined)
+                }
+              >
+                Manage on {managePage.domain}
+              </MenuItem>
+            ) : null}
             <MenuCheckboxItem
               variant="switch"
               checked={account.controls.visibility === "readable"}

@@ -125,6 +125,25 @@ export function importProfileName(sourceName: string, taken: ReadonlyArray<strin
  */
 const ICON_BY_DOMAIN: Readonly<Record<string, string>> = ACCOUNT_ICONS;
 
+/** Where each service lets you see, revoke and create the keys or sign-ins Accounts holds. */
+const MANAGE_PAGES: Readonly<Record<string, string>> = {
+  "github.com": "https://github.com/settings/tokens",
+  "huggingface.co": "https://huggingface.co/settings/tokens",
+  "openai.com": "https://platform.openai.com/api-keys",
+  "anthropic.com": "https://console.anthropic.com/settings/keys",
+  "cloudflare.com": "https://dash.cloudflare.com/profile/api-tokens",
+  "amazonaws.com": "https://console.aws.amazon.com/iam/home#/security_credentials",
+  "google.com": "https://myaccount.google.com/security",
+};
+
+/** The service's own page for managing this account, labelled by its domain. */
+export function accountManagePage(
+  sites: ReadonlyArray<string>,
+): { readonly domain: string; readonly url: string } | undefined {
+  const page = byDomain(sites, MANAGE_PAGES);
+  return page && { domain: page.domain, url: page.value };
+}
+
 /** Catalogue names whose logo domain differs from the account's site. */
 const ICON_NAME_ALIASES: Readonly<Record<string, string>> = {
   moodle: "moodle.org",
@@ -132,17 +151,27 @@ const ICON_NAME_ALIASES: Readonly<Record<string, string>> = {
   gcloud: "cloud.google.com",
 };
 
-/** The bundled logo for an account's sites, matched by domain or parent domain, then by name. */
-export function accountIconUrl(sites: ReadonlyArray<string>, name?: string): string | undefined {
+/** The entry for the first site whose host is a key or a subdomain of one. */
+function byDomain<T>(
+  sites: ReadonlyArray<string>,
+  table: Readonly<Record<string, T>>,
+): { readonly domain: string; readonly value: T } | undefined {
   for (const site of sites) {
     const host = site
       .replace(/^https?:\/\//, "")
       .split("/")[0]!
       .toLowerCase();
-    for (const [domain, icon] of Object.entries(ICON_BY_DOMAIN)) {
-      if (host === domain || host.endsWith(`.${domain}`)) return icon;
+    for (const [domain, value] of Object.entries(table)) {
+      if (host === domain || host.endsWith(`.${domain}`)) return { domain, value };
     }
   }
+  return undefined;
+}
+
+/** The bundled logo for an account's sites, matched by domain or parent domain, then by name. */
+export function accountIconUrl(sites: ReadonlyArray<string>, name?: string): string | undefined {
+  const icon = byDomain(sites, ICON_BY_DOMAIN);
+  if (icon) return icon.value;
   const lowered = name?.toLowerCase() ?? "";
   for (const [alias, domain] of Object.entries(ICON_NAME_ALIASES)) {
     if (lowered.includes(alias)) return ICON_BY_DOMAIN[domain];
