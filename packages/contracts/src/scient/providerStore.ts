@@ -20,6 +20,7 @@ export const ProviderStoreEntry = Schema.Struct({
   marketplace: TrimmedNonEmptyString,
   displayName: TrimmedNonEmptyString,
   description: Schema.String,
+  tagline: Schema.optional(Schema.String),
   kind: Schema.Literals(["shared", "codex"]),
   installed: Schema.Boolean,
   version: Schema.optional(Schema.String),

@@ -178,12 +178,14 @@ function ExtensionIconTile({
   iconUrl,
   glyph: Glyph,
   size = "row",
+  unframed = false,
 }: {
   readonly name: string;
   readonly iconUrl?: string | undefined;
   /** A Scient-drawn symbol, for built-in features that have no logo. */
   readonly glyph?: LucideIcon | undefined;
   readonly size?: ExtensionIconSize;
+  readonly unframed?: boolean;
 }) {
   const image = iconUrl !== undefined && isExtensionIconDataUri(iconUrl) ? iconUrl : undefined;
   const [sample, setSample] = useState<{ url: string; rendered: string }>();
@@ -201,6 +203,7 @@ function ExtensionIconTile({
             : "border-border [color-scheme:light] dark:border-white/10",
           Glyph && (size === "large" ? "p-2.5" : "p-1.5"),
           ICON_FRAME[size],
+          unframed && "size-8 border-0 bg-transparent p-1 opacity-60",
         )}
       >
         {Glyph ? (

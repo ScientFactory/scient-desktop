@@ -16,6 +16,7 @@ export function ExtensionContentDialog({
   name,
   kind,
   glyph,
+  iconUrl,
   description,
   actions,
   footer,
@@ -23,8 +24,9 @@ export function ExtensionContentDialog({
   onOpenChange,
 }: {
   readonly name: string;
-  readonly kind: "Skill" | "Tool";
-  readonly glyph: LucideIcon;
+  readonly kind: "Skill" | "Tool" | "App";
+  readonly glyph?: LucideIcon | undefined;
+  readonly iconUrl?: string | undefined;
   readonly description: string;
   readonly actions?: ReactNode;
   readonly footer?: ReactNode;
@@ -37,15 +39,19 @@ export function ExtensionContentDialog({
       <DialogPopup
         ref={popupRef}
         initialFocus={popupRef}
-        layout="visual"
-        className="max-w-3xl"
+        className="flex max-h-[min(70vh,680px)] w-full max-w-xl flex-col overflow-hidden"
         showCloseButton={false}
         padding="none"
         gap="none"
       >
-        <DialogHeader>
+        <DialogHeader size="compact">
           <div className="flex items-start justify-between gap-4">
-            <ExtensionIcon name={name} glyph={glyph} size="large" />
+            <ExtensionIcon
+              name={name}
+              glyph={iconUrl ? undefined : glyph}
+              iconUrl={iconUrl}
+              size="row"
+            />
             <div className="flex items-center gap-1">
               {actions}
               <DialogClose
@@ -66,7 +72,7 @@ export function ExtensionContentDialog({
           </DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <div className="mx-6 mb-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-background">
+        <div className="mx-4 mb-4 flex min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
           <DialogPanel padding="none" scrollFade={false}>
             {children}
           </DialogPanel>

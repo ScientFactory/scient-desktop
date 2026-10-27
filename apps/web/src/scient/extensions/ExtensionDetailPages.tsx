@@ -1,3 +1,4 @@
+import ChatMarkdown from "../../components/ChatMarkdown";
 import { ConnectorToolsList } from "./ConnectorToolsList";
 import { PluginContents } from "./PluginContents";
 import {
@@ -16,7 +17,7 @@ import { Link } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
   ChevronRightIcon,
-  DownloadIcon,
+  PlusIcon,
   EllipsisIcon,
   LogInIcon,
   type LucideIcon,
@@ -41,7 +42,7 @@ import {
   useProviderPluginActions,
   useProviderServerActions,
 } from "./extensionActions";
-import { ActionFeedback, mcpServerSummary, ProviderAppConnect } from "./ExtensionItems";
+import { ActionFeedback, mcpServerSummary } from "./ExtensionItems";
 import {
   BackLink,
   ExtensionsPage,
@@ -102,20 +103,24 @@ export function DetailLayout({
   readonly feedback?: ReactNode;
   readonly children: ReactNode;
 }) {
+  const { environmentId } = useExtensionsEnvironment();
   return (
     <>
       <DetailBack to={back} />
-      <article className="grid gap-6">
-        <div className="grid gap-4">
+      <article className="grid min-w-0 grid-cols-1 gap-6">
+        <div className="grid min-w-0 grid-cols-1 gap-4">
           {header}
           {description ? (
-            <p className="max-w-prose whitespace-pre-line text-sm text-muted-foreground">
-              {description}
-            </p>
+            <ChatMarkdown
+              text={description}
+              cwd={undefined}
+              environmentId={environmentId}
+              className="text-sm text-muted-foreground"
+            />
           ) : null}
           {feedback ? <div className="grid gap-1 empty:hidden">{feedback}</div> : null}
         </div>
-        <div className="grid gap-8">{children}</div>
+        <div className="grid min-w-0 grid-cols-1 gap-8">{children}</div>
       </article>
     </>
   );
@@ -128,6 +133,7 @@ export function DetailHeader({
   providerPlugin,
   glyph,
   tagline,
+  developer,
   actions,
 }: {
   readonly name: string;
@@ -135,6 +141,7 @@ export function DetailHeader({
   readonly providerPlugin?: Extract<ExtensionTarget, { kind: "provider-plugin" }> | undefined;
   readonly glyph?: LucideIcon | undefined;
   readonly tagline?: string | undefined;
+  readonly developer?: string | undefined;
   readonly actions: ReactNode;
 }) {
   return (
@@ -148,7 +155,11 @@ export function DetailHeader({
       />
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-2xl font-medium tracking-[-0.02em] text-foreground">{name}</h1>
-        {tagline ? <p className="text-sm text-muted-foreground">{tagline}</p> : null}
+        {developer || tagline ? (
+          <p className="text-sm text-muted-foreground">
+            {[developer ? `By ${developer}` : undefined, tagline].filter(Boolean).join(" • ")}
+          </p>
+        ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>
     </header>
@@ -165,7 +176,7 @@ function extraDescription(description: string | undefined, tagline: string | und
  * The item's main action, drawn like the provider "Install" button in
  * Settings → Providers: a borderless primary-colour button with a leading icon.
  */
-function PrimaryAction({
+export function PrimaryAction({
   icon: Icon,
   disabled,
   onClick,
@@ -204,24 +215,33 @@ function MoreMenu({ label, children }: { readonly label: string; readonly childr
 
 export function DetailSection({
   title,
+  count,
   children,
 }: {
   readonly title: string;
+  readonly count?: number;
   readonly children: ReactNode;
 }) {
   return (
-    <section className="grid gap-3" aria-label={title}>
-      <h2 className={SECTION_HEADING_CLASS}>{title}</h2>
+    <section
+      className="grid min-w-0 grid-cols-1 gap-3"
+      aria-label={count === undefined ? title : `${title} ${count}`}
+    >
+      <h2 className={cn(SECTION_HEADING_CLASS, count !== undefined && "border-b pb-3")}>
+        {title}
+        {count !== undefined ? (
+          <>
+            {" "}
+            <span className="font-normal text-muted-foreground">{count}</span>
+          </>
+        ) : null}
+      </h2>
       {children}
     </section>
   );
 }
 
 const CARD_CLASS = "divide-y divide-border overflow-hidden rounded-xl border bg-card";
-
-export function DetailCard({ children }: { readonly children: ReactNode }) {
-  return <div className={CARD_CLASS}>{children}</div>;
-}
 
 export function CardRow({ children }: { readonly children: ReactNode }) {
   return <div className="flex min-h-14 items-center gap-3 px-4 py-3">{children}</div>;
@@ -741,7 +761,7 @@ function ServerDetail({
           actions={
             <>
               <PrimaryAction
-                icon={DownloadIcon}
+                icon={PlusIcon}
                 disabled={!actions.canAdd || actions.locked}
                 onClick={() => (entryNeedsToken(entry) ? onAddWithOptions() : void actions.add())}
               >
@@ -920,7 +940,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
         <DetailHeader
           name={plugin.displayName}
           glyph={glyph}
-          tagline={plugin.description}
+          developer={plugin.publisher}
           actions={
             <>
               {plugin.canSetEnabled ? (
@@ -947,6 +967,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
           }
         />
       }
+      description={plugin.description}
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
       <PluginContents key={plugin.pluginId} input={{ pluginId: plugin.pluginId }} />
@@ -1064,7 +1085,6 @@ function ProviderPluginDetail({
             pluginId: plugin.id,
             workspace,
           }}
-          tagline={plugin.description}
           actions={
             <>
               {plugin.canSetEnabled ? (
@@ -1093,6 +1113,7 @@ function ProviderPluginDetail({
           }
         />
       }
+      description={plugin.description}
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
       <PluginContents

@@ -55,7 +55,18 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
       isEnabled: true,
       installUrl: "https://chatgpt.com/apps/sample/app",
       pluginDisplayNames: ["sample"],
+      toolSummaries: [
+        {
+          name: "search",
+          title: "Search pages",
+          description: "Find pages",
+          isReadOnly: true,
+          isEnabled: true,
+        },
+        { name: "create", description: "Create pages", isReadOnly: false, isEnabled: false },
+      ],
     },
+    remoteContents: "---\nname: search\n---\n# Remote instructions" as string | null,
     localPlugins: [] as Plugin[],
     skills: [{ name: "search" }] as Array<{ name: string; path?: string; description?: string }>,
     summary: undefined as Plugin | undefined,
@@ -100,6 +111,8 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
                 hooks: [],
               },
             });
+          case "plugin/skill/read":
+            return Effect.succeed({ contents: state.remoteContents });
           case "app/installed":
             return Effect.succeed({
               apps: state.app.isAccessible
@@ -244,7 +257,11 @@ describe("Codex provider store", () => {
           expect(
             fixture.calls
               .filter((call) => call.method === "app/read")
-              .every((call) => JSON.stringify(call.params) === JSON.stringify({ appIds: ["app"] })),
+              .every(
+                (call) =>
+                  JSON.stringify(call.params) ===
+                  JSON.stringify({ appIds: ["app"], includeTools: false }),
+              ),
           ).toBe(true);
         }),
       ),
@@ -388,6 +405,7 @@ it.effect(
         fixture.state.skills = [
           { name: "search", path: NodePath.join(NodeOS.tmpdir(), "outside/SKILL.md") },
         ];
+        fixture.state.localPlugins = [plugin("local", { version: "2" })];
         yield* store.search({ refresh: true });
         expect((yield* store.contents("local")).skills[0]?.documentAvailable).toBe(false);
         expect((yield* store.skillDocument("local", "search").pipe(Effect.result))._tag).toBe(
@@ -517,4 +535,59 @@ it.effect("keeps the shared client when one operation fails while another is in 
       expect(openings).toBe(1);
     }),
   ),
+);
+
+it.effect(
+  "reads uninstalled remote skills, strips front matter, bounds bytes and preserves app tool metadata",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = clientFixture([
+          plugin("notion@remote", { remotePluginId: "remote-notion" }),
+        ]);
+        const store = yield* makeCodexProviderStore(
+          () => Effect.succeed(fixture.client),
+          () => Effect.succeed(undefined),
+        );
+        const contents = yield* store.contents("notion@remote");
+        expect(contents.skills[0]).toMatchObject({ documentAvailable: true, enabled: false });
+        expect(contents.apps[0]?.toolSummaries).toEqual(fixture.state.app.toolSummaries);
+        expect(contents.apps[0]?.toolCounts).toEqual({ read: 1, write: 1 });
+        expect(fixture.calls.find((call) => call.method === "app/read")?.params).toMatchObject({
+          includeTools: true,
+        });
+        expect(yield* store.skillDocument("notion@remote", "search")).toEqual({
+          instructions: "# Remote instructions",
+        });
+        expect(fixture.calls.find((call) => call.method === "plugin/skill/read")?.params).toEqual({
+          remoteMarketplaceName: "remote",
+          remotePluginId: "remote-notion",
+          skillName: "search",
+        });
+        const reads = fixture.calls.length;
+        yield* TestClock.adjust("61 minutes");
+        expect(yield* store.skillDocument("notion@remote", "search")).toEqual({
+          instructions: "# Remote instructions",
+        });
+        expect(fixture.calls).toHaveLength(reads);
+        fixture.state.plugins = [
+          plugin("notion@remote", { remotePluginId: "remote-notion", version: "2" }),
+        ];
+        yield* store.search({ refresh: true });
+        fixture.state.remoteContents = "# Updated version";
+        expect(yield* store.skillDocument("notion@remote", "search")).toEqual({
+          instructions: "# Updated version",
+        });
+        expect(fixture.calls.filter((call) => call.method === "plugin/read")).toHaveLength(2);
+        yield* fixture.notify("account/updated", {});
+        fixture.state.remoteContents = "é".repeat(128 * 1024 + 1);
+        expect(
+          (yield* store.skillDocument("notion@remote", "search").pipe(Effect.result))._tag,
+        ).toBe("Failure");
+        fixture.state.remoteContents = null;
+        expect(
+          (yield* store.skillDocument("notion@remote", "search").pipe(Effect.result))._tag,
+        ).toBe("Failure");
+      }),
+    ),
 );

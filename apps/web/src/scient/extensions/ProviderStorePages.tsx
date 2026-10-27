@@ -1,3 +1,4 @@
+import { PlusIcon } from "lucide-react";
 import { PluginContents } from "./PluginContents";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
@@ -14,7 +15,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useDebouncedValue } from "../../state/queries";
 import { useActionLock } from "./extensionActions";
 import { ActionFeedback } from "./ExtensionItems";
-import { AboutCard, DetailHeader, DetailLayout } from "./ExtensionDetailPages";
+import { AboutCard, DetailHeader, DetailLayout, PrimaryAction } from "./ExtensionDetailPages";
 import {
   BackLink,
   ExtensionsPage,
@@ -63,9 +64,8 @@ function StoreInstall({
   const lock = useActionLock(JSON.stringify(["store", provider.instanceId, entry.id]));
   return (
     <>
-      <Button
-        size="sm"
-        variant="ghost-primary"
+      <PrimaryAction
+        icon={PlusIcon}
         disabled={!allowed || lock.locked || installed || Boolean(entry.disabledReason)}
         onClick={() =>
           void lock.run("install", async () => {
@@ -88,15 +88,15 @@ function StoreInstall({
         }
       >
         {lock.busy
-          ? "Installing…"
+          ? "Adding…"
           : installed
-            ? "Installed"
+            ? "Added"
             : target.driver === "codex"
-              ? "Install in Codex"
+              ? "Add to Codex"
               : target.driver === "claudeAgent"
-                ? "Install in Claude Code"
-                : "Install in Scient Agent"}
-      </Button>
+                ? "Add to Claude Code"
+                : "Add to Scient Agent"}
+      </PrimaryAction>
       <ActionFeedback feedback={lock.feedback} />
     </>
   );
@@ -215,7 +215,7 @@ function StoreResults({
                 name={entry.displayName}
                 iconUrl={entry.iconUrl}
                 tagline={entry.description}
-                status={entry.installed ? "Installed" : null}
+                status={entry.installed ? "Added" : null}
               />
             ))}
           </ExtensionGrid>
@@ -415,6 +415,8 @@ function StoreDetail({
         <DetailHeader
           name={entry.displayName}
           iconUrl={entry.iconUrl}
+          developer={entry.publisher}
+          tagline={entry.tagline}
           actions={
             <StoreInstall
               provider={provider}
@@ -431,6 +433,7 @@ function StoreDetail({
         key={JSON.stringify([provider.instanceId, entry.id])}
         provider={provider}
         canConnectApps={entry.installed}
+        iconUrl={entry.iconUrl}
         input={{ instanceId: provider.instanceId, entryId: entry.id }}
       />
       <AboutCard

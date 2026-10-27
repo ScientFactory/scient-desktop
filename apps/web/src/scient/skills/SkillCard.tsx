@@ -11,6 +11,7 @@ import { ExtensionContentDialog } from "../extensions/ExtensionContentDialog";
 export function SkillCard({
   name,
   displayName,
+  iconUrl,
   description,
   environmentId,
   instructions,
@@ -20,6 +21,7 @@ export function SkillCard({
 }: {
   readonly name: string;
   readonly displayName?: string | undefined;
+  readonly iconUrl?: string | undefined;
   readonly description: string;
   readonly environmentId: EnvironmentId;
   readonly instructions: string | null;
@@ -34,6 +36,7 @@ export function SkillCard({
       name={formatProviderSkillDisplayName({ name, displayName })}
       kind="Skill"
       glyph={BookOpenIcon}
+      iconUrl={iconUrl}
       description={description}
       onOpenChange={onOpenChange}
       actions={
@@ -58,12 +61,12 @@ export function SkillCard({
       footer={
         <>
           {tryError ? (
-            <p role="alert" className="px-6 text-sm text-destructive-foreground">
+            <p role="alert" className="px-4 text-sm text-destructive-foreground">
               {tryError}
             </p>
           ) : null}
           {onTry ? (
-            <DialogFooter variant="bare">
+            <DialogFooter variant="bare" padding="compact">
               <Button
                 disabled={trying}
                 onClick={() => {
@@ -84,19 +87,25 @@ export function SkillCard({
                 {trying ? "Opening…" : "Try now"}
               </Button>
             </DialogFooter>
-          ) : null}
+          ) : (
+            <DialogFooter variant="bare" padding="compact">
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          )}
         </>
       }
     >
       {instructions === null ? (
-        <p className="p-6 text-sm text-muted-foreground">{error ?? "Loading skill…"}</p>
+        <p className="p-4 text-sm text-muted-foreground">{error ?? "Loading skill…"}</p>
       ) : (
         <ChatMarkdown
           text={instructions}
           cwd={undefined}
           environmentId={environmentId}
           contentDirection="auto"
-          className="p-6"
+          className="p-4"
         />
       )}
     </ExtensionContentDialog>

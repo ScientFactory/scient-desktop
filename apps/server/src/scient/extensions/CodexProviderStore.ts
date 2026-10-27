@@ -35,6 +35,15 @@ type CachedPlugin = {
   readonly marketplacePath?: string;
 };
 const encodeKey = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const pluginVersionKey = (item: CachedPlugin) =>
+  encodeKey([
+    item.marketplace,
+    item.plugin.id,
+    item.plugin.version,
+    item.plugin.localVersion,
+    item.plugin.remotePluginId,
+    item.plugin.source,
+  ]);
 const fail = (message: string) => Effect.fail({ message });
 
 export function codexStoreDisabledReason(plugin: Plugin, plan: string): string | undefined {
@@ -86,6 +95,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     | {
         readonly key: string;
         readonly details: Map<string, CodexSchema.V2PluginReadResponse__PluginDetail>;
+        readonly documents: Map<string, string>;
         readonly at: number;
         readonly entries: ReadonlyArray<CachedPlugin>;
         readonly featured: ReadonlySet<string>;
@@ -107,14 +117,20 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     client: Client,
     references: ReadonlyArray<CodexSchema.V2PluginReadResponse__AppSummary>,
     refresh = false,
+    includeTools = false,
   ) {
     const ids = [...new Set(references.map((app) => app.id))];
     if (!ids.length) return [];
     const installed = yield* client.request("app/installed", { forceRefresh: refresh });
     const states = new Map(installed.apps.map((app) => [app.id, app]));
-    const apps: App[] = [];
+    const apps: Array<
+      App & Pick<CodexSchema.V2AppsReadResponse__ConnectorMetadata, "toolSummaries">
+    > = [];
     for (let offset = 0; offset < ids.length; offset += 100) {
-      const page = yield* client.request("app/read", { appIds: ids.slice(offset, offset + 100) });
+      const page = yield* client.request("app/read", {
+        appIds: ids.slice(offset, offset + 100),
+        includeTools,
+      });
       apps.push(
         ...page.apps.map((app) => ({
           ...app,
@@ -129,9 +145,12 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const projectApps = Effect.fn("CodexProviderStore.projectApps")(function* (
     client: Client,
     references: ReadonlyArray<CodexSchema.V2PluginReadResponse__AppSummary>,
+    includeTools = false,
   ) {
     const selected = references.slice(0, 200);
-    const apps = new Map((yield* readApps(client, selected)).map((app) => [app.id, app]));
+    const apps = new Map(
+      (yield* readApps(client, selected, false, includeTools)).map((app) => [app.id, app]),
+    );
     return yield* Effect.forEach(
       selected,
       Effect.fn("CodexProviderStore.app")(function* (reference) {
@@ -148,6 +167,21 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
           name: app?.name ?? reference.name,
           ...(app?.description || reference.description
             ? { description: app?.description ?? reference.description! }
+            : {}),
+          ...(includeTools && app?.toolSummaries
+            ? {
+                toolCounts: {
+                  read: app.toolSummaries.filter((tool) => tool.isReadOnly === true).length,
+                  write: app.toolSummaries.filter((tool) => tool.isReadOnly !== true).length,
+                },
+                toolSummaries: app.toolSummaries.slice(0, 200).map((tool) => ({
+                  name: tool.name.slice(0, 500),
+                  ...(tool.title ? { title: tool.title.slice(0, 500) } : {}),
+                  description: tool.description.slice(0, 4000),
+                  isReadOnly: tool.isReadOnly === true,
+                  isEnabled: tool.isEnabled !== false,
+                })),
+              }
             : {}),
           connected: app?.isAccessible === true,
           enabled: app?.isEnabled !== false,
@@ -240,6 +274,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const now = yield* Clock.currentTimeMillis;
         const key = encodeKey([account.email, account.planType]);
         let store = yield* Ref.get(cache);
+        const previous = store?.key === key ? store : undefined;
         if ((store && (store.key !== key || now - store.at >= 3_600_000)) || refresh) {
           store = undefined;
           pendingAuth.clear();
@@ -262,7 +297,8 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
             return yield* fail("The Codex store exceeded its entry limit.");
           store = {
             key,
-            details: store?.details ?? new Map(),
+            details: previous?.details ?? new Map(),
+            documents: previous?.documents ?? new Map(),
             at: now,
             entries,
             featured: new Set(response?.featuredPluginIds ?? []),
@@ -307,14 +343,19 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     item: CachedPlugin,
     generation: Map<string, CodexSchema.V2PluginReadResponse__PluginDetail>,
   ) {
-    let detailLock = detailLocks.get(item.plugin.id);
+    const versionKey = encodeKey([
+      pluginVersionKey(item),
+      item.plugin.enabled,
+      item.plugin.installed,
+    ]);
+    let detailLock = detailLocks.get(versionKey);
     if (!detailLock) {
       detailLock = Semaphore.makeUnsafe(1);
-      detailLocks.set(item.plugin.id, detailLock);
+      detailLocks.set(versionKey, detailLock);
     }
     return yield* detailLock.withPermits(1)(
       Effect.gen(function* () {
-        const cached = generation.get(item.plugin.id);
+        const cached = generation.get(versionKey);
         if (cached) return cached;
         const detail = (yield* client.request("plugin/read", {
           pluginName: item.plugin.name,
@@ -322,7 +363,8 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
             ? { marketplacePath: item.marketplacePath }
             : { remoteMarketplaceName: item.marketplace }),
         })).plugin;
-        generation.set(item.plugin.id, detail);
+        if (generation.size >= 256) generation.delete(generation.keys().next().value!);
+        generation.set(versionKey, detail);
         return detail;
       }),
     );
@@ -458,6 +500,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const summary = yield* project(item, current.plan, current.installedIds.has(id));
         return {
           ...summary,
+          tagline: summary.description,
           description: detail.description ?? summary.description,
           includes: [
             ...detail.skills.map((skill) => `Skill: ${skill.name}`),
@@ -503,6 +546,15 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     client: Client,
     id: string,
   ) {
+    const cached = yield* Ref.get(cache);
+    const cachedItem = cached?.entries.find(({ plugin }) => plugin.id === id);
+    if (cached && cachedItem)
+      return {
+        detail: yield* readDetail(client, cachedItem, cached.details),
+        item: cachedItem,
+        installed: cached.installedIds.has(id),
+        documents: cached.documents,
+      };
     let current = yield* state(client, false, true);
     let item = current?.store.entries.find(({ plugin }) => plugin.id === id);
     if (!item) {
@@ -511,7 +563,12 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     }
     if (!current || !item) return yield* fail("This plugin is no longer available.");
     const detail = yield* readDetail(client, item, current.store.details);
-    return { detail, installed: current.installedIds.has(id) };
+    return {
+      detail,
+      item,
+      installed: current.installedIds.has(id),
+      documents: current.store.documents,
+    };
   });
   const skillRoot = (detail: CodexSchema.V2PluginReadResponse__PluginDetail, file: string) => {
     const source = detail.summary?.source;
@@ -526,9 +583,9 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const contents = (id: string) =>
     withClient(
       Effect.fn("CodexProviderStore.contents")(function* (client: Client) {
-        const { detail, installed } = yield* detailFor(client, id);
+        const { detail, item, installed } = yield* detailFor(client, id);
         return {
-          apps: yield* projectApps(client, detail.apps),
+          apps: yield* projectApps(client, detail.apps, true),
           mcpServers: detail.mcpServers.slice(0, 200).map((name) => ({ name })),
           skills: yield* Effect.forEach(
             detail.skills.slice(0, 200),
@@ -547,7 +604,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
                   skill.description ??
                   "",
                 enabled: installed && detail.summary?.enabled !== false && skill.enabled !== false,
-                documentAvailable: root !== undefined,
+                documentAvailable: root !== undefined || Boolean(item.plugin.remotePluginId),
               };
             }),
           ),
@@ -560,19 +617,35 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const skillDocument = (id: string, skillId: string) =>
     withClient(
       Effect.fn("CodexProviderStore.skillDocument")(function* (client: Client) {
-        const { detail } = yield* detailFor(client, id);
+        const { detail, item, documents } = yield* detailFor(client, id);
         const skill = detail.skills.slice(0, 200).find((skill) => skill.name === skillId);
+        const documentKey = encodeKey([pluginVersionKey(item), skillId]);
+        const cached = documents.get(documentKey);
+        if (cached !== undefined) return { instructions: cached };
         const root = skill?.path ? yield* skillRoot(detail, skill.path) : undefined;
-        if (!root || !skill?.path)
-          return yield* fail("Install this plugin to read its skill documents.");
-        const text = yield* Effect.tryPromise(() =>
-          readContainedPluginText(root, skill.path!),
-        ).pipe(
-          Effect.mapError(() => ({
-            message: "This skill must stay within its plugin and be at most 256 KB.",
-          })),
-        );
-        return { instructions: text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim() };
+        if (!skill) return yield* fail("This skill is no longer available.");
+        const remotePluginId = item.plugin.remotePluginId;
+        const text =
+          root && skill.path
+            ? yield* Effect.tryPromise(() => readContainedPluginText(root, skill.path!)).pipe(
+                Effect.mapError(() => ({
+                  message: "This skill must stay within its plugin and be at most 256 KB.",
+                })),
+              )
+            : remotePluginId
+              ? (yield* client.request("plugin/skill/read", {
+                  remoteMarketplaceName: item.marketplace,
+                  remotePluginId,
+                  skillName: skill.name,
+                })).contents
+              : undefined;
+        if (text == null) return yield* fail("Install this plugin to read its skill documents.");
+        if (new TextEncoder().encode(text).length > 256 * 1024)
+          return yield* fail("This skill must be at most 256 KB.");
+        const instructions = text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim();
+        if (documents.size >= 128) documents.delete(documents.keys().next().value!);
+        documents.set(documentKey, instructions);
+        return { instructions };
       }),
     );
   const enrichInstalled = (plugins: ReadonlyArray<ServerProviderPlugin>, refresh = false) =>

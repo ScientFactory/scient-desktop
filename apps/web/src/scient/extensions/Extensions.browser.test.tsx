@@ -7,6 +7,7 @@ import {
   type DiscoverPage as DiscoverPageResult,
   ExtensionsError,
   type ExtensionsInventory,
+  type ExtensionPluginContents,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -50,6 +51,7 @@ const state = vi.hoisted(() => ({
   /** `extensions.discover.entry` answers by name; catalog entries answer too. */
   entries: {} as Record<string, DiscoverEntry>,
   storeEntry: null as ProviderStoreEntry | null,
+  contentApps: undefined as ExtensionPluginContents["apps"] | undefined,
   queryTargets: [] as unknown[],
   projects: [] as Array<{ environmentId: string; id: string; title: string; isScratch?: true }>,
   projectsKnown: true,
@@ -170,7 +172,7 @@ vi.mock("../../state/query", async () => {
         );
         return {
           data: {
-            apps: state.storeEntry?.apps ?? [],
+            apps: state.contentApps ?? state.storeEntry?.apps ?? [],
             mcpServers: [],
             skills: (plugin?.components.filter((item) => item.type === "skill") ?? []).map(
               (skill) => ({
@@ -617,6 +619,7 @@ function setup() {
   state.registry = AtomRegistry.make();
   state.queryTargets = [];
   state.storeEntry = null;
+  state.contentApps = undefined;
   state.hash = "";
   state.navigate.mockReset();
   for (const command of Object.values(state.commands)) command.mockReset();
@@ -1905,7 +1908,7 @@ describe("Codex store connection", () => {
     state.commands.providerAct.mockResolvedValueOnce({ _tag: "Success", value: { providers: [] } });
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
     expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
-    await userEvent.click(buttonIn(fixture.container, "Install in Codex")!);
+    await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
     expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
     state.storeEntry = {
       ...state.storeEntry,
@@ -1920,9 +1923,7 @@ describe("Codex store connection", () => {
       ],
     };
     await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
-    await expect
-      .element(page.getByRole("button", { name: "Installed", exact: true }))
-      .toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Added", exact: true })).toBeDisabled();
     await expect
       .element(page.getByRole("button", { name: "Connect Sample", exact: true }))
       .toBeVisible();
@@ -1941,4 +1942,53 @@ describe("Codex store connection", () => {
     expect(buttonIn(fixture.container, "Connect Sample")).toBeNull();
     expect(fixture.section("Apps 1").textContent).toContain("Disabled");
   });
+});
+
+it("groups app tools by read/write and opens their descriptions without installing", async () => {
+  await using fixture = setup();
+  state.storeEntry = {
+    id: "sample",
+    name: "sample",
+    displayName: "Sample",
+    description: "Search documents",
+    marketplace: "remote",
+    kind: "codex",
+    installed: false,
+    includes: [],
+    apps: [],
+  };
+  state.contentApps = [
+    {
+      name: "Sample",
+      connected: false,
+      enabled: true,
+      toolSummaries: [
+        {
+          name: "find",
+          title: "Find pages",
+          description: "Find a page",
+          isReadOnly: true,
+          isEnabled: true,
+        },
+        {
+          name: "create",
+          title: "Create page",
+          description: "Create a new page",
+          isReadOnly: false,
+          isEnabled: true,
+        },
+      ],
+    },
+  ];
+  await fixture.render(<ProviderStoreDetailPage instanceId="codex" entryId="sample" />);
+  await userEvent.click(buttonIn(fixture.section("Apps 1"), "View Sample app")!);
+  await expect
+    .element(page.getByText("The Sample app contains 2 tools (1 write, 1 read)"))
+    .toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Write 1", exact: true }));
+  await expect.element(page.getByRole("button", { name: /Create page/ })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Find pages/ })).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: /Create page/ }));
+  await expect.element(page.getByRole("heading", { name: "Create page Tool" })).toBeVisible();
+  expect(state.commands.providerAct).not.toHaveBeenCalled();
 });

@@ -29,7 +29,28 @@ export const ExtensionPluginSkill = Schema.Struct({
 export type ExtensionPluginSkill = typeof ExtensionPluginSkill.Type;
 export const ExtensionPluginContents = Schema.Struct({
   deferred: Schema.optional(Schema.Boolean),
-  apps: Schema.Array(ProviderStoreApp).check(Schema.isMaxLength(200)),
+  apps: Schema.Array(
+    Schema.Struct({
+      ...ProviderStoreApp.fields,
+      toolCounts: Schema.optional(
+        Schema.Struct({
+          read: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+          write: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        }),
+      ),
+      toolSummaries: Schema.optional(
+        Schema.Array(
+          Schema.Struct({
+            name: Schema.String.check(Schema.isMaxLength(500)),
+            title: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
+            description: Schema.String.check(Schema.isMaxLength(4000)),
+            isReadOnly: Schema.Boolean,
+            isEnabled: Schema.Boolean,
+          }),
+        ).check(Schema.isMaxLength(200)),
+      ),
+    }),
+  ).check(Schema.isMaxLength(200)),
   mcpServers: Schema.Array(
     Schema.Struct({ name: TrimmedNonEmptyString, status: Schema.optional(Schema.String) }),
   ).check(Schema.isMaxLength(200)),
