@@ -204,7 +204,8 @@ describe("OverleafFileChip", () => {
     client.syncOverleaf.mockRejectedValue({
       _tag: "ScientOverleafOperationError",
       reason: "editor-unsaved",
-      message: "Open editors were not all saved.",
+      message:
+        "paper/main.tex was deleted while its editor held unsaved edits. Keep or discard those edits in the editor, then try again.",
       paths: ["paper/main.tex"],
     });
     await using _screen = await render(chip());
@@ -215,7 +216,7 @@ describe("OverleafFileChip", () => {
       expect.objectContaining({
         type: "error",
         description:
-          "paper/main.tex has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.",
+          "paper/main.tex was deleted while its editor held unsaved edits. Keep or discard those edits in the editor, then try again.",
       }),
     ]);
   });

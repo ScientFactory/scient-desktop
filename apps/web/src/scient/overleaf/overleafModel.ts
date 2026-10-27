@@ -345,11 +345,21 @@ const REASON = /^[a-z][a-z-]{0,63}$/u;
 /**
  * What an operation's thrown error says. The server's typed refusal
  * (`ScientOverleafOperationError`) and the app's own reasoned errors carry a
- * fixed reason, mapped to its words; anything else gets one fixed line.
+ * fixed reason, mapped to its words. Typed editor-save failures preserve the server's
+ * explanation; anything else gets one fixed line.
  */
 export function operationErrorText(error: unknown): string {
   if (typeof error === "object" && error !== null && "reason" in error) {
     const { reason, paths } = error as { readonly reason: unknown; readonly paths?: unknown };
+    if (
+      reason === "editor-unsaved" &&
+      "_tag" in error &&
+      error._tag === "ScientOverleafOperationError" &&
+      "message" in error &&
+      typeof error.message === "string" &&
+      error.message.trim().length > 0
+    )
+      return error.message;
     // An editor that couldn't save is named by the first of the files the server lists.
     const path = Array.isArray(paths) && typeof paths[0] === "string" ? paths[0] : undefined;
     if (typeof reason === "string" && REASON.test(reason))
