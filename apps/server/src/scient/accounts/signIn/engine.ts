@@ -89,9 +89,12 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   const target = opened.tabId;
   const password = secrets.password === undefined ? undefined : Redacted.value(secrets.password);
   const totp = secrets.totp === undefined ? undefined : Redacted.value(secrets.totp);
-  const filled: Array<{ origin: string; selector: string }> = [];
+  // Only the last submission's fields: earlier pages are gone, and after a hand-off the user
+  // continues with what is on screen.
+  let filled: Array<{ origin: string; selector: string }> = [];
   const submissions: SignInSubmission[] = [];
-  let succeeded = false;
+  // Cleared unless the sign-in succeeded or the user takes over, including on interruption.
+  let clearFilled = true;
   let cleanupFailed = false;
   const run = Effect.gen(function* () {
     for (let step = 0; step <= 6; step++) {
@@ -129,12 +132,11 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         password: password !== undefined,
         otp: totp !== undefined,
       });
-      if (action.type === "signed-in") {
-        succeeded = true;
-        return { outcome: "signed-in" as const, tabId: target };
-      }
+      if (action.type === "signed-in" || action.type === "needs-user") clearFilled = false;
+      if (action.type === "signed-in") return { outcome: "signed-in" as const, tabId: target };
       if (action.type === "needs-user")
         return { outcome: "needs-user" as const, message: action.message, tabId: target };
+      filled = [];
       for (const field of action.fields) {
         const text = yield* Effect.try({
           try: () =>
@@ -179,7 +181,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
     })),
     Effect.ensuring(
       Effect.gen(function* () {
-        if (succeeded) return;
+        if (!clearFilled) return;
         for (const field of filled)
           yield* invoke("accountType", { ...field, text: "", clear: true }, target).pipe(
             Effect.catch(() =>

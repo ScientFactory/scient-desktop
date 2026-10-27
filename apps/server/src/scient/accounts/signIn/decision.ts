@@ -49,6 +49,8 @@ export function decideSignInContinuation(
   step: number,
   otpPeriod: number | undefined,
 ) {
+  // A challenge is the user's to finish; it says nothing about the password.
+  if (page.challenge) return { type: "continue" } as const;
   const sameOrigin = submissions.filter((entry) => entry.origin === page.origin);
   if (page.password && sameOrigin.some((entry) => entry.fields.includes("password")))
     return {

@@ -130,6 +130,16 @@ describe("sign-in submission guard", () => {
         .type,
     ).toBe("code-rejected");
   });
+  it("leaves a challenge to the user instead of calling the password rejected", () => {
+    expect(
+      decideSignInContinuation(
+        { ...page, challenge: "captcha" },
+        [submitted(["password"])],
+        1,
+        undefined,
+      ).type,
+    ).toBe("continue");
+  });
   it("stops at the six-submission limit", () => {
     expect(decideSignInContinuation(page, [], 6, undefined).type).toBe("failed");
   });

@@ -461,7 +461,7 @@ export const layer = Layer.effect(
             ? "needs-attention"
             : "ready",
         ...(warnings.length ? { statusMessage: warnings[0] } : {}),
-        ...(!input.secrets?.password && existing?.summary.lastSignInOutcome
+        ...(!input.secrets?.password && !input.secrets?.totp && existing?.summary.lastSignInOutcome
           ? { lastSignInOutcome: existing.summary.lastSignInOutcome }
           : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,

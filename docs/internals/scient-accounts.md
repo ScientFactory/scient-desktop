@@ -198,11 +198,12 @@ one-time-code fields, a submit control, CAPTCHA or passkey prompts. Scient fills
 page's origin matches one of the account's sites (a bare domain matches its subdomains), so a
 look-alike page never receives the password. It types with `clear`, submits, waits for the
 navigation, and repeats for multi-step SSO up to six submissions. A password field returning on
-the same origin after password submission returns `password-rejected` without resubmitting.
-A returning code field returns `code-rejected`; generated TOTP may retry once only after a new
-period starts. Static codes never retry. Non-success exits clear the fields Scient attempted to
-fill, using origin-bound browser operations; unavailable or navigated-away fields may prevent
-cleanup. The result tells the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-user`, `password-rejected`, `code-rejected` or `failed`
+the same origin after password submission returns `password-rejected` without resubmitting; a
+CAPTCHA, passkey or push prompt is a hand-off, not a rejection. A returning code field returns
+`code-rejected`; generated TOTP may retry once only after a new period starts. Static codes never
+retry. Rejected, failed and interrupted sign-ins clear the fields of the last submission, using
+origin-bound browser operations; a hand-off leaves them for the user to finish. The result tells
+the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-user`, `password-rejected`, `code-rejected` or `failed`
 and records that outcome in activity. The 2FA code comes from the stored
 `totp` field (`otpauth://` URI or base32 key) via `otpauth`, or from 1Password
 (`?attribute=otp`). CAPTCHAs, push approvals, passkeys and unknown forms return `needs-user`; the
@@ -247,7 +248,7 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   and the isolated guest's document nonce reject navigation races, including same-origin reloads.
 - Website rows offer **Open <site>**, opening the first site in a new in-app browser tab in the
   account's profile (or the default profile). Rejected passwords and codes show a short row status;
-  a later successful sign-in or editing the password clears it.
+  a later successful sign-in or editing the password or two-factor key clears it.
 - **Approval cards** appear above the composer of the thread that asked, and on the Accounts page.
 
 ## Cookie encryption

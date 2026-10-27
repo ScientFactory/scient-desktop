@@ -116,7 +116,7 @@ it.effect("handles sequential login steps and bounds retries without returning f
     steps = 0;
     expect((yield* run()).outcome).toBe("failed");
     expect(steps).toBe(7);
-    expect(cleared).toHaveLength(6);
+    expect(cleared).toHaveLength(1);
     cleared.length = 0;
     stuck = false;
     rejected = true;
@@ -133,6 +133,8 @@ it.effect("handles sequential login steps and bounds retries without returning f
     steps = 0;
     cleared.length = 0;
     expect((yield* run("invalid:totp")).outcome).toBe("failed");
-    expect(cleared).toHaveLength(2);
+    expect(cleared).toEqual([
+      { origin: "https://login.example.com", selector: "#password", text: "", clear: true },
+    ]);
   }),
 );
