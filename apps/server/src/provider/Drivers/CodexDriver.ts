@@ -267,17 +267,19 @@ export const CodexDriver: ScientProviderDriver<
     };
     // SCIENT-FORK:START — Scient Extensions: provider-native plugins and MCP servers: bounded
     // enrichment and generation-bound actions, owned by this instance.
-    const nativeInventory = yield* makeCodexNativeInventory((cwd) =>
-      withCodexAppServerClient({
-        binaryPath: effectiveConfig.binaryPath,
-        homePath: effectiveConfig.homePath,
-        launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-        cwd: cwd ?? serverConfig.cwd,
-        environment: processEnv,
-      }).pipe(
-        Effect.map(({ client }) => client),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      ),
+    const nativeInventory = yield* makeCodexNativeInventory(
+      (cwd) =>
+        withCodexAppServerClient({
+          binaryPath: effectiveConfig.binaryPath,
+          homePath: effectiveConfig.homePath,
+          launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          cwd: cwd ?? serverConfig.cwd,
+          environment: processEnv,
+        }).pipe(
+          Effect.map(({ client }) => client),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      pathService.join(homeLayout.sharedHomePath, "plugins", "cache"),
     );
     // SCIENT-FORK:END
 

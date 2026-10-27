@@ -137,8 +137,10 @@ export const ServerProviderSkill = Schema.Struct({
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
 // SCIENT-FORK:START — Scient Extensions native inventory.
+import { ProviderStoreApp } from "./scient/providerStore.ts";
 /** A plugin installed in a provider instance's own plugin system. Provider-owned; Scient only reports it. */
 export const ServerProviderPlugin = Schema.Struct({
+  apps: Schema.optional(Schema.Array(ProviderStoreApp)),
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
   displayName: Schema.optional(TrimmedNonEmptyString),
@@ -149,6 +151,9 @@ export const ServerProviderPlugin = Schema.Struct({
   enabled: Schema.Boolean,
   /** Provider-owned capability. Absent means Scient must render this plugin read-only. */
   canUninstall: Schema.optional(Schema.Boolean),
+  canSetEnabled: Schema.optional(Schema.Boolean),
+  sourceLabel: Schema.optional(TrimmedNonEmptyString),
+  scope: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderPlugin = typeof ServerProviderPlugin.Type;
 
@@ -173,6 +178,7 @@ export const ServerProviderMcpServer = Schema.Struct({
   error: Schema.optional(TrimmedNonEmptyString),
   /** The provider can start its own sign-in for this server from Scient. */
   canStartSignIn: Schema.optional(Schema.Boolean),
+  connectUrl: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderMcpServer = typeof ServerProviderMcpServer.Type;
 // SCIENT-FORK:END
@@ -328,6 +334,8 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   // SCIENT-FORK:START — Scient Extensions native inventory.
+  accountAppsAvailable: Schema.optional(Schema.Boolean),
+  usesClaudePlugins: Schema.optional(Schema.Boolean),
   /** Opaque live-instance generation; replacement resets inventory. Never persisted. */
   nativeInventoryGeneration: Schema.optionalKey(TrimmedNonEmptyString),
   /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */

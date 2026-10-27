@@ -16,8 +16,21 @@
     "apps/web/src/routes/_chat.settings.extensions_.item.provider.$instanceId.server.$serverName.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.item.server.$.tsx",
     "apps/server/src/provider/CodexPluginInventory.ts",
+    "apps/server/src/provider/CodexPluginInventory.test.ts",
     "apps/server/src/provider/ProviderNativeInventory.ts",
-    "apps/server/src/provider/ScientProviderNativeInventory.ts"
+    "apps/server/src/provider/ScientProviderNativeInventory.ts",
+    "packages/contracts/src/scient/extensionAudience.ts",
+    "packages/contracts/src/scient/providerStore.ts",
+    "apps/web/src/routes/_chat.settings.extensions_.store.$instanceId.tsx",
+    "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx",
+    "packages/contracts/src/scient/extensionIcon.ts",
+    "packages/contracts/src/scient/extensionsPermissions.ts",
+    "packages/contracts/src/scient/extensionsPermissions.test.ts",
+    "scripts/generate-extension-brand-icons.mjs",
+    "scripts/scient-extension-brands.json",
+    "packages/contracts/src/scient/pluginContents.ts",
+    "apps/server/src/scient/extensions/brandIcons/NOTICE",
+    "apps/server/src/provider/Drivers/ScientClaudeSkillFiles.ts"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",
@@ -106,12 +119,12 @@
     {
       "path": "apps/server/src/provider/Drivers/ClaudeDriver.ts",
       "anchor": "ProviderNativeInventory",
-      "purpose": "Publish Claude's live plugin and MCP server inventory for its exact provider instance."
+      "purpose": "Publish Claude's live plugin and MCP server inventory for its exact provider instance; resolve account capabilities before the cached Extensions account probe."
     },
     {
       "path": "apps/server/src/provider/Drivers/CodexDriver.ts",
       "anchor": "makeCodexNativeInventory",
-      "purpose": "Attach verified Codex plugin uninstall and MCP sign-in actions to the exact provider instance."
+      "purpose": "Attach verified Codex plugin uninstall and MCP sign-in actions to the exact provider instance; its store retains one scoped lease and caches plugin details across page, icon and skill reads."
     },
     {
       "path": "apps/server/src/provider/ProviderRegistry.ts",
@@ -239,6 +252,21 @@
       "purpose": "Upstream-owned and unchanged by Scient: its recording notes name the claude.ai Firecrawl connector, so upstream comment edits match the connector signal. Nothing Scient mounts here."
     },
     {
+      "path": "apps/web/src/components/settings/ProviderInstanceCard.tsx",
+      "anchor": "ScientClaudePluginsSetting",
+      "purpose": "Expose the version-gated default-on Claude plugin source preference for Scient Agent."
+    },
+    {
+      "path": "packages/contracts/src/clientRpcPermissions.ts",
+      "anchor": "SCIENT_EXTENSION_GUARDED_RPC_SCOPES",
+      "purpose": "Require the destination settings grant for provider plugin commands."
+    },
+    {
+      "path": "apps/web/src/components/chat/ChatComposer.tsx",
+      "anchor": "composerSkillPrompt",
+      "purpose": "Reuse the same invocation token for composer selection and the shared skill card."
+    },
+    {
       "path": "scripts/effect-budget.json",
       "anchor": "\"apps/web/src/scient/extensions/extensionActions.ts\"",
       "purpose": "The shared React effect budget records existing Scient extensions lifecycle owners; new effects still require their own scoped justification and lint validation."
@@ -294,6 +322,41 @@
       "path": "apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.wake.testkit.ts",
       "anchor": "onNativeInventory",
       "purpose": "Let Claude adapter wake fixtures observe native plugin and MCP inventory reports."
+    },
+    {
+      "path": "apps/server/src/provider/Drivers/ScientAgentDriver.ts",
+      "anchor": "makeScientAgentPluginInventory",
+      "purpose": "Publish and manage Scient Agent native plugins through its exact executable and isolated root."
+    },
+    {
+      "path": "apps/server/src/provider/omp/OmpRpcProcess.ts",
+      "anchor": "useClaudePlugins",
+      "purpose": "Enable Claude plugin sources only after runtime identity proves Scient Agent 0.1.3 support."
+    },
+    {
+      "path": "apps/web/src/scient/skills/SkillCard.tsx",
+      "anchor": "SkillCard",
+      "purpose": "Use one existing Dialog and Markdown presentation for Extensions and Skills settings, retaining provider display names."
+    },
+    {
+      "path": "apps/web/src/scient/skills/ManagedSkillCard.tsx",
+      "anchor": "ManagedSkillCard",
+      "purpose": "Read managed skill documents for the shared skill card."
+    },
+    {
+      "path": "apps/web/src/scient/skills/ScientSkillsSettings.tsx",
+      "anchor": "ManagedSkillCard",
+      "purpose": "Open managed skills in the same card as plugin skills."
+    },
+    {
+      "path": "apps/web/src/scient/skills/SkillSettingsRow.tsx",
+      "anchor": "onOpen",
+      "purpose": "Let a settings skill name open its shared document card."
+    },
+    {
+      "path": "apps/web/src/scient/skills/composerSkills.ts",
+      "anchor": "composerSkillPrompt",
+      "purpose": "Share skill invocation tokens and create a draft on the exact environment and provider."
     },
     {
       "path": "apps/web/src/scient/accounts/AccountsPage.tsx",

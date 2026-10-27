@@ -24,6 +24,8 @@ import * as Stream from "effect/Stream";
 import type * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
+import { sharedPluginDisplayName } from "../scient/extensions/SharedPluginStore.ts";
+import { makeCodexProviderStore } from "../scient/extensions/CodexProviderStore.ts";
 import { nextInventoryReadSequence, nonEmptyText, uniqueBy } from "./ProviderNativeInventory.ts";
 import type {
   ProviderMcpSignInAttempt,
@@ -95,7 +97,8 @@ export function parseCodexInstalledPlugins(
         const id = nonEmptyText(plugin.id);
         const name = nonEmptyText(plugin.name);
         if (!plugin.installed || !id || !name) return [];
-        const displayName = nonEmptyText(plugin.interface?.displayName);
+        const displayName =
+          nonEmptyText(plugin.interface?.displayName) ?? sharedPluginDisplayName(name);
         const description =
           nonEmptyText(plugin.interface?.shortDescription) ??
           nonEmptyText(plugin.interface?.longDescription);
@@ -292,6 +295,7 @@ const listingFailure = (fallback: string) => (cause: unknown) => ({
  */
 export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(function* <E>(
   open: (cwd: string | undefined) => Effect.Effect<CodexAppServerClient, E, Scope.Scope>,
+  pluginCacheRoot?: string,
 ) {
   const reportsPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ProviderNativeInventory>(),
@@ -473,23 +477,40 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
       ),
   };
 
-  const actions: ProviderPluginActions = {
-    listPlugins: ({ cwd }) =>
-      open(cwd).pipe(
-        Effect.flatMap((client) =>
-          Effect.gen(function* () {
-            const sequence = yield* nextInventoryReadSequence;
-            const plugins = yield* requestCodexInstalledPlugins(
-              client,
-              cwd === undefined ? undefined : [cwd],
-            );
-            return { plugins, sequence };
-          }),
-        ),
-        Effect.timeout(CODEX_ACTION_TIMEOUT),
-        Effect.scoped,
-        Effect.mapError(listingFailure("Codex could not list its plugins.")),
+  const store = yield* makeCodexProviderStore(open, undefined, pluginCacheRoot);
+  const listPlugins = (cwd: string | undefined, refresh = false) =>
+    open(cwd).pipe(
+      Effect.flatMap((client) =>
+        Effect.gen(function* () {
+          const sequence = yield* nextInventoryReadSequence;
+          const plugins = yield* requestCodexInstalledPlugins(
+            client,
+            cwd === undefined ? undefined : [cwd],
+          );
+          const enriched = yield* store
+            .enrichInstalled(plugins, refresh)
+            .pipe(Effect.orElseSucceed(() => plugins));
+          return { plugins: enriched, sequence };
+        }),
       ),
+      Effect.timeout(CODEX_ACTION_TIMEOUT),
+      Effect.scoped,
+      Effect.mapError(listingFailure("Codex could not list its plugins.")),
+    );
+  const actions: ProviderPluginActions = {
+    store,
+    refreshInventory: Effect.fn("CodexPluginInventory.refreshInventory")(function* ({
+      force,
+      connectionsOnly,
+    }: {
+      readonly force: boolean;
+      readonly connectionsOnly?: boolean | undefined;
+    }) {
+      if (!connectionsOnly) yield* store.search({ refresh: force, limit: 1 });
+      const listing = yield* listPlugins(undefined, force || connectionsOnly === true);
+      yield* publishMachine("plugins", listing);
+    }),
+    listPlugins: ({ cwd }) => listPlugins(cwd),
     readMcpServer: ({ serverName }) =>
       open(undefined).pipe(
         Effect.flatMap((client) => requestCodexMcpServers(client, serverName)),
@@ -523,5 +544,11 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
     whenRetired: Deferred.await(retired),
   };
 
+  yield* store.changes.pipe(
+    Stream.runForEach(() =>
+      actions.refreshInventory!({ force: false, connectionsOnly: true }).pipe(Effect.ignore),
+    ),
+    Effect.forkScoped,
+  );
   return { actions, refresh, workspace, reports };
 });

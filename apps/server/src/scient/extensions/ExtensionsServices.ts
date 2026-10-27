@@ -201,6 +201,17 @@ export class ExtensionsDiscover extends Context.Service<
 >()("t3/scient/extensions/ExtensionsServices/ExtensionsDiscover") {}
 
 export interface ScientPluginRegistryShape {
+  readonly contents?:
+    | ((
+        pluginId: string,
+      ) => Effect.Effect<import("@t3tools/contracts").ExtensionPluginContents, ExtensionsError>)
+    | undefined;
+  readonly skillDocument?:
+    | ((
+        pluginId: string,
+        skillId: string,
+      ) => Effect.Effect<import("@t3tools/contracts").ExtensionSkillDocument, ExtensionsError>)
+    | undefined;
   readonly list: () => Effect.Effect<{
     readonly plugins: ReadonlyArray<ScientPluginSummary>;
     readonly diagnostics: ReadonlyArray<ExtensionsDiagnostic>;

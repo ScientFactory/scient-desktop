@@ -3,6 +3,7 @@
  * than predicting its resulting state.
  */
 import {
+  ExtensionsError,
   type ExtensionsChangedEvent,
   type ExtensionsInventory,
   type ServerProviders,
@@ -19,6 +20,8 @@ import * as Stream from "effect/Stream";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
+import { resolveBrandIcon } from "./BrandIcons.ts";
+import { makePluginContents } from "./PluginContents.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
 import {
   ConnectorRuntime,
@@ -36,6 +39,7 @@ import {
  * Health/status refreshes alone must not invalidate the inventory.
  */
 export interface ExtensionsChangeFeedShape {
+  readonly notify: Effect.Effect<void>;
   readonly current: Effect.Effect<number>;
   readonly changes: Stream.Stream<ExtensionsChangedEvent>;
 }
@@ -93,6 +97,10 @@ export const changeFeedLayer = Layer.effect(
       providerSupportChanges(yield* providers.getProviders, providers.streamChanges),
       () => undefined,
     );
+    const notify = Ref.updateAndGet(revision, (value) => value + 1).pipe(
+      Effect.flatMap((next) => PubSub.publish(events, { revision: next })),
+      Effect.asVoid,
+    );
     yield* Stream.mergeAll(
       [
         Stream.map(connectors.changes, () => undefined),
@@ -102,14 +110,11 @@ export const changeFeedLayer = Layer.effect(
       ],
       { concurrency: "unbounded" },
     ).pipe(
-      Stream.runForEach(() =>
-        Ref.updateAndGet(revision, (value) => value + 1).pipe(
-          Effect.flatMap((next) => PubSub.publish(events, { revision: next })),
-        ),
-      ),
+      Stream.runForEach(() => notify),
       Effect.forkScoped,
     );
     return ExtensionsChangeFeed.of({
+      notify,
       current: Ref.get(revision),
       changes: Stream.fromPubSub(events),
     });
@@ -159,11 +164,56 @@ export const makeExtensionsRpcHandlers = ({
     } satisfies ExtensionsInventory;
   });
 
+  const contents = makePluginContents(providerRegistry, pluginRegistry);
   return WsExtensionsRpcGroup.of({
+    [WS_METHODS.extensionsBrandIcon]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsBrandIcon,
+        Effect.sync(() => ({
+          icons: Object.fromEntries(
+            input.names.flatMap((name) => {
+              const icon = resolveBrandIcon(name);
+              return icon === undefined ? [] : [[name, icon]];
+            }),
+          ),
+        })),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsPluginContents]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginContents, contents.read(input), traceAttributes),
+    [WS_METHODS.extensionsSkillDocument]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsSkillDocument,
+        contents.document(input),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsList]: () =>
       observeRpcEffect(WS_METHODS.extensionsList, inventory(), traceAttributes),
     [WS_METHODS.extensionsSubscribeChanges]: () =>
-      observeRpcStream(WS_METHODS.extensionsSubscribeChanges, changeFeed.changes, traceAttributes),
+      observeRpcStream(
+        WS_METHODS.extensionsSubscribeChanges,
+        Stream.unwrap(
+          Effect.gen(function* () {
+            for (const provider of yield* providerRegistry.getProviders) {
+              if (!provider.enabled) continue;
+              const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+                provider.instanceId,
+              );
+              if (actions?.store?.changes)
+                yield* actions.store.changes.pipe(
+                  Stream.runForEach(() => changeFeed.notify),
+                  Effect.forkScoped,
+                );
+              if (actions?.refreshInventory)
+                yield* actions
+                  .refreshInventory({ force: false })
+                  .pipe(Effect.ignore, Effect.forkScoped);
+            }
+            return changeFeed.changes;
+          }),
+        ),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsConnectorAdd]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorAdd,
@@ -202,6 +252,54 @@ export const makeExtensionsRpcHandlers = ({
       ),
     [WS_METHODS.extensionsDiscoverCatalog]: () =>
       observeRpcEffect(WS_METHODS.extensionsDiscoverCatalog, discover.catalog(), traceAttributes),
+    [WS_METHODS.extensionsProviderStoreSearch]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsProviderStoreSearch,
+        Effect.gen(function* () {
+          const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+            input.instanceId,
+          );
+          if (!actions?.store || (yield* actions.isRetired))
+            return yield* new ExtensionsError({
+              reason: "unsupported",
+              message: "This agent has no available plugin store.",
+            });
+          return yield* actions.store.search(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ExtensionsError({
+                  reason: "state-unavailable",
+                  message: cause.message,
+                }),
+            ),
+          );
+        }),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsProviderStoreEntry]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsProviderStoreEntry,
+        Effect.gen(function* () {
+          const actions = yield* providerRegistry.getProviderPluginActionsForInstance(
+            input.instanceId,
+          );
+          if (!actions?.store || (yield* actions.isRetired))
+            return yield* new ExtensionsError({
+              reason: "unsupported",
+              message: "This agent has no available plugin store.",
+            });
+          return yield* actions.store.entry(input.entryId).pipe(
+            Effect.mapError(
+              () =>
+                new ExtensionsError({
+                  reason: "not-found",
+                  message: "This plugin is no longer available.",
+                }),
+            ),
+          );
+        }),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsDiscoverEntry]: (input) =>
       observeRpcEffect(WS_METHODS.extensionsDiscoverEntry, discover.entry(input), traceAttributes),
     [WS_METHODS.extensionsPluginInstall]: (input) =>

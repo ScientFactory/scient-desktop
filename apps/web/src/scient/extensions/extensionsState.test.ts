@@ -7,15 +7,39 @@ import {
   type SupervisorConnectionState,
 } from "@t3tools/client-runtime/connection";
 import type { RpcSession } from "@t3tools/client-runtime/rpc";
-import { ConnectorId, EnvironmentId, WS_METHODS } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  type AuthSessionState,
+  ConnectorId,
+  EnvironmentId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
+import { vi } from "vite-plus/test";
+
 import { createExtensionsAtoms } from "./extensionsState";
+
+const grant: AuthSessionState = {
+  authenticated: true,
+  auth: {
+    policy: "remote-reachable",
+    bootstrapMethods: [],
+    sessionMethods: [],
+    sessionCookieName: "test",
+  },
+  scopes: [AuthSettingsWriteScope],
+  permissions: [AuthSettingsWriteScope],
+};
+const sessions = Atom.family((_id: EnvironmentId) => Atom.make(AsyncResult.success(grant)));
+vi.mock("@t3tools/client-runtime/state/session", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: (id: EnvironmentId) => sessions(id) }),
+}));
 
 const LOCAL = EnvironmentId.make("local");
 const REMOTE = EnvironmentId.make("remote");
@@ -152,4 +176,17 @@ describe("extensions mutation lane", () => {
     expect(await update).toMatchObject({ _tag: "Success" });
     registry.dispose();
   });
+});
+
+it("refuses a mutation before reaching the owner without a destination settings grant", async () => {
+  const { atoms, events } = makeHarness();
+  const registry = AtomRegistry.make();
+  registry.set(sessions(LOCAL), AsyncResult.success({ ...grant, scopes: [], permissions: [] }));
+  const result = await atoms.installScientPlugin.run(registry, {
+    environmentId: LOCAL,
+    input: { path: "/bundles/local" },
+  });
+  expect(result._tag).toBe("Failure");
+  expect(events).toEqual([]);
+  registry.dispose();
 });
