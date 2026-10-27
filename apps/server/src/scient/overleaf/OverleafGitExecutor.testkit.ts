@@ -1,14 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Builds the shipped helper in an isolated test directory.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { beforeAll, afterAll } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 import { make, OverleafGitExecutor } from "./OverleafGitExecutor.ts";
 
 export function windowsCompilerCommand(command: string, cwd: string) {
@@ -42,30 +41,11 @@ export function windowsCompilerCommand(command: string, cwd: string) {
     throw new Error(`Windows test compilation failed (exit ${result.status}).`);
 }
 
-let buildDirectory: string | undefined;
-afterAll(async () => {
-  if (buildDirectory !== undefined)
-    await NodeFSP.rm(buildDirectory, { recursive: true, force: true });
-});
-beforeAll(async () => {
-  if (HostProcess.Platform.defaultValue() !== "win32") return;
-  const destination = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-git-helper-"));
-  buildDirectory = destination;
-  // The ordinary resolver consumes the shipped helper; the test never substitutes a mock boundary.
-  const target = NodePath.resolve(
-    import.meta.dirname,
-    "../../../../../native/file-exchange/win32-x64",
-  );
-  windowsCompilerCommand(
-    `"${process.execPath}" "${NodePath.resolve(import.meta.dirname, "../../../../../scripts/stage-file-exchange.ts")}" --destination="${target}"`,
-    destination,
-  );
-});
-
 export const withExecutor = <A, E>(
   body: (input: {
     readonly git: OverleafGitExecutor["Service"];
     readonly runtimeRoot: string;
+    readonly publicationHelper: string | undefined;
     readonly work: string;
   }) => Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
   options: {
@@ -90,7 +70,11 @@ export const withExecutor = <A, E>(
       const runtimeRoot = NodePath.join(root, "runtime");
       const work = NodePath.join(root, "work");
       yield* fs.makeDirectory(work);
-      const git = yield* make({ runtimeRoot, ...options });
-      return yield* body({ git, runtimeRoot, work });
+      const publicationHelper =
+        HostProcess.Platform.defaultValue() === "win32"
+          ? yield* Effect.promise(() => filePublicationTestHelper())
+          : undefined;
+      const git = yield* make({ runtimeRoot, publicationHelper, ...options });
+      return yield* body({ git, runtimeRoot, work, publicationHelper });
     }),
   ).pipe(Effect.provide(NodeServices.layer));

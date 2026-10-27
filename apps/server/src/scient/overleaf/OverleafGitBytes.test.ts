@@ -18,7 +18,7 @@ describe("Overleaf Git bytes", () => {
   it.effect(
     "hashes and merges LF, CRLF, mixed endings, BOM and binary without machine conversions",
     () =>
-      withExecutor(({ git: initialGit, work, runtimeRoot }) =>
+      withExecutor(({ git: initialGit, work, runtimeRoot, publicationHelper }) =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const hostile = NodePath.join(work, "host.gitconfig");
@@ -34,7 +34,7 @@ describe("Overleaf Git bytes", () => {
               encoding: "utf8",
             }).trim(),
           ).toBe("true");
-          const git = yield* make({ runtimeRoot }).pipe(
+          const git = yield* make({ runtimeRoot, publicationHelper }).pipe(
             Effect.provideService(HostProcess.Environment, environment),
           );
           const repos = yield* OverleafRepository.make.pipe(

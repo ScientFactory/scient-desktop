@@ -4,12 +4,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import {
   observedDirectoryBinding,
-  resolveNativeFilePublicationHelperPath,
   withNativeFilePublicationLease,
 } from "../workspace/NativeFilePublication.ts";
 
-export async function makeGitScratch(runtimeRoot: string, windows: boolean) {
-  const helper = windows ? await resolveNativeFilePublicationHelperPath() : undefined;
+export async function makeGitScratch(runtimeRoot: string, windows: boolean, helper?: string) {
   if (windows && helper === undefined) throw new Error("Private-directory helper unavailable.");
   const privateDirectory = async (directory: string): Promise<string> => {
     if (helper === undefined) {
