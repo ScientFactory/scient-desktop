@@ -15,6 +15,9 @@ export type AgentCaller<ExternalProviderId extends string = string> =
 
 /** Existing session grants. Finer settings policy is a separate migration. */
 export type OperationCapability =
+  // SCIENT-FORK:START — Scient Accounts: declare the account operation grant.
+  | "accounts"
+  // SCIENT-FORK:END
   | "preview"
   | "documents:build"
   | "compute:inventory"

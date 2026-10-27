@@ -8,7 +8,7 @@ import { Combobox, ComboboxInput } from "~/components/ui/combobox";
 import { Input } from "~/components/ui/input";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { NumberField, NumberFieldGroup, NumberFieldInput } from "~/components/ui/number-field";
-import { Select, SelectTrigger } from "~/components/ui/select";
+import { NativeSelect, Select, SelectTrigger } from "~/components/ui/select";
 import { Textarea } from "~/components/ui/textarea";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
@@ -44,6 +44,9 @@ it("keeps one form focus border", async () => {
       <Select>
         <SelectTrigger aria-label="Bordered select">Select</SelectTrigger>
       </Select>
+      <NativeSelect aria-label="Native select">
+        <option>One</option>
+      </NativeSelect>
       <Combobox>
         <ComboboxInput aria-label="Combobox" showTrigger={false} />
       </Combobox>
@@ -64,13 +67,14 @@ it("keeps one form focus border", async () => {
     "Text area",
     "Number",
     "Bordered select",
+    "Native select",
     "Combobox",
   ]) {
     const field = _fixture.host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!;
     const surface =
       field.closest<HTMLElement>('[data-slot="input-group"]') ??
       field.closest<HTMLElement>(
-        '[data-slot="input-control"], [data-slot="textarea-control"], [data-slot="number-field-group"], [data-slot="select-trigger"]',
+        '[data-slot="input-control"], [data-slot="textarea-control"], [data-slot="number-field-group"], [data-slot="select-trigger"], [data-slot="native-select"]',
       )!;
     let validBorder = "";
     for (const invalid of [false, true]) {

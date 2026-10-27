@@ -4,6 +4,11 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+// SCIENT-FORK:START — Scient Accounts: mount account tools on the existing MCP transport.
+import { ScientAccountsToolkit } from "../scient/accounts/agent/tools.ts";
+import { AccountSessionFilesLive } from "../scient/accounts/agent/sessionFiles.ts";
+import { ScientAccountsToolkitHandlersLive } from "../scient/accounts/agent/handlers.ts";
+// SCIENT-FORK:END
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -1304,6 +1309,12 @@ export const layerMcpTransport = McpServer.layerHttp({
 }).pipe(Layer.provide(layerMcpAuthMiddleware), Layer.provide(layerScientToolList));
 
 export const layer = Layer.mergeAll(
+  // SCIENT-FORK:START — Scient Accounts: register the account toolkit.
+  registerScientToolkit(ScientAccountsToolkit).pipe(
+    Layer.provide(ScientAccountsToolkitHandlersLive),
+    Layer.provide(AccountSessionFilesLive),
+  ),
+  // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,

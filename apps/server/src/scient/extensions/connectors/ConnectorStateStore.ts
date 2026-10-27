@@ -47,7 +47,7 @@ export const ConnectorAuthRecord = Schema.Union([
     type: Schema.Literal("credential"),
     strategy: CredentialStrategy,
     headerName: Schema.optional(TrimmedNonEmptyString),
-    storage: Schema.Literal("owned"),
+    storage: Schema.Literals(["owned", "bound"]),
     credentialRef: VaultSecretRef,
   }),
 ]);

@@ -10,6 +10,9 @@ import type {
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
+// SCIENT-FORK:START — Scient Accounts: expose the desktop accounts bridge.
+import { makeDesktopAccountsBridge } from "./scient/accounts/preloadBridge.ts";
+// SCIENT-FORK:END
 import * as IpcChannels from "./ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./scient/voice/preloadBridge.ts";
 import { installSpellingSampler, type SampleOutcome } from "./scient/spelling/preloadSampler.ts";
@@ -489,4 +492,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
   },
   voice: makeDesktopVoiceBridge(ipcRenderer),
+  // SCIENT-FORK:START — Scient Accounts: mount the desktop accounts bridge.
+  accounts: makeDesktopAccountsBridge(ipcRenderer),
+  // SCIENT-FORK:END
 } satisfies DesktopBridge);
