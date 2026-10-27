@@ -1,0 +1,51 @@
+name: Linux Overleaf Scratch
+on:
+  push:
+    branches: [claude/scratch-ovlinux-20261027]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    name: Linux focused ${{ matrix.repeat }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        repeat: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+      - name: Seal Compute candidate metadata
+        run: node apps/server/scripts/compute-recipes.ts seal
+      - name: Test affected files
+        working-directory: apps/server
+        run: ../../node_modules/.bin/vp test run src/workspace/WorkspaceFileSystem.retention.test.ts src/scient/overleaf/OverleafCoordinator.confirmEpochs.test.ts src/scient/overleaf/OverleafSync.test.ts
+      - name: Test ignored-file authority
+        if: always()
+        working-directory: apps/server
+        run: ../../node_modules/.bin/vp test run src/server.test.ts -t 'ignored-file results after workspace root authority changes'
+  main_control:
+    name: Main ignored-file control
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+      - name: Seal Compute candidate metadata
+        run: node apps/server/scripts/compute-recipes.ts seal
+      - name: Test ignored-file authority on main
+        working-directory: apps/server
+        run: ../../node_modules/.bin/vp test run src/server.test.ts -t 'ignored-file results after workspace root authority changes'
