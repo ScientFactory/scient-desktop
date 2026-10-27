@@ -100,7 +100,7 @@ while ($ancestor) {
 }
 foreach ($file in $files) {
   $mask = if ($file -in $files[0..2]) { 0xD0156 } else { 0xD0040 }
-  $acl = Get-Acl -LiteralPath $file
+  $acl = if ([IO.Directory]::Exists($file)) { [IO.Directory]::GetAccessControl($file) } else { [IO.File]::GetAccessControl($file) }
   $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
   if ($owner -notin $allowed) { throw 'Unexpected native resource owner' }
   foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
