@@ -240,7 +240,6 @@ export const accountCatalogue = [
     envName: "GEMINI_API_KEY",
   },
   { name: "Mistral", kind: "api-key", site: "console.mistral.ai", envName: "MISTRAL_API_KEY" },
-  { name: "xAI", kind: "api-key", site: "console.x.ai", envName: "XAI_API_KEY" },
   { name: "Zotero", kind: "api-key", site: "zotero.org", envName: "ZOTERO_API_KEY" },
   { name: "NCBI / PubMed", kind: "api-key", site: "ncbi.nlm.nih.gov", envName: "NCBI_API_KEY" },
   {
@@ -272,7 +271,7 @@ export type CatalogueEntry = (typeof accountCatalogue)[number];
 export const accountCatalogueGroups = [
   {
     name: "AI models",
-    entries: ["OpenAI", "Anthropic", "OpenRouter", "Google Gemini", "Mistral", "xAI"],
+    entries: ["OpenAI", "Anthropic", "OpenRouter", "Google Gemini", "Mistral"],
   },
   {
     name: "Research",
