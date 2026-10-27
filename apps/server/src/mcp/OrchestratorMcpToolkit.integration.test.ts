@@ -1104,10 +1104,11 @@ describe("orchestrator MCP toolkit", () => {
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
             }
-            for (const name of ["scient_queue_edit", "scient_queue_cancel"]) {
-              const refusedQueueMutation = yield* invoke(name, {
+            for (const action of ["edit", "cancel"]) {
+              const refusedQueueMutation = yield* invoke("scient_queue", {
+                action,
                 queuedRunId: parentRun.id,
-                ...(name === "scient_queue_edit" ? { text: "Keep the active turn." } : {}),
+                ...(action === "edit" ? { text: "Keep the active turn." } : {}),
               });
               expect(refusedQueueMutation.isError).toBe(true);
               expect(refusedQueueMutation.structuredContent).toBeUndefined();
@@ -1565,23 +1566,31 @@ describe("orchestrator MCP toolkit", () => {
             if (queuedUserRun === undefined) {
               return yield* Effect.die(new Error("Queued user follow-up missing."));
             }
-            const queueFirstPage = yield* invoke("scient_queue_list", { limit: 1 });
+            const queueFirstPage = yield* invoke("scient_queue", { action: "list", limit: 1 });
             expect(queueFirstPage.structuredContent).toMatchObject({
               items: [{ queuedRunId: queueRace.queuedRun.id }],
               nextCursor: 1,
             });
-            const queueSecondPage = yield* invoke("scient_queue_list", { cursor: 1, limit: 1 });
+            const queueSecondPage = yield* invoke("scient_queue", {
+              action: "list",
+              cursor: 1,
+              limit: 1,
+            });
             expect(queueSecondPage.structuredContent).toEqual({
               items: [{ queuedRunId: queuedUserRun.id, text: "🙂".repeat(1000), truncated: true }],
               nextCursor: null,
             });
-            const queueRead = yield* invoke("scient_queue_read", { queuedRunId: queuedUserRun.id });
+            const queueRead = yield* invoke("scient_queue", {
+              action: "read",
+              queuedRunId: queuedUserRun.id,
+            });
             expect(queueRead.structuredContent).toEqual({
               queuedRunId: queuedUserRun.id,
               text: "🙂".repeat(16000),
               truncated: true,
             });
-            const missingQueueRead = yield* invoke("scient_queue_read", {
+            const missingQueueRead = yield* invoke("scient_queue", {
+              action: "read",
               queuedRunId: parentRun.id,
             });
             expect(missingQueueRead.isError).toBe(true);
@@ -1730,7 +1739,6 @@ describe("orchestrator MCP toolkit", () => {
               _tag: "OrchestratorMcpFailure",
               code: "capability_denied",
             });
-            expect(threadReadTool?.tool.inputSchema).toMatchObject({ additionalProperties: false });
             const unknownPagingParamError = yield* invoke("scient_thread_inspect", {
               threadId: parentThreadId,
               cursor: 90,
@@ -1746,7 +1754,6 @@ describe("orchestrator MCP toolkit", () => {
               properties: {
                 action: expect.any(Object),
                 title: expect.any(Object),
-                pullRequest: expect.any(Object),
               },
             });
             const deniedThreadUpdate = yield* invokeAs(
@@ -1886,7 +1893,7 @@ describe("orchestrator MCP toolkit", () => {
               const callerScope = yield* callerScopeFor(callerThreadId);
               for (const binding of [undefined, false, true]) {
                 const before = yield* Ref.get(scheduledStore);
-                const denied = yield* invokeAs(callerScope, "update_scheduled_task", {
+                const denied = yield* invokeAs(callerScope, "schedule_task", {
                   scheduledTaskId,
                   prompt: "replacement instructions",
                   ...(binding === undefined ? {} : { bindToCurrentThread: binding }),
@@ -1964,7 +1971,7 @@ describe("orchestrator MCP toolkit", () => {
               );
               for (const binding of [undefined, false, true]) {
                 const before = yield* Ref.get(scheduledStore);
-                const denied = yield* invokeAs(callerScope, "update_scheduled_task", {
+                const denied = yield* invokeAs(callerScope, "schedule_task", {
                   scheduledTaskId,
                   prompt: "Cannot inherit future thread defaults.",
                   ...(binding === undefined ? {} : { bindToCurrentThread: binding }),
@@ -1993,7 +2000,7 @@ describe("orchestrator MCP toolkit", () => {
               expect(futureTask).toMatchObject({ runtimeMode, interactionMode, threadId: null });
               if (futureTask !== undefined) {
                 const beforeRebind = yield* Ref.get(scheduledStore);
-                const deniedRebind = yield* invokeAs(callerScope, "update_scheduled_task", {
+                const deniedRebind = yield* invokeAs(callerScope, "schedule_task", {
                   scheduledTaskId: futureTask.id,
                   bindToCurrentThread: true,
                   prompt: "Cannot rebind captured restricted work to broader future defaults.",
@@ -2023,7 +2030,7 @@ describe("orchestrator MCP toolkit", () => {
                 expect(
                   Option.isNone(yield* manager.resolveMcpInvocationPolicy(foreignScope.thread)),
                 ).toBe(true);
-                const denied = yield* invokeAs(foreignScope, "update_scheduled_task", {
+                const denied = yield* invokeAs(foreignScope, "schedule_task", {
                   scheduledTaskId,
                   prompt: "foreign",
                 });
@@ -2040,7 +2047,7 @@ describe("orchestrator MCP toolkit", () => {
                   interactionMode,
                 })),
               );
-              const boundDenied = yield* invokeAs(callerScope, "update_scheduled_task", {
+              const boundDenied = yield* invokeAs(callerScope, "schedule_task", {
                 scheduledTaskId,
                 prompt: "replacement for a stronger bound thread",
                 bindToCurrentThread: false,
@@ -2052,7 +2059,7 @@ describe("orchestrator MCP toolkit", () => {
             }
 
             // A caller within the ceiling can edit and unbind normally.
-            const unbound = yield* invoke("update_scheduled_task", {
+            const unbound = yield* invoke("schedule_task", {
               scheduledTaskId,
               prompt: "updated safe scheduled instructions",
               bindToCurrentThread: false,
@@ -2065,7 +2072,7 @@ describe("orchestrator MCP toolkit", () => {
               interactionMode: "default",
             });
 
-            const scheduledUpdateCall = yield* invoke("update_scheduled_task", {
+            const scheduledUpdateCall = yield* invoke("schedule_task", {
               scheduledTaskId,
               enabled: false,
             });
@@ -3179,24 +3186,17 @@ describe("orchestrator MCP toolkit", () => {
             expect(repeatedRename.commandId).toBe(renamed.commandId);
             expect(repeatedRename.sequence).toBe(renamed.sequence);
 
-            const linkedCall = yield* invoke("scient_thread_update", {
-              threadId: emptyThread.threadId,
-              action: "link_pull_request",
-              pullRequest: {
-                repository: "pingdotgg/t3code",
-                number: 8689,
-                url: "https://github.com/pingdotgg/t3code/pull/8689",
-              },
-              clientRequestId: "metadata-link-1",
-            });
-            const linked = yield* decodeThreadUpdateResult(linkedCall.structuredContent).pipe(
-              Effect.orDie,
-            );
-            expect(linked.linkedPullRequest).toEqual({
+            const linkedPullRequest = {
               projectId,
               repository: "pingdotgg/t3code",
               number: 8689,
               url: "https://github.com/pingdotgg/t3code/pull/8689",
+            };
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make("command:mcp-empty:metadata-link"),
+              threadId: emptyThread.threadId,
+              linkedPullRequest,
             });
             const metadataReadCall = yield* invoke("scient_thread_inspect", {
               threadId: emptyThread.threadId,
@@ -3206,7 +3206,7 @@ describe("orchestrator MCP toolkit", () => {
             ).pipe(Effect.orDie);
             expect(metadataRead.thread).toMatchObject({
               title: "Metadata-managed thread",
-              linkedPullRequest: linked.linkedPullRequest,
+              linkedPullRequest,
             });
             const metadataListCall = yield* invoke("scient_thread_list", { limit: 100 });
             const metadataList = yield* decodeThreadListResult(
@@ -3216,7 +3216,7 @@ describe("orchestrator MCP toolkit", () => {
               metadataList.threads.find((thread) => thread.threadId === emptyThread.threadId),
             ).toMatchObject({
               title: "Metadata-managed thread",
-              linkedPullRequest: linked.linkedPullRequest,
+              linkedPullRequest,
               settled: false,
               settledAt: null,
             });
@@ -3307,15 +3307,12 @@ describe("orchestrator MCP toolkit", () => {
               reason: "user",
             });
 
-            const unlinkedCall = yield* invoke("scient_thread_update", {
+            yield* orchestrator.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make("command:mcp-empty:metadata-unlink"),
               threadId: emptyThread.threadId,
-              action: "unlink_pull_request",
-              clientRequestId: "metadata-unlink-1",
+              linkedPullRequest: null,
             });
-            const unlinked = yield* decodeThreadUpdateResult(unlinkedCall.structuredContent).pipe(
-              Effect.orDie,
-            );
-            expect(unlinked.linkedPullRequest).toBeNull();
 
             // Links added through thread.pull-request.link leave linkedPullRequest unchanged.
             yield* orchestrator.dispatch({

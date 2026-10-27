@@ -263,8 +263,8 @@
     },
     {
       "path": "apps/server/src/scient/operations/AgentCapabilityBudget.test.ts",
-      "anchor": "actual42Bytes",
-      "purpose": "Include the five account tools in the eager schema inventory."
+      "anchor": "\"scient_accounts_list\"",
+      "purpose": "Include the six account tools in the eager schema inventory."
     },
     {
       "path": "packages/scient-analytics/src/wireContract.ts",

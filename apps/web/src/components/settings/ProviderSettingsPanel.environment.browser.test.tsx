@@ -519,6 +519,7 @@ describe("Scient provider settings", () => {
       "Select Oh My Pi",
       "Select Cursor",
       "Select Grok",
+      "Select fx",
       "Select Devin",
       "Select Muse Code",
     ]);
@@ -537,9 +538,9 @@ describe("Scient provider settings", () => {
         element.getAttribute("aria-disabled") !== "true" && !element.hasAttribute("disabled"),
     );
     expect(choices.map((element) => element.querySelector(".font-medium")?.textContent)).toEqual(
-      DRIVER_OPTIONS.filter((option) => option.value !== "acpRegistry").map(
-        (option) => option.label,
-      ),
+      DRIVER_OPTIONS.filter(
+        (option) => option.value !== "acpRegistry" && option.clientDefinition.featured !== false,
+      ).map((option) => option.label),
     );
     expect(state.mutateProviderInstance).not.toHaveBeenCalled();
     expect(state.updateSettings).not.toHaveBeenCalled();

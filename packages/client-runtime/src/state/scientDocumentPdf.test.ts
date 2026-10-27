@@ -63,6 +63,7 @@ const observeHostRequests = Effect.fn("TestScientDocumentPdf.observeHostRequests
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
+    inboundFrames: Effect.succeed(0),
   };
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: TARGET,

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-23T00:00:00Z",
+  "updatedAt": "2026-10-26T20:00:36Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -205,6 +205,15 @@
           "range": "<1.4.2",
           "status": "unknown"
         }
+      ]
+    },
+    {
+      "driver": "fx",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=0.0.13",
+      "ranges": [
+        { "range": ">=0.0.13", "status": "supported" },
+        { "range": "<0.0.13", "status": "unsupported" }
       ]
     }
   ],
@@ -948,7 +957,7 @@
           "name": "Claude Haiku 5.5",
           "aliases": ["haiku", "haiku-5.5", "claude-haiku-5.5"],
           "status": "current",
-          "badge": "new",
+          "releasedAt": "2026-10-07",
           "profile": "haiku-5-5",
           "adapter": {
             "claudeCode": {

@@ -76,6 +76,7 @@ const makeInventoryHarness = Effect.fn("TestInventory.makeHarness")(function* (
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
+    inboundFrames: Effect.succeed(0),
   };
   const supervisor = EnvironmentSupervisor.of({
     target: TARGET,

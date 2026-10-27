@@ -21,7 +21,7 @@ The computer running Scient needs an `ssh` client and network access to the
 target. The remote host needs a compatible Node.js version. Configure an SSH
 key, SSH agent, or host entry in `~/.ssh/config` first when possible.
 
-1. Open **Settings → Connections** and choose **Add environment**.
+1. Open **Settings → Environments** and choose **Add environment**.
 2. Choose **SSH**.
 3. Select a suggested host, or enter its host name, optional user, and optional
    port.
@@ -121,7 +121,7 @@ later route, Scient checks the earlier ones when your network changes, when you
 return to the app, and every minute, and moves back as soon as one works.
 
 On web and desktop, select the route count under the machine's name in
-**Settings → Connections** to see its routes. Drag a route to change the order,
+**Settings → Environments** to see its routes. Drag a route to change the order,
 or remove it. On mobile, open the machine under **Settings → Environments** and
 choose **Edit**.
 
@@ -135,7 +135,7 @@ different permissions.
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in
-**Settings → Connections → Load balancing** to automatically choose a machine for
+**Settings → Environments → Load balancing** to automatically choose a machine for
 new threads in projects grouped across connected environments. The section
 appears once two or more machines are switched on.
 Each machine starts at **Normal**. Choose **Prefer** to favor it when it has CPU and
@@ -152,7 +152,7 @@ Mobile keeps its manual environment selection.
 
 ### Tailscale HTTPS
 
-When the desktop app detects Tailscale, **Settings → Connections** can show its
+When the desktop app detects Tailscale, **Settings → Sharing & access** can show its
 Tailnet IP, MagicDNS name, and an HTTPS MagicDNS endpoint. Tailscale HTTPS is
 off until you explicitly enable it. Turning it on asks Tailscale Serve to proxy
 private HTTPS traffic to the local Scient backend; turning it off removes that
@@ -181,12 +181,12 @@ address and temporary pairing information needed by a client.
 
 ## Pair a client safely
 
-In **Settings → Connections**, create a time-limited pairing link or code with
+In **Settings → Sharing & access**, create a time-limited pairing link or code with
 only the read and write permissions that client needs. Share it only with the
 intended device, and revoke unused links or sessions from the same page.
 
 Pairing codes and share links are available only in the client that created them,
-while its Connections page remains open. After leaving or reloading that page,
+while its Sharing & access page remains open. After leaving or reloading that page,
 create a new link to share. Other clients can see a link's name, scopes, and expiry,
 and can revoke it if they have access-management permission.
 
@@ -219,8 +219,9 @@ bug report. See [Antigravity](./providers-antigravity.md) for the complete flow.
 
 ## Keep versions aligned
 
-When the remote server version differs from the desktop client, Scient shows
-the appropriate action in the composer and **Settings → Connections**. Use that
+When the remote server version differs from the desktop client, Scient offers
+the appropriate action from the update control at the bottom of the sidebar and
+in **Settings → Environments**. Use that
 exact action or copied command; see [Update Scient](updating.md). Changing the
 package or version can produce an incompatible server.
 
@@ -234,7 +235,7 @@ running is left alone.
 
 Each desktop app keeps one session on the host for its SSH connection and reuses
 it when it reconnects. Revoke sessions you no longer use in **Settings →
-Connections** on the host, or on a headless host with `scient auth session list` and
+Sharing & access** on the host, or on a headless host with `scient auth session list` and
 `scient auth session revoke <id>`. A desktop that can still sign in over SSH pairs
 again on its next connect.
 
@@ -244,7 +245,7 @@ For Antigravity's Google callback on a remote host, see
 ## Use the desktop app only for remote environments
 
 If this computer should only control work running elsewhere, turn off **Local
-environment** in **Settings → Connections**. Scient restarts without a local
+environment** in **Settings → Environments**. Scient restarts without a local
 server: local providers and terminals stop, WSL backends stay off, and other
 devices can no longer connect to this computer. Existing local projects, history,
 and saved connections are kept.
@@ -310,7 +311,7 @@ threads on an environment through its MCP server. See
 Turn **Local environment** back on in the same place to restore the previous local
 environment.
 
-Removing a saved remote environment from **Settings → Connections** forgets it on
+Removing a saved remote environment from **Settings → Environments** forgets it on
 this device only. Scient hosts no relay, so there is no account-level
 registration left behind to revoke.
 
