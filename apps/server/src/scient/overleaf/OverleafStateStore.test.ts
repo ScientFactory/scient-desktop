@@ -784,7 +784,12 @@ describe("OverleafStateStore", () => {
           expect(Exit.isFailure(result)).toBe(true);
           expect(
             yield* Effect.promise(() =>
-              NodeFSP.readdir(NodePath.join(root, "state", "retained", "connection-1")),
+              NodeFSP.readdir(NodePath.join(root, "state", "retained", "connection-1")).catch(
+                (cause: unknown) => {
+                  if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+                  throw cause;
+                },
+              ),
             ),
           ).toEqual([]);
         }),
@@ -820,7 +825,10 @@ describe("OverleafStateStore", () => {
               NodeFSP.realpath(NodePath.join(root, "state", "retained", "connection-1")),
             ),
           );
-          expect(prepared.identity.volume).toBe(VOLUME);
+          // Linux identity comes from the held native object, never the macOS seam.
+          if (HostProcess.Platform.defaultValue() === "linux")
+            expect(prepared.identity).toMatchObject({ platform: "linux" });
+          else expect(prepared.identity.volume).toBe(VOLUME);
           const stat = yield* Effect.promise(() => NodeFSP.stat(prepared.directory));
           expect(stat.mode & 0o077).toBe(0);
           expect(yield* prepare(store, checkout, prepared.identity)).toEqual(prepared);
@@ -1030,20 +1038,24 @@ describe("OverleafStateStore", () => {
       ),
     );
 
-    it.live("refuses a disk without a volume identity, never using the device number", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const root = yield* temporaryRoot();
-          const checkout = NodePath.join(root, "checkout");
-          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
-          const { store } = yield* openStore(
-            NodePath.join(root, "state"),
-            undefined,
-            async () => null,
-          );
-          expect(yield* refusal(prepare(store, checkout))).toBe("no-volume-identity");
-        }),
-      ),
+    // The null-resolver premise only exists where the seam discovers volumes;
+    // Linux reads identity natively (its no-volume case is covered in LinuxFilePublication).
+    it.live.skipIf(HostProcess.Platform.defaultValue() === "linux")(
+      "refuses a disk without a volume identity, never using the device number",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* temporaryRoot();
+            const checkout = NodePath.join(root, "checkout");
+            yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+            const { store } = yield* openStore(
+              NodePath.join(root, "state"),
+              undefined,
+              async () => null,
+            );
+            expect(yield* refusal(prepare(store, checkout))).toBe("no-volume-identity");
+          }),
+        ),
     );
 
     it.live("refuses a read-only location beside the checkout", () =>
