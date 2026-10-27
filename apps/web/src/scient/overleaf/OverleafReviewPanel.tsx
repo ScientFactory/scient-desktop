@@ -43,6 +43,7 @@ import {
   choicesFor,
   decidableFiles,
   overleafResultView,
+  readNothingToDoLine,
   reviewIdentity,
   workspacePathOf,
   type OverleafFileDecision,
@@ -507,6 +508,11 @@ export function OverleafReviewPanel(props: {
           ) : null}
           {review ? (
             <>
+              {!synced && readNothingToDoLine(review) ? (
+                <p className="px-1 text-sm text-muted-foreground" role="status">
+                  {readNothingToDoLine(review)}
+                </p>
+              ) : null}
               <ChangeList
                 title={synced ? "Came in" : "To bring in"}
                 icon={ArrowDownToLine}

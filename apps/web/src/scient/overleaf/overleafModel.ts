@@ -376,6 +376,16 @@ function heldLine(held: ReadonlyArray<string>): string {
   return `Waiting for conflict marks to be settled: ${named}.`;
 }
 
+/**
+ * What a read of the changes says when there is nothing to do, so the tab never shows an
+ * empty page; null when the read lists changes, conflicts or held files.
+ */
+export function readNothingToDoLine(review: ScientOverleafReview): string | null {
+  return review.upToDate && review.unresolvedMarkers.length === 0
+    ? "Up to date with Overleaf: nothing to bring in or send."
+    : null;
+}
+
 /** The headline counts for a review that was applied, and whether its send reached Overleaf. */
 function countsTitle(review: ScientOverleafReview, sent: boolean, held: number): string {
   const incoming = review.incoming.length;

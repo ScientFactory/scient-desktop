@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  readNothingToDoLine,
   askAgentMessage,
   choicesFor,
   connectionForPath,
@@ -626,5 +627,17 @@ describe("conflict marks", () => {
     expect(overleafUndoView({ _tag: "not-eligible", reason: "unresolved" }).lines).toEqual([
       "Overleaf never answered this send.",
     ]);
+  });
+});
+
+describe("readNothingToDoLine", () => {
+  it("says up to date only when a read has nothing to bring in, send or hold", () => {
+    expect(readNothingToDoLine(review({ upToDate: true }))).toBe(
+      "Up to date with Overleaf: nothing to bring in or send.",
+    );
+    expect(readNothingToDoLine(review({ upToDate: false }))).toBeNull();
+    expect(
+      readNothingToDoLine(review({ upToDate: true, unresolvedMarkers: ["a.tex"] })),
+    ).toBeNull();
   });
 });
