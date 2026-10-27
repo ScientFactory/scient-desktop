@@ -971,6 +971,9 @@ export function EditableFileEditor({
   const [externalFile, setExternalFile] = useState(() =>
     editableFileContents(environmentId, cwd, relativePath, contents),
   );
+  // SCIENT-FORK:START — track native edits between React commits as well as incoming replacements.
+  const lastEditorSource = useRef({ file: externalFile, contents: externalFile.contents });
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — a document session's source undo belongs to the document,
   // which keeps its id across an in-place rename and across reopening the file.
   const [fileEditStateKey] = useState(() => `scient-file:${environmentId}:${cwd}:${relativePath}`);
@@ -1124,7 +1127,15 @@ export function EditableFileEditor({
       return;
     // SCIENT-FORK:END
     setEditedContents(file.contents);
-    if (!applyingExternal.current) onContentsChange(file.contents);
+    // SCIENT-FORK:START — Pierre also reports incoming prop replacements as edit changes.
+    const previousSource =
+      lastEditorSource.current.file === externalFile
+        ? lastEditorSource.current.contents
+        : externalFile.contents;
+    lastEditorSource.current = { file: externalFile, contents: file.contents };
+    if (!applyingExternal.current && file.contents !== previousSource)
+      onContentsChange(file.contents);
+    // SCIENT-FORK:END
     if (nextLineAnnotations) {
       const remapped = remapFileCommentAnnotations(nextLineAnnotations);
       setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));
