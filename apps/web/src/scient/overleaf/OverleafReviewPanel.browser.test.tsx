@@ -109,6 +109,7 @@ function review(overrides: Partial<ScientOverleafReview> = {}): ScientOverleafRe
     ],
     warnings: [],
     unresolvedMarkers: [],
+    heldWithMarked: [],
     released: [],
     collisions: [],
     selectedAdditions: [],

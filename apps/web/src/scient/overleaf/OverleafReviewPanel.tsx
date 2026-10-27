@@ -47,6 +47,7 @@ import {
   outgoingAfterDecisions,
   overleafResultView,
   readNothingToDoLine,
+  reviewHeldLines,
   reviewIdentity,
   workspacePathOf,
   type OverleafFileDecision,
@@ -582,6 +583,13 @@ export function OverleafReviewPanel(props: {
                   {readNothingToDoLine(review)}
                 </p>
               ) : null}
+              {!synced
+                ? reviewHeldLines(review).map((line) => (
+                    <p key={line} className="px-1 text-sm text-muted-foreground" role="status">
+                      {line}
+                    </p>
+                  ))
+                : null}
               <ChangeList
                 title={synced ? "Came in" : "To bring in"}
                 icon={ArrowDownToLine}

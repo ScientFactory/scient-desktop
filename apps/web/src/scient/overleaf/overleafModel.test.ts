@@ -8,6 +8,8 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   outgoingAfterDecisions,
   readNothingToDoLine,
+  reviewHeldLines,
+  overleafSyncSucceeded,
   askAgentMessage,
   choicesFor,
   connectionForPath,
@@ -71,6 +73,7 @@ function review(overrides: Partial<ScientOverleafReview> = {}): ScientOverleafRe
     conflicts: [],
     warnings: [],
     unresolvedMarkers: [],
+    heldWithMarked: [],
     released: [],
     collisions: [],
     selectedAdditions: [],
@@ -513,6 +516,7 @@ describe("conflict marks", () => {
       conflicts: [],
       warnings: [],
       unresolvedMarkers: ["main.tex"],
+      heldWithMarked: [],
       released: [],
       collisions: [],
       selectedAdditions: [],
@@ -578,6 +582,7 @@ describe("conflict marks", () => {
           conflicts: [],
           warnings: [],
           unresolvedMarkers: [],
+          heldWithMarked: [],
           released: [],
           collisions: [],
           selectedAdditions: [],
@@ -651,6 +656,38 @@ describe("conflict marks", () => {
     expect(overleafUndoView({ _tag: "not-eligible", reason: "unresolved" }).lines).toEqual([
       "Overleaf never answered this send.",
     ]);
+  });
+});
+
+describe("clean held files", () => {
+  it("names their marked dependencies and keeps a held-only sync open", () => {
+    const held = review({
+      upToDate: true,
+      unresolvedMarkers: ["b.tex"],
+      heldWithMarked: [{ path: "a.tex", markedPaths: ["b.tex"] }],
+    });
+    const line =
+      "a.tex waits with b.tex, which still has conflict marks: Scient can't tell whether the file moved. Settle b.tex, then sync again.";
+    expect(reviewHeldLines(held)).toContain(line);
+    const result = synced({ review: held, publication: { _tag: "none" } });
+    expect(overleafResultView(result).title).toBe("2 files wait for conflicts");
+    expect(overleafResultView(result).lines).toContain(line);
+    // Even when the dependency has just been marked by the apply, the clean file stays visible.
+    const fresh = { ...held, unresolvedMarkers: [] };
+    expect(readNothingToDoLine(fresh)).toBeNull();
+    expect(overleafSyncSucceeded(synced({ review: fresh, publication: { _tag: "none" } }))).toBe(
+      false,
+    );
+    expect(
+      overleafResultView({
+        _tag: "needs-decision",
+        review: fresh,
+        retried: false,
+        settled: null,
+        activity: [],
+        linkedElsewhere: false,
+      }).lines,
+    ).toContain(line);
   });
 });
 

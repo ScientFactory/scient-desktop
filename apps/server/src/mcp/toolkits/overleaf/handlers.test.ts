@@ -81,6 +81,7 @@ const emptyReview = () => ({
   conflicts: [],
   warnings: [],
   unresolvedMarkers: [],
+  heldWithMarked: [],
   released: [],
   collisions: [],
   selectedAdditions: [],
@@ -362,8 +363,10 @@ describe("Overleaf tool handlers", () => {
           fakeOverleaf({ preview: () => Effect.succeed({ _tag: "review", review }) as never }),
         ),
       );
-      expect(previewed.lines[0]).toBe("Up to date: nothing would come in or be sent.");
-      expect(previewed.lines[1]).toMatch(/^1 file still has conflict marks: guide\.md\./u);
+      expect(previewed.lines.some((line) => line.startsWith("Up to date"))).toBe(false);
+      expect(
+        previewed.lines.some((line) => /^1 file still has conflict marks: guide\.md\./u.test(line)),
+      ).toBe(true);
       const stopped = yield* overleafSyncForInvocation({ connectionId: "c-1" }).pipe(
         provide(
           fakeOverleaf({

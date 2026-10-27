@@ -161,7 +161,14 @@ const fileLines = (review: ScientOverleafReview): string[] => {
 };
 
 const markerLine = (paths: ReadonlyArray<string>) =>
-  `${plural(paths.length, "file")} still ${paths.length === 1 ? "has" : "have"} conflict marks: ${named(paths)}. Merge each marked block, remove every mark, then sync again; a file with marks is not sent. If the marks are a file's content, send it as it is with files.release.`;
+  `${plural(paths.length, "file")} still ${paths.length === 1 ? "has" : "have"} conflict marks: ${paths.join(", ")}. Merge each marked block, remove every mark, then sync again; a file with marks is not sent. If the marks are a file's content, send it as it is with files.release.`;
+
+const heldWithMarkedLines = (review: ScientOverleafReview): string[] =>
+  review.heldWithMarked.map(({ path, markedPaths }) =>
+    markedPaths.length > 0
+      ? `${path} waits with ${markedPaths.join(", ")}, which still ${markedPaths.length === 1 ? "has" : "have"} conflict marks: Scient can't tell whether the file moved. Settle ${markedPaths.join(", ")}, then sync again.`
+      : `${path} is held because Scient can't tell whether marked work moved to it. Settle the conflict marks, then sync again.`,
+  );
 
 /** Files with marks a review sends as they are, as `files.release` asked. */
 const releasedLine = (paths: ReadonlyArray<string>, tense: Exclude<SendTense, "unsent">) =>
@@ -170,12 +177,13 @@ const releasedLine = (paths: ReadonlyArray<string>, tense: Exclude<SendTense, "u
 /** What a review would do: the preview's lines. */
 const reviewLines = (review: ScientOverleafReview): string[] => {
   // Held files wait whatever else moves: they are always named (design section 4.2).
-  if (review.upToDate && review.conflicts.length === 0)
-    return [
-      "Up to date: nothing would come in or be sent.",
-      ...fileLines(review),
-      ...(review.unresolvedMarkers.length > 0 ? [markerLine(review.unresolvedMarkers)] : []),
-    ];
+  if (
+    review.upToDate &&
+    review.conflicts.length === 0 &&
+    review.unresolvedMarkers.length === 0 &&
+    review.heldWithMarked.length === 0
+  )
+    return ["Up to date: nothing would come in or be sent.", ...fileLines(review)];
   const lines: string[] = [];
   lines.push(
     review.incoming.length === 0
@@ -191,6 +199,7 @@ const reviewLines = (review: ScientOverleafReview): string[] => {
   lines.push(...fileLines(review));
   lines.push(...warningLines(review.warnings, "would"));
   if (review.unresolvedMarkers.length > 0) lines.push(markerLine(review.unresolvedMarkers));
+  lines.push(...heldWithMarkedLines(review));
   if (review.released.length > 0) lines.push(releasedLine(review.released, "would"));
   return lines;
 };
@@ -422,7 +431,12 @@ export const syncLines = (result: ScientOverleafSyncResult): string[] => {
         ...incomingLines(result),
         ...publicationLines(result.publication, result.review, result.markerPaths),
       ];
-      if (lines.length === 0)
+      if (
+        lines.length === 0 &&
+        result.markerPaths.length === 0 &&
+        result.review.unresolvedMarkers.length === 0 &&
+        result.review.heldWithMarked.length === 0
+      )
         lines.push(
           result.retried
             ? "In the last attempt, nothing came in and nothing needed sending."
@@ -434,6 +448,7 @@ export const syncLines = (result: ScientOverleafSyncResult): string[] => {
         const marked = [...new Set([...result.markerPaths, ...result.review.unresolvedMarkers])];
         if (marked.length > 0) lines.push(markerLine(marked));
       }
+      lines.push(...heldWithMarkedLines(result.review));
       const tense = sendTense(result.publication);
       if (result.review.released.length > 0 && tense !== "unsent")
         lines.push(releasedLine(result.review.released, tense));
@@ -447,6 +462,7 @@ export const syncLines = (result: ScientOverleafSyncResult): string[] => {
         ...(result.review.unresolvedMarkers.length > 0
           ? [markerLine(result.review.unresolvedMarkers)]
           : []),
+        ...heldWithMarkedLines(result.review),
         ...activityLines(result.activity),
       ];
     case "refused":

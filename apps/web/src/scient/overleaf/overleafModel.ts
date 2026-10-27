@@ -387,16 +387,34 @@ function heldPaths(
   review: ScientOverleafReview,
   markerPaths: ReadonlyArray<string> = [],
 ): string[] {
-  return [...new Set([...markerPaths, ...review.unresolvedMarkers])].sort();
+  return [
+    ...new Set([
+      ...markerPaths,
+      ...review.unresolvedMarkers,
+      ...review.heldWithMarked.map((file) => file.path),
+    ]),
+  ].sort();
 }
 
 /** Held files wait while everything else syncs; they are always named (design section 4.2). */
 function heldLine(held: ReadonlyArray<string>): string {
-  const named =
-    held.length <= 3
-      ? held.join(", ")
-      : `${held.slice(0, 3).join(", ")} and ${held.length - 3} more`;
-  return `Waiting for conflict marks to be settled: ${named}.`;
+  return `Waiting for conflict marks to be settled: ${held.join(", ")}.`;
+}
+
+/** Every held folder file is named, including clean files waiting on ambiguous identities. */
+export function reviewHeldLines(
+  review: ScientOverleafReview,
+  markerPaths: ReadonlyArray<string> = [],
+): string[] {
+  const marked = [...new Set([...markerPaths, ...review.unresolvedMarkers])].sort();
+  return [
+    ...(marked.length > 0 ? [heldLine(marked)] : []),
+    ...review.heldWithMarked.map(({ path, markedPaths }) =>
+      markedPaths.length > 0
+        ? `${path} waits with ${markedPaths.join(", ")}, which still ${markedPaths.length === 1 ? "has" : "have"} conflict marks: Scient can't tell whether the file moved. Settle ${markedPaths.join(", ")}, then sync again.`
+        : `${path} is held because Scient can't tell whether marked work moved to it. Settle the conflict marks, then sync again.`,
+    ),
+  ];
 }
 
 /**
@@ -404,7 +422,7 @@ function heldLine(held: ReadonlyArray<string>): string {
  * empty page; null when the read lists changes, conflicts or held files.
  */
 export function readNothingToDoLine(review: ScientOverleafReview): string | null {
-  return review.upToDate && review.unresolvedMarkers.length === 0
+  return review.upToDate && heldPaths(review).length === 0
     ? "Up to date with Overleaf: nothing to bring in or send."
     : null;
 }
@@ -589,7 +607,7 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
         ...progress,
         ...(publication.line ? [publication.line] : []),
         ...warningLines(result.review),
-        ...(held.length > 0 ? [heldLine(held)] : []),
+        ...reviewHeldLines(result.review, result.markerPaths),
         ...(result.interrupted > 0
           ? [`An interrupted sync left ${fileCount(result.interrupted)} to settle.`]
           : []),
@@ -612,9 +630,7 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
           progress.length === 0
             ? "Nothing was changed yet. Choose how to settle each one, then sync again."
             : "None of these was changed yet. Choose how to settle each one, then sync again.",
-          ...(result.review.unresolvedMarkers.length > 0
-            ? [heldLine(heldPaths(result.review))]
-            : []),
+          ...reviewHeldLines(result.review),
           ...contextLines(result.activity, result.linkedElsewhere),
         ],
         tone: "warning",
@@ -700,7 +716,7 @@ export function overleafSyncSucceeded(result: ScientOverleafSyncResult): boolean
     result.outcome === "complete" &&
     (result.publication._tag === "none" || result.publication._tag === "accepted") &&
     result.markerPaths.length === 0 &&
-    result.review.unresolvedMarkers.length === 0
+    heldPaths(result.review).length === 0
   );
 }
 

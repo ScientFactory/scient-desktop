@@ -238,6 +238,10 @@ file waits: everything else is sent, Overleaf keeps its own version of the
 file, and every sync result names the files that wait. Your version from
 before the sync is always kept.
 
+If Scient can't tell whether marked work moved to a clean file, that file waits
+as well. The review and sync result name it and the marked files it waits with.
+Settle those conflict marks, then sync again.
+
 If the marks are the file's real content (a guide that quotes them, say), the
 Overleaf tab lists it under **Waiting for conflicts** with **Send it anyway**:
 the next sync sends it as it is, marks included.

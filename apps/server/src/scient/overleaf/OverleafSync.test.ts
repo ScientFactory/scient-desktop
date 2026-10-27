@@ -9,6 +9,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
+import { ScientOverleafReview } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+import { previewLines, syncLines } from "../../mcp/toolkits/overleaf/resultLines.ts";
+import { syncView } from "./http.ts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -24,6 +29,8 @@ import {
   TOKEN,
   write,
 } from "./OverleafSync.testkit.ts";
+
+const decodeReview = Schema.decodeUnknownEffect(ScientOverleafReview);
 
 describe.skipIf(!canApply)("OverleafSync", () => {
   it.live(
@@ -1721,6 +1728,78 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           ).toEqual({ _tag: "not-eligible", reason: "not-recorded" });
         }),
       ),
+  );
+
+  it.live("names a clean file conservatively held by a legacy marker record", () =>
+    run(
+      Effect.gen(function* () {
+        const original = { "a.tex": "A\n", "b.tex": "B\n" };
+        const w = yield* world({ overleaf: { [PROJECT]: original } });
+        const caller = w.at(w.main);
+        const connected = yield* w.service.connect({
+          caller,
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+        const stored = yield* w.store.readConnection(id);
+        if (stored._tag !== "ready") return yield* Effect.die(stored);
+        yield* w.store.replaceConnection({
+          expectedRevision: stored.document.revision,
+          next: {
+            ...stored.document,
+            revision: stored.document.revision + 1,
+            markers: [{ path: "a.tex", folderPaths: [], overleafPaths: ["a.tex"] }],
+            markerFileIds: [],
+          },
+        });
+        const folder = NodePath.join(w.main, "paper");
+        yield* write(folder, {
+          "a.tex": "clean replacement\n",
+          "b.tex": "<<<<<<< Scient\nmine\n=======\ntheirs\n>>>>>>> Overleaf\n",
+        });
+        const preview = yield* w.service.preview({ caller, connectionId: id });
+        if (preview._tag !== "review") return yield* Effect.die(preview);
+        const review = yield* decodeReview(preview.review);
+        expect(review.heldWithMarked).toEqual([{ path: "a.tex", markedPaths: ["b.tex"] }]);
+        expect(review.unresolvedMarkers).toEqual(["b.tex"]);
+        expect(review.outgoing).toEqual([]);
+        expect(review.upToDate).toBe(false);
+        const lines = previewLines({ _tag: "review", review, settled: null });
+        expect(lines.some((line) => line.startsWith("a.tex waits with b.tex,"))).toBe(true);
+        expect(lines.some((line) => /up to date|nothing needed sending/iu.test(line))).toBe(false);
+        const result = syncView(
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s2" }),
+        );
+        expect(result).toMatchObject({
+          _tag: "synced",
+          review: { heldWithMarked: review.heldWithMarked },
+          publication: { _tag: "none" },
+        });
+        expect(syncLines(result).some((line) => line.startsWith("a.tex waits with b.tex,"))).toBe(
+          true,
+        );
+        expect(
+          syncLines(result).some((line) => /up to date|nothing needed sending/iu.test(line)),
+        ).toBe(false);
+        expect(yield* w.overleafNow(PROJECT)).toEqual(original);
+        yield* write(folder, { "b.tex": "settled\n" });
+        const sent = syncView(yield* w.service.sync({ caller, connectionId: id, requestId: "s3" }));
+        expect(sent).toMatchObject({
+          _tag: "synced",
+          review: { heldWithMarked: [], unresolvedMarkers: [] },
+          publication: { _tag: "accepted" },
+        });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({
+          "a.tex": "clean replacement\n",
+          "b.tex": "settled\n",
+        });
+      }),
+    ),
   );
 
   it.live("holds a file with conflict marks, and sends it as it is once released", () =>
