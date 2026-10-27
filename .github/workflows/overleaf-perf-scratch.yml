@@ -1,0 +1,46 @@
+name: Overleaf Performance Scratch
+
+on:
+  push:
+    branches: [claude/scratch-ovperf-20261027]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: ./.github/actions/setup-ci-deps
+      - name: Baseline incoming benchmark
+        continue-on-error: true
+        working-directory: apps/server
+        run: |
+          git restore --source=cea802969788042c789b1832f401010b7750dcec -- src/scient/workspace/NativeFilePublication.ts src/scient/workspace/WorkspaceFileMutations.ts
+          ../../node_modules/.bin/vp test bench --run src/scient/overleaf/OverleafSync.bench.ts -t 'incoming' 2>&1 | tee "$RUNNER_TEMP/overleaf-before.log"
+      - name: Restore candidate
+        if: always()
+        run: git restore --source=HEAD -- apps/server/src/scient/workspace/NativeFilePublication.ts apps/server/src/scient/workspace/WorkspaceFileMutations.ts
+      - name: Focused native filesystem tests
+        working-directory: apps/server
+        run: ../../node_modules/.bin/vp test run src/scient/workspace/NativeFilePublication.test.ts src/scient/workspace/WorkspaceFileMutations.test.ts src/scient/workspace/WorkspaceFileMutations.lease.test.ts src/scient/workspace/RetainedFileMutation.test.ts
+      - name: Candidate sync benchmark
+        working-directory: apps/server
+        run: ../../node_modules/.bin/vp test bench --run src/scient/overleaf/OverleafSync.bench.ts 2>&1 | tee "$RUNNER_TEMP/overleaf-after.log"
+      - name: Server typecheck
+        working-directory: apps/server
+        run: pnpm run typecheck
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: overleaf-performance-tables
+          path: ${{ runner.temp }}/overleaf-*.log
