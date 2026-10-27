@@ -287,7 +287,9 @@ describe("Overleaf tool handlers", () => {
         sync: { _tag: "synced", publication: { _tag: "accepted", attemptNumber: 5 } },
       });
       expect(undone.lines).toEqual([
-        "Put back what Overleaf had before send #4: restored main.tex; wrote back gone.tex (the send deleted them). The files it replaced are kept as copies.",
+        "Undo of send #4 completed in the folder.",
+        "Put back an earlier version locally: main.tex.",
+        "Recreated locally: gone.tex.",
         "Left as it is: notes.tex (edited since that send).",
         "Then it synced:",
         "Sent 2 files to Overleaf (send #5): main.tex, gone.tex (new).",

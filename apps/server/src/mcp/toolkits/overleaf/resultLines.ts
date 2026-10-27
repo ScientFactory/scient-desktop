@@ -516,23 +516,17 @@ export const undoLines = (attemptNumber: number, result: ScientOverleafUndoResul
   switch (result._tag) {
     case "undone": {
       const lines: string[] = [];
-      const put = [
-        ...(result.restored.length > 0 ? [`restored ${named(result.restored)}`] : []),
-        ...(result.removed.length > 0
-          ? [`removed ${named(result.removed)} (the send added them)`]
-          : []),
-        ...(result.recreated.length > 0
-          ? [`wrote back ${named(result.recreated)} (the send deleted them)`]
-          : []),
-      ].join("; ");
       switch (result.outcome) {
         case null:
           lines.push(`Nothing of send #${attemptNumber} was put back.`);
           break;
         case "complete":
-          lines.push(
-            `Put back what Overleaf had before send #${attemptNumber}: ${put}. The files it replaced are kept as copies.`,
-          );
+          lines.push(`Undo of send #${attemptNumber} completed in the folder.`);
+          if (result.removed.length > 0) lines.push(`Removed locally: ${named(result.removed)}.`);
+          if (result.restored.length > 0)
+            lines.push(`Put back an earlier version locally: ${named(result.restored)}.`);
+          if (result.recreated.length > 0)
+            lines.push(`Recreated locally: ${named(result.recreated)}.`);
           break;
         case "replan":
           lines.push(
