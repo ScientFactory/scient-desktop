@@ -61,8 +61,14 @@ export type OverleafRetentionRefusal =
 export type OverleafVolumeIdentityResolver = VolumeIdentityResolver;
 
 const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code;
-const isReadOnly = (error: unknown) =>
-  ["EACCES", "EPERM", "EROFS"].includes(errorCode(error) ?? "");
+/** Native helper failures carry their errno numerically on the result, not as `code`. */
+const isReadOnly = (error: unknown) => {
+  if (["EACCES", "EPERM", "EROFS"].includes(errorCode(error) ?? "")) return true;
+  const result = (
+    error as { readonly result?: { readonly codeDomain: string; readonly code: number } | null }
+  )?.result;
+  return result?.codeDomain === "errno" && [1, 13, 30].includes(result.code);
+};
 
 class Refused extends Error {
   readonly reason: OverleafRetentionRefusal;
