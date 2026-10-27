@@ -65,7 +65,8 @@ function SkillCategoryDisclosure(props: {
       <CollapsiblePanel>
         {/* Set apart from the lines between skills: inset slightly from the card's edges. */}
         <div aria-hidden className="mx-2 h-px bg-border" />
-        <div className="[&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
+        {/* The same faint grey the agent skills panel shows on the page. */}
+        <div className="bg-foreground/[0.013] [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
           {props.children}
         </div>
       </CollapsiblePanel>
