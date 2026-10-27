@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   BROWSER_PROFILE_NAME_MAX_LENGTH,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
   AccountId,
   defaultAccountControls,
   defaultBrowserProfileRecord,
@@ -8,6 +11,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  providerManagedAccounts,
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
@@ -321,4 +325,57 @@ it("does not automatically fill accounts the thread agent cannot use, while reta
   expect(canAutomaticallyFill(controls, true, undefined)).toBe(true);
   const account = { ...website(), controls: { ...controls, access: "off" as const } };
   expect(matchingAccounts([account], "https://example.com", "default")).toEqual([account]);
+});
+
+it("lists only signed-in provider connections, deduplicating apps across plugins", () => {
+  const base: ServerProvider = {
+    instanceId: ProviderInstanceId.make("synthetic-claude"),
+    driver: ProviderDriverKind.make("claude-code"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    mcpServers: [
+      { name: "Signed in", status: "connected", scope: "claudeai" },
+      { name: "Sign in required", status: "needs-auth", scope: "claudeai" },
+      { name: "Local server", status: "connected", scope: "local" },
+      { name: "Unknown", status: "unknown", scope: "claudeai" },
+    ],
+  };
+  const apps = [
+    { name: "Connected app", connected: true, enabled: false },
+    { name: "Available app", connected: false, enabled: true },
+  ];
+  const codex = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-codex"),
+    driver: ProviderDriverKind.make("codex"),
+    plugins: [
+      { id: "first", name: "First", source: "local" as const, enabled: true, apps },
+      { id: "second", name: "Second", source: "local" as const, enabled: false, apps },
+    ],
+  };
+  expect(
+    providerManagedAccounts([base, codex]).map((row) => [row.kind, row.name, row.instanceId]),
+  ).toEqual([
+    ["claude", "Signed in", base.instanceId],
+    ["codex", "Connected app", codex.instanceId],
+  ]);
+  expect(
+    providerManagedAccounts([
+      { ...base, mcpServers: [] },
+      { ...codex, plugins: [] },
+    ]),
+  ).toEqual([]);
+  expect(
+    providerManagedAccounts([
+      { ...base, enabled: false },
+      { ...codex, installed: false },
+    ]),
+  ).toEqual([]);
 });
