@@ -22,6 +22,7 @@ import {
 import { overleafFilesAvailability } from "../overleaf/overleafFileAvailability.ts";
 import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 import type { WindowsCrashJob } from "./WindowsRetainedFileMutation.crash-child.ts";
+import { probeWindowsRetention } from "../overleaf/WindowsOverleafRetention.ts";
 import { windowsNativeFile, windowsPrivateDirectory } from "./WindowsNativeFile.ts";
 
 const windows = HostProcess.Platform.defaultValue() === "win32";
@@ -770,7 +771,7 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
 });
 
 it.skipIf(!windows)(
-  "creates a user-owned file even with an elevated Administrators default owner",
+  "creates user-owned files and qualifies retention with an elevated Administrators default owner",
   () =>
     fixture(async (input, target) => {
       const owner = (operation: string) =>
@@ -798,6 +799,12 @@ it.skipIf(!windows)(
         );
         expect(replaced.outcome).toBe("done");
         expect(await NodeFSP.readFile(target, "utf8")).toBe("next");
+        const capability = await ensureNativePrivateRetentionDirectory(
+          helper!,
+          NodePath.join(input.retentionDirectory, "capability"),
+        );
+        await probeWindowsRetention(capability, helper!);
+        expect(await NodeFSP.readdir(capability)).toEqual([]);
       } finally {
         expect(owner("default-owner")).toBe(0);
       }

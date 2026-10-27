@@ -42,9 +42,24 @@ export async function probeWindowsRetention(directory: string, helper: string | 
     NodePath.join(scratch, "records"),
   );
   const original = Buffer.from("original");
-  await NodeFSP.writeFile(target, original, { flag: "wx" });
-  const identity = await fileIdentity(target, helper);
   try {
+    const seeded = await mutateRetainedFile(
+      {
+        cwd: scratch,
+        relativePath: "target",
+        retentionDirectory: records,
+        id: "seed",
+        kind: "create",
+        condition: "absent",
+        bytes: original,
+        expectedRevision: null,
+        nativePublicationHelper: helper,
+      },
+      target,
+    );
+    if (seeded.outcome !== "done")
+      throw new Error("Windows retention volume failed native creation qualification.");
+    const identity = await fileIdentity(target, helper);
     const result = await mutateRetainedFile(
       {
         cwd: scratch,
@@ -65,9 +80,22 @@ export async function probeWindowsRetention(directory: string, helper: string | 
     )
       throw new Error("Windows retention volume failed capture/install qualification.");
   } finally {
-    const folders = [NodePath.join(records, "probe"), records, scratch, directory];
+    const folders = [
+      NodePath.join(records, "probe"),
+      NodePath.join(records, "seed"),
+      records,
+      scratch,
+      directory,
+    ];
     // Retire a child's pinned handles before deleting that child from its parent.
     for (const folder of folders) {
+      if (
+        !(await NodeFSP.lstat(folder).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        }))
+      )
+        continue;
       const binding = await observedDirectoryBinding(helper, folder);
       await withNativeFilePublicationLease(
         helper,
