@@ -59,6 +59,11 @@ export interface DesktopAccountsBridge {
     profileId: string,
     environmentId?: string,
   ) => Promise<ReadonlyArray<DesktopProfileSignedInSite>>;
+  /** Full cookie-domain/expiry inventory, or null when the read failed. Never includes values. */
+  readonly cookieMetadata?: (
+    profileId: string,
+    environmentId?: string,
+  ) => Promise<ReadonlyArray<{ readonly domain: string; readonly expires?: number }> | null>;
   /** Removes every cookie of one site (a registrable domain) from the profile. Optional for older desktops. */
   readonly signOutSite?: (
     profileId: string,
