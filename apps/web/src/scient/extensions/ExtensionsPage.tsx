@@ -135,7 +135,7 @@ export function ExtensionsPage({
           environmentId={environmentId}
           loadProviderInventory={loadProviderInventory}
         >
-          <div className="grid gap-10">{children}</div>
+          <div className="@container/extensions grid gap-10">{children}</div>
         </ExtensionsEnvironmentProvider>
       )}
     </SettingsPageContainer>

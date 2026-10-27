@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — version-gated shared Claude plugin preference.
+import { ScientClaudePluginsSetting } from "../../scient/extensions/ScientClaudePluginsSetting";
+// SCIENT-FORK:END
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -1193,14 +1196,22 @@ export function ProviderInstanceCard({
     </>
   );
 
+  // SCIENT-FORK:START — Scient Agent exposes shared plugins only on supported runtimes.
   const runtimeFields = driverOption ? (
-    <ProviderSettingsForm
-      definition={driverOption.clientDefinition}
-      value={instance.config}
-      idPrefix={`provider-instance-${instanceId}`}
-      variant="settings"
-      onChange={updateConfig}
-    />
+    <>
+      <ProviderSettingsForm
+        definition={driverOption.clientDefinition}
+        value={instance.config}
+        idPrefix={`provider-instance-${instanceId}`}
+        variant="settings"
+        onChange={updateConfig}
+      />
+      <ScientClaudePluginsSetting
+        provider={liveProvider}
+        config={instance.config}
+        onChange={updateConfig}
+      />
+    </>
   ) : (
     <SettingsRow
       title="Driver"
@@ -1213,6 +1224,7 @@ export function ProviderInstanceCard({
     />
   );
 
+  // SCIENT-FORK:END
   return (
     <>
       <SettingsSection

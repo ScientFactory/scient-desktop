@@ -14,9 +14,16 @@ const state = vi.hoisted(() => ({
   setEnabled: vi.fn(),
   refreshProviders: vi.fn(),
   toast: vi.fn(),
+  document: {
+    instructions: "# External instructions",
+    unavailableReason: undefined as string | undefined,
+  },
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.providers }));
+vi.mock("@effect/atom-react", async (actual) => ({
+  ...(await actual<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => state.providers,
+}));
 vi.mock("../../state/server", () => ({
   primaryServerProvidersAtom: null,
   serverEnvironment: { refreshProviders: "refresh-providers" },
@@ -28,7 +35,30 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) =>
     command === "refresh-providers" ? state.refreshProviders : state.setEnabled,
 }));
-vi.mock("./scientSkillsState", () => ({ setProviderSkillEnabled: null }));
+vi.mock("./scientSkillsState", () => ({
+  setProviderSkillEnabled: null,
+  providerSkillDocument: (input: unknown) => input,
+}));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: () => ({ data: state.document, error: null }),
+}));
+vi.mock("../extensions/ExtensionContentDialog", () => ({
+  ExtensionContentDialog: ({
+    children,
+    footer,
+  }: {
+    children: React.ReactNode;
+    footer: React.ReactNode;
+  }) => (
+    <div role="dialog">
+      {children}
+      {footer}
+    </div>
+  ),
+}));
+vi.mock("../../components/ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <div>{text}</div>,
+}));
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.toast } }));
 vi.mock("@tanstack/react-router", async (_actualRouter) => ({
   ...(await _actualRouter<typeof import("@tanstack/react-router")>()),
@@ -48,11 +78,19 @@ vi.mock("../../components/settings/settingsLayout", () => ({
     status,
     control,
   }: {
-    title: string;
+    title: React.ReactNode;
     status: string;
     control?: React.ReactNode;
   }) => (
-    <div data-title={title} data-status={status}>
+    <div
+      data-title={
+        typeof title === "string"
+          ? title
+          : (title as React.ReactElement<{ children: string }>).props.children
+      }
+      data-status={status}
+    >
+      {title}
       {control}
     </div>
   ),
@@ -167,6 +205,51 @@ describe("ExternalSkillsSettings activation", () => {
     _fixture.container.remove();
     vi.unstubAllGlobals();
   }
+
+  it("opens a virtual bundled skill with a muted explanation and keeps its switch separate", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    state.providers = [
+      {
+        ...provider(),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        skills: [
+          { name: "simplify", path: "claude://skills/simplify", enabled: true, scope: "app" },
+        ],
+      },
+    ];
+    state.document = {
+      instructions: "",
+      unavailableReason: "Bundled with Claude Code; its full text isn't available.",
+    };
+    _fixture.cleanup.defer(() => {
+      state.document = { instructions: "# External instructions", unavailableReason: undefined };
+    });
+    await act(async () => {
+      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+    });
+    await act(() => {
+      _fixture.container
+        .querySelector<HTMLButtonElement>('[data-title="Simplify"] button')!
+        .click();
+    });
+    await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
+    expect(document.body.textContent).toContain(state.document.unavailableReason);
+    expect(state.setEnabled).not.toHaveBeenCalled();
+  });
+
+  it("opens read-only external instructions separately from enablement", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await act(() => {
+      _fixture.container.querySelector<HTMLButtonElement>('[data-title="First"] button')?.click();
+    });
+    await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
+    expect(document.body.textContent).toContain("External instructions");
+    expect(state.setEnabled).not.toHaveBeenCalled();
+  });
 
   it("keeps both switches responsive and coalesces repeated clicks on one skill", async () => {
     await using _fixture = _createFixture();

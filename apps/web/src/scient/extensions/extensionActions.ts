@@ -35,6 +35,7 @@ import {
 } from "./extensionsState";
 import { entryAddTarget, entryName, installableRemotes } from "./extensionsView";
 import { openAuthorizationPage, type SignInOpening } from "./openAuthorizationPage";
+import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 /**
  * What one item's last action left to show. Nothing here predicts the server:
@@ -105,14 +106,15 @@ function finishSignIn(patch: OperationPatch, opening: SignInOpening, startedAt: 
  * component that started the action being replaced by another view of the
  * same item.
  */
-function useActionLock(item: string) {
+export function useActionLock(item: string) {
   const { environmentId, canWrite } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const operation = useAtomValue(
     extensionItemOperation(extensionItemOperationKey(environmentId, item)),
   );
   const patch = operationPatch(registry, environmentId, item);
-  const locked = !canWrite || operation.busy !== null;
+  const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
+  const locked = !canWrite || !allowed || operation.busy !== null;
 
   /** Runs one command for this item; the item unlocks whatever happens. */
   const run = async <A>(
@@ -351,10 +353,21 @@ export function useProviderPluginActions(
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   return {
     ...lock,
+    setEnabled: (enabled: boolean) =>
+      lock.run("enable", () =>
+        act({
+          environmentId,
+          input: {
+            instanceId: provider.instanceId,
+            action: { type: "set-enabled", pluginId: plugin.id, enabled },
+            ...(workspace ? { cwd: workspace } : {}),
+          },
+        }),
+      ),
     uninstall: async () => {
       if (lock.locked || plugin.canUninstall !== true) return;
       const confirmed = await confirmDestructive(
-        `Uninstall ${plugin.displayName ?? plugin.name} from ${label}?`,
+        `Remove ${plugin.displayName ?? plugin.name} from ${label}?`,
       );
       if (!confirmed) return;
       await lock.run("uninstall", () =>
@@ -379,12 +392,25 @@ export function useProviderServerActions(
   const { environmentId } = useExtensionsEnvironment();
   const lock = useActionLock(JSON.stringify(["provider-server", provider.instanceId, server.name]));
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
+  const waiting = useRef(false);
+  useWindowFocusRefresh(() => {
+    if (!waiting.current) return;
+    waiting.current = false;
+    void act({
+      environmentId,
+      input: { instanceId: provider.instanceId, action: { type: "refresh-inventory" } },
+    });
+  });
   return {
     ...lock,
     signIn: () =>
       lock.signIn(
         "sign-in",
         async () => {
+          if (server.connectUrl) {
+            waiting.current = true;
+            return server.connectUrl;
+          }
           const result = await act({
             environmentId,
             input: {

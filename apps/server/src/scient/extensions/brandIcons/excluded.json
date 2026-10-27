@@ -1,0 +1,194 @@
+[
+  {
+    "name": "agent-sdk-dev",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "ai-plugins",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "atomic-agents",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "boltz",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "clangd-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "claude-code-setup",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "claude-md-management",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "claude-security",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "code-modernization",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "code-review",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "code-simplifier",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "commit-commands",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "csharp-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "cwc-makers",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "data",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "data-engineering",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "explanatory-output-style",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "fakechat",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "feature-dev",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "frontend-design",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "gopls-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "hookify",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "jdtls-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "kotlin-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "learning-output-style",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "lua-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "math-olympiad",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "math-proof",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "mattpocock-skills",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "mcp-server-dev",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "mcp-tunnels",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "php-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "playground",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "plugin-dev",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "pr-review-toolkit",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "project-artifact",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "pyright-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "ralph-loop",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "receipts",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "remember",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "ruby-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "rust-analyzer-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "security-guidance",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "session-report",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "skill-creator",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "superpowers",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "swift-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  },
+  {
+    "name": "typescript-lsp",
+    "reason": "Generic workflow, personal/community skills pack, or language tooling; no vendor mark assigned."
+  }
+]

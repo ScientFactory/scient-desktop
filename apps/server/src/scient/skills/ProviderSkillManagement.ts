@@ -1,14 +1,24 @@
 import {
   ProviderSkillManagementError,
   type ProviderSkillSetEnabledInput,
+  type ProviderSkillReadDocumentInput,
   type ProviderSkillSetEnabledResult,
 } from "@t3tools/contracts";
+import * as Path from "effect/Path";
+import { readContainedPluginText } from "../extensions/LocalPluginContents.ts";
 import * as Effect from "effect/Effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 
 export interface ProviderSkillManagementShape {
+  readonly readDocument: (
+    input: ProviderSkillReadDocumentInput,
+  ) => Effect.Effect<
+    { readonly instructions: string; readonly unavailableReason?: string },
+    ProviderSkillManagementError,
+    Path.Path
+  >;
   readonly setEnabled: (
     input: ProviderSkillSetEnabledInput,
   ) => Effect.Effect<ProviderSkillSetEnabledResult, ProviderSkillManagementError>;
@@ -100,5 +110,47 @@ export function makeProviderSkillManagement(
     };
   });
 
-  return { setEnabled: (input) => writePermit.withPermits(1)(setEnabled(input)) };
+  const readDocument = Effect.fn("ProviderSkillManagement.readDocument")(function* (
+    input: ProviderSkillReadDocumentInput,
+  ) {
+    const provider = (yield* providerRegistry.getProviders).find(
+      (candidate) => candidate.instanceId === input.instanceId,
+    );
+    if (!provider)
+      return yield* failure({
+        ...input,
+        reason: "provider_not_found",
+        message: "This provider instance is no longer available.",
+      });
+    const skill = provider.skills.find(
+      (candidate) => candidate.name === input.name && candidate.path === input.path,
+    );
+    if (!skill)
+      return yield* failure({
+        ...input,
+        reason: "skill_not_found",
+        message: "This skill is no longer reported by the agent.",
+      });
+    const path = yield* Path.Path;
+    if (!path.isAbsolute(skill.path) || path.basename(skill.path).toLowerCase() !== "skill.md")
+      return {
+        instructions: "",
+        unavailableReason:
+          provider.driver === "claudeAgent"
+            ? "Bundled with Claude Code; its full text isn't available."
+            : "This agent doesn't provide the full text of this skill.",
+      };
+    const text = yield* Effect.tryPromise({
+      try: () => readContainedPluginText(path.dirname(skill.path), skill.path),
+      catch: () =>
+        failure({
+          ...input,
+          reason: "provider_rejected",
+          message:
+            "This skill document could not be read. It must be a local file within its skill folder and at most 256 KB.",
+        }),
+    });
+    return { instructions: text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "").trim() };
+  });
+  return { readDocument, setEnabled: (input) => writePermit.withPermits(1)(setEnabled(input)) };
 }

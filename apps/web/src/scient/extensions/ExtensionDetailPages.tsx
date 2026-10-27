@@ -1,5 +1,7 @@
+import ChatMarkdown from "../../components/ChatMarkdown";
+import { ConnectorToolsList } from "./ConnectorToolsList";
+import { PluginContents } from "./PluginContents";
 import {
-  type ConnectorProviderSupport,
   type ConnectorSummary,
   type ConnectorTestResult,
   type DiscoverCatalog,
@@ -15,7 +17,7 @@ import { Link } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
   ChevronRightIcon,
-  DownloadIcon,
+  PlusIcon,
   EllipsisIcon,
   LogInIcon,
   type LucideIcon,
@@ -23,15 +25,12 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
+import { WorksWithValue } from "./WorksWith";
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
-import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
-import { ScrollArea } from "../../components/ui/scroll-area";
 import { NativeSelect } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { AddConnectorDialog } from "./AddConnectorDialog";
@@ -52,20 +51,21 @@ import {
   SECTION_HEADING_CLASS,
   useExtensionsEnvironment,
 } from "./ExtensionsPage";
-import { ExtensionIcon } from "./ExtensionRow";
+import { ExtensionIcon, type ExtensionTarget } from "./ExtensionRow";
 import { extensionsDiscoverEntry } from "./extensionsState";
 import {
   type ProviderExtensionGroup,
-  type ToolGroups,
   catalogEntries,
+  providerExtensionAudience,
   collectProviderExtensionGroups,
   connectorActions,
   connectorAuthLabel,
   connectorSourceLabel,
   entryName,
+  entryNeedsToken,
+  providerServerDisplayName,
   entrySourceLabel,
   entryTagline,
-  groupTools,
   isCatalogOnlyEntry,
   MCP_SERVER_STATUS_TEXT,
   pluginGlyph,
@@ -91,7 +91,7 @@ function DetailBack({ to }: { readonly to: BackTo }) {
  * Every detail page: a header with the item's actions, an optional longer
  * description and feedback, then its cards.
  */
-function DetailLayout({
+export function DetailLayout({
   back,
   header,
   description,
@@ -104,45 +104,63 @@ function DetailLayout({
   readonly feedback?: ReactNode;
   readonly children: ReactNode;
 }) {
+  const { environmentId } = useExtensionsEnvironment();
   return (
     <>
       <DetailBack to={back} />
-      <article className="grid gap-6">
-        <div className="grid gap-4">
+      <article className="grid min-w-0 grid-cols-1 gap-6">
+        <div className="grid min-w-0 grid-cols-1 gap-4">
           {header}
           {description ? (
-            <p className="max-w-prose whitespace-pre-line text-sm text-muted-foreground">
-              {description}
-            </p>
+            <ChatMarkdown
+              text={description}
+              cwd={undefined}
+              environmentId={environmentId}
+              className="text-sm text-muted-foreground"
+            />
           ) : null}
           {feedback ? <div className="grid gap-1 empty:hidden">{feedback}</div> : null}
         </div>
-        <div className="grid gap-8">{children}</div>
+        <div className="grid min-w-0 grid-cols-1 gap-8">{children}</div>
       </article>
     </>
   );
 }
 
 /** 64px icon, name and tagline; the item's buttons on the right. */
-function DetailHeader({
+export function DetailHeader({
   name,
   iconUrl,
+  providerPlugin,
   glyph,
   tagline,
+  developer,
   actions,
 }: {
   readonly name: string;
   readonly iconUrl?: string | undefined;
+  readonly providerPlugin?: Extract<ExtensionTarget, { kind: "provider-plugin" }> | undefined;
   readonly glyph?: LucideIcon | undefined;
   readonly tagline?: string | undefined;
+  readonly developer?: string | undefined;
   readonly actions: ReactNode;
 }) {
   return (
     <header className="flex flex-wrap items-center gap-4">
-      <ExtensionIcon name={name} iconUrl={iconUrl} glyph={glyph} size="large" />
+      <ExtensionIcon
+        name={name}
+        iconUrl={iconUrl}
+        glyph={glyph}
+        size="large"
+        providerPlugin={providerPlugin}
+      />
       <div className="min-w-0 flex-1">
         <h1 className="truncate text-2xl font-medium tracking-[-0.02em] text-foreground">{name}</h1>
-        {tagline ? <p className="text-sm text-muted-foreground">{tagline}</p> : null}
+        {developer || tagline ? (
+          <p className="text-sm text-muted-foreground">
+            {[developer ? `By ${developer}` : undefined, tagline].filter(Boolean).join(" • ")}
+          </p>
+        ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>
     </header>
@@ -159,7 +177,7 @@ function extraDescription(description: string | undefined, tagline: string | und
  * The item's main action, drawn like the provider "Install" button in
  * Settings → Providers: a borderless primary-colour button with a leading icon.
  */
-function PrimaryAction({
+export function PrimaryAction({
   icon: Icon,
   disabled,
   onClick,
@@ -196,16 +214,29 @@ function MoreMenu({ label, children }: { readonly label: string; readonly childr
   );
 }
 
-function DetailSection({
+export function DetailSection({
   title,
+  count,
   children,
 }: {
   readonly title: string;
+  readonly count?: number;
   readonly children: ReactNode;
 }) {
   return (
-    <section className="grid gap-3" aria-label={title}>
-      <h2 className={SECTION_HEADING_CLASS}>{title}</h2>
+    <section
+      className="grid min-w-0 grid-cols-1 gap-3"
+      aria-label={count === undefined ? title : `${title} ${count}`}
+    >
+      <h2 className={cn(SECTION_HEADING_CLASS, count !== undefined && "border-b pb-3")}>
+        {title}
+        {count !== undefined ? (
+          <>
+            {" "}
+            <span className="font-normal text-muted-foreground">{count}</span>
+          </>
+        ) : null}
+      </h2>
       {children}
     </section>
   );
@@ -213,7 +244,7 @@ function DetailSection({
 
 const CARD_CLASS = "divide-y divide-border overflow-hidden rounded-xl border bg-card";
 
-function CardRow({ children }: { readonly children: ReactNode }) {
+export function CardRow({ children }: { readonly children: ReactNode }) {
   return <div className="flex min-h-14 items-center gap-3 px-4 py-3">{children}</div>;
 }
 
@@ -233,7 +264,7 @@ function fact(label: string, value: ReactNode | null | undefined): Fact | null {
 }
 
 /** Key/value rows in a card; rows without data are left out. */
-function AboutCard({ rows }: { readonly rows: ReadonlyArray<Fact | null> }) {
+export function AboutCard({ rows }: { readonly rows: ReadonlyArray<Fact | null> }) {
   const shown = rows.filter((row) => row !== null);
   if (shown.length === 0) return null;
   return (
@@ -286,160 +317,6 @@ function categoryLabel(entry: DiscoverEntry | undefined, catalog: DiscoverCatalo
     .join(", ");
 }
 
-/** "All agents", "4 agents": agents with limits can use the service, so they count. */
-function worksWithCount(support: ReadonlyArray<ConnectorProviderSupport>): string {
-  const usable = support.filter((entry) => entry.status !== "unsupported").length;
-  if (usable === support.length) return "All agents";
-  if (usable === 0) return "None of your agents";
-  return `${usable} ${usable === 1 ? "agent" : "agents"}`;
-}
-
-/** An agent's logo with its name below; an amber dot marks one that works with limits. */
-function AgentTileContent({
-  entry,
-  iconUrl,
-}: {
-  readonly entry: ConnectorProviderSupport;
-  readonly iconUrl: string | undefined;
-}) {
-  return (
-    <>
-      <ProviderInstanceIcon
-        driverKind={entry.driver}
-        displayName={entry.displayName}
-        acpRegistryIconUrl={iconUrl}
-        iconClassName="size-7"
-        indicatorBackground="var(--popover)"
-        {...(entry.status === "conditional" ? { statusDotClassName: "bg-warning" } : {})}
-      />
-      <span className="line-clamp-2 w-full text-xs leading-tight text-muted-foreground">
-        {entry.displayName}
-      </span>
-    </>
-  );
-}
-
-const AGENT_TILE_CLASS = "flex w-[4.5rem] flex-col items-center gap-1.5 py-1 text-center";
-
-/** How long the pointer rests on "Works with" before its card opens. */
-const WORKS_WITH_OPEN_DELAY_MS = 200;
-
-/**
- * A press pins the reason even if hover/focus just opened it; otherwise a tap following focus would
- * immediately close the explanation. Keep the tooltip inside the card's open scope.
- */
-function LimitedAgentTile({
-  entry,
-  iconUrl,
-}: {
-  readonly entry: ConnectorProviderSupport;
-  readonly iconUrl: string | undefined;
-}) {
-  const [shown, setShown] = useState<"closed" | "shown" | "pinned">("closed");
-  const reason = entry.reason ?? "Works with limits";
-  return (
-    <Tooltip
-      open={shown !== "closed"}
-      onOpenChange={(next, details) => {
-        // Presses are handled below; everything else shows or hides it.
-        if (details.reason === "trigger-press") return;
-        if (!next) setShown("closed");
-        else setShown((current) => (current === "pinned" ? "pinned" : "shown"));
-      }}
-    >
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`${entry.displayName}: ${reason}`}
-            onClick={() => setShown((current) => (current === "pinned" ? "closed" : "pinned"))}
-            className={cn(
-              AGENT_TILE_CLASS,
-              "cursor-default rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-            )}
-          />
-        }
-      >
-        <AgentTileContent entry={entry} iconUrl={iconUrl} />
-      </TooltipTrigger>
-      <TooltipPopup side="top">{reason}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-/**
- * Move keyboard focus into the card so Tab can reach limited agents' reasons; omit unusable agents
- * because the count already communicates their absence.
- */
-function WorksWithValue() {
-  const { inventory, providers } = useExtensionsEnvironment();
-  const support = inventory?.providerSupport ?? [];
-  if (support.length === 0) {
-    return <span className="text-muted-foreground">No agents reported</span>;
-  }
-  const usable = support.filter((entry) => entry.status !== "unsupported");
-  const count = worksWithCount(support);
-  if (usable.length === 0) return <span>{count}</span>;
-  const iconUrlOf = (entry: ConnectorProviderSupport) =>
-    providers.find((provider) => provider.instanceId === entry.providerInstanceId)?.iconUrl;
-  return (
-    <Popover>
-      <PopoverTrigger
-        openOnHover
-        delay={WORKS_WITH_OPEN_DELAY_MS}
-        closeDelay={120}
-        render={
-          <button
-            type="button"
-            aria-label={`Works with: ${count}`}
-            className={cn(GHOST_LINK_CLASS, "text-foreground")}
-          />
-        }
-      >
-        {count}
-      </PopoverTrigger>
-      {/* Above the count, left edges aligned; below only when there is no room
-          above, and shifted sideways only as far as the viewport needs. */}
-      <PopoverPopup
-        side="top"
-        align="start"
-        sideOffset={8}
-        collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "none" }}
-        padding="comfortable"
-        aria-label="Agents"
-        initialFocus={(openType) => openType === "keyboard"}
-        className="w-max"
-      >
-        {/* The width limit sits on the content, independent of the positioner's
-            measurements, so the card is measured, and placed, at that width.
-            A wide 4rem fade marks whichever edge still has more agents, so the
-            row reads as scrollable. */}
-        <ScrollArea
-          scrollFade
-          hideScrollbars
-          className="h-auto max-w-[min(396px,calc(100vw-3rem))] [&>[data-slot=scroll-area-viewport]]:[--fade-size:4rem]"
-        >
-          <ul className="flex w-max gap-1">
-            {usable.map((entry) => (
-              <li
-                key={entry.providerInstanceId}
-                data-support={entry.status}
-                className={entry.status === "conditional" ? undefined : AGENT_TILE_CLASS}
-              >
-                {entry.status === "conditional" ? (
-                  <LimitedAgentTile entry={entry} iconUrl={iconUrlOf(entry)} />
-                ) : (
-                  <AgentTileContent entry={entry} iconUrl={iconUrlOf(entry)} />
-                )}
-              </li>
-            ))}
-          </ul>
-        </ScrollArea>
-      </PopoverPopup>
-    </Popover>
-  );
-}
-
 interface DetailRow {
   readonly key: string;
   readonly name: ReactNode;
@@ -482,7 +359,7 @@ function DetailGroupRow({ group }: { readonly group: DetailGroup }) {
 }
 
 /** Collapsible groups in one card; empty groups are left out. */
-function GroupsCard({
+export function GroupsCard({
   label,
   groups,
 }: {
@@ -508,19 +385,10 @@ function MutedCard({ children }: { readonly children: string }) {
   );
 }
 
-function toolRows(tools: ToolGroups["read"]): ReadonlyArray<DetailRow> {
-  return tools.map((tool) => ({
-    key: tool.name,
-    name: <span className="font-mono text-xs leading-5">{tool.name}</span>,
-    detail: tool.description?.trim() || tool.title,
-  }));
-}
-
 const TOOLS_AFTER_SIGN_IN = "Tools appear after you add and sign in.";
 
 /**
- * A connector's tools, grouped from its last test. Nothing runs on its own:
- * "See tools" runs one test, then the groups show.
+ * "See tools" runs one test before displaying the connector's tools.
  */
 function ToolsSection({
   canTest,
@@ -535,24 +403,14 @@ function ToolsSection({
   readonly testResult: ConnectorTestResult | null;
   readonly onTest: () => void;
 }) {
-  if (!canTest || testResult?.outcome === "ok") {
-    const grouped = testResult?.outcome === "ok" ? groupTools(testResult.tools) : null;
+  const { environmentId } = useExtensionsEnvironment();
+  if (testResult?.outcome === "ok") {
+    return <ConnectorToolsList tools={testResult.tools} environmentId={environmentId} />;
+  }
+  if (!canTest) {
     return (
       <DetailSection title="Tools">
-        {grouped === null ? (
-          <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
-        ) : testResult?.tools.length === 0 ? (
-          <MutedCard>No tools reported.</MutedCard>
-        ) : (
-          <GroupsCard
-            label="Tool groups"
-            groups={[
-              { label: "Write", rows: toolRows(grouped.write) },
-              { label: "Read", rows: toolRows(grouped.read) },
-              { label: "Other", rows: toolRows(grouped.other) },
-            ]}
-          />
-        )}
+        <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
       </DetailSection>
     );
   }
@@ -584,7 +442,7 @@ function ToolsSection({
 function connectionState(connector: ConnectorSummary): string {
   if (connector.status === "needs-auth") return "Needs sign-in";
   if (connector.status === "needs-credential") return "Key missing";
-  return connector.auth.type === "none" ? "No sign-in needed" : "Signed in";
+  return connector.auth.type === "none" ? "No account needed" : "Signed in";
 }
 
 function connectionDetail(connector: ConnectorSummary, busy: string | null): string {
@@ -768,6 +626,11 @@ function ConnectorDetail({
               </PrimaryAction>
             ) : null}
             <MoreMenu label={`More for ${name} connection`}>
+              {connector.status === "connected" && connector.auth.type === "oauth" ? (
+                <MenuItem disabled={!actions.canSignIn} onClick={() => void actions.signIn()}>
+                  Sign in again
+                </MenuItem>
+              ) : null}
               <MenuItem
                 disabled={actions.locked || !allowed.canTest}
                 onClick={() => void actions.test()}
@@ -883,7 +746,8 @@ function ServerDetail({
   readonly entry: DiscoverEntry;
   readonly onAddWithOptions: () => void;
 }) {
-  const { catalog } = useExtensionsEnvironment();
+  const { catalog, providers } = useExtensionsEnvironment();
+  const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
   const actions = useAddEntry(entry);
   const name = entryName(entry);
   const tagline = entryTagline(entry);
@@ -899,9 +763,9 @@ function ServerDetail({
           actions={
             <>
               <PrimaryAction
-                icon={DownloadIcon}
+                icon={PlusIcon}
                 disabled={!actions.canAdd || actions.locked}
-                onClick={() => void actions.add()}
+                onClick={() => (entryNeedsToken(entry) ? onAddWithOptions() : void actions.add())}
               >
                 {actions.busy === "add" ? "Adding…" : "Add"}
               </PrimaryAction>
@@ -925,12 +789,15 @@ function ServerDetail({
                 "Scient can't add this server: it has no remote endpoint to connect to."}
             </MutedLine>
           ) : null}
+          {entry.accountRequired === false ? <MutedLine>No account needed</MutedLine> : null}
           <ActionFeedback feedback={actions.feedback} />
         </>
       }
     >
       <DetailSection title="Tools">
-        <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
+        <MutedCard>
+          {entry.accountRequired === false ? "Tools appear after you add it." : TOOLS_AFTER_SIGN_IN}
+        </MutedCard>
       </DetailSection>
       <AboutCard
         rows={[
@@ -954,6 +821,18 @@ function ServerDetail({
           catalogOnly ? null : ["Registry name", <Mono key="registry-name">{entry.name}</Mono>],
           catalogOnly ? null : ["Version", entry.version],
           ["Source", entrySourceLabel(entry)],
+          fact(
+            "Also available",
+            entry.agentStores?.codex && codex ? (
+              <Link
+                to="/settings/extensions/item/store/$instanceId/$entryId"
+                params={{ instanceId: codex.instanceId, entryId: entry.agentStores.codex }}
+                className={cn(GHOST_LINK_CLASS, "text-foreground")}
+              >
+                Also in {codex.displayName ?? "Codex"}’s store
+              </Link>
+            ) : null,
+          ),
         ]}
       />
     </DetailLayout>
@@ -1077,7 +956,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
         <DetailHeader
           name={plugin.displayName}
           glyph={glyph}
-          tagline={plugin.description}
+          developer={plugin.publisher}
           actions={
             <>
               {plugin.canSetEnabled ? (
@@ -1097,18 +976,25 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
                   disabled={actions.locked}
                   onClick={() => void actions.remove()}
                 >
-                  Uninstall
+                  Remove
                 </Button>
               ) : null}
             </>
           }
         />
       }
+      description={plugin.description}
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
-      {plugin.components.length > 0 ? (
+      <PluginContents key={plugin.pluginId} input={{ pluginId: plugin.pluginId }} />
+      {plugin.components.some((component) => component.type !== "skill") ? (
         <DetailSection title="Includes">
-          <GroupsCard label="Parts" groups={componentGroups(plugin.components)} />
+          <GroupsCard
+            label="Parts"
+            groups={componentGroups(
+              plugin.components.filter((component) => component.type !== "skill"),
+            )}
+          />
         </DetailSection>
       ) : null}
       <AboutCard
@@ -1124,6 +1010,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
               </Link>
             ) : null,
           ),
+          ["Works with", <WorksWithValue key="works-with" />],
           ["Source", builtIn ? "Built into Scient" : "Plugin bundle"],
           fact("SHA-256", plugin.digest ? <Mono>{plugin.digest}</Mono> : null),
         ]}
@@ -1207,53 +1094,76 @@ function ProviderPluginDetail({
 }) {
   const actions = useProviderPluginActions(group.provider, group.label, plugin, workspace);
   const name = plugin.displayName ?? plugin.name;
-  const servers = group.mcpServers.filter((server) => server.pluginId === plugin.id);
   return (
     <DetailLayout
       back="installed"
       header={
         <DetailHeader
           name={name}
-          tagline={plugin.description}
+          providerPlugin={{
+            kind: "provider-plugin",
+            instanceId: group.provider.instanceId,
+            pluginId: plugin.id,
+            workspace,
+          }}
           actions={
-            plugin.canUninstall === true ? (
-              <Button
-                variant="destructive-outline"
-                disabled={actions.locked}
-                onClick={() => void actions.uninstall()}
-              >
-                Uninstall
-              </Button>
-            ) : (
-              <ManagedBy label={group.label} />
-            )
+            <>
+              {plugin.canSetEnabled ? (
+                <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Switch
+                    checked={plugin.enabled}
+                    disabled={actions.locked}
+                    aria-label={`Use ${name}`}
+                    onCheckedChange={(enabled) => void actions.setEnabled(enabled)}
+                  />
+                  Use plugin
+                </label>
+              ) : null}
+              {plugin.canUninstall === true ? (
+                <Button
+                  variant="destructive-outline"
+                  disabled={actions.locked}
+                  onClick={() => void actions.uninstall()}
+                >
+                  Remove
+                </Button>
+              ) : (
+                <MutedLine>
+                  {group.provider.driver === "claudeAgent"
+                    ? "Remove this plugin in Claude Code using its original install scope."
+                    : `Remove this plugin in ${group.label}’s plugin manager.`}
+                </MutedLine>
+              )}
+            </>
           }
         />
       }
+      description={plugin.description}
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
-      {servers.length > 0 ? (
-        <DetailSection title="Includes">
-          <GroupsCard
-            label="Parts"
-            groups={[
-              {
-                label: "MCP servers",
-                rows: servers.map((server) => ({
-                  key: server.name,
-                  name: server.name,
-                  detail: mcpServerSummary(server),
-                })),
-              },
-            ]}
-          />
-        </DetailSection>
-      ) : null}
+      <PluginContents
+        key={JSON.stringify([group.provider.instanceId, plugin.id, workspace])}
+        provider={group.provider}
+        input={{
+          instanceId: group.provider.instanceId,
+          pluginId: plugin.id,
+          ...(workspace ? { cwd: workspace } : {}),
+        }}
+      />
       <AboutCard
         rows={[
           ["Managed by", group.label],
+          ["Plugin ID", <Mono key="plugin-id">{plugin.name}</Mono>],
+          [
+            "Works with",
+            <WorksWithValue
+              key="works-with"
+              audience={providerExtensionAudience(group.provider, plugin)}
+            />,
+          ],
           fact("Version", plugin.version),
           fact("Marketplace", plugin.marketplace),
+          fact("Source", plugin.sourceLabel),
           fact("Workspace", workspace ? workspaceLabel(workspace) : null),
           ["State", plugin.enabled ? "On" : "Off"],
         ]}
@@ -1307,7 +1217,7 @@ function ProviderServerDetail({
   readonly server: ServerProviderMcpServer;
 }) {
   const actions = useProviderServerActions(group.provider, group.label, server);
-  const canSignIn = server.canStartSignIn === true;
+  const canSignIn = server.canStartSignIn === true || Boolean(server.connectUrl);
   const status =
     server.status === "connected"
       ? "Connected"
@@ -1317,7 +1227,7 @@ function ProviderServerDetail({
       back="installed"
       header={
         <DetailHeader
-          name={server.name}
+          name={providerServerDisplayName(server)}
           tagline={mcpServerSummary(server)}
           actions={
             <>
@@ -1327,7 +1237,11 @@ function ProviderServerDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.signIn()}
                 >
-                  {server.status === "connected" ? "Sign in again" : "Sign in"}
+                  {server.connectUrl
+                    ? "Connect on claude.ai"
+                    : server.status === "connected"
+                      ? "Sign in again"
+                      : "Sign in"}
                 </PrimaryAction>
               ) : null}
               <ManagedBy label={group.label} />
@@ -1347,6 +1261,13 @@ function ProviderServerDetail({
       <AboutCard
         rows={[
           ["Managed by", group.label],
+          [
+            "Works with",
+            <WorksWithValue
+              key="works-with"
+              audience={providerExtensionAudience(group.provider, server)}
+            />,
+          ],
           ["Status", status],
           fact("Tools", server.toolCount === undefined ? null : String(server.toolCount)),
           fact("Scope", server.scope),
