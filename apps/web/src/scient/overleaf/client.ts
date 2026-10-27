@@ -1,4 +1,5 @@
 import {
+  getEnvironmentOverleafDiff,
   cancelEnvironmentOverleafSync,
   connectEnvironmentOverleaf,
   disconnectEnvironmentOverleaf,
@@ -19,6 +20,7 @@ import type {
   ScientOverleafConnectionRequest,
   ScientOverleafConnectRequest,
   ScientOverleafDisconnectRequest,
+  ScientOverleafDiffRequest,
   ScientOverleafPreviewRequest,
   ScientOverleafRestoreRequest,
   ScientOverleafSyncRequest,
@@ -162,5 +164,14 @@ export async function cancelOverleafSync(
 ) {
   return runtime.runPromise(
     cancelEnvironmentOverleafSync({ prepared: prepared(environmentId), request }),
+  );
+}
+
+export async function readOverleafDiff(
+  environmentId: EnvironmentId,
+  request: ScientOverleafDiffRequest,
+) {
+  return runtime.runPromise(
+    getEnvironmentOverleafDiff({ prepared: prepared(environmentId), request }),
   );
 }
