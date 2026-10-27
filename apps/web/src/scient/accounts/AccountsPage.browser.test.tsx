@@ -34,6 +34,7 @@ vi.mock("~/state/use-atom-command", () => ({
 vi.mock("./useAccounts", () => ({
   useAccounts: () => ({ data: null, canWrite: true }),
   useAccountCommand: () => async () => ({ ok: true, value: {} }),
+  usePasswordStorePermission: () => true,
 }));
 
 function fixture(platform = "MacIntel", desktop = true) {
