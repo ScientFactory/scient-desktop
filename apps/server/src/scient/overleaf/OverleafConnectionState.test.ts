@@ -67,6 +67,22 @@ const violation = (
 /** Attempt 1 recorded unknown on base generation 1. */
 const pending = next(synced, { lastAttemptNumber: 1, attempts: [attempt(1)] });
 
+describe("marker disk identities", () => {
+  it("reads older records without identities and round-trips verified identities", () => {
+    expect(decodeOverleafConnectionDocument(JSON.stringify(synced))?.markerFileIds).toBeUndefined();
+    const markerFileIds = [{ path: "a.tex", fileId: "a".repeat(64) }];
+    expect(
+      decodeOverleafConnectionDocument(JSON.stringify({ ...synced, markerFileIds }))?.markerFileIds,
+    ).toEqual(markerFileIds);
+    expect(
+      isValid({ ...synced, markerFileIds: [{ path: "../a.tex", fileId: "a".repeat(64) }] }),
+    ).toBe(false);
+    expect(isValid({ ...synced, markerFileIds: [{ path: "a.tex", fileId: "invalid" }] })).toBe(
+      false,
+    );
+  });
+});
+
 describe("overleafTransitionViolation", () => {
   it("accepts the next revision and refuses skipped or repeated revisions", () => {
     expect(violation(synced, {})).toBeNull();

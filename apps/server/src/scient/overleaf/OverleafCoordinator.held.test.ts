@@ -165,6 +165,110 @@ const heldWorld = (at?: Parameters<typeof world>[0]["at"], overleaf: "git" | "sc
   });
 
 describe.skipIf(!canApply)("OverleafCoordinator, holding back a file with conflict marks", () => {
+  it.live.each([
+    {
+      name: "beside another marked file",
+      second: true,
+      resolution: "value LOCAL-ASK\nvalue REMOTE-ASK",
+    },
+    {
+      name: "as the only conflict",
+      second: false,
+      resolution: "value LOCAL-ASK\nvalue REMOTE-ASK",
+    },
+    { name: "when choosing the local side", second: true, resolution: "value LOCAL-ASK" },
+    {
+      name: "after an atomic save and server restart",
+      second: true,
+      resolution: "value LOCAL-ASK\nvalue REMOTE-ASK",
+      atomic: true,
+    },
+  ])(
+    "sends a resolved held conflict $name without an explicit release",
+    ({ second, resolution, atomic = false }) =>
+      run(
+        Effect.gen(function* () {
+          const ask = (value: string) => `% STRESS-R2-ASK\n${value}\n`;
+          const w = yield* world({
+            overleaf: "git",
+            synced: {
+              "ask.tex": ask("value BASE"),
+              ...(atomic ? { "notes.md": "Notes\n=======\n" } : {}),
+              ...(second ? { "merge.tex": "value BASE-MERGE\n" } : {}),
+            },
+            remote: {
+              "ask.tex": ask("value REMOTE-ASK"),
+              ...(atomic ? { "notes.md": "Notes\n=======\n" } : {}),
+              ...(second ? { "merge.tex": "value REMOTE-MERGE\n" } : {}),
+            },
+          });
+          yield* write(w.folder, {
+            "ask.tex": ask("value LOCAL-ASK"),
+            ...(second ? { "merge.tex": "value LOCAL-MERGE\n" } : {}),
+          });
+          const first = yield* syncChoosing(w.coordinator, "markers");
+          expect(first.result).toMatchObject({ publication: { _tag: "none" } });
+          expect(yield* marked(w, "ask.tex")).toBe(true);
+          if (second) expect(yield* marked(w, "merge.tex")).toBe(true);
+          const remote = yield* w.overleafNow;
+          expect((yield* w.connection).base.tree).toBe(remote.tree);
+
+          if (atomic) {
+            yield* write(w.folder, { "resolved.tmp": ask(resolution) });
+            yield* move(w, "resolved.tmp", "ask.tex");
+          } else yield* write(w.folder, { "ask.tex": ask(resolution) });
+          const coordinator = atomic ? (yield* w.restart()).coordinator : w.coordinator;
+          const next = yield* coordinator.prepare({ connectionId: CONNECTION });
+          if (next._tag !== "review") return yield* Effect.die(next);
+          expect(next.review.conflicts).toEqual([]);
+          expect(next.review.unresolvedMarkers).toEqual(second ? ["merge.tex"] : []);
+          expect(next.review.binding.heldPaths).toEqual(second ? ["merge.tex"] : []);
+          expect(next.review.outgoing).toEqual([{ kind: "modified", path: "ask.tex" }]);
+          expect(next.review.upToDate).toBe(false);
+          expect(
+            yield* coordinator.confirm({
+              connectionId: CONNECTION,
+              requestId: "request-2",
+              reviewId: next.review.id,
+              digest: next.review.digest,
+              acknowledgements: next.review.binding.acknowledgements,
+            }),
+          ).toMatchObject({ publication: { _tag: "accepted" } });
+          expect((yield* w.overleafNow).contents).toEqual({
+            ...remote.contents,
+            "ask.tex": ask(resolution),
+          });
+          if (second) expect(yield* marked(w, "merge.tex")).toBe(true);
+          expect((yield* w.connection).markers.map((record) => record.path)).toEqual(
+            second ? ["merge.tex"] : [],
+          );
+        }),
+      ),
+  );
+
+  it.live("keeps a marked identity moved over another conflict, despite a clean replacement", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "a.tex": "value BASE-A\n", "b.tex": "value BASE-B\n" },
+          remote: { "a.tex": "value REMOTE-A\n", "b.tex": "value REMOTE-B\n" },
+        });
+        yield* write(w.folder, { "a.tex": "value LOCAL-A\n", "b.tex": "value LOCAL-B\n" });
+        yield* syncChoosing(w.coordinator, "markers");
+        yield* move(w, "a.tex", "b.tex");
+        yield* write(w.folder, { "a.tex": "unrelated clean replacement\n" });
+        const next = yield* syncChoosing(w.coordinator, "mine", { requestId: "request-2" });
+        expect(next.review.binding.heldPaths).toEqual(["a.tex", "b.tex"]);
+        expect(next.review.outgoing).toEqual([]);
+        expect((yield* w.overleafNow).contents).toEqual({
+          "a.tex": "value REMOTE-A\n",
+          "b.tex": "value REMOTE-B\n",
+        });
+      }),
+    ),
+  );
+
   it.live("sends everything but the marked file, across syncs, until its marks are gone", () =>
     run(
       Effect.gen(function* () {

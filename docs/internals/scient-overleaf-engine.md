@@ -384,6 +384,15 @@ replacement writes version 2. A later
 version is reported unsupported; an older one that does not upgrade cleanly is
 reported corrupt.
 
+After a whole apply, `markerFileIds` optionally records each held file's device,
+inode and creation-time fingerprint, verified against the intended Git blob.
+Inventory reads bind that fingerprint to the captured bytes and inventory digest.
+An in-place clean resolution is settled independently of other conflicts. An
+atomic clean replacement is settled when all remaining marked files retain
+other recorded identities. A moved marked file keeps its original Overleaf
+paths even when it replaces another marked file. Missing identity evidence,
+including older records, retains the conservative rename/unknown-file closure.
+
 Request receipts are created once per request ID. A repeat with the same
 payload returns the original receipt instead of running again; reuse with a
 different payload, or a second different terminal status, is refused.

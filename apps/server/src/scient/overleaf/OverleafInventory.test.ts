@@ -625,6 +625,32 @@ describe("captureOverleafInventory", () => {
   });
 });
 
+describe("captured file identities", () => {
+  it("follows a file across edits and renames, but distinguishes an atomic replacement", async () => {
+    const root = await folder({ "a.tex": "marks" });
+    const replacement = await folder({ "replacement.tmp": "resolved" });
+    const original = (await captured(root, { managedPaths: ["a.tex"] })).captured.get(
+      "a.tex",
+    )!.fileId;
+    expect(original).toBeDefined();
+    await NodeFSP.writeFile(NodePath.join(root, "a.tex"), "resolved");
+    expect((await captured(root, { managedPaths: ["a.tex"] })).captured.get("a.tex")!.fileId).toBe(
+      original,
+    );
+    await NodeFSP.rename(NodePath.join(root, "a.tex"), NodePath.join(root, "b.tex"));
+    const renamed = await captured(root, { managedPaths: ["b.tex"] });
+    expect(renamed.captured.get("b.tex")!.fileId).toBe(original);
+    const before = overleafInventoryDigest(renamed);
+    await NodeFSP.rename(
+      NodePath.join(replacement, "replacement.tmp"),
+      NodePath.join(root, "b.tex"),
+    );
+    const replaced = await captured(root, { managedPaths: ["b.tex"] });
+    expect(replaced.captured.get("b.tex")!.fileId).not.toBe(original);
+    expect(overleafInventoryDigest(replaced)).not.toBe(before);
+  });
+});
+
 describe("overleafInventoryDigest", () => {
   it("is the same for the same folder and differs for any change a review reads", async () => {
     const root = await folder({ "main.tex": "main", "notes.md": "notes" });
