@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { decideSignIn } from "./decision.ts";
+import { decideSignIn, decideSignInContinuation, type SignInSubmission } from "./decision.ts";
 import type { SignInDetection } from "./detection.ts";
 import { matchesAccountOrigin } from "./origin.ts";
 import { accountOtp, parseTotp } from "./totp.ts";
@@ -89,5 +89,58 @@ describe("account sign-in decisions", () => {
     expect(accountOtp("123456", 0)).toBe("123456");
     for (const value of ["not:a:key", "otpauth://hotp/example?secret=GEZDGNBV&counter=1", ""])
       expect(() => parseTotp(value)).toThrow("The account's two-factor setup is invalid.");
+  });
+});
+
+describe("sign-in submission guard", () => {
+  const submitted = (fields: SignInSubmission["fields"], otpPeriod?: number): SignInSubmission => ({
+    origin: page.origin,
+    fields,
+    otpPeriod,
+  });
+  it("stops a repeated password but permits the first password after a username step", () => {
+    expect(decideSignInContinuation(page, [submitted(["password"])], 1, undefined).type).toBe(
+      "password-rejected",
+    );
+    expect(decideSignInContinuation(page, [submitted(["username"])], 1, undefined).type).toBe(
+      "continue",
+    );
+    expect(
+      decideSignInContinuation(
+        { ...page, origin: "https://sso.example.com" },
+        [submitted(["password"])],
+        1,
+        undefined,
+      ).type,
+    ).toBe("continue");
+  });
+  it("permits exactly one new TOTP period retry and never retries a static code", () => {
+    const codePage = { ...page, password: null, otp: "#otp" };
+    expect(decideSignInContinuation(codePage, [submitted(["otp"], 10)], 1, 10).type).toBe(
+      "code-rejected",
+    );
+    expect(decideSignInContinuation(codePage, [submitted(["otp"])], 1, undefined).type).toBe(
+      "code-rejected",
+    );
+    expect(decideSignInContinuation(codePage, [submitted(["otp"], 10)], 1, 11).type).toBe(
+      "continue",
+    );
+    expect(
+      decideSignInContinuation(codePage, [submitted(["otp"], 10), submitted(["otp"], 11)], 2, 12)
+        .type,
+    ).toBe("code-rejected");
+  });
+  it("leaves a challenge to the user instead of calling the password rejected", () => {
+    expect(
+      decideSignInContinuation(
+        { ...page, challenge: "captcha" },
+        [submitted(["password"])],
+        1,
+        undefined,
+      ).type,
+    ).toBe("continue");
+  });
+  it("stops at the six-submission limit", () => {
+    expect(decideSignInContinuation(page, [], 6, undefined).type).toBe("failed");
   });
 });
