@@ -683,6 +683,27 @@ const UNDO_NOT_ELIGIBLE: Record<
   "history-unavailable": "Scient no longer holds what this send replaced.",
 };
 
+/** Only a finished apply with an answered send can be dismissed as successful. */
+export function overleafSyncSucceeded(result: ScientOverleafSyncResult): boolean {
+  return (
+    result._tag === "synced" &&
+    result.outcome === "complete" &&
+    (result.publication._tag === "none" || result.publication._tag === "accepted") &&
+    result.markerPaths.length === 0 &&
+    result.review.unresolvedMarkers.length === 0
+  );
+}
+
+export function overleafUndoSucceeded(result: ScientOverleafUndoResult): boolean {
+  return (
+    result._tag === "undone" &&
+    result.outcome === "complete" &&
+    result.skipped.length === 0 &&
+    result.sync._tag !== "not-synced" &&
+    overleafSyncSucceeded(result.sync)
+  );
+}
+
 /** What an undo did (design section 4.3): what it put back, what it left and why, then its sync. */
 export function overleafUndoView(
   result: ScientOverleafUndoResult,
@@ -695,7 +716,15 @@ export function overleafUndoView(
           : [
               `Left as it is: ${result.skipped.map((skip) => `${skip.path} (${UNDO_SKIPPED[skip.reason]})`).join(", ")}.`,
             ];
-      const put = result.restored.length + result.removed.length + result.recreated.length;
+      const effects = [
+        ...(result.removed.length > 0 ? [`Removed locally: ${result.removed.join(", ")}.`] : []),
+        ...(result.restored.length > 0
+          ? [`Put back an earlier version locally: ${result.restored.join(", ")}.`]
+          : []),
+        ...(result.recreated.length > 0
+          ? [`Recreated locally: ${result.recreated.join(", ")}.`]
+          : []),
+      ];
       // The sync after the undo: what it sent and any conflict it stopped at, or that
       // none ran because the undo stopped partway.
       const synced = result.sync._tag === "not-synced" ? null : overleafResultView(result.sync);
@@ -728,8 +757,8 @@ export function overleafUndoView(
           };
         default:
           return {
-            title: `Put back ${fileCount(put)}`,
-            lines: [...skipped, ...syncLines],
+            title: "Undo complete",
+            lines: [...effects, ...skipped, ...syncLines],
             tone: synced?.tone ?? "success",
             needsDecision,
           };

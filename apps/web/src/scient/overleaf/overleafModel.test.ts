@@ -23,6 +23,7 @@ import {
   overleafChipView,
   overleafResultView,
   overleafUndoView,
+  overleafUndoSucceeded,
   parseOverleafProjectInput,
   refusalText,
   workspacePathOf,
@@ -560,7 +561,7 @@ describe("conflict marks", () => {
       _tag: "undone" as const,
       restored: ["main.tex"],
       removed: ["new.tex"],
-      recreated: [],
+      recreated: ["gone.tex"],
       skipped: [{ path: "notes.tex", reason: "changed" as const }],
       // The sync that follows every undo; here it had nothing more to do.
       sync: {
@@ -593,11 +594,30 @@ describe("conflict marks", () => {
       },
     };
     expect(overleafUndoView({ ...undone, outcome: "complete" })).toEqual({
-      title: "Put back 2 files",
-      lines: ["Left as it is: notes.tex (edited since).", "Up to date with Overleaf."],
+      title: "Undo complete",
+      lines: [
+        "Removed locally: new.tex.",
+        "Put back an earlier version locally: main.tex.",
+        "Recreated locally: gone.tex.",
+        "Left as it is: notes.tex (edited since).",
+        "Up to date with Overleaf.",
+      ],
       tone: "success",
       needsDecision: false,
     });
+    const complete = { ...undone, outcome: "complete" as const, skipped: [] };
+    expect(overleafUndoSucceeded(complete)).toBe(true);
+    expect(overleafUndoSucceeded({ ...complete, skipped: undone.skipped })).toBe(false);
+    expect(overleafUndoSucceeded({ ...complete, outcome: "attention" })).toBe(false);
+    expect(
+      overleafUndoSucceeded({ ...complete, sync: { ...complete.sync, outcome: "replan" } }),
+    ).toBe(false);
+    expect(
+      overleafUndoSucceeded({
+        ...complete,
+        sync: { ...complete.sync, publication: { _tag: "unknown", attemptNumber: 1 } },
+      }),
+    ).toBe(false);
     expect(overleafUndoView({ ...undone, outcome: "replan" }).title).toBe("Nothing was put back");
     // Stopped partway: not synced, and it says nothing was sent.
     expect(

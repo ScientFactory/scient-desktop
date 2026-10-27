@@ -18,11 +18,17 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
+import { toastManager } from "~/components/ui/toast";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 
 import { listOverleafUndoableSends } from "./client";
 import { runOverleafUndo } from "./overleafActions";
-import { operationErrorText, overleafUndoView, undoChangeLabel } from "./overleafModel";
+import {
+  operationErrorText,
+  overleafUndoView,
+  overleafUndoSucceeded,
+  undoChangeLabel,
+} from "./overleafModel";
 import type { OverleafConnection } from "./overleafStore";
 
 type Send = ScientOverleafUndoableSends["sends"][number];
@@ -95,12 +101,21 @@ export function OverleafUndoDialog(props: {
   const view = phase._tag === "done" ? overleafUndoView(phase.result) : null;
   const undo = async (chosen: Send) => {
     setPhase({ _tag: "undoing", send: chosen });
-    setPhase(
-      await undoSend(
-        { environmentId, workspaceRoot, connection, openReview: props.openReview },
-        chosen,
-      ),
+    const completed = await undoSend(
+      { environmentId, workspaceRoot, connection, openReview: props.openReview },
+      chosen,
     );
+    if (completed._tag === "done" && overleafUndoSucceeded(completed.result)) {
+      const resultView = overleafUndoView(completed.result);
+      toastManager.add({
+        type: resultView.tone,
+        title: resultView.title,
+        description: resultView.lines.join(" "),
+      });
+      onClose();
+      return;
+    }
+    setPhase(completed);
   };
 
   return (

@@ -250,7 +250,7 @@ describe("OverleafFileChip", () => {
     await expect.element(page.getByText("Earlier version")).toBeVisible();
     await expect.element(page.getByText("Removed")).toBeVisible();
     await page.getByRole("button", { name: "Undo", exact: true }).click();
-    await expect.element(page.getByText("Put back 1 file")).toBeVisible();
+    await expect.element(page.getByText("Undo complete")).toBeVisible();
     await expect.element(page.getByText("Left as it is: notes.tex (edited since).")).toBeVisible();
     await expect.element(page.getByText("1 file was sent.")).toBeVisible();
     expect(client.undoOverleafSend).toHaveBeenCalledExactlyOnceWith(environmentId, {
@@ -298,7 +298,14 @@ describe("OverleafFileChip", () => {
     await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
     await page.getByRole("menuitem", { name: "Undo last send…" }).click();
     await page.getByRole("button", { name: "Undo", exact: true }).click();
-    await expect.element(page.getByText("Put back 1 file")).toBeVisible();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(toasts.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "success",
+        title: "Undo complete",
+        description: expect.stringContaining("Put back an earlier version locally: main.tex."),
+      }),
+    );
     expect(client.undoOverleafSend).toHaveBeenCalledExactlyOnceWith(
       environmentId,
       expect.objectContaining({ attemptNumber: 4, files: { keepOnlyHere: ["private.tex"] } }),
