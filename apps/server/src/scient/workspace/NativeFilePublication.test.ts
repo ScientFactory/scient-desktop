@@ -131,9 +131,9 @@ describe.skipIf(helper === undefined || !posix)("directory bindings observed in 
             [
               "--directory=1",
               "bind",
-              HostProcess.Platform.defaultValue() === "darwin"
-                ? "strict-current-root"
-                : "bound-object",
+              HostProcess.Platform.defaultValue() === "linux"
+                ? "linux-held-root"
+                : "strict-current-root",
               root,
               relative || ".",
               "-",
