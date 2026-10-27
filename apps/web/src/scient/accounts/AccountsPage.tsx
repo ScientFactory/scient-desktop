@@ -374,20 +374,6 @@ function AccountsContent({
   ];
   return (
     <div className="scient-accounts-settings grid gap-8" data-agent-access={snapshot.agentAccess}>
-      <SettingsSection title="Agent access" hideTitle>
-        <SettingsRow
-          id="accounts-agent-access"
-          title="Let agents use your accounts"
-          control={
-            <Switch
-              aria-label="Let agents use your accounts"
-              checked={snapshot.agentAccess}
-              disabled={!canWrite}
-              onCheckedChange={(enabled) => void setAccess({ enabled })}
-            />
-          }
-        />
-      </SettingsSection>
       {snapshot.approvals.length ? (
         <AccountApprovals
           environmentId={environmentId}
@@ -416,6 +402,18 @@ function AccountsContent({
           </Menu>
         }
       >
+        <SettingsRow
+          id="accounts-agent-access"
+          title="Let agents use your accounts"
+          control={
+            <Switch
+              aria-label="Let agents use your accounts"
+              checked={snapshot.agentAccess}
+              disabled={!canWrite}
+              onCheckedChange={(enabled) => void setAccess({ enabled })}
+            />
+          }
+        />
         {!snapshot.accounts.length ? (
           <SettingsRow
             title="No accounts"
@@ -442,8 +440,14 @@ function AccountsContent({
           />
         ))}
       </SettingsSection>
+      <BrowserProfiles
+        environmentId={environmentId}
+        snapshot={snapshot}
+        canWrite={canWrite}
+        onImport={() => setDialog("import")}
+      />
       {managedRows.length ? (
-        <SettingsSection title="Signed in elsewhere">
+        <SettingsSection title="Other sign-ins">
           {managedRows.map((row) => (
             <ManagedAccountRow
               key={`${row.kind}:${row.id}`}
@@ -453,12 +457,6 @@ function AccountsContent({
           ))}
         </SettingsSection>
       ) : null}
-      <BrowserProfiles
-        environmentId={environmentId}
-        snapshot={snapshot}
-        canWrite={canWrite}
-        onImport={() => setDialog("import")}
-      />
       <PasswordStores
         environmentId={environmentId}
         snapshot={snapshot}

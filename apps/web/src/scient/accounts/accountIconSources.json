@@ -71,5 +71,93 @@
     "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/vivaldi-icon.svg",
     "license": "CC0-1.0; trademarks remain with their owners.",
     "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "openrouter.ai",
+    "name": "openrouter",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/openrouter.svg",
+    "color": "#000000",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "aistudio.google.com",
+    "name": "googlegemini",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/googlegemini.svg",
+    "color": "#8E75B2",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "console.mistral.ai",
+    "name": "mistralai",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/mistralai.svg",
+    "color": "#FA520F",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "overleaf.com",
+    "name": "overleaf",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/overleaf.svg",
+    "color": "#47A141",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "zotero.org",
+    "name": "zotero",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/zotero.svg",
+    "color": "#CC2936",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "ncbi.nlm.nih.gov",
+    "name": "pubmed",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/pubmed.svg",
+    "color": "#326599",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "semanticscholar.org",
+    "name": "semanticscholar",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/semanticscholar.svg",
+    "color": "#1857B6",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "dev.elsevier.com",
+    "name": "elsevier",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/elsevier.svg",
+    "color": "#FF6C00",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "orcid.org",
+    "name": "orcid",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/orcid.svg",
+    "color": "#A6CE39",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "kaggle.com",
+    "name": "kaggle",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/kaggle.svg",
+    "color": "#20BEFF",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "wandb.ai",
+    "name": "weightsandbiases",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/weightsandbiases.svg",
+    "color": "#FFBE00",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
   }
 ]

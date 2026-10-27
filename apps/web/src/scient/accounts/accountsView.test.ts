@@ -395,3 +395,13 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
     ]),
   ).toEqual([]);
 });
+
+it("gives every catalogue key and CLI login a site and valid environment names", () => {
+  for (const entry of accountCatalogue) {
+    if (entry.kind !== "api-key" && entry.kind !== "cli-login") continue;
+    expect(entry.site).toBeTruthy();
+    const names = entry.kind === "api-key" ? [entry.envName] : entry.variables;
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(name).toMatch(/^[A-Z][A-Z0-9_]*$/);
+  }
+});

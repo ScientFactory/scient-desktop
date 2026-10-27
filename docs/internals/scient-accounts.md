@@ -301,7 +301,7 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 
 ## The user's side
 
-- **Settings → Accounts**: the global switch, browser profile cards, accounts, password stores.
+- **Settings → Accounts**: accounts with the global switch, browser profiles, Other sign-ins, then password stores.
   Built from the existing settings components; labels say what a thing is and status appears only
   when something is wrong. It sits in the Agents group after Extensions. Profiles moved here from
   the Browser page, which links to Accounts; the rest of the browser settings stay there.

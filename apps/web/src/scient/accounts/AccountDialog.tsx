@@ -37,6 +37,7 @@ import { accountsState } from "./accountsState";
 import { useAccountCommand } from "./useAccounts";
 import {
   accountCatalogue,
+  accountCatalogueGroups,
   accountIconUrl,
   catalogueDetails,
   KIND_LABELS,
@@ -602,23 +603,37 @@ export function AccountDialog({
                   onChange={(event) => setQuery(event.target.value)}
                 />
                 <DiscoveryList>
-                  {accountCatalogue
-                    .filter((entry) => entry.name.toLowerCase().includes(query.toLowerCase()))
-                    .map((entry) => (
-                      <DiscoveryListRow
-                        key={entry.name}
-                        icon={
-                          <CatalogueIcon
-                            name={entry.name}
-                            site={entry.site}
-                            environmentId={environmentId}
+                  {accountCatalogueGroups.map((group) => {
+                    const entries = accountCatalogue.filter(
+                      (entry) =>
+                        group.entries.some((name) => name === entry.name) &&
+                        `${entry.name} ${entry.site}`
+                          .toLowerCase()
+                          .includes(query.trim().toLowerCase()),
+                    );
+                    return entries.length ? (
+                      <div key={group.name}>
+                        <div className="px-3 pb-1 pt-3 text-xs text-muted-foreground">
+                          {group.name}
+                        </div>
+                        {entries.map((entry) => (
+                          <DiscoveryListRow
+                            key={entry.name}
+                            icon={
+                              <CatalogueIcon
+                                name={entry.name}
+                                site={entry.site}
+                                environmentId={environmentId}
+                              />
+                            }
+                            title={entry.name}
+                            description={KIND_LABELS[entry.kind]}
+                            onClick={() => choose(entry)}
                           />
-                        }
-                        title={entry.name}
-                        description={KIND_LABELS[entry.kind]}
-                        onClick={() => choose(entry)}
-                      />
-                    ))}
+                        ))}
+                      </div>
+                    ) : null;
+                  })}
                   <DiscoveryListRow
                     icon={
                       <ExtensionIcon

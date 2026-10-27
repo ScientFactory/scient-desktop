@@ -232,8 +232,73 @@ export const accountCatalogue = [
     tool: "gcloud",
     variables: ["CLOUDSDK_AUTH_ACCESS_TOKEN"],
   },
+  { name: "OpenRouter", kind: "api-key", site: "openrouter.ai", envName: "OPENROUTER_API_KEY" },
+  {
+    name: "Google Gemini",
+    kind: "api-key",
+    site: "aistudio.google.com",
+    envName: "GEMINI_API_KEY",
+  },
+  { name: "Mistral", kind: "api-key", site: "console.mistral.ai", envName: "MISTRAL_API_KEY" },
+  { name: "xAI", kind: "api-key", site: "console.x.ai", envName: "XAI_API_KEY" },
+  { name: "Zotero", kind: "api-key", site: "zotero.org", envName: "ZOTERO_API_KEY" },
+  { name: "NCBI / PubMed", kind: "api-key", site: "ncbi.nlm.nih.gov", envName: "NCBI_API_KEY" },
+  {
+    name: "Semantic Scholar",
+    kind: "api-key",
+    site: "semanticscholar.org",
+    envName: "SEMANTIC_SCHOLAR_API_KEY",
+  },
+  {
+    name: "Elsevier / Scopus",
+    kind: "api-key",
+    site: "dev.elsevier.com",
+    envName: "ELSEVIER_API_KEY",
+  },
+  { name: "Kaggle", kind: "api-key", site: "kaggle.com", envName: "KAGGLE_KEY" },
+  { name: "Weights & Biases", kind: "api-key", site: "wandb.ai", envName: "WANDB_API_KEY" },
+  { name: "Overleaf", kind: "website", site: "overleaf.com" },
+  { name: "ORCID", kind: "website", site: "orcid.org" },
+  {
+    name: "GitLab token",
+    kind: "cli-login",
+    site: "gitlab.com",
+    tool: "glab",
+    variables: ["GITLAB_TOKEN"],
+  },
 ] as const;
 export type CatalogueEntry = (typeof accountCatalogue)[number];
+
+export const accountCatalogueGroups = [
+  {
+    name: "AI models",
+    entries: ["OpenAI", "Anthropic", "OpenRouter", "Google Gemini", "Mistral", "xAI"],
+  },
+  {
+    name: "Research",
+    entries: [
+      "Overleaf",
+      "Zotero",
+      "NCBI / PubMed",
+      "Semantic Scholar",
+      "Elsevier / Scopus",
+      "ORCID",
+    ],
+  },
+  { name: "Universities & libraries", entries: ["HUJI", "OpenAthens library", "Moodle", "Google"] },
+  {
+    name: "Developer tools",
+    entries: [
+      "GitHub token",
+      "GitLab token",
+      "Cloudflare / wrangler",
+      "AWS",
+      "gcloud",
+      "Postgres database",
+    ],
+  },
+  { name: "Data & ML", entries: ["Hugging Face", "Kaggle", "Weights & Biases"] },
+] satisfies ReadonlyArray<{ name: string; entries: ReadonlyArray<CatalogueEntry["name"]> }>;
 
 export function catalogueDetails(entry: CatalogueEntry | null, website = ""): AccountDetails {
   if (!entry) return { kind: "website", sites: website ? [website] : [] };

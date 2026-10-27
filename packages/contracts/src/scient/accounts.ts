@@ -194,7 +194,7 @@ export const ApiKeyAuth = Schema.Union([
 ]);
 export type ApiKeyAuth = typeof ApiKeyAuth.Type;
 
-export const CliLoginTool = Schema.Literals(["gh", "wrangler", "aws", "gcloud", "other"]);
+export const CliLoginTool = Schema.Literals(["gh", "glab", "wrangler", "aws", "gcloud", "other"]);
 export type CliLoginTool = typeof CliLoginTool.Type;
 
 export const CliLoginVariable = Schema.Struct({

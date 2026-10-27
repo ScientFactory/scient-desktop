@@ -37,11 +37,21 @@ it("opens the add-account picker outside the Extensions page", async () => {
   );
   // regression: extension icons once required the Extensions page and crashed this dialog.
   await expect.element(page.getByText("Any website")).toBeVisible();
-  await page.getByRole("button", { name: "Google", exact: false }).click();
+  const search = page.getByRole("searchbox", { name: "Find an account" });
+  await search.fill("aistudio.google.com");
+  await expect.element(page.getByText("Google Gemini", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Research", { exact: true })).not.toBeInTheDocument();
+  await page.getByText("Google Gemini", { exact: true }).click();
+  await expect
+    .element(page.getByRole("textbox", { name: "Name", exact: true }))
+    .toHaveValue("Google Gemini");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await search.fill("");
+  await page.getByText("Google", { exact: true }).click();
   await expect.element(page.getByRole("textbox", { name: "Username", exact: true })).toHaveFocus();
   await page.getByLabelText("Password", { exact: true }).fill("synthetic-password");
   await page.getByRole("button", { name: "Back", exact: true }).click();
-  await page.getByRole("button", { name: "Google", exact: false }).click();
+  await page.getByText("Google", { exact: true }).click();
   await expect.element(page.getByLabelText("Password", { exact: true })).toHaveValue("");
 });
 

@@ -34,7 +34,11 @@ const snapshot: AccountsSnapshot = {
   },
 };
 it("lists running-browser metadata and imports the selection only after quit and recheck", async () => {
-  state.sources = [{ id: "chrome", name: "Chrome", profiles: [], unavailable: "browserRunning" }];
+  state.sources = [
+    { id: "chrome", name: "Chrome", profiles: [], unavailable: "browserRunning" },
+    { id: "edge", name: "Edge", profiles: [], unavailable: "notInstalled" },
+    { id: "brave", name: "Brave", profiles: [], unavailable: "notInstalled" },
+  ];
   state.importCookies.mockReset().mockResolvedValue({
     kind: "imported",
     imported: 1,
@@ -64,6 +68,10 @@ it("lists running-browser metadata and imports the selection only after quit and
       onClose={close}
     />,
   );
+  await expect
+    .element(page.getByText("Chrome · open, quit to import", { exact: true }))
+    .toBeVisible();
+  await expect.element(page.getByText("Not found: Edge, Brave", { exact: true })).toBeVisible();
   await page.getByRole("checkbox", { name: "Work · Chrome" }).click();
   await page.getByRole("button", { name: "Import (1)", exact: true }).click();
   await expect.element(page.getByRole("heading", { name: "Quit Chrome to import" })).toBeVisible();

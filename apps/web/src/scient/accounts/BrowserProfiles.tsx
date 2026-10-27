@@ -60,8 +60,7 @@ import {
   mergeSourceProfiles,
 } from "./accountsView";
 
-// oxlint-disable-next-line t3code/no-em-dash-copy -- The Accounts design brief specifies this exact running-browser label.
-const RUNNING_BROWSER_COPY = "Open — quit to import";
+const RUNNING_BROWSER_COPY = "open, quit to import";
 
 const decodeProfileUpdate = Schema.decodeOption(BrowserProfileRecordUpdateInput);
 
@@ -379,7 +378,7 @@ export function BrowserImportDialog({
                                 alreadyImported
                                   ? [source.name, profile.email].filter(Boolean).join(" · ")
                                   : source.unavailable === "browserRunning"
-                                    ? RUNNING_BROWSER_COPY
+                                    ? `${source.name} · ${RUNNING_BROWSER_COPY}`
                                     : source.unavailable
                                       ? BROWSER_IMPORT_FAILURE_COPY[source.unavailable]
                                       : [source.name, profile.email].filter(Boolean).join(" · ")
@@ -415,6 +414,15 @@ export function BrowserImportDialog({
                     (source.profiles.length === 0 && source.unavailable !== "needsFullDiskAccess"),
                 ) ? (
                   <div className="px-3 py-3 text-sm text-muted-foreground">No browsers found</div>
+                ) : null}
+                {sources.some((source) => source.unavailable === "notInstalled") ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    Not found:{" "}
+                    {sources
+                      .filter((source) => source.unavailable === "notInstalled")
+                      .map((source) => source.name)
+                      .join(", ")}
+                  </div>
                 ) : null}
               </DiscoveryList>
               {permission.error ? (
