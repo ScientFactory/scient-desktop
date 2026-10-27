@@ -36,6 +36,11 @@ const lane = {
 
 export const accountsState = {
   snapshot,
+  passwordStore: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:passwordStore",
+    tag: WS_METHODS.accountsPasswordStore,
+    ...lane,
+  }),
   save: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:save",
     tag: WS_METHODS.accountsSave,

@@ -19,7 +19,12 @@ export function planSecretStores(
   pending: ReadonlyArray<AccountWriteStore> = [],
 ): ReadonlyArray<CopyDestination> {
   const prior = old
-    ? [old.source, ...(old.copies ?? [])].filter((source) => source.type !== "custom-model")
+    ? [old.source, ...(old.copies ?? [])].filter(
+        (source) =>
+          source.type !== "custom-model" &&
+          source.type !== "bitwarden" &&
+          source.type !== "proton-pass",
+      )
     : [];
   const selected: ReadonlyArray<AccountValueSource | AccountWriteStore> = [
     ...prior,

@@ -58,6 +58,11 @@ it.effect(
           token: syntheticValue(),
         }),
         reader[WS_METHODS.accountsOnePasswordDisconnect]({}),
+        reader[WS_METHODS.accountsPasswordStore]({
+          store: "bitwarden",
+          action: "connect",
+          password: "synthetic",
+        }),
         reader[WS_METHODS.accountsImportPasswords]({
           format: "auto",
           content: "name,url,username,password",

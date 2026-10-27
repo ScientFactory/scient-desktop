@@ -102,7 +102,7 @@
     {
       "path": "packages/contracts/src/clientRpcPermissions.ts",
       "anchor": "Scient Accounts: recheck credential and settings authority at execution.",
-      "purpose": "Require destination settings-write authorization for account mutations and credential reads."
+      "purpose": "Require destination settings-write authorization for account mutations, CLI password-store connections and discovery, and credential reads."
     },
     {
       "path": "apps/server/src/ws.ts",
@@ -117,12 +117,12 @@
     {
       "path": "apps/server/src/auth/RpcAuthorization.ts",
       "anchor": "Scient Accounts: declare read and settings-write permissions.",
-      "purpose": "Require read or settings-write authority for every Accounts RPC."
+      "purpose": "Require read or settings-write authority for every Accounts RPC, including CLI store unlock and item discovery."
     },
     {
       "path": "apps/server/src/observability/RpcInstrumentation.ts",
       "anchor": "Scient Accounts: instrument sensitive account RPCs without payloads.",
-      "purpose": "Label Accounts RPCs without capturing their sensitive inputs."
+      "purpose": "Label Accounts RPCs, including CLI unlock, without capturing their sensitive inputs."
     },
     {
       "path": "scripts/lib/cli-external-packages.ts",
