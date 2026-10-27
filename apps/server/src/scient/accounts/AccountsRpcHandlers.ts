@@ -12,6 +12,8 @@ export const makeAccountsRpcHandlers = ({
 }) => {
   const attributes = { "rpc.aggregate": "accounts" };
   return WsAccountsRpcGroup.of({
+    [WS_METHODS.accountsPasswordStore]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsPasswordStore, accounts.passwordStore(input), attributes),
     [WS_METHODS.accountsSnapshot]: () =>
       observeRpcEffect(WS_METHODS.accountsSnapshot, accounts.snapshot, attributes),
     [WS_METHODS.accountsSubscribeChanges]: () =>
@@ -120,6 +122,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
   Effect.map(
     Option.getOrElse(() =>
       AccountsService.of({
+        passwordStore: unavailable,
         snapshot: missingService,
         changes: Stream.empty,
         save: unavailable,

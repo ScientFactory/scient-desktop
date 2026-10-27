@@ -3,6 +3,8 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  CliPasswordStoreInput,
+  CliPasswordStoreResult,
   AccountMatchSignInInput,
   AccountMatchSignInResult,
   AccountActivityEntry,
@@ -30,6 +32,7 @@ import {
 
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_ACCOUNT_WS_METHODS = {
+  accountsPasswordStore: "accounts.passwordStore",
   accountsSnapshot: "accounts.snapshot",
   accountsSubscribeChanges: "accounts.subscribeChanges",
   accountsSave: "accounts.save",
@@ -51,6 +54,14 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
 
 const AccountsRpcError = Schema.Union([AccountsError, EnvironmentAuthorizationError]);
 const Empty = Schema.Struct({});
+export const WsAccountsPasswordStoreRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsPasswordStore,
+  {
+    payload: CliPasswordStoreInput,
+    success: CliPasswordStoreResult,
+    error: AccountsRpcError,
+  },
+);
 
 export const WsAccountsSnapshotRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSnapshot, {
   payload: Empty,
