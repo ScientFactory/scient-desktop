@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  outgoingAfterDecisions,
   readNothingToDoLine,
   askAgentMessage,
   choicesFor,
@@ -639,5 +640,42 @@ describe("readNothingToDoLine", () => {
     expect(
       readNothingToDoLine(review({ upToDate: true, unresolvedMarkers: ["a.tex"] })),
     ).toBeNull();
+  });
+});
+
+describe("results the folder status can't show", () => {
+  it("the chip says a conflict or a refusal from the last sync before the edits waiting", () => {
+    const edits = status({ local: { _tag: "read", changed: 1, deleted: 0, added: 0 } });
+    expect(
+      overleafChipView(edits, false, {
+        _tag: "needs-decision",
+        review: review(),
+        retried: false,
+        settled: null,
+        activity: [],
+        linkedElsewhere: false,
+      }),
+    ).toMatchObject({ state: "decision", label: "Needs a decision" });
+    expect(
+      overleafChipView(edits, false, {
+        _tag: "refused",
+        refusal: { reason: "unreadable-file", path: "a.txt" },
+        retried: false,
+        settled: null,
+      }),
+    ).toMatchObject({ state: "problem", label: "Couldn't sync" });
+    expect(overleafChipView(edits, false, null).state).toBe("edits");
+  });
+
+  it("a review still to run does not list a new file kept only here as sent", () => {
+    const outgoing = [
+      { kind: "added" as const, path: "keep.txt" },
+      { kind: "added" as const, path: "send.txt" },
+      { kind: "renamed" as const, from: "a.tex", to: "b.tex" },
+    ];
+    expect(outgoingAfterDecisions(outgoing, new Map([["keep.txt", "keep" as const]]))).toEqual([
+      { kind: "added", path: "send.txt" },
+      { kind: "renamed", from: "a.tex", to: "b.tex" },
+    ]);
   });
 });

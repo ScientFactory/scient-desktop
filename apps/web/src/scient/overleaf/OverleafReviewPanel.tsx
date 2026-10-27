@@ -44,6 +44,7 @@ import {
   askAgentMessage,
   choicesFor,
   decidableFiles,
+  outgoingAfterDecisions,
   overleafResultView,
   readNothingToDoLine,
   reviewIdentity,
@@ -267,7 +268,8 @@ export function OverleafReviewPanel(props: {
         });
     });
   };
-  const conflicts = review?.conflicts ?? [];
+  // A sync that applied decided its review's conflicts: their controls go with it.
+  const conflicts = synced ? [] : (review?.conflicts ?? []);
   // The send of the sync shown, which Undo can put back (design section 4.3).
   const sentAttempt =
     sent && last?.result._tag === "synced" && last.result.publication._tag === "accepted"
@@ -488,7 +490,19 @@ export function OverleafReviewPanel(props: {
                   </p>
                 }
               >
-                <OverleafReviewDiff result={shownDiff.result} />
+                <OverleafReviewDiff
+                  result={
+                    shownDiff.result._tag === "diff"
+                      ? {
+                          ...shownDiff.result,
+                          outgoing: outgoingAfterDecisions(
+                            shownDiff.result.outgoing,
+                            pendingDecisions,
+                          ),
+                        }
+                      : shownDiff.result
+                  }
+                />
               </Suspense>
             ) : (
               <p role="status" className="px-1 text-sm text-muted-foreground">
@@ -576,7 +590,11 @@ export function OverleafReviewPanel(props: {
               <ChangeList
                 title={sent ? "Sent" : "To send"}
                 icon={ArrowUpFromLine}
-                changes={review.outgoing}
+                changes={
+                  synced
+                    ? review.outgoing
+                    : outgoingAfterDecisions(review.outgoing, pendingDecisions)
+                }
                 folder={connection.folder}
                 onOpenFile={openFile}
               />

@@ -9,6 +9,7 @@ import type {
   ScientOverleafReview,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
+  ScientOverleafDiffFile,
   ScientOverleafUndoResult,
 } from "@t3tools/contracts";
 
@@ -130,10 +131,22 @@ const plural = (count: number, one: string, many: string = `${one}s`) =>
 export function overleafChipView(
   status: ScientOverleafStatus | null,
   syncing: boolean,
+  /** This window's latest sync of the link, dropped when another sync changes it. */
+  last: ScientOverleafSyncResult | null = null,
 ): OverleafChipView {
   if (syncing || status?.busy) {
     return { state: "syncing", label: "Syncing…", detail: "A sync is running." };
   }
+  // The status reads only the folder: a sync that stopped at a conflict or was refused
+  // says more than the edits waiting, until the next sync.
+  if (last?._tag === "needs-decision")
+    return {
+      state: "decision",
+      label: "Needs a decision",
+      detail: "A conflict with Overleaf needs a choice.",
+    };
+  if (last?._tag === "refused")
+    return { state: "problem", label: "Couldn't sync", detail: refusalText(last.refusal) };
   if (status === null) return { state: "up-to-date", label: "Overleaf", detail: "" };
   if (status.availability === "unavailable" || status.availability === "disconnected") {
     return {
@@ -384,6 +397,17 @@ export function readNothingToDoLine(review: ScientOverleafReview): string | null
   return review.upToDate && review.unresolvedMarkers.length === 0
     ? "Up to date with Overleaf: nothing to bring in or send."
     : null;
+}
+
+/**
+ * What a review still to run will send, with the pending per-file decisions applied: a new
+ * file kept only here is not sent, though the review was read before that choice.
+ */
+export function outgoingAfterDecisions<T extends ScientOverleafChange | ScientOverleafDiffFile>(
+  outgoing: ReadonlyArray<T>,
+  decisions: ReadonlyMap<string, OverleafFileDecision>,
+): ReadonlyArray<T> {
+  return outgoing.filter((change) => !("path" in change && decisions.get(change.path) === "keep"));
 }
 
 /** The headline counts for a review that was applied, and whether its send reached Overleaf. */
