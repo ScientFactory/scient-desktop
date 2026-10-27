@@ -40,6 +40,7 @@ export const PluginKeyState = Schema.Struct({
   keys: Schema.Array(
     Schema.Struct({
       envName: PluginKeyIdentity.fields.envName,
+      origins: Schema.optional(Schema.Array(Schema.String).check(Schema.isMaxLength(200))),
       accountRef: Schema.optional(VaultSecretRef),
       accountName: Schema.optional(Schema.String),
       available: Schema.Boolean,

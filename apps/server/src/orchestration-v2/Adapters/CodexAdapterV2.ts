@@ -1393,7 +1393,7 @@ export function codexThreadRuntimeParams(input: {
             // above, so the user's MCP configuration stays in place beside them.
             ...Object.fromEntries(
               mcpSession.connectors.map((connector) => [
-                `mcp_servers.${connector.serverName}`,
+                `mcp_servers.${mcpSession.pluginKeyServerNames?.[connector.serverName] === undefined ? connector.serverName : JSON.stringify(mcpSession.pluginKeyServerNames[connector.serverName])}`,
                 {
                   url: connector.url,
                   http_headers: { Authorization: mcpSession.authorizationHeader },

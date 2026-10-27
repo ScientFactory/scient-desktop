@@ -465,14 +465,23 @@ export function AccountDialog({
   account: AccountSummary | null;
   canWrite: boolean;
   onClose: () => void;
-  initialApiKey?: { readonly name: string; readonly envName: string };
+  initialApiKey?: {
+    readonly name: string;
+    readonly envName: string;
+    readonly sites?: ReadonlyArray<string>;
+  };
   onSaved?: (accountId: AccountId) => void;
 }) {
   const [query, setQuery] = useState("");
   const [details, setDetails] = useState<AccountDetails | null>(
     account?.details ??
       (initialApiKey
-        ? { kind: "api-key", sites: [], auth: { type: "bearer" }, envName: initialApiKey.envName }
+        ? {
+            kind: "api-key",
+            sites: initialApiKey.sites ?? [],
+            auth: { type: "bearer" },
+            envName: initialApiKey.envName,
+          }
         : null),
   );
   const [name, setName] = useState(account?.name ?? initialApiKey?.name ?? "");

@@ -438,7 +438,7 @@ it.effect(
         const store = yield* makeCodexProviderStore(
           () => Effect.succeed(fixture.client),
           () => Effect.undefined,
-          NodePath.join(cache, "other-cache"),
+          cache,
         );
         expect((yield* store.contents("local")).requiredKeys).toEqual(["SYNTHETIC_KEY"]);
         expect((yield* store.contents("local")).skills).toMatchObject([
@@ -451,6 +451,14 @@ it.effect(
         expect(fixture.calls.filter((call) => call.method === "plugin/read")).toHaveLength(1);
         expect(fixture.calls.some((call) => call.method === "plugin/list")).toBe(false);
         expect(fixture.calls.filter((call) => call.method === "plugin/installed")).toHaveLength(1);
+
+        fixture.state.summary = plugin("local", { source: { type: "remote" } });
+        fixture.state.localPlugins = [plugin("local", { version: "cached-remote" })];
+        yield* store.search({ refresh: true });
+        expect((yield* store.contents("local")).requiredKeys).toEqual(["SYNTHETIC_KEY"]);
+        expect(yield* store.keyServerRoot("local")).toBe(
+          yield* Effect.promise(() => NodeFSP.realpath(root)),
+        );
 
         fixture.state.skills = [
           { name: "search", path: NodePath.join(NodeOS.tmpdir(), "outside/SKILL.md") },

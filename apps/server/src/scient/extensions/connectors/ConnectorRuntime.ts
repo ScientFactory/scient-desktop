@@ -380,6 +380,15 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 ) {
   const credentials = yield* ConnectorCredentialStore;
   const accounts = yield* Effect.serviceOption(AccountsService);
+  const pluginHttp = new Map<
+    string,
+    {
+      readonly record: ConnectorRecord;
+      readonly authorize: Parameters<
+        NonNullable<ConnectorRuntimeShape["registerPluginKeyHttp"]>
+      >[0]["authorize"];
+    }
+  >();
   const eligibility = yield* PluginConnectorEligibility;
   const projects = yield* ProjectStoreV2;
   const store = yield* makeConnectorStateStore(options.stateDir);
@@ -726,9 +735,22 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
   const credentialFor = Effect.fn("ConnectorRuntime.credentialFor")(function* (
     record: ConnectorRecord,
+    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
   ) {
     if (!isLive(record.connectorId)) {
       return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
+    }
+    const plugin = pluginHttp.get(record.connectorId);
+    if (plugin) {
+      const resolved = yield* plugin.authorize(scope).pipe(Effect.result);
+      if (
+        resolved._tag === "Failure" ||
+        !resolved.success.secrets.every(
+          (secret) => isProtectableCredential(secret) && !/[\r\n\0]/.test(secret),
+        )
+      )
+        return { type: "lost", message: lostGrantMessage(record) } satisfies Credential;
+      return { type: "ok", ...resolved.success, accessToken: undefined } satisfies Credential;
     }
     const auth = record.auth;
     switch (auth.type) {
@@ -825,6 +847,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       readonly signal: AbortSignal | undefined;
     },
     fetch: (url: string, init: RequestInit) => Promise<Response>,
+    scope?: import("../../../mcp/McpInvocationContext.ts").McpInvocationScope,
   ) {
     const lifetime = lifetimeOf(record.connectorId);
     const signal =
@@ -844,7 +867,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }).pipe(Effect.exit);
     const gone = { type: "lost", message: lostGrantMessage(record) } satisfies SendOutcome;
 
-    const credential = yield* credentialFor(record);
+    const credential = yield* credentialFor(record, scope);
     if (credential.type === "lost") return credential satisfies SendOutcome;
     if (!isLive(record.connectorId)) return gone;
     const first = yield* send(credential.headers);
@@ -1524,7 +1547,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const forward: ConnectorRuntimeShape["forward"] = Effect.fn("ConnectorRuntime.forward")(
     function* (request) {
       const state = yield* store.read;
-      const record = state.connectors.find((entry) => entry.connectorId === request.connectorId);
+      const record =
+        state.connectors.find((entry) => entry.connectorId === request.connectorId) ??
+        pluginHttp.get(request.connectorId)?.record;
       const rpc = request.method === "POST" ? parseRpcRequest(request.body) : {};
       const correlationId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
       const recordToolUse = (decision: "allowed" | "denied", outcome?: "ok" | "error") =>
@@ -1596,6 +1621,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           signal: exchange.signal,
         },
         proxyFetch(policyOf(record)),
+        request.scope,
       ).pipe(Effect.onInterrupt(() => release));
       if (outcome.type !== "response") {
         yield* release;
@@ -1691,6 +1717,34 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   );
 
   return ConnectorRuntime.of({
+    registerPluginKeyHttp: Effect.fn("ConnectorRuntime.registerPluginKeyHttp")(function* (input) {
+      if (!pluginHttp.has(input.connectorId) && pluginHttp.size >= 1000)
+        return yield* new ExtensionsError({
+          reason: "limit-reached",
+          message:
+            "Plugin server registrations reached their session limit. Restart Scient to release unused registrations.",
+        });
+      const url = yield* checkUrl(input.url, STRICT_EGRESS_POLICY);
+      const createdAt = yield* isoNow;
+      const record: ConnectorRecord = {
+        connectorId: input.connectorId,
+        serverName: input.serverName,
+        displayName: input.displayName,
+        url,
+        source: { type: "url" },
+        auth: { type: "none" },
+        status: "connected",
+        enabled: true,
+        authRevision: 0,
+        availability: input.projectId
+          ? { type: "projects", projectIds: [input.projectId] }
+          : { type: "all-projects" },
+        createdAt,
+        updatedAt: createdAt,
+      };
+      pluginHttp.set(input.connectorId, { record, authorize: input.authorize });
+      return eligibleOf(record);
+    }),
     list: Effect.fn("ConnectorRuntime.list")(function* () {
       const state = yield* store.read;
       return {
@@ -1785,7 +1839,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     }),
     isGranted: Effect.fn("ConnectorRuntime.isGranted")(function* (input) {
       const state = yield* store.read;
-      const record = state.connectors.find((entry) => entry.connectorId === input.connectorId);
+      const record =
+        state.connectors.find((entry) => entry.connectorId === input.connectorId) ??
+        pluginHttp.get(input.connectorId)?.record;
       return (
         record !== undefined &&
         isLive(record.connectorId) &&

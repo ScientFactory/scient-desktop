@@ -1797,7 +1797,7 @@ export function claudeMcpQueryOverrides(input: {
       // SCIENT-FORK:START Scient Extensions connectors (same session bearer, Scient proxy URL)
       ...Object.fromEntries(
         session.connectors.map((connector) => [
-          connector.serverName,
+          session.pluginKeyServerNames?.[connector.serverName] ?? connector.serverName,
           {
             type: "http" as const,
             url: connector.url,
@@ -10363,7 +10363,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ? {}
                   : {
                       yieldToNativeServers: {
-                        serverNames: mcpSession.connectors.map((connector) => connector.serverName),
+                        serverNames: mcpSession.connectors
+                          .filter(
+                            (connector) =>
+                              mcpSession.pluginKeyServerNames?.[connector.serverName] === undefined,
+                          )
+                          .map((connector) => connector.serverName),
                         beginRegistration:
                           mcpSession.beginConnectorRegistration ??
                           Effect.succeed(() => Effect.void),

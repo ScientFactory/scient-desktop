@@ -42,6 +42,7 @@ export const makePluginKeyBindings = Effect.fn("PluginKeyBindings.make")(functio
   const list = Effect.fn("PluginKeyBindings.list")(function* (
     target: PluginKeyTarget,
     requiredKeys: ReadonlyArray<string> | undefined,
+    origins: ReadonlyMap<string, ReadonlyArray<string>> = new Map(),
   ) {
     const saved = yield* store.read;
     const choices = accounts
@@ -56,21 +57,23 @@ export const makePluginKeyBindings = Effect.fn("PluginKeyBindings.make")(functio
         const account = binding && choices.find((item) => item.ref === binding.accountRef);
         const available =
           accounts && binding && saved.writable
-            ? yield* accounts
-                .resolveBound(binding.accountRef, {
+            ? yield* Effect.forEach(origins.get(envName) ?? [undefined], (origin) =>
+                accounts.resolveBound(binding.accountRef, {
                   kind: "plugin-key",
                   agent: target.agent ?? "scient",
                   pluginId: target.pluginId,
                   envName,
                   ...(target.projectId ? { projectId: target.projectId } : {}),
-                })
-                .pipe(
-                  Effect.as(true),
-                  Effect.orElseSucceed(() => false),
-                )
+                  ...(origin ? { origin } : {}),
+                }),
+              ).pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              )
             : false;
         return {
           envName,
+          origins: origins.get(envName) ?? [],
           available,
           ...(binding ? { accountRef: binding.accountRef } : {}),
           ...(account ? { accountName: account.name } : {}),
@@ -114,7 +117,36 @@ export const makePluginKeyBindings = Effect.fn("PluginKeyBindings.make")(functio
     yield* store.update(input);
     yield* notify;
   });
-  return { list, bind, unbind, changes: Stream.fromPubSub(events) };
+  const resolveKey = Effect.fn("PluginKeyBindings.resolveKey")(function* (
+    input: PluginKeyTarget & {
+      readonly envName: string;
+      readonly origin: string;
+      readonly expectedRef?: import("@t3tools/contracts").VaultSecretRef | undefined;
+    },
+  ) {
+    if (!accounts) return yield* unavailable();
+    const state = yield* store.read;
+    const binding = state.bindings.find(
+      (binding) => pluginKeyIdentity(binding) === pluginKeyIdentity(input),
+    );
+    if (
+      !state.writable ||
+      !binding ||
+      (input.expectedRef !== undefined && input.expectedRef !== binding.accountRef)
+    )
+      return yield* unavailable();
+    return yield* accounts
+      .resolveBound(binding.accountRef, {
+        kind: "plugin-key",
+        agent: input.agent ?? "scient",
+        pluginId: input.pluginId,
+        envName: input.envName,
+        origin: input.origin,
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+      })
+      .pipe(Effect.mapError(unavailable));
+  });
+  return { list, bind, unbind, resolveKey, changes: Stream.fromPubSub(events) };
 });
 export class PluginKeyBindings extends Context.Service<
   PluginKeyBindings,

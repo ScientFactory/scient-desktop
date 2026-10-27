@@ -30,14 +30,20 @@ export function pluginKeyStatusLabel(state: PluginKeyState | null, provider?: Se
 }
 
 export function usePluginKeys(input: ExtensionPluginContentsInput) {
-  const { environmentId } = useExtensionsEnvironment();
+  const { environmentId, providerInventory } = useExtensionsEnvironment();
   const projects = useProjects();
+  const installed =
+    providerInventory?.providers
+      .find((provider) => provider.instanceId === input.instanceId)
+      ?.plugins?.filter((plugin) => plugin.id === input.entryId || plugin.name === input.entryId) ??
+    [];
+  const pluginId = input.pluginId ?? (installed.length === 1 ? installed[0]?.id : undefined);
   const project = projects.find(
     (project) => project.environmentId === environmentId && project.workspaceRoot === input.cwd,
   );
-  const target: PluginKeyTarget | null = input.pluginId
+  const target: PluginKeyTarget | null = pluginId
     ? {
-        pluginId: input.pluginId,
+        pluginId,
         ...(input.instanceId ? { agent: input.instanceId } : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(project ? { projectId: project.id } : {}),
@@ -128,7 +134,11 @@ export function PluginKeys({
           snapshot={accounts.data}
           account={null}
           canWrite={accounts.canWrite}
-          initialApiKey={{ name: adding, envName: adding }}
+          initialApiKey={{
+            name: adding,
+            envName: adding,
+            sites: keys.data.keys.find((key) => key.envName === adding)?.origins ?? [],
+          }}
           onSaved={(accountId) => void change(adding, `account:${accountId}:token`)}
           onClose={() => setAdding(null)}
         />

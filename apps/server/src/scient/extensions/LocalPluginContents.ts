@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { parseDocument } from "yaml";
 import * as Schema from "effect/Schema";
+import { pluginKeyHttpServer } from "./PluginKeyHttpServers.ts";
 import { declaredPluginKeys, requiredServerKeys } from "./PluginRequiredKeys.ts";
 import { extensionIconData } from "./ExtensionIconData.ts";
 import type { ExtensionPluginContents } from "@t3tools/contracts";
@@ -94,6 +95,8 @@ function skillMetadata(text: string, fallback: string) {
 
 async function readLocalPluginMcpContents(root: string) {
   const servers = new Set<string>();
+  const definitions = new Map<string, unknown>();
+  const duplicateNames = new Set<string>();
   const requiredKeys = new Set<string>();
   let keysKnown = true;
   const addKeys = (names: ReadonlyArray<string>) => {
@@ -134,6 +137,8 @@ async function readLocalPluginMcpContents(root: string) {
           if (Object.keys(record).length > MAX_ENTRIES) keysKnown = false;
           for (const [name, settings] of Object.entries(record).slice(0, MAX_ENTRIES)) {
             if (name.trim()) {
+              if (definitions.has(name)) duplicateNames.add(name);
+              definitions.set(name, settings);
               addKeys(requiredServerKeys(settings));
               if (servers.size < MAX_ENTRIES) servers.add(name);
               else if (!servers.has(name)) keysKnown = false;
@@ -150,6 +155,7 @@ async function readLocalPluginMcpContents(root: string) {
     }
   }
   return {
+    definitions: [...definitions].filter(([name]) => !duplicateNames.has(name)),
     ...(keysKnown ? { requiredKeys: [...requiredKeys].sort() } : {}),
     mcpServers: [...servers].map((name) => ({ name })),
   };
@@ -176,7 +182,8 @@ export async function readLocalPluginContents(root: string): Promise<ExtensionPl
   const mcp = await readLocalPluginMcpContents(root);
   return {
     apps: [],
-    ...mcp,
+    ...(mcp.requiredKeys === undefined ? {} : { requiredKeys: mcp.requiredKeys }),
+    mcpServers: mcp.mcpServers,
     skills,
     commands: await entries(root, "commands"),
     agents: await entries(root, "agents"),
@@ -220,4 +227,14 @@ export async function readLocalPluginRequiredKeys(
   if (!NodePath.isAbsolute(root)) throw new Error("The plugin root must be absolute.");
   if (!(await NodeFSP.stat(root)).isDirectory()) throw new Error("The plugin root is unavailable.");
   return (await readLocalPluginMcpContents(root)).requiredKeys;
+}
+
+export async function readLocalPluginKeyHttpServers(root: string) {
+  if (!NodePath.isAbsolute(root)) throw new Error("The plugin root must be absolute.");
+  const contents = await readLocalPluginMcpContents(root);
+  if (contents.requiredKeys === undefined) return [];
+  return contents.definitions.flatMap(([name, definition]) => {
+    const server = pluginKeyHttpServer(name, definition);
+    return server ? [server] : [];
+  });
 }

@@ -308,3 +308,10 @@ plugin, variable name and selected project when computing eligibility. Revocatio
 and token removal never fall back to a previous value. Status projections discard
 resolved `Redacted` values. Accounts usage-only events do not invalidate those
 projections; authorization and token-metadata changes do.
+
+HTTP plugin-key consumers also include the original declared remote origin.
+Eligibility checks every supported destination a key serves; delivery resolves
+the current value again for each request. The Accounts add form can be opened
+from a Keys row with its declared environment name and allowed origins, then
+Extensions binds the saved account id. There is no copy into plugin config or a
+provider environment. The existing proxy redacts reflected values in responses.

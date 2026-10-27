@@ -144,20 +144,18 @@ access; visual acceptance in a desktop candidate remains unperformed.
 
 ## Remaining implementation and qualification
 
-This foundation is not the complete plugin-key feature, including the smaller
-HTTP delivery milestone from the plan of record. Remaining work:
+The binding, Keys UI, generated provider startup policies and HTTP-header proxy
+path are implemented and tested offline. Remaining work:
 
-3. Live qualification of generated native startup suppression. The adapter
-   policy is implemented, with the unverified-live limits recorded below.
-4. HTTP template validation and account-bound proxy injection through
-   `resolveBound({ kind: "plugin-key", ... })`, retaining the original origin
-   and project checks, plus provider-specific registration under original names.
-5. Scoped stdio launcher files, 0600 enforcement, cleanup on all session exits,
-   safe command substitution and provider configuration tests.
-6. Synthetic startup/collision witnesses for each provider and browser coverage
-   of binding, missing-key, unavailable-agent and revocation states.
-7. Authorized real-provider tool calls and visual acceptance. No live tokens
-   are needed or permitted in fixtures or qualification logs.
+1. Live qualification of Claude SDK loading/precedence and actual plugin tool
+   names, and Codex's effective plugin id, policy acceptance and tool namespace.
+2. Stdio launcher files, 0600 enforcement, cleanup on all session exits, safe
+   command substitution and provider configuration tests. Stdio servers of
+   detected key-bearing plugins remain suppressed; keys never enter agent env.
+3. Local-root discovery for remote-only plugins without a verified cache path.
+   Missing requirements remain unknown, rather than guessed from server names.
+4. Authorized real-provider tool calls and visual acceptance in a desktop
+   candidate. No live token is needed or permitted in fixtures or logs.
 
 ## Native startup suppression (unverified live)
 
@@ -184,5 +182,48 @@ entry and the explicit local SDK load; preservation of actual skill/tool names;
 Codex's acceptance of this policy and effective native plugin identity on the
 installed CLI; shared-session handoffs. Unit tests qualify the generated config,
 not those live claims. Plugins whose local key requirements cannot be inspected
-remain outside this detected-key policy. HTTP replacement and stdio delivery are
-still pending; bound credential eligibility alone does not deliver a server.
+remain outside this detected-key policy. HTTP replacement is implemented below; stdio delivery remains unsupported.
+Bound credential eligibility alone is not live-provider qualification.
+
+## HTTP-header delivery
+
+Supported remote servers use fixed HTTPS URLs and headers containing `${NAME}`
+or Claude `${user_config.NAME}` references. URL/args/env key delivery, unsupported
+transports, credential-bearing URLs, unsafe header names, ambiguous duplicate
+server definitions and unresolved templates are withheld. All declared plugin
+keys must be eligible before any of its HTTP servers is delivered. Key status
+checks each declared supported HTTP origin; Add key seeds those origins in the
+Accounts form so an empty site list is not mistaken for remote authorization.
+
+Session preparation registers an in-memory connector and grants its id to the
+existing session credential. Only the Scient proxy URL and session bearer reach
+the adapter. The proxy uses the existing request/body limits, egress checks,
+redirect refusal, upstream MCP-session binding and response redaction. Its
+credential callback rechecks the provider generation, installed/enabled plugin,
+source path and template fingerprint, then calls `resolveBound` with the original
+origin, project, agent instance, plugin id and each variable name. Rotation is
+observed at the next request. Off, removal, missing bindings and source changes
+refuse a request without falling back to any previously resolved value. A changed
+account binding produces a new connector id and denies the previous registration;
+resolution also pins the expected account ref across the authorization boundary,
+so rebinding cannot reuse another account's upstream MCP session.
+
+Internal connector aliases remain provider-safe for receipts; adapters map them
+back to the native server name. Claude uses `plugin:<plugin-name>:<server-name>`
+and bypasses ordinary native-collision withholding only for these explicit
+replacements. Codex uses a quoted native server key beside its disabled
+plugin-scoped transport. Reserved Scient names and unresolved Codex native
+ownership collisions are withheld. There is no arbitrary name-collision override.
+
+Codex supports local/git source roots and roots verified from skill paths inside
+its configured plugin cache. The server-only root port is never exposed as an
+RPC that reads arbitrary paths. Remote plugins without either source remain
+unknown. Transient registrations store no credentials, are absent from the
+user's connector file/list and are capped at 1,000 per runtime. Old session
+bearers are still controlled by the existing MCP registry; a runtime restart
+releases registration metadata. Unsupported stdio servers stay suppressed.
+
+Tests exercise real Accounts rotation/revocation and origin checks, configuration
+changes and agent ownership, adapter alias mapping, and the actual connector
+forwarding/redaction pipeline with a synthetic reflected credential and a mocked
+upstream fetch. They do not contact a real vendor or qualify provider behavior.

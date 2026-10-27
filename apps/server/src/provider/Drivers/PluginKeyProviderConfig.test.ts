@@ -3,6 +3,8 @@ import { claudePluginKeyOptions, codexPluginKeyConfig } from "./PluginKeyProvide
 const policies = [
   {
     pluginId: "sample@synthetic",
+    bindingPluginId: "sample@synthetic",
+    requiredKeys: ["TOKEN"],
     pluginName: "sample",
     path: "/synthetic/plugin",
     serverNames: ["api", "local"],

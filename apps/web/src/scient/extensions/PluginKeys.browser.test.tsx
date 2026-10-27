@@ -15,6 +15,7 @@ import { PluginKeys } from "./PluginKeys";
 const state = vi.hoisted(() => ({
   data: null as PluginKeyState | null,
   canWrite: true,
+  storeInstalled: false,
   bind: vi.fn(),
   unbind: vi.fn(),
   save: vi.fn(),
@@ -22,7 +23,20 @@ const state = vi.hoisted(() => ({
 vi.mock("../../hooks/useSettings", () => ({ useClientSettings: () => [] }));
 vi.mock("./ExtensionRow", () => ({ ExtensionIcon: () => null }));
 vi.mock("./ExtensionsPage", () => ({
-  useExtensionsEnvironment: () => ({ environmentId: "synthetic", canWrite: state.canWrite }),
+  useExtensionsEnvironment: () => ({
+    environmentId: "synthetic",
+    canWrite: state.canWrite,
+    providerInventory: {
+      providers: state.storeInstalled
+        ? [
+            {
+              instanceId: "synthetic-agent",
+              plugins: [{ id: "sample@synthetic", name: "sample@synthetic" }],
+            },
+          ]
+        : [],
+    },
+  }),
 }));
 vi.mock("./ExtensionDetailPages", () => ({
   DetailSection: ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -69,11 +83,12 @@ const input = {
 };
 function setup() {
   state.canWrite = true;
+  state.storeInstalled = false;
   state.data = {
     status: "needs-key",
     requirementsKnown: true,
     writable: true,
-    keys: [{ envName: "TOKEN", available: false }],
+    keys: [{ envName: "TOKEN", available: false, origins: ["https://api.example.com"] }],
     accounts: [{ ref: existing, name: "Existing API key" }],
   };
   state.bind.mockReset().mockImplementation(async ({ input: binding }) => {
@@ -95,7 +110,7 @@ function setup() {
     state.data = {
       ...state.data!,
       status: "needs-key",
-      keys: [{ envName: "TOKEN", available: false }],
+      keys: [{ envName: "TOKEN", available: false, origins: ["https://api.example.com"] }],
     };
     return { _tag: "Success", value: state.data };
   });
@@ -143,7 +158,7 @@ it("creates an API-key account in Accounts before binding its returned id", asyn
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   expect(state.save.mock.calls[0]?.[0]).toMatchObject({
-    details: { kind: "api-key", envName: "TOKEN" },
+    details: { kind: "api-key", envName: "TOKEN", sites: ["https://api.example.com"] },
   });
   expect(state.bind.mock.calls[0]?.[0].input.accountRef).toBe("account:acc_created001:token");
 });
@@ -154,4 +169,17 @@ it("keeps bindings read-only without the environment write grant", async () => {
   await using _screen = await render(<PluginKeys input={input} />);
   await expect.element(page.getByRole("combobox", { name: "TOKEN account" })).toBeDisabled();
   await expect.element(page.getByRole("button", { name: "Add key", exact: true })).toBeDisabled();
+});
+
+it("waits for a verified installed identity before showing bindings on a store detail page", async () => {
+  setup();
+  const storeInput = { instanceId: input.instanceId, entryId: "sample@synthetic" };
+  await using screen = await render(<PluginKeys input={storeInput} />);
+  await expect
+    .element(page.getByRole("combobox", { name: "TOKEN account" }))
+    .not.toBeInTheDocument();
+  state.storeInstalled = true;
+  await screen.rerender(<PluginKeys input={storeInput} />);
+  await page.getByRole("combobox", { name: "TOKEN account" }).selectOptions(existing);
+  expect(state.bind.mock.calls[0]?.[0].input.pluginId).toBe("sample@synthetic");
 });

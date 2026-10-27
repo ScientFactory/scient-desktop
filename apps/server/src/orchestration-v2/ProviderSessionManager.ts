@@ -1,5 +1,7 @@
 // SCIENT-FORK:START — prepare native key-server suppression before provider startup.
+import { ConnectorRuntime } from "../scient/extensions/ExtensionsServices.ts";
 import { preparePluginKeyStartup } from "../scient/extensions/PluginKeyStartup.ts";
+import { preparePluginKeyHttpDelivery } from "../scient/extensions/PluginKeyHttpDelivery.ts";
 import { PluginKeyBindings } from "../scient/extensions/PluginKeyBindings.ts";
 // SCIENT-FORK:END
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -711,7 +713,7 @@ export const layerWithOptions = (
             // SCIENT-FORK:START — Scient Accounts: all provider sessions can use user-granted accounts.
             capabilities.add("accounts");
             // SCIENT-FORK:END
-            const connectorPlan = yield* planConnectors(true);
+            let connectorPlan = yield* planConnectors(true);
             // SCIENT-FORK:START — key-bearing native servers stay suppressed until Scient supplies them.
             const pluginKeyPolicies = Option.isSome(pluginKeyBindings)
               ? yield* preparePluginKeyStartup(
@@ -721,6 +723,28 @@ export const layerWithOptions = (
                 )
               : [];
             // SCIENT-FORK:END
+            const pluginHttpRuntime = yield* Effect.serviceOption(ConnectorRuntime);
+            const pluginHttp =
+              Option.isSome(pluginKeyBindings) && Option.isSome(pluginHttpRuntime)
+                ? yield* preparePluginKeyHttpDelivery(
+                    providerRegistry,
+                    pluginHttpRuntime.value,
+                    pluginKeyBindings.value,
+                    {
+                      agent: providerInstanceId,
+                      cwd: cwd ?? undefined,
+                      policies: pluginKeyPolicies,
+                      projectId: yield* projectionStore.getThread(threadId).pipe(
+                        Effect.map((thread) => thread.projectId),
+                        Effect.orElseSucceed(() => undefined),
+                      ),
+                    },
+                  )
+                : { connectors: [], serverNames: {} };
+            connectorPlan = {
+              ...connectorPlan,
+              delivered: [...connectorPlan.delivered, ...pluginHttp.connectors],
+            };
             // SCIENT-FORK:END
             const subagent = yield* projectionStore.getThread(threadId).pipe(
               Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
@@ -808,6 +832,9 @@ export const layerWithOptions = (
             yield* mcpSessions.set({
               ...credential.config,
               ...(pluginKeyPolicies.length ? { pluginKeyPolicies } : {}),
+              ...(pluginHttp.connectors.length
+                ? { pluginKeyServerNames: pluginHttp.serverNames }
+                : {}),
               ...(credential.config.connectors.length === 0
                 ? {}
                 : {

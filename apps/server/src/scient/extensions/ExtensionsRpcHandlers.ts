@@ -24,6 +24,7 @@ import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { PluginKeyBindings, pluginKeyAccountsEligibilityKey } from "./PluginKeyBindings.ts";
+import { readPluginKeyOrigins } from "./PluginKeyStartup.ts";
 import { makePluginContents } from "./PluginContents.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
 import {
@@ -193,7 +194,16 @@ export const makeExtensionsRpcHandlers = ({
       ...(input.agent ? { instanceId: input.agent } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
     });
-    return yield* pluginKeys.list(input, detail.requiredKeys);
+    const origins = yield* readPluginKeyOrigins(providerRegistry, input).pipe(
+      Effect.mapError(
+        () =>
+          new ExtensionsError({
+            reason: "state-unavailable",
+            message: "Could not check this plugin's key destinations.",
+          }),
+      ),
+    );
+    return yield* pluginKeys.list(input, detail.requiredKeys, origins);
   });
   const keyMutation = Effect.fn("ExtensionsRpc.keyMutation")(function* (
     input: PluginKeyTarget & {

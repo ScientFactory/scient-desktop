@@ -542,7 +542,7 @@ export function ProviderStoreDetailPage(props: {
   readonly entryId: string;
 }) {
   return (
-    <ExtensionsPage>
+    <ExtensionsPage loadProviderInventory>
       <StoreDetail key={JSON.stringify(props)} {...props} />
     </ExtensionsPage>
   );

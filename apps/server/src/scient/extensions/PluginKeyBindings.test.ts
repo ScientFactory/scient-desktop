@@ -34,6 +34,37 @@ it.effect(
       const bindings = yield* makePluginKeyBindings(root, service);
       expect((yield* bindings.list(target, ["TOKEN"])).status).toBe("needs-key");
       yield* bindings.bind({ ...target, envName: "TOKEN", accountRef: accountTokenRef(accountId) });
+      expect(
+        (yield* bindings.list(target, ["TOKEN"], new Map([["TOKEN", ["https://api.example.com"]]])))
+          .status,
+      ).toBe("needs-key");
+      yield* service.save({
+        accountId,
+        name: "Synthetic key",
+        details: { kind: "api-key", sites: ["example.com"], auth: { type: "bearer" } },
+        secrets: {},
+      });
+      expect(
+        (yield* bindings.list(target, ["TOKEN"], new Map([["TOKEN", ["https://api.example.com"]]])))
+          .status,
+      ).toBe("ready");
+      expect(
+        (yield* bindings.list(
+          target,
+          ["TOKEN"],
+          new Map([["TOKEN", ["https://api.example.com", "https://other.example.net"]]]),
+        )).status,
+      ).toBe("needs-key");
+      expect(
+        (yield* bindings
+          .resolveKey({
+            ...target,
+            envName: "TOKEN",
+            origin: "https://api.example.com",
+            expectedRef: VaultSecretRef.make("account:acc_another01:token"),
+          })
+          .pipe(Effect.result))._tag,
+      ).toBe("Failure");
       const eligibilityBeforeUse = pluginKeyAccountsEligibilityKey(yield* service.snapshot);
       expect((yield* bindings.list(target, ["TOKEN"])).status).toBe("ready");
       expect(pluginKeyAccountsEligibilityKey(yield* service.snapshot)).toBe(eligibilityBeforeUse);
