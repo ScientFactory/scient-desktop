@@ -215,7 +215,7 @@ Never ask for the token in chat, never write it anywhere, and never repeat it.
 ## Syncing
 
 1. Find the link with \`scient_overleaf_status\`; it lists each linked folder's \`connectionId\` and status without going online.
-2. Optionally preview with \`scient_overleaf_preview\`: what would come in and be sent, and any conflicts.
+2. Optionally preview with \`scient_overleaf_preview\`: what would come in and be sent, and any conflicts. Pass \`diff: true\` for bounded before/after text from the sync base to the fetched and publication trees; binary and oversized files are listed without contents. A stale diff needs another preview.
 3. Sync with \`scient_overleaf_sync\`. It saves the folder's open editors, brings Overleaf's changes in, then sends the folder's changes. New files, deletions, renames and older versions all sync, then get reported.
 4. New files are sent by default, except build output, hidden files and Scient's own project files. Send one of those with \`files.send\`. Keep a new file only here (notes to self, for example) with \`files.keepOnlyHere\`; it stays out until you send it the same way.
 5. Report the result lines to the user: what came in, what was sent, renames (Overleaf drops comments and tracked changes on renamed files), older versions sent, and any other agents working in the same copy.
