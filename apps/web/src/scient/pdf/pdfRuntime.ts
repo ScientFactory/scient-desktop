@@ -136,7 +136,8 @@ export function createPdfRuntime(input: {
     imageResourcesPath: `${pdfAssetRoot()}images/`,
     maxCanvasDim: 8_192,
     maxCanvasPixels: 16_777_216,
-    removePageBorders: false,
+    // Page margins come from the container's border; see scientPdfReader.css.
+    removePageBorders: true,
     supportsPinchToZoom: true,
   };
   const viewer = new PDFViewer(viewerOptions);
