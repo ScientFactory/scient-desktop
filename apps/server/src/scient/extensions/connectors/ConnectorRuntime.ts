@@ -743,6 +743,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
           ? Option.isSome(accounts)
             ? accounts.value
                 .resolveBound(auth.credentialRef, {
+                  kind: "connector",
                   connectorId: record.connectorId,
                   origin: new URL(record.url).origin,
                 })
@@ -1024,6 +1025,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             ? Redacted.value(
                 yield* accounts.value
                   .resolveBound(entered.secretRef, {
+                    kind: "connector",
                     connectorId,
                     origin: new URL(url).origin,
                   })

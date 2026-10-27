@@ -145,6 +145,12 @@ connector `needs-credential`; it never falls back to an owned value or OAuth.
 Disconnecting a bound connector leaves the account intact. Successful resolutions
 and denied access appear in Accounts activity without values.
 
+Plugin keys use the same two calls with a `plugin-key` consumer (agent, plugin,
+variable name, optional site and project). Without a site, `listBindable` offers
+every API-key account and `resolveBound` skips the site match; it still checks
+both Off switches and, unlike connectors, the account's project scope against the
+consumer's project. Activity names the plugin, variable and agent.
+
 ### Existing secrets
 
 - **Extensions connectors** (`connector-<uuid>`): Accounts provides the `ConnectorCredentialStore`
