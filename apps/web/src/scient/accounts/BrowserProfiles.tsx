@@ -95,6 +95,7 @@ function SignedInSitesDialog({
       ?.signOutSite?.(profile.id, site, environmentId)
       .catch(() => false);
     if (!done) profileError();
+    else window.dispatchEvent(new Event("scient-accounts-session-changed"));
     await load();
     setBusy(null);
   };

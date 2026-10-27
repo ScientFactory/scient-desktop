@@ -36,6 +36,12 @@ const lane = {
 
 export const accountsState = {
   snapshot,
+  websiteSnapshot: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "accounts:website-snapshot",
+    tag: WS_METHODS.accountsSnapshot,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  }),
   save: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:save",
     tag: WS_METHODS.accountsSave,
