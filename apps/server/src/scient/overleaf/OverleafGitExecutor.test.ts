@@ -150,13 +150,13 @@ describe("OverleafGitExecutor", () => {
   );
 
   it.effect("sweeps abandoned command scratch on startup and preserves unrelated state", () =>
-    withExecutor(({ runtimeRoot, work }) =>
+    withExecutor(({ runtimeRoot, work, publicationHelper }) =>
       Effect.gen(function* () {
         const abandoned = NodePath.join(runtimeRoot, "git-crashed");
         NodeFS.mkdirSync(abandoned);
         NodeFS.writeFileSync(NodePath.join(abandoned, "token"), "dummy-crash-canary");
         NodeFS.writeFileSync(NodePath.join(runtimeRoot, "keep"), "state");
-        const restarted = yield* make({ runtimeRoot });
+        const restarted = yield* make({ runtimeRoot, publicationHelper });
         expect(NodeFS.existsSync(abandoned)).toBe(false);
         expect(NodeFS.readFileSync(NodePath.join(runtimeRoot, "keep"), "utf8")).toBe("state");
         yield* restarted.execute({ cwd: work, args: ["--version"] });
@@ -166,11 +166,11 @@ describe("OverleafGitExecutor", () => {
   );
 
   it.effect("refuses unavailable private scratch without taking down the service layer", () =>
-    withExecutor(({ work }) =>
+    withExecutor(({ work, publicationHelper }) =>
       Effect.gen(function* () {
         const runtimeRoot = NodePath.join(work, "not-a-directory");
         NodeFS.writeFileSync(runtimeRoot, "untouched");
-        const unavailable = yield* make({ runtimeRoot });
+        const unavailable = yield* make({ runtimeRoot, publicationHelper });
         const error = yield* unavailable.availability.pipe(Effect.flip);
         expect(error.reason).toBe("runtime-failed");
         expect(NodeFS.readFileSync(runtimeRoot, "utf8")).toBe("untouched");

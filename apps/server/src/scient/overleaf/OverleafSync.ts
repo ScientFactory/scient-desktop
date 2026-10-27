@@ -1285,12 +1285,18 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const stateRoot = NodePath.join(config.stateDir, "overleaf");
+    const publicationHelper = yield* Effect.promise(() =>
+      resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
+    );
     const engine = Layer.mergeAll(
       OverleafStateStoreModule.layer,
       WorkspaceApplierModule.layer,
       OverleafRepositoryModule.layer.pipe(
         Layer.provide(
-          OverleafGitExecutor.layer({ runtimeRoot: NodePath.join(stateRoot, "runtime") }),
+          OverleafGitExecutor.layer({
+            runtimeRoot: NodePath.join(stateRoot, "runtime"),
+            publicationHelper,
+          }),
         ),
       ),
     );
@@ -1327,9 +1333,6 @@ export const layer = Layer.unwrap(
                 ];
           });
         }).pipe(Effect.orElseSucceed(() => null));
-        const publicationHelper = yield* Effect.promise(() =>
-          resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-        );
         const service = yield* make({
           stateRoot,
           environmentId,

@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
 import { makeGitScratch } from "./OverleafGitScratch.ts";
 
 const DEFAULT_TIMEOUT: Duration.Input = "2 minutes";
@@ -354,6 +355,7 @@ const spawnGit = Effect.fnUntraced(function* (input: SpawnInput) {
 export interface OverleafGitExecutorOptions {
   /** Private directory for per-command scratch space; created on demand. */
   readonly runtimeRoot: string;
+  readonly publicationHelper?: string | undefined;
   /** Tests only. */
   readonly allowLocalProtocols?: boolean;
 }
@@ -437,9 +439,12 @@ export const make = Effect.fn("OverleafGitExecutor.make")(function* (
     return resolved;
   });
 
-  const scratchReady = yield* Effect.tryPromise(() =>
-    makeGitScratch(options.runtimeRoot, windows),
-  ).pipe(
+  const scratchReady = yield* Effect.tryPromise(async () => {
+    const helper = windows
+      ? (options.publicationHelper ?? (await resolveNativeFilePublicationHelperPath()))
+      : undefined;
+    return makeGitScratch(options.runtimeRoot, windows, helper);
+  }).pipe(
     Effect.mapError((cause) =>
       fail(
         "runtime-failed",
