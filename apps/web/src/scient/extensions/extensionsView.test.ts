@@ -13,6 +13,7 @@ import {
   collectProviderExtensionGroups,
   preferCuratedStoreEntries,
   providerExtensionAudience,
+  worksWithCardAgents,
 } from "./extensionsView";
 
 const provider = (driver: string, id = driver) =>
@@ -38,6 +39,10 @@ describe("extension audiences", () => {
       providerExtensionAudience(claude, { name: "mail", status: "needs-auth", scope: "claudeai" })
         .layer,
     ).toBe("agent");
+    // "Codex only" lists Codex alone; Scient connectors still explain every agent.
+    const support = audienceSupport(audience, [codex, claude], []);
+    expect(worksWithCardAgents(audience, support).map((entry) => entry.driver)).toEqual(["codex"]);
+    expect(worksWithCardAgents({ layer: "scient" }, support)).toHaveLength(2);
   });
   it("shows shared plugins under the Scient filter while hiding Claude account connectors", () => {
     const groups = collectProviderExtensionGroups(

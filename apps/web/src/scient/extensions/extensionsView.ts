@@ -457,6 +457,20 @@ export function audienceSupport(
   });
 }
 
+/**
+ * Agents shown in the works-with card. An agent-specific label ("Codex only") already names who can
+ * use the item, so other agents are left out; Scient connectors keep every agent, with the reason
+ * an agent can't use it.
+ */
+export function worksWithCardAgents(
+  audience: ExtensionAudience,
+  support: ReadonlyArray<ConnectorProviderSupport>,
+): ReadonlyArray<ConnectorProviderSupport> {
+  return audience.layer === "scient"
+    ? support
+    : support.filter((entry) => entry.status !== "unsupported");
+}
+
 export function preferCuratedStoreEntries<T extends { readonly name: string }>(
   entries: ReadonlyArray<T>,
   curated: ReadonlyArray<DiscoverEntry>,

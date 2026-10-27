@@ -6,7 +6,7 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { useExtensionsEnvironment, GHOST_LINK_CLASS } from "./ExtensionsPage";
-import { audienceLabel, audienceSupport } from "./extensionsView";
+import { audienceLabel, audienceSupport, worksWithCardAgents } from "./extensionsView";
 
 /** An agent's logo with its name below; an amber dot marks one that works with limits. */
 function AgentTileContent({
@@ -97,7 +97,7 @@ export function WorksWithValue({
   if (support.length === 0) {
     return <span className="text-muted-foreground">No agents reported</span>;
   }
-  const usable = support;
+  const usable = worksWithCardAgents(audience, support);
   const count = audienceLabel(audience);
   if (usable.length === 0) return <span>{count}</span>;
   const iconUrlOf = (entry: ConnectorProviderSupport) =>
