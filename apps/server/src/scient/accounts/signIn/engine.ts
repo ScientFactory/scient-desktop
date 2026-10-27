@@ -18,6 +18,7 @@ import { accountOtp, parseTotp } from "./totp.ts";
 import { matchesAccountOrigin } from "./origin.ts";
 
 const decodeDetection = Schema.decodeUnknownEffect(SignInDetection);
+const REJECTION_SETTLE_CHECKS = 5;
 
 export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   session: AccountSessionScope,
@@ -91,13 +92,13 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   const totp = secrets.totp === undefined ? undefined : Redacted.value(secrets.totp);
   // Only the last submission's fields: earlier pages are gone, and after a hand-off the user
   // continues with what is on screen.
-  let filled: Array<{ origin: string; selector: string }> = [];
+  let filled: Array<{ origin: string; selector: string; expected: string }> = [];
   const submissions: SignInSubmission[] = [];
   // Cleared unless the sign-in succeeded or the user takes over, including on interruption.
   let clearFilled = true;
   let cleanupFailed = false;
   const run = Effect.gen(function* () {
-    for (let step = 0; step <= 6; step++) {
+    const inspect = Effect.fn("accounts.signIn.inspect")(function* (step: number) {
       const detected = yield* invoke<unknown>(
         "evaluate",
         { expression: signInDetectionScript },
@@ -125,6 +126,22 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
                 }),
             });
       const continuation = decideSignInContinuation(page, submissions, step, otpPeriod);
+      return { page, timestamp, otpPeriod, continuation };
+    });
+    for (let step = 0; step <= 6; step++) {
+      let { page, timestamp, otpPeriod, continuation } = yield* inspect(step);
+      // Script-submitted logins answer after "load"; a field still on screen is only a
+      // rejection once the page has had a few seconds to respond.
+      for (
+        let wait = 0;
+        wait < REJECTION_SETTLE_CHECKS &&
+        (continuation.type === "password-rejected" || continuation.type === "code-rejected") &&
+        !page.signedIn;
+        wait++
+      ) {
+        yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
+        ({ page, timestamp, otpPeriod, continuation } = yield* inspect(step));
+      }
       if (continuation.type !== "continue" && !page.signedIn)
         return { outcome: continuation.type, message: continuation.message, tabId: target };
       const action = decideSignIn(page, details.sites, {
@@ -151,7 +168,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
               message: "The account's two-factor setup is invalid.",
             }),
         });
-        filled.push({ origin: page.origin, selector: field.selector });
+        filled.push({ origin: page.origin, selector: field.selector, expected: text });
         yield* invoke(
           "accountType",
           { origin: page.origin, selector: field.selector, text, clear: true },
