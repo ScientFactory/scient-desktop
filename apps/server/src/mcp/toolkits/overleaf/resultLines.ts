@@ -261,6 +261,7 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
   const at = refusal.path === undefined ? "" : ` (${refusal.path})`;
   switch (refusal.reason) {
     case "access-denied":
+      return "Overleaf refused access. Check your Overleaf token in Settings ▸ Synced folders, and that the project is shared with your account.";
     case "project-not-found":
       return "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.";
     case "remote-file-limit":

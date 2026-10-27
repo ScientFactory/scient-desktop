@@ -286,7 +286,7 @@ describe("Add project ▸ Overleaf project", () => {
     await expect
       .element(page.getByRole("alert"))
       .toHaveTextContent(
-        "The project is made, but Overleaf isn't linked yet. Overleaf has no such project.",
+        "The project is made, but Overleaf isn't linked yet. Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.",
       );
     await expect.element(page.getByLabelText("Project name")).toBeDisabled();
     await expect.element(page.getByLabelText("Location")).toBeDisabled();
@@ -313,7 +313,7 @@ describe("Add project ▸ Overleaf project", () => {
     await page.getByRole("button", { name: "Change…" }).click();
     await page.getByLabelText("Paper folder").fill("paper");
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect.element(page.getByText(/Overleaf refused the token/u)).toBeVisible();
+    await expect.element(page.getByText(/Overleaf refused access/u)).toBeVisible();
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     expect(openNewThread).toHaveBeenCalledExactlyOnceWith(projectRef);

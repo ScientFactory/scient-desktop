@@ -66,7 +66,7 @@ const OVERLEAF_FAILURES = {
   "access-denied": () =>
     toolError(
       "overleaf-access-denied",
-      "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.",
+      "Overleaf refused access. Check your Overleaf token in Settings ▸ Synced folders, and that the project is shared with your account.",
     ),
   "project-not-found": () =>
     toolError(

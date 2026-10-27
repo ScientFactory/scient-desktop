@@ -464,8 +464,11 @@ describe("Overleaf tool handlers", () => {
           ),
         ),
       );
+      // Refused access may be the token as well as sharing, so it names both.
       expect(error.code).toBe("overleaf-access-denied");
-      expect(error.message).toBe(message);
+      expect(error.message).toBe(
+        "Overleaf refused access. Check your Overleaf token in Settings ▸ Synced folders, and that the project is shared with your account.",
+      );
     }),
   );
 

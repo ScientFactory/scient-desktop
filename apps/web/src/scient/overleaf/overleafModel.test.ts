@@ -385,7 +385,7 @@ describe("refusalText", () => {
         message: "Overleaf refused the token.",
       }),
     ).toBe(
-      "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.",
+      "Overleaf refused access. Check your Overleaf token in Settings ▸ Synced folders, and that the project is shared with your account.",
     );
     // The server saved the folder's editors first and names the files that couldn't save.
     expect(

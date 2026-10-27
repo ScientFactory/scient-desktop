@@ -230,6 +230,7 @@ export function refusalText(
     case "token-missing":
       return "No Overleaf token is saved. Add one in Settings ▸ Synced folders ▸ Overleaf.";
     case "access-denied":
+      return "Overleaf refused access. Check your Overleaf token in Settings ▸ Synced folders, and that the project is shared with your account.";
     case "project-not-found":
       return "Overleaf has no project with this link that your account can open. Check the link, and that the project is shared with you.";
     case "project-invalid":
