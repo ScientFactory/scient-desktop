@@ -1,16 +1,14 @@
 import { isExtensionIconDataUri, type ExtensionAudience } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import type { LucideIcon } from "lucide-react";
+import { PuzzleIcon, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { extensionMarkLayout } from "./extensionIconLayout";
-import { ProjectMonogram } from "../../components/ProjectMonogram";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { useExtensionsEnvironment } from "./ExtensionsPage";
 import { extensionsBrandIcon, extensionsProviderStoreEntry } from "./extensionsState";
 import { WorksWithValue } from "./WorksWith";
-import { iconTint } from "./extensionsView";
 
 /** Every place an extension row or button can open. */
 export type ExtensionTarget =
@@ -112,8 +110,6 @@ function ExtensionLink({
   }
 }
 
-const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
 type ExtensionIconSize = "row" | "large" | "avatar";
 
 /** Avatar icons share the row size and use a round frame. */
@@ -162,19 +158,7 @@ function renderIcon(image: HTMLImageElement, url: string): string {
   return result;
 }
 
-const MONOGRAM_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
-  row: "size-10",
-  large: "size-16",
-  avatar: "size-10 rounded-full",
-};
-
-/**
- * The entry's own image when it is an allowed inline image
- * (`data:image/png|jpeg|webp|svg+xml;base64`, so nothing loads from
- * elsewhere), otherwise its first letter on a tint derived from its name.
- */
 function ExtensionIconTile({
-  name,
   iconUrl,
   glyph: Glyph,
   size = "row",
@@ -191,44 +175,35 @@ function ExtensionIconTile({
   const [sample, setSample] = useState<{ url: string; rendered: string }>();
   const rendered =
     image && (renderedIcons.get(image) ?? (sample?.url === image ? sample.rendered : image));
-  if (image !== undefined || Glyph) {
-    return (
-      <span
-        aria-hidden
-        data-extension-icon={Glyph ? "glyph" : "image"}
-        className={cn(
-          "flex shrink-0 items-center justify-center overflow-hidden border",
-          Glyph
-            ? "border-border bg-white dark:bg-card"
-            : "border-border [color-scheme:light] dark:border-white/10",
-          Glyph && (size === "large" ? "p-2.5" : "p-1.5"),
-          ICON_FRAME[size],
-          unframed && "size-8 border-0 bg-transparent p-1 opacity-60",
-        )}
-      >
-        {Glyph ? (
-          <Glyph className="size-full text-foreground/75" strokeWidth={1.75} />
-        ) : (
-          <img
-            alt=""
-            src={rendered}
-            className="size-full object-cover"
-            onLoad={(event) => {
-              if (image && !renderedIcons.has(image))
-                setSample({ url: image, rendered: renderIcon(event.currentTarget, image) });
-            }}
-          />
-        )}
-      </span>
-    );
-  }
-  const first = graphemes.segment(name.trim()).containing(0)?.segment ?? "?";
+  const Icon = Glyph ?? (image === undefined ? PuzzleIcon : undefined);
   return (
-    <ProjectMonogram
-      text={first.toLocaleUpperCase()}
-      color={iconTint(name)}
-      className={MONOGRAM_FRAME[size]}
-    />
+    <span
+      aria-hidden
+      data-extension-icon={Icon ? "glyph" : "image"}
+      className={cn(
+        "flex shrink-0 items-center justify-center overflow-hidden border",
+        Icon
+          ? "border-border bg-white dark:bg-card"
+          : "border-border [color-scheme:light] dark:border-white/10",
+        Icon && (size === "large" ? "p-2.5" : "p-1.5"),
+        ICON_FRAME[size],
+        unframed && "size-8 border-0 bg-transparent p-1 opacity-60",
+      )}
+    >
+      {Icon ? (
+        <Icon className="size-full text-foreground/75" strokeWidth={1.75} />
+      ) : (
+        <img
+          alt=""
+          src={rendered}
+          className="size-full object-cover"
+          onLoad={(event) => {
+            if (image && !renderedIcons.has(image))
+              setSample({ url: image, rendered: renderIcon(event.currentTarget, image) });
+          }}
+        />
+      )}
+    </span>
   );
 }
 
@@ -246,16 +221,18 @@ export function ExtensionIcon(props: ExtensionIconProps) {
 function ResolvedExtensionIcon(props: ExtensionIconProps) {
   const { environmentId, providers } = useExtensionsEnvironment();
   const target = props.providerPlugin;
-  const codex =
-    target &&
-    providers.find(
-      (provider) => provider.instanceId === target.instanceId && provider.driver === "codex",
-    );
+  const provider =
+    target && providers.find((provider) => provider.instanceId === target.instanceId);
+  const plugin = provider?.plugins?.find((plugin) => plugin.id === target?.pluginId);
   const own = useEnvironmentQuery(
-    codex && target
+    provider && target
       ? extensionsProviderStoreEntry({
           environmentId,
-          input: { instanceId: codex.instanceId, entryId: target.pluginId },
+          input: {
+            instanceId: provider.instanceId,
+            entryId:
+              provider.driver === "codex" ? target.pluginId : (plugin?.name ?? target.pluginId),
+          },
         })
       : null,
   );
@@ -302,7 +279,7 @@ export function ExtensionRow({
 }) {
   return (
     <li className="flex min-w-0 flex-col" data-extension-row={name}>
-      <div className="relative flex items-center gap-3 rounded-xl p-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-inset has-[a:focus-visible]:ring-ring">
+      <div className="relative flex items-center gap-3 rounded-xl p-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring">
         <ExtensionIcon
           name={name}
           iconUrl={iconUrl}
@@ -344,7 +321,10 @@ export function ExtensionGrid({
   readonly children: ReactNode;
 }) {
   return (
-    <ul aria-label={label} className="-mx-2 grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+    <ul
+      aria-label={label}
+      className="-mx-2 grid grid-cols-1 gap-x-6 gap-y-1 @min-[720px]/extensions:grid-cols-2"
+    >
       {children}
     </ul>
   );

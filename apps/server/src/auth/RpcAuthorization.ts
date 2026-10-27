@@ -106,6 +106,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverTestCustomModel]: AuthSettingsWriteScope,
   [WS_METHODS.skillsList]: AuthOrchestrationReadScope,
   [WS_METHODS.skillsReadDocument]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:START — external skill documents require read access.
+  [WS_METHODS.providerSkillsReadDocument]: AuthOrchestrationReadScope,
+  // SCIENT-FORK:END
   [WS_METHODS.skillsSetProjectPreference]: AuthSettingsWriteScope,
   [WS_METHODS.skillsSetUserActivation]: AuthSettingsWriteScope,
   [WS_METHODS.providerSkillsSetEnabled]: AuthSettingsWriteScope,

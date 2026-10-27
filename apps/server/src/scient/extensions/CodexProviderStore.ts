@@ -254,8 +254,16 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     // in the real server; the budget must outlast them or every retry starts
     // cold again.
     Effect.timeout("35 seconds"),
-    Effect.mapError(() => ({
-      message: "Codex could not finish the store request. Refresh to try again.",
+    Effect.mapError((cause) => ({
+      message:
+        cause instanceof Error
+          ? cause.message
+          : typeof cause === "object" &&
+              cause !== null &&
+              "message" in cause &&
+              typeof cause.message === "string"
+            ? cause.message
+            : "Codex could not finish the store request. Refresh to check its current state.",
     })),
   );
   const state = Effect.fn("CodexProviderStore.state")(function* (
@@ -483,21 +491,31 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const entry: NonNullable<ProviderPluginActions["store"]>["entry"] = (id) =>
     withClient(
       Effect.fn("CodexProviderStore.entry")(function* (client: Client) {
+        const findEntry = (entries: ReadonlyArray<CachedPlugin> | undefined) => {
+          const exact = entries?.find(({ plugin }) => plugin.id === id);
+          if (exact) return exact;
+          const named = entries?.filter(({ plugin }) => plugin.name === id);
+          return named?.length === 1 ? named[0] : undefined;
+        };
         let current = yield* state(client, false, true);
-        let item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+        let item = findEntry(current?.store.entries);
         if (!item) {
           current = yield* state(client);
-          item = current?.store.entries.find(({ plugin }) => plugin.id === id);
+          item = findEntry(current?.store.entries);
         }
         if (!current || !item) return yield* fail("This Codex plugin is no longer available.");
         const detail = yield* readDetail(client, item, current.store.details);
-        const pending = pendingAuth.get(id);
+        const pending = pendingAuth.get(item.plugin.id);
         const references = new Map(
           [...detail.apps, ...(pending?.key === current.store.key ? pending.apps : [])].map(
             (app) => [app.id, app],
           ),
         );
-        const summary = yield* project(item, current.plan, current.installedIds.has(id));
+        const summary = yield* project(
+          item,
+          current.plan,
+          current.installedIds.has(item.plugin.id),
+        );
         return {
           ...summary,
           tagline: summary.description,
@@ -514,7 +532,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
   const install: NonNullable<ProviderPluginActions["store"]>["install"] = (id) =>
     withClient(
       Effect.fn("CodexProviderStore.install")(function* (client: Client) {
-        const current = yield* state(client, true);
+        const current = yield* state(client);
         const item = current?.store.entries.find(({ plugin }) => plugin.id === id);
         if (!current || !item) return yield* fail("This Codex plugin is no longer available.");
         const reason = codexStoreDisabledReason(item.plugin, current.plan);

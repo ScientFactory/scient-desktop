@@ -441,7 +441,7 @@ function ToolsSection({
 function connectionState(connector: ConnectorSummary): string {
   if (connector.status === "needs-auth") return "Needs sign-in";
   if (connector.status === "needs-credential") return "Key missing";
-  return connector.auth.type === "none" ? "No sign-in needed" : "Signed in";
+  return connector.auth.type === "none" ? "No account needed" : "Signed in";
 }
 
 function connectionDetail(connector: ConnectorSummary, busy: string | null): string {
@@ -745,7 +745,8 @@ function ServerDetail({
   readonly entry: DiscoverEntry;
   readonly onAddWithOptions: () => void;
 }) {
-  const { catalog } = useExtensionsEnvironment();
+  const { catalog, providers } = useExtensionsEnvironment();
+  const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
   const actions = useAddEntry(entry);
   const name = entryName(entry);
   const tagline = entryTagline(entry);
@@ -787,12 +788,15 @@ function ServerDetail({
                 "Scient can't add this server: it has no remote endpoint to connect to."}
             </MutedLine>
           ) : null}
+          {entry.accountRequired === false ? <MutedLine>No account needed</MutedLine> : null}
           <ActionFeedback feedback={actions.feedback} />
         </>
       }
     >
       <DetailSection title="Tools">
-        <MutedCard>{TOOLS_AFTER_SIGN_IN}</MutedCard>
+        <MutedCard>
+          {entry.accountRequired === false ? "Tools appear after you add it." : TOOLS_AFTER_SIGN_IN}
+        </MutedCard>
       </DetailSection>
       <AboutCard
         rows={[
@@ -816,7 +820,18 @@ function ServerDetail({
           catalogOnly ? null : ["Registry name", <Mono key="registry-name">{entry.name}</Mono>],
           catalogOnly ? null : ["Version", entry.version],
           ["Source", entrySourceLabel(entry)],
-          fact("Also available", entry.agentStores?.codex ? "Also in Codex’s store" : null),
+          fact(
+            "Also available",
+            entry.agentStores?.codex && codex ? (
+              <Link
+                to="/settings/extensions/item/store/$instanceId/$entryId"
+                params={{ instanceId: codex.instanceId, entryId: entry.agentStores.codex }}
+                className={cn(GHOST_LINK_CLASS, "text-foreground")}
+              >
+                Also in {codex.displayName ?? "Codex"}’s store
+              </Link>
+            ) : null,
+          ),
         ]}
       />
     </DetailLayout>
@@ -960,7 +975,7 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
                   disabled={actions.locked}
                   onClick={() => void actions.remove()}
                 >
-                  Uninstall
+                  Remove
                 </Button>
               ) : null}
             </>
@@ -1104,10 +1119,14 @@ function ProviderPluginDetail({
                   disabled={actions.locked}
                   onClick={() => void actions.uninstall()}
                 >
-                  Uninstall
+                  Remove
                 </Button>
               ) : (
-                <ManagedBy label={group.label} />
+                <MutedLine>
+                  {group.provider.driver === "claudeAgent"
+                    ? "Remove this plugin in Claude Code using its original install scope."
+                    : `Remove this plugin in ${group.label}’s plugin manager.`}
+                </MutedLine>
               )}
             </>
           }
@@ -1128,6 +1147,7 @@ function ProviderPluginDetail({
       <AboutCard
         rows={[
           ["Managed by", group.label],
+          ["Plugin ID", <Mono key="plugin-id">{plugin.name}</Mono>],
           [
             "Works with",
             <WorksWithValue

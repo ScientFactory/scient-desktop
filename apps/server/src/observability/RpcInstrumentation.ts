@@ -257,6 +257,9 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeComputeSessions]: "subscribe",
   [WS_METHODS.skillsList]: "skills",
   [WS_METHODS.skillsReadDocument]: "skills",
+  // SCIENT-FORK:START — external skill document reads.
+  [WS_METHODS.providerSkillsReadDocument]: "providerSkills",
+  // SCIENT-FORK:END
   [WS_METHODS.skillsSetProjectPreference]: "skills",
   [WS_METHODS.skillsSetUserActivation]: "skills",
   [WS_METHODS.providerSkillsSetEnabled]: "providerSkills",

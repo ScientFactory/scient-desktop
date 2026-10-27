@@ -10,7 +10,6 @@ import {
   supportsScientClaudePlugins,
   type ExtensionAudience,
   type ExtensionDeliverySkipReason,
-  type ProjectIconColor,
   type ProviderInstanceId,
   type ScientPluginSummary,
   type ServerProvider,
@@ -30,7 +29,6 @@ import {
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
 import { normalizeSearchText } from "../../lib/utils";
 import { PullRequestGlyph } from "../../components/pullRequest/pullRequestIcons";
-import { PROJECT_ICON_COLORS } from "../../projectIconColors";
 
 /** Shown after a row's name; healthy entries show nothing. */
 const CONNECTOR_STATUS_TEXT: Readonly<Record<ConnectorStatus, string | null>> = {
@@ -211,13 +209,6 @@ export function matchesQuery(query: string, texts: ReadonlyArray<string | undefi
   if (words.length === 0) return true;
   const haystack = normalizeSearchText(texts.filter(Boolean).join(" "));
   return words.every((word) => haystack.includes(word));
-}
-
-/** A stable tint per name, from the project icon palette. */
-export function iconTint(name: string): ProjectIconColor {
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return PROJECT_ICON_COLORS[Math.abs(hash) % PROJECT_ICON_COLORS.length]!.value;
 }
 
 function providerLabel(provider: Pick<ServerProvider, "driver" | "displayName">): string {

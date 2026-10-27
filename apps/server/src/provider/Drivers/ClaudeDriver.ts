@@ -36,7 +36,10 @@ import { makeClaudeVoiceTranscriptCorrection } from "../../scient/voice/ClaudeVo
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 // SCIENT-FORK:START — Scient Extensions: live-session provider-native inventory.
 import { makeSharedPluginStore } from "../../scient/extensions/SharedPluginStore.ts";
-import { readClaudeInstalledPlugins } from "../../scient/extensions/ClaudeInstalledPlugins.ts";
+import {
+  readClaudeInstalledPlugins,
+  uninstallClaudePlugin,
+} from "../../scient/extensions/ClaudeInstalledPlugins.ts";
 import { runProviderPluginCommand } from "../../scient/extensions/ProviderPluginCommand.ts";
 import { resolveClaudeSdkExecutablePath } from "./ClaudeExecutable.ts";
 import { nextInventoryReadSequence } from "../ProviderNativeInventory.ts";
@@ -320,35 +323,35 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
     const listPlugins: ProviderPluginActions["listPlugins"] = Effect.fn("ClaudeDriver.listPlugins")(
       function* ({ cwd }: { readonly cwd?: string | undefined }) {
         const sequence = yield* nextInventoryReadSequence;
-        const plugins = yield* readClaudeInstalledPlugins(configDir, cwd);
+        const plugins = yield* readClaudeInstalledPlugins(configDir, cwd, true);
         return { plugins, sequence };
       },
       Effect.provideService(Path.Path, path),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.mapError(() => ({ message: "Could not read Claude Code’s installed plugins." })),
     );
+    const runPluginCommand = Effect.fn("ClaudeDriver.runPluginCommand")(
+      function* (args: ReadonlyArray<string>) {
+        const executable = yield* resolveClaudeSdkExecutablePath(
+          effectiveConfig.binaryPath,
+          effectiveProcessEnv,
+        );
+        return yield* runProviderPluginCommand(
+          executable,
+          { ...effectiveProcessEnv, CLAUDE_CONFIG_DIR: configDir },
+          serverConfig.stateDir,
+          args,
+        );
+      },
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
     const store = yield* makeSharedPluginStore({
       kind: "claude",
       claudeHome: configDir,
       installed: () => listPlugins({}),
-      run: Effect.fn("ClaudeDriver.installSharedPlugin")(
-        function* (args: ReadonlyArray<string>) {
-          const executable = yield* resolveClaudeSdkExecutablePath(
-            effectiveConfig.binaryPath,
-            effectiveProcessEnv,
-          );
-          return yield* runProviderPluginCommand(
-            executable,
-            { ...effectiveProcessEnv, CLAUDE_CONFIG_DIR: configDir },
-            serverConfig.stateDir,
-            args,
-          );
-        },
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.mapError(() => ({ message: "Claude could not install the plugin." })),
-      ),
+      run: runPluginCommand,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
@@ -362,7 +365,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
         ),
       listPlugins,
       readMcpServer: () => unsupported,
-      uninstall: () => unsupported,
+      uninstall: (input) => uninstallClaudePlugin(listPlugins, runPluginCommand, input),
       startMcpSignIn: () => unsupported,
       isRetired: Deferred.isDone(retired),
       whenRetired: Deferred.await(retired),

@@ -81,6 +81,14 @@ export class ScientSkillManagementError extends Schema.TaggedError<ScientSkillMa
   },
 ) {}
 
+export const ProviderSkillReadDocumentInput = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  name: TrimmedNonEmptyString,
+  path: TrimmedNonEmptyString,
+});
+export type ProviderSkillReadDocumentInput = typeof ProviderSkillReadDocumentInput.Type;
+export const ProviderSkillDocument = Schema.Struct({ instructions: Schema.String });
+
 /**
  * Mutate one provider-owned skill through the provider's reviewed native API.
  * `path` is already part of the provider snapshot contract and is never shown

@@ -318,11 +318,8 @@ export function makeProviderPluginManagement(
       "installing the plugin",
       actions.store.install(entryId),
     ).pipe(
-      Effect.mapError(() =>
-        failure(
-          "provider-rejected",
-          "The agent did not confirm the installation. Refresh to check.",
-        ),
+      Effect.mapError((cause) =>
+        isExtensionsError(cause) ? cause : failure("provider-rejected", cause.message),
       ),
     );
     const verified = yield* untilRetired(

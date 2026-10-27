@@ -429,6 +429,7 @@ import {
   WsSkillsSetProjectPreferenceRpc,
   WsSkillsSetUserActivationRpc,
   WsProviderSkillsSetEnabledRpc,
+  WsProviderSkillsReadDocumentRpc,
 } from "./scient/skillRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions RPCs.
@@ -2192,6 +2193,9 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsProviderSkillsSetEnabledRpc,
+  // SCIENT-FORK:START — external skill document RPC.
+  WsProviderSkillsReadDocumentRpc,
+  // SCIENT-FORK:END
   WsVoiceCorrectTranscriptRpc,
   WsProviderUploadFeedbackRpc,
   WsServerUpdateProviderRpc,

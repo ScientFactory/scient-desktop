@@ -145,6 +145,47 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
   return { client, calls, state, notify };
 }
 describe("Codex provider store", () => {
+  it.effect("resolves curated cross-store names to a unique canonical plugin id", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = clientFixture([plugin("notion@curated", { name: "notion" })]);
+        const store = yield* makeCodexProviderStore(() => Effect.succeed(fixture.client));
+        expect((yield* store.entry("notion")).id).toBe("notion@curated");
+      }),
+    ),
+  );
+
+  it.effect(
+    "installs from the displayed catalog without a second forced refresh and preserves provider errors",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fixture = clientFixture([plugin("latex")]);
+          const original = fixture.client.request;
+          let failInstall = false;
+          const client = {
+            ...fixture.client,
+            request: ((method: string, params: unknown) =>
+              method === "plugin/install" && failInstall
+                ? Effect.fail({ message: "The plugin download was rejected" })
+                : original(
+                    method as Parameters<typeof original>[0],
+                    params as never,
+                  )) as typeof original,
+          };
+          const store = yield* makeCodexProviderStore(() => Effect.succeed(client));
+          yield* store.entry("latex");
+          yield* store.install("latex");
+          expect((yield* store.entry("latex")).installed).toBe(true);
+          expect(fixture.calls.filter((call) => call.method === "plugin/list")).toHaveLength(1);
+          failInstall = true;
+          expect((yield* store.install("latex").pipe(Effect.flip)).message).toBe(
+            "The plugin download was rejected",
+          );
+        }),
+      ),
+  );
+
   it.effect("prefers bundled brands in store details and app contents, with runtime fallback", () =>
     Effect.scoped(
       Effect.gen(function* () {

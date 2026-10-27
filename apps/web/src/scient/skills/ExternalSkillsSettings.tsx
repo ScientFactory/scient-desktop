@@ -20,7 +20,14 @@ import {
   externalSkillSourceLabel,
   externalSkillStatus,
 } from "./externalSkills";
-import { setProviderSkillEnabled } from "./scientSkillsState";
+import { SkillCard } from "./SkillCard";
+import { useEnvironmentQuery } from "../../state/query";
+import {
+  type EnvironmentId,
+  type ServerProviderSkill,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
+import { providerSkillDocument, setProviderSkillEnabled } from "./scientSkillsState";
 import {
   SettingsSourcePanel,
   SettingsSourceGroup,
@@ -40,6 +47,12 @@ export function ExternalSkillsSettings() {
   const environmentId = usePrimaryEnvironmentId();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const groups = collectExternalSkillProviders(providers);
+  const [selected, setSelected] = useState<{
+    instanceId: ProviderInstanceId;
+    skill: ServerProviderSkill;
+    displayName: string;
+    description: string;
+  } | null>(null);
   const [expandedInstanceId, setExpandedInstanceId] = useState<string | null>(null);
   const [local, setLocal] = useState({
     environmentId,
@@ -185,6 +198,14 @@ export function ExternalSkillsSettings() {
 
   return (
     <SettingsPageContainer>
+      {selected && environmentId ? (
+        <ExternalSkillCard
+          key={JSON.stringify([environmentId, selected.instanceId, selected.skill.path])}
+          environmentId={environmentId}
+          {...selected}
+          onClose={() => setSelected(null)}
+        />
+      ) : null}
       <SettingsSection
         title="External skills"
         icon={<LibraryBigIcon className="size-4" />}
@@ -260,7 +281,22 @@ export function ExternalSkillsSettings() {
                       <SettingsRow
                         key={skill.path}
                         className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
-                        title={displayName}
+                        title={
+                          <button
+                            type="button"
+                            className="cursor-pointer rounded-sm text-left outline-none focus-visible:outline focus-visible:outline-ring"
+                            onClick={() =>
+                              setSelected({
+                                instanceId: expandedGroup.provider.instanceId,
+                                skill,
+                                displayName,
+                                description: description ?? "",
+                              })
+                            }
+                          >
+                            {displayName}
+                          </button>
+                        }
                         description={description}
                         status={
                           pending && !pending.confirmed
@@ -294,5 +330,41 @@ export function ExternalSkillsSettings() {
         )}
       </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function ExternalSkillCard({
+  environmentId,
+  instanceId,
+  skill,
+  displayName,
+  description,
+  onClose,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+  readonly skill: ServerProviderSkill;
+  readonly displayName: string;
+  readonly description: string;
+  readonly onClose: () => void;
+}) {
+  const document = useEnvironmentQuery(
+    providerSkillDocument({
+      environmentId,
+      input: { instanceId, name: skill.name, path: skill.path },
+    }),
+  );
+  return (
+    <SkillCard
+      name={skill.name}
+      displayName={displayName}
+      description={description}
+      environmentId={environmentId}
+      instructions={document.data?.instructions ?? null}
+      error={document.error}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    />
   );
 }

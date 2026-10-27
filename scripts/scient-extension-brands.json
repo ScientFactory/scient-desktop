@@ -664,6 +664,22 @@
     }
   },
   {
+    "key": "claude",
+    "names": ["claude"],
+    "website": "https://claude.ai",
+    "source": {
+      "kind": "official",
+      "url": "repo:apps/marketing/public/harnesses/claude-ai-icon.svg",
+      "rendering": "mark",
+      "background": "#ffffff",
+      "licenseNote": "Brand-owned artwork already bundled by Scient; trademarks remain with Anthropic.",
+      "sourceWidth": 256,
+      "sourceHeight": 257,
+      "sourceFormat": "svg",
+      "outputBytes": 5048
+    }
+  },
+  {
     "key": "clay",
     "names": ["clay"],
     "website": "https://clay.com",

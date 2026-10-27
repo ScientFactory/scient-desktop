@@ -1,3 +1,4 @@
+import { resolveBrandIcon } from "./BrandIcons.ts";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -8,6 +9,7 @@ import {
   makeSharedPluginStore,
   sharedPluginDisplayName,
   sharedPluginShelfRank,
+  sharedPluginIcon,
 } from "./SharedPluginStore.ts";
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -58,6 +60,43 @@ const fixture = Effect.gen(function* () {
   return { home, clone, agent, path, write };
 });
 describe("shared marketplace store", () => {
+  it("uses the brand pack, own logo, verified author brand, then a neutral fallback", () => {
+    const logo = "data:image/png;base64,YQ==";
+    expect(resolveBrandIcon("Claude")).toBeDefined();
+    expect(sharedPluginIcon("Notion", logo, "elsewhere", "someone")).toBe(
+      resolveBrandIcon("Notion"),
+    );
+    expect(sharedPluginIcon("unknown", logo, "claude-plugins-official", "Anthropic")).toBe(logo);
+    expect(
+      sharedPluginIcon("agent-sdk-dev", undefined, "claude-plugins-official", "Anthropic"),
+    ).toBe(resolveBrandIcon("Claude"));
+    expect(sharedPluginIcon("unknown", undefined, "elsewhere", "Anthropic")).toBeUndefined();
+    expect(
+      sharedPluginIcon("unknown", undefined, "claude-plugins-official", "someone"),
+    ).toBeUndefined();
+  });
+  it.effect("keeps healthy marketplaces usable and names a failed source", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { home, clone, path, write } = yield* fixture;
+        yield* write(path.join(home, "plugins", "known_marketplaces.json"), {
+          "claude-plugins-official": { installLocation: clone },
+          broken: { installLocation: path.join(home, "missing") },
+        });
+        const store = yield* makeSharedPluginStore({
+          kind: "claude",
+          claudeHome: home,
+          installed: () => Effect.succeed({ sequence: 1, plugins: [] }),
+          run: () => Effect.die("read only"),
+        });
+        const page = yield* store.search({});
+        expect(page.entries).toHaveLength(2);
+        expect(page.sourceFailures).toEqual(["broken"]);
+        expect((yield* store.entry("review@claude-plugins-official")).name).toBe("review");
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect(
     "pages local catalogs without executing plugins, and reads includes and matched review provenance",
     () =>

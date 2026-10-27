@@ -352,6 +352,7 @@ export type DiscoverRemote = typeof DiscoverRemote.Type;
 
 export const DiscoverEntry = Schema.Struct({
   agentStores: Schema.optional(ExtensionAgentStores),
+  accountRequired: Schema.optional(Schema.Boolean),
   name: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),

@@ -3,7 +3,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import { scientAgentTarget } from "../../provider/scient/ScientAgentTarget.ts";
+import { sharedPluginDisplayName } from "./SharedPluginStore.ts";
 import { readPluginJson } from "./LocalPluginFiles.ts";
 
 const Registry = Schema.Struct({
@@ -32,6 +34,7 @@ const decodeSourceSetting = Schema.decodeUnknownEffect(
 export const readClaudeInstalledPlugins = Effect.fn("readClaudeInstalledPlugins")(function* (
   home: string,
   cwd?: string,
+  allowRemoval = false,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -88,6 +91,8 @@ export const readClaudeInstalledPlugins = Effect.fn("readClaudeInstalledPlugins"
       plugins.push({
         id: `claude:${entry.scope}:${name}:${index}`,
         name,
+        displayName: sharedPluginDisplayName(name.split("@")[0]!),
+        canUninstall: allowRemoval && entry.scope === "user",
         path: entry.installPath,
         enabled: entry.enabled !== false && overrides[name] !== false,
         scope: entry.scope === "local" ? "project" : entry.scope,
@@ -124,3 +129,18 @@ export const readScientClaudePlugins = Effect.fn("readScientClaudePlugins")(
   },
   Effect.mapError(() => ({ message: "Could not read Claude Code's plugins for Scient Agent." })),
 );
+
+export const uninstallClaudePlugin = Effect.fn("uninstallClaudePlugin")(function* (
+  list: ProviderPluginActions["listPlugins"],
+  run: (args: ReadonlyArray<string>) => Effect.Effect<string, { readonly message: string }>,
+  input: { readonly pluginId: string; readonly cwd?: string | undefined },
+) {
+  const plugin = (yield* list({ cwd: input.cwd })).plugins.find(
+    (item) => item.id === input.pluginId,
+  );
+  if (!plugin?.canUninstall || plugin.scope !== "user")
+    return yield* Effect.fail({
+      message: "Only user-scope Claude Code plugins can be removed here.",
+    });
+  yield* run(["plugin", "uninstall", plugin.name, "--scope", "user", "--keep-data", "--json"]);
+});

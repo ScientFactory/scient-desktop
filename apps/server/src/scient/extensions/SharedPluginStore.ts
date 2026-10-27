@@ -9,7 +9,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
-import { readLocalPluginContents, readLocalPluginSkill } from "./LocalPluginContents.ts";
+import {
+  readContainedPluginIcon,
+  readLocalPluginContents,
+  readLocalPluginSkill,
+} from "./LocalPluginContents.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { readPluginJson } from "./LocalPluginFiles.ts";
 
@@ -59,6 +63,7 @@ const Plugin = Schema.Struct({
   skills: Schema.optional(Schema.Unknown),
   commands: Schema.optional(Schema.Unknown),
   author: Schema.optional(Schema.Struct({ name: Schema.String })),
+  logo: Schema.optional(Schema.String),
 });
 const Review = Schema.Struct({
   name: Schema.String,
@@ -129,6 +134,21 @@ export function sharedPluginDisplayName(slug: string): string {
     )
     .join(" ");
 }
+export function sharedPluginIcon(
+  name: string,
+  logo: string | undefined,
+  marketplace: string,
+  author: string | undefined,
+) {
+  return (
+    resolveBrandIcon(name) ??
+    logo ??
+    (marketplace === OFFICIAL && author?.trim().toLowerCase() === "anthropic"
+      ? resolveBrandIcon("Claude")
+      : undefined)
+  );
+}
+
 export function sharedPluginShelfRank(
   name: string,
   review?: { readonly state: string; readonly by?: { readonly type: string } | undefined },
@@ -277,10 +297,19 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       rank: number;
       inline: ExtensionPluginContents;
     }> = [];
+    const sourceFailures: string[] = [];
     for (const source of roots) {
-      const raw = yield* optionalJson(source.catalog);
-      if (raw === undefined) continue;
-      const catalog = yield* decodeCatalog(raw);
+      const result = yield* optionalJson(source.catalog).pipe(
+        Effect.flatMap((raw) =>
+          raw === undefined ? Effect.fail({ message: "Catalog missing" }) : decodeCatalog(raw),
+        ),
+        Effect.result,
+      );
+      if (result._tag === "Failure") {
+        sourceFailures.push(source.name);
+        continue;
+      }
+      const catalog = result.success;
       if (catalog.name !== source.name) continue;
       if (catalog.plugins.length > 10_000 || entries.length + catalog.plugins.length > 20_000)
         return yield* Effect.fail({ message: "The shared store exceeded its entry limit." });
@@ -311,6 +340,13 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
         const directory = reviews.find(
           (entry) => pluginNameKey(entry.name) === pluginNameKey(plugin.name),
         );
+        const logo =
+          plugin.logo && pluginDir
+            ? yield* Effect.tryPromise(() =>
+                readContainedPluginIcon(pluginRoot, path.resolve(pluginDir, plugin.logo!)),
+              ).pipe(Effect.orElseSucceed(() => undefined))
+            : undefined;
+        const iconUrl = sharedPluginIcon(plugin.name, logo, source.name, plugin.author?.name);
         entries.push({
           rank: sharedPluginShelfRank(plugin.name, directory?.checks?.review),
           inline: inlinePluginContents(plugin),
@@ -332,6 +368,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
             installed: installed.has(id),
             includes: [],
             apps: [],
+            ...(iconUrl ? { iconUrl } : {}),
             ...(plugin.version ? { version: plugin.version } : {}),
             ...(plugin.author?.name ? { publisher: plugin.author.name } : {}),
             ...(plugin.homepage ? { website: plugin.homepage } : {}),
@@ -346,6 +383,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
     }
     return {
       entries,
+      sourceFailures,
       officialStoreConfigured: roots.some(
         (source) => source.name === OFFICIAL && source.configured,
       ),
@@ -376,6 +414,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       return {
         entries: matching.slice(offset, offset + limit).map((item) => item.entry),
         total: matching.length,
+        ...(result.sourceFailures.length ? { sourceFailures: result.sourceFailures } : {}),
         ...(offset + limit < matching.length ? { nextCursor: String(offset + limit) } : {}),
         canAddOfficialStore: result.canAddOfficialStore,
         officialStoreConfigured: result.officialStoreConfigured,

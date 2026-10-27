@@ -89,6 +89,12 @@ export const makeSkillRpcHandlers = ({
   const providerSkillManagement =
     ProviderSkillManagement.makeProviderSkillManagement(providerRegistry);
   return {
+    [WS_METHODS.providerSkillsReadDocument]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.providerSkillsReadDocument,
+        providerSkillManagement.readDocument(input),
+        { "rpc.aggregate": "skills" },
+      ),
     [WS_METHODS.providerSkillsSetEnabled]: (input) =>
       observeRpcEffect(
         WS_METHODS.providerSkillsSetEnabled,
@@ -140,6 +146,7 @@ export const makeSkillRpcHandlers = ({
       ),
   } satisfies ScientRpcHandlerSubset<
     typeof WsServerManagementRpcGroup,
+    | typeof WS_METHODS.providerSkillsReadDocument
     | typeof WS_METHODS.providerSkillsSetEnabled
     | typeof WS_METHODS.skillsList
     | typeof WS_METHODS.skillsReadDocument

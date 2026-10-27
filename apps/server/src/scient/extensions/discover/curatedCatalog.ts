@@ -69,6 +69,7 @@ export interface CuratedServer {
   /** Bundled logo: a `data:` URI that passes `isExtensionIconDataUri`. */
   readonly icon: string;
   readonly agentStores?: DiscoverEntry["agentStores"];
+  readonly accountRequired?: boolean;
 }
 
 export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
@@ -76,6 +77,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-26: no auth, initialize + tools/list (7 tools).
     id: "pubmed",
+    accountRequired: false,
     displayName: "PubMed",
     tagline: "Biomedical papers, abstracts and full text",
     description:
@@ -265,6 +267,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-26: no auth, initialize + tools/list (3 tools); exact registry remote.
     id: "wolfram",
+    accountRequired: false,
     displayName: "Wolfram",
     tagline: "Compute integrals, solve equations and explore data",
     description:
@@ -278,6 +281,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-26: no auth, initialize + tools/list (4 tools); exact registry remote.
     id: "arxiv-community",
+    accountRequired: false,
     displayName: "arXiv (community)",
     tagline: "Find and read mathematics and computer science papers",
     description:
@@ -291,6 +295,7 @@ export const CURATED_SERVERS: ReadonlyArray<CuratedServer> = [
   {
     // Verified 2026-10-26: no auth, initialize + tools/list (6 tools); exact registry remote.
     id: "oeis-community",
+    accountRequired: false,
     displayName: "OEIS (community)",
     tagline: "Identify integer sequences and find formulas and programs",
     description:
@@ -684,6 +689,7 @@ export const curatedDiscoverEntry = (
   version: server.registry?.version ?? CATALOG_VERIFIED_ON,
   title: server.displayName,
   ...(server.agentStores ? { agentStores: server.agentStores } : {}),
+  ...(server.accountRequired !== undefined ? { accountRequired: server.accountRequired } : {}),
   description: server.description,
   tagline: server.tagline,
   categories: [...server.categories],

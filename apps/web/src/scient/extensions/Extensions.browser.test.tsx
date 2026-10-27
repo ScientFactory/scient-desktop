@@ -823,7 +823,7 @@ describe("Discover", () => {
     );
   });
 
-  it("draws a letter tile for an icon that is not an allowed inline image", async () => {
+  it("draws a neutral tile for an icon that is not an allowed inline image", async () => {
     await using fixture = setup();
     const [popular] = catalog.sections;
     state.catalog = {
@@ -846,7 +846,7 @@ describe("Discover", () => {
     };
     await fixture.render(<DiscoverPage />);
     expect(fixture.row("Odd").querySelector("img")).toBeNull();
-    expect(fixture.row("Odd").querySelector("[data-extension-icon]")).toBeNull();
+    expect(fixture.row("Odd").querySelector('[data-extension-icon="glyph"]')).not.toBeNull();
     expect(fixture.row("Fine").querySelector('[data-extension-icon="image"] img')).not.toBeNull();
   });
 
@@ -1216,17 +1216,17 @@ describe("Detail pages", () => {
     await fixture.render(<PluginDetailPage pluginId="scient.sources" />);
     expect(fixture.headerButtons()).toEqual([]);
     await fixture.render(<PluginDetailPage pluginId="lab-kit" />);
-    expect(fixture.headerButtons()).toEqual(["Turn off Lab kit", "Uninstall"]);
+    expect(fixture.headerButtons()).toEqual(["Turn off Lab kit", "Remove"]);
 
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    expect(fixture.headerButtons()).toEqual(["Uninstall"]);
+    expect(fixture.headerButtons()).toEqual(["Remove"]);
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-2" workspace={undefined} />,
     );
     expect(fixture.headerButtons()).toEqual([]);
-    expect(fixture.header().textContent).toContain("Managed by Codex");
+    expect(fixture.header().textContent).toContain("Remove this plugin in Codex");
   });
 
   it("shows the connection with its sign-in, menu and On/Off switch", async () => {
@@ -1849,7 +1849,7 @@ describe("Detail pages", () => {
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={workspace} />
     );
     await fixture.render(page("/work/a"));
-    await userEvent.click(buttonIn(fixture.header(), "Uninstall")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: {
@@ -1858,11 +1858,11 @@ describe("Detail pages", () => {
         cwd: "/work/a",
       },
     });
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(true);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(true);
     await fixture.render(page("/work/b"));
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
     await fixture.render(page(undefined));
-    expect(buttonIn(fixture.header(), "Uninstall")?.disabled).toBe(false);
+    expect(buttonIn(fixture.header(), "Remove")?.disabled).toBe(false);
 
     await act(async () => pending.resolve(extensionsError("Codex refused.")));
     await fixture.render(page("/work/a"));
@@ -1880,7 +1880,7 @@ describe("Detail pages", () => {
     await fixture.render(
       <ProviderPluginDetailPage instanceId="codex" pluginId="plugin-1" workspace={undefined} />,
     );
-    await userEvent.click(buttonIn(fixture.header(), "Uninstall")!);
+    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
     expect(state.commands.providerAct).toHaveBeenCalledExactlyOnceWith({
       environmentId: "local",
       input: { instanceId: codex, action: { type: "uninstall", pluginId: "plugin-1" } },

@@ -750,6 +750,7 @@ describe("ProviderPluginManagement install", () => {
       Effect.gen(function* () {
         const installed = yield* Ref.make(false);
         const accept = yield* Ref.make(false);
+        const reject = yield* Ref.make(false);
         let mutations = 0;
         const { actions } = yield* makeGeneration({
           store: {
@@ -770,6 +771,10 @@ describe("ProviderPluginManagement install", () => {
               ),
             install: () =>
               Effect.gen(function* () {
+                if (yield* Ref.get(reject))
+                  return yield* Effect.fail({
+                    message: "The plugin archive could not be downloaded.",
+                  });
                 mutations++;
                 yield* Ref.set(installed, yield* Ref.get(accept));
               }),
@@ -789,6 +794,11 @@ describe("ProviderPluginManagement install", () => {
         yield* management.act(input);
         assert.strictEqual(mutations, 2);
         assert.strictEqual((yield* Ref.get(recorded)).length, 1);
+        yield* Ref.set(reject, true);
+        assert.strictEqual(
+          (yield* management.act(input).pipe(Effect.flip)).message,
+          "The plugin archive could not be downloaded.",
+        );
       }),
     ),
   );

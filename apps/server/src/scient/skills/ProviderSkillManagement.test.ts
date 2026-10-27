@@ -1,5 +1,8 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { NodeServices } from "@effect/platform-node";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 
 import { makeProviderRegistryMock } from "../../provider/testUtils/providerRegistryMock.ts";
@@ -32,6 +35,47 @@ function provider(canSetEnabled = true): ServerProvider {
 }
 
 describe("provider skill management", () => {
+  it.effect(
+    "reads only a reported local skill and rejects missing, escaping, and oversized documents",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped();
+          const folder = path.join(root, "skill");
+          yield* fs.makeDirectory(folder);
+          const file = path.join(folder, "SKILL.md");
+          yield* fs.writeFileString(file, "---\nname: review\n---\n# Review instructions");
+          const snapshot = {
+            ...provider(),
+            skills: [{ name: "review", path: file, enabled: true }],
+          };
+          const management = makeProviderSkillManagement(makeProviderRegistryMock([snapshot]));
+          const input = { instanceId, name: "review", path: file };
+          expect((yield* management.readDocument(input)).instructions).toBe(
+            "# Review instructions",
+          );
+          expect(
+            (yield* management
+              .readDocument({ ...input, path: path.join(root, "SKILL.md") })
+              .pipe(Effect.flip)).reason,
+          ).toBe("skill_not_found");
+          yield* fs.writeFileString(file, "x".repeat(256 * 1024 + 1));
+          expect((yield* management.readDocument(input).pipe(Effect.flip)).reason).toBe(
+            "provider_rejected",
+          );
+          yield* fs.remove(file);
+          const outside = path.join(root, "outside.md");
+          yield* fs.writeFileString(outside, "outside");
+          yield* fs.symlink(outside, file);
+          expect((yield* management.readDocument(input).pipe(Effect.flip)).reason).toBe(
+            "provider_rejected",
+          );
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("preserves concurrent skill changes that share native settings", () =>
     Effect.gen(function* () {
       const base = provider();

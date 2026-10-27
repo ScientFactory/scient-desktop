@@ -250,10 +250,10 @@ export const makeExtensionsRpcHandlers = ({
             });
           return yield* actions.store.search(input).pipe(
             Effect.mapError(
-              () =>
+              (cause) =>
                 new ExtensionsError({
                   reason: "state-unavailable",
-                  message: "Could not read this agent’s plugin store.",
+                  message: cause.message,
                 }),
             ),
           );

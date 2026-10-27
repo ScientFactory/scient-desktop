@@ -5,11 +5,50 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { readClaudeInstalledPlugins, readScientClaudePlugins } from "./ClaudeInstalledPlugins.ts";
+import {
+  readClaudeInstalledPlugins,
+  readScientClaudePlugins,
+  uninstallClaudePlugin,
+} from "./ClaudeInstalledPlugins.ts";
 const decodeSettings = Schema.decodeSync(ScientAgentSettings);
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 describe("Claude plugin source compatibility", () => {
+  it.effect(
+    "removes only the selected user-scope plugin, retaining its data and other scopes",
+    () =>
+      Effect.gen(function* () {
+        const calls: ReadonlyArray<string>[] = [];
+        const user = {
+          id: "claude:user:review@official:0",
+          name: "review@official",
+          scope: "user",
+          enabled: true,
+          source: "local" as const,
+          canUninstall: true,
+        };
+        const project = {
+          ...user,
+          id: "claude:project:review@official:0",
+          scope: "project",
+          canUninstall: false,
+        };
+        const list = () => Effect.succeed({ sequence: 1, plugins: [user, project] });
+        const run = (args: ReadonlyArray<string>) =>
+          Effect.sync(() => {
+            calls.push(args);
+            return "";
+          });
+        yield* uninstallClaudePlugin(list, run, { pluginId: user.id });
+        expect(calls).toEqual([
+          ["plugin", "uninstall", user.name, "--scope", "user", "--keep-data", "--json"],
+        ]);
+        yield* uninstallClaudePlugin(list, run, { pluginId: project.id }).pipe(Effect.flip);
+        yield* uninstallClaudePlugin(list, run, { pluginId: "missing" }).pipe(Effect.flip);
+        expect(calls).toHaveLength(1);
+      }),
+  );
+
   it("defaults existing configurations on but requires a supported stable release", () => {
     expect(decodeSettings({}).useClaudePlugins).toBe(true);
     expect([null, "0.1.2", "0.1.3-beta.1", "invalid"].map(supportsScientClaudePlugins)).toEqual([
@@ -54,7 +93,11 @@ describe("Claude plugin source compatibility", () => {
           enabled: false,
           sourceLabel: "Claude Code's plugins",
         });
-        expect(plugins[0]?.canUninstall).toBeUndefined();
+        expect(plugins[0]?.canUninstall).toBe(false);
+        expect((yield* readClaudeInstalledPlugins(home, undefined, true))[0]).toMatchObject({
+          canUninstall: true,
+          displayName: "Review",
+        });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );

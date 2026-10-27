@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   type ProviderStoreEntry,
   type ServerProvider,
+  type ServerProviderPlugin,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useContext, useEffect, useState } from "react";
@@ -13,7 +14,7 @@ import { Input } from "../../components/ui/input";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useDebouncedValue } from "../../state/queries";
-import { useActionLock } from "./extensionActions";
+import { useActionLock, useProviderPluginActions } from "./extensionActions";
 import { ActionFeedback } from "./ExtensionItems";
 import { AboutCard, DetailHeader, DetailLayout, PrimaryAction } from "./ExtensionDetailPages";
 import {
@@ -57,11 +58,15 @@ function StoreInstall({
       ? (providers.find((item) => storeAvailable(item) && item.driver === "claudeAgent") ??
         provider)
       : provider;
-  const installed =
-    entry.installed || target.plugins?.some((plugin) => plugin.name === entry.id) === true;
+  const plugin = target.plugins?.find(
+    (plugin) => plugin.id === entry.id || plugin.name === entry.id,
+  );
+  const installed = entry.installed || plugin !== undefined;
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
   const act = useAtomCommand(actOnProviderPlugin);
   const lock = useActionLock(JSON.stringify(["store", provider.instanceId, entry.id]));
+  if (installed && plugin?.canUninstall)
+    return <StoreRemove provider={target} plugin={plugin} refresh={refresh} />;
   return (
     <>
       <PrimaryAction
@@ -97,7 +102,42 @@ function StoreInstall({
                 ? "Add to Claude Code"
                 : "Add to Scient Agent"}
       </PrimaryAction>
+      {installed ? (
+        <MutedLine>
+          Remove this plugin in {target.displayName ?? "the agent"}’s plugin manager.
+        </MutedLine>
+      ) : null}
       <ActionFeedback feedback={lock.feedback} />
+    </>
+  );
+}
+
+function StoreRemove({
+  provider,
+  plugin,
+  refresh,
+}: {
+  readonly provider: ServerProvider;
+  readonly plugin: ServerProviderPlugin;
+  readonly refresh: () => void;
+}) {
+  const actions = useProviderPluginActions(
+    provider,
+    provider.displayName ?? "this agent",
+    plugin,
+    undefined,
+  );
+  return (
+    <>
+      <span className="text-sm text-muted-foreground">Added</span>
+      <Button
+        variant="destructive-outline"
+        disabled={actions.locked}
+        onClick={() => void actions.uninstall().then(refresh)}
+      >
+        {actions.busy ? "Removing…" : "Remove"}
+      </Button>
+      <ActionFeedback feedback={actions.feedback} />
     </>
   );
 }
@@ -163,11 +203,30 @@ function StoreResults({
   return (
     <>
       {page.error ? (
-        <MutedLine>{page.error}</MutedLine>
+        <MutedLine>
+          {provider.displayName ??
+            (provider.driver === "scient"
+              ? "Scient Agent"
+              : provider.driver === "claudeAgent"
+                ? "Claude Code"
+                : "Codex")}
+          : {page.error}{" "}
+          <Button size="sm" variant="ghost-muted" onClick={refresh}>
+            Retry
+          </Button>
+        </MutedLine>
       ) : page.data === null ? (
         <MutedLine>Loading plugins…</MutedLine>
       ) : (
         <>
+          {page.data.sourceFailures?.length ? (
+            <MutedLine>
+              Could not read {page.data.sourceFailures.join(", ")}.{" "}
+              <Button size="sm" variant="ghost-muted" onClick={refresh}>
+                Retry
+              </Button>
+            </MutedLine>
+          ) : null}
           {page.data.message ? <MutedLine>{page.data.message}</MutedLine> : null}
           {page.data.canAddOfficialStore && !claudeServesOfficial ? (
             <Button
@@ -361,7 +420,8 @@ function Store({ instanceId }: { readonly instanceId: string }) {
               ? [provider]
               : providers.filter(
                   (item) =>
-                    item.enabled && (item.driver === "claudeAgent" || item.driver === "scient"),
+                    storeAvailable(item) &&
+                    (item.driver === "claudeAgent" || item.driver === "scient"),
                 )
             ).map((target) => (
               <StoreResults
@@ -393,7 +453,7 @@ function StoreDetail({
   readonly instanceId: string;
   readonly entryId: string;
 }) {
-  const { environmentId, providers } = useExtensionsEnvironment();
+  const { environmentId, providers, catalog } = useExtensionsEnvironment();
   const registry = useContext(RegistryContext);
   const atom = extensionsProviderStoreEntry({
     environmentId,
@@ -408,6 +468,9 @@ function StoreDetail({
   const provider = providers.find((item) => item.instanceId === instanceId);
   if (!provider || !result.data) return <MutedLine>{result.error ?? "Loading plugin…"}</MutedLine>;
   const entry = result.data;
+  const connector = catalog?.sections
+    .flatMap((section) => section.entries)
+    .find((item) => item.agentStores?.codex === entry.name);
   return (
     <DetailLayout
       back="discover"
@@ -455,6 +518,18 @@ function StoreDetail({
               }
             />,
           ],
+          connector
+            ? [
+                "Also available",
+                <Link
+                  key="connector"
+                  to="/settings/extensions/item/server/$"
+                  params={{ _splat: connector.name }}
+                >
+                  Connect with Scient for all your agents
+                </Link>,
+              ]
+            : null,
           ["Marketplace", entry.marketplace],
           entry.version ? ["Version", entry.version] : null,
           entry.publisher ? ["Publisher", entry.publisher] : null,

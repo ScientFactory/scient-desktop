@@ -366,7 +366,7 @@ export function useProviderPluginActions(
     uninstall: async () => {
       if (lock.locked || plugin.canUninstall !== true) return;
       const confirmed = await confirmDestructive(
-        `Uninstall ${plugin.displayName ?? plugin.name} from ${label}?`,
+        `Remove ${plugin.displayName ?? plugin.name} from ${label}?`,
       );
       if (!confirmed) return;
       await lock.run("uninstall", () =>

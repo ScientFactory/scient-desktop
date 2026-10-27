@@ -53,6 +53,7 @@ export const ProviderStorePage = Schema.Struct({
   entries: Schema.Array(ProviderStoreEntry),
   nextCursor: Schema.optional(Schema.String),
   total: Schema.Number,
+  sourceFailures: Schema.optional(Schema.Array(Schema.String)),
   canAddOfficialStore: Schema.optional(Schema.Boolean),
   /** The agent's own home has Claude Code's official marketplace configured. */
   officialStoreConfigured: Schema.optional(Schema.Boolean),
