@@ -293,7 +293,7 @@ export async function publicationLeaseBindings(
   const identityFor = async (path: string) => {
     let identity = identities.get(path);
     if (!identity) {
-      identity = await directoryIdentity(path);
+      identity = await directoryIdentity(path, helper);
       identities.set(path, identity);
     }
     return identity;
@@ -341,9 +341,9 @@ export async function publicationLeaseBindings(
 const absent = (e: unknown) =>
   ["ENOENT", "ENOTDIR"].includes((e as NodeJS.ErrnoException).code ?? "");
 export const retainedFileNames = ["slot", "retained", "provisional"] as const;
-export async function directoryIdentity(directory: string): Promise<Identity> {
+export async function directoryIdentity(directory: string, helper?: string): Promise<Identity> {
   if (HostProcess.Platform.defaultValue() === "win32") {
-    const identity = await windowsFileIdentity(directory);
+    const identity = await windowsFileIdentity(directory, helper);
     if (!identity || identity.type !== "directory")
       throw new Error("Workspace directory binding changed.");
     return { dev: identity.dev, ino: identity.ino };
@@ -353,13 +353,13 @@ export async function directoryIdentity(directory: string): Promise<Identity> {
     throw new Error("Workspace directory binding changed.");
   return { dev: String(stat.dev), ino: String(stat.ino) };
 }
-export async function assertRootBinding(root: string, expected?: Identity) {
-  if (expected && !sameIdentity(await directoryIdentity(root), expected))
+export async function assertRootBinding(root: string, expected?: Identity, helper?: string) {
+  if (expected && !sameIdentity(await directoryIdentity(root, helper), expected))
     throw new RetainedMutationError("target", "Workspace root identity changed.", "root-binding");
 }
-export async function fileIdentity(file: string): Promise<Identity | null> {
+export async function fileIdentity(file: string, helper?: string): Promise<Identity | null> {
   if (HostProcess.Platform.defaultValue() === "win32") {
-    const identity = await windowsFileIdentity(file);
+    const identity = await windowsFileIdentity(file, helper);
     return identity?.type === "file" ? { dev: identity.dev, ino: identity.ino } : null;
   }
   try {
@@ -458,7 +458,7 @@ export async function fileRevision(file: string): Promise<string | null> {
   }
 }
 
-export async function inspectGuardedFile(file: string, maxBytes?: number) {
+export async function inspectGuardedFile(file: string, maxBytes?: number, helper?: string) {
   let handle;
   try {
     handle = await NodeFSP.open(
@@ -504,7 +504,7 @@ export async function inspectGuardedFile(file: string, maxBytes?: number) {
     return {
       identity:
         HostProcess.Platform.defaultValue() === "win32"
-          ? (await fileIdentity(file))!
+          ? (await fileIdentity(file, helper))!
           : { dev: String(stat.dev), ino: String(stat.ino) },
       byteLength,
       binary,
@@ -558,9 +558,9 @@ export async function durableJson(file: string, value: unknown) {
   await NodeFSP.rename(temporary, file);
   await syncDirectory(NodePath.dirname(file));
 }
-export async function assertPrivateRetention(directory: string) {
+export async function assertPrivateRetention(directory: string, helper?: string) {
   if (HostProcess.Platform.defaultValue() === "win32") {
-    const info = await windowsNativeFile(directory, "private");
+    const info = await windowsNativeFile(directory, "private", helper);
     if (info.code === 2 || info.code === 3)
       throw Object.assign(new Error("Missing private directory."), { code: "ENOENT" });
     if (info.code !== 0 || info.syncManaged)
@@ -592,10 +592,10 @@ export async function assertPrivateRetention(directory: string) {
 export async function prepareRetainedDirectory(retention: string, id: string, helper: string) {
   if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(id))
     throw new RetainedMutationError("intent", "Invalid retained mutation identity.", id);
-  await assertPrivateRetention(retention);
+  await assertPrivateRetention(retention, helper);
   const directory = NodePath.join(retention, id);
   try {
-    await assertPrivateRetention(directory);
+    await assertPrivateRetention(directory, helper);
   } catch (cause) {
     if (!isRetainedMissing(cause)) throw cause;
     const prepared = await ensureNativePrivateRetentionDirectory(helper, directory);
@@ -605,7 +605,7 @@ export async function prepareRetainedDirectory(retention: string, id: string, he
         "Retained directory authority changed during creation.",
         id,
       );
-    await assertPrivateRetention(directory);
+    await assertPrivateRetention(directory, helper);
   }
   return directory;
 }
@@ -622,18 +622,18 @@ export async function retainedPaths(directory: string): Promise<string[]> {
   }
   return paths;
 }
-export async function retainedStorageBytes(retention: string): Promise<number> {
+export async function retainedStorageBytes(retention: string, helper?: string): Promise<number> {
   let total = 0;
   for (const entry of await NodeFSP.readdir(retention, { withFileTypes: true })) {
     if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]{1,100}$/u.test(entry.name)) continue;
     const directory = NodePath.join(retention, entry.name);
-    await assertPrivateRetention(directory);
+    await assertPrivateRetention(directory, helper);
     for (const file of await retainedPaths(directory)) total += (await NodeFSP.lstat(file)).size;
   }
   return total;
 }
-export async function readRetainedRecord(directory: string) {
-  await assertPrivateRetention(directory);
+export async function readRetainedRecord(directory: string, helper?: string) {
+  await assertPrivateRetention(directory, helper);
   return decodeRetainedRecord(
     await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
   );
@@ -641,8 +641,9 @@ export async function readRetainedRecord(directory: string) {
 
 export async function retainedMutationReceipt(
   directory: string,
+  helper?: string,
 ): Promise<RetainedMutationResult | null> {
-  const record = await readRetainedRecord(directory);
+  const record = await readRetainedRecord(directory, helper);
   if (record.version !== 2 || record.phase !== "done") return null;
   const paths = await retainedPaths(directory);
   const kept = paths.find((path) => NodePath.basename(path) === "retained") ?? paths[0] ?? null;
@@ -651,7 +652,7 @@ export async function retainedMutationReceipt(
     recordDirectory: directory,
     retainedPath: kept,
     retainedRevision: kept ? await fileRevision(kept) : null,
-    retainedIdentity: kept ? await fileIdentity(kept) : null,
+    retainedIdentity: kept ? await fileIdentity(kept, helper) : null,
     mutationId: record.mutationId,
     revision: record.publishedRevision,
     currentRevision: record.currentRevision,
@@ -699,7 +700,9 @@ export async function mutateRetainedFile(
   const creation =
     kind === "create" ||
     condition === "absent" ||
-    (kind === "write" && condition === "unguarded" && (await fileIdentity(target)) === null);
+    (kind === "write" &&
+      condition === "unguarded" &&
+      (await fileIdentity(target, helper)) === null);
   if (
     (kind === "write" || kind === "create") &&
     !(creation
@@ -709,7 +712,10 @@ export async function mutateRetainedFile(
   ) {
     let previous;
     try {
-      previous = await readRetainedRecord(NodePath.join(input.retentionDirectory, input.id));
+      previous = await readRetainedRecord(
+        NodePath.join(input.retentionDirectory, input.id),
+        helper,
+      );
     } catch (cause) {
       if (!absent(cause)) throw cause;
     }
@@ -722,7 +728,7 @@ export async function mutateRetainedFile(
         );
       const publicationParent = parent;
       const qualifyNoop = async () => {
-        const snapshot = await inspectGuardedFile(target, input.guardMaxBytes);
+        const snapshot = await inspectGuardedFile(target, input.guardMaxBytes, helper);
         const current = await bindNativeFilePublicationParent(
           helper,
           publicationParent.rootPath,
@@ -734,7 +740,7 @@ export async function mutateRetainedFile(
           (condition !== "revision" || snapshot.revision === input.expectedRevision) &&
           (input.guardMaxBytes === undefined ||
             (snapshot.byteLength <= input.guardMaxBytes && !snapshot.binary)) &&
-          sameIdentity(snapshot.identity, await fileIdentity(target)) &&
+          sameIdentity(snapshot.identity, await fileIdentity(target, helper)) &&
           sameIdentity(current.rootIdentity, publicationParent.rootIdentity) &&
           sameIdentity(current.parentIdentity, publicationParent.parentIdentity)
         );
@@ -765,7 +771,7 @@ export async function mutateRetainedFile(
     }));
   if (binding.recordPath !== directory)
     throw new RetainedMutationError("target", "Retained record binding mismatch.", input.id);
-  await assertRootBinding(binding.rootPath, input.expectedRootIdentity);
+  await assertRootBinding(binding.rootPath, input.expectedRootIdentity, helper);
   const destinationBinding =
     input.destinationBinding ??
     (input.destination
@@ -1590,10 +1596,11 @@ export async function retainedViewPath(
   directory: string,
   leaf: (typeof retainedFileNames)[number],
   target: string,
+  helper?: string,
 ) {
-  await assertPrivateRetention(directory);
+  await assertPrivateRetention(directory, helper);
   const source = NodePath.join(directory, leaf),
-    identity = await fileIdentity(source);
+    identity = await fileIdentity(source, helper);
   if (!identity) return source;
   const extension = NodePath.extname(target);
   const safeExtension = /^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt";
@@ -1602,7 +1609,7 @@ export async function retainedViewPath(
     await NodeFSP.link(source, view);
     await syncDirectory(directory);
   } catch (e) {
-    if (!isRetainedExists(e) || !sameIdentity(await fileIdentity(view), identity)) throw e;
+    if (!isRetainedExists(e) || !sameIdentity(await fileIdentity(view, helper), identity)) throw e;
   }
   return view;
 }

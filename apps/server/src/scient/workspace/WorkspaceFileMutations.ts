@@ -541,7 +541,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const removeKept = async (lease: NativeFilePublicationLease, directory: string, name: string) => {
     const path = NodePath.join(directory, name);
     await deps.retainedHooks?.removal?.("before", path);
-    await removeNativeRetainedEntry(lease, directory, name);
+    await removeNativeRetainedEntry(lease, directory, name, deps.nativePublicationHelper);
     await deps.retainedHooks?.removal?.("after", path);
   };
   /**
@@ -604,7 +604,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const recordsIn = async (storage: string): Promise<Stored[]> => {
     let entries;
     try {
-      await assertPrivateRetention(storage);
+      await assertPrivateRetention(storage, deps.nativePublicationHelper);
       entries = await NodeFSP.readdir(storage, { withFileTypes: true });
     } catch (e) {
       if (isNodeError(e, "ENOENT")) return [];
@@ -619,13 +619,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         records.push(known.stored);
         continue;
       }
-      await assertPrivateRetention(indexed);
+      await assertPrivateRetention(indexed, deps.nativePublicationHelper);
       const reference = await readOptional(
         NodePath.join(indexed, "reference.json"),
         decodeReference,
       );
       const directory = reference?.recordDirectory ?? indexed;
-      await assertPrivateRetention(directory);
+      await assertPrivateRetention(directory, deps.nativePublicationHelper);
       // Taken before the read: a change after it moves this on.
       const stand = await recordStand(indexed, directory);
       const text = await readOptional(NodePath.join(directory, "record.json"), (value) => value);
@@ -682,7 +682,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const allRecords = async (): Promise<Stored[]> => {
     let parents;
     try {
-      await assertPrivateRetention(await deps.resolveRetentionStorageDirectory());
+      await assertPrivateRetention(
+        await deps.resolveRetentionStorageDirectory(),
+        deps.nativePublicationHelper,
+      );
       parents = await NodeFSP.readdir(await deps.resolveRetentionStorageDirectory(), {
         withFileTypes: true,
       });
@@ -741,7 +744,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           parent = NodePath.dirname(parent);
           continue;
         }
-        await directoryIdentity(parent);
+        await directoryIdentity(parent, deps.nativePublicationHelper);
         return bindNativeFilePublicationParent(helperFor(), root, NodePath.relative(root, parent));
       } catch (e) {
         if (!isNodeError(e, "ENOENT") && !isNodeError(e, "ENOTDIR")) throw e;
@@ -870,7 +873,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           record.target,
         );
       } catch {
-        const current = await readRetainedRecord(directory);
+        const current = await readRetainedRecord(directory, deps.nativePublicationHelper);
         if (current.version === 2 && current.phase !== "done")
           await durableJson(NodePath.join(directory, "record.json"), {
             ...current,
@@ -964,8 +967,14 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       return (
         (await NodeFSP.realpath(binding.rootPath)) === binding.rootPath &&
         (await NodeFSP.realpath(parentPath)) === parentPath &&
-        sameIdentity(await directoryIdentity(binding.rootPath), binding.rootIdentity) &&
-        sameIdentity(await directoryIdentity(parentPath), binding.parentIdentity)
+        sameIdentity(
+          await directoryIdentity(binding.rootPath, deps.nativePublicationHelper),
+          binding.rootIdentity,
+        ) &&
+        sameIdentity(
+          await directoryIdentity(parentPath, deps.nativePublicationHelper),
+          binding.parentIdentity,
+        )
       );
     } catch {
       return false;
@@ -1049,6 +1058,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             entry.directory,
             NodePath.basename(path) as (typeof retainedFileNames)[number],
             entry.target ?? resolved.target,
+            deps.nativePublicationHelper,
           ),
         );
     return {
@@ -1153,7 +1163,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 "Native workspace parent creation refused.",
                 "parent-binding",
               );
-            await directoryIdentity(directory);
+            await directoryIdentity(directory, deps.nativePublicationHelper);
           }
         },
         { mode: "exclusive", signal },
@@ -1294,7 +1304,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   ) => {
     let current: GuardedSnapshot;
     try {
-      current = await inspectGuardedFile(target);
+      current = await inspectGuardedFile(target, undefined, deps.nativePublicationHelper);
     } catch {
       throw cause;
     }
@@ -1358,7 +1368,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       await folderUnchanged();
       if (intent.condition === "revision" && snapshot) {
         const now = await beforeChange(() =>
-          inspectGuardedFile(resolved.target, intent.guardMaxBytes),
+          inspectGuardedFile(resolved.target, intent.guardMaxBytes, deps.nativePublicationHelper),
         );
         if (now === null || !sameIdentity(now.identity, snapshot.identity))
           throw new RetainedMutationError(
@@ -1428,7 +1438,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     } catch (cause) {
       await handle.close().catch(() => undefined);
       // Only the file this call created is removed; then the target is as before.
-      const current = await fileIdentity(target).catch(() => null);
+      const current = await fileIdentity(target, deps.nativePublicationHelper).catch(() => null);
       if (created !== null && current !== null && sameIdentity(current, created)) {
         await NodeFSP.rm(target, { force: true });
         throw new PlainPublicationUnchangedError(cause);
@@ -1490,7 +1500,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         intent.id,
       );
     const snapshot = await beforePublication(() =>
-      inspectGuardedFile(resolved.target, intent.guardMaxBytes),
+      inspectGuardedFile(resolved.target, intent.guardMaxBytes, deps.nativePublicationHelper),
     );
     const fields: PlainFields = {
       workspaceRoot: input.cwd,
@@ -1520,7 +1530,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       snapshot &&
       (intent.guardMaxBytes === undefined || snapshot.byteLength <= intent.guardMaxBytes) &&
       snapshot.revision === bytesRevision(intent.bytes) &&
-      sameIdentity(snapshot.identity, await beforePublication(() => fileIdentity(resolved.target)))
+      sameIdentity(
+        snapshot.identity,
+        await beforePublication(() => fileIdentity(resolved.target, deps.nativePublicationHelper)),
+      )
     )
       return receipt(false);
     if (
@@ -1544,7 +1557,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     }
     if (
       intent.condition === "absent" &&
-      (await beforePublication(() => fileIdentity(resolved.target)))
+      (await beforePublication(() => fileIdentity(resolved.target, deps.nativePublicationHelper)))
     )
       throw new WorkspaceFileExistsError(fields);
     if (verify) await beforePublication(() => verify(snapshot));
@@ -1594,7 +1607,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       intent.condition === "absent" ||
       (intent.kind === "write" &&
         intent.condition === "unguarded" &&
-        (await fileIdentity(resolved.target)) === null);
+        (await fileIdentity(resolved.target, deps.nativePublicationHelper)) === null);
     const qualified = creation
       ? (capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata) ||
         (capabilities.windowsMoveInstall === true && parentCapabilities.windowsMoveInstall === true)
@@ -1656,7 +1669,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               if (
                 !(await bindingCurrent(rootBinding)) ||
                 (parentBinding && !(await bindingCurrent(parentBinding))) ||
-                (snapshot && !sameIdentity(snapshot.identity, await fileIdentity(resolved.target)))
+                (snapshot &&
+                  !sameIdentity(
+                    snapshot.identity,
+                    await fileIdentity(resolved.target, deps.nativePublicationHelper),
+                  ))
               )
                 throw new RetainedMutationError(
                   "target",
@@ -1688,7 +1705,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             );
           return;
         }
-        const snapshot = await inspectGuardedFile(resolved.target, intent.guardMaxBytes);
+        const snapshot = await inspectGuardedFile(
+          resolved.target,
+          intent.guardMaxBytes,
+          deps.nativePublicationHelper,
+        );
         const fields = {
           workspaceRoot: input.cwd,
           relativePath: input.relativePath,
@@ -1714,12 +1735,19 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             intent.id,
           );
         }
-        if (intent.condition === "absent" && (await fileIdentity(resolved.target)))
+        if (
+          intent.condition === "absent" &&
+          (await fileIdentity(resolved.target, deps.nativePublicationHelper))
+        )
           throw new WorkspaceFileExistsError(fields);
         if (
           !(await bindingCurrent(rootBinding)) ||
           (parentBinding && !(await bindingCurrent(parentBinding))) ||
-          (snapshot && !sameIdentity(snapshot.identity, await fileIdentity(resolved.target)))
+          (snapshot &&
+            !sameIdentity(
+              snapshot.identity,
+              await fileIdentity(resolved.target, deps.nativePublicationHelper),
+            ))
         )
           throw new RetainedMutationError(
             "target",
@@ -1864,7 +1892,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             if (original) {
               let terminal;
               try {
-                terminal = await retainedMutationReceipt(original.recordDirectory);
+                terminal = await retainedMutationReceipt(
+                  original.recordDirectory,
+                  deps.nativePublicationHelper,
+                );
               } catch {
                 throw new RetainedMutationError(
                   "recovery",
@@ -1992,7 +2023,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             resolved.root,
             NodePath.dirname(resolved.target),
           );
-          await assertPrivateRetention(storage);
+          await assertPrivateRetention(storage, deps.nativePublicationHelper);
           const directory = await prepareRetainedDirectory(
             retentionOverride ?? storage,
             id,
@@ -2068,7 +2099,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 );
               if (original) {
                 if (original.recordDirectory !== identityDirectory) {
-                  const receipt = await retainedMutationReceipt(original.recordDirectory);
+                  const receipt = await retainedMutationReceipt(
+                    original.recordDirectory,
+                    deps.nativePublicationHelper,
+                  );
                   if (receipt) return receipt; // Original receipt survives later D and explicit review/discard.
                   if (original.recordDirectory !== directory)
                     throw new RetainedMutationError(
@@ -2162,7 +2196,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                     "An earlier retained identity was reused with a different intent.",
                     mutationId,
                   );
-                const terminal = await retainedMutationReceipt(prior.directory);
+                const terminal = await retainedMutationReceipt(
+                  prior.directory,
+                  deps.nativePublicationHelper,
+                );
                 if (terminal) return terminal;
                 throw new RetainedMutationError(
                   "recovery",
@@ -2251,7 +2288,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                   return result;
                 // The expected-epoch root EX lease remains held. Only this exact
                 // namespace mutation can have advanced the captured native epoch.
-                const terminal = await readRetainedRecord(result.recordDirectory);
+                const terminal = await readRetainedRecord(
+                  result.recordDirectory,
+                  deps.nativePublicationHelper,
+                );
                 if (
                   terminal.version !== 2 ||
                   terminal.phase !== "done" ||
@@ -2300,7 +2340,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                   throw cause;
                 let admitted;
                 try {
-                  admitted = await readRetainedRecord(directory);
+                  admitted = await readRetainedRecord(directory, deps.nativePublicationHelper);
                 } catch (e) {
                   if (!isNodeError(e, "ENOENT"))
                     throw new RetainedMutationError(
@@ -2318,7 +2358,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                       // directory sync. Re-establish durability before accepting it.
                       await syncDirectory(directory);
                       return await completePublicationReceipt(
-                        (await retainedMutationReceipt(directory))!,
+                        (await retainedMutationReceipt(directory, deps.nativePublicationHelper))!,
                       );
                     } catch (retirement) {
                       throw new RetainedMutationError(
@@ -2487,7 +2527,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         keyFor(input.mutationId!),
       );
       try {
-        await assertPrivateRetention(identityDirectory);
+        await assertPrivateRetention(identityDirectory, deps.nativePublicationHelper);
       } catch (cause) {
         if (isNodeError(cause, "ENOENT")) return null;
         throw cause;
@@ -2499,7 +2539,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       if (!original) return null;
       let recorded;
       try {
-        recorded = await readRetainedRecord(original.recordDirectory);
+        recorded = await readRetainedRecord(original.recordDirectory, deps.nativePublicationHelper);
       } catch (cause) {
         throw new RetainedMutationError(
           "recovery",
@@ -2525,7 +2565,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         helperFor(),
         privateBindings,
         async () => {
-          const record = await readRetainedRecord(original.recordDirectory);
+          const record = await readRetainedRecord(
+            original.recordDirectory,
+            deps.nativePublicationHelper,
+          );
           if (record.version !== 2 || record.phase !== "done") return null;
           const root = await NodeFSP.realpath(input.cwd);
           const requestedPath = NodePath.join(root, named.relativePath);
@@ -2561,7 +2604,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             );
           }
           return {
-            result: (await retainedMutationReceipt(original.recordDirectory))!,
+            result: (await retainedMutationReceipt(
+              original.recordDirectory,
+              deps.nativePublicationHelper,
+            ))!,
             target: record.target,
             relativePath: named.relativePath,
           };
@@ -2889,7 +2935,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       return replay.result;
     }
     yield* Effect.tryPromise({
-      try: () => assertRootBinding(input.cwd, input.expectedRootIdentity),
+      try: () =>
+        assertRootBinding(input.cwd, input.expectedRootIdentity, deps.nativePublicationHelper),
       catch: (cause) => errorFor(input, input.cwd, cause),
     });
     const resolved = yield* resolveTarget(input);
@@ -3118,7 +3165,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 entry.record.outcome === "done" &&
                 entry.record.publication === "create" &&
                 leaf === "slot" &&
-                sameIdentity(await fileIdentity(file), await fileIdentity(resolved.target))
+                sameIdentity(
+                  await fileIdentity(file, deps.nativePublicationHelper),
+                  await fileIdentity(resolved.target, deps.nativePublicationHelper),
+                )
               )
                 continue;
               retainedBytes += stat.size;
@@ -3129,6 +3179,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                   entry.directory,
                   leaf,
                   entry.target ?? resolved.target,
+                  deps.nativePublicationHelper,
                 ),
                 revision: stat.isFile() && !stat.isSymbolicLink() ? await fileRevision(file) : null,
                 byteLength: stat.size,
@@ -3271,8 +3322,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               input.recoveryId,
             );
           const binding = await nearestParent(resolved.root, resolved.target),
-            before = await fileIdentity(resolved.target),
-            snapshot = await inspectGuardedFile(resolved.target);
+            before = await fileIdentity(resolved.target, deps.nativePublicationHelper),
+            snapshot = await inspectGuardedFile(
+              resolved.target,
+              undefined,
+              deps.nativePublicationHelper,
+            );
           const revision = snapshot?.revision ?? null;
           if (input.currentRevision === null) {
             if (!(await proveMissing(resolved, rootBinding, parentBinding)))
@@ -3286,7 +3341,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             !snapshot ||
             revision !== input.currentRevision ||
             !sameIdentity(before, snapshot.identity) ||
-            !sameIdentity(before, await fileIdentity(resolved.target)) ||
+            !sameIdentity(
+              before,
+              await fileIdentity(resolved.target, deps.nativePublicationHelper),
+            ) ||
             !(await bindingCurrent(binding)) ||
             !(await bindingCurrent(rootBinding))
           )
@@ -3369,7 +3427,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     );
   };
   const epochFor = async (root: string, records: ReadonlyArray<Stored>) => {
-    const identity = await directoryIdentity(root),
+    const identity = await directoryIdentity(root, deps.nativePublicationHelper),
       hash = NodeCrypto.createHash("sha256");
     hash.update(`${identity.dev}:${identity.ino}\n`);
     hash.update(plainEpochComponent());
@@ -3591,7 +3649,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     // `active` holds root keys; overlap is judged on the root part.
     const rootOf = (key: string) => key.slice(0, key.indexOf("\0"));
     const plainEpochOf = async (root: string) => {
-      const identity = await directoryIdentity(root);
+      const identity = await directoryIdentity(root, deps.nativePublicationHelper);
       return NodeCrypto.createHash("sha256")
         .update(`${identity.dev}:${identity.ino}\n${plainEpochComponent(true)}`)
         .digest("hex");
@@ -3769,7 +3827,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             await stillResolves(destinationInput, destination, id);
             const guard = input.expectedRevision === undefined ? undefined : 1024 * 1024;
             const snapshot = await beforePublication(() =>
-              inspectGuardedFile(source.target, guard),
+              inspectGuardedFile(source.target, guard, deps.nativePublicationHelper),
             );
             if (
               snapshot === null ||
@@ -3802,7 +3860,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               );
             /** Removes the new name only while it is still the link this move created. */
             const undoLink = async () => {
-              const current = await fileIdentity(destination.target).catch(() => null);
+              const current = await fileIdentity(
+                destination.target,
+                deps.nativePublicationHelper,
+              ).catch(() => null);
               if (current === null || !sameIdentity(current, snapshot.identity)) return false;
               await NodeFSP.unlink(destination.target);
               return true;
@@ -3824,7 +3885,11 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               new Error("The moved file's new name could not be confirmed or removed.", { cause });
             let moved: GuardedSnapshot;
             try {
-              moved = await inspectGuardedFile(destination.target, guard);
+              moved = await inspectGuardedFile(
+                destination.target,
+                guard,
+                deps.nativePublicationHelper,
+              );
             } catch (cause) {
               if (await undoLink().catch(() => false))
                 throw new PlainPublicationUnchangedError(cause);
@@ -3900,7 +3965,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             if (link?.isSymbolicLink())
               throw new RetainedMutationError("target", "The file is a link.", id);
             const snapshot = await beforePublication(() =>
-              inspectGuardedFile(resolved.target, 1024 * 1024),
+              inspectGuardedFile(resolved.target, 1024 * 1024, deps.nativePublicationHelper),
             );
             if (snapshot === null)
               throw new RetainedMutationError(
@@ -3920,7 +3985,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             try {
               await NodeFSP.unlink(resolved.target);
             } catch (cause) {
-              const still = await fileIdentity(resolved.target).catch(() => null);
+              const still = await fileIdentity(resolved.target, deps.nativePublicationHelper).catch(
+                () => null,
+              );
               if (still !== null && sameIdentity(still, snapshot.identity))
                 throw new PlainPublicationUnchangedError(cause);
               throw cause;

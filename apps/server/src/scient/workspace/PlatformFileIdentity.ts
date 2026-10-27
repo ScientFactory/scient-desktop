@@ -53,7 +53,7 @@ const volumeIdentity = async (path: string, helperPath?: string): Promise<string
   if (HostProcess.Platform.defaultValue() === "linux")
     return (await nativeLinuxFileIdentity(path, false, helperPath))?.identity?.volume ?? null;
   if (HostProcess.Platform.defaultValue() === "win32") {
-    const identity = await windowsFileIdentity(path);
+    const identity = await windowsFileIdentity(path, helperPath);
     return identity ? `\\\\?\\Volume{${identity.dev}}\\` : null;
   }
   if (HostProcess.Platform.defaultValue() !== "darwin") return null;
@@ -76,7 +76,7 @@ async function persistentIdentity(
   if (HostProcess.Platform.defaultValue() === "linux")
     return (await nativeLinuxFileIdentity(path, directoryOnly, helperPath))?.identity ?? null;
   if (HostProcess.Platform.defaultValue() === "win32") {
-    const identity = await windowsFileIdentity(path);
+    const identity = await windowsFileIdentity(path, helperPath);
     if (!identity || (directoryOnly && identity.type !== "directory")) return null;
     return {
       version: 1,

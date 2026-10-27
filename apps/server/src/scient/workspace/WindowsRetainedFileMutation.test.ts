@@ -96,10 +96,18 @@ async function onVirtualDisk(
 }
 
 describe.skipIf(!windows)("Windows capture and install", () => {
-  it("retains the original object and installs complete bytes", () =>
+  it("uses the supplied helper to retain the original object and install complete bytes", () =>
     fixture(async (input, target) => {
-      const original = await fileIdentity(target);
-      const result = await mutateRetainedFile(input, target);
+      const original = await fileIdentity(target, helper);
+      const configured = process.env.SCIENT_FILE_PUBLICATION_HELPER;
+      process.env.SCIENT_FILE_PUBLICATION_HELPER = NodePath.join(input.cwd, "missing-helper.exe");
+      let result;
+      try {
+        result = await mutateRetainedFile(input, target);
+      } finally {
+        if (configured === undefined) delete process.env.SCIENT_FILE_PUBLICATION_HELPER;
+        else process.env.SCIENT_FILE_PUBLICATION_HELPER = configured;
+      }
       expect(
         result.outcome,
         await NodeFSP.readFile(NodePath.join(result.recordDirectory, "record.json"), "utf8"),
@@ -107,12 +115,12 @@ describe.skipIf(!windows)("Windows capture and install", () => {
       expect(result.retainedIdentity).toEqual(original);
       expect(await NodeFSP.readFile(result.retainedPath!, "utf8")).toBe("original");
       expect(await NodeFSP.readFile(target, "utf8")).toBe("incoming");
-      expect(await fileIdentity(target)).not.toEqual(original);
+      expect(await fileIdentity(target, helper)).not.toEqual(original);
       expect((await windowsNativeFile(result.retainedPath!, "private", helper)).code).toBe(0);
     }));
   it("deletes by keeping the original object and prunes only an empty directory", () =>
     fixture(async (input, target) => {
-      const original = await fileIdentity(target);
+      const original = await fileIdentity(target, helper);
       const deleted = await mutateRetainedFile(
         { ...input, kind: "delete", bytes: undefined },
         target,
@@ -143,15 +151,15 @@ describe.skipIf(!windows)("Windows capture and install", () => {
       NodeChildProcess.execFileSync("attrib.exe", ["+R", "+H", target]);
       const result = await mutateRetainedFile(input, target);
       expect(result.outcome).toBe("done");
-      expect((await windowsNativeFile(target, "flags")).flags & 3).toBe(3);
+      expect((await windowsNativeFile(target, "flags", helper)).flags & 3).toBe(3);
       expect((await NodeFSP.stat(target)).mtimeMs).toBeGreaterThan(oldTime * 1000);
-      expect((await windowsNativeFile(result.retainedPath!, "flags")).flags & 3).toBe(3);
+      expect((await windowsNativeFile(result.retainedPath!, "flags", helper)).flags & 3).toBe(3);
       const binding = await bindNativeFilePublicationParent(helper!, result.recordDirectory, "");
       await withNativeFilePublicationLease(
         helper!,
         [binding],
         async (lease) => {
-          await removeNativeRetainedEntry(lease, result.recordDirectory, "retained");
+          await removeNativeRetainedEntry(lease, result.recordDirectory, "retained", helper);
         },
         { mode: "exclusive" },
       );
@@ -268,7 +276,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
     "done",
   ] as const)("recovers after TerminateProcess at %s without losing the original", (point) =>
     fixture(async (input, target) => {
-      const original = await fileIdentity(target);
+      const original = await fileIdentity(target, helper);
       const policy = await security(target);
       const jobPath = NodePath.join(NodePath.dirname(input.cwd), "job.json");
       const job: WindowsCrashJob = { input, target, point, probe: probe! };
@@ -286,7 +294,7 @@ describe.skipIf(!windows)("Windows process death and sharing", () => {
         : null;
       expect([live, kept]).toContain("original");
       if (live === "original") {
-        expect(await fileIdentity(target)).toEqual(original);
+        expect(await fileIdentity(target, helper)).toEqual(original);
         expect(await security(target)).toBe(policy);
       } else {
         expect(live).toBe("incoming");
@@ -653,13 +661,17 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
       await NodeFSP.mkdir(cwd, { recursive: true });
       const target = NodePath.join(cwd, "main.tex");
       await NodeFSP.writeFile(target, "original");
-      const identity = await platformFileIdentity.directory(cwd);
+      const identity = await platformFileIdentity.directory(cwd, undefined, helper);
       expect(identity).toMatchObject({ platform: "windows", version: 1 });
       expect(identity!.volume.startsWith("\\\\?\\Volume{")).toBe(true);
       expect(identity!.fileId).toMatch(/^[0-9a-f]{32}$/u);
-      expect((await overleafFilesAvailability([cwd, target])).get(target)).toBe("available");
+      expect(
+        (await overleafFilesAvailability([cwd, target], undefined, undefined, helper)).get(target),
+      ).toBe("available");
       const blocked = NodePath.join(target, "child");
-      expect((await overleafFilesAvailability([blocked])).get(blocked)).toBe("available");
+      expect(
+        (await overleafFilesAvailability([blocked], undefined, undefined, helper)).get(blocked),
+      ).toBe("available");
       const result = await mutateRetainedFile({ ...input, cwd }, target);
       expect(
         result.outcome,
@@ -673,7 +685,9 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
       fixture(async (input, target) => {
         NodeChildProcess.execFileSync("attrib.exe", ["+O", target]);
         try {
-          expect((await overleafFilesAvailability([target])).get(target)).toBe("online-only-file");
+          expect(
+            (await overleafFilesAvailability([target], undefined, undefined, helper)).get(target),
+          ).toBe("online-only-file");
           await expect(
             mutateRetainedFile(
               {
@@ -697,7 +711,9 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
       onVirtualDisk(input, "fat32", async (root) => {
         const directory = NodePath.join(root, "paper");
         await NodeFSP.mkdir(directory);
-        await expect(platformFileIdentity.directory(directory)).rejects.toMatchObject({
+        await expect(
+          platformFileIdentity.directory(directory, undefined, helper),
+        ).rejects.toMatchObject({
           reason: "unsupported-filesystem",
         });
       }),
@@ -737,7 +753,7 @@ describe.skipIf(!windows)("Windows identity and file admission", () => {
   it("refuses an EFS-encrypted file before changing its bytes or policy", () =>
     fixture(async (input, target) => {
       NodeChildProcess.execFileSync("cipher.exe", ["/e", "/a", target]);
-      expect((await windowsNativeFile(target, "flags")).flags & 0x4000).toBe(0x4000);
+      expect((await windowsNativeFile(target, "flags", helper)).flags & 0x4000).toBe(0x4000);
       const policy = await security(target);
       await expect(mutateRetainedFile(input, target)).rejects.toThrow("encrypted-file");
       expect(await NodeFSP.readFile(target, "utf8")).toBe("original");

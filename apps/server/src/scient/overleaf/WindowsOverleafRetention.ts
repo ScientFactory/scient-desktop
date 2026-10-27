@@ -43,7 +43,7 @@ export async function probeWindowsRetention(directory: string, helper: string | 
   );
   const original = Buffer.from("original");
   await NodeFSP.writeFile(target, original, { flag: "wx" });
-  const identity = await fileIdentity(target);
+  const identity = await fileIdentity(target, helper);
   try {
     const result = await mutateRetainedFile(
       {
@@ -76,7 +76,7 @@ export async function probeWindowsRetention(directory: string, helper: string | 
           for (const name of folder === directory
             ? [NodePath.basename(scratch)]
             : await NodeFSP.readdir(folder))
-            await removeNativeRetainedEntry(lease, folder, name);
+            await removeNativeRetainedEntry(lease, folder, name, helper);
         },
         { mode: "exclusive" },
       );

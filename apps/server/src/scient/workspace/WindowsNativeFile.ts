@@ -44,8 +44,8 @@ async function invokeWindows(args: string[], helper?: string) {
   return (await run(executable, args, { windowsHide: true, maxBuffer: 65536 })).stdout;
 }
 const decodeFlags = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.Number)));
-export async function windowsNativeFlags(paths: ReadonlyArray<string>) {
-  return decodeFlags(await invokeWindows(["--windows-flags=1", ...paths]));
+export async function windowsNativeFlags(paths: ReadonlyArray<string>, helper?: string) {
+  return decodeFlags(await invokeWindows(["--windows-flags=1", ...paths], helper));
 }
 
 export async function windowsNativeFile(
@@ -56,13 +56,13 @@ export async function windowsNativeFile(
   return decodeReply(await invokeWindows(["--windows=1", operation, path], helper));
 }
 
-export async function windowsFileIdentity(path: string) {
+export async function windowsFileIdentity(path: string, helper?: string) {
   if (
     path.startsWith("\\\\") &&
     (!path.startsWith("\\\\?\\") || path.toUpperCase().startsWith("\\\\?\\UNC\\"))
   )
     throw new WindowsNativeFileError("network-filesystem");
-  const info = await windowsNativeFile(path);
+  const info = await windowsNativeFile(path, "info", helper);
   if (info.code === 2 || info.code === 3) return null;
   if (info.code !== 0 || !info.identity)
     throw new WindowsNativeFileError(
