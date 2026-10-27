@@ -22,6 +22,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { NativeSelect } from "~/components/ui/select";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
 import { ExtensionIcon } from "../extensions/ExtensionRow";
+import { AccountLogo } from "./AccountLogo";
 import {
   Dialog,
   DialogPopup,
@@ -539,12 +540,7 @@ export function AccountDialog({
                     .map((entry) => (
                       <DiscoveryListRow
                         key={entry.name}
-                        icon={
-                          <ExtensionIcon
-                            name={entry.name}
-                            iconUrl={accountIconUrl(entry.site ? [entry.site] : [], entry.name)}
-                          />
-                        }
+                        icon={<CatalogueIcon name={entry.name} site={entry.site} />}
                         title={entry.name}
                         description={KIND_LABELS[entry.kind]}
                         onClick={() => choose(entry)}
@@ -618,5 +614,20 @@ export function AccountDialog({
         ) : null}
       </DialogPopup>
     </Dialog>
+  );
+}
+
+function CatalogueIcon({
+  name,
+  site,
+}: {
+  readonly name: string;
+  readonly site?: string | undefined;
+}) {
+  const iconUrl = accountIconUrl(site ? [site] : [], name);
+  return iconUrl ? (
+    <AccountLogo src={iconUrl} className="size-10 rounded-[25%]" />
+  ) : (
+    <ExtensionIcon name={name} />
   );
 }

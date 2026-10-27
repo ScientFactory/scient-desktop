@@ -218,6 +218,9 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   Built from the existing settings components; labels say what a thing is and status appears only
   when something is wrong. Profiles moved here from Integrations; the rest of the browser settings
   stay in Integrations.
+- **Logos** for known services live in `accountIcons.json` as square, opaque tiles: a brand tile
+  as is, a transparent mark trimmed and centred at 70% on white. `AccountLogo` draws them with no
+  padding, so each takes its frame's shape.
 - **Profile cards** show the picture and name from the source browser (Chrome's Google picture or
   avatar colour, else a coloured initial), the source and email, the signed-in sites and the access
   chip. "Add profile" lists every profile found on the machine with picture, name and email; picking

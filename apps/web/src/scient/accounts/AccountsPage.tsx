@@ -37,6 +37,7 @@ import { AccountDialog } from "./AccountDialog";
 import { BrowserProfiles, BrowserImportDialog } from "./BrowserProfiles";
 import { PasswordStores, OnePasswordDialog } from "./PasswordStores";
 import { AccountApprovals } from "./AccountApprovals";
+import { AccountLogo } from "./AccountLogo";
 import { KIND_LABELS, accountIconUrl } from "./accountsView";
 
 function AccountRow({
@@ -65,12 +66,7 @@ function AccountRow({
       title={
         <span className="flex min-w-0 items-baseline gap-2">
           {iconUrl ? (
-            <span
-              aria-hidden
-              className="flex size-6 shrink-0 items-center justify-center self-center overflow-hidden rounded-md border bg-white p-0.5 [color-scheme:light] dark:border-white/10"
-            >
-              <img alt="" src={iconUrl} className="size-full object-contain" />
-            </span>
+            <AccountLogo src={iconUrl} className="size-6 self-center rounded-md" />
           ) : (
             <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
           )}
@@ -198,12 +194,7 @@ function ManagedAccountRow({
       title={
         <span className="flex min-w-0 items-baseline gap-2">
           {iconUrl ? (
-            <span
-              aria-hidden
-              className="flex size-6 shrink-0 items-center justify-center self-center overflow-hidden rounded-md border bg-white p-0.5 [color-scheme:light] dark:border-white/10"
-            >
-              <img alt="" src={iconUrl} className="size-full object-contain" />
-            </span>
+            <AccountLogo src={iconUrl} className="size-6 self-center rounded-md" />
           ) : (
             <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
           )}
