@@ -605,8 +605,22 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`a56ecdafa7c944286f3b45aa51486be4ffe079fd` is recorded in
+[the 2026-10-27 a56ecdafa7 receipt](docs/internals/t3-upstream-sync-20261027-a56ecdafa7.md)
+([Scient PR #684](https://github.com/ScientFactory/scient-desktop/pull/684)).
+Literal merge `92002fb3417a5ccaaa5fbd1527578bb491a29464` has owned base
+`d17d8f60cecccf6580a9f50c9672d0cd1e8ed3e9` and the frozen official target as parents,
+retaining the 15 official commits after `e9236274a3`. A hung delegated-task stop
+now times out so later runs can start; draft model reconciliation runs at app
+start; the upload queue alone records finished draft uploads; Alchemy moves to
+2.0.0-beta.84 while the relay deploy workflow stays disabled. Scient's release
+runbook, Native V2, storage identities and cloud, telemetry, relay, updater,
+mobile publication and release controls remain. Release remains separate.
+
+The previous committed alignment through
 `e9236274a3a6e0c731a7df4092db1e686f039068` is recorded in
-[the 2026-10-27 receipt](docs/internals/t3-upstream-sync-20261027-4cb29a56f6.md).
+[the 2026-10-27 4cb29a56f6 receipt](docs/internals/t3-upstream-sync-20261027-4cb29a56f6.md)
+([Scient PR #678](https://github.com/ScientFactory/scient-desktop/pull/678)).
 Literal merge `778edf4cf086b666c42964b409480ba0c2821982` retains the 92 official
 commits after `dd5b5401e1`; official extensions `5331a9f1be`, `825bc88442`,
 `cd1eeaa6e0`, `b229dcb1cf`, `a2fdbcf0b0`, `cde42c1b92` and `07694becc0` retain the next 7, 3, 8, 8, 1, 3 and 1.
