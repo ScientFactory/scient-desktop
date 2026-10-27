@@ -9,7 +9,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import { makeAccountVault, AccountVault } from "./AccountVault.ts";
 import * as AccountPersistence from "./AccountPersistence.ts";
-import { noKeychain, syntheticValue } from "./AccountsTestkit.ts";
+import { noKeychain, syntheticValue } from "./Accounts.testkit.ts";
 
 it.effect("persists encrypted account files and a fallback key with owner-only permissions", () =>
   Effect.gen(function* () {

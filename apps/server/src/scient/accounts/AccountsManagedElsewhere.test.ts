@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { Effect, Layer, Option } from "effect";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
-import { makeHarness } from "./AccountsTestkit.ts";
+import { makeHarness } from "./Accounts.testkit.ts";
 
 it.effect(
   "projects authenticated GitHub identities and the existing Custom models key inventory",

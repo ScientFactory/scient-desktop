@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { ConnectorId, VaultSecretRef, defaultAccountControls } from "@t3tools/contracts";
 import { Effect, Stream } from "effect";
 import { accountTokenRef } from "./AccountBoundRef.ts";
-import { makeHarness, secretEquals, syntheticValue, website } from "./AccountsTestkit.ts";
+import { makeHarness, secretEquals, syntheticValue, website } from "./Accounts.testkit.ts";
 
 const consumer = {
   connectorId: ConnectorId.make("con_synthetic01"),

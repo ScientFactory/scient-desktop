@@ -9,7 +9,7 @@ import {
   secretEquals,
   syntheticValue,
   website,
-} from "./AccountsTestkit.ts";
+} from "./Accounts.testkit.ts";
 
 const encodeSnapshot = Schema.encodeEffect(Schema.fromJsonString(AccountsSnapshot));
 const scope = {

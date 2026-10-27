@@ -10,7 +10,7 @@ import {
 import { Effect, Layer, Stream } from "effect";
 import { RpcTest } from "effect/rpc";
 import { makeAccountsRpcHandlers } from "../scient/accounts/AccountsRpcHandlers.ts";
-import { makeHarness, syntheticValue, website } from "../scient/accounts/AccountsTestkit.ts";
+import { makeHarness, syntheticValue, website } from "../scient/accounts/Accounts.testkit.ts";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
 
 it.effect(

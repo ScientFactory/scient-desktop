@@ -7,7 +7,7 @@ import {
   secretEquals,
   syntheticValue,
   website,
-} from "./AccountsTestkit.ts";
+} from "./Accounts.testkit.ts";
 import { AccountsState, decodePrivateJson, encodePrivateJson } from "./AccountPersistence.ts";
 import { onePasswordWriteFailure } from "./AccountSources.ts";
 import { planSecretStores } from "./copyPlan.ts";

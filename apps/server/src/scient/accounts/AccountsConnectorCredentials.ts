@@ -47,14 +47,10 @@ export const layer = Layer.effect(
       envelope: Envelope,
       create = false,
     ) {
-      const encoded = yield* encodeEnvelope(envelope).pipe(Effect.mapError(unavailable));
-      const bytes = yield* vault
-        .encrypt(ref, Redacted.make(new TextEncoder().encode(encoded)))
-        .pipe(Effect.mapError(unavailable));
-      yield* (create ? store.create(ref, bytes) : store.set(ref, bytes)).pipe(
-        Effect.mapError(unavailable),
-      );
-    });
+      const encoded = yield* encodeEnvelope(envelope);
+      const bytes = yield* vault.encrypt(ref, Redacted.make(new TextEncoder().encode(encoded)));
+      yield* create ? store.create(ref, bytes) : store.set(ref, bytes);
+    }, Effect.mapError(unavailable));
     const read = Effect.fn("AccountsConnectorCredentials.read")(function* (ref: VaultSecretRef) {
       if (!refPattern.test(ref)) return Option.none<Envelope>();
       const stored = yield* store.get(ref).pipe(Effect.mapError(unavailable));

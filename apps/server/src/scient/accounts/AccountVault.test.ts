@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Redacted } from "effect";
 import { decryptBlob, encryptBlob, makeAccountVault } from "./AccountVault.ts";
-import { memoryStore, noKeychain, syntheticValue } from "./AccountsTestkit.ts";
+import { memoryStore, noKeychain, syntheticValue } from "./Accounts.testkit.ts";
 
 const key = () =>
   Redacted.make(new TextEncoder().encode(syntheticValue().replaceAll("-", "").slice(0, 32)));

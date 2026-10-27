@@ -5,7 +5,7 @@ import { Effect, Layer, Redacted } from "effect";
 import { layerTest as settingsTestLayer } from "../../serverSettings.ts";
 import { AccountsSecretStore } from "./AccountsSecretStore.ts";
 import { AccountSources, layer } from "./AccountSources.ts";
-import { syntheticValue, website } from "./AccountsTestkit.ts";
+import { syntheticValue, website } from "./Accounts.testkit.ts";
 
 const fixture = vi.hoisted(() => ({
   items: [] as Array<{ id: string; vaultId: string; tags: string[]; fields: ItemField[] }>,
@@ -14,7 +14,8 @@ vi.mock("@1password/sdk", () => ({
   ItemCategory: { Login: "Login" },
   ItemFieldType: { Text: "Text", Concealed: "Concealed", Totp: "Totp" },
   AutofillBehavior: { ExactDomain: "ExactDomain", AnywhereOnWebsite: "AnywhereOnWebsite" },
-  DesktopAuth: class {},
+  // Constructed with `new`; the mock needs no members.
+  DesktopAuth: function DesktopAuth() {},
   createClient: async () => ({
     vaults: { list: async () => [{ id: "vault", title: "Synthetic vault" }] },
     items: {

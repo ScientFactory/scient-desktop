@@ -16,7 +16,7 @@ import {
 } from "../../customModels.ts";
 import { makeAccountVault } from "./AccountVault.ts";
 import { makeAccountsSecretStore } from "./AccountsSecretStore.ts";
-import { memoryStore, noKeychain, syntheticValue } from "./AccountsTestkit.ts";
+import { memoryStore, noKeychain, syntheticValue } from "./Accounts.testkit.ts";
 
 const make = Effect.fn("AccountsSecretStoreTest.make")(function* (
   storage: ReturnType<typeof memoryStore> = memoryStore(),

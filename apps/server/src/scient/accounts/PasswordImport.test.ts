@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { parseCsv, parsePasswordImport } from "./PasswordImport.ts";
-import { syntheticValue } from "./AccountsTestkit.ts";
+import { syntheticValue } from "./Accounts.testkit.ts";
 
 const formats = [
   [

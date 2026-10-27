@@ -11,7 +11,7 @@ import * as ServerConfig from "../../../config.ts";
 import { Effect, Layer, Stream } from "effect";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { AccountsService } from "../../../scient/accounts/AccountsService.ts";
-import { makeHarness } from "../../../scient/accounts/AccountsTestkit.ts";
+import { makeHarness } from "../../../scient/accounts/Accounts.testkit.ts";
 import { McpInvocationContext } from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {

@@ -111,33 +111,38 @@ const missingService = Effect.fail(
   }),
 );
 
+/** Every call fails the same way on a server without Accounts. */
+const unavailable = Effect.fn("AccountsService.unavailable")(function* () {
+  return yield* missingService;
+});
+
 export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
   Effect.map(
     Option.getOrElse(() =>
       AccountsService.of({
         snapshot: missingService,
         changes: Stream.empty,
-        save: () => missingService,
-        remove: () => missingService,
-        test: () => missingService,
-        setControls: () => missingService,
-        setAgentAccess: () => missingService,
-        updateProfile: () => missingService,
-        removeProfile: () => missingService,
-        respondApproval: () => missingService,
-        activity: () => missingService,
-        keychainCandidates: () => missingService,
-        connectOnePassword: () => missingService,
+        save: unavailable,
+        remove: unavailable,
+        test: unavailable,
+        setControls: unavailable,
+        setAgentAccess: unavailable,
+        updateProfile: unavailable,
+        removeProfile: unavailable,
+        respondApproval: unavailable,
+        activity: unavailable,
+        keychainCandidates: unavailable,
+        connectOnePassword: unavailable,
         disconnectOnePassword: missingService,
-        importPasswords: () => missingService,
-        fillValues: () => missingService,
-        matchSignIn: () => missingService,
-        forSession: () => missingService,
-        authorize: () => missingService,
-        resolveBound: () => missingService,
-        listBindable: () => missingService,
-        resolveSecrets: () => missingService,
-        recordUse: () => Effect.void,
+        importPasswords: unavailable,
+        fillValues: unavailable,
+        matchSignIn: unavailable,
+        forSession: unavailable,
+        authorize: unavailable,
+        resolveBound: unavailable,
+        listBindable: unavailable,
+        resolveSecrets: unavailable,
+        recordUse: Effect.fn("AccountsService.recordUse")(function* () {}),
       }),
     ),
   ),

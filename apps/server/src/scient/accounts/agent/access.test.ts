@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import { AccountsService } from "../AccountsService.ts";
-import { makeHarness } from "../AccountsTestkit.ts";
+import { makeHarness } from "../Accounts.testkit.ts";
 import { fakeAccounts } from "./AccountsService.testkit.ts";
 import { authorizePreviewProfile, filterPreviewProfiles } from "./previewProfileAccess.ts";
 

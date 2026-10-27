@@ -85,6 +85,7 @@ function SignedInSitesDialog({
       .then(setSites)
       .catch(() => setSites([])),
   );
+  // oxlint-disable-next-line t3code/react-effect-budget -- Read this profile's signed-in sites from the desktop when the view opens.
   useEffect(() => {
     void load();
   }, []);
@@ -184,6 +185,7 @@ export function BrowserImportDialog({
       profileError();
     }
   };
+  // oxlint-disable-next-line t3code/react-effect-budget -- List the browsers' profiles from the desktop when the import view opens; ignore a late answer after it closes.
   useEffect(() => {
     let live = true;
     void Promise.all([
@@ -466,6 +468,7 @@ export function BrowserProfiles({
     }
   });
   const fetchSources = useEffectEvent(loadSources);
+  // oxlint-disable-next-line t3code/react-effect-budget -- Once saved profiles load, link profiles imported before Accounts to their source browser profile.
   useEffect(() => {
     if (!canWrite || !hydrated || unlinked === "") return;
     let live = true;

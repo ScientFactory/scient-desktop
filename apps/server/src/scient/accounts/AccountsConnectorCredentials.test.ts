@@ -5,7 +5,7 @@ import { ServerSecretStore } from "../../auth/ServerSecretStore.ts";
 import { ConnectorCredentialStore } from "../extensions/connectors/ConnectorCredentialStore.ts";
 import { AccountVault, makeAccountVault } from "./AccountVault.ts";
 import * as EncryptedCredentials from "./AccountsConnectorCredentials.ts";
-import { memoryStore, noKeychain, syntheticValue } from "./AccountsTestkit.ts";
+import { memoryStore, noKeychain, syntheticValue } from "./Accounts.testkit.ts";
 
 const owner = { type: "connector", connectorId: "synthetic-connector" } as const;
 const make = Effect.fn("AccountsConnectorCredentialsTest.make")(function* (

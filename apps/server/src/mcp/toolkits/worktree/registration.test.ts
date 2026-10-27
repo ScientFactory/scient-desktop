@@ -1,5 +1,5 @@
 // SCIENT-FORK:START — Scient Accounts: keep MCP fixtures away from native credential stores.
-import * as AccountsTestkit from "../../../scient/accounts/AccountsTestkit.ts";
+import * as AccountsTestkit from "../../../scient/accounts/Accounts.testkit.ts";
 // SCIENT-FORK:END
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";

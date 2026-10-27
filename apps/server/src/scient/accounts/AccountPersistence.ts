@@ -92,7 +92,7 @@ export const decodePrivateJson = <A, E>(
   schema: Schema.Codec<A, E>,
   bytes: Redacted.Redacted<Uint8Array>,
 ) =>
-  Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(
+  Schema.decodeEffect(Schema.fromJsonString(schema))(
     new TextDecoder().decode(Redacted.value(bytes)),
   ).pipe(
     Effect.mapError(

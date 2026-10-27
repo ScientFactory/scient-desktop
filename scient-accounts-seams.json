@@ -181,7 +181,7 @@
     },
     {
       "path": "packages/contracts/src/previewAutomation.ts",
-      "anchor": "Scient Accounts: internal account operations use the authenticated browser rail.",
+      "anchor": "Scient Accounts: server browser supports internal account operations.",
       "purpose": "Internal account operations use the authenticated browser rail."
     },
     {
@@ -310,6 +310,11 @@
       "path": "apps/web/src/scient/extensions/AddConnectorDialog.browser.test.tsx",
       "anchor": "binds a matching account without retaining the entered key",
       "purpose": "Verify account selection drops typed key material and rejects a binding after an endpoint-origin change."
+    },
+    {
+      "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
+      "anchor": "apps/server/src/scient/accounts/AccountsSecretStore.ts",
+      "purpose": "Void provider runtime publications when the store that seals Custom models keys changes."
     }
   ]
 }
