@@ -9,6 +9,7 @@ import { type ReactNode, useState } from "react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SettingsSourcePanel } from "../../components/settings/SettingsSourceStrip";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
 import { scientSkillsInventory, setScientSkillUserActivation } from "./scientSkillsState";
 import { matchesQuery } from "../extensions/extensionsView";
@@ -44,7 +45,7 @@ function SkillCategoryDisclosure(props: {
   const [open, setOpen] = useState(props.defaultOpen ?? false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger className="group flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 pt-4 pb-2 text-left outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
+      <CollapsibleTrigger className="group -mx-3 flex w-[calc(100%+1.5rem)] cursor-pointer items-center gap-3 rounded-xl px-3 py-3 text-left outline-none transition-colors hover:bg-foreground/[0.025] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
         <span className="min-w-0 flex-1">
           <span className="block text-base font-semibold tracking-[-0.01em] text-foreground">
             {props.title}
@@ -61,7 +62,11 @@ function SkillCategoryDisclosure(props: {
           className="size-4 shrink-0 text-muted-foreground transition-transform group-data-panel-open:rotate-180"
         />
       </CollapsibleTrigger>
-      <CollapsiblePanel>{props.children}</CollapsiblePanel>
+      <CollapsiblePanel>
+        <div className="pt-1 pb-4">
+          <SettingsSourcePanel>{props.children}</SettingsSourcePanel>
+        </div>
+      </CollapsiblePanel>
     </Collapsible>
   );
 }
@@ -134,7 +139,7 @@ export function ScientSkillsLibrary({
               : "This Scient build does not publish any skills."}
         </p>
       ) : (
-        <div className="rounded-xl border border-border/60 bg-card/40 shadow-xs/5 [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
+        <div className="[&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
           {groupSkillsByCategory(userSkills).map((group) => (
             <SkillCategoryDisclosure
               key={`${group.category}:${query === "" ? "browse" : "search"}`}

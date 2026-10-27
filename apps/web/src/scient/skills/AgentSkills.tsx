@@ -13,6 +13,7 @@ import {
   externalSkillStatus,
 } from "./externalSkills";
 import { SkillCard } from "./SkillCard";
+import { OPENABLE_ROW_CLASS, openFromRow } from "./skillRowOpen";
 import { useEnvironmentQuery } from "../../state/query";
 import {
   type EnvironmentId,
@@ -270,23 +271,24 @@ export function AgentSkills({
                   );
                   const pending = pendingEnabled[key];
                   const shownEnabled = pending?.enabled ?? skill.enabled;
+                  const open = () =>
+                    setSelected({
+                      instanceId: expandedGroup.provider.instanceId,
+                      iconUrl: expandedGroup.provider.iconUrl,
+                      skill,
+                      displayName,
+                      description: skill.description ?? description ?? "",
+                    });
                   return (
                     <SettingsRow
                       key={skill.path}
-                      className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
+                      className={`sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none ${OPENABLE_ROW_CLASS}`}
+                      onClick={openFromRow(open)}
                       title={
                         <button
                           type="button"
                           className="cursor-pointer rounded-sm text-left outline-none focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-ring"
-                          onClick={() =>
-                            setSelected({
-                              instanceId: expandedGroup.provider.instanceId,
-                              iconUrl: expandedGroup.provider.iconUrl,
-                              skill,
-                              displayName,
-                              description: skill.description ?? description ?? "",
-                            })
-                          }
+                          onClick={open}
                         >
                           {displayName}
                         </button>

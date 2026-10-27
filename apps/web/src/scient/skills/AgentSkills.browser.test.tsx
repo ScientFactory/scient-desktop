@@ -75,14 +75,19 @@ vi.mock("../../components/settings/settingsLayout", () => ({
   SettingsSection: "section",
   SettingsRow: ({
     title,
+    description,
     status,
     control,
+    onClick,
   }: {
     title: React.ReactNode;
+    description?: React.ReactNode;
     status: string;
     control?: React.ReactNode;
+    onClick?: React.MouseEventHandler<HTMLDivElement>;
   }) => (
     <div
+      onClick={onClick}
       data-title={
         typeof title === "string"
           ? title
@@ -91,6 +96,7 @@ vi.mock("../../components/settings/settingsLayout", () => ({
       data-status={status}
     >
       {title}
+      <p data-description="">{description}</p>
       {control}
     </div>
   ),
@@ -259,6 +265,17 @@ describe("AgentSkills activation", () => {
     await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
     expect(document.body.textContent).toContain("External instructions");
     expect(state.setEnabled).not.toHaveBeenCalled();
+  });
+
+  it("opens a skill's card from anywhere on its row except its switch", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const row = () => _fixture.container.querySelector<HTMLElement>('[data-title="First"]');
+    await act(() => switches(_fixture)[0]?.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(() => row()?.querySelector<HTMLElement>("[data-description]")?.click());
+    await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
   });
 
   it("keeps both switches responsive and coalesces repeated clicks on one skill", async () => {
