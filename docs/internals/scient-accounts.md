@@ -213,9 +213,11 @@ the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-use
 and records that outcome in activity. The 2FA code comes from the stored
 `totp` field (`otpauth://` URI or base32 key) via `otpauth`, or from 1Password
 (`?attribute=otp`). When an attended sign-in needs a CAPTCHA, phone approval, passkey or missing information,
-Scient shows one line above the thread's composer (account, what to do, a close button) with
-the sign-in's own browser tab live underneath, fitted to the box (`HandoffBrowser` borrows the
-tab's surface and hands it back afterwards; the side panel does not open). The user finishes
+Scient shows a centered card at the end of the conversation (it scrolls with the messages and
+scrolls itself into view once): one line (account, what to do, a close button) with the
+sign-in's own browser tab live underneath, fitted to the box. `HandoffBrowser` borrows the
+tab's surface and hands it back afterwards; the side panel does not open. The live page is a
+native layer, so it shows only while the card is wholly in view above the composer. The user finishes
 right there; Scient checks every two seconds for up to three minutes and continues
 automatically, including filling a stored authenticator code after phone approval. The line can
 show a confidently detected phone match number. A client with no view of the tab gets an
