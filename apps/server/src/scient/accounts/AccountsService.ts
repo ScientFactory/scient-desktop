@@ -4,6 +4,8 @@
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
 import type {
+  CliPasswordStoreInput,
+  CliPasswordStoreResult,
   AccountMatchSignInInput,
   AccountMatchSignInResult,
   AccountActivityEntry,
@@ -76,6 +78,9 @@ export type AccountAuthorization =
 
 export interface AccountsServiceShape {
   // Client surface (RPC).
+  readonly passwordStore: (
+    input: CliPasswordStoreInput,
+  ) => Effect.Effect<CliPasswordStoreResult, AccountsError>;
   readonly snapshot: Effect.Effect<AccountsSnapshot, AccountsError>;
   readonly changes: Stream.Stream<AccountsSnapshot>;
   readonly save: (input: AccountSaveInput) => Effect.Effect<AccountSaveResult, AccountsError>;

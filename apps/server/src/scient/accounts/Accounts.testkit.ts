@@ -1,3 +1,4 @@
+import { makeCliPasswordStores } from "./CliPasswordStores.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- Tests generate synthetic material and keep it in memory.
 import * as NodeCrypto from "node:crypto";
 import { AccountsError, BUILT_IN_BROWSER_PROFILES } from "@t3tools/contracts";
@@ -80,6 +81,7 @@ export const makeHarness = Effect.fn("AccountsTestkit.make")(function* (
   const storage = options.storage ?? memoryStore();
   const vault = yield* makeAccountVault(storage.store, "/synthetic/accounts-test", noKeychain);
   const sources = AccountSources.of({
+    passwordStores: makeCliPasswordStores({ env: {}, platform: "linux", commonDirectories: [] }),
     platform: "linux",
     profiles: Effect.succeed(BUILT_IN_BROWSER_PROFILES.map((profile) => profile.id)),
     customModelKeys: Effect.succeed([]),

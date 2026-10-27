@@ -27,6 +27,7 @@ export function fakeAccounts(
     }),
   );
   const service = AccountsService.of({
+    passwordStore: () => unavailable,
     snapshot: unavailable,
     changes: Stream.empty,
     save: () => unavailable,
