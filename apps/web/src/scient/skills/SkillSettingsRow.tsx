@@ -25,6 +25,7 @@ export function SkillSettingsRow(props: {
   readonly pending: boolean;
   readonly disabled: boolean;
   readonly status: string;
+  readonly onOpen?: (() => void) | undefined;
   readonly onUpdate: (patch: {
     readonly active?: boolean;
     readonly invocationPolicy?: ScientSkillInvocationPolicy;
@@ -36,7 +37,17 @@ export function SkillSettingsRow(props: {
       className="sm:[&>div]:grid-cols-[minmax(0,1fr)_5rem] [&>div>div>p]:max-w-none"
       title={
         <span className="inline-flex items-center gap-2">
-          <span>{displaySkillName(skill.name)}</span>
+          {props.onOpen ? (
+            <button
+              type="button"
+              className="cursor-pointer rounded-sm text-left outline-none hover:underline focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-ring"
+              onClick={props.onOpen}
+            >
+              {displaySkillName(skill.name)}
+            </button>
+          ) : (
+            <span>{displaySkillName(skill.name)}</span>
+          )}
           <Select
             value={skill.invocationPolicy}
             disabled={!skill.active || disabled}

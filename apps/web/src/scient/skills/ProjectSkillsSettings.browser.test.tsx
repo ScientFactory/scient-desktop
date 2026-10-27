@@ -1,7 +1,12 @@
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 import { type ReactNode } from "react";
 
-import { EnvironmentId, ProjectId, type ScientSkillInventory } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  type ScientSkillCatalogItem,
+  type ScientSkillInventory,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ProjectSkillsSettings } from "./ProjectSkillsSettings";
 
@@ -27,11 +32,17 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   vi.unstubAllGlobals();
 }
 
+vi.mock("../extensions/ExtensionRow", () => ({ ExtensionIcon: () => null }));
+vi.mock("./composerSkills", () => ({ useTryComposerSkill: () => undefined }));
+vi.mock("../../components/ChatMarkdown", () => ({
+  default: ({ text }: { text: string }) => <div>{text}</div>,
+}));
+
 const query = vi.hoisted(() => ({
   refresh: vi.fn(),
   inventories: new Map<string, { refresh: () => void }>(),
   data: {
-    skills: [],
+    skills: [] as ScientSkillCatalogItem[],
     diagnostics: [],
     supportedProviders: [],
   } satisfies ScientSkillInventory,
@@ -39,7 +50,12 @@ const query = vi.hoisted(() => ({
 
 vi.mock("../../state/query", () => ({
   useEnvironmentQuery: (atom: { refresh: () => void }) => ({
-    data: query.data,
+    data:
+      "document" in atom
+        ? atom.document
+          ? { instructions: "# Project instructions" }
+          : null
+        : query.data,
     error: null,
     isPending: false,
     refresh: atom.refresh,
@@ -59,14 +75,26 @@ vi.mock("./scientSkillsState", () => ({
     }
     return atom;
   }),
+  scientSkillDocument: ({ input }: { input: { projectId?: string } }) => ({
+    document: input.projectId === firstProjectId,
+  }),
   setScientSkillProjectPreference: Symbol("set-project-preference"),
 }));
 
 vi.mock("../../components/settings/settingsLayout", () => ({
-  SettingsRow: ({ title, description }: { title: string; description?: string }) => (
+  SettingsRow: ({
+    title,
+    description,
+    control,
+  }: {
+    title: ReactNode;
+    description?: string;
+    control?: ReactNode;
+  }) => (
     <div>
       {title}
       {description}
+      {control}
     </div>
   ),
 }));
@@ -86,7 +114,42 @@ describe("ProjectSkillsSettings inventory freshness", () => {
   async function _setupFixture2(_fixture: _Fixture) {
     query.refresh.mockReset();
     query.inventories.clear();
+    query.data.skills = [];
   }
+
+  it("opens project instructions in the shared card without changing availability", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    await _setupFixture2(_fixture);
+    query.data.skills = [
+      {
+        releaseKey: "project-review",
+        id: "review",
+        version: "1",
+        name: "review",
+        description: "Review the project",
+        category: "Project",
+        categoryDescription: "Project skills",
+        origin: "project",
+        scope: "project",
+        supportedScopes: ["project"],
+        defaultInvocationPolicy: "automatic",
+        defaultActive: true,
+        active: true,
+        invocationPolicy: "automatic",
+      },
+    ];
+    await render(_fixture, firstProjectId);
+    await act(() => {
+      _fixture.host.querySelector<HTMLButtonElement>('button[type="button"]')!.click();
+    });
+    await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
+    expect(document.body.textContent).toContain("Project instructions");
+    expect(_fixture.host.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe(
+      "true",
+    );
+  });
 
   it("refreshes when opened and when the selected project changes", async () => {
     await using _fixture = _createFixture();

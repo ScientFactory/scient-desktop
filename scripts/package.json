@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vp test run --config ../vite.config.ts --dir ."
+    "test": "vp test run --config ../vite.config.ts --dir .",
+    "extensions:icons:generate": "node generate-extension-brand-icons.mjs"
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
