@@ -860,6 +860,7 @@ export async function removeNativeRetainedEntry(
   lease: NativeFilePublicationLease,
   directory: string,
   name: string,
+  helper?: string,
 ) {
   let result = await lease.remove(directory, name, "unlink");
   if (
@@ -880,7 +881,7 @@ export async function removeNativeRetainedEntry(
   const current =
     HostProcess.Platform.defaultValue() === "win32"
       ? await import("./WindowsNativeFile.ts").then(({ windowsFileIdentity }) =>
-          windowsFileIdentity(directory),
+          windowsFileIdentity(directory, helper),
         )
       : await NodeFSP.stat(directory, { bigint: true });
   if (

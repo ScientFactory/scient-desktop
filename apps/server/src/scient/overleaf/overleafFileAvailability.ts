@@ -48,20 +48,20 @@ const macFlags: OverleafFileFlagReader = async (paths) => {
   return flags;
 };
 
-const windowsFlags: OverleafFileFlagReader = async (paths) => {
+const windowsFlags = async (paths: ReadonlyArray<string>, helper?: string) => {
   const flags: number[] = [];
   let batch: string[] = [],
     length = 0;
   for (const path of paths) {
     if (batch.length && (batch.length >= STAT_BATCH || length + path.length > 24_000)) {
-      flags.push(...(await windowsNativeFlags(batch)));
+      flags.push(...(await windowsNativeFlags(batch, helper)));
       batch = [];
       length = 0;
     }
     batch.push(path);
     length += path.length + 3;
   }
-  if (batch.length) flags.push(...(await windowsNativeFlags(batch)));
+  if (batch.length) flags.push(...(await windowsNativeFlags(batch, helper)));
   return flags;
 };
 
@@ -70,11 +70,16 @@ export async function overleafFilesAvailability(
   paths: ReadonlyArray<string>,
   platform: string = HostProcess.Platform.defaultValue(),
   readFlags?: OverleafFileFlagReader,
+  helper?: string,
 ): Promise<ReadonlyMap<string, OverleafFileAvailability>> {
   const answer = (value: OverleafFileAvailability) => new Map(paths.map((path) => [path, value]));
   if (platform === "linux" || paths.length === 0) return answer("available");
   if (platform !== "darwin" && platform !== "win32") return answer("helper-unavailable");
-  const reader = readFlags ?? (platform === "darwin" ? macFlags : windowsFlags);
+  const reader =
+    readFlags ??
+    (platform === "darwin"
+      ? macFlags
+      : (paths: ReadonlyArray<string>) => windowsFlags(paths, helper));
   if (reader === undefined) return answer("helper-unavailable");
   const flags = await reader(paths).catch(() => null);
   if (flags === null || flags.length !== paths.length) return answer("helper-unavailable");

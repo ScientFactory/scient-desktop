@@ -58,15 +58,22 @@ export async function runWindowsRetainedMutation(
     ...(input.peerGuards ?? []).map((peer) => NodePath.join(input.cwd, peer.path)),
   ];
   if (input.destination) paths.push(input.destination, NodePath.dirname(input.destination));
-  const availability = await overleafFilesAvailability(paths);
+  const availability = await overleafFilesAvailability(
+    paths,
+    undefined,
+    undefined,
+    input.nativePublicationHelper,
+  );
   for (const status of availability.values()) {
     if (status !== "available")
       throw new RetainedMutationError("unavailable", status, input.id, [], { refusal: status });
   }
-  const previous = await readRetainedRecord(directory).catch((error: unknown) => {
-    if (!absent(error)) throw error;
-    return null;
-  });
+  const previous = await readRetainedRecord(directory, input.nativePublicationHelper).catch(
+    (error: unknown) => {
+      if (!absent(error)) throw error;
+      return null;
+    },
+  );
   if (previous && !("originalSecurity" in previous))
     throw new RetainedMutationError(
       "recovery",
@@ -76,7 +83,9 @@ export async function runWindowsRetainedMutation(
   const creation =
     kind === "create" ||
     condition === "absent" ||
-    (kind === "write" && condition === "unguarded" && (await fileIdentity(target)) === null);
+    (kind === "write" &&
+      condition === "unguarded" &&
+      (await fileIdentity(target, input.nativePublicationHelper)) === null);
   let record: WindowsRetainedRecord = previous ?? {
     version: 2,
     mutationId: input.mutationId ?? input.id,
@@ -159,7 +168,7 @@ export async function runWindowsRetainedMutation(
       retainedPath: kept,
       retainedPaths: paths,
       retainedRevision: kept ? await fileRevision(kept) : null,
-      retainedIdentity: kept ? await fileIdentity(kept) : null,
+      retainedIdentity: kept ? await fileIdentity(kept, input.nativePublicationHelper) : null,
       mutationId: record.mutationId,
       revision: record.publishedRevision,
       currentRevision: record.currentRevision,
@@ -257,11 +266,18 @@ export async function runWindowsRetainedMutation(
   try {
     if (previous && record.phase !== "preparing") {
       const current =
-        kind === "prune" ? await windowsFileIdentity(target) : await fileIdentity(target);
+        kind === "prune"
+          ? await windowsFileIdentity(target, input.nativePublicationHelper)
+          : await fileIdentity(target, input.nativePublicationHelper);
       const kept =
-        kind === "prune" ? await windowsFileIdentity(retained) : await fileIdentity(retained);
-      const staged = await fileIdentity(stage);
-      if (same(await fileIdentity(published), record.stagedIdentity) && staged === null) {
+        kind === "prune"
+          ? await windowsFileIdentity(retained, input.nativePublicationHelper)
+          : await fileIdentity(retained, input.nativePublicationHelper);
+      const staged = await fileIdentity(stage, input.nativePublicationHelper);
+      if (
+        same(await fileIdentity(published, input.nativePublicationHelper), record.stagedIdentity) &&
+        staged === null
+      ) {
         if (
           record.publication !== "windows-stage-create" &&
           (!same(kept, record.originalIdentity) ||
@@ -312,7 +328,13 @@ export async function runWindowsRetainedMutation(
         current === null &&
         same(staged, record.stagedIdentity) &&
         (record.parentChange === undefined ||
-          (await windowsNativeFile(NodePath.dirname(published))).changeTime !== record.parentChange)
+          (
+            await windowsNativeFile(
+              NodePath.dirname(published),
+              undefined,
+              input.nativePublicationHelper,
+            )
+          ).changeTime !== record.parentChange)
       )
         return await finish("attention", "recovery");
       if (
@@ -402,7 +424,8 @@ export async function runWindowsRetainedMutation(
       if (
         space.bavail * space.bsize < required ||
         (input.retentionLimitBytes != null &&
-          (await retainedStorageBytes(input.retentionDirectory)) + Number(required) >
+          (await retainedStorageBytes(input.retentionDirectory, input.nativePublicationHelper)) +
+            Number(required) >
             input.retentionLimitBytes)
       )
         throw new RetainedMutationError(
@@ -478,14 +501,22 @@ export async function runWindowsRetainedMutation(
       if (stageRevision !== null && (await fileRevision(stage)) !== stageRevision)
         return await finish("attention", "recovery");
       const parentChange = creation
-        ? (await windowsNativeFile(NodePath.dirname(published))).changeTime
+        ? (
+            await windowsNativeFile(
+              NodePath.dirname(published),
+              undefined,
+              input.nativePublicationHelper,
+            )
+          ).changeTime
         : undefined;
       if (creation && parentChange === undefined) return await finish("attention", "recovery");
       await save({ phase: "prepared", ...(parentChange === undefined ? {} : { parentChange }) });
       await point("prepared");
       if (!creation) {
         const snapshot =
-          kind === "prune" ? null : await inspectGuardedFile(target, input.guardMaxBytes);
+          kind === "prune"
+            ? null
+            : await inspectGuardedFile(target, input.guardMaxBytes, input.nativePublicationHelper);
         if (
           kind !== "prune" &&
           (!snapshot ||
@@ -532,7 +563,7 @@ export async function runWindowsRetainedMutation(
     });
     await point("installed");
     if (
-      !same(await fileIdentity(published), record.stagedIdentity) ||
+      !same(await fileIdentity(published, input.nativePublicationHelper), record.stagedIdentity) ||
       (await fileRevision(published)) !== stageRevision
     )
       return await finish("attention", "recovery");
