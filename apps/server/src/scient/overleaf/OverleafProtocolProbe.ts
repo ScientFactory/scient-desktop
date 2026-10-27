@@ -110,7 +110,10 @@ export function classifyProbeGitFailure(error: OverleafGitError) {
                   ? "connection"
                   : /askpass|could not read username|could not read password/iu.test(detail)
                     ? "credential-prompt"
-                    : "unclassified";
+                    : // Overleaf's server answered, in words not listed above: it refused.
+                      /^remote: \S/mu.test(detail)
+                      ? "server-refused"
+                      : "unclassified";
   return { reason: error.reason, exitCode: error.exitCode ?? -1, category };
 }
 

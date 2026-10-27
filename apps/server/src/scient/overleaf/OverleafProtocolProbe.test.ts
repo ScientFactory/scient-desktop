@@ -33,6 +33,7 @@ describe("Cloud probe boundaries", () => {
       ["redirect denied", "redirect"],
       ["Failed to connect", "connection"],
       ["cannot run askpass", "credential-prompt"],
+      ["remote: Something Overleaf has not said before\nfatal: exited", "server-refused"],
       [`Unexpected remote output ${secret}`, "unclassified"],
     ] as const) {
       const diagnostic = classifyProbeGitFailure(

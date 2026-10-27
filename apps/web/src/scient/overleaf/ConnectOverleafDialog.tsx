@@ -3,7 +3,7 @@
 // project" opens it after making the Scient project, bringing the paper in as a subfolder.
 import type { EnvironmentId, ScientOverleafSyncResult } from "@t3tools/contracts";
 import { ExternalLinkIcon, FolderOpenIcon } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { SecretInput } from "~/components/settings/SecretInput";
 import {
@@ -77,6 +77,17 @@ export interface OverleafNewProject {
   readonly chooseFolder?: ((current: string) => Promise<string | null>) | undefined;
   /** Makes the Scient project at `root` (or uses the one there) and resolves to its workspace root. */
   readonly create: (root: string) => Promise<string>;
+}
+
+/** A path that wraps after its slashes, not in the middle of a folder's name. */
+function WrappingPath(props: { readonly path: string }) {
+  return props.path.split(/(?<=\/)/u).map((part, index) => (
+    // oxlint-disable-next-line react/no-array-index-key -- path segments repeat and never reorder
+    <Fragment key={index}>
+      {part}
+      <wbr />
+    </Fragment>
+  ));
 }
 
 export function ConnectOverleafDialog(props: {
@@ -351,9 +362,9 @@ export function ConnectOverleafDialog(props: {
                           <span className="shrink-0">Goes in</span>
                           <span
                             id="overleaf-new-project-destination"
-                            className="min-w-0 break-all text-foreground/80"
+                            className="min-w-0 [overflow-wrap:anywhere] text-foreground/80"
                           >
-                            {destination}
+                            <WrappingPath path={destination} />
                           </span>
                           {whereOpen ? null : (
                             <InlineButton tone="muted" onClick={() => setWhereOpen(true)}>
@@ -459,9 +470,11 @@ export function ConnectOverleafDialog(props: {
                             <span className="shrink-0">Goes in</span>
                             <span
                               id="overleaf-destination"
-                              className="min-w-0 break-all text-foreground/80"
+                              className="min-w-0 [overflow-wrap:anywhere] text-foreground/80"
                             >
-                              {fullPath(newFolderPath(chosenPath, name.trim()))}
+                              <WrappingPath
+                                path={fullPath(newFolderPath(chosenPath, name.trim()))}
+                              />
                             </span>
                           </p>
                         ) : null}
@@ -485,8 +498,8 @@ export function ConnectOverleafDialog(props: {
                         </div>
                         <p className="flex min-w-0 items-baseline gap-1 text-xs text-muted-foreground">
                           <span className="shrink-0">Links</span>
-                          <span className="min-w-0 break-all text-foreground/80">
-                            {fullPath(chosenPath)}
+                          <span className="min-w-0 [overflow-wrap:anywhere] text-foreground/80">
+                            <WrappingPath path={fullPath(chosenPath)} />
                           </span>
                         </p>
                       </div>

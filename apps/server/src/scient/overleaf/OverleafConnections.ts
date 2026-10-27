@@ -202,6 +202,7 @@ export const gitRefusal = (
   switch (classifyProbeGitFailure(error).category) {
     case "authentication-or-access-denied":
     case "credential-prompt":
+    case "server-refused":
       return "access-denied";
     case "project-not-found":
       return "project-not-found";
@@ -500,7 +501,17 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
             ),
             Effect.catchTags({
               OverleafGitError: (error) =>
-                Effect.succeed({ _tag: "refused", reason: gitRefusal(error) } as const),
+                Effect.as(
+                  // Overleaf's wording for an unknown refusal is kept, without URLs, for diagnosis.
+                  ["server-refused", "unclassified"].includes(
+                    classifyProbeGitFailure(error).category,
+                  )
+                    ? Effect.logWarning("Overleaf connect refused in unrecognised words", {
+                        detail: error.detail.replace(/https?:\/\/\S+/gu, "[remote]").slice(0, 1000),
+                      })
+                    : Effect.void,
+                  { _tag: "refused", reason: gitRefusal(error) } as const,
+                ),
               OverleafRepositoryError: (error) =>
                 Effect.succeed({ _tag: "refused", reason: gitRefusal(error) } as const),
             }),

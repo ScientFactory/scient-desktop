@@ -313,7 +313,7 @@ describe("Add project ▸ Overleaf project", () => {
     await page.getByRole("button", { name: "Change…" }).click();
     await page.getByLabelText("Paper folder").fill("paper");
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect.element(page.getByText(/Overleaf refused access/u)).toBeVisible();
+    await expect.element(page.getByText(/Overleaf refused this project/u)).toBeVisible();
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     expect(openNewThread).toHaveBeenCalledExactlyOnceWith(projectRef);
