@@ -154,7 +154,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(44);
+      expect(scientTools).toHaveLength(50);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_click",
         "preview_dialog",
