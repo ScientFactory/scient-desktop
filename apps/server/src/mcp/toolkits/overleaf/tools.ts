@@ -6,6 +6,7 @@ import {
   ScientOverleafKeptCopies,
   ScientOverleafManageResult,
   ScientOverleafPreviewResult,
+  ScientOverleafDiffResult,
   ScientOverleafRecoverResult,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
@@ -167,8 +168,17 @@ const ScientOverleafPreviewTool = Tool.make("scient_overleaf_preview", {
     connectionId: ConnectionId,
     choices: Schema.optional(Choices),
     files: Schema.optional(Files),
+    diff: Schema.optional(Schema.Boolean).annotate({
+      description:
+        "Include bounded line-diff text pairs from the sync base to the fetched Overleaf and publication trees. Binary and oversized files are listed without contents.",
+    }),
   }),
-  success: Schema.Struct({ lines: Lines, link: LinkedCopy, preview: ScientOverleafPreviewResult }),
+  success: Schema.Struct({
+    lines: Lines,
+    link: LinkedCopy,
+    preview: ScientOverleafPreviewResult,
+    diff: Schema.optional(ScientOverleafDiffResult),
+  }),
   failure: ScientOverleafToolError,
   dependencies,
 })

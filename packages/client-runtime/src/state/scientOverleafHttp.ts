@@ -4,6 +4,7 @@ import type {
   ScientOverleafConnectionRequest,
   ScientOverleafConnectRequest,
   ScientOverleafDisconnectRequest,
+  ScientOverleafDiffRequest,
   ScientOverleafPreviewRequest,
   ScientOverleafRestoreRequest,
   ScientOverleafSyncRequest,
@@ -243,5 +244,19 @@ export const cancelEnvironmentOverleafSync = Effect.fn(
     timeoutMs: READ_TIMEOUT_MS,
     url: (urls) => urls.cancel(),
     run: ({ client, headers }) => client.cancel({ headers, payload: input.request }),
+  });
+});
+
+export const getEnvironmentOverleafDiff = Effect.fn(
+  "clientRuntime.state.getEnvironmentOverleafDiff",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly request: ScientOverleafDiffRequest;
+}) {
+  return yield* request({
+    prepared: input.prepared,
+    timeoutMs: READ_TIMEOUT_MS,
+    url: (urls) => urls.diff(),
+    run: ({ client, headers }) => client.diff({ headers, payload: input.request }),
   });
 });
