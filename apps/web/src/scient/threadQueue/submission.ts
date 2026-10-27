@@ -58,10 +58,11 @@ const SubmissionJournal = Schema.Union([
   Schema.Struct({ fingerprint: Schema.String, id: Schema.String }),
   Schema.Record(Schema.String, Schema.String),
 ]);
+const decodeSubmissionJournal = Schema.decodeUnknownSync(SubmissionJournal);
 function readSubmissionJournal(key: string): Record<string, string> {
   const stored = localStorage.getItem(key);
   if (!stored) return {};
-  const saved = Schema.decodeUnknownSync(SubmissionJournal)(JSON.parse(stored));
+  const saved = decodeSubmissionJournal(JSON.parse(stored));
   return "fingerprint" in saved && "id" in saved ? { [saved.fingerprint]: saved.id } : { ...saved };
 }
 

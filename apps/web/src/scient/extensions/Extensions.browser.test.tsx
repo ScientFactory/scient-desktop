@@ -42,6 +42,9 @@ const state = vi.hoisted(() => ({
   scopeEnvironmentId: undefined as string | null | undefined,
   httpBaseUrls: {} as Record<string, string>,
   canWrite: true,
+  canRead: true,
+  refreshInventory: vi.fn(),
+  publishRevision: (_environmentId: string, _revision: number) => {},
   providersByEnvironment: {} as Record<string, ServerProvider[]>,
   inventory: null as ExtensionsInventory | null,
   catalog: null as DiscoverCatalog | null,
@@ -53,7 +56,13 @@ const state = vi.hoisted(() => ({
   storeEntry: null as ProviderStoreEntry | null,
   contentApps: undefined as ExtensionPluginContents["apps"] | undefined,
   queryTargets: [] as unknown[],
-  projects: [] as Array<{ environmentId: string; id: string; title: string; isScratch?: true }>,
+  projects: [] as Array<{
+    environmentId: string;
+    id: string;
+    title: string;
+    workspaceRoot?: string;
+    isScratch?: true;
+  }>,
   projectsKnown: true,
   registry: null as AtomRegistry.AtomRegistry | null,
   hash: "",
@@ -109,9 +118,19 @@ vi.mock("@effect/atom-react", async (importOriginal) => {
 vi.mock("../../state/shell", () => ({
   environmentShell: { stateValueAtom: (environmentId: string) => ({ shellOf: environmentId }) },
 }));
-vi.mock("../../state/server", () => ({
-  providersIgnoringCheckedAtAtom: (environmentId: string) => environmentId,
-}));
+vi.mock("../../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const permission = Atom.make(true);
+  return {
+    providersIgnoringCheckedAtAtom: (environmentId: string) => environmentId,
+    serverEnvironment: {
+      refreshProviders: {
+        permissionAtom: () => permission,
+        run: (...args: unknown[]) => state.refreshInventory(...args),
+      },
+    },
+  };
+});
 vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => state.primaryEnvironmentId,
   usePrimaryEnvironment: () => null,
@@ -151,15 +170,20 @@ vi.mock("../../components/settings/SettingInheritance", () => ({
 }));
 vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentScope: () => {
+  useEnvironmentScope: (_environmentId: string, scope: string) => {
     useStateVersion();
-    return state.canWrite;
+    return scope === "settings:write" ? state.canWrite : state.canRead;
   },
   useEnvironmentsWithScope: () => new Set(),
 }));
 vi.mock("../../state/query", async () => {
   const { ExtensionsError: NotFound } = await import("@t3tools/contracts");
+  const CauseModule = await import("effect/Cause");
   return {
+    formatEnvironmentQueryError: (cause: Cause.Cause<unknown>) => {
+      const error = CauseModule.squash(cause);
+      return error instanceof Error ? error.message : "The environment request failed.";
+    },
     useEnvironmentQuery: (
       atom: { kind: string; environmentId: string; input?: Record<string, unknown> } | null,
     ) => {
@@ -224,9 +248,17 @@ vi.mock("../../state/query", async () => {
 });
 vi.mock("../../state/queries", () => ({ useDebouncedValue: (value: unknown) => value }));
 vi.mock("./extensionsState", async () => {
-  const { Atom } = await import("effect/reactivity");
-  const storeAtom = Atom.family((key: string) => Object.assign(Atom.make(null), JSON.parse(key)));
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const changes = Atom.family((_environmentId: string) =>
+    Atom.make<import("effect/reactivity").AsyncResult.AsyncResult<{ revision: number }>>(
+      AsyncResult.initial(),
+    ),
+  );
+  state.publishRevision = (environmentId, revision) => {
+    state.registry?.set(changes(environmentId), AsyncResult.success({ revision }));
+  };
   const idle = { busy: null, error: null, blockedSignInUrl: null, signInStartedAt: null };
+  const storeAtom = Atom.family((key: string) => Object.assign(Atom.make(null), JSON.parse(key)));
   return {
     extensionsBrandIcon: () => null,
     extensionsPluginContents: ({
@@ -243,6 +275,7 @@ vi.mock("./extensionsState", async () => {
       environmentId: string;
       input: Record<string, unknown>;
     }) => storeAtom(JSON.stringify({ kind: "skill-document", environmentId, input })),
+    extensionsChanges: ({ environmentId }: { environmentId: string }) => changes(environmentId),
     extensionsInventory: ({ environmentId }: { environmentId: string }) => ({
       kind: "inventory",
       environmentId,
@@ -592,6 +625,15 @@ function setup() {
   state.scopeEnvironmentId = undefined;
   state.httpBaseUrls = { local: "http://127.0.0.1:3773/" };
   state.canWrite = true;
+  state.canRead = true;
+  state.refreshInventory
+    .mockReset()
+    .mockImplementation((_registry, target: { environmentId: string }) =>
+      Promise.resolve({
+        _tag: "Success",
+        value: { providers: state.providersByEnvironment[target.environmentId] ?? [] },
+      }),
+    );
   state.projects = [];
   state.providersByEnvironment = {
     local: [
@@ -1042,6 +1084,304 @@ describe("Discover", () => {
 });
 
 describe("Installed", () => {
+  it("lists all unopened project roots beyond both retention bounds only in the selected environment", async () => {
+    await using fixture = setup();
+    state.scopeEnvironmentId = "remote";
+    state.projects = [
+      ...Array.from({ length: 40 }, (_, index) => ({
+        environmentId: "remote",
+        id: `p-${index}`,
+        title: `Project ${index}`,
+        workspaceRoot: `/p-${index}`,
+      })),
+      { environmentId: "local", id: "local", title: "Local", workspaceRoot: "/local" },
+      {
+        environmentId: "remote",
+        id: "scratch",
+        title: "Scratch",
+        workspaceRoot: "/scratch",
+        isScratch: true,
+      },
+    ];
+    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
+    state.providersByEnvironment = { remote: [raw] };
+    let snapshots: NonNullable<ServerProvider["workspaceSnapshots"]> = [];
+    state.refreshInventory.mockImplementation(
+      async (_registry, target: { environmentId: string; input: { cwd?: string } }) => {
+        expect(target.environmentId).toBe("remote");
+        const cwd = target.input.cwd;
+        if (cwd)
+          snapshots = [
+            ...snapshots,
+            {
+              cwd,
+              checkedAt: "2026-10-26T00:00:00.000Z",
+              skills: [],
+              slashCommands: [],
+              plugins: [
+                { id: cwd, name: `Plugin ${cwd}`, source: "local" as const, enabled: true },
+              ],
+            },
+          ].slice(-16);
+        return {
+          _tag: "Success",
+          value: { providers: [{ ...raw, workspaceSnapshots: snapshots }] },
+        };
+      },
+    );
+    await fixture.render(<InstalledPage />);
+    await vi.waitFor(() =>
+      expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
+    );
+    await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
+    expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
+    expect(fixture.rowNames()).toContain("Plugin /p-0");
+    expect(fixture.rowNames()).toContain("Plugin /p-39");
+    expect(
+      state.refreshInventory.mock.calls.flatMap(([, target]) => target.input.cwd ?? []),
+    ).toHaveLength(40);
+    expect(snapshots).toHaveLength(16);
+  });
+
+  it.each([false, true])(
+    "sweeps 40 roots once after same-ID replacement (coalesced reset: %s)",
+    async (coalesced) => {
+      await using fixture = setup();
+      state.projects = Array.from({ length: 40 }, (_, index) => ({
+        environmentId: "local",
+        id: `p-${index}`,
+        title: `Project ${index}`,
+        workspaceRoot: `/p-${index}`,
+      }));
+      let raw = provider(codex, "codex", {
+        nativeInventoryGeneration: "old",
+        plugins: [],
+        mcpServers: [],
+      });
+      state.providersByEnvironment = { local: [raw] };
+      let snapshots: NonNullable<ServerProvider["workspaceSnapshots"]> = [];
+      const scanned: string[] = [];
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<unknown>();
+      let held = false;
+      state.refreshInventory.mockImplementation(
+        async (_registry, { input }: { input: { cwd?: string } }) => {
+          if (held) {
+            held = false;
+            entered.resolve();
+            return release.promise;
+          }
+          if (input.cwd) {
+            scanned.push(`${raw.nativeInventoryGeneration}:${input.cwd}`);
+            snapshots = [
+              ...snapshots.filter((entry) => entry.cwd !== input.cwd),
+              {
+                cwd: input.cwd,
+                checkedAt: raw.checkedAt,
+                skills: [],
+                slashCommands: [],
+                plugins: [
+                  {
+                    id: input.cwd,
+                    name: `${raw.nativeInventoryGeneration} ${input.cwd}`,
+                    source: "local" as const,
+                    enabled: true,
+                  },
+                ],
+              },
+            ].slice(-16);
+          }
+          return {
+            _tag: "Success",
+            value: { providers: [{ ...raw, workspaceSnapshots: snapshots }] },
+          };
+        },
+      );
+      await fixture.render(<InstalledPage />);
+      await vi.waitFor(() =>
+        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
+      );
+      const retired = { ...raw, workspaceSnapshots: snapshots };
+      held = true;
+      await act(async () => state.publishRevision("local", 2));
+      await entered.promise;
+      raw = { ...raw, nativeInventoryGeneration: "new" };
+      snapshots = coalesced
+        ? [
+            {
+              cwd: "/p-39",
+              checkedAt: raw.checkedAt,
+              skills: [],
+              slashCommands: [],
+              plugins: [{ id: "/p-39", name: "new /p-39", source: "local", enabled: true }],
+            },
+          ]
+        : [];
+      state.providersByEnvironment.local = [raw];
+      await fixture.render(<InstalledPage />);
+      expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
+      await act(async () => release.resolve({ _tag: "Success", value: { providers: [retired] } }));
+      await vi.waitFor(() =>
+        expect(buttonIn(fixture.section("From Codex"), "Show all 40")).not.toBeNull(),
+      );
+      await userEvent.click(buttonIn(fixture.section("From Codex"), "Show all 40")!);
+      expect(fixture.rowNames(fixture.section("From Codex"))).toHaveLength(40);
+      expect(fixture.rowNames().some((name) => name?.startsWith("old ") === true)).toBe(false);
+      expect(scanned.filter((entry) => entry.startsWith("old:"))).toHaveLength(40);
+      expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
+      const reads = state.refreshInventory.mock.calls.length;
+      state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
+      await fixture.render(<InstalledPage />);
+      expect(state.refreshInventory).toHaveBeenCalledTimes(reads);
+      await act(async () => state.publishRevision("local", 3));
+      await vi.waitFor(() => expect(state.refreshInventory).toHaveBeenCalledTimes(reads + 1));
+      expect(scanned.filter((entry) => entry.startsWith("new:"))).toHaveLength(40);
+    },
+  );
+
+  it("rejects late results after an environment switch", async () => {
+    await using fixture = setup();
+    const local = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
+    const remote = provider(codex, "codex", {
+      plugins: [{ id: "remote", name: "Remote plugin", source: "local", enabled: true }],
+      mcpServers: [],
+    });
+    state.providersByEnvironment.remote = [remote];
+    state.refreshInventory.mockImplementation((_registry, target: { environmentId: string }) => {
+      if (target.environmentId === "local") {
+        started.resolve();
+        return local.promise;
+      }
+      return Promise.resolve({ _tag: "Success", value: { providers: [remote] } });
+    });
+    await fixture.render(<InstalledPage />);
+    await started.promise;
+    state.scopeEnvironmentId = "remote";
+    await fixture.render(<InstalledPage />);
+    await vi.waitFor(() => expect(fixture.rowNames()).toContain("Remote plugin"));
+    await act(async () =>
+      local.resolve({ _tag: "Success", value: { providers: state.providersByEnvironment.local } }),
+    );
+    expect(fixture.rowNames()).not.toContain("Codex plugin 1");
+    expect(fixture.rowNames()).toContain("Remote plugin");
+  });
+
+  it("serializes changed roots and discards the previous root's pending reply", async () => {
+    await using fixture = setup();
+    const old = Promise.withResolvers<unknown>();
+    const started = Promise.withResolvers<void>();
+    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
+    state.providersByEnvironment = { local: [raw] };
+    state.projects = [{ environmentId: "local", id: "p", title: "Project", workspaceRoot: "/old" }];
+    state.refreshInventory.mockImplementation(
+      (_registry, { input }: { input: { cwd?: string } }) => {
+        if (input.cwd === "/old") {
+          started.resolve();
+          return old.promise;
+        }
+        return Promise.resolve({
+          _tag: "Success",
+          value: {
+            providers: [
+              {
+                ...raw,
+                workspaceSnapshots: input.cwd
+                  ? [
+                      {
+                        cwd: input.cwd,
+                        checkedAt: raw.checkedAt,
+                        skills: [],
+                        slashCommands: [],
+                        plugins: [
+                          { id: "new", name: "New root plugin", source: "local", enabled: true },
+                        ],
+                      },
+                    ]
+                  : [],
+              },
+            ],
+          },
+        });
+      },
+    );
+    await fixture.render(<InstalledPage />);
+    await started.promise;
+    state.projects = [{ environmentId: "local", id: "p", title: "Project", workspaceRoot: "/new" }];
+    await fixture.render(<InstalledPage />);
+    expect(
+      state.refreshInventory.mock.calls.some(([, target]) => target.input.cwd === "/new"),
+    ).toBe(false);
+    await act(async () =>
+      old.resolve({ _tag: "Success", value: { providers: state.providersByEnvironment.local } }),
+    );
+    await vi.waitFor(() => expect(fixture.rowNames()).toContain("New root plugin"));
+    expect(
+      state.refreshInventory.mock.calls.filter(([, target]) => target.input.cwd === "/old"),
+    ).toHaveLength(1);
+  });
+
+  it("observes native plugin revisions without timestamp or inventory re-render scans", async () => {
+    await using fixture = setup();
+    const raw = provider(codex, "codex", { plugins: [], mcpServers: [] });
+    state.providersByEnvironment = { local: [raw] };
+    await fixture.render(<InstalledPage />);
+    // Codex keeps its own section, even empty, so its store stays one click away.
+    await vi.waitFor(() => expect(fixture.section("From Codex")).not.toBeNull());
+    const before = state.refreshInventory.mock.calls.length;
+    state.providersByEnvironment.local = [{ ...raw, checkedAt: "2026-10-26T01:00:00.000Z" }];
+    state.inventory = inventory({ revision: 99 });
+    await fixture.render(<InstalledPage />);
+    expect(state.refreshInventory).toHaveBeenCalledTimes(before);
+    state.refreshInventory.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        providers: [
+          {
+            ...raw,
+            plugins: [{ id: "late", name: "Late plugin", source: "local", enabled: true }],
+          },
+        ],
+      },
+    });
+    await act(async () => state.publishRevision("local", 100));
+    await vi.waitFor(() => expect(fixture.rowNames()).toContain("Late plugin"));
+    expect(state.refreshInventory).toHaveBeenCalledTimes(before + 1);
+  });
+
+  it("keeps unknown, checking, refusal and installed-empty distinct and never scans Discover", async () => {
+    await using fixture = setup();
+    state.projectsKnown = false;
+    await fixture.render(<InstalledPage />);
+    expect(fixture.section("From your agents").textContent).toContain("not been checked");
+    expect(state.refreshInventory).not.toHaveBeenCalled();
+    state.projectsKnown = true;
+    const pending = Promise.withResolvers<unknown>();
+    state.refreshInventory.mockReturnValue(pending.promise);
+    await fixture.render(<InstalledPage />);
+    await vi.waitFor(() =>
+      expect(fixture.section("From your agents").textContent).toContain("Checking"),
+    );
+    await act(async () =>
+      pending.resolve({ _tag: "Failure", cause: Cause.fail(new Error("Inventory denied")) }),
+    );
+    await vi.waitFor(() =>
+      expect(fixture.section("From your agents").textContent).toContain("Inventory denied"),
+    );
+    expect(fixture.section("From your agents").textContent).not.toContain("No agent plugins");
+    await fixture.reset();
+    state.refreshInventory.mockClear();
+    await fixture.render(<DiscoverPage />);
+    expect(state.refreshInventory).not.toHaveBeenCalled();
+    await fixture.reset();
+    state.canRead = false;
+    await fixture.render(<InstalledPage />);
+    expect(state.refreshInventory).not.toHaveBeenCalled();
+    expect(fixture.section("From your agents").textContent).toContain(
+      "cannot read agent extensions",
+    );
+  });
+
   it("groups connectors, Scient plugins and each agent's own items, six rows until Show all", async () => {
     await using fixture = setup();
     state.inventory = inventory({
@@ -1834,6 +2174,10 @@ describe("Detail pages", () => {
       skills: [],
       plugins: [pluginOne],
     });
+    state.projects = [
+      { environmentId: "local", id: "a", title: "A", workspaceRoot: "/work/a" },
+      { environmentId: "local", id: "b", title: "B", workspaceRoot: "/work/b" },
+    ];
     state.providersByEnvironment = {
       local: [
         provider(codex, "codex", {

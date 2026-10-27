@@ -369,26 +369,32 @@ const make = Effect.fn("ScientSkillPolicy.make")(function* () {
     readState,
     snapshot: Effect.map(readState, ({ snapshot }) => snapshot),
     snapshotIsComplete: Effect.map(readState, ({ snapshotIsComplete }) => snapshotIsComplete),
-    setUserSkillActivation: (release, active, invocationPolicy) =>
-      update((current) => ({
-        ...current,
-        userSkills: [
-          ...current.userSkills.filter(
-            (entry) => releaseIdentity(entry.release) !== releaseIdentity(release),
-          ),
-          { release, active, invocationPolicy },
-        ],
-      })),
-    setProjectSkillPreference: (projectId, name, active, invocationPolicy) =>
-      update((current) => ({
-        ...current,
-        projectSkills: [
-          ...current.projectSkills.filter(
-            (entry) => entry.projectId !== projectId || entry.name !== name,
-          ),
-          { projectId, name, active, invocationPolicy },
-        ],
-      })),
+    setUserSkillActivation: Effect.fn("ScientSkillPolicy.setUserSkillActivation")(
+      function (release, active, invocationPolicy) {
+        return update((current) => ({
+          ...current,
+          userSkills: [
+            ...current.userSkills.filter(
+              (entry) => releaseIdentity(entry.release) !== releaseIdentity(release),
+            ),
+            { release, active, invocationPolicy },
+          ],
+        }));
+      },
+    ),
+    setProjectSkillPreference: Effect.fn("ScientSkillPolicy.setProjectSkillPreference")(
+      function (projectId, name, active, invocationPolicy) {
+        return update((current) => ({
+          ...current,
+          projectSkills: [
+            ...current.projectSkills.filter(
+              (entry) => entry.projectId !== projectId || entry.name !== name,
+            ),
+            { projectId, name, active, invocationPolicy },
+          ],
+        }));
+      },
+    ),
     trustProjectLock: Effect.fn("ScientSkillPolicy.trustProjectLock")(function* (projectRoot) {
       const lock = yield* inspectProjectLock(projectRoot);
       if (lock.status !== "valid") {

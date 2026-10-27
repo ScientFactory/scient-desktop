@@ -91,7 +91,9 @@ function idleMessage(watch: DroidPromptWatch, idleMillis: number): string {
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 const isAcpProcessExitedError = Schema.is(EffectAcpErrors.AcpProcessExitedError);
 
-export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
+export const makeDroidAdapterV2 = Effect.fn("makeDroidAdapterV2")(function (
+  options: DroidAdapterV2Options,
+) {
   const runtimes = new WeakMap<object, DroidAcpRuntime>();
   const reportedRetirements = new WeakSet<object>();
   const effortNotices = new WeakMap<
@@ -533,4 +535,4 @@ export function makeDroidAdapterV2(options: DroidAdapterV2Options) {
       }),
   };
   return makeAcpAdapterV2({ ...options, flavor });
-}
+});

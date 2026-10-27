@@ -1,7 +1,8 @@
 import {
   createPreviewFramePainter,
   createPreviewStreamClient,
-  previewStreamControlLabel,
+  // SCIENT-FORK:START — the control label moved to BrowserControlChip
+  // SCIENT-FORK:END
   previewStreamModifiers,
   type PreviewStreamClient,
   type PreviewStreamControl,
@@ -14,6 +15,9 @@ import {
   type PreviewStreamViewport,
   previewStreamHostSetupMessage,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
+// SCIENT-FORK:START
+import { BrowserControlChip } from "~/scient/browser/BrowserControlChip";
+// SCIENT-FORK:END
 import type {
   EnvironmentId,
   PreviewStreamHostSetup,
@@ -50,7 +54,6 @@ export interface ServerBrowserHandle {
 }
 
 const RESIZE_THROTTLE_MS = 150;
-const ACCESS_RETRY_MS = 10_000;
 // Reuse nearby probes when a slow link would return the tap's answer after it ends.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
@@ -165,7 +168,6 @@ export function ServerBrowserSurface(props: {
     pdfUrl = null,
     ref,
   } = props;
-  const access = usePreviewStreamAccess(environmentId);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const keySentRef = useRef(false);
@@ -194,6 +196,7 @@ export function ServerBrowserSurface(props: {
   };
   const unauthorizedRef = useRef(0);
   const [accessDenied, setAccessDenied] = useState(false);
+  const access = usePreviewStreamAccess(environmentId, { retry: visible && !accessDenied });
   const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
   const pendingMoveRef = useRef<MouseInput | null>(null);
   const pendingWheelRef = useRef<WheelInput | null>(null);
@@ -483,12 +486,6 @@ export function ServerBrowserSurface(props: {
   ]);
 
   useEffect(() => {
-    if (!visible || accessDenied || access !== null) return;
-    const timer = setInterval(() => refreshPreviewStreamAccess(environmentId), ACCESS_RETRY_MS);
-    return () => clearInterval(timer);
-  }, [access, accessDenied, environmentId, visible]);
-
-  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     // Registered natively: React's wheel listener is passive and cannot stop the panel scrolling.
@@ -731,28 +728,14 @@ export function ServerBrowserSurface(props: {
       className={cn("relative flex flex-col overflow-hidden", className)}
       data-server-browser-surface={tabId}
     >
-      <div
-        className={cn(
-          "visible relative z-20 flex shrink-0 items-center justify-between gap-2 border-border bg-background px-2 py-1",
-          controlPosition === "bottom" ? "order-last border-t" : "border-b",
-        )}
-      >
-        <span role="status" className="text-xs text-muted-foreground">
-          {previewStreamControlLabel(control)}
-        </span>
-        {control?.canOperate ? (
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={control.controller === "another-viewer"}
-            onClick={() =>
-              send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
-            }
-          >
-            {control.controller === "you" ? "Release control" : "Take control"}
-          </Button>
-        ) : null}
-      </div>
+      {/* SCIENT-FORK:START — who drives the page, only when an agent or another window is involved */}
+      <BrowserControlChip
+        control={control}
+        position={controlPosition}
+        onTake={() => send({ type: "takeControl" })}
+        onRelease={() => send({ type: "releaseControl" })}
+      />
+      {/* SCIENT-FORK:END */}
       <div className="relative min-h-0 flex-1">
         {pdfUrl ? (
           <embed

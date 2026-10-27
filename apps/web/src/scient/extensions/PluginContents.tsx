@@ -28,6 +28,7 @@ import {
   extensionsSkillDocument,
   extensionsProviderStoreEntry,
 } from "./extensionsState";
+import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 function PluginSkillCard({
   skill,
@@ -344,6 +345,7 @@ export function PluginContents({
   const atom = extensionsPluginContents({ environmentId, input });
   const contents = useEnvironmentQuery(atom);
   const prefetches = useRef(new Map<string, () => void>());
+  // oxlint-disable-next-line t3code/react-effect-budget -- Hover prefetches subscribe to query atoms outside render; release them when the plugin page goes away.
   useEffect(() => {
     const mounted = prefetches.current;
     return () => {
@@ -377,11 +379,7 @@ export function PluginContents({
   );
   const pluginIcon = iconUrl ?? pluginEntry.data?.iconUrl;
 
-  useEffect(() => {
-    const refresh = () => registry.refresh(atom);
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [atom, registry]);
+  useWindowFocusRefresh(() => registry.refresh(atom));
   const [selected, setSelected] = useState<ExtensionPluginSkill | null>(null);
   const knownServers = input.cwd ? [] : (provider?.mcpServers ?? []);
   if (!contents.data) return <MutedLine>{contents.error ?? "Loading contents…"}</MutedLine>;

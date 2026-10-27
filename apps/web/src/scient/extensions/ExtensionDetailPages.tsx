@@ -73,6 +73,7 @@ import {
   urlHost,
   workspaceLabel,
 } from "./extensionsView";
+import { providerInventoryMessage } from "./providerInventory";
 
 const isExtensionsError = Schema.is(ExtensionsError);
 
@@ -1043,8 +1044,8 @@ export function PluginDetailPage({ pluginId }: { readonly pluginId: string }) {
 }
 
 function useProviderGroup(instanceId: string): ProviderExtensionGroup | undefined {
-  const { providers } = useExtensionsEnvironment();
-  return collectProviderExtensionGroups(providers, null).find(
+  const { providerInventory } = useExtensionsEnvironment();
+  return collectProviderExtensionGroups(providerInventory.providers, null).find(
     (group) => group.provider.instanceId === instanceId,
   );
 }
@@ -1063,6 +1064,7 @@ function ProviderPluginDetailContent({
   readonly workspace: string | undefined;
 }) {
   const group = useProviderGroup(instanceId);
+  const { providerInventory } = useExtensionsEnvironment();
   const found = group?.plugins.find(
     (entry) => entry.plugin.id === pluginId && entry.cwd === workspace,
   );
@@ -1070,7 +1072,11 @@ function ProviderPluginDetailContent({
     return (
       <>
         <DetailBack to="installed" />
-        <MutedLine>This plugin is no longer reported.</MutedLine>
+        <MutedLine>
+          {providerInventory.phase === "ready"
+            ? "This plugin is no longer reported."
+            : providerInventoryMessage(providerInventory)}
+        </MutedLine>
       </>
     );
   }
@@ -1172,7 +1178,7 @@ export function ProviderPluginDetailPage(props: {
   readonly workspace: string | undefined;
 }) {
   return (
-    <ExtensionsPage>
+    <ExtensionsPage loadProviderInventory>
       <ProviderPluginDetailContent {...props} />
     </ExtensionsPage>
   );
@@ -1186,12 +1192,17 @@ function ProviderServerDetailContent({
   readonly serverName: string;
 }) {
   const group = useProviderGroup(instanceId);
+  const { providerInventory } = useExtensionsEnvironment();
   const server = group?.mcpServers.find((candidate) => candidate.name === serverName);
   if (!group || !server) {
     return (
       <>
         <DetailBack to="installed" />
-        <MutedLine>This MCP server is no longer reported.</MutedLine>
+        <MutedLine>
+          {providerInventory.phase === "ready"
+            ? "This MCP server is no longer reported."
+            : providerInventoryMessage(providerInventory)}
+        </MutedLine>
       </>
     );
   }
@@ -1272,7 +1283,7 @@ export function ProviderServerDetailPage(props: {
   readonly serverName: string;
 }) {
   return (
-    <ExtensionsPage>
+    <ExtensionsPage loadProviderInventory>
       <ProviderServerDetailContent {...props} />
     </ExtensionsPage>
   );

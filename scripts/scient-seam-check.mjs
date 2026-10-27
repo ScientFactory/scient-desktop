@@ -12,6 +12,8 @@ const definitions = {
   latex: { schema: 2, signals: "latexDiffSignals" },
   omp: { schema: 2, signals: "ompDiffSignals" },
   extensions: { schema: 2, signals: "extensionsDiffSignals" },
+  accounts: { schema: 2, signals: "accountsDiffSignals" },
+  "side-panel": { schema: 2, signals: "sidePanelDiffSignals" },
 };
 
 function git(cwd, args, env = process.env) {

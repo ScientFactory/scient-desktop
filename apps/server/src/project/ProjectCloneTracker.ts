@@ -429,13 +429,22 @@ export const make = Effect.gen(function* () {
     { bufferSize: 1, strategy: "sliding" },
   );
 
+  // Forwarders retain the underlying operation spans.
   return ProjectCloneTracker.of({
-    start: (input, hooks) => locked(start(input, hooks)),
-    cancel: (projectId) => locked(cancel(projectId)),
-    retry: (projectId) => locked(retry(projectId)),
+    start: Effect.fnUntraced(function* (input, hooks) {
+      return yield* locked(start(input, hooks));
+    }),
+    cancel: Effect.fnUntraced(function* (projectId) {
+      return yield* locked(cancel(projectId));
+    }),
+    retry: Effect.fnUntraced(function* (projectId) {
+      return yield* locked(retry(projectId));
+    }),
     // Retire the exact clone through filesystem and map cleanup even if its
     // caller disconnects while waiting for the action lock or native shutdown.
-    discard: (projectId) => locked(discard(projectId)).pipe(Effect.uninterruptible),
+    discard: Effect.fnUntraced(function* (projectId) {
+      return yield* locked(discard(projectId));
+    }, Effect.uninterruptible),
     get,
     stream,
   });

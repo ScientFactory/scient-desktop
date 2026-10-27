@@ -35,8 +35,8 @@ vi.mock("~/assets/assetUrls", async (importOriginal) => ({
   useAssetUrlState: (_environmentId: unknown, resource: unknown) => {
     testState.resources.push(resource);
     return testState.assetState === "failure"
-      ? { _tag: "Failure" }
-      : { _tag: "Success", url: "https://signed.test/asset.png" };
+      ? { _tag: "Failure", refresh: vi.fn() }
+      : { _tag: "Success", url: "https://signed.test/asset.png", refresh: vi.fn() };
   },
 }));
 vi.mock("~/hooks/useTheme", async (importOriginal) => ({

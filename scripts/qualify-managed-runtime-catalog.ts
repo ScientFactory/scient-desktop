@@ -45,6 +45,7 @@ import {
   readManagedRuntimeCatalog,
   validateManagedRuntimeCandidate,
 } from "./lib/managed-runtime-catalog.ts";
+import { runLiveTests } from "./lib/managed-runtime-live-tests.ts";
 
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(name);
@@ -64,40 +65,6 @@ if (runPiLiveTests && provider !== "pi") {
 }
 if (runDroidLiveTests && provider !== "droid") {
   throw new Error("--droid-live-tests is valid only for Droid qualification.");
-}
-
-/** Runs live suites, one file at a time, against the binary named in `environment`. */
-async function runLiveTests(input: {
-  readonly label: string;
-  readonly tests: ReadonlyArray<string>;
-  readonly environment: Readonly<Record<string, string>>;
-  readonly platform: NodeJS.Platform;
-}): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = NodeChildProcess.spawn(
-      "vp",
-      ["test", "run", "--no-file-parallelism", ...input.tests],
-      {
-        cwd: process.cwd(),
-        env: { ...process.env, ...input.environment },
-        // Windows cannot execute a package-manager .cmd shim directly through spawn.
-        // The shell is needed only to resolve the fixed `vp` command; all arguments are static.
-        shell: input.platform === "win32",
-        stdio: "inherit",
-        windowsHide: true,
-      },
-    );
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (code === 0) resolve();
-      else
-        reject(
-          new Error(
-            `${input.label} failed${signal ? ` with signal ${signal}` : ` with exit code ${String(code)}`}.`,
-          ),
-        );
-    });
-  });
 }
 
 const verifyPiIntegration = (binary: string, version: string, platform: NodeJS.Platform) =>

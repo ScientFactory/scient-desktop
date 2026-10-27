@@ -225,7 +225,7 @@ export function makeScientAgentConnectionActions(input: {
     const completion = Fiber.join(login);
 
     const first = yield* Effect.raceFirst(
-      Queue.take(prompts).pipe(Effect.map((prompt) => Option.some(prompt))),
+      Queue.take(prompts).pipe(Effect.asSome),
       completion.pipe(Effect.as(Option.none<Prompt>())),
     ).pipe(
       Effect.timeoutOrElse({
@@ -247,6 +247,7 @@ export function makeScientAgentConnectionActions(input: {
       else question ??= prompt;
     };
     take(first.value);
+    // oxlint-disable-next-line no-unmodified-loop-condition -- take(next.value) fills link or question on each iteration.
     while (link === undefined || question === undefined) {
       const next = yield* Queue.take(prompts).pipe(
         Effect.timeoutOption(input.promptSettle ?? PROMPT_SETTLE),

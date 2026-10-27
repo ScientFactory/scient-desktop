@@ -1,3 +1,4 @@
+import * as DocumentText from "../../provider/DocumentText.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -77,7 +78,7 @@ it.effect.each(
     Layer.provideMerge(
       Layer.mergeAll(replay, CommandReceiptStore.layer).pipe(
         Layer.provideMerge(SqlitePersistenceMemory),
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
       ),
     ),
   );

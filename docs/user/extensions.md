@@ -35,6 +35,11 @@ name. Under **Authentication**, keep **Sign in if the server asks**, or choose
 sign-in, **Advanced** lets you use an OAuth client that you registered with the
 service yourself.
 
+With **API key**, choose **Use an existing account** in the key picker when a
+matching API-key account is saved in **Settings → Accounts**. Updating that
+account's key updates the service too. Account access set to **Off**, or the global
+**Agent access** switch, prevents its use.
+
 Scient holds the sign-in or key. Every agent that Scient runs can use the
 service through Scient, and agents never receive your credentials: they are
 not written into agent configuration, environment variables, or transcripts.
@@ -62,7 +67,7 @@ only read, and others. The list is cleared when the service's sign-in changes.
 
 **About** shows where the service came from, its website, its URL, the name
 agents see, and **Works with**. Use **Remove** at the top of the page to delete
-the service and its stored sign-in or key.
+the service and its stored sign-in or key. A key from Accounts stays in Accounts.
 
 ## Works with
 
@@ -91,7 +96,10 @@ to sign in. A bundle's page has an On/Off switch and **Uninstall**.
 
 Sections named **From Codex**, **From Claude**, and so on show plugins and MCP
 servers that each agent manages in its own configuration. Scient lists them so
-you can see everything in one place, but the agent remains in charge.
+you can see everything in one place, but the agent remains in charge. Project-scoped
+items include all known projects in the selected environment, even projects you have
+not opened recently. The list reports when inventory is still being checked or could
+not be fully read.
 **Uninstall** and **Sign in** appear only where that agent allows Scient to do
 them. A section shows six items at first; use **Show all** in its header to see
 the rest.

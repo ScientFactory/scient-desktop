@@ -336,6 +336,8 @@ export const ServerProvider = Schema.Struct({
   // SCIENT-FORK:START — Scient Extensions native inventory.
   accountAppsAvailable: Schema.optional(Schema.Boolean),
   usesClaudePlugins: Schema.optional(Schema.Boolean),
+  /** Opaque live-instance generation; replacement resets inventory. Never persisted. */
+  nativeInventoryGeneration: Schema.optionalKey(TrimmedNonEmptyString),
   /** Provider-native plugins (global scope). Workspace-scoped plugins live in workspace snapshots. */
   plugins: Schema.optionalKey(Schema.Array(ServerProviderPlugin)),
   /** Provider-native MCP servers as last reported by the provider. */

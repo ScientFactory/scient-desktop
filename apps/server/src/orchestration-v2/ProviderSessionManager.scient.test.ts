@@ -136,6 +136,9 @@ it.effect.each(
                 "sources:read",
                 "sources:write",
                 "threads:read",
+                // SCIENT-FORK:START — Scient Accounts: keep credential-policy fixtures complete.
+                "accounts",
+                // SCIENT-FORK:END
                 "skills:read",
                 ...(stalePolicy === "excess-device-grant" ? ["device" as const] : []),
               ],
@@ -162,6 +165,7 @@ it.effect.each(
       );
       assert.isFalse(configured.capabilities.has("device"));
       assert.isTrue(configured.capabilities.has("threads:read"));
+      assert.isTrue(configured.capabilities.has("accounts"));
       assert.isTrue(configured.capabilities.has("skills:read"));
       const secondId = yield* idAllocator.allocate.providerSession({
         providerInstanceId: modelSelection.instanceId,
@@ -2826,6 +2830,7 @@ it.effect(
             "sources:read",
             "sources:write",
             "threads:read",
+            "accounts",
             "skills:read",
           ]),
         );
@@ -3238,6 +3243,7 @@ it.effect.each(["resume", "start"] as const)(
                 },
                 flush: () => {
                   let task: (() => void) | undefined;
+                  // oxlint-disable-next-line no-unmodified-loop-condition -- task() invokes shouldYield, which can set paused before the next task.
                   while (!paused && (task = tasks.shift()) !== undefined) task();
                 },
               };

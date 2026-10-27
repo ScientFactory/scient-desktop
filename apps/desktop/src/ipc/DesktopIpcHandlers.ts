@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: register the desktop accounts transport.
+import { installAccountsIpc } from "../scient/accounts/ipc.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer badge owns the app icon (docs/internals/answer-attention.md).
 import { installUnreadAnswerBadge } from "../scient/answerAttention/ipc.ts";
 // SCIENT-FORK:END
@@ -201,6 +204,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
     yield* ipc.handle(voiceMethod);
   }
   yield* ipc.handle(VoiceIpc.requestMicrophoneAccess);
+  // SCIENT-FORK:START — Scient Accounts: install handlers beside the voice bridge.
+  yield* installAccountsIpc();
+  // SCIENT-FORK:END
 
   for (const previewMethod of PreviewIpc.methods) {
     // Explicit types preserve the error/service union of these heterogeneous preview methods.

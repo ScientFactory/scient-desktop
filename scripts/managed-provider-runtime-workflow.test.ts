@@ -202,7 +202,7 @@ describe("managed provider runtime update workflow", () => {
       (step: { name: string }) => step.name === "Install official ACP qualification dependencies",
     );
     expect(deps.if).toBe("inputs.provider == 'antigravityAcp'");
-    expect(deps.run).toBe("vp install --frozen-lockfile --filter=t3...");
+    expect(deps.run).toBe("vp install --frozen-lockfile --ignore-scripts --filter=t3...");
     expect(
       steps.find((step: { run?: string }) =>
         step.run?.includes("node apps/server/scripts/qualify-antigravity-acp-catalog.ts"),
@@ -392,7 +392,14 @@ describe("managed provider runtime update workflow", () => {
 
   it.each([
     ["antigravityAcp", ["apps/server/scripts/qualify-antigravity-acp-catalog.ts"]],
-    ["droid", liveSuites("droid")],
+    [
+      "droid",
+      [
+        ...liveSuites("droid"),
+        "scripts/lib/managed-runtime-live-tests.ts",
+        "apps/server/vite.config.ts",
+      ],
+    ],
     [
       "scient",
       [
@@ -400,7 +407,14 @@ describe("managed provider runtime update workflow", () => {
         "apps/server/src/scient/providerLifecycle/ScientAgentManagedRuntimeActions.ts",
       ],
     ],
-    ["pi", liveSuites("pi")],
+    [
+      "pi",
+      [
+        ...liveSuites("pi"),
+        "scripts/lib/managed-runtime-live-tests.ts",
+        "apps/server/vite.config.ts",
+      ],
+    ],
     ["omp", ["apps/server/scripts/qualify-omp-rpc.ts"]],
     ["muse", ["apps/server/scripts/qualify-muse-runtime.ts"]],
   ] as const)(

@@ -10,7 +10,7 @@ import { AssistantCitationChip } from "~/components/chat/AssistantCitationChip";
 
 import { pdfCitationHash } from "./pdfCitationNavigation";
 
-const quote = Schema.decodeUnknownSync(PdfCitation)({
+const quote = Schema.decodeSync(PdfCitation)({
   kind: "pdf",
   version: 1,
   environmentId: "environment",

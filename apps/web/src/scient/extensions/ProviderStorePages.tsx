@@ -8,7 +8,7 @@ import {
   type ServerProviderPlugin,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useContext, useEffect, useState } from "react";
+import { useContext, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { useEnvironmentQuery } from "../../state/query";
@@ -33,6 +33,7 @@ import {
   extensionsProviderStorePage,
 } from "./extensionsState";
 import { WorksWithValue } from "./WorksWith";
+import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 function storeAvailable(provider: ServerProvider) {
   return (
@@ -189,11 +190,7 @@ function StoreResults({
   const allowed = useAtomValue(actOnProviderPlugin.permissionAtom(environmentId));
   const lock = useActionLock(JSON.stringify(["store-source", provider.instanceId]));
   const refresh = () => registry.refresh(atom);
-  useEffect(() => {
-    const onFocus = () => registry.refresh(atom);
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [atom, registry]);
+  useWindowFocusRefresh(() => registry.refresh(atom));
   const entries =
     page.data?.entries.filter(
       (entry) =>
@@ -460,11 +457,7 @@ function StoreDetail({
     input: { instanceId: ProviderInstanceId.make(instanceId), entryId },
   });
   const result = useEnvironmentQuery(atom);
-  useEffect(() => {
-    const refresh = () => registry.refresh(atom);
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [atom, registry]);
+  useWindowFocusRefresh(() => registry.refresh(atom));
   const provider = providers.find((item) => item.instanceId === instanceId);
   if (!provider || !result.data) return <MutedLine>{result.error ?? "Loading plugin…"}</MutedLine>;
   const entry = result.data;

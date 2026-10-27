@@ -225,6 +225,13 @@ Stop turns into a queued message joins the held queue. Upstream's release block 
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
 `SteeringCompletion.integration.test.ts` assert Scient's rule.
 
+The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
+`queuedRunsControl` slot. Scient's additions live in
+`scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
+`SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
+command errors, the edit row after extraction and the delayed "Queuing…" status. Take
+upstream's changes to the rest of the file as they are.
+
 Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
 and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
 `SCIENT-FORK` mounts in upstream hosts. Local checkpoint preparation observes the
@@ -592,16 +599,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
-`5b35402623d7d1d88eaa472807272a6c2e78012a` is recorded in
-[the 2026-10-25 receipt](docs/internals/t3-upstream-sync-20261025-5b35402623.md).
-Three literal upstream merges retain all 96 official commits after `d53873b6a4`;
-owned-main catch-up `49bab4df24d8332bbe0546ae660794dcfd85bd94` retains frozen
-owned main `7753f54630c66f5fc2a9df4585bf34b8afad12ed`. Full Stage C browser and
-server runs each had one failure, resolved with affected-file verification;
-post-catch-up affected tests, static checks, root build and isolated desktop
-smoke pass. Owner visual review of `d0f3b04a3a` is approved. Exact-head CI, merge and release
-remain separate pending steps. The
-[previous receipt](docs/internals/t3-upstream-sync-20261024-d53873b6a4.md)
+`dd5b5401e1f240f4314af29edf431369d182f386` is recorded in
+[the 2026-10-26 receipt](docs/internals/t3-upstream-sync-20261026-10629afaac.md).
+Literal merge `cd00c855fd6bc05f153e8390ee5dd9685e283186` retains the 192 official
+commits after `5b35402623`; owned-main catch-ups `2f5ac15cf3` and `421f6276e2`
+retain owned main through `b4966ac4eb916b183ca8c38a325e7ba5385d5fd1`; official
+extensions `606c164fc9` (#672) and `c23258e6e7` retain the next 50 and 7
+commits. Typecheck, lint, seam checks and affected suites pass; exact-head CI
+qualifies each PR. Owner visual acceptance and release remain separate steps. The
+[previous receipt](docs/internals/t3-upstream-sync-20261025-5b35402623.md)
 retains its own boundaries and evidence. Native V2, scientific capabilities,
 immutable migrations, storage compatibility and cloud, telemetry, relay,
 updater, mobile publication and release controls remain.
@@ -1471,8 +1477,9 @@ The rich Markdown editor is isolated under `packages/scient-markdown`,
 `apps/server/src/scient/markdown`, with `packages/contracts/src/scientMarkdown.ts`
 and `packages/client-runtime/src/state/scientMarkdownHttp.ts` as the owned files
 outside those roots. The inherited-host seams are limited to one lazy editor
-mount and eye switch in `FilePreviewPanel.tsx`, one create button in
-`FileBrowserPanel.tsx`, a generic current-file control slot in
+mount and eye switch in `FilePreviewPanel.tsx`, the Files bar's New menu and a
+folder's New document in `FileBrowserPanel.tsx` (see "Side panel and Files bar"),
+a generic current-file control slot in
 `FileBreadcrumbNavigator.tsx`, the pending-departure calls in `ChatView.tsx`,
 typed workspace operations in `WorkspaceFileSystem.ts`, RPC, and contracts,
 Scient's `MarkdownCodeBlock` (a copy of T3's code block, owned in
@@ -1625,3 +1632,49 @@ truncation and selection checks in
 `apps/web/src/scient/files/fileTreeBidi.browser.test.ts`. Reversing filenames or
 setting the whole tree RTL is not a substitute for preserving each name's bidi
 paragraph.
+
+## Side panel and Files bar
+
+Scient's side panel replaces T3's tab bar look, its empty state and its file
+toolbar. The behaviour lives in `apps/web/src/scient/rightPanel`, `scient/files`,
+`scient/browser` and `scient/presentation`; T3 files keep short marked calls,
+guarded by `scient-side-panel-seams.json`. Without `onAddNewTab`,
+`RightPanelTabs` keeps T3's "+" menu, empty state and scroll arrows; Scient's tab
+look applies either way.
+
+| Piece                    | Owned in                                                                                                           | Mounted in T3 at                                                                                                    | Removed from T3's version                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Tab strip                | `rightPanel/tabStrip.ts` (`SCIENT_PANEL_TAB_CLASS`, `useScientTabStrip`), `presentation/scient-panel-tabstrip.css` | `RightPanelTabs.tsx`: tab classes after T3's own (later classes win), `data-scient-tabstrip`, `data-scient-surface` | Scroll arrows give way to the all-tabs menu (`AllTabsMenu`)                                 |
+| New tab page             | `rightPanel/SurfaceLauncher.tsx`, `ScientNewTabButton`, `useScientRightPanelOpeners`                               | `RightPanelTabs.tsx` (launcher instead of `RightPanelEmptyState`, "+" outside the scrolling list), `ChatView.tsx`   | The "+" menu; an open, empty panel always shows a New tab                                   |
+| Tab shortcuts, duplicate | `rightPanel/usePanelTabShortcuts.ts`, `panelTabCommands.ts`, `panelTabDuplication.ts`                              | `ChatView.tsx` (`...panelTabs.shortcuts`, `onDuplicateSurface`), `RightPanelTabs.tsx` tab menu "Duplicate"          | —                                                                                           |
+| File list beside a tab   | `rightPanel/PanelFilesColumn.tsx` (`PanelFilesLayout`, `PanelFilesToggle`, `usePanelFilesOpen`)                    | `ChatView.tsx` around the panel content, `RightPanelTabs.tsx` Files button                                          | `FilePreviewPanel.tsx`'s own file-list toggle and its storage key                           |
+| Files bar                | `files/useScientFolderActions.tsx`, `files/FileBrowserToolbarActions.tsx`, `WorkspaceFilesMenu`                    | `FileBrowserPanel.tsx` toolbar and folder right-click menu                                                          | `RefreshFilesButton`, the expand-all button (both in the Files menu), the old create button |
+| Tab Back and Forward     | `rightPanel/tabHistory.tsx`                                                                                        | `ChatView.tsx` (`useRightPanelTabHistory`, renames carry history), `FilePreviewPanel.tsx` toolbar                   | —                                                                                           |
+| Browser control chip     | `browser/BrowserControlChip.tsx`                                                                                   | `ServerBrowserSurface.tsx`; `otherViewers` in `ServerBrowser.ts` and `serverBrowserStream.ts`                       | T3's control status row (`previewStreamControlLabel`)                                       |
+| Browser history link     | `browser/useBrowserHistoryProjectLink.ts`                                                                          | `ChatView.tsx`                                                                                                      | —                                                                                           |
+| Tooltip timing           | `presentation/AppTooltipTiming.tsx`                                                                                | `main.tsx`, around `<AppRoot>`                                                                                      | —                                                                                           |
+| Icon weight              | `presentation/scient-icon-weight.css`                                                                              | stylesheet only; `PanelLayoutControls.tsx` sets its maximize glyph's stroke                                         | —                                                                                           |
+
+When aligning, check:
+
+- **App-wide effects.** Tooltips open after 0.1s, and at once while moving between
+  controls, everywhere; a place that sets its own timing keeps it. Lucide icons
+  drawn 16–18.5px wide take a 1.75 stroke; an icon with its own stroke class or
+  width, or marked `data-preserve-icon-weight` (on the icon or its parent), keeps its weight.
+- **Shortcuts T3 may also claim.** Scient adds `rightPanel.nextTab` (Ctrl+Tab),
+  `rightPanel.previousTab` (Ctrl+Shift+Tab), `rightPanel.duplicateTab` (⌘⇧D),
+  `rightPanel.toggleFiles` (⌘⌥E), and ⌘T (`rightPanel.new`) for a closed panel; the
+  server's keybindings migration gives existing configs the closed-panel rule. ⌘[ and
+  ⌘] (T3's `navigation.back`/`forward`) belong to a file tab's own history while the
+  keyboard is in it. If T3 binds any of these, decide which command keeps the key.
+- **`otherViewers`.** The server browser now tells each window how many others watch
+  the page, so the one in control sees that another waits. Keep the field if T3
+  reshapes the control payload.
+- **A T3 bug fix to retire.** `useBrowserHistoryProjectLink` restores the call T3's
+  orchestrator rewrite (upstream `de34391427`) dropped, which filed browser visits
+  under the thread's project. Remove it and its mount once T3 makes that call again.
+- **New tab page letters.** `composerFocusRedirect.ts` leaves `[data-scient-launcher]`
+  out of the composer's typing redirect, so the page's letter shortcuts reach it.
+- **User docs.** `docs/user/keybindings.md` (these shortcuts) and `docs/user/devices.md`
+  (Device under More on the New tab page) carry no markers, like the rest of
+  Scient's lines there.

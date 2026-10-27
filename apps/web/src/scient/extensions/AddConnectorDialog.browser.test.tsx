@@ -1,5 +1,8 @@
 import {
   ConnectorId,
+  AccountId,
+  type AccountSummary,
+  defaultAccountControls,
   type ConnectorSummary,
   type DiscoverEntry,
   EnvironmentId,
@@ -16,8 +19,16 @@ const state = vi.hoisted(() => ({
   startSignIn: vi.fn(),
   toast: vi.fn(),
   onOpenChange: vi.fn(),
+  accountsAvailable: false,
+  accounts: [] as AccountSummary[],
 }));
 
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: () => ({
+    isSuccess: state.accountsAvailable,
+    data: { accounts: state.accounts },
+  }),
+}));
 vi.mock("./extensionsState", () => ({
   addConnector: "add",
   startConnectorSignIn: "start-sign-in",
@@ -48,6 +59,8 @@ const connector: ConnectorSummary = {
 };
 
 function setup() {
+  state.accountsAvailable = false;
+  state.accounts = [];
   state.add.mockReset();
   state.startSignIn.mockReset();
   state.toast.mockReset();
@@ -383,4 +396,51 @@ describe("AddConnectorDialog validation", () => {
     expect(reserved.location.href).toBe("https://auth.linear.app/authorize?state=2");
     expect(state.onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
   });
+});
+
+it("binds a matching account without retaining the entered key and blocks a changed origin", async () => {
+  await using fixture = setup();
+  const accountId = AccountId.make("acc_synthetic01");
+  state.accountsAvailable = true;
+  state.add.mockResolvedValue({ _tag: "Success", value: { connector, nextStep: "ready" } });
+  state.accounts = [
+    {
+      accountId,
+      name: "Synthetic API",
+      details: { kind: "api-key", sites: ["example.com"], auth: { type: "bearer" } },
+      secrets: { token: { source: { type: "scient" } } },
+      controls: defaultAccountControls("api-key"),
+      status: "ready",
+      createdAt: "2026-10-26T00:00:00.000Z",
+      updatedAt: "2026-10-26T00:00:00.000Z",
+    },
+  ];
+  await fixture.render();
+  await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
+  await userEvent.selectOptions(field<HTMLSelectElement>("connector-auth"), "api-key");
+  await userEvent.fill(
+    field<HTMLInputElement>("connector-key"),
+    crypto.getRandomValues(new Uint32Array(8)).join("-"),
+  );
+  await userEvent.selectOptions(field<HTMLSelectElement>("connector-account"), accountId);
+  await userEvent.selectOptions(field<HTMLSelectElement>("connector-account"), "");
+  expect(field<HTMLInputElement>("connector-key").value).toBe("");
+  await userEvent.selectOptions(field<HTMLSelectElement>("connector-account"), accountId);
+  await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://example.net/mcp");
+  await submit();
+  expect(state.add).not.toHaveBeenCalled();
+  await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
+  await submit();
+  const input = state.add.mock.calls[0]?.[0].input;
+  expect(input.credential).toEqual({
+    type: "bound",
+    strategy: "bearer",
+    secretRef: `account:${accountId}:token`,
+  });
+  await fixture.reset();
+  state.accountsAvailable = false;
+  await fixture.render();
+  await userEvent.fill(field<HTMLInputElement>("connector-url"), "https://api.example.com/mcp");
+  await userEvent.selectOptions(field<HTMLSelectElement>("connector-auth"), "api-key");
+  expect(document.getElementById("connector-account")).toBeNull();
 });

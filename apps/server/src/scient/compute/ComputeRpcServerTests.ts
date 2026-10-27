@@ -254,16 +254,16 @@ export const registerComputeRpcTests = (
       const wsUrl = yield* getWsServerUrl("/ws");
       const assets = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
-          Effect.all(
-            figures.map((figure) =>
-              client[WS_METHODS.assetsCreateUrl]({ resource: outputResource(figure) }),
-            ),
+          Effect.forEach(
+            figures,
+            (figure) => client[WS_METHODS.assetsCreateUrl]({ resource: outputResource(figure) }),
             { concurrency: "unbounded" },
           ),
         ),
       );
-      const served = yield* Effect.all(
-        assets.map((asset) =>
+      const served = yield* Effect.forEach(
+        assets,
+        (asset) =>
           Effect.gen(function* () {
             const response = yield* fetchEffect(yield* getHttpServerUrl(asset.relativeUrl));
             return {
@@ -271,7 +271,6 @@ export const registerComputeRpcTests = (
               bytes: new Uint8Array(yield* response.arrayBuffer),
             };
           }),
-        ),
         { concurrency: "unbounded" },
       );
 

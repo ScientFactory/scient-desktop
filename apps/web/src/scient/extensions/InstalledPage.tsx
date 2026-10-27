@@ -1,6 +1,6 @@
 import type { ProviderInstanceId } from "@t3tools/contracts";
 import { FolderOpenIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { SettingsSearchTarget } from "../../components/settings/settingsLayout";
 import { searchableSetting } from "../../components/settings/settingsSearch";
@@ -34,6 +34,8 @@ import {
   worksWithOptions,
 } from "./extensionsView";
 import { InstallBundleDialog } from "./InstallBundleDialog";
+import { providerInventoryMessage } from "./providerInventory";
+import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 /** Rows a provider section shows before "Show all". */
 const PROVIDER_PREVIEW_ROWS = 6;
@@ -43,18 +45,14 @@ function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) 
   const { environmentId, canWrite } = useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   const waitingForConnection = useRef(false);
-  useEffect(() => {
-    const refresh = () => {
-      if (!waitingForConnection.current) return;
-      waitingForConnection.current = false;
-      void act({
-        environmentId,
-        input: { instanceId: group.provider.instanceId, action: { type: "refresh-inventory" } },
-      });
-    };
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [act, environmentId, group.provider.instanceId]);
+  useWindowFocusRefresh(() => {
+    if (!waitingForConnection.current) return;
+    waitingForConnection.current = false;
+    void act({
+      environmentId,
+      input: { instanceId: group.provider.instanceId, action: { type: "refresh-inventory" } },
+    });
+  });
   const rows = [
     ...group.plugins.map(({ plugin, cwd }) => (
       <ProviderPluginItem
@@ -131,13 +129,24 @@ function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) 
 }
 
 function Installed() {
-  const { environmentId, callbackOrigin, inventory, inventoryError, catalog, providers, canWrite } =
-    useExtensionsEnvironment();
+  const {
+    environmentId,
+    callbackOrigin,
+    inventory,
+    inventoryError,
+    catalog,
+    providers,
+    providerInventory,
+    canWrite,
+  } = useExtensionsEnvironment();
   const [worksWith, setWorksWith] = useState<ProviderInstanceId | null>(null);
   const [dialog, setDialog] = useState<"add" | "install" | null>(null);
   const options = worksWithOptions(inventory?.providerSupport ?? [], providers);
   const selected = options.find((option) => option.instanceId === worksWith) ?? null;
-  const groups = collectProviderExtensionGroups(providers, selected?.instanceId ?? null);
+  const groups = collectProviderExtensionGroups(
+    providerInventory.providers,
+    selected?.instanceId ?? null,
+  );
   const curated = catalogEntries(catalog);
   const plugins = [
     ...(inventory?.plugins.filter((plugin) => plugin.origin === "bundle") ?? []),
@@ -244,23 +253,22 @@ function Installed() {
         )}
       </ExtensionsSection>
 
-      {groups.length === 0 ? (
-        <ExtensionsSection
-          id={searchableSetting("extensions-provider-plugins").id}
-          title="From your agents"
-        >
-          <MutedLine>Agents that report their plugins or MCP servers appear here.</MutedLine>
-        </ExtensionsSection>
-      ) : (
-        <SettingsSearchTarget
-          id={searchableSetting("extensions-provider-plugins").id}
-          className="grid gap-10 outline-none"
-        >
-          {groups.map((group) => (
-            <ProviderSection key={group.provider.instanceId} group={group} />
-          ))}
-        </SettingsSearchTarget>
-      )}
+      <SettingsSearchTarget
+        id={searchableSetting("extensions-provider-plugins").id}
+        className="grid gap-10 outline-none"
+      >
+        {providerInventory.phase !== "ready" || groups.length === 0 ? (
+          <ExtensionsSection title="From your agents">
+            <MutedLine>{providerInventoryMessage(providerInventory)}</MutedLine>
+            {providerInventory.errors.map((error) => (
+              <MutedLine key={error}>{error}</MutedLine>
+            ))}
+          </ExtensionsSection>
+        ) : null}
+        {groups.map((group) => (
+          <ProviderSection key={group.provider.instanceId} group={group} />
+        ))}
+      </SettingsSearchTarget>
 
       {dialog === "add" ? (
         <AddConnectorDialog
@@ -288,7 +296,7 @@ function Installed() {
 /** Settings ▸ Extensions ▸ Installed: everything this environment already has. */
 export function InstalledPage() {
   return (
-    <ExtensionsPage>
+    <ExtensionsPage loadProviderInventory>
       <Installed />
     </ExtensionsPage>
   );

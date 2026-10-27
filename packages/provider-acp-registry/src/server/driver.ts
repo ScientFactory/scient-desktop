@@ -658,7 +658,11 @@ export function makeAcpRegistryDriver(
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
         initialSnapshot: () => checkProvider,
         checkProvider,
-        enrichSnapshot: ({ snapshot, getSnapshot, publishSnapshot }) => {
+        enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
+          snapshot,
+          getSnapshot,
+          publishSnapshot,
+        }) {
           if (!snapshot.installed) return Effect.void;
           const publishEnrichment = (
             Option.isSome(runtimeCoordinator)
@@ -668,7 +672,7 @@ export function makeAcpRegistryDriver(
                     : effectiveConfig.agentId,
                   enrichProviderCached(snapshot),
                 )
-              : enrichProviderCached(snapshot).pipe(Effect.map(Option.some))
+              : enrichProviderCached(snapshot).pipe(Effect.asSome)
           ).pipe(
             Effect.flatMap(
               Option.match({
@@ -745,7 +749,7 @@ export function makeAcpRegistryDriver(
               discard: true,
             },
           );
-        },
+        }),
       }).pipe(
         Effect.mapError(
           (cause) =>

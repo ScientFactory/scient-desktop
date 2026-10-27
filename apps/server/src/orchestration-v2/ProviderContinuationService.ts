@@ -147,16 +147,16 @@ export const layer = Layer.effectDiscard(
           yield* request.dispatchIfCurrent(dispatch).pipe(
             Effect.tap(() => clearRetryAttempt(identity)),
             Effect.catchTags({
-              OrchestratorProviderWorkDeferredError: () =>
-                Effect.gen(function* () {
-                  const delay = yield* nextRetryDelay(identity);
-                  // Keep the exact offer, buffer and command identity. Re-enter
-                  // the producer's generation guard on every dispatch attempt.
-                  yield* Effect.sleep(`${delay} millis`).pipe(
-                    Effect.andThen(requests.offer(request)),
-                    Effect.forkScoped,
-                  );
-                }),
+              // The enclosing operation owns the span for this inline handler.
+              OrchestratorProviderWorkDeferredError: Effect.fnUntraced(function* () {
+                const delay = yield* nextRetryDelay(identity);
+                // Keep the exact offer, buffer and command identity. Re-enter
+                // the producer's generation guard on every dispatch attempt.
+                yield* Effect.sleep(`${delay} millis`).pipe(
+                  Effect.andThen(requests.offer(request)),
+                  Effect.forkScoped,
+                );
+              }),
             }),
           );
           return;

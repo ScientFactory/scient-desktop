@@ -1,3 +1,10 @@
+// SCIENT-FORK:START — Scient Accounts: discover supported Accounts environments.
+import { EnvironmentId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { KeyRoundIcon } from "lucide-react";
+import { usePrimaryEnvironmentId } from "~/state/environments";
+import { accountsAvailability } from "~/scient/accounts/accountsState";
+// SCIENT-FORK:END
 import {
   lazy,
   Suspense,
@@ -51,6 +58,7 @@ import { scrollToSettingsTarget } from "./settingsLayout";
 import {
   searchSettings,
   isSettingsOverviewVisible,
+  revealSettingsSearchTarget,
   SETTINGS_SECTION_LABELS,
   type SettingsPath,
   type SettingsSearchItem,
@@ -110,6 +118,9 @@ const SETTINGS_SECTION_ICONS: Readonly<
   // SCIENT-FORK:START — Scient Extensions
   "/settings/extensions": PuzzleIcon,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: place Accounts next to Extensions.
+  "/settings/accounts": KeyRoundIcon,
+  // SCIENT-FORK:END
   "/settings/integrations": BlocksIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/scientific-computing": ScientificComputingSidebarIcon,
@@ -136,9 +147,14 @@ const SETTINGS_NAV_ITEMS: ReadonlyArray<{
     icon: SETTINGS_SECTION_ICONS[to],
   }));
 
+// Attached only to the highlighted result, so it runs whenever the highlight lands on a row.
+function scrollResultIntoView(row: HTMLElement | null) {
+  row?.scrollIntoView({ block: "nearest" });
+}
+
 function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   const Icon = SETTINGS_SECTION_ICONS[to];
-  return <Icon className="size-3.5 h-5 shrink-0 text-sidebar-muted-foreground/60" />;
+  return <Icon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
@@ -146,9 +162,20 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const currentHash = useLocation({ select: (location) => location.hash });
   const currentSearch = useLocation({ select: (location) => location.search });
   const scopeSearch = validateSettingsScopeSearch(currentSearch);
-  const navItems = SETTINGS_NAV_ITEMS.filter(
-    (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
+  // SCIENT-FORK:START — Scient Accounts: hide account navigation on older servers.
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const accountsAvailable = useAtomValue(
+    accountsAvailability(
+      scopeSearch.machine ? EnvironmentId.make(scopeSearch.machine) : primaryEnvironmentId,
+    ),
   );
+
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Accounts: omit unsupported navigation.
+  const navItems = SETTINGS_NAV_ITEMS.filter(
+    (item) => item.to !== "/settings/accounts" || accountsAvailable,
+  ).filter((item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch));
+  // SCIENT-FORK:END
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   // Below md the nav is an icon rail; searching expands it over the page.
@@ -156,7 +183,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems(scopeSearch);
   const renderPageSections = useScientSettingsNavigation(pathname, SETTINGS_NAV_ITEMS);
-  const results = searchSettings(query, searchableItems);
+  // SCIENT-FORK:START — Scient Accounts: search follows server availability.
+  const results = searchSettings(query, searchableItems).filter(
+    (item) => item.to !== "/settings/accounts" || accountsAvailable,
+  );
+  // SCIENT-FORK:END
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;
   const maxResultIndex = Math.max(results.length - 1, 0);
@@ -164,14 +195,6 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   if (activeResultIndex > maxResultIndex) {
     setActiveResultIndex(maxResultIndex);
   }
-
-  useEffect(() => {
-    const result = results[activeResultIndex];
-    if (!result) return;
-    document
-      .getElementById(`settings-search-result-${result.id}`)
-      ?.scrollIntoView({ block: "nearest" });
-  }, [activeResultIndex, results]);
 
   useEffect(() => {
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -229,6 +252,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     clearSearch();
     setCompactSearchOpen(false);
     const targetId = item.targetId ?? item.id;
+    revealSettingsSearchTarget(targetId);
     if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
       scrollToSettingsTarget(targetId);
       return;
@@ -346,7 +370,11 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 aria-label={hasResults ? "Settings search results" : undefined}
               >
                 {results.map((item, index) => (
-                  <SidebarMenuItem key={item.id} role="presentation">
+                  <SidebarMenuItem
+                    key={item.id}
+                    role="presentation"
+                    ref={index === activeResultIndex ? scrollResultIntoView : undefined}
+                  >
                     <SidebarMenuButton
                       id={`settings-search-result-${item.id}`}
                       role="option"

@@ -108,7 +108,7 @@ function asyncEventStream() {
   };
 }
 
-const OPENCODE_TEST_SETTINGS = Schema.decodeUnknownSync(OpenCodeSettings)({});
+const OPENCODE_TEST_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 
 function runtimePolicy(
   runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
@@ -188,6 +188,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     readonly orchestrationSystemPrompt?: (hasMcp: boolean) => string | undefined;
     readonly runtimeInstructions?: (input: { readonly harness: string }) => string;
   } = {},
+  host: Partial<ProviderHost.ProviderHost["Service"]> = {},
 ) {
   const instanceId = ProviderInstanceId.make(`opencode-${suffix}`);
   const threadId = ThreadId.make(`thread-opencode-${suffix}`);
@@ -218,6 +219,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },
       resolveAttachmentPath: () => null,
+      ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
   );
   const runtime = yield* adapter.openSession({
@@ -2558,6 +2560,100 @@ describe("OpenCodeAdapterV2", () => {
       );
       const interrupted = yield* runtime.readThreadSnapshot({ providerThread });
       assert.equal(interrupted.providerTurns.at(-1)?.status, "interrupted");
+    }).pipe(
+      Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+      Effect.scoped,
+    ),
+  );
+
+  it.effect("rejects steering when stop wins the extracted-text lookup", () =>
+    Effect.gen(function* () {
+      const events = asyncEventStream();
+      const lookup = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let prompts = 0;
+      const harness = yield* makeOpenCodeRuntimeHarness(
+        "extraction-stop",
+        "root",
+        {
+          event: {
+            subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+              options.signal?.addEventListener("abort", () => events.close(), { once: true });
+              return { stream: events.stream };
+            },
+          },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            // Scient installs each turn's permission rules before prompting.
+            ...nativePermissionPeer(),
+            promptAsync: async () => {
+              prompts++;
+              return { data: true };
+            },
+            status: async () => ({ data: { root: { type: "busy" } } }),
+            messages: async () => ({ data: [] }),
+            children: async () => ({ data: [] }),
+            abort: async () => ({ data: true }),
+          },
+          mcp: { add: async () => ({ data: true }) },
+        },
+        true,
+        {},
+        {
+          resolveAttachmentPath: () => "/workspace/report.docx",
+          resolveExtractedTextPath: () =>
+            Deferred.succeed(lookup, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as("/workspace/report.docx.txt"),
+            ),
+        },
+      );
+      yield* harness.startTurn();
+      const snapshot = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      const turn = snapshot.providerTurns.at(-1)!;
+      const steer = yield* harness.runtime
+        .steerTurn({
+          threadId: harness.threadId,
+          runId: harness.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: turn.id,
+          message: {
+            messageId: MessageId.make("steer-extraction-stop"),
+            text: "read this",
+            createdBy: "user",
+            creationSource: "web",
+            attachments: [
+              {
+                type: "file",
+                id: "report-docx",
+                name: "report.docx",
+                mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                sizeBytes: 1,
+              },
+            ],
+          },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(lookup);
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: turn.id,
+      });
+      yield* Deferred.succeed(release, undefined);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(steer)));
+      assert.equal(prompts, 1);
+      yield* Effect.promise(() =>
+        events.push({
+          type: "session.status",
+          properties: { sessionID: "root", status: { type: "idle" } },
+        }),
+      );
+      const stopped = yield* harness.runtime.readThreadSnapshot({
+        providerThread: harness.providerThread,
+      });
+      assert.equal(stopped.providerTurns.at(-1)?.status, "interrupted");
     }).pipe(
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,

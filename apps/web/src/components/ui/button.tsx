@@ -140,7 +140,7 @@ const inlineButtonVariants = cva(
         destructive: "text-destructive/80 hover:text-destructive",
         info: "gap-1 text-2xs font-normal text-info-foreground/80 transition-colors hover:text-info-foreground",
         picker:
-          "gap-1.5 text-foreground underline decoration-foreground/30 decoration-dotted decoration-from-font underline-offset-4 hover:decoration-foreground hover:decoration-solid data-popup-open:decoration-foreground data-popup-open:decoration-solid",
+          "gap-1 text-foreground underline decoration-foreground/30 decoration-dotted decoration-from-font underline-offset-4 hover:decoration-foreground hover:decoration-solid data-popup-open:decoration-foreground data-popup-open:decoration-solid redesign:no-underline redesign:hover:underline redesign:data-popup-open:underline",
       },
     },
   },

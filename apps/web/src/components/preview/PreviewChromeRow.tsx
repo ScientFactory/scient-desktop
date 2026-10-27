@@ -1,3 +1,7 @@
+// SCIENT-FORK:START — Scient Accounts: desktop account controls for the owning tab.
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { BrowserAccountControls } from "~/scient/accounts/BrowserAccountControls";
+// SCIENT-FORK:END
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ArrowLeft,
@@ -11,8 +15,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type ReactNode,
-  useEffect,
-  useRef,
+  type RefObject,
   useState,
 } from "react";
 
@@ -22,13 +25,19 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
 interface Props {
+  // SCIENT-FORK:START — Scient Accounts: the preview owner supplies the native tab identity.
+  accountsTab?:
+    | { environmentId: EnvironmentId; threadRef: ScopedThreadRef; tabId: string; profileId: string }
+    | undefined;
+  // SCIENT-FORK:END
   url: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   refreshDisabled: boolean;
   inputDisabled?: boolean | undefined;
-  focusUrlNonce?: number | undefined;
+  /** Owned by the caller so its shortcut handler can focus the address bar directly. */
+  urlInputRef: RefObject<HTMLInputElement | null>;
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void;
@@ -52,12 +61,15 @@ const NOOP = () => {};
 
 export function PreviewChromeRow({
   url,
+  // SCIENT-FORK:START — Scient Accounts: receive the native tab account context.
+  accountsTab,
+  // SCIENT-FORK:END
   loading,
   canGoBack,
   canGoForward,
   refreshDisabled,
   inputDisabled,
-  focusUrlNonce,
+  urlInputRef: inputRef,
   onBack,
   onForward,
   onRefresh,
@@ -76,16 +88,8 @@ export function PreviewChromeRow({
   trailingActions,
   leadingActions,
 }: Props) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
-
-  useEffect(() => {
-    if (focusUrlNonce == null) return;
-    const node = inputRef.current;
-    if (!node) return;
-    node.focus();
-  }, [focusUrlNonce]);
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
@@ -291,6 +295,9 @@ export function PreviewChromeRow({
             </TooltipPopup>
           </Tooltip>
         ) : null}
+        {/* SCIENT-FORK:START — Scient Accounts: fill and capture stay anchored to this tab. */}
+        {accountsTab ? <BrowserAccountControls {...accountsTab} url={url} /> : null}
+        {/* SCIENT-FORK:END */}
         {trailingActions}
       </form>
       <div

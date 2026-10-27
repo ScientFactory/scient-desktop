@@ -231,7 +231,7 @@ it.effect.each([
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: (id) => {
               assert.equal(id, projectId);
-              return Effect.succeed(Option.some({ workspaceRoot } as never));
+              return Effect.succeedSome({ workspaceRoot } as never);
             },
           }),
           Layer.mock(GitWorkflow.GitWorkflowService)({
@@ -413,9 +413,9 @@ it.effect.each([
       targetAttempt:
         targetOrdinal === 0 ? undefined : { id: "attempt-1", providerTurnId: "turn-1" },
       rolledBackAttemptIds: ["attempt-3"],
-      rollbackAttachmentIds: [1, 2]
-        .filter((ordinal) => ordinal > targetOrdinal)
-        .flatMap((ordinal) => [`local-image-${ordinal}`, `local-question-${ordinal}`]),
+      rollbackAttachmentIds: [1, 2].flatMap((ordinal) =>
+        ordinal > targetOrdinal ? [`local-image-${ordinal}`, `local-question-${ordinal}`] : [],
+      ),
       staleCheckpoints: [],
       checkpoint: {
         id: checkpointId,

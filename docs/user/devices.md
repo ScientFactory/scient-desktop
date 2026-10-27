@@ -7,7 +7,8 @@ yourself. Agents get the same device through `device_*` tools and the
 
 ## Open a device
 
-Open the right panel in a project thread and choose **Device**. On first use,
+Open a new tab in the right panel of a project thread and choose **More**, then
+**Device**. On first use,
 the panel walks through three steps: starting the device hub, checking iOS and
 Android support, and choosing whether agents may control devices. Opening the
 panel alone does not download or start anything. If the hub is already
@@ -73,6 +74,8 @@ connected to the thread, the same way an agent-driven browser does. Turn off
 **Auto-show floating preview** in **Settings → Integrations → Browser** to open a
 right-panel tab instead. In the mobile app, open the agent's thread and tap the
 device button above the composer to watch the live screen and control it.
+On iOS layouts with an inspector, the device opens beside the thread. Maximize
+it to fill the screen; closing the full-screen view returns to the inspector.
 If the thread has several devices open, choose one in the viewer. Closing the
 viewer stops streaming and leaves the device available to the agent. Device
 activity also appears in the thread timeline.

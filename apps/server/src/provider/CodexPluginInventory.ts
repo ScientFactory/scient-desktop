@@ -415,6 +415,13 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
       }),
     ).pipe(Effect.flatMap(Fiber.awaitAll), Effect.asVoid);
   const workspace: ProviderWorkspaceInventory = {
+    awaitCurrent: (cwd) =>
+      Ref.get(workspaceListingsRef).pipe(
+        Effect.flatMap((listings) => {
+          const listing = listings.get(cwd);
+          return listing ? Fiber.await(listing.fiber).pipe(Effect.asVoid) : Effect.void;
+        }),
+      ),
     cancel: (cwd) =>
       workspaceLock.withPermits(1)(stopWorkspaceListings((candidate) => candidate === cwd)),
     retain: (current) =>
@@ -426,7 +433,7 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
           yield* stopWorkspaceListings((cwd) => !keep.has(cwd));
         }),
       ),
-    refresh: (cwd) =>
+    refresh: (cwd, publish) =>
       workspaceLock.withPermits(1)(
         Effect.gen(function* () {
           // Waiting for the replaced listing to exit is interruptible: a
@@ -450,7 +457,7 @@ export const makeCodexNativeInventory = Effect.fn("makeCodexNativeInventory")(fu
                           requestCodexInstalledPlugins(client, [cwd]),
                         );
                         if (plugins) {
-                          yield* PubSub.publish(reportsPubSub, { cwd, plugins, sequence });
+                          yield* publish({ cwd, plugins, sequence });
                         }
                       }),
                     ),

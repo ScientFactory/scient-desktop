@@ -75,7 +75,7 @@ export function SidebarThreadHeader({
           here because SidebarInput owns its own colors. */}
       <div
         ref={searchFieldRef}
-        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground [&_input[data-slot=input]]:placeholder:text-(--sidebar-icon-color) hover:[&_input[data-slot=input]]:placeholder:text-sidebar-foreground hover:[&>svg]:text-sidebar-foreground"
+        className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground [&_input[data-slot=input]]:placeholder:text-(--sidebar-icon-color) hover:[&_input[data-slot=input]]:placeholder:text-sidebar-foreground hover:[&>svg]:text-sidebar-foreground redesign:focus-within:bg-sidebar-row-hover redesign:focus-within:text-sidebar-foreground redesign:focus-within:ring-1 redesign:focus-within:ring-inset redesign:focus-within:ring-ring/70"
       >
         {/* SCIENT-FORK:END */}
         <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />

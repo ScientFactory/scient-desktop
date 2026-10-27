@@ -502,7 +502,9 @@ jobs:
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # SCIENT-FORK:START — shard 1 also runs the Python bridge and performance steps (upstream: 10).
+    timeout-minutes: 15
+    # SCIENT-FORK:END
     strategy:
       fail-fast: false
       matrix:

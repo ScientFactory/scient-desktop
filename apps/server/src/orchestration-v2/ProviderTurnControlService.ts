@@ -11,6 +11,7 @@ import * as Clock from "effect/Clock";
 import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -102,6 +103,7 @@ export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
   | ServerConfig
+  | FileSystem.FileSystem
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
   | McpProviderSessions.McpProviderSessions
@@ -113,6 +115,7 @@ export const layer: Layer.Layer<
     const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const serverConfig = yield* ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -382,7 +385,7 @@ export const layer: Layer.Layer<
             useFallback: (fallback) => {
               text = fallback;
             },
-          });
+          }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           // SCIENT-FORK:END
           const current = yield* load({ ...input, operation: "steer" });
           if (

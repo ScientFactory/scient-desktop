@@ -1,15 +1,7 @@
-import {
-  MessageId,
-  ThreadId,
-  type OrchestrationV2ConversationMessage,
-  type ScientThreadQueueItem,
-} from "@t3tools/contracts";
-import { DateTime } from "effect";
+import { MessageId } from "@t3tools/contracts";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  deriveQueueAcknowledgedUserMessages,
-  pendingQueueAdmissionPreviews,
   optimisticTimelineMessages,
   settleQueueAdmissionPreview,
   shouldPreviewQueueAdmission,
@@ -26,15 +18,6 @@ const message: OptimisticUserMessage = {
   streaming: false,
   queueAdmission: { threadKey: "host:thread", accepted: false },
 };
-const item: ScientThreadQueueItem = {
-  queueItemId: "qitem_authoritative",
-  messageId: message.id,
-  text: message.text,
-  attachments: [],
-  createdAt: message.createdAt,
-  updatedAt: message.updatedAt,
-};
-
 describe("optimistic queue admission presentation", () => {
   it("keeps real V2 timeline consumption free of pending and accepted queue previews", () => {
     const timeline = (messages: OptimisticUserMessage[]) =>
@@ -74,69 +57,6 @@ describe("optimistic queue admission presentation", () => {
     ).toBe(false);
   });
 
-  it("holds an accepted queue preview across a delayed refresh, and retires it when the queue or delivered message arrives", () => {
-    const accepted = settleQueueAdmissionPreview([message], message.id, true);
-    expect(pendingQueueAdmissionPreviews(accepted, "host:thread", [], [])).toEqual([
-      { ...message, queueAdmission: { threadKey: "host:thread", accepted: true } },
-    ]);
-    expect(pendingQueueAdmissionPreviews(accepted, "other-host:thread", [], [])).toEqual([]);
-    expect(pendingQueueAdmissionPreviews(accepted, "host:thread", [item], [])).toEqual([]);
-    expect(pendingQueueAdmissionPreviews(accepted, "host:thread", [], [message])).toEqual([]);
-    // A queue snapshot can beat the acknowledgement; neither order duplicates a row.
-    expect(pendingQueueAdmissionPreviews([message], "host:thread", [item], [])).toEqual([]);
-    expect(settleQueueAdmissionPreview([], message.id, true)).toEqual([]);
-  });
-
-  it.each([false, true])(
-    "retires only server-owned user previews before a queue snapshot (receipt arrived: %s)",
-    (receiptArrived) => {
-      const second = { ...message, id: MessageId.make("second"), text: "Second" };
-      const pending = [message, second];
-      const previews = receiptArrived
-        ? settleQueueAdmissionPreview(pending, message.id, true)
-        : pending;
-      const serverMessage: OrchestrationV2ConversationMessage = {
-        createdBy: "agent",
-        creationSource: "provider",
-        id: message.id,
-        threadId: ThreadId.make("thread"),
-        runId: null,
-        nodeId: null,
-        role: "assistant",
-        text: "Server content differs from the local preview",
-        attachments: [],
-        streaming: false,
-        createdAt: DateTime.makeUnsafe(message.createdAt),
-        updatedAt: DateTime.makeUnsafe(message.updatedAt),
-      };
-      const visible = (messages: ReadonlyArray<OrchestrationV2ConversationMessage>) =>
-        pendingQueueAdmissionPreviews(
-          previews,
-          "host:thread",
-          [],
-          deriveQueueAcknowledgedUserMessages(messages),
-        );
-      expect(visible([])).toEqual(previews);
-      expect(visible([serverMessage, { ...serverMessage, role: "system" }])).toEqual(previews);
-      expect(
-        visible([{ ...serverMessage, role: "user", id: MessageId.make("unrelated") }]),
-      ).toEqual(previews);
-      expect(visible([{ ...serverMessage, role: "user" }])).toEqual([second]);
-      // A late receipt does not resurrect a preview already owned by the server.
-      const accepted = settleQueueAdmissionPreview(previews, message.id, true);
-      expect(
-        pendingQueueAdmissionPreviews(
-          accepted,
-          "host:thread",
-          [],
-          deriveQueueAcknowledgedUserMessages([{ ...serverMessage, role: "user" }]),
-        ),
-      ).toEqual([second]);
-      // Both authoritative arrival orders preserve the remaining preview's identity.
-      expect(pendingQueueAdmissionPreviews(accepted, "host:thread", [item], [])).toEqual([second]);
-    },
-  );
-
   it("uses the server's sent outcome when the running turn finishes during admission", () => {
     const other = { ...message, id: MessageId.make("other-follow-up") };
     const sent = settleQueueAdmissionPreview([message, other], message.id, false);
@@ -144,7 +64,6 @@ describe("optimistic queue admission presentation", () => {
     expect(sent[0]?.id).toBe(message.id);
     expect(sent[0]?.text).toBe(message.text);
     expect(sent[1]).toBe(other);
-    expect(pendingQueueAdmissionPreviews(sent, "host:thread", [], [])).toEqual([other]);
   });
 
   it("keeps ordinary optimistic Send intact and removes it if admission unexpectedly queues it", () => {
@@ -153,5 +72,6 @@ describe("optimistic queue admission presentation", () => {
     expect(settleQueueAdmissionPreview(messages, ordinary.id, false)).toBe(messages);
     expect(settleQueueAdmissionPreview(messages, "another-submission", true)).toBe(messages);
     expect(settleQueueAdmissionPreview([ordinary], ordinary.id, true)).toEqual([]);
+    expect(settleQueueAdmissionPreview([], message.id, true)).toEqual([]);
   });
 });

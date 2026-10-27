@@ -57,6 +57,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as Crypto from "effect/Crypto";
 import * as PlatformError from "effect/PlatformError";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DocumentText from "./provider/DocumentText.ts";
 import * as ProviderAdapters from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry } from "./orchestration-v2/testkit/ProviderReplayHarness.ts";
 
@@ -227,6 +228,7 @@ it.effect.each([
         }),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: false,
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
           prepareTrial: Effect.succeed(undefined),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -261,7 +263,12 @@ it.effect.each([
           }
         }
       }).pipe(
-        Effect.provide(ServerRuntimeStartup.layerWithOptions().pipe(Layer.provide(dependencies))),
+        Effect.provide(
+          ServerRuntimeStartup.layerWithOptions().pipe(
+            Layer.provide(DocumentText.layer),
+            Layer.provide(dependencies),
+          ),
+        ),
         Effect.provideService(ServerActivation, Effect.never),
       );
     }),

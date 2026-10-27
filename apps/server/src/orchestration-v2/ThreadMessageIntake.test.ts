@@ -1,3 +1,4 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -41,7 +42,7 @@ const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
 }).pipe(
   Layer.provideMerge(
     Layer.merge(
-      NodeServices.layer,
+      DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     ),
   ),

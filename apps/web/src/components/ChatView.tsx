@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: mount approvals above the composer.
+import { ThreadAccountApprovals } from "~/scient/accounts/AccountApprovals";
+// SCIENT-FORK:END
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
@@ -47,7 +50,7 @@ import {
   useForkPdfContinuityPending,
   deriveForkTimelineBaseline,
 } from "~/scient/fork/chatViewFork";
-import type { CitationHistoryPage } from "./chat/useAssistantCitationTarget";
+import type { ReadingHistoryPage } from "./chat/readerScrolling";
 import { useProjectScriptAutoPreview } from "./preview/useProjectScriptAutoPreview";
 import { AgentsPanel } from "./AgentsPanel";
 import {
@@ -55,18 +58,8 @@ import {
   useScientRightPanelOpeners,
 } from "~/scient/rightPanel/useScientRightPanelOpeners";
 import { ScientRightPanelContent } from "~/scient/rightPanel/ScientRightPanelContent";
-import { ThreadQueueStrip } from "~/scient/threadQueue/ThreadQueueStrip";
-import {
-  deriveQueueAcknowledgedUserMessages,
-  pendingQueueAdmissionPreviews,
-  type OptimisticUserMessage,
-} from "~/scient/threadQueue/optimisticQueuePresentation";
-import { useThreadQueue } from "~/scient/threadQueue/useThreadQueue";
-import {
-  editQueuedMessageShortcut,
-  steerQueuedMessageShortcut,
-} from "~/scient/threadQueue/queueShortcuts";
-import type { ScientThreadQueueItem } from "@t3tools/contracts";
+import { type OptimisticUserMessage } from "~/scient/threadQueue/optimisticQueuePresentation";
+import { useLegacyQueueRecoveryError } from "~/scient/threadQueue/useLegacyQueueRecoveryError";
 import { ContentDirectionScope } from "../scient/bidi/ContentDirectionScope";
 import {
   ScientRevertDialogDiagnostics,
@@ -91,7 +84,7 @@ import {
   getOpenStaticArtifacts,
 } from "~/scient/compute/chatComputeFigureFollower";
 
-import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
+import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { resolveDraftHeroState } from "./ChatView.logic";
@@ -115,7 +108,7 @@ import { type TerminalLaunchContext, useChatTerminalActions } from "./chat/useCh
 import { useComposerSend } from "./chat/useComposerSend";
 import { useComposerResume } from "./chat/useComposerResume";
 import { useImplementPlanInNewThread } from "./chat/useProposedPlanSend";
-
+import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
 import {
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
@@ -251,6 +244,12 @@ import {
 import { isPreviewSupportedInRuntime, useThreadPreviewState } from "../previewStateStore";
 
 import { previewRuntimeTabId } from "../browser/previewRuntimeTabId";
+// SCIENT-FORK:START
+import { useBrowserHistoryProjectLink } from "~/scient/browser/useBrowserHistoryProjectLink";
+import { renameInTabHistory, useRightPanelTabHistory } from "~/scient/rightPanel/tabHistory";
+import { PanelFilesLayout } from "~/scient/rightPanel/PanelFilesColumn";
+import { usePanelTabShortcuts } from "~/scient/rightPanel/usePanelTabShortcuts";
+// SCIENT-FORK:END
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
@@ -273,7 +272,6 @@ import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
-import { registerFaviconProjectForThread } from "~/browserFaviconStore";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -291,7 +289,7 @@ import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations"
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { isPreviewFocused } from "../lib/previewFocus";
-import { getTerminalFocusOwner } from "../lib/terminalFocus";
+import { focusTerminalOnThreadEnter, getTerminalFocusOwner } from "../lib/terminalFocus";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -351,6 +349,7 @@ import {
   PullRequestThreadDialogHost,
 } from "./chat/ChatOverlayHosts";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
+import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
@@ -644,8 +643,8 @@ function ChatViewContent(props: ChatViewProps) {
       },
     };
   })() as MessagesTimelineHistoryControls | undefined;
-  // SCIENT-FORK:START — older pages for the reading-position restore and for citations.
-  const loadEarlierTurns = ((): CitationHistoryPage | null => {
+  // SCIENT-FORK:START — older pages for the reading-position restore.
+  const loadEarlierTurns = ((): ReadingHistoryPage | null => {
     if (routeThreadDetailRef === null || !shouldShowLoadEarlierControl(serverThreadHistory)) {
       return null;
     }
@@ -671,12 +670,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return ids;
   })();
-  // SCIENT-FORK:START — the queue strip hides a preview once the server owns
-  // the message; the acknowledged user rows are that source of truth.
-  const serverAcknowledgedUserMessages = deriveQueueAcknowledgedUserMessages(
-    serverProjection?.messages ?? [],
-  );
-  // SCIENT-FORK:END
   const settings = useEnvironmentSettings(environmentId);
   const clientSettingsHydrated = useClientSettingsHydrated();
   const timestampFormat = settings.timestampFormat;
@@ -699,6 +692,7 @@ function ChatViewContent(props: ChatViewProps) {
       ? { citation, key: citationLocation.key ?? citationLocation.href }
       : null;
   })() as AssistantCitationRequest | null;
+  const citationHistory = useCitedHistory(citationRequest);
   const { resolvedTheme } = useTheme();
   const composerExtractedIntent = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.extractedIntent,
@@ -804,7 +798,6 @@ function ChatViewContent(props: ChatViewProps) {
   const isMobileViewport = useMediaQuery("max-sm");
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
-  const [terminalFocusRequestId, setTerminalFocusRequestId] = useState(0);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
     useState<TerminalLaunchContext | null>(null);
   // Overrides chosen before a server thread's first turn; they belong to that thread only.
@@ -845,7 +838,6 @@ function ChatViewContent(props: ChatViewProps) {
   };
   const setMultipleModelSelectionsStable = useStableCallback(setMultipleModelSelections);
   const feedbackUploadsInFlightRef = useRef(new Set<string>());
-  const terminalUiOpenByThreadRef = useRef<Record<string, boolean>>({});
 
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef),
@@ -1131,7 +1123,6 @@ function ChatViewContent(props: ChatViewProps) {
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
-  const previewSessionsReady = !activeEnvironmentServerBrowser || activePreviewState.listLoaded;
   const resolvePreviewRuntimeTabId = activeThreadRef
     ? (tabId: string) => previewRuntimeTabId(activeThreadRef, activePreviewServerEpoch, tabId)
     : undefined;
@@ -1198,31 +1189,14 @@ function ChatViewContent(props: ChatViewProps) {
   );
 
   useEffect(() => {
-    if (!activeThreadRef || !previewSessionsReady) return;
-    const hiddenTabIds = new Set(
-      Object.values(activePreviewState.sessions)
-        .filter((session) => session.runtime === "server" && session.reveal === false)
-        .map((session) => session.tabId),
-    );
-    useRightPanelStore
-      .getState()
-      .reconcileBrowserSurfaces(
-        activeThreadRef,
-        Object.keys(activePreviewState.sessions),
-        hiddenTabIds,
-      );
-  }, [activePreviewState.sessions, activeThreadRef, previewSessionsReady]);
-
-  useEffect(() => {
     if (!activeThreadRef || !activePreviewMiniPlayer) return;
     const content = activePreviewMiniPlayer.content;
     if (content.kind === "device") return;
     const shouldClose =
       content.kind === "browser"
-        ? (previewSessionsReady && !activePreviewState.sessions[content.tabId]) ||
-          (previewPanelOpen &&
-            activeRightPanelSurface?.kind === "preview" &&
-            activeRightPanelSurface.resourceId === content.tabId)
+        ? previewPanelOpen &&
+          activeRightPanelSurface?.kind === "preview" &&
+          activeRightPanelSurface.resourceId === content.tabId
         : rightPanelOpen &&
           activeRightPanelSurface?.kind === "scient" &&
           activeRightPanelSurface.module === "artifact" &&
@@ -1232,12 +1206,10 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [
     activePreviewMiniPlayer,
-    activePreviewState.sessions,
     activeRightPanelSurface,
     activeThreadRef,
     previewPanelOpen,
     rightPanelOpen,
-    previewSessionsReady,
   ]);
 
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
@@ -1368,6 +1340,7 @@ function ChatViewContent(props: ChatViewProps) {
     runAfterPendingSurfaceSave: runAfterSurfaceSave,
     runAfterPendingFileSave: runAfterFileSave,
   } = useChatSurfaceDepartureGuards({
+    activeThreadRef,
     pendingFileSurfaceIds,
     markdownDepartureOptions,
     activeSurfaceId: activeRightPanelSurface?.id ?? null,
@@ -1405,10 +1378,15 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeEnvironmentBootstrapComplete, activeThreadRef, activeWorkspaceKeyRoot]);
 
   const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
-  useEffect(() => {
-    if (!activeThreadRef || !activeProjectRef) return;
-    registerFaviconProjectForThread(activeThreadRef, activeProjectRef);
-  }, [activeProjectRef, activeThreadRef]);
+  // SCIENT-FORK:START — browser visits are filed under the thread's project again
+  useBrowserHistoryProjectLink({
+    threadRef: activeThreadRef,
+    projectKey: activeProject
+      ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
+      : null,
+    settingsHydrated: clientSettingsHydrated,
+  });
+  // SCIENT-FORK:END
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentUnavailable =
@@ -1566,14 +1544,11 @@ function ChatViewContent(props: ChatViewProps) {
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeRuntime);
-  // SCIENT-FORK:START — Scient thread queue: pending composer payloads for
-  // this thread. Server-thread-scoped only; local draft threads have no
-  // queue surface.
-  const threadQueue = useThreadQueue({
-    environmentId: isServerThread ? environmentId : null,
-    threadId: isServerThread && activeThread ? activeThread.id : null,
-    threadBusy: phase === "running",
-  });
+  // SCIENT-FORK:START — saved pre-native queue work that needs recovery says so in the queue.
+  const legacyQueueRecoveryError = useLegacyQueueRecoveryError(
+    isServerThread ? environmentId : null,
+    isServerThread && activeThread ? activeThread.id : null,
+  );
   const queueContextKeyRef = useRef(activeThreadKey);
   useLayoutEffect(() => {
     queueContextKeyRef.current = activeThreadKey;
@@ -1641,7 +1616,6 @@ function ChatViewContent(props: ChatViewProps) {
   } = usePendingThreadRequests({
     environmentId,
     activeThreadId,
-    activeThread,
     serverProjection,
     supportsQuestionAttachments,
     composerDraftTarget,
@@ -1997,6 +1971,13 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const backgroundThread = use(BackgroundThreadContext);
+  // SCIENT-FORK:START — Back and Forward for file tabs; stand down in background like other shortcuts
+  useRightPanelTabHistory({
+    threadRef: backgroundThread ? null : activeThreadRef,
+    keybindings,
+    runAfterPendingFileSave,
+  });
+  // SCIENT-FORK:END
   const scriptKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
@@ -2374,7 +2355,6 @@ function ChatViewContent(props: ChatViewProps) {
     panelTerminalIds,
     canReuseTerminal,
     gitCwd,
-    setTerminalFocusRequestId,
     setTerminalUiLaunchContext,
     setThreadError,
   });
@@ -2394,6 +2374,7 @@ function ChatViewContent(props: ChatViewProps) {
   );
   // SCIENT-FORK:START — openers for the right-panel surfaces Scient adds.
   const {
+    addNewTabSurface,
     addAgentsSurface,
     addDocumentsSurface,
     addSourcesSurface,
@@ -2423,9 +2404,6 @@ function ChatViewContent(props: ChatViewProps) {
     threadRef: activeThreadRef,
     deviceState,
     deviceStateLoaded,
-    previewState: activePreviewState,
-    serverBrowserAvailable: activeEnvironmentServerBrowser,
-    panelSurfaces: rightPanelState.surfaces,
     // SCIENT-FORK:START — the floating player holds tagged content (browser, device or figure).
     miniPlayerSource: activePreviewMiniPlayer?.content ?? null,
     // SCIENT-FORK:END
@@ -2666,7 +2644,6 @@ function ChatViewContent(props: ChatViewProps) {
     composerTimelineInset,
     routeThreadKey,
     activeThreadKey,
-    activeThreadId: activeThread?.id,
     isServerThread,
     serverProjection,
     timelineMessages,
@@ -2746,11 +2723,9 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — retire admitted previews permanently so editing or deleting a queue row
   // cannot reveal them again.
   const queuedAdmissionIds = new Set(
-    isServerThread
-      ? (serverProjection?.runs
-          .filter((run) => run.status === "queued")
-          .map((run) => run.userMessageId) ?? [])
-      : threadQueue.items.map((item) => item.messageId),
+    serverProjection?.runs
+      .filter((run) => run.status === "queued")
+      .map((run) => run.userMessageId) ?? [],
   );
   if (
     optimisticUserMessages.some(
@@ -3046,7 +3021,6 @@ function ChatViewContent(props: ChatViewProps) {
     supportsPullRequests,
     pullRequestsSurfaceAvailable,
     explicitDiffOpenRef,
-    setTerminalFocusRequestId,
     onDiffPanelOpen,
     closeRightPanelSurface,
   });
@@ -3212,6 +3186,7 @@ function ChatViewContent(props: ChatViewProps) {
           stoppedAt: activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt,
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
+          timestampFormat,
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
@@ -3290,27 +3265,12 @@ function ChatViewContent(props: ChatViewProps) {
     setTerminalUiLaunchContext(null);
   }
 
+  // Entering a thread with its drawer open focuses the drawer terminal; opening
+  // it from a handler requests focus there. A closed drawer leaves focus to the
+  // composer effect above.
   useEffect(() => {
-    if (!activeThreadKey) return;
-    const previous = terminalUiOpenByThreadRef.current[activeThreadKey] ?? false;
-    const current = Boolean(terminalUiState.terminalOpen);
-
-    if (!previous && current) {
-      terminalUiOpenByThreadRef.current[activeThreadKey] = current;
-      setTerminalFocusRequestId((value) => value + 1);
-      return;
-    } else if (previous && !current) {
-      terminalUiOpenByThreadRef.current[activeThreadKey] = current;
-      const frame = window.requestAnimationFrame(() => {
-        focusComposerStable();
-      });
-      return () => {
-        window.cancelAnimationFrame(frame);
-      };
-    }
-
-    terminalUiOpenByThreadRef.current[activeThreadKey] = current;
-  }, [activeThreadKey, focusComposerStable, terminalUiState.terminalOpen]);
+    if (activeThreadRef) return focusTerminalOnThreadEnter(activeThreadRef);
+  }, [activeThreadRef]);
 
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
     terminalFocus: getTerminalFocusOwner() !== null,
@@ -3330,11 +3290,26 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — messages present active Scient skills beside provider-native ones.
   const timelineSkills = effectiveActiveProviderSkills;
   // SCIENT-FORK:END
-  const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
-  const [isThreadFindActive, setIsThreadFindActive] = useState(false);
-  const openThreadFind = () => threadFindControlsRef.current?.open();
-  const closeThreadFind = () => threadFindControlsRef.current?.close();
+  const threadFindEnabled =
+    isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline;
+  const isThreadFindActive = useThreadFindOpen(activeThreadRef, threadFindEnabled);
 
+  // SCIENT-FORK:START — side-panel tab shortcuts and duplicating a tab (scient/rightPanel)
+  const panelTabs = usePanelTabShortcuts({
+    threadRef: activeThreadRef,
+    panelOpen: rightPanelOpen,
+    surfaces: renderedRightPanelSurfaces,
+    activeSurface: renderedRightPanelSurface,
+    activate: activateRightPanelSurfaceStable,
+    addNewTab: addNewTabSurface,
+    canOperatePreview,
+    browserAvailable,
+    runAfterPendingFileSave,
+    openPreview,
+    previewSessions: activePreviewState.sessions,
+    addTerminal: addTerminalSurfaceStable,
+  });
+  // SCIENT-FORK:END
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
     keybindings,
@@ -3355,9 +3330,13 @@ function ChatViewContent(props: ChatViewProps) {
         if (!event.repeat) copyActiveThreadReference();
       },
       "chat.find": () => {
-        if (!isServerThread || serverConfig?.threadFind !== true) return false;
-        openThreadFind();
+        if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
+          return false;
+        openThreadFind(activeThreadKey);
       },
+      // SCIENT-FORK:START
+      ...panelTabs.shortcuts,
+      // SCIENT-FORK:END
       "composer.cycleHost": ({ event }) => {
         if (!canChangeEnvironment) return false;
         if (event.repeat) return;
@@ -3374,23 +3353,13 @@ function ChatViewContent(props: ChatViewProps) {
       "composer.previousWorktree": ({ event }) => {
         if (!event.repeat) branchToolbarRef.current?.usePreviousWorktree();
       },
-      // SCIENT-FORK:START — queue shortcuts are decided by the Scient queue (threadQueue/queueShortcuts).
       "thread.steerQueuedMessage": ({ event }) =>
-        steerQueuedMessageShortcut({
-          repeat: event.repeat,
-          nativeQueue: queuedRunsControlRef.current,
-          stripHead: threadQueue.items[0],
-          steerStripItem: (item) =>
-            void threadQueue.control("steer", item.queueItemId).catch((cause) => {
-              if (activeThreadId) setThreadError(activeThreadId, chatActionErrorMessage(cause));
-            }),
-        }),
+        routeKind !== "draft" && queuedRunsControlRef.current?.steerNext(event.repeat) === true,
       "thread.editQueuedMessage": ({ event }) =>
-        editQueuedMessageShortcut({
-          repeat: event.repeat,
-          nativeQueue: queuedRunsControlRef.current,
-        }),
-      // SCIENT-FORK:END
+        routeKind !== "draft" &&
+        // SCIENT-FORK:START — Edit Queued Message takes the latest message wherever the caret is.
+        // SCIENT-FORK:END
+        queuedRunsControlRef.current?.editLatest(event.repeat) === true,
       "thread.stop": ({ event }) => {
         if (!canInterruptRunningThread) return false;
         if (!event.repeat) void onInterruptStable();
@@ -3514,33 +3483,9 @@ function ChatViewContent(props: ChatViewProps) {
     activeEnvironmentUnavailable,
     defaultRuntimeMode,
   });
-  const editQueuedItem = (item: ScientThreadQueueItem) => {
-    if (!isServerThread || !activeThreadId) return;
-    if (activePendingProgress || pendingApprovals.length > 0 || isConnecting || isSendBusy) {
-      setThreadError(
-        activeThreadId,
-        "Finish the current approval or question before editing a queued message.",
-      );
-      return;
-    }
-    void beginQueueEdit(routeThreadRef, item)
-      .then(() => threadQueue.refresh())
-      .catch((cause) => {
-        setThreadError(activeThreadId, chatActionErrorMessage(cause));
-      });
-  };
-
-  const deleteQueuedItem = (item: ScientThreadQueueItem) => {
-    if (!isServerThread || !activeThreadId) return;
-    void threadQueue.remove(item.queueItemId).catch((cause) => {
-      setThreadError(activeThreadId, chatActionErrorMessage(cause));
-    });
-  };
-
   const { onSend } = useComposerSend({
     queueEditsReady,
     queueContextKeyRef,
-    threadQueue,
     serverProjection,
     hasHeldQueuedRuns,
     onForkConversation,
@@ -3634,6 +3579,35 @@ function ChatViewContent(props: ChatViewProps) {
     serverProjection?.thread.guestShare?.messages.filter((message) => message.status === "pending")
       .length ?? 0;
   // SCIENT-FORK:END
+
+  const queuedRunsControl =
+    isServerThread && activeThread ? (
+      <>
+        <QueuedRunsControl
+          ref={queuedRunsControlRef}
+          steerShortcutLabel={shortcutLabelForCommand(keybindings, "thread.steerQueuedMessage", {
+            context: { terminalFocus: false },
+          })}
+          editShortcutLabel={shortcutLabelForCommand(keybindings, "thread.editQueuedMessage", {
+            context: { composerFocus: true },
+          })}
+          environmentId={activeThread.environmentId}
+          threadId={activeThread.id}
+          optimisticMessages={optimisticUserMessages}
+          // SCIENT-FORK:START — queued edits live in Scient edit sessions (scient/threadQueue/editSession).
+          error={legacyQueueRecoveryError ?? queueEditStorageError}
+          editingRunId={queueEdit?.nativeRun?.runId ?? null}
+          onEditQueuedRun={beginEditingQueuedRunStable}
+          onCancelEdit={() => {
+            if (queueEdit)
+              void stashRecoveredDraft(queueEdit).catch((cause) =>
+                setThreadError(threadId, chatActionErrorMessage(cause)),
+              );
+          }}
+          // SCIENT-FORK:END
+        />
+      </>
+    ) : null;
 
   const resendAfterWorkLocallyStable = useStableCallback(() => {
     setWorkLocallyResendDraftId(null);
@@ -3775,7 +3749,6 @@ function ChatViewContent(props: ChatViewProps) {
         onCloseSurface={closeRightPanelSurface}
         terminal={{
           launchContext: activeTerminalLaunchContext ?? null,
-          focusRequestId: terminalFocusRequestId,
           keybindings,
           onAddTerminalContext: addTerminalContextToDraftStable,
           onSplitTerminal: splitPanelTerminalStable,
@@ -3814,12 +3787,19 @@ function ChatViewContent(props: ChatViewProps) {
               workspaceRoot: activeWorkspaceRoot,
               onCiteFile: (citation, anchor) =>
                 composerRef.current?.citeText(citation, anchor) ?? false,
+              // A rename carries the tab's Back and Forward history with it.
               onFileRenamed: (fromPath, toPath) =>
-                useRightPanelStore.getState().renameFileSurface(activeThreadRef, fromPath, toPath),
+                renameInTabHistory(activeThreadRef, fromPath, toPath, () =>
+                  useRightPanelStore
+                    .getState()
+                    .renameFileSurface(activeThreadRef, fromPath, toPath),
+                ),
               onFileMoved: (fromPath, toPath) =>
-                useRightPanelStore
-                  .getState()
-                  .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true }),
+                renameInTabHistory(activeThreadRef, fromPath, toPath, () =>
+                  useRightPanelStore
+                    .getState()
+                    .renameFileSurface(activeThreadRef, fromPath, toPath, { keepState: true }),
+                ),
               onOpenFileSource: openFileSourceSurface,
               onHtmlPresentationRequestHandled: handleHtmlPresentationRequestHandled,
               onLatexPresentationRequestHandled: handleLatexPresentationRequestHandled,
@@ -3940,11 +3920,8 @@ function ChatViewContent(props: ChatViewProps) {
               skills: timelineSkills,
               progressive: serverConfig?.threadFindProgressive === true,
               thread: activeThreadRef,
-              enabled:
-                isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline,
+              enabled: threadFindEnabled,
             }}
-            controlsRef={threadFindControlsRef}
-            onOpenChange={setIsThreadFindActive}
             detailsCardTopInset={isThreadFindActive ? THREAD_FIND_BAR_RESERVED_HEIGHT : 0}
             composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
             data-chat-workspace-drop-target="true"
@@ -3991,7 +3968,7 @@ function ChatViewContent(props: ChatViewProps) {
                 readyMarkdownCwd={gitCwd}
                 readyWorkspaceRoot={activeWorkspaceRoot ?? null}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
-                citationHistoryLoading={threadDetailLoading}
+                citationHistory={citationHistory}
                 {...(!paintOnlyDisplayedTimeline
                   ? {
                       onCiteAssistantText: citeAssistantTextStable,
@@ -4176,7 +4153,7 @@ function ChatViewContent(props: ChatViewProps) {
                 // SCIENT-FORK:END
                 emptyPlaceholderInset={composerReservedHeight}
                 topFadeEnabled={!hasTimelineTopBanner}
-                // SCIENT-FORK:START — older pages for the restore and for citations.
+                // SCIENT-FORK:START — older pages for the restore.
                 loadEarlier={paintOnlyDisplayedTimeline ? null : loadEarlierTurns}
                 // SCIENT-FORK:END
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
@@ -4265,78 +4242,15 @@ function ChatViewContent(props: ChatViewProps) {
                         : undefined
                     }
                   >
-                    {/* SCIENT-FORK:START — queued messages strip, stacked on top of the composer */}
-                    <div className="mx-auto w-full max-w-3xl">
-                      {isServerThread && activeThread ? (
-                        <QueuedRunsControl
-                          error={threadQueue.error ?? queueEditStorageError}
-                          ref={queuedRunsControlRef}
-                          steerShortcutLabel={shortcutLabelForCommand(
-                            keybindings,
-                            "thread.steerQueuedMessage",
-                            { context: { terminalFocus: false } },
-                          )}
-                          editShortcutLabel={shortcutLabelForCommand(
-                            keybindings,
-                            "thread.editQueuedMessage",
-                            { context: { composerFocus: true } },
-                          )}
+                    {/* SCIENT-FORK:START — Scient Accounts: approvals belong to the active thread. */}
+                    {activeThread ? (
+                      <div className="mx-auto w-full max-w-3xl">
+                        <ThreadAccountApprovals
                           environmentId={activeThread.environmentId}
                           threadId={activeThread.id}
-                          optimisticMessages={optimisticUserMessages}
-                          editingRunId={queueEdit?.nativeRun?.runId ?? null}
-                          onEditQueuedRun={beginEditingQueuedRunStable}
-                          onCancelEdit={() => {
-                            if (queueEdit)
-                              void stashRecoveredDraft(queueEdit).catch((cause) =>
-                                setThreadError(threadId, chatActionErrorMessage(cause)),
-                              );
-                          }}
                         />
-                      ) : (
-                        <ThreadQueueStrip
-                          items={threadQueue.items}
-                          pendingMessages={pendingQueueAdmissionPreviews(
-                            optimisticUserMessages,
-                            routeThreadKey,
-                            threadQueue.items,
-                            serverAcknowledgedUserMessages,
-                          ).map((message) => ({
-                            id: message.id,
-                            text: message.text,
-                            attachmentCount: message.attachments?.length ?? 0,
-                            accepted: message.queueAdmission?.accepted === true,
-                          }))}
-                          error={threadQueue.error ?? queueEditStorageError}
-                          threadBusy={phase === "running" || phase === "connecting"}
-                          supportsExplicitSend={
-                            environmentById.get(environmentId)?.serverConfig?.environment
-                              .capabilities.threadQueueExplicitSend === true
-                          }
-                          awaitingCompletion={threadQueue.awaitingCompletion}
-                          paused={threadQueue.paused !== null}
-                          dispatchingItemId={threadQueue.pendingSendItemId}
-                          onSend={(item) => {
-                            void threadQueue.control("send", item.queueItemId).catch(() => {});
-                          }}
-                          onSteer={(item) => {
-                            void threadQueue.control("steer", item.queueItemId).catch(() => {});
-                          }}
-                          retryable={threadQueue.paused !== null}
-                          onRetry={() => {
-                            void threadQueue.control("resume").catch(() => {});
-                          }}
-                          onEdit={editQueuedItem}
-                          onDelete={deleteQueuedItem}
-                          onReorder={(ids) => {
-                            void threadQueue.reorder(ids).catch((cause) => {
-                              if (activeThreadId)
-                                setThreadError(activeThreadId, chatActionErrorMessage(cause));
-                            });
-                          }}
-                        />
-                      )}
-                    </div>
+                      </div>
+                    ) : null}
                     {/* SCIENT-FORK:END */}
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
@@ -4440,7 +4354,7 @@ function ChatViewContent(props: ChatViewProps) {
                                             : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
-                              queuedRunsControl={null}
+                              queuedRunsControl={queuedRunsControl}
                               bannerItems={composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
@@ -4737,7 +4651,6 @@ function ChatViewContent(props: ChatViewProps) {
           activeTerminalOpen={Boolean(terminalUiState.terminalOpen)}
           composerHeight={composerReservedHeight}
           launchContext={activeTerminalLaunchContext ?? null}
-          focusRequestId={terminalFocusRequestId}
           splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
           splitVerticalShortcutLabel={splitTerminalVerticalShortcutLabel ?? undefined}
           newShortcutLabel={newTerminalShortcutLabel ?? undefined}
@@ -4792,6 +4705,10 @@ function ChatViewContent(props: ChatViewProps) {
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddAgents={addAgentsSurface}
           onAddSources={addSourcesSurface}
+          // SCIENT-FORK:START — "+" and its shortcut open the launcher as a tab
+          onAddNewTab={addNewTabSurface}
+          onDuplicateSurface={panelTabs.duplicateSurface}
+          // SCIENT-FORK:END
           onAddDocuments={addDocumentsSurface}
           documentsAvailable={activeWorkspaceRoot !== undefined}
           onAddCompute={addComputeSurface}
@@ -4808,7 +4725,21 @@ function ChatViewContent(props: ChatViewProps) {
           computeAvailable={activeProject !== null && activeWorkspaceRoot !== undefined}
           deviceAvailable={activeThreadRef !== null}
         >
-          {forkPdfContinuityPending ? null : rightPanelContent}
+          {/* SCIENT-FORK:START — the project's file list can sit beside any tab */}
+          {forkPdfContinuityPending ? null : (
+            <PanelFilesLayout
+              surface={renderedRightPanelSurface}
+              environmentId={activeThreadRef.environmentId}
+              cwd={activeWorkspaceRoot}
+              projectName={activeProject?.title ?? null}
+              workspaceMutationId={workspaceMutationId}
+              onOpenFile={openFileSurfaceStable}
+              onOpenFileSource={openFileSourceSurface}
+            >
+              {rightPanelContent}
+            </PanelFilesLayout>
+          )}
+          {/* SCIENT-FORK:END */}
         </ChatRightPanel>
       ) : null}
 

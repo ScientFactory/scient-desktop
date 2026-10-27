@@ -19,12 +19,8 @@ export function makeCodexStoreIcons(fetch: ConnectorFetch = fetchIcon) {
   const cache = new Map<string, { readonly value: string | undefined; readonly at: number }>();
   return Effect.fn("CodexStoreIcons.read")(function* (url: string | null | undefined) {
     if (!url) return undefined;
-    let parsed: URL;
-    try {
-      parsed = new URL(url, "https://chatgpt.com");
-    } catch {
-      return undefined;
-    }
+    if (!URL.canParse(url, "https://chatgpt.com")) return undefined;
+    const parsed = new URL(url, "https://chatgpt.com");
     if (
       parsed.protocol !== "https:" ||
       !(

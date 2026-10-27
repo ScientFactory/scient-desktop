@@ -23,6 +23,8 @@ import {
   runningForkAuthorityChanged,
   makeRunningForkTextCapture,
 } from "./scient-fork/runningForkSource.ts";
+
+const isProviderTextSnapshotError = Schema.is(ProviderTextSnapshotError);
 // SCIENT-FORK:END
 import {
   CommandId,
@@ -765,7 +767,7 @@ const layerBase: Layer.Layer<
     ) =>
       writeRunningForkText(input).pipe(
         Effect.mapError((cause) =>
-          Schema.is(ProviderTextSnapshotError)(cause)
+          isProviderTextSnapshotError(cause)
             ? cause
             : new EventSinkWriteError({ eventCount: input.events.length, cause }),
         ),

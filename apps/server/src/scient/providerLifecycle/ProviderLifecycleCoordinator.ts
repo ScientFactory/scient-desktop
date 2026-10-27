@@ -81,10 +81,14 @@ export const make = Effect.gen(function* () {
   return ProviderLifecycleCoordinator.of({
     reserve,
     release,
-    current: (instanceId) =>
-      Ref.get(reservations).pipe(Effect.map((map) => map.get(`instance:${instanceId}`))),
-    currentForProvider: (provider) =>
-      Ref.get(reservations).pipe(Effect.map((map) => map.get(`provider:${provider}`))),
+    current: Effect.fn("ProviderLifecycleCoordinator.current")(function (instanceId) {
+      return Ref.get(reservations).pipe(Effect.map((map) => map.get(`instance:${instanceId}`)));
+    }),
+    currentForProvider: Effect.fn("ProviderLifecycleCoordinator.currentForProvider")(
+      function (provider) {
+        return Ref.get(reservations).pipe(Effect.map((map) => map.get(`provider:${provider}`)));
+      },
+    ),
   });
 });
 

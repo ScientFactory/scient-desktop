@@ -402,12 +402,10 @@ export const make = Effect.gen(function* () {
         ? stale
         : null;
     },
-    Effect.catch(() =>
-      Effect.succeed(
-        unavailable(
-          "source-stale",
-          "The current source publication could not be verified. Resolve file recovery and rebuild the document.",
-        ),
+    Effect.orElseSucceed(() =>
+      unavailable(
+        "source-stale",
+        "The current source publication could not be verified. Resolve file recovery and rebuild the document.",
       ),
     ),
   );

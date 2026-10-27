@@ -1,42 +1,19 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
+import "@fontsource-variable/inter";
 import "./index.css";
 
-import { isElectron } from "./env";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
-import { getRouter } from "./router";
-import {
-  syncDocumentElectronPlatformClasses,
-  syncDocumentWindowControlsOverlayClass,
-} from "./lib/windowControlsOverlay";
+import { isElectron } from "./env";
+import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
-import { requestDesktopReload } from "./lib/desktopReload";
-import { toastManager } from "./components/ui/toast";
+// SCIENT-FORK:START — one tooltip timing for the whole app.
+import { AppTooltipTiming } from "./scient/presentation/AppTooltipTiming";
+// SCIENT-FORK:END
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
-// Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-const history = isElectron ? createHashHistory() : createBrowserHistory();
-
-const router = getRouter(history);
-
-if (isElectron) {
-  syncDocumentElectronPlatformClasses(navigator.platform);
-  syncDocumentWindowControlsOverlayClass();
-  window.desktopBridge?.onMenuAction((action) => {
-    if (action === "reload-main" || action === "force-reload-main") {
-      requestDesktopReload(action === "force-reload-main");
-    }
-  });
-  window.desktopBridge?.onReloadBlocked?.(() => {
-    toastManager.add({
-      type: "warning",
-      title: "Reload paused",
-      description: "A file has pending changes. Save or resolve them, then try again.",
-    });
-  });
-}
+const router = startAppServices();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
@@ -50,7 +27,13 @@ window.addEventListener("vite:preloadError", (event) => {
   }
 });
 
-const app = <AppRoot router={router} />;
+// SCIENT-FORK:START — the app renders inside Scient's tooltip timing.
+const app = (
+  <AppTooltipTiming>
+    <AppRoot router={router} />
+  </AppTooltipTiming>
+);
+// SCIENT-FORK:END
 
 // Split by runtime to keep Clerk out of local startup and clerk-js out of browser builds.
 const managedAuthShellModule =

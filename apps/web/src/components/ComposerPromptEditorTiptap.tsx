@@ -1,3 +1,4 @@
+import { documentIconColorForFileName } from "~/pierre-icons";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import {
@@ -7,6 +8,7 @@ import {
   Node,
   wrappingInputRule,
   type JSONContent,
+  type TiptapEditorHTMLElement,
 } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -44,6 +46,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
@@ -109,11 +112,9 @@ import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
-import { SkillChipIcon } from "./chat/SkillInlineText";
+import { SkillChipPopover, skillPopoverDescription } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
-import { ContextChipPopover } from "./contextChipParts";
-import { Button } from "./ui/button";
 import { ContextChip } from "./ContextChip";
 import {
   ComposerContextActionsContext,
@@ -269,9 +270,11 @@ const ComposerMentionExtension = Node.create({
 function ComposerMentionNodeView({ node }: NodeViewProps) {
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
+  const accent = documentIconColorForFileName(path);
   const chip = (
     <ContextChip
       kind="mention"
+      style={accent ? ({ "--context-chip-accent": accent } as CSSProperties) : undefined}
       dir="ltr"
       render={<button type="button" />}
       onClick={() => actions.openMention(path)}
@@ -359,29 +362,13 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
     : (node.attrs.skillLabel as string) || skillName;
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
-      <ContextChipPopover
-        kind="skill"
-        icon={<SkillChipIcon />}
+      <SkillChipPopover
         label={skillLabel}
-        accessibleLabel={`Skill ${skillLabel}`}
-      >
-        {/* SCIENT-FORK:START — the skill popover opens Scient's skill view. */}
-        <div className="space-y-2 p-1.5 text-sm">
-          <p className="font-medium leading-none">{skillLabel}</p>
-          <p className="rounded-md border border-border/60 bg-muted/35 px-2.5 py-2 font-mono text-2xs leading-relaxed text-muted-foreground select-text">
-            {(skill ? composerSkillMeta(skills, skillName)?.description : skillDescription) ??
-              "No description is available for this skill."}
-          </p>
-          {skill ? (
-            <div className="flex justify-end">
-              <Button variant="ghost-muted" size="micro" onClick={() => actions.openSkill(skill)}>
-                View Skill
-              </Button>
-            </div>
-          ) : null}
-        </div>
-        {/* SCIENT-FORK:END */}
-      </ContextChipPopover>
+        description={skill ? skillPopoverDescription(skill) : skillDescription}
+        // SCIENT-FORK:START — the skill popover opens Scient's skill view.
+        onViewInstructions={skill ? () => actions.openSkill(skill) : undefined}
+        // SCIENT-FORK:END
+      />
     </NodeViewWrapper>
   );
 }
@@ -1003,36 +990,15 @@ function ComposerPromptEditorTiptapInner(
   const expandEditorCursor = (text: string, position: number) =>
     literalText ? position : expandCollapsedComposerCursor(text, position);
 
-  const onChangeRef = useRef(onChange);
-  const onVisibleSelectionChangeRef = useRef(onVisibleSelectionChange);
-  const onCommandKeyDownRef = useRef(onCommandKeyDown);
-  const isPathQueryActiveRef = useRef(isPathQueryActive);
-  const buildFragmentRef = useRef(buildContextClipboardFragment);
-  const importFragmentRef = useRef(importContextFragment);
   const latestValueRef = useRef(value);
-  const editorHolder = useRef<TiptapEditor | null>(null);
-
-  useEffect(() => {
-    onChangeRef.current = onChange;
-  }, [onChange]);
-  useEffect(() => {
-    onVisibleSelectionChangeRef.current = onVisibleSelectionChange;
-  }, [onVisibleSelectionChange]);
-  useEffect(() => {
-    onCommandKeyDownRef.current = onCommandKeyDown;
-  }, [onCommandKeyDown]);
-  useEffect(() => {
-    isPathQueryActiveRef.current = isPathQueryActive;
-  }, [isPathQueryActive]);
-  useEffect(() => {
-    buildFragmentRef.current = buildContextClipboardFragment;
-  }, [buildContextClipboardFragment]);
-  useEffect(() => {
-    importFragmentRef.current = importContextFragment;
-  }, [importContextFragment]);
-  useLayoutEffect(() => {
-    latestValueRef.current = value;
-  }, [value]);
+  // The editor config is built once, so its handlers reach the current callbacks through here.
+  const readCallbacks = useStableCallback(() => ({
+    onChange,
+    onVisibleSelectionChange,
+    onCommandKeyDown,
+    isPathQueryActive,
+    importContextFragment,
+  }));
 
   // Stable so a skills refresh does not rerun the controlled-value effect.
   const skillLabelFor = useStableCallback((name: string) => composerSkillMeta(skills, name));
@@ -1101,7 +1067,7 @@ function ComposerPromptEditorTiptapInner(
     if (isApplyingControlledUpdateRef.current) return;
     if (!snapshotChanged) {
       if (didComposerSelectionChangeVisibly(previousSelectionRange, nextSelectionRange)) {
-        onVisibleSelectionChangeRef.current?.();
+        readCallbacks().onVisibleSelectionChange?.();
       }
       return;
     }
@@ -1126,12 +1092,18 @@ function ComposerPromptEditorTiptapInner(
       [updated.state.selection.$from.nodeBefore, updated.state.selection.$from.nodeAfter].some(
         (node) => node?.isInline && node.isAtom && !node.isText && node.type.name !== "hardBreak",
       );
-    onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, suppressTrigger, contextIds);
+    readCallbacks().onChange(
+      nextValue,
+      nextCursor,
+      nextExpandedCursor,
+      suppressTrigger,
+      contextIds,
+    );
   };
 
   const editorAttributes = {
     class: cn(
-      "composer-tiptap -m-1 block max-h-52 min-h-19.5 overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
+      "composer-tiptap -m-1 block max-h-52 min-h-19.5 redesign:min-h-12 overflow-y-auto p-1 whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
       className,
     ),
     "data-testid": "composer-editor",
@@ -1331,9 +1303,9 @@ function ComposerPromptEditorTiptapInner(
               return true;
             }
           }
-          const handler = onCommandKeyDownRef.current;
+          const handler = readCallbacks().onCommandKeyDown;
           if (event.key === "Enter") {
-            const instance = editorHolder.current;
+            const instance = (view.dom as TiptapEditorHTMLElement).editor;
             const isTaskItem = richText && (instance?.isActive("taskItem") ?? false);
             const isListItem = richText && (instance?.isActive("listItem") ?? false);
             const handled = handler?.("Enter", event, isTaskItem || isListItem) ?? false;
@@ -1420,7 +1392,7 @@ function ComposerPromptEditorTiptapInner(
             );
             return true;
           }
-          const importFragment = importFragmentRef.current;
+          const importFragment = readCallbacks().importContextFragment;
           let text =
             !literalText && importFragment
               ? importPastedComposerText(clipboardData, importFragment)
@@ -1442,8 +1414,8 @@ function ComposerPromptEditorTiptapInner(
           const lineBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, "\uFFFC");
           const literalLength = literalText
             ? 0
-            : pastedPathQueryLength(lineBefore, text, isPathQueryActiveRef.current?.());
-          const editorInstance = editorHolder.current;
+            : pastedPathQueryLength(lineBefore, text, readCallbacks().isPathQueryActive?.());
+          const editorInstance = (view.dom as TiptapEditorHTMLElement).editor;
           if (editorInstance) {
             const $paste = view.state.selection.$from;
             const nested = ["listItem", "taskItem", "blockquote"].some((name) =>
@@ -1505,10 +1477,6 @@ function ComposerPromptEditorTiptapInner(
   useEffect(() => {
     editor?.setEditable(!disabled);
   }, [disabled, editor]);
-
-  useEffect(() => {
-    editorHolder.current = editor;
-  }, [editor]);
 
   // SCIENT-FORK:START — the editor follows the thread's content direction.
   useLayoutEffect(() => {
@@ -1584,7 +1552,10 @@ function ComposerPromptEditorTiptapInner(
     onCitationDraftSave(replacedValue, serializeEditorDoc(current.state.doc).value);
   });
 
+  // The one place the controlled value reaches the editor. Imperative handlers compare against
+  // the committed value, so it is recorded here even before the editor exists.
   useLayoutEffect(() => {
+    latestValueRef.current = value;
     if (!editor) return;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
@@ -1717,7 +1688,7 @@ function ComposerPromptEditorTiptapInner(
       start: snapshotRef.current.expandedCursor,
       end: snapshotRef.current.expandedCursor,
     };
-    onChangeRef.current(
+    readCallbacks().onChange(
       snapshotRef.current.value,
       boundedCursor,
       snapshotRef.current.expandedCursor,
@@ -1808,7 +1779,7 @@ function ComposerPromptEditorTiptapInner(
   );
 
   const handleCopyCut = (event: React.ClipboardEvent, cut: boolean) => {
-    const build = buildFragmentRef.current;
+    const build = buildContextClipboardFragment;
     if (!editor || (cut && !editor.isEditable)) return;
     const clipboardData = event.clipboardData;
     const { from, to } = editor.state.selection;
@@ -1897,7 +1868,7 @@ function ComposerPromptEditorTiptapInner(
             {isEmpty && contextRecords.size === 0 && placeholder ? (
               <div
                 className={cn(
-                  "pointer-events-none absolute inset-0 leading-relaxed text-placeholder/75",
+                  "pointer-events-none absolute inset-0 leading-relaxed text-placeholder",
                   placeholderClassName,
                 )}
               >

@@ -1,3 +1,4 @@
+import * as PreviewAgentActivity from "../preview/PreviewAgentActivity.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as ServerConfig from "../config.ts";
 import { expect, it, vi } from "vite-plus/test";
@@ -173,9 +174,7 @@ function startWithMissingWorktree(
         Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(
-              Option.some({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
-            ),
+            Effect.succeedSome({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords: () => {
@@ -780,7 +779,7 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
-            Effect.succeed(Option.some({ workspaceRoot: "/tmp/native-account-project" } as never)),
+            Effect.succeedSome({ workspaceRoot: "/tmp/native-account-project" } as never),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getThreadRecords,
@@ -862,6 +861,7 @@ function makeLocalCommandHarness(input: {
       Layer.provide(
         Layer.mergeAll(
           McpAppModelContext.layerEmpty,
+          PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
           IdAllocator.layer,

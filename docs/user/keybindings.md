@@ -163,7 +163,7 @@ in Settings.
 
 ## Copy pull request references
 
-With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`
+With a PR open in the right panel or on the Pull requests page, use `mod+shift+c`
 to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
 Both shortcuts can be changed in Settings. Search for “Copy Link or Thread ID”
 or “Copy Number”. They copy the selected PR and leave terminal input alone.
@@ -203,7 +203,12 @@ Useful current commands include:
 - `projectSearch.toggle` (`mod+shift+f`) searches inside project files;
 - `themeEditor.toggle` (`mod+alt+shift+t`) opens the floating theme editor;
 - `thread.settle` (`mod+shift+s`) settles or restores the active thread;
-- `thread.pin` (`mod+shift+p`) pins or unpins the active thread; and
+- `thread.pin` (`mod+shift+p`) pins or unpins the active thread;
+- `rightPanel.new` (`mod+t`) opens a side-panel tab on the Tools page;
+- `rightPanel.nextTab` and `rightPanel.previousTab` (`ctrl+tab`, `ctrl+shift+tab`) move between
+  side-panel tabs;
+- `rightPanel.toggleFiles` (`mod+alt+e`) shows or hides the file list beside a side-panel tab;
+- `rightPanel.duplicateTab` (`mod+shift+d`) opens a second copy of a browser or terminal tab; and
 - `rightPanel.toggleMaximized` maximizes or restores the open right panel and has no default shortcut.
 
 Repeating either search shortcut closes it; opening the other replaces the current search. The theme
@@ -280,6 +285,21 @@ the next tab. With the terminal focused, `mod+w` closes the terminal instead, an
 to close it closes the desktop window as before. Browsers reserve `mod+w` for closing their own tab
 and never pass it to the page, so in a browser rebind this command (and `terminal.close`) to a
 shortcut the browser leaves alone, such as `alt+w`.
+
+`rightPanel.new` opens a new tab in the side panel and defaults to `mod+t`. A new tab shows the
+**Tools** page, where you choose what the tab becomes. With the panel closed, the shortcut opens it
+on a new tab. It does not run while the terminal has focus.
+`rightPanel.nextTab` and `rightPanel.previousTab` move to the next or previous side-panel tab,
+wrapping at either end. They default to `ctrl+tab` and `ctrl+shift+tab`, which is Control on every
+platform, as in Chrome. Browsers keep `ctrl+tab` for their own tabs, so in a browser rebind these
+two commands to keys the browser leaves alone. To open a second copy of a browser page or a
+terminal, right-click its tab and choose **Duplicate**, or use `rightPanel.duplicateTab`, which
+defaults to `mod+shift+d` outside the terminal. In the terminal, `mod+shift+d` still splits it.
+While the keyboard is in a side-panel Files or file tab, `navigation.back` and
+`navigation.forward` (`mod+[` and `mod+]`) move back and forward in that tab's own history
+instead of between threads.
+`rightPanel.toggleFiles` shows or hides the project's file list beside the open side-panel tab and
+defaults to `mod+alt+e`. It does not run while the terminal has focus.
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
 model picker is open. The thread jumps do not run while the model picker is open.
 Those defaults use `isDesktop` so they do not steal the

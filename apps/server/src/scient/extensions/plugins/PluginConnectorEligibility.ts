@@ -35,11 +35,17 @@ export class PluginConnectorEligibility extends Context.Service<
 const make = Effect.gen(function* () {
   const eligible = yield* Ref.make<ReadonlySet<ConnectorId> | undefined>(undefined);
   return PluginConnectorEligibility.of({
-    isEligible: ({ connectorId, pluginId }) =>
-      pluginId === undefined
+    isEligible: Effect.fn("PluginConnectorEligibility.isEligible")(function ({
+      connectorId,
+      pluginId,
+    }) {
+      return pluginId === undefined
         ? Effect.succeed(true)
-        : Ref.get(eligible).pipe(Effect.map((set) => set?.has(connectorId) ?? false)),
-    publish: (next) => Ref.set(eligible, next),
+        : Ref.get(eligible).pipe(Effect.map((set) => set?.has(connectorId) ?? false));
+    }),
+    publish: Effect.fn("PluginConnectorEligibility.publish")(function (next) {
+      return Ref.set(eligible, next);
+    }),
   });
 });
 

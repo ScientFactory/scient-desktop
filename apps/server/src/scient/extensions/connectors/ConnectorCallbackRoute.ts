@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
-import { ConnectorRuntime, type ConnectorSignInCallbackOutcome } from "../ExtensionsServices.ts";
+import { ConnectorRuntime } from "../ExtensionsServices.ts";
 import { CONNECTOR_OAUTH_CALLBACK_PATH } from "./ConnectorOAuth.ts";
 
 import { renderCallbackPage } from "./ConnectorCallbackPage.ts";

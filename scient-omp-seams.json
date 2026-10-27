@@ -314,6 +314,11 @@
       "path": "apps/server/src/scient/extensions/ProviderPluginCommand.ts",
       "anchor": "runScientAgentPluginCommand",
       "purpose": "Keep native plugin one-shots under the shared executable lease, runtime identity gate, and version-gated Claude plugin source policy."
+    },
+    {
+      "path": "apps/web/src/scient/accounts/accountIcons.json",
+      "anchor": "\"github.com\"",
+      "purpose": "Accounts-owned bundled logos; the OMP signal matches only inside their base64 image data. Nothing OMP mounts here."
     }
   ]
 }

@@ -346,6 +346,8 @@ export const DesktopCliCommandStateSchema = Schema.Struct({
    * while it is there, since a link behind it would never run.
    */
   shadowedBy: Schema.optionalKey(Schema.String),
+  /** The app's bundled `scient` launcher, which runs without Node or a PATH entry. */
+  launcherPath: Schema.NullOr(Schema.String),
 });
 export type DesktopCliCommandState = typeof DesktopCliCommandStateSchema.Type;
 
@@ -640,6 +642,8 @@ export interface DesktopPreviewTabState {
   /** Chromium reports playback even when audioMuted is true. */
   audible: boolean;
   controller: "human" | "agent" | "none";
+  /** A screenshot or stream of the guest is pending, so the client keeps it painting while hidden. */
+  capturing: boolean;
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
 }

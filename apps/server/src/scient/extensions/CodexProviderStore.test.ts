@@ -141,7 +141,7 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
       }),
   } as unknown as CodexClient.CodexAppServerClient["Service"];
   const notify = (method: string, input: unknown) =>
-    Effect.suspend(() => notifications.get(method)?.(input) ?? Effect.void);
+    Effect.suspend(() => notifications.get(method)?.(input) ?? Effect.undefined);
   return { client, calls, state, notify };
 }
 describe("Codex provider store", () => {
@@ -262,7 +262,7 @@ describe("Codex provider store", () => {
           const fixture = clientFixture([plugin("sample")]);
           const store = yield* makeCodexProviderStore(
             () => Effect.succeed(fixture.client),
-            () => Effect.succeed(undefined),
+            () => Effect.undefined,
           );
           expect((yield* store.entry("sample")).installed).toBe(false);
           const installed = yield* store.install("sample");
@@ -313,7 +313,7 @@ describe("Codex provider store", () => {
         const fixture = clientFixture([plugin("sample")]);
         const store = yield* makeCodexProviderStore(
           () => Effect.succeed(fixture.client),
-          () => Effect.succeed(undefined),
+          () => Effect.undefined,
         );
         yield* store.search({});
         fixture.state.account = { type: "apiKey" };
@@ -350,7 +350,7 @@ describe("Codex provider store", () => {
                       live--;
                     }),
                 ),
-              () => Effect.succeed(undefined),
+              () => Effect.undefined,
             );
             expect((yield* store.install("sample").pipe(Effect.result))._tag).toBe("Failure");
             expect(fixture.calls.some((call) => call.method === "plugin/install")).toBe(false);
@@ -429,7 +429,7 @@ it.effect(
         fixture.state.skills = [{ name: "search", path, description: "Search locally" }];
         const store = yield* makeCodexProviderStore(
           () => Effect.succeed(fixture.client),
-          () => Effect.succeed(undefined),
+          () => Effect.undefined,
           NodePath.join(cache, "other-cache"),
         );
         expect((yield* store.contents("local")).skills).toMatchObject([
@@ -478,7 +478,7 @@ it.effect(
                   Effect.andThen(Deferred.await(release)),
                   Effect.as(undefined),
                 )
-              : Effect.succeed(undefined),
+              : Effect.undefined,
         );
         const page = yield* store
           .search({ limit: 1 })
@@ -521,7 +521,7 @@ it.effect("lets a slow first store request finish instead of timing it out at 15
       } as typeof base;
       const store = yield* makeCodexProviderStore(
         () => Effect.succeed(client),
-        () => Effect.succeed(undefined),
+        () => Effect.undefined,
       );
       const reading = yield* store
         .contents("sample")
@@ -562,7 +562,7 @@ it.effect("keeps the shared client when one operation fails while another is in 
                 Effect.andThen(Deferred.await(release)),
                 Effect.as(undefined),
               )
-            : Effect.succeed(undefined),
+            : Effect.undefined,
       );
       const page = yield* store
         .search({ limit: 1 })
@@ -588,7 +588,7 @@ it.effect(
         ]);
         const store = yield* makeCodexProviderStore(
           () => Effect.succeed(fixture.client),
-          () => Effect.succeed(undefined),
+          () => Effect.undefined,
         );
         const contents = yield* store.contents("notion@remote");
         expect(contents.skills[0]).toMatchObject({ documentAvailable: true, enabled: false });

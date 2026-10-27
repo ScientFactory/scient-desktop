@@ -200,7 +200,7 @@ it.live.each(
 
     return { caseTitle: title, scenario, title };
   }),
-)("$caseTitle", ({ scenario, title }) =>
+)("$caseTitle", ({ scenario, title: _title }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const name = `scient-native-fork-continuity-${scenario}`;

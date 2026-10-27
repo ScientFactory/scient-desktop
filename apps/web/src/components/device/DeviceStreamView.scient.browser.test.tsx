@@ -1,5 +1,7 @@
+import { RegistryContext } from "@effect/atom-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { EnvironmentId } from "@t3tools/contracts";
+import { AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
@@ -158,15 +160,19 @@ async function setup(_fixture: _Fixture, h264 = false, platform: "ios" | "androi
       },
     ),
   );
+  // No idle TTL, as in the app: hiding the view ends its stream session.
+  const registry = AtomRegistry.make();
   const view = (visible: boolean) => (
-    <DeviceStreamView
-      hostId="local"
-      environmentId={EnvironmentId.make("test")}
-      deviceId="test"
-      platform={platform}
-      visible={visible}
-      allowPhoneView={h264}
-    />
+    <RegistryContext.Provider value={registry}>
+      <DeviceStreamView
+        hostId="local"
+        environmentId={EnvironmentId.make("test")}
+        deviceId="test"
+        platform={platform}
+        visible={visible}
+        allowPhoneView={h264}
+      />
+    </RegistryContext.Provider>
   );
   _fixture.container = document.createElement("div");
   _fixture.container.style.cssText = "width: 400px; height: 800px; display: flex";
@@ -215,7 +221,8 @@ it("removes MJPEG requests while hidden and reconnects when shown", async () => 
   await show(false);
   expect(_fixture.container.querySelectorAll("img")).toHaveLength(0);
   expect(images[0]!.src).toBe("");
-  expect(vi.getTimerCount()).toBe(0);
+  // The registry ends the hidden view's stream session in a task of its own.
+  await vi.waitFor(() => expect(vi.getTimerCount()).toBe(0));
   await show(true);
   expect(images.at(-1)!.src).toContain("stream.mjpeg");
 });

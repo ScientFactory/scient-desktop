@@ -33,6 +33,8 @@ import { environmentShell } from "../../state/shell";
 import { useEnvironmentScope } from "../../state/session";
 import { extensionsDiscoverCatalog, extensionsInventory } from "./extensionsState";
 import { callbackOriginOf } from "./extensionsView";
+import type { ProviderInventoryView } from "./providerInventory";
+import { useProviderInventory } from "./useProviderInventory";
 
 export interface ExtensionsEnvironment {
   readonly environmentId: EnvironmentId;
@@ -44,6 +46,7 @@ export interface ExtensionsEnvironment {
   readonly catalog: DiscoverCatalog | null;
   readonly catalogError: string | null;
   readonly providers: ReadonlyArray<ServerProvider>;
+  readonly providerInventory: ProviderInventoryView;
   readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
   /**
    * Whether `projects` is this environment's real project list. Before its
@@ -62,9 +65,11 @@ export function useExtensionsEnvironment(): ExtensionsEnvironment {
 
 function ExtensionsEnvironmentProvider({
   environmentId,
+  loadProviderInventory,
   children,
 }: {
   readonly environmentId: EnvironmentId;
+  readonly loadProviderInventory: boolean;
   readonly children: ReactNode;
 }) {
   const providers = useAtomValue(providersIgnoringCheckedAtAtom(environmentId));
@@ -74,6 +79,17 @@ function ExtensionsEnvironmentProvider({
   const catalog = useEnvironmentQuery(extensionsDiscoverCatalog({ environmentId, input: {} }));
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const callbackOrigin = callbackOriginOf(useEnvironmentHttpBaseUrl(environmentId));
+  const projects = allProjects.filter(
+    (project) => project.environmentId === environmentId && project.isScratch !== true,
+  );
+  const projectsKnown = Option.isSome(shell.snapshot);
+  const providerInventory = useProviderInventory({
+    environmentId,
+    roots: projects.map((project) => project.workspaceRoot),
+    projectsKnown,
+    providers,
+    enabled: loadProviderInventory,
+  });
   const value: ExtensionsEnvironment = {
     environmentId,
     canWrite,
@@ -83,10 +99,9 @@ function ExtensionsEnvironmentProvider({
     catalog: catalog.data,
     catalogError: catalog.error,
     providers,
-    projects: allProjects
-      .filter((project) => project.environmentId === environmentId && project.isScratch !== true)
-      .map((project) => ({ id: project.id, title: project.title })),
-    projectsKnown: Option.isSome(shell.snapshot),
+    providerInventory,
+    projects: projects.map((project) => ({ id: project.id, title: project.title })),
+    projectsKnown,
   };
   return <ExtensionsEnvironmentContext value={value}>{children}</ExtensionsEnvironmentContext>;
 }
@@ -97,7 +112,13 @@ function ExtensionsEnvironmentProvider({
  * page below it, and every change it sends, uses that environment; switching
  * environments remounts the page.
  */
-export function ExtensionsPage({ children }: { readonly children: ReactNode }) {
+export function ExtensionsPage({
+  children,
+  loadProviderInventory = false,
+}: {
+  readonly children: ReactNode;
+  readonly loadProviderInventory?: boolean;
+}) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const scope = useOptionalSettingsScope();
   const environmentId =
@@ -109,7 +130,11 @@ export function ExtensionsPage({ children }: { readonly children: ReactNode }) {
           Connect an execution environment to manage extensions.
         </p>
       ) : (
-        <ExtensionsEnvironmentProvider key={environmentId} environmentId={environmentId}>
+        <ExtensionsEnvironmentProvider
+          key={environmentId}
+          environmentId={environmentId}
+          loadProviderInventory={loadProviderInventory}
+        >
           <div className="@container/extensions grid gap-10">{children}</div>
         </ExtensionsEnvironmentProvider>
       )}

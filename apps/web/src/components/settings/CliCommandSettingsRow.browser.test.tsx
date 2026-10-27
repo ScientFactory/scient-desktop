@@ -3,6 +3,8 @@ import type { DesktopCliCommandState } from "@t3tools/contracts";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { refreshDesktopCliCommandState } from "../../state/desktopCliCommand";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 
 const bridge = vi.hoisted(() => ({
@@ -32,13 +34,25 @@ describe("desktop CLI shortcut actions", () => {
     _fixture.root0 = _fixture.stack.use(
       await _fixtureRender(null, { container: _fixture.container, router: false }),
     );
-    state = { supported: true, installedPath: null, onPath: false, legacyInstalled: true };
+    state = {
+      supported: true,
+      installedPath: null,
+      onPath: false,
+      launcherPath: null,
+      legacyInstalled: true,
+    };
     bridge.getState.mockImplementation(async () => state);
     bridge.install.mockImplementation(async () => {
       throw new Error("The canonical launcher is occupied by a foreign file.");
     });
     bridge.uninstall.mockImplementation(async () => {
-      state = { supported: true, installedPath: null, onPath: false, legacyInstalled: false };
+      state = {
+        supported: true,
+        installedPath: null,
+        onPath: false,
+        launcherPath: null,
+        legacyInstalled: false,
+      };
       return state;
     });
   }
@@ -63,27 +77,55 @@ describe("desktop CLI shortcut actions", () => {
     return found;
   }
 
+  async function mountRow(_fixture: _Fixture) {
+    // The state atom is app-scoped and kept alive, so reload it from this test's bridge.
+    refreshDesktopCliCommandState();
+    await act(
+      async () =>
+        await _fixture.root0.rerender(
+          <AppAtomRegistryProvider>
+            <CliCommandSettingsRow />
+          </AppAtomRegistryProvider>,
+        ),
+    );
+  }
+
+  function waitForAbsent(_fixture: _Fixture, label: string) {
+    return vi.waitFor(() => expect(findButton(_fixture, label)).toBeUndefined());
+  }
+
+  function waitForEnabled(_fixture: _Fixture, label: string) {
+    return vi.waitFor(() => expect(button(_fixture, label).disabled).toBe(false));
+  }
+
   // regression: ad9bf52f2d fix(settings): simplify terminal command actions
   it("offers only installation on fresh setup and removal after canonical installation", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    state = { supported: true, installedPath: null, onPath: false, legacyInstalled: false };
+    state = {
+      supported: true,
+      installedPath: null,
+      onPath: false,
+      launcherPath: null,
+      legacyInstalled: false,
+    };
     bridge.install.mockImplementation(async () => {
       state = { ...state, installedPath: "/fixture/bin/scient", onPath: true };
       return state;
     });
-    await act(async () => await _fixture.root0.rerender(<CliCommandSettingsRow />));
+    await mountRow(_fixture);
+    await waitForEnabled(_fixture, "Install scient");
     expect(findButton(_fixture, "Remove")).toBeUndefined();
 
     await act(() => button(_fixture, "Install scient").click());
-    expect(findButton(_fixture, "Install scient")).toBeUndefined();
-    expect(button(_fixture, "Remove").disabled).toBe(false);
+    await waitForAbsent(_fixture, "Install scient");
+    await waitForEnabled(_fixture, "Remove");
 
     await act(() => button(_fixture, "Remove").click());
-    expect(findButton(_fixture, "Remove")).toBeUndefined();
-    expect(button(_fixture, "Install scient").disabled).toBe(false);
+    await waitForAbsent(_fixture, "Remove");
+    await waitForEnabled(_fixture, "Install scient");
   });
 
   it("allows removing legacy shortcuts when canonical installation fails", async () => {
@@ -91,14 +133,15 @@ describe("desktop CLI shortcut actions", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    await act(async () => await _fixture.root0.rerender(<CliCommandSettingsRow />));
+    await mountRow(_fixture);
+    await waitForEnabled(_fixture, "Install scient");
     await act(() => button(_fixture, "Install scient").click());
-    const remove = button(_fixture, "Remove");
-    expect(remove.disabled).toBe(false);
+    await waitForEnabled(_fixture, "Remove");
+    expect(notices.add).toHaveBeenCalledOnce();
 
-    await act(() => remove.click());
-    expect(findButton(_fixture, "Remove")).toBeUndefined();
-    expect(button(_fixture, "Install scient").disabled).toBe(false);
+    await act(() => button(_fixture, "Remove").click());
+    await waitForAbsent(_fixture, "Remove");
+    await waitForEnabled(_fixture, "Install scient");
   });
 
   it("shows the actual installation after an operation changes state and then fails", async () => {
@@ -110,13 +153,14 @@ describe("desktop CLI shortcut actions", () => {
       state = { ...state, installedPath: "/fixture/bin/scient", onPath: true };
       throw new Error("A later legacy shortcut could not be refreshed.");
     });
-    await act(async () => await _fixture.root0.rerender(<CliCommandSettingsRow />));
+    await mountRow(_fixture);
+    await waitForEnabled(_fixture, "Install scient");
     await act(() => button(_fixture, "Install scient").click());
 
-    expect(findButton(_fixture, "Install scient")).toBeUndefined();
-    expect(button(_fixture, "Remove").disabled).toBe(false);
+    await waitForAbsent(_fixture, "Install scient");
+    await waitForEnabled(_fixture, "Remove");
     await act(() => button(_fixture, "Remove").click());
-    expect(button(_fixture, "Install scient").disabled).toBe(false);
+    await waitForEnabled(_fixture, "Install scient");
   });
 
   // regression: ad9bf52f2d fix(settings): simplify terminal command actions
@@ -130,16 +174,18 @@ describe("desktop CLI shortcut actions", () => {
       resolveRefresh = resolve;
     });
     bridge.getState.mockResolvedValueOnce(state).mockImplementation(() => refresh);
-    await act(async () => await _fixture.root0.rerender(<CliCommandSettingsRow />));
+    await mountRow(_fixture);
+    await waitForEnabled(_fixture, "Install scient");
     await act(() => button(_fixture, "Install scient").click());
 
+    await vi.waitFor(() => expect(bridge.getState).toHaveBeenCalledTimes(2));
     expect(button(_fixture, "Install scient").disabled).toBe(true);
     expect(button(_fixture, "Remove").disabled).toBe(true);
     await act(() => button(_fixture, "Remove").click());
     expect(bridge.uninstall).not.toHaveBeenCalled();
 
     await act(() => resolveRefresh(state));
-    expect(button(_fixture, "Install scient").disabled).toBe(false);
+    await waitForEnabled(_fixture, "Install scient");
     expect(button(_fixture, "Remove").disabled).toBe(false);
   });
 });

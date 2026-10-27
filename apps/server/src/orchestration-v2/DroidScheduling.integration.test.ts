@@ -99,8 +99,8 @@ it.live("Stop before native Droid start offer cancels the pending attempt withou
         assert.lengthOf(promptTexts(yield* h.log), 1);
         assert.isTrue(promptTexts(yield* h.log)[0]?.endsWith("again"));
         const offeredPrompt = (yield* h.log).find((row) => row.method === "session/prompt")!;
-        const rawPrompt = (offeredPrompt.params?.prompt as ReadonlyArray<{ text: string }>)[0]!
-          .text;
+        const prompt = offeredPrompt.params?.prompt as ReadonlyArray<{ text: string }>;
+        const rawPrompt = prompt[0]!.text;
         assert.equal(rawPrompt.split(importedQuestion).length - 1, 1);
         assert.equal(rawPrompt.split(importedAnswer).length - 1, 1);
         assert.equal(rawPrompt.match(/again/gu)?.length, 1);

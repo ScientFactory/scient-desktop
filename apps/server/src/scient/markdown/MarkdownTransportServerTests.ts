@@ -60,14 +60,14 @@ export function registerMarkdownTransportTests(
             assert.equal(opened.revision, created.revision);
 
             const contents = ["# First\r\nתוצאה 😁\r\n", "# Second\r\nתוצאה 😀\r\n"];
-            const results = yield* Effect.all(
-              contents.map((value) =>
+            const results = yield* Effect.forEach(
+              contents,
+              (value) =>
                 client[WS_METHODS.projectsWriteFile]({
                   ...input,
                   contents: value,
                   expectedRevision: opened.revision,
                 }).pipe(Effect.result),
-              ),
               { concurrency: 2 },
             );
             assert.lengthOf(

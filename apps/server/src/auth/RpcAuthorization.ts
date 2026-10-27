@@ -112,6 +112,25 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.skillsSetProjectPreference]: AuthSettingsWriteScope,
   [WS_METHODS.skillsSetUserActivation]: AuthSettingsWriteScope,
   [WS_METHODS.providerSkillsSetEnabled]: AuthSettingsWriteScope,
+  // SCIENT-FORK:START — Scient Accounts: declare read and settings-write permissions.
+  [WS_METHODS.accountsSnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountsSubscribeChanges]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountsSave]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsTest]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileUpdate]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileRemove]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsApprovalRespond]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsActivity]: AuthOrchestrationReadScope,
+  [WS_METHODS.accountsKeychainCandidates]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsOnePasswordConnect]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsOnePasswordDisconnect]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsImportPasswords]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsFillValues]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsMatchSignIn]: AuthSettingsWriteScope,
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient extensions: reads observe, every change is a settings write.
   [WS_METHODS.extensionsList]: AuthOrchestrationReadScope,
   [WS_METHODS.extensionsSubscribeChanges]: AuthOrchestrationReadScope,
@@ -340,9 +359,7 @@ const SettingsUpdate = Schema.Struct({
   patch: ServerSettingsPatch,
   providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
 });
-
 const decodeSettingsUpdate = Schema.decodeUnknownSync(SettingsUpdate);
-const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
 const requiredScopesForSettingsUpdate = (payload: unknown) => {
   const input = decodeSettingsUpdate(payload);
@@ -354,6 +371,7 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 };
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
 const requiredScopesForRpcCall = (
   method: string,

@@ -171,14 +171,19 @@ export interface ProviderNativeInventory {
 
 /**
  * Workspace plugin listing that runs after a workspace scan is published, so
- * a slow listing never delays the scan. Owned by the instance; its reports
- * arrive on the instance's native inventory stream with `cwd` set.
+ * a slow listing never delays an ordinary scan. The registry publishes each
+ * complete report before the instance releases its listing's completion.
  */
 export interface ProviderWorkspaceInventory {
   /** A newer scan of `cwd` started: stop any listing still running for it. */
   readonly cancel: (cwd: string) => Effect.Effect<void>;
   /** Start a bounded listing of `cwd` in the background, replacing a running one. */
-  readonly refresh: (cwd: string) => Effect.Effect<void>;
+  readonly refresh: (
+    cwd: string,
+    publish: (inventory: ProviderNativeInventory) => Effect.Effect<void>,
+  ) => Effect.Effect<void>;
+  /** Wait for an existing listing, including registry publication; cancellation leaves it owned by the instance. */
+  readonly awaitCurrent: (cwd: string) => Effect.Effect<void>;
   /**
    * Stop every queued or running listing of a workspace outside `current`,
    * the workspaces whose snapshots are published now. `current` is read

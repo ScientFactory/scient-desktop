@@ -232,29 +232,31 @@ export const make = Effect.fn("ConversationExportFiles.make")(function* (options
 
   const write: ConversationExportFiles["Service"]["write"] = Effect.fn(
     "ConversationExportFiles.write",
-  )(function* (input) {
-    const directory = path.join(root, input.exportId);
-    const target = path.join(directory, input.fileName);
-    yield* Effect.gen(function* () {
-      yield* fileSystem.makeDirectory(directory, { recursive: true });
-      if (input.content._tag === "text") {
-        yield* fileSystem.writeFileString(target, input.content.text);
-      } else {
-        const { entries, modifiedAt } = input.content;
-        yield* Effect.tryPromise({
-          try: () => writeZip(target, entries, DateTime.toDateUtc(DateTime.makeUnsafe(modifiedAt))),
-          catch: (cause) => new ConversationExportFileError({ cause }),
-        }).pipe(
-          // Never leave a partial archive behind a signed URL.
-          Effect.onError(() => fileSystem.remove(target, { force: true }).pipe(Effect.ignore)),
-        );
-      }
-    }).pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
-    const info = yield* fileSystem
-      .stat(target)
-      .pipe(Effect.mapError((cause) => new ConversationExportFileError({ cause })));
-    return { path: target, byteLength: Number(info.size) };
-  });
+  )(
+    function* (input) {
+      const directory = path.join(root, input.exportId);
+      const target = path.join(directory, input.fileName);
+      yield* Effect.gen(function* () {
+        yield* fileSystem.makeDirectory(directory, { recursive: true });
+        if (input.content._tag === "text") {
+          yield* fileSystem.writeFileString(target, input.content.text);
+        } else {
+          const { entries, modifiedAt } = input.content;
+          yield* Effect.tryPromise({
+            try: () =>
+              writeZip(target, entries, DateTime.toDateUtc(DateTime.makeUnsafe(modifiedAt))),
+            catch: (cause) => new ConversationExportFileError({ cause }),
+          }).pipe(
+            // Never leave a partial archive behind a signed URL.
+            Effect.onError(() => fileSystem.remove(target, { force: true }).pipe(Effect.ignore)),
+          );
+        }
+      });
+      const info = yield* fileSystem.stat(target);
+      return { path: target, byteLength: Number(info.size) };
+    },
+    Effect.mapError((cause) => new ConversationExportFileError({ cause })),
+  );
 
   const reserve: ConversationExportFiles["Service"]["reserve"] = Effect.fn(
     "ConversationExportFiles.reserve",

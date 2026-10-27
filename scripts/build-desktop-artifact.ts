@@ -1109,18 +1109,14 @@ export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindo
       input.sourceCommit.length < 12 ||
       !receipt.sourceSha.startsWith(input.sourceCommit)
     )
-      return yield* Effect.fail(
-        new WindowsNativeResourceError({
-          message: "Windows native prerequisites do not match the target/source commit.",
-        }),
-      );
+      return yield* new WindowsNativeResourceError({
+        message: "Windows native prerequisites do not match the target/source commit.",
+      });
     const expected = [...WINDOWS_NATIVE_RESOURCE_FILES].sort();
     if (Object.keys(receipt.files).sort().join("\n") !== expected.join("\n"))
-      return yield* Effect.fail(
-        new WindowsNativeResourceError({
-          message: "Windows native prerequisite receipt has an unexpected inventory.",
-        }),
-      );
+      return yield* new WindowsNativeResourceError({
+        message: "Windows native prerequisite receipt has an unexpected inventory.",
+      });
     for (const file of expected) {
       const source = path.join(input.sourceDir, file);
       const info = yield* Effect.tryPromise(() => NodeFSP.lstat(source));
@@ -1131,18 +1127,14 @@ export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindo
         !parent.isDirectory() ||
         parent.isSymbolicLink()
       )
-        return yield* Effect.fail(
-          new WindowsNativeResourceError({
-            message: `Windows native prerequisite is not a regular file: ${file}`,
-          }),
-        );
+        return yield* new WindowsNativeResourceError({
+          message: `Windows native prerequisite is not a regular file: ${file}`,
+        });
       const bytes = yield* fs.readFile(source);
       if (NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== receipt.files[file])
-        return yield* Effect.fail(
-          new WindowsNativeResourceError({
-            message: `Windows native prerequisite SHA-256 mismatch: ${file}`,
-          }),
-        );
+        return yield* new WindowsNativeResourceError({
+          message: `Windows native prerequisite SHA-256 mismatch: ${file}`,
+        });
       if (/\.(exe|dll)$/.test(file)) {
         const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         const pe = bytes.length >= 64 ? view.getUint32(0x3c, true) : bytes.length;
@@ -1153,11 +1145,9 @@ export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindo
           view.getUint32(pe, true) !== 0x00004550 ||
           view.getUint16(pe + 4, true) !== (input.arch === "x64" ? 0x8664 : 0xaa64)
         )
-          return yield* Effect.fail(
-            new WindowsNativeResourceError({
-              message: `Windows native prerequisite has the wrong PE architecture: ${file}`,
-            }),
-          );
+          return yield* new WindowsNativeResourceError({
+            message: `Windows native prerequisite has the wrong PE architecture: ${file}`,
+          });
       }
     }
     // Stale host helpers cannot leak into the target's exact loose inventories.
@@ -3192,6 +3182,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     productName: resolveDesktopProductName(version),
     artifactName: "Scient-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
+    // SCIENT-FORK:START — Scient Accounts: encrypt packaged browser cookies.
+    // Never turn this fuse off: doing so makes existing encrypted cookies unreadable.
+    electronFuses: { enableCookieEncryption: true },
+    // SCIENT-FORK:END
     // SCIENT-FORK:START
     fileAssociations:
       platform === "linux"

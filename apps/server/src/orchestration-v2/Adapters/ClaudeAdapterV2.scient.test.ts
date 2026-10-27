@@ -1434,20 +1434,19 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
               assert.equal(planEvent.value.plan.markdown, longPlan.trim());
             }
           }
-          const requestEvent = yield* runtime.events
-            .pipe(
-              Stream.filter((event) => event.type === "runtime_request.updated"),
-              Stream.runHead,
-            )
-            .pipe(Effect.forkScoped);
-          const controller = new AbortController();
+          const requestEvent = yield* runtime.events.pipe(
+            Stream.filter((event) => event.type === "runtime_request.updated"),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          const signal = yield* Effect.abortSignal;
           const dialog = yield* Effect.promise(() =>
             callback!(
               {
                 dialogKind: "resume_return",
                 payload: { sessionAgeMinutes: 90, estimatedTokens: 120000 },
               },
-              { signal: controller.signal, requestId: "dialog-resume-1" },
+              { signal, requestId: "dialog-resume-1" },
             ),
           ).pipe(Effect.forkScoped);
           const event = yield* Fiber.join(requestEvent);
@@ -1463,8 +1462,7 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
           });
           assert.deepEqual(yield* Fiber.join(dialog), { behavior: "completed", result: "compact" });
 
-          const cancelledController = new AbortController();
-          cancelledController.abort();
+          const cancelledSignal = AbortSignal.abort();
           assert.deepEqual(
             yield* Effect.promise(() =>
               callback!(
@@ -1472,7 +1470,7 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                   dialogKind: "resume_return",
                   payload: { sessionAgeMinutes: 90, estimatedTokens: 120000 },
                 },
-                { signal: cancelledController.signal, requestId: "dialog-resume-2" },
+                { signal: cancelledSignal, requestId: "dialog-resume-2" },
               ),
             ),
             { behavior: "cancelled" },
@@ -3528,15 +3526,15 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         decision: ProviderApprovalDecision;
         feedback?: string;
       }>();
-      const controller = new AbortController();
+      const signal = yield* Effect.abortSignal;
       let removes = 0;
-      const removeEventListener = controller.signal.removeEventListener.bind(controller.signal);
-      controller.signal.removeEventListener = (...args) => {
+      const removeEventListener = signal.removeEventListener.bind(signal);
+      signal.removeEventListener = (...args) => {
         removes += 1;
         return removeEventListener(...args);
       };
       const fiber = yield* Effect.forkChild(
-        ClaudeAdapterV2.awaitClaudeApprovalDecision(decision, controller.signal),
+        ClaudeAdapterV2.awaitClaudeApprovalDecision(decision, signal),
       );
       yield* Effect.yieldNow;
       yield* Deferred.succeed(decision, { decision: "accept" });
@@ -3544,7 +3542,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
 
       assert.deepEqual(result, { decision: "accept" });
       assert.equal(removes, 1);
-    }),
+    }).pipe(Effect.scoped),
   );
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 

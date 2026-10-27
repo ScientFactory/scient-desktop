@@ -12,15 +12,12 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
 import * as Settings from "../serverSettings.ts";
-import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
+import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
-import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
-import type * as ServerConfig from "../config.ts";
 // SCIENT-FORK:START — drivers share the process-wide lifecycle coordinator.
 import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
 // SCIENT-FORK:END
@@ -70,12 +67,12 @@ export const layerSettingsWatcher = (settingsChanges: Stream.Stream<ServerSettin
           // older than the seed. A failed current read must never replay an older emission.
           serverSettings.getSettings.pipe(
             // SCIENT-FORK:START — an unrelated secret failure must not retain a revoked native runtime.
-            Effect.catch((error) =>
-              error.operation === "read-secret"
-                ? serverSettings.withSettingsSnapshot(Effect.succeed, {
-                    allowUnresolvedSecrets: true,
-                  })
-                : Effect.fail(error),
+            Effect.catchIf(
+              (error) => error.operation === "read-secret",
+              () =>
+                serverSettings.withSettingsSnapshot(Effect.succeed, {
+                  allowUnresolvedSecrets: true,
+                }),
             ),
             // SCIENT-FORK:END
             Effect.flatMap((current) =>

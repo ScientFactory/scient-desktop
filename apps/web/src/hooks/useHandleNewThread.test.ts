@@ -231,7 +231,7 @@ vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
   useUiStateStore: () => [],
 }));
-vi.mock("./useSettings", () => ({ useClientSettings: () => ({}) }));
+vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 // SCIENT-FORK:START
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 // SCIENT-FORK:END

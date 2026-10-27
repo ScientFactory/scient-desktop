@@ -22,6 +22,8 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
+  isCompactionCommandMessage,
+  parseGoalCommand,
   RunId,
   RunAttemptId,
   ThreadId,
@@ -251,6 +253,7 @@ export const layer: Layer.Layer<
                 const request = turnItems.find((item) => item.type === "run_interrupt_request");
                 return request?.type === "run_interrupt_request" ? request.message : undefined;
               }),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
               Effect.catchCause(() => Effect.succeed(undefined)),
             ),
       };
@@ -350,11 +353,12 @@ export const layer: Layer.Layer<
                     source.status === "interrupted" ||
                     (source.status === "completed" &&
                       handoff.delivery === undefined &&
+                      // Compaction and /goal turns defer history to the next turn.
                       projection.messages.some(
                         (message) =>
                           message.id === source.userMessageId &&
-                          message.attachments.length === 0 &&
-                          message.text.trim().toLowerCase() === "/compact",
+                          (isCompactionCommandMessage(message) ||
+                            parseGoalCommand(message) !== null),
                       ))),
               ))),
       );
@@ -579,14 +583,14 @@ export const layer: Layer.Layer<
                   path: worktreePath,
                 }),
               ),
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning("provider turn start failed to recreate worktree", {
-                      threadId: projection.thread.id,
-                      worktreePath,
-                      cause: Cause.pretty(cause),
-                    }),
+              Effect.catchCauseIf(
+                (cause) => !Cause.hasInterruptsOnly(cause),
+                (cause) =>
+                  Effect.logWarning("provider turn start failed to recreate worktree", {
+                    threadId: projection.thread.id,
+                    worktreePath,
+                    cause: Cause.pretty(cause),
+                  }),
               ),
             );
           }
@@ -844,6 +848,7 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = providerWork === undefined ? handoffs : [];
       let completedNativeFork = nativeForkTransfer;
+      let resumeFellBack = false;
       const loadedProviderThread = yield* Effect.gen(function* () {
         // Adoption consumes the existing generation; it cannot reload or replace its native owner.
         if (providerWork !== undefined) return providerThread;
@@ -1013,7 +1018,15 @@ export const layer: Layer.Layer<
           ),
           createdAt,
         });
-        effectiveHandoffs = [handoff, ...effectiveHandoffs];
+        // Delivery ranks later handoffs as newer history. Pending handoffs from
+        // earlier runs predate this summary; handoffs for this run (provider-switch
+        // delta, merge-back) are newer and must stay last.
+        effectiveHandoffs = [
+          ...effectiveHandoffs.filter((candidate) => candidate.targetRunId !== run.id),
+          handoff,
+          ...effectiveHandoffs.filter((candidate) => candidate.targetRunId === run.id),
+        ];
+        resumeFellBack = true;
         yield* eventSink.write({
           events: [
             {
@@ -1237,6 +1250,7 @@ export const layer: Layer.Layer<
       );
       const missedRuns = projection.runs.filter(
         (source) =>
+          !resumeFellBack &&
           source.ordinal < run.ordinal &&
           source.providerThreadId === providerThread.id &&
           (source.status === "failed" || source.status === "interrupted") &&
@@ -1288,6 +1302,9 @@ export const layer: Layer.Layer<
       );
       const userText = preparedSkills.text;
       // SCIENT-FORK:END
+      // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
+      const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
+      const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,
@@ -1302,8 +1319,8 @@ export const layer: Layer.Layer<
           projection.messages
             .filter(
               (candidate) =>
-                candidate.attachments.length === 0 &&
-                candidate.text.trim().toLowerCase() === "/compact",
+                isCompactionCommandMessage(candidate) ||
+                (goalDriver && parseGoalCommand(candidate) !== null),
             )
             .map((candidate) => candidate.id),
         ),
@@ -1422,14 +1439,12 @@ export const layer: Layer.Layer<
             ? preparedSkills.runtimeInstruction
             : undefined;
           const validateCurrent = (text: string) =>
-            Effect.fromResult(
-              validateProviderCurrentInput({
-                text,
-                attachments: message.attachments,
-                attachmentsDir: serverConfig.attachmentsDir,
-                ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
-              }),
-            );
+            validateProviderCurrentInput({
+              text,
+              attachments: message.attachments,
+              attachmentsDir: serverConfig.attachmentsDir,
+              ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
+            }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
           let preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : userText;
           let currentInput = compact
             ? userText
@@ -1472,7 +1487,7 @@ export const layer: Layer.Layer<
           const prepareDelivery = () =>
             deliverContextHandoffs({
               handoffs: [...effectiveHandoffs, ...retryHandoff],
-              deferInline: compact,
+              deferInline: compact || goalCommand,
               providerThread: runningProviderThread,
               budget: Effect.gen(function* () {
                 const policy = yield* usesScientBudget
@@ -1528,17 +1543,17 @@ export const layer: Layer.Layer<
             });
           const delivery = yield* prepareDelivery().pipe(
             Effect.catchTags({
-              ContextHandoffBudgetError: (cause) =>
-                Effect.gen(function* () {
-                  const fallback = preparedSkills.textWithoutCatalogMarker;
-                  if (fallback === undefined) return yield* cause;
-                  preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
-                  runtimeInstruction = usesRuntimeInstruction
-                    ? preparedSkills.runtimeInstructionWithoutCatalogMarker
-                    : undefined;
-                  currentInput = compact ? fallback : yield* validateCurrent(preparedUserText);
-                  return yield* prepareDelivery();
-                }),
+              // The enclosing operation owns the span for this inline handler.
+              ContextHandoffBudgetError: Effect.fnUntraced(function* (cause) {
+                const fallback = preparedSkills.textWithoutCatalogMarker;
+                if (fallback === undefined) return yield* cause;
+                preparedUserText = usesRuntimeInstruction ? preparedSkills.baseText : fallback;
+                runtimeInstruction = usesRuntimeInstruction
+                  ? preparedSkills.runtimeInstructionWithoutCatalogMarker
+                  : undefined;
+                currentInput = compact ? fallback : yield* validateCurrent(preparedUserText);
+                return yield* prepareDelivery();
+              }),
             }),
           );
           if (!(yield* shouldStartProviderTurn()))
@@ -1561,7 +1576,7 @@ export const layer: Layer.Layer<
               ...turnInput.message,
               ...(runtimeInstruction === undefined ? {} : { runtimeInstruction }),
               text:
-                context === ""
+                context === "" || goalCommand
                   ? preparedUserText
                   : `${context}\n\nUser message:\n${preparedUserText}`,
             },

@@ -4,6 +4,11 @@ import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+// SCIENT-FORK:START — Scient Accounts: mount account tools on the existing MCP transport.
+import { ScientAccountsToolkit } from "../scient/accounts/agent/tools.ts";
+import { AccountSessionFilesLive } from "../scient/accounts/agent/sessionFiles.ts";
+import { ScientAccountsToolkitHandlersLive } from "../scient/accounts/agent/handlers.ts";
+// SCIENT-FORK:END
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -432,7 +437,9 @@ const decodeAsAdvertised = <Tools extends Record<string, Tool.Any>>(
 
 const isPreviewAutomationError = Schema.is(PreviewAutomationError);
 
-const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
+const previewSnapshotFailure = Effect.fn("previewSnapshotFailure")(function <E>(
+  cause: Cause.Cause<E>,
+) {
   if (Cause.hasInterrupts(cause) || cause.reasons.some(Cause.isDieReason)) {
     return Effect.failCause(cause).pipe(Effect.orDie);
   }
@@ -465,7 +472,7 @@ const previewSnapshotFailure = <E>(cause: Cause.Cause<E>) => {
     errorTag,
     failureCount: failures.length,
   }).pipe(Effect.as(result));
-};
+});
 
 const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot")(function* () {
   const server = yield* McpServer.McpServer;
@@ -774,7 +781,7 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
       const resolver = yield* WorkspaceBindingResolver;
       const guarded = McpServer.McpServer.of({
         ...server,
-        addTool: (registration) => {
+        addTool: Effect.fn("McpServer.addTool")(function (registration) {
           const operation = scientOperationCatalog.forTool(registration.tool.name);
           if (!operation)
             return Effect.die(new Error(`Unregistered Scient tool: ${registration.tool.name}`));
@@ -824,7 +831,7 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
                 }),
               ),
           });
-        },
+        }),
       });
       yield* registerRequestToolkit(toolkit).pipe(
         Effect.provideService(McpServer.McpServer, guarded),
@@ -1137,8 +1144,8 @@ const withToolAnalytics =
       );
     const recordingServer = McpServer.McpServer.of({
       ...server,
-      addTool: (options) =>
-        server.addTool({
+      addTool: Effect.fn("McpServer.addTool")(function (options) {
+        return server.addTool({
           ...options,
           handle:
             /* Request instrumentation already owns the span; keep this helper in that context. */
@@ -1160,7 +1167,8 @@ const withToolAnalytics =
                 }),
               );
             }),
-        }),
+        });
+      }),
     });
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
@@ -1301,6 +1309,12 @@ export const layerMcpTransport = McpServer.layerHttp({
 }).pipe(Layer.provide(layerMcpAuthMiddleware), Layer.provide(layerScientToolList));
 
 export const layer = Layer.mergeAll(
+  // SCIENT-FORK:START — Scient Accounts: register the account toolkit.
+  registerScientToolkit(ScientAccountsToolkit).pipe(
+    Layer.provide(ScientAccountsToolkitHandlersLive),
+    Layer.provide(AccountSessionFilesLive),
+  ),
+  // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,

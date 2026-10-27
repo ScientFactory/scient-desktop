@@ -104,7 +104,7 @@ export function connectorAuthLabel(auth: ConnectorSummary["auth"]): string {
           : auth.strategy === "basic"
             ? "Basic auth"
             : `Header ${auth.headerName ?? ""}`.trim();
-      return auth.storage === "bound" ? `${kind} from Secrets` : kind;
+      return auth.storage === "bound" ? `${kind} from Accounts` : kind;
     }
   }
 }

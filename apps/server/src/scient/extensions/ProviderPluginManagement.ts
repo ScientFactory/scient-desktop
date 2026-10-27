@@ -124,14 +124,38 @@ export function makeProviderPluginManagement(
   ) {
     const { provider, actions } = yield* admit(input.instanceId);
     const providerName = provider.displayName ?? "This provider";
-    if (!listedPlugins(provider, input.cwd)?.some((candidate) => candidate.id === pluginId)) {
-      return yield* failure("not-found", "This provider plugin is no longer installed.");
-    }
     if (!actions) {
       return yield* failure(
         "unsupported",
         `${providerName} does not let Scient uninstall plugins.`,
       );
+    }
+
+    let admission = provider;
+    if (input.cwd !== undefined && listedPlugins(provider, input.cwd) === undefined) {
+      yield* untilRetired(
+        actions,
+        "reading the workspace inventory",
+        providerRegistry.refreshWorkspaceSnapshot({
+          instanceId: input.instanceId,
+          cwd: input.cwd,
+          awaitNativeInventory: true,
+        }),
+      );
+      const current = yield* admit(input.instanceId);
+      if (current.actions !== actions || (yield* actions.isRetired)) {
+        return yield* retiredDuring("reading the workspace inventory");
+      }
+      admission = current.provider;
+      if (listedPlugins(admission, input.cwd) === undefined) {
+        return yield* failure(
+          "state-unavailable",
+          "Scient could not read this workspace's plugin inventory, so nothing was changed.",
+        );
+      }
+    }
+    if (!listedPlugins(admission, input.cwd)?.some((candidate) => candidate.id === pluginId)) {
+      return yield* failure("not-found", "This provider plugin is no longer installed.");
     }
 
     // Validate against the generation that will act, not the published snapshot.

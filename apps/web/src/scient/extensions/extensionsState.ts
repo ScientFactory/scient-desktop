@@ -222,6 +222,7 @@ export function extensionItemOperationKey(environmentId: EnvironmentId, item: st
 
 const extensionsAtoms = createExtensionsAtoms(connectionAtomRuntime);
 
+export const extensionsChanges = extensionsAtoms.changes;
 export const extensionsInventory = extensionsAtoms.inventory;
 export const extensionsDeliveryReceipt = extensionsAtoms.deliveryReceipt;
 export const extensionsDiscoverCatalog = extensionsAtoms.discoverCatalog;

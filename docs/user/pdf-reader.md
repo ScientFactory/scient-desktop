@@ -29,7 +29,8 @@ The reader supports:
 - continuous, fit-to-width reading that remains responsive in long documents;
 - previous/next navigation and direct page-number entry;
 - zoom in five-percent steps, fit width by clicking the zoom percentage, actual
-  size, and smooth trackpad pinch zoom;
+  size, and smooth trackpad pinch zoom around your fingers; the zoom buttons zoom
+  around the middle of the view;
 - text selection and copy when the PDF contains a text layer;
 - responsive document search after each key, with previous/next result navigation;
 - internal document links and external links opened in a separate context;

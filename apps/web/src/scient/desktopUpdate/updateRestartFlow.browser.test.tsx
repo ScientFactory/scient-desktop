@@ -26,9 +26,10 @@ vi.mock("../../env", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   isElectron: true,
 }));
-vi.mock("../../state/desktopUpdate", async () => {
+vi.mock("../../state/desktopUpdate", async (importOriginal) => {
   const { useSyncExternalStore } = await import("react");
   return {
+    ...(await importOriginal<object>()),
     useDesktopUpdateState: () => useSyncExternalStore(updateStore.subscribe, updateStore.get),
   };
 });

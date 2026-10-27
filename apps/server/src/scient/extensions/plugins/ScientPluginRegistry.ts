@@ -926,7 +926,7 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
   );
 
   return ScientPluginRegistry.of({
-    contents: (pluginId) =>
+    contents: Effect.fn("ScientPluginRegistry.contents")((pluginId: string) =>
       Ref.get(state).pipe(
         Effect.map((current) => {
           const plugin = current.plugins.find((item) => item.record.pluginId === pluginId);
@@ -946,22 +946,25 @@ const make = Effect.fn("ScientPluginRegistry.make")(function* () {
           };
         }),
       ),
-    skillDocument: (pluginId, skillId) =>
-      Ref.get(state).pipe(
-        Effect.flatMap((current) => {
-          const release = current.plugins
-            .find((item) => item.record.pluginId === pluginId)
-            ?.bundle?.releases.find((item) => skillReleaseKey(item) === skillId);
-          return release
-            ? Effect.succeed({ instructions: release.instructions })
-            : Effect.fail(
-                new ExtensionsError({
-                  reason: "not-found",
-                  message: "This skill is no longer in the plugin.",
-                }),
-              );
-        }),
-      ),
+    ),
+    skillDocument: Effect.fn("ScientPluginRegistry.skillDocument")(
+      (pluginId: string, skillId: string) =>
+        Ref.get(state).pipe(
+          Effect.flatMap((current) => {
+            const release = current.plugins
+              .find((item) => item.record.pluginId === pluginId)
+              ?.bundle?.releases.find((item) => skillReleaseKey(item) === skillId);
+            return release
+              ? Effect.succeed({ instructions: release.instructions })
+              : Effect.fail(
+                  new ExtensionsError({
+                    reason: "not-found",
+                    message: "This skill is no longer in the plugin.",
+                  }),
+                );
+          }),
+        ),
+    ),
     list,
     install,
     remove,

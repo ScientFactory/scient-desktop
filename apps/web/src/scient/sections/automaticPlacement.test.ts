@@ -25,6 +25,22 @@ it("seeds equal priority, appends arrivals, and leaves eligible transitions stab
   expect(order(second)).toEqual(["a", "b", "x", "c"]);
   expect(update(second, ["a", "b"])).toBe(second);
 });
+it("seeds the first populated snapshot after its group was initially empty", () => {
+  const empty = reconcilePlacement(EMPTY_PLACEMENT, [{ id: "general", rows: [] }], null, 0);
+  const snapshot = [
+    {
+      id: "general",
+      rows: ["x", "hidden", "a", "b", "y"].map((key) => ({
+        key,
+        eligible: key === "a" || key === "b",
+        orderKey: null,
+      })),
+    },
+  ];
+  const populated = reconcilePlacement(empty, snapshot, null, 0);
+  expect(order(populated)).toEqual(["a", "b", "x", "hidden", "y"]);
+  expect(reconcilePlacement(populated, snapshot, null, 0)).toBe(populated);
+});
 it("holds read completion while open, then demotes exactly three seconds after leaving", () => {
   let state = update(update(EMPTY_PLACEMENT, ["a", "b"]), ["b"], "a");
   expect(order(state)).toEqual(["a", "b", "x", "c"]);

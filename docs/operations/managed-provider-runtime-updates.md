@@ -166,6 +166,9 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    guards for custom-model keys, background generation and request loops. The fixtures use
    POSIX shells and are verified on macOS only; Linux and Windows binaries of the same
    release are qualified by the shared lifecycle checks.
+   Pi and Droid live suites run from the server workspace with its test configuration,
+   not the repository's multi-project entrypoint. Their filtered dependency installation
+   need not link unrelated desktop, mobile, or web workspaces.
    Official Antigravity ACP uses T3's paired-executable installer instead of the generic
    runtime engine. Its five runners cover Apple-silicon macOS, Linux x64/ARM64, and Windows
    x64/ARM64. Intel macOS has a native artifact but is not yet approved for Scient-managed
@@ -174,7 +177,11 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    service instance, and removal. Linux musl policy variants have archive/policy tests;
    the hosted Linux jobs exercise glibc, not native musl, and must not be reported
    as native musl qualification. Its server dependencies are installed through the
-   already-provisioned Vite+ package-manager entrypoint.
+   already-provisioned Vite+ package-manager entrypoint with dependency build scripts
+   disabled. This qualification drives the downloaded executables over stdio; it does not
+   require repository native addons such as `node-pty` or `msgpackr-extract`. Native addon
+   builds remain the responsibility of the normal app CI and packaging checks; the
+   provider executables still undergo the full installer and protocol checks above.
 5. Queue every publication (`queue: max`) under one shared writer lock, re-read
    the latest catalog, validate only the selected family on the immutable
    discovery commit, and merge only the provider that passed.
@@ -187,7 +194,9 @@ Grok, Pi, Oh My Pi, and Scient Agent. The release-family runs are intentionally 
    packages behind them. Those paths are folders, so a module added to one of
    them is covered, and `scripts/managed-provider-runtime-workflow.test.ts`
    follows the suites' imports and fails when a module they load lies outside
-   the guard. ACP and Scient's server qualification inputs likewise invalidate
+   the guard. Droid and Pi also guard the live-suite runner and server test
+   configuration, including the modules that configuration loads.
+   ACP and Scient's server qualification inputs likewise invalidate
    only their own families, with import-graph regression coverage. Common policy,
    discovery, shared package, artifact-qualification and publication changes
    still invalidate all families. Other `main` changes do not block publication; a

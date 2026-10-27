@@ -95,21 +95,21 @@ export const persistChatAttachments = Effect.fn("AttachmentPersistence.persistCh
             const handle = yield* fileSystem.open(temporary, { flag: "r+" });
             yield* handle.sync;
             yield* fileSystem.link(temporary, destination).pipe(
-              Effect.catch((error) =>
-                error.reason._tag !== "AlreadyExists"
-                  ? Effect.fail(error)
-                  : fileSystem.readFile(destination).pipe(
-                      Effect.flatMap((existing) =>
-                        existing.byteLength === bytes.byteLength &&
-                        existing.every((byte, index) => byte === bytes[index])
-                          ? Effect.void
-                          : Effect.fail(
-                              new PersistChatAttachmentsError({
-                                message: `Attachment ${attachment.name} conflicts with previously stored bytes.`,
-                              }),
-                            ),
-                      ),
+              Effect.catchIf(
+                (error) => error.reason._tag === "AlreadyExists",
+                () =>
+                  fileSystem.readFile(destination).pipe(
+                    Effect.flatMap((existing) =>
+                      existing.byteLength === bytes.byteLength &&
+                      existing.every((byte, index) => byte === bytes[index])
+                        ? Effect.void
+                        : Effect.fail(
+                            new PersistChatAttachmentsError({
+                              message: `Attachment ${attachment.name} conflicts with previously stored bytes.`,
+                            }),
+                          ),
                     ),
+                  ),
               ),
             );
           }),

@@ -195,10 +195,8 @@ export function makeV1EventAccess(sql: SqlClient.SqlClient) {
     `;
       const row = rows[0];
       if (row === undefined) {
-        return yield* Effect.fail(
-          toPersistenceSqlError("OrchestrationEventStore.append:insert")(
-            new Error("orchestration event insert returned no row"),
-          ),
+        return yield* toPersistenceSqlError("OrchestrationEventStore.append:insert")(
+          new Error("orchestration event insert returned no row"),
         );
       }
       return yield* rowToV1Event(row);

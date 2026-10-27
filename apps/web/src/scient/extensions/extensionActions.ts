@@ -35,6 +35,7 @@ import {
 } from "./extensionsState";
 import { entryAddTarget, entryName, installableRemotes } from "./extensionsView";
 import { openAuthorizationPage, type SignInOpening } from "./openAuthorizationPage";
+import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 /**
  * What one item's last action left to show. Nothing here predicts the server:
@@ -392,18 +393,14 @@ export function useProviderServerActions(
   const lock = useActionLock(JSON.stringify(["provider-server", provider.instanceId, server.name]));
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
   const waiting = useRef(false);
-  useEffect(() => {
-    const refresh = () => {
-      if (!waiting.current) return;
-      waiting.current = false;
-      void act({
-        environmentId,
-        input: { instanceId: provider.instanceId, action: { type: "refresh-inventory" } },
-      });
-    };
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [act, environmentId, provider.instanceId]);
+  useWindowFocusRefresh(() => {
+    if (!waiting.current) return;
+    waiting.current = false;
+    void act({
+      environmentId,
+      input: { instanceId: provider.instanceId, action: { type: "refresh-inventory" } },
+    });
+  });
   return {
     ...lock,
     signIn: () =>

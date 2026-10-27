@@ -203,14 +203,16 @@ test("composer hosts include settings, Stop and queue consumers and existing cli
   for (const host of ["ChatComposer.tsx", "ComposerPrimaryActions.tsx"]) {
     NodeAssert.deepEqual(ids([`apps/web/src/components/chat/${host}`]), all);
   }
-  const queue = selectBoundaries(["apps/web/src/scient/threadQueue/queueShortcuts.ts"]).boundaries;
+  const queue = selectBoundaries([
+    "apps/web/src/scient/threadQueue/useScientQueueParts.tsx",
+  ]).boundaries;
   NodeAssert.deepEqual(
     queue.map((row) => row.id),
     ["queue"],
   );
   NodeAssert.ok(
     queue[0].checks["web-browser"].includes(
-      "src/scient/threadQueue/queueShortcuts.browser.test.tsx",
+      "src/components/chat/QueuedRunsControl.scient.browser.test.tsx",
     ),
   );
   NodeAssert.ok(queue[0].checks["web-unit"].includes("src/scient/threadQueue/disposition.test.ts"));

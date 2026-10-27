@@ -3,8 +3,8 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 
 /**
  * Which attachment a chat attachment preview shows, as the identity Scient's
- * reader keeps. Null when there is nothing durable to name, so the preview
- * keeps its generic frame.
+ * reader keeps. Null when there is nothing durable to name; that input retains
+ * the ordinary unsupported-file/save behavior.
  */
 export function attachmentPdfMount(input: {
   readonly asset?: { readonly environmentId: EnvironmentId; readonly attachmentId: string };

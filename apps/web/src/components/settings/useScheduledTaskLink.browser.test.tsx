@@ -1,7 +1,7 @@
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
 
 import { expect, it, vi } from "vite-plus/test";
-import { ScheduledTaskId } from "@t3tools/contracts";
+import { EnvironmentId, ScheduledTaskId } from "@t3tools/contracts";
 import { useScheduledTaskLink } from "./useScheduledTaskLink";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
@@ -16,8 +16,16 @@ it("waits for tasks, opens changed or re-entered links, and ignores refreshed da
   const opened = vi.fn();
   const a = ScheduledTaskId.make("task-a");
   const b = ScheduledTaskId.make("task-b");
-  function Probe({ target, available }: { target?: ScheduledTaskId; available?: ScheduledTaskId }) {
-    useScheduledTaskLink(target, available, () => opened(target));
+  function Probe({
+    target,
+    available,
+    environmentId,
+  }: {
+    target?: ScheduledTaskId;
+    available?: ScheduledTaskId;
+    environmentId?: EnvironmentId;
+  }) {
+    useScheduledTaskLink(target, available, () => opened(target), environmentId);
     return null;
   }
   let root: Screen | undefined;
@@ -42,6 +50,13 @@ it("waits for tasks, opens changed or re-entered links, and ignores refreshed da
     await act(async () => await root!.rerender(<Probe />));
     await act(async () => await root!.rerender(<Probe target={b} available={b} />));
     expect(opened).toHaveBeenCalledTimes(4);
+    await act(
+      async () =>
+        await root!.rerender(
+          <Probe target={b} available={b} environmentId={EnvironmentId.make("remote")} />,
+        ),
+    );
+    expect(opened).toHaveBeenCalledTimes(5);
   } finally {
     await act(async () => await root?.unmount());
   }

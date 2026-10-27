@@ -16,8 +16,8 @@ ownership: clients rebuild those entries, so runtime-discovered models must not 
 
 Scient never imports or edits Pi's `auth.json`/`models.json` or Factory's
 `~/.factory/settings.json`. Native profiles remain independently owned. Keys entered in Scient
-use the existing restricted-file secret store, not OS-keychain encryption. Only a last-four-character
-hint leaves that store; keys of four characters or fewer stay fully hidden. Pi and Oh My Pi receive
+are encrypted by the Accounts store under their existing secret names; legacy keys are sealed on
+first read. Only a last-four-character hint leaves that store; keys of four characters or fewer stay fully hidden. Pi and Oh My Pi receive
 full keys in their processes (OMP through its bootstrap file, below); Droid is never given one (see
 the key broker below). Full-access code running as the same OS user is not a separate security
 boundary.

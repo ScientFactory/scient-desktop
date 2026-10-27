@@ -435,16 +435,14 @@ const make = Effect.gen(function* () {
           cause,
         ),
     }).pipe(
-      Effect.flatMap((identity) =>
-        identity === null
-          ? Effect.fail(
-              analysisError(
-                operation,
-                "project-not-initialized",
-                "Initialize this folder as a Scient project before running analysis files.",
-              ),
-            )
-          : Effect.succeed(identity),
+      Effect.filterOrFail(
+        (identity) => identity !== null,
+        () =>
+          analysisError(
+            operation,
+            "project-not-initialized",
+            "Initialize this folder as a Scient project before running analysis files.",
+          ),
       ),
     );
 
@@ -1633,11 +1631,11 @@ const make = Effect.gen(function* () {
     if (input.waitForExit) yield* startLock.withPermits(1)(Effect.void);
     const completion = completions.get(input.runId);
     const result = yield* requestRunCancellation(input).pipe(
-      Effect.catch((error) =>
-        input.waitForExit &&
-        (error.reason === "run-not-found" || error.reason === "run-already-finished")
-          ? getRun({ cwd: input.cwd, runId: input.runId })
-          : Effect.fail(error),
+      Effect.catchIf(
+        (error) =>
+          Boolean(input.waitForExit) &&
+          (error.reason === "run-not-found" || error.reason === "run-already-finished"),
+        () => getRun({ cwd: input.cwd, runId: input.runId }),
       ),
     );
     if (!input.waitForExit) return result;

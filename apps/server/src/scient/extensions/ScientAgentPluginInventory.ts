@@ -169,7 +169,7 @@ export const makeScientAgentPluginInventory = Effect.fn("makeScientAgentPluginIn
       listPlugins: ({ cwd }) => list(cwd),
       uninstall: (input) => mutate(input, "uninstall"),
       setEnabled: (input) => mutate(input, input.enabled ? "enable" : "disable"),
-      readMcpServer: () => Effect.succeed(undefined),
+      readMcpServer: () => Effect.undefined,
       startMcpSignIn: () =>
         Effect.fail({ message: "Manage this MCP server's sign-in in Scient Agent." }),
       isRetired: Deferred.isDone(retired),

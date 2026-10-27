@@ -4,6 +4,7 @@ import { render as _fixtureRender, type Screen, act } from "../../../test/render
 import { createRef } from "react";
 
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vitest/browser";
 
 import { ZoomableImage, type ZoomableImageHandle } from "./ZoomableImage";
 
@@ -105,8 +106,11 @@ it("bounds wheel zoom and returns to fit when the window resizes", async () => {
   await wheel(100_000);
   expect(zoom()).toBe("100% zoom");
   await wheel(-100_000);
-  await act(() => window.dispatchEvent(new Event("resize")));
-  expect(zoom()).toBe("100% zoom");
+  // Only a real size change refits; a resize event at the same size keeps the zoom.
+  const previousViewport = { width: innerWidth, height: innerHeight };
+  _fixture.stack.defer(() => page.viewport(previousViewport.width, previousViewport.height));
+  await page.viewport(previousViewport.width - 100, previousViewport.height);
+  await expect.poll(zoom).toBe("100% zoom");
 });
 
 it("retains the image label and delegates load failure to the existing dialog", async () => {

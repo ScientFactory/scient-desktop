@@ -695,6 +695,9 @@ export const layerWithOptions = (
             // SCIENT-FORK:START Scient Extensions connector delivery
             // Capability grants owned by other Scient features (Secrets: secrets:list,
             // secrets:use) are appended here, before connector delivery is planned.
+            // SCIENT-FORK:START — Scient Accounts: all provider sessions can use user-granted accounts.
+            capabilities.add("accounts");
+            // SCIENT-FORK:END
             const connectorPlan = yield* planConnectors(true);
             // SCIENT-FORK:END
             const subagent = yield* projectionStore.getThread(threadId).pipe(
@@ -1234,11 +1237,7 @@ export const layerWithOptions = (
           firstRecordsAttempt === undefined
             ? Fiber.join(owner.operation)
             : Deferred.await(firstRecordsAttempt).pipe(
-                Effect.flatMap((firstRecords) =>
-                  Exit.isFailure(firstRecords)
-                    ? Effect.succeed(firstRecords)
-                    : Fiber.join(owner.operation),
-                ),
+                Effect.filterOrElse(Exit.isFailure, () => Fiber.join(owner.operation)),
               );
         const result = yield* completion.pipe(Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS));
         if (Option.isNone(result))
@@ -2149,51 +2148,48 @@ export const layerWithOptions = (
               sessionScope,
               runtime.driver,
               input.providerThread.nativeThreadRef?.nativeId,
-            )
-              .pipe(
-                // SCIENT-FORK:START — invalidate idle unloading before waiting for its attach lock.
-                Effect.andThen(
-                  holdThreadLoaded({
+            ).pipe(
+              // SCIENT-FORK:START — invalidate idle unloading before waiting for its attach lock.
+              Effect.andThen(
+                holdThreadLoaded({
+                  providerSessionId,
+                  threadId,
+                  providerThread: input.providerThread,
+                }),
+              ),
+              // SCIENT-FORK:END
+              Effect.andThen(
+                observeActivity(
+                  providerSessionId,
+                  ensureThreadAttached({
                     providerSessionId,
                     threadId,
-                    providerThread: input.providerThread,
+                    providerInstanceId: runtime.instanceId,
                   }),
                 ),
-                // SCIENT-FORK:END
-                Effect.andThen(
-                  observeActivity(
-                    providerSessionId,
-                    ensureThreadAttached({
-                      providerSessionId,
-                      threadId,
-                      providerInstanceId: runtime.instanceId,
-                    }),
-                  ),
-                ),
-              )
-              .pipe(
-                Effect.andThen(
-                  isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
-                ),
-                Effect.flatMap((loaded) =>
-                  loaded ? Effect.succeed(input.providerThread) : runtime.resumeThread(input),
-                ),
-                Effect.tap((providerThread) =>
-                  markProviderThreadLoaded({
-                    providerSessionId,
-                    threadId,
-                    providerThreadKey: providerThreadLoadKey({
-                      providerThread,
-                      ...(input.modelSelection === undefined
-                        ? {}
-                        : { modelSelection: input.modelSelection }),
-                      ...(input.runtimePolicy === undefined
-                        ? {}
-                        : { runtimePolicy: input.runtimePolicy }),
-                    }),
+              ),
+              Effect.andThen(
+                isProviderThreadLoaded({ providerSessionId, threadId, providerThreadKey }),
+              ),
+              Effect.flatMap((loaded) =>
+                loaded ? Effect.succeed(input.providerThread) : runtime.resumeThread(input),
+              ),
+              Effect.tap((providerThread) =>
+                markProviderThreadLoaded({
+                  providerSessionId,
+                  threadId,
+                  providerThreadKey: providerThreadLoadKey({
+                    providerThread,
+                    ...(input.modelSelection === undefined
+                      ? {}
+                      : { modelSelection: input.modelSelection }),
+                    ...(input.runtimePolicy === undefined
+                      ? {}
+                      : { runtimePolicy: input.runtimePolicy }),
                   }),
-                ),
-              );
+                }),
+              ),
+            );
           },
           forkThread: (input) =>
             observeActivity(

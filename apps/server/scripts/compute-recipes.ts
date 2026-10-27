@@ -16,7 +16,7 @@ const directory = NodePath.join(root, "apps/server/src/scient/compute/managed-py
 const metadataPath = NodePath.join(directory, "bundled-recipes.json");
 const mode = process.argv[2] ?? "check";
 if (!["check", "seal", "catalog"].includes(mode)) throw new Error("Use check, seal, or catalog.");
-const originalCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ComputeRecipeCatalog))(
+const originalCatalog = Schema.decodeSync(Schema.fromJsonString(ComputeRecipeCatalog))(
   await NodeFSP.readFile(metadataPath, "utf8"),
 );
 const revision = Number(

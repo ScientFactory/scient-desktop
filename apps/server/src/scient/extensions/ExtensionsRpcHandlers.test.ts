@@ -40,7 +40,7 @@ const provider = (
 
 const summarize = (key: string): string => {
   const entries: ReadonlyArray<{ providerInstanceId: string; driver: string; status: string }> =
-    JSON.parse(key);
+    JSON.parse(key).support;
   return entries
     .map((entry) => `${entry.providerInstanceId}:${entry.driver}:${entry.status}`)
     .join(",");
@@ -99,4 +99,43 @@ it.effect("bumps the extensions revision when a provider instance is added", () 
     assert.deepEqual(Array.from(yield* Fiber.join(announced)), [{ revision: 1 }]);
     assert.equal(yield* feed.current, 1);
   }),
+);
+
+it.effect(
+  "announces late workspace plugin content without looping on scan timestamps or ordering",
+  () =>
+    Effect.gen(function* () {
+      const plugin = { id: "one", name: "One", source: "local" as const, enabled: true };
+      const snapshot = (cwd: string, checkedAt: string, plugins: ReadonlyArray<typeof plugin>) => ({
+        cwd,
+        checkedAt,
+        plugins,
+        skills: [],
+        slashCommands: [],
+      });
+      const first = snapshot("/one", "2026-10-26T00:00:00.000Z", []);
+      const second = snapshot("/two", "2026-10-26T00:00:00.000Z", []);
+      const original = provider("work", "codex", { workspaceSnapshots: [first, second] });
+      const listed = { ...first, plugins: [plugin] };
+      const changes = yield* providerSupportChanges(
+        [original],
+        Stream.make(
+          [
+            {
+              ...original,
+              workspaceSnapshots: [{ ...first, checkedAt: "2026-10-26T00:01:00.000Z" }, second],
+            },
+          ],
+          [{ ...original, workspaceSnapshots: [listed, second] }],
+          [
+            {
+              ...original,
+              workspaceSnapshots: [second, { ...listed, checkedAt: "2026-10-26T00:02:00.000Z" }],
+            },
+          ],
+          [{ ...original, workspaceSnapshots: [first, second] }],
+        ),
+      ).pipe(Stream.runCollect);
+      assert.lengthOf(changes, 2);
+    }),
 );

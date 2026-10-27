@@ -43,10 +43,24 @@ vi.mock("~/localApi", () => ({ readLocalApi: () => undefined }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
 vi.mock("~/components/ui/tooltip", () => ({
+  TooltipProvider: ({ children }: { children: ReactNode }) => children,
   Tooltip: ({ children }: { children: ReactNode }) => children,
   TooltipTrigger: ({ render }: { render: ReactNode }) => render,
   TooltipPopup: () => null,
 }));
+
+/** Refresh and expand-all live in the Files menu ("⋯") at the end of the bar. */
+async function chooseFromFilesMenu(container: HTMLElement, label: string) {
+  const findItem = () =>
+    [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (candidate) => candidate.textContent?.trim() === label,
+    );
+  await act(() =>
+    container.querySelector<HTMLButtonElement>('button[aria-label="Files menu"]')!.click(),
+  );
+  await expect.poll(findItem).toBeDefined();
+  await act(() => findItem()!.click());
+}
 
 function entry(
   relativePath: string,
@@ -179,11 +193,7 @@ describe("Files panel search", () => {
           finishRefresh = resolve;
         }),
     );
-    await act(() =>
-      screen.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Refresh workspace files"]')!
-        .click(),
-    );
+    await chooseFromFilesMenu(screen.container, "Refresh files");
     expect(screen.rowTop("package.json")).toBe(initialTop);
     await act(() =>
       finishRefresh(AsyncResult.success({ entries: files.directories[""], complete: true })),
@@ -280,27 +290,15 @@ describe("Files panel search", () => {
     files.directories["src/lib"] = [entry("src/lib/util.ts")];
     await using screen = await renderPanel();
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
-    await act(() =>
-      screen.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Expand all folders"]')!
-        .click(),
-    );
+    await chooseFromFilesMenu(screen.container, "Expand all folders");
     await expect.poll(screen.visiblePaths).toContain("src/lib/");
     expect(
       files.listDirectory.mock.calls.map(([request]) => request.input.relativeDirectory),
     ).toEqual(["", "src"]);
     expect(screen.visiblePaths()).not.toContain("src/lib/util.ts");
-    await act(() =>
-      screen.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Expand all folders"]')!
-        .click(),
-    );
+    await chooseFromFilesMenu(screen.container, "Expand all folders");
     await expect.poll(screen.visiblePaths).toContain("src/lib/util.ts");
-    await act(() =>
-      screen.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Collapse all folders"]')!
-        .click(),
-    );
+    await chooseFromFilesMenu(screen.container, "Collapse all folders");
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
   });
 });

@@ -1,9 +1,11 @@
-import type {
-  ConnectorAddInput,
-  ConnectorSummary,
-  CredentialStrategy,
-  DiscoverEntry,
-  EnvironmentId,
+import {
+  VaultSecretRef,
+  type AccountSummary,
+  type ConnectorAddInput,
+  type ConnectorSummary,
+  type CredentialStrategy,
+  type DiscoverEntry,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { useState } from "react";
 
@@ -22,6 +24,9 @@ import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { NativeSelect } from "../../components/ui/select";
 import { toastManager } from "../../components/ui/toast";
+import { useEnvironmentQuery } from "../../state/query";
+import { accountsState } from "../accounts/accountsState";
+import { siteMatchesUrl } from "../accounts/accountsView";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { addConnector, startConnectorSignIn } from "./extensionsState";
 import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./ExtensionsFeedback";
@@ -48,6 +53,7 @@ interface AddConnectorErrors {
   clientId?: string;
   headerName?: string;
   value?: string;
+  accountId?: string;
 }
 
 interface Draft {
@@ -61,6 +67,7 @@ interface Draft {
   readonly strategy: CredentialStrategy;
   readonly headerName: string;
   readonly value: string;
+  readonly accountId: string;
 }
 
 function emptyDraft(entry: DiscoverEntry | null): Draft {
@@ -75,10 +82,15 @@ function emptyDraft(entry: DiscoverEntry | null): Draft {
     strategy: "bearer",
     headerName: "",
     value: "",
+    accountId: "",
   };
 }
 
-function validateAddConnectorDraft(draft: Draft, entry: DiscoverEntry | null): AddConnectorErrors {
+function validateAddConnectorDraft(
+  draft: Draft,
+  entry: DiscoverEntry | null,
+  accounts: ReadonlyArray<AccountSummary>,
+): AddConnectorErrors {
   const errors: AddConnectorErrors = {};
   if (entry === null) {
     const url = validateConnectorUrl(draft.url);
@@ -96,8 +108,11 @@ function validateAddConnectorDraft(draft: Draft, entry: DiscoverEntry | null): A
       if (headerName !== null) errors.headerName = headerName;
     }
     const value = draft.value.trim();
-    if (value.length === 0) errors.value = "Enter the key.";
-    else if (draft.strategy === "basic" && !value.includes(":")) {
+    if (draft.accountId) {
+      if (!accounts.some((account) => account.accountId === draft.accountId))
+        errors.accountId = "Choose an account.";
+    } else if (value.length === 0) errors.value = "Enter the key.";
+    else if (!draft.accountId && draft.strategy === "basic" && !value.includes(":")) {
       errors.value = "Use user:password.";
     }
   }
@@ -119,10 +134,14 @@ function toAddInput(draft: Draft, entry: DiscoverEntry | null): ConnectorAddInpu
     ...(draft.authMode === "api-key"
       ? {
           credential: {
-            type: "entered" as const,
+            ...(draft.accountId
+              ? {
+                  type: "bound" as const,
+                  secretRef: VaultSecretRef.make(`account:${draft.accountId}:token`),
+                }
+              : { type: "entered" as const, value: draft.value.trim() }),
             strategy: draft.strategy,
             ...(draft.strategy === "header" ? { headerName: draft.headerName.trim() } : {}),
-            value: draft.value.trim(),
           },
         }
       : {}),
@@ -136,6 +155,7 @@ const FIELD_IDS: ReadonlyArray<readonly [keyof AddConnectorErrors, string]> = [
   ["clientId", "connector-client-id"],
   ["headerName", "connector-header-name"],
   ["value", "connector-key"],
+  ["accountId", "connector-account"],
 ];
 
 function FieldError({
@@ -157,12 +177,6 @@ function invalidProps(fieldId: string, message: string | undefined) {
   return message ? { "aria-invalid": true as const, "aria-describedby": `${fieldId}-error` } : {};
 }
 
-/**
- * Adds a connected service by URL or from a Discover entry. Mount it once per
- * add: the draft starts from `entry`. Keys and client secrets are sent once
- * and never read back. Binding a secret from Settings → Secrets is offered
- * only once that vault exists.
- */
 export function AddConnectorDialog({
   open,
   onOpenChange,
@@ -191,7 +205,17 @@ export function AddConnectorDialog({
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [blockedSignInUrl, setBlockedSignInUrl] = useState<string | null>(null);
-  const errors = validateAddConnectorDraft(draft, entry);
+  const accountsQuery = useEnvironmentQuery(accountsState.snapshot({ environmentId, input: {} }));
+  const matchingAccounts = accountsQuery.isSuccess
+    ? (accountsQuery.data?.accounts.filter(
+        ({ details }) =>
+          details.kind === "api-key" &&
+          details.sites.some((site) =>
+            siteMatchesUrl(site, entry ? draft.remoteUrl : draft.url.trim()),
+          ),
+      ) ?? [])
+    : [];
+  const errors = validateAddConnectorDraft(draft, entry, matchingAccounts);
   const shownErrors = attempted ? errors : {};
   const remotes = entry ? installableRemotes(entry) : [];
 
@@ -207,9 +231,10 @@ export function AddConnectorDialog({
           clientId: githubClientId!,
           clientSecret: "",
           value: "",
+          accountId: "",
         }
       : draft;
-    const sendingErrors = validateAddConnectorDraft(sendingDraft, entry);
+    const sendingErrors = validateAddConnectorDraft(sendingDraft, entry, matchingAccounts);
     const invalid = FIELD_IDS.find(([field]) => sendingErrors[field] !== undefined);
     if (invalid) {
       setAttempted(true);
@@ -485,32 +510,55 @@ export function AddConnectorDialog({
                         />
                       </div>
                     ) : null}
-                    <div className="grid gap-1.5">
-                      <Label htmlFor="connector-key">
-                        {github
-                          ? "Use a token"
-                          : draft.strategy === "basic"
-                            ? "User and password"
-                            : "Key"}
-                      </Label>
-                      <SecretInput
-                        id="connector-key"
-                        placeholder={
-                          github
-                            ? "Paste your GitHub token"
+                    {matchingAccounts.length > 0 || draft.accountId ? (
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="connector-account">Key</Label>
+                        <NativeSelect
+                          id="connector-account"
+                          value={draft.accountId}
+                          {...invalidProps("connector-account", shownErrors.accountId)}
+                          onChange={(event) => patch({ accountId: event.target.value, value: "" })}
+                        >
+                          <option value="">Enter a key</option>
+                          <optgroup label="Use an existing account">
+                            {matchingAccounts.map((account) => (
+                              <option key={account.accountId} value={account.accountId}>
+                                {account.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        </NativeSelect>
+                        <FieldError id="connector-account-error" message={shownErrors.accountId} />
+                      </div>
+                    ) : null}
+                    {!draft.accountId ? (
+                      <div className="grid gap-1.5">
+                        <Label htmlFor="connector-key">
+                          {github
+                            ? "Use a token"
                             : draft.strategy === "basic"
-                              ? "user:password"
-                              : undefined
-                        }
-                        value={draft.value}
-                        {...invalidProps("connector-key", shownErrors.value)}
-                        onChange={(event) => patch({ value: event.target.value })}
-                      />
-                      <FieldError id="connector-key-error" message={shownErrors.value} />
-                      <p className="text-xs text-muted-foreground">
-                        Sent once and stored on the server. It is never shown again.
-                      </p>
-                    </div>
+                              ? "User and password"
+                              : "Key"}
+                        </Label>
+                        <SecretInput
+                          id="connector-key"
+                          placeholder={
+                            github
+                              ? "Paste your GitHub token"
+                              : draft.strategy === "basic"
+                                ? "user:password"
+                                : undefined
+                          }
+                          value={draft.value}
+                          {...invalidProps("connector-key", shownErrors.value)}
+                          onChange={(event) => patch({ value: event.target.value })}
+                        />
+                        <FieldError id="connector-key-error" message={shownErrors.value} />
+                        <p className="text-xs text-muted-foreground">
+                          Sent once and stored on the server. It is never shown again.
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
                 {serverError ? (

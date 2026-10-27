@@ -1,6 +1,7 @@
 import { Check, Copy, Maximize2, Minimize2 } from "lucide";
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentProps } from "react";
+import { useRef, useState, type ComponentProps } from "react";
 
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { observeResize } from "../../lib/observeResize";
 import {
   serializeTableElementToCsv,
@@ -42,74 +43,52 @@ function tableHasClippedCells(container: HTMLElement, table: HTMLTableElement): 
 
 export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const tableRef = useRef<HTMLTableElement | null>(null);
   // SCIENT-FORK:START — tables start readable, independently of code word-wrap.
   const [expanded, setExpanded] = useState(true);
   const tableDirection = dir === "rtl" ? "rtl" : "ltr";
   // SCIENT-FORK:END
   const [hasClippedCells, setHasClippedCells] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { copyToClipboard, isCopied: copied } = useCopyToClipboard<"markdown" | "csv">({
+    timeout: 1200,
+    onError: (cause, format) =>
+      reportMarkdownActionFailure({ operation: "copy-table", format }, cause),
+  });
   const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
-  const measureClippedCells = () => {
-    const container = containerRef.current;
-    const table = tableRef.current;
+  // React calls this with null when a previous attach returned no cleanup.
+  const attachContainer = (container: HTMLDivElement | null) => {
+    containerRef.current = container;
+    const table = container?.querySelector("table");
     if (!container || !table) return;
-    setHasClippedCells(tableHasClippedCells(container, table));
+    const measure = () => setHasClippedCells(tableHasClippedCells(container, table));
+    measure();
+    // A streamed cell can grow until it clips while the table keeps its size, and a
+    // narrower column can clip a cell without this component rendering.
+    const mutations = new MutationObserver(measure);
+    mutations.observe(table, { childList: true, characterData: true, subtree: true });
+    const stopResize = observeResize(table, measure);
+    return () => {
+      mutations.disconnect();
+      stopResize();
+      containerRef.current = null;
+    };
   };
-
-  // A streamed cell can grow until it clips while the table keeps its size,
-  // so remeasure after every render, not only on resize.
-  useLayoutEffect(measureClippedCells);
-
-  // Column width changes can clip a cell without rendering this table.
-  useLayoutEffect(() => {
-    const table = tableRef.current;
-    if (!table) return;
-    return observeResize(table, measureClippedCells);
-  }, [measureClippedCells]);
 
   const handleCopy = (format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
-    if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    const text =
+    if (!table) return;
+    copyToClipboard(
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table);
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch((cause) => {
-        reportMarkdownActionFailure({ operation: "copy-table", format }, cause);
-      });
+        : serializeTableElementToCsv(table),
+      format,
+    );
   };
-
-  useEffect(
-    () => () => {
-      if (copiedTimerRef.current != null) {
-        clearTimeout(copiedTimerRef.current);
-        copiedTimerRef.current = null;
-      }
-    },
-    [],
-  );
 
   return (
     <div
-      ref={containerRef}
+      ref={attachContainer}
       className="chat-markdown-table-container"
       data-expanded={expanded ? "true" : "false"}
       // SCIENT-FORK:START — one direction for the table and its scroll viewport.
@@ -124,7 +103,7 @@ export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table
         className="w-full max-w-full"
         dir={tableDirection}
       >
-        <table ref={tableRef} {...props} dir={tableDirection}>
+        <table {...props} dir={tableDirection}>
           {children}
         </table>
       </ScrollArea>

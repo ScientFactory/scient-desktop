@@ -8,6 +8,7 @@ import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
+import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
 import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
 import {
@@ -101,6 +102,7 @@ export function useRightPanelSurfaceClose(input: {
     if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
       setActivePreviewTab(threadRef, nextActiveSurface.resourceId);
     }
+    focusPanelTerminalAfterClose(threadRef, activeId);
   };
   // SCIENT-FORK:START
   const finishClose = (toClose: readonly RightPanelSurface[]) => {

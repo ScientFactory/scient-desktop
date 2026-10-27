@@ -10,6 +10,7 @@ self.addEventListener("message", (event: MessageEvent<VisualProcessingRequest>) 
   const input =
     event.data.input.kind === "change-delta" ? state.expand(event.data.input) : event.data.input;
   if (!input) {
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- This dedicated worker replies to its owner; its API has no target origin.
     self.postMessage({ id, output: null, needsFull: true } satisfies VisualProcessingReply);
     return;
   }
@@ -54,6 +55,8 @@ self.addEventListener("message", (event: MessageEvent<VisualProcessingRequest>) 
     // Cache failure does not discard an otherwise valid result. A missing base
     // causes the next request to retry its full, revision-checked input.
   }
+  // oxlint-disable-next-line unicorn/require-post-message-target-origin -- This dedicated worker replies to its owner; its API has no target origin.
   self.postMessage(reply);
 });
+// oxlint-disable-next-line unicorn/require-post-message-target-origin -- This dedicated worker replies to its owner; its API has no target origin.
 self.postMessage({ ready: true });

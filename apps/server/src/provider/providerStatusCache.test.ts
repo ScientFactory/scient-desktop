@@ -24,7 +24,7 @@ import {
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
-const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+
 const providerSnapshotJson = Schema.fromJsonString(ServerProviderSchema);
 const decodeProviderSnapshotJson = Schema.decodeUnknownEffect(providerSnapshotJson);
 const encodeProviderSnapshotJson = Schema.encodeEffect(providerSnapshotJson);

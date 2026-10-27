@@ -78,6 +78,21 @@ import {
   WorkspaceFileMutationIntentConflictError,
 } from "./WorkspaceFileErrors.ts";
 
+const isWorkspaceFileRevisionConflictError = Schema.is(WorkspaceFileRevisionConflictError);
+const isWorkspaceFileExistsError = Schema.is(WorkspaceFileExistsError);
+const decodeRefusalRecord = Schema.decodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      version: Schema.Literal(1),
+      outcome: Schema.Literal("unchanged"),
+      reason: Schema.String,
+    }),
+  ),
+);
+const decodeMutationIntentRecord = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Struct({ intent: Schema.String })),
+);
+
 export interface WorkspaceWriteTargetInspection {
   readonly relativePath: string;
   readonly canonicalRelativePath: string;
@@ -255,6 +270,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly isProtectedPath?: (absolutePath: string) => Promise<boolean>;
 }) {
   const { workspacePaths, workspaceEntries } = deps;
+  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const errorFor = (
     input: { cwd: string; relativePath: string },
     target: string,
@@ -265,10 +281,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       relativePath: input.relativePath,
       resolvedPath: target,
     };
-    if (
-      Schema.is(WorkspaceFileRevisionConflictError)(cause) ||
-      Schema.is(WorkspaceFileExistsError)(cause)
-    )
+    if (isWorkspaceFileRevisionConflictError(cause) || isWorkspaceFileExistsError(cause))
       return cause;
     if (cause instanceof RetainedMutationError) {
       if (cause.reason === "intent")
@@ -509,17 +522,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             keyFor(reference.mutationId ?? entry.name),
             "refusal.json",
           );
-          const refusal = await readOptional(refusalPath, (value) =>
-            Schema.decodeUnknownSync(
-              Schema.fromJsonString(
-                Schema.Struct({
-                  version: Schema.Literal(1),
-                  outcome: Schema.Literal("unchanged"),
-                  reason: Schema.String,
-                }),
-              ),
-            )(value),
-          );
+          const refusal = await readOptional(refusalPath, (value) => decodeRefusalRecord(value));
           if (!refusal)
             records.push({
               directory,
@@ -1685,10 +1688,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           async () => {
             const immutable = await readOptional(
               NodePath.join(identityDirectory, "intent.json"),
-              (text) =>
-                Schema.decodeUnknownSync(
-                  Schema.fromJsonString(Schema.Struct({ intent: Schema.String })),
-                )(text),
+              (text) => decodeMutationIntentRecord(text),
             );
             if (immutable && immutable.intent !== fingerprint)
               throw new RetainedMutationError(
@@ -1924,7 +1924,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                     );
                 }
               }
-              const current = await Effect.runPromise(resolveTarget(input));
+              const current = await runPromise(resolveTarget(input));
               if (current.target !== resolved.target || current.root !== resolved.root)
                 throw new RetainedMutationError(
                   "target",
@@ -1941,7 +1941,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                   mutationId,
                 );
               if (destination) {
-                const currentDestination = await Effect.runPromise(
+                const currentDestination = await runPromise(
                   resolveTarget({ cwd: input.cwd, relativePath: destination.named.relativePath }),
                 );
                 if (
@@ -2821,7 +2821,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         withRoot(
           normalized,
           async (_root, records, rootBinding, parentBinding) => {
-            const resolved = await Effect.runPromise(resolveTarget(input, true));
+            const resolved = await runPromise(resolveTarget(input, true));
             const physicalParent = within(resolved.root, resolved.physicalTarget)
               ? await nearestParent(resolved.root, resolved.physicalTarget)
               : null;
@@ -2830,7 +2830,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               read(await attentionFor(records, resolved), { currentMissing }),
               { signal },
             );
-            const after = await Effect.runPromise(resolveTarget(input, true));
+            const after = await runPromise(resolveTarget(input, true));
             if (
               after.root !== resolved.root ||
               after.target !== resolved.target ||
@@ -3130,7 +3130,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             entry.mutationId,
             await retainedPaths(entry.directory),
           );
-        const resolved = await Effect.runPromise(
+        const resolved = await runPromise(
           resolveTarget({ cwd: root, relativePath: NodePath.relative(root, entry.target) }, true),
         );
         if (!(await reviewed(entry, resolved)))
@@ -3152,7 +3152,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         );
       if (await requiresAttention(entry)) {
         const relativePath = NodePath.relative(root, record.target);
-        const resolved = await Effect.runPromise(resolveTarget({ cwd: root, relativePath }, true));
+        const resolved = await runPromise(resolveTarget({ cwd: root, relativePath }, true));
         if (!(await reviewed(entry, resolved)))
           throw new RetainedMutationError(
             "recovery",
@@ -3202,7 +3202,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               const path = input.relativePath,
                 target = path === undefined ? null : NodePath.resolve(root, path);
               if (target !== null && target !== root && within(root, target)) {
-                resolved = await Effect.runPromise(
+                resolved = await runPromise(
                   resolveTarget({ cwd: root, relativePath: NodePath.relative(root, target) }, true),
                 );
                 physicalParent = within(resolved.root, resolved.physicalTarget)
@@ -3216,7 +3216,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 { signal },
               );
               if (resolved) {
-                const after = await Effect.runPromise(
+                const after = await runPromise(
                   resolveTarget(
                     { cwd: input.cwd, relativePath: NodePath.relative(root, target!) },
                     true,
@@ -3445,7 +3445,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const settledFileRead: WorkspaceFileMutationMethods["withSettledFileRead"] = (input, read) =>
       ownedRead(
         input,
-        async () => missing((await Effect.runPromise(resolveTarget(input, true))).target),
+        async () => missing((await runPromise(resolveTarget(input, true))).target),
         read,
       );
     // As the native read: only a path inside the root is checked for absence.
@@ -3459,7 +3459,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           const path = input.relativePath;
           const target = path === undefined ? null : NodePath.resolve(root, path);
           if (target === null || target === root || !within(root, target)) return false;
-          const resolved = await Effect.runPromise(
+          const resolved = await runPromise(
             resolveTarget({ cwd: root, relativePath: NodePath.relative(root, target) }, true),
           );
           return missing(resolved.target);

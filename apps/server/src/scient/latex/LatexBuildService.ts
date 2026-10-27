@@ -116,6 +116,7 @@ export class LatexBuildError extends Schema.TaggedError<LatexBuildError>()("Late
     return this.detail;
   }
 }
+const isLatexBuildError = Schema.is(LatexBuildError);
 
 export class LatexBuildService extends Context.Service<
   LatexBuildService,
@@ -2130,7 +2131,7 @@ export const make = Effect.gen(function* () {
       path.resolve(workspaceRoot, requestedRelative),
       ROOT_RESOLUTION_HEAD_BYTES,
     ).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.orElseSucceed(() => Option.none<string>()),
     );
     if (Option.isNone(contents)) {
@@ -2187,7 +2188,7 @@ export const make = Effect.gen(function* () {
           detail: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
         });
       if (expectedMutationEpoch !== undefined && mutationEpoch !== expectedMutationEpoch)
-        return yield* Effect.fail(changed());
+        return yield* changed();
       const value = yield* workspaceFiles.withSettledWorkspaceRead(
         { cwd: input.workspaceRoot, relativePath: input.relativePath },
         (attention) =>
@@ -2202,14 +2203,14 @@ export const make = Effect.gen(function* () {
               ),
       );
       if ((yield* workspaceFiles.getMutationEpoch({ cwd: input.workspaceRoot })) !== mutationEpoch)
-        return yield* Effect.fail(changed());
+        return yield* changed();
       return { value, mutationEpoch };
     },
     (effect, operation) =>
       effect.pipe(
         Effect.catch((error) =>
           Effect.fail(
-            Schema.is(LatexBuildError)(error)
+            isLatexBuildError(error)
               ? error
               : new LatexBuildError({
                   operation,
@@ -2389,8 +2390,9 @@ export const make = Effect.gen(function* () {
         selection.mutationEpoch,
       ).pipe(
         Effect.map((observed) => observed.value),
-        Effect.catch((error) =>
-          error.reason === "sources-changed" ? Effect.succeed(false) : Effect.fail(error),
+        Effect.catchIf(
+          (error) => error.reason === "sources-changed",
+          () => Effect.succeed(false),
         ),
       );
     if (target.failureSummary !== null) return yield* syntheticSnapshot(target);
@@ -2459,7 +2461,7 @@ export const make = Effect.gen(function* () {
       const binding = yield* store
         .abandonProduction({ ...entry.production, reason: CANCELLED_SUMMARY })
         .pipe(
-          Effect.map(Option.some),
+          Effect.asSome,
           Effect.catch((error) =>
             Effect.logWarning("latex build production could not be released", { error }).pipe(
               Effect.as(Option.none<DocumentArtifactBinding>()),

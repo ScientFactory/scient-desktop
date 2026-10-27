@@ -6,7 +6,6 @@
     "apps/web/src/testUtils/shardWeights.json",
     "packages/contracts/src/scient/extensions.ts",
     "packages/contracts/src/scient/extensionRpcs.ts",
-    "packages/contracts/src/scient/secrets.ts",
     "apps/web/src/routes/_chat.settings.extensions.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.all.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.category.$category.tsx",
@@ -265,6 +264,11 @@
       "path": "apps/web/src/components/chat/ChatComposer.tsx",
       "anchor": "composerSkillPrompt",
       "purpose": "Reuse the same invocation token for composer selection and the shared skill card."
+    },
+    {
+      "path": "scripts/effect-budget.json",
+      "anchor": "\"apps/web/src/scient/extensions/extensionActions.ts\"",
+      "purpose": "The shared React effect budget records existing Scient extensions lifecycle owners; new effects still require their own scoped justification and lint validation."
     }
   ],
   "scientMounts": [
@@ -352,6 +356,31 @@
       "path": "apps/web/src/scient/skills/composerSkills.ts",
       "anchor": "composerSkillPrompt",
       "purpose": "Share skill invocation tokens and create a draft on the exact environment and provider."
+    },
+    {
+      "path": "apps/web/src/scient/accounts/AccountsPage.tsx",
+      "anchor": "extensionsInventory",
+      "purpose": "Read Extensions connector summaries as read-only Accounts rows linked to their owning Settings page."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/AccountsConnectorCredentials.ts",
+      "anchor": "AccountsConnectorCredentials.readOwned",
+      "purpose": "Keep the Extensions credential port on the Accounts encrypted-envelope implementation."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/request.ts",
+      "anchor": "from \"../../extensions/connectors/ConnectorOutbound.ts\"",
+      "purpose": "Accounts reuses Extensions public-address validation and credential-response redaction."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/AccountsService.ts",
+      "anchor": "readonly resolveBound:",
+      "purpose": "Expose the live account-token resolver and matching-account list consumed by Extensions bindings."
+    },
+    {
+      "path": "apps/web/src/scient/accounts/accountsView.ts",
+      "anchor": "curatedIcons.json",
+      "purpose": "Account logos reuse logos from the Extensions curated icon registry; the file only names that source."
     }
   ]
 }

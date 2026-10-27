@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: remember the identity of browser sessions.
+import { rememberAccountsSession } from "../scient/accounts/sessionIdentity.ts";
+// SCIENT-FORK:END
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewRecordingInputSchema,
@@ -108,6 +111,7 @@ export interface PreviewTabState {
   audioMuted: boolean;
   audible: boolean;
   controller: "human" | "agent" | "none";
+  capturing: boolean;
   favicon?: DesktopPreviewFavicon;
   serverTab?: { readonly threadId: string; readonly tabId: string };
   updatedAt: string;
@@ -1683,6 +1687,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           audioMuted: false,
           audible: false,
           controller: "none",
+          capturing: false,
           updatedAt,
         };
         return [
@@ -1756,6 +1761,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       audioMuted: false,
       audible: false,
       controller: "none",
+      capturing: false,
       updatedAt,
     };
     yield* emit(tabId, closed);
@@ -1977,7 +1983,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         audioMuted: current?.audioMuted ?? false,
         audible: current?.audible ?? false,
         controller: current?.controller ?? "none",
+        capturing: current?.capturing ?? false,
         ...(current?.favicon ? { favicon: current.favicon } : {}),
+        ...(current?.serverTab ? { serverTab: current.serverTab } : {}),
         updatedAt,
       };
       return [
@@ -2330,7 +2338,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         return;
       }
       if (afterAttach.serverTab) {
-        yield* listenForAgentPointers;
+        yield* listenToBrowserHost;
         browserHost.attach(afterAttach.serverTab, { webContents: wc, debugger: control.debugger });
       }
       if (afterAttach.colorScheme !== "system") {
@@ -3309,14 +3317,33 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       { discard: true },
     );
   });
-  let pointersStarted = false;
-  const listenForAgentPointers = Effect.suspend(() => {
-    if (pointersStarted) return Effect.void;
-    pointersStarted = true;
-    return browserHost.pointers.pipe(
-      Stream.runForEach(emitAgentPointer),
-      Effect.forkIn(parentScope),
-      Effect.asVoid,
+  const updateServerTabCapturing = Effect.fn("PreviewManager.updateServerTabCapturing")(
+    function* (painting: {
+      readonly key: { readonly threadId: string; readonly tabId: string };
+      readonly active: boolean;
+    }) {
+      const tab = [...(yield* SynchronizedRef.get(tabsRef)).values()].find(
+        (candidate) =>
+          candidate.serverTab?.threadId === painting.key.threadId &&
+          candidate.serverTab.tabId === painting.key.tabId,
+      );
+      if (tab && tab.capturing !== painting.active) {
+        yield* update(tab.tabId, { capturing: painting.active });
+      }
+    },
+  );
+  let browserHostStarted = false;
+  // Subscribes before the attach that follows, so no event falls between the two.
+  const listenToBrowserHost = Effect.suspend(() => {
+    if (browserHostStarted) return Effect.void;
+    browserHostStarted = true;
+    const listen = Effect.forkIn(parentScope, { startImmediately: true });
+    return Effect.all(
+      [
+        browserHost.pointers.pipe(Stream.runForEach(emitAgentPointer), listen),
+        browserHost.painting.pipe(Stream.runForEach(updateServerTabCapturing), listen),
+      ],
+      { discard: true },
     );
   });
 
@@ -3362,6 +3389,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   yield* Effect.addFinalizer(() => destroy().pipe(Effect.ignore));
 
   return {
+    // SCIENT-FORK:START — Scient Accounts: resolve only registered preview guests.
+    accountsWebContents: requireWebContents,
+    accountsTabIdForWebContents: tabIdForWebContents,
+    // SCIENT-FORK:END
     cancelPickElement,
     captureScreenshot,
     exportPdf,
@@ -3554,6 +3585,12 @@ export type PreviewManagerError = typeof PreviewManagerError.Type;
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
+    // SCIENT-FORK:START — Scient Accounts: narrow registered-tab lookup for capture and fill.
+    readonly accountsWebContents: (
+      tabId: string,
+    ) => Effect.Effect<Electron.WebContents, PreviewManagerError>;
+    readonly accountsTabIdForWebContents: (id: number) => Effect.Effect<string | null>;
+    // SCIENT-FORK:END
     readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
     readonly setForwardedShortcuts: (
       shortcuts: ReadonlyArray<PreviewForwardedShortcut>,
@@ -3701,6 +3738,10 @@ export const make = Effect.gen(function* PreviewManagerMake() {
   );
 
   return PreviewManager.of({
+    // SCIENT-FORK:START — Scient Accounts: expose registered-tab lookups.
+    accountsWebContents: operations.accountsWebContents,
+    accountsTabIdForWebContents: operations.accountsTabIdForWebContents,
+    // SCIENT-FORK:END
     setMainWindow: operations.setMainWindow,
     setForwardedShortcuts: operations.setForwardedShortcuts,
     getBrowserSession: Effect.fn("PreviewManager.getBrowserSession")(
@@ -3712,6 +3753,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
               (cause) => new PreviewOperationError({ operation: "getBrowserSession", cause }),
             ),
           );
+        // SCIENT-FORK:START — Scient Accounts: bind capture to the session's profile identity.
+        rememberAccountsSession(session, scope, persistent, namespace);
+        // SCIENT-FORK:END
         placeServerDownloads(session);
         passkeys.installSessionHandlers(session);
         return session;

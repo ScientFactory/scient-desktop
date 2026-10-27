@@ -1,7 +1,7 @@
 # Scient Extensions
 
 Status: implemented. User guide: [Extensions and connected services](../user/extensions.md).
-Companion feature: **Secrets** (separate owner, see [Secrets integration](#secrets-integration)).
+Companion feature: **Accounts** (see [Secrets integration](#secrets-integration)).
 
 ## Purpose
 
@@ -775,10 +775,18 @@ endpoints, or another transport (for example legacy SSE).
 
 ## Secrets integration
 
-The Secrets feature (separate owner, branch `claude/scient-secrets`) provides the
-encrypted vault, Settings → Secrets, brokered service profiles and the secret
-audit log. Extensions consumes the vault through one port,
-`ConnectorCredentialStore`, whose shape mirrors the agreed vault API:
+[Scient Accounts](./scient-accounts.md) provides the encrypted vault and Settings →
+Accounts. Extensions owns connector records and consumes `ConnectorCredentialStore`
+for owned credentials and OAuth. Bound API-key accounts use the narrow
+`AccountsService.resolveBound(ref, { connectorId, origin })` and
+`listBindable({ origin })` port. The saved connector record is the user's binding
+approval; Accounts validates the ref and account on every request, reads its current
+token as `Redacted`, enforces site matching and both Off switches, and records use.
+Ask is approved by the binding, so agent calls never prompt. Connector project
+availability governs this explicit delegation. Missing or ineligible accounts become
+`needs-credential`, with no fallback. Disconnect never deletes a bound account.
+
+The credential-store port keeps the owned-credential operations:
 
 ```ts
 type SecretOwner = { type: "user" } | { type: "connector"; connectorId: string };
@@ -786,34 +794,31 @@ type SecretKind = "oauth-connection" | "bearer" | "header" | "basic";
 
 put(owner, kind, material: Uint8Array, opts: { label: string }): Effect<VaultSecretRef>
 readOwned(ref, owner): Effect<Option<{ material; version }>>   // connector-owned (OAuth, entered keys)
-resolveBound(ref, consumer: { type: "connector"; connectorId; origin }): Effect<Option<{ material; version }>>
-bind(ref, connectorId, origin): Effect<void>                    // user action only; agents never bind
-listBindable({ strategy, origin }): Effect<ReadonlyArray<{ ref; name; last4? }>>
 replace(ref, material, expectedVersion): Effect<number, SecretVersionConflict> // compare-and-swap
 remove(ref): Effect<void>
 recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlationId }): Effect<void> // non-blocking
 ```
 
 - `VaultSecretRef` lives in `packages/contracts/src/scient/secrets.ts` (owned by
-  Secrets). It is distinct from the one-use `SecretRef` of `request_secret`.
-- Connector-owned entries carry a label and appear in Settings → Secrets as
-  "Managed by <connector>"; they are removed only by disconnecting.
-- Header-style connectors either own an entered key or bind a user secret.
-  Binding is checked inside the vault against the connector and its origin, so
-  a user's token cannot be replayed to another connector URL.
+  Accounts). It is distinct from the one-use `SecretRef` of `request_secret`.
+- Connector-owned entries carry a label and appear in Settings → Accounts as
+  managed connectors; they are removed only by disconnecting.
+- Header-style connectors either own an entered key or bind an API-key account.
+  Only the user's settings action can create a binding. The connector's saved URL
+  supplies the origin checked against the account's sites on every request.
 - `recordUse` receives the server-derived `McpInvocationScope`, never
   request-supplied ids, and carries no arguments, headers or bodies.
-- Both features resolve grants from the project per session, so delegated
-  children in the same project inherit them; writes keep the provider's own
+- Connector availability is checked against the project per session, so delegated
+  children in the same project inherit bindings; writes keep the provider's own
   per-call approval.
 - Both features express where a grant applies with the same `GrantScope`
   (`{ type: "all-projects" } | { type: "projects"; projectIds }`, defined in
   `packages/contracts/src/scient/secrets.ts`): a connector's `availability`
   and a secret's grant scope mean the same thing and are edited the same way.
-- Until the vault lands, the port is implemented over `ServerSecretStore` with
-  entries named `connector-<uuid>.bin` and a versioned material envelope; the
-  vault migration moves them by that prefix. Binding user secrets is offered
-  only once the vault exists, because user secrets exist only there.
+- Accounts encrypts owned envelopes under `connector-<uuid>.bin`, migrating legacy
+  plaintext envelopes when read. Bound credentials store only the validated
+  `account:<accountId>:token` ref. The add dialog offers matching API-key accounts
+  only when the environment's Accounts snapshot is available.
 - A future egress proxy must never intercept a Scient server origin.
 
 ## Release requirements

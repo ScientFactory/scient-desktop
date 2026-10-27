@@ -615,7 +615,7 @@ export const makeWithOptions = Effect.fn("ManagedRuntimeCatalog.makeWithOptions"
         ),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
-        Effect.catchCause(() => Effect.void),
+        Effect.ignoreCause,
       );
 
     const refresh = Effect.fn("ManagedRuntimeCatalog.refresh")(function* (force: boolean) {

@@ -11,7 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, PlusIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "../../state/use-atom-command";
 import { actOnProviderPlugin } from "./extensionsState";
@@ -43,6 +43,7 @@ import {
   MCP_SERVER_STATUS_TEXT,
   TEST_OUTCOME_LABELS,
 } from "./extensionsView";
+import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
 /** Navigates to a detail page, for menu items that cannot be links themselves. */
 function useOpenExtension() {
@@ -473,22 +474,17 @@ export function ProviderAppConnect({
   const { environmentId } = useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin);
   const waiting = useRef(false);
-  const refreshContents = useEffectEvent(() => onConnectionChange?.());
-  useEffect(() => {
-    const refresh = () => {
-      if (!waiting.current) return;
-      waiting.current = false;
-      void act({
-        environmentId,
-        input: {
-          instanceId: provider.instanceId,
-          action: { type: "refresh-inventory", connectionsOnly: true },
-        },
-      }).then(() => refreshContents());
-    };
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [act, environmentId, provider.instanceId]);
+  useWindowFocusRefresh(() => {
+    if (!waiting.current) return;
+    waiting.current = false;
+    void act({
+      environmentId,
+      input: {
+        instanceId: provider.instanceId,
+        action: { type: "refresh-inventory", connectionsOnly: true },
+      },
+    }).then(() => onConnectionChange?.());
+  });
   const lock = useActionLock(
     JSON.stringify(["provider-app", provider.instanceId, pluginId, app.name]),
   );

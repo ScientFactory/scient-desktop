@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as FileSystem from "effect/FileSystem";
 
 import {
@@ -160,14 +161,13 @@ describe("LaTeX project preparation", () => {
       const project = NodePath.join(workspace, "paper");
       NodeFS.mkdirSync(project, { recursive: true });
       NodeFS.writeFileSync(NodePath.join(directory, "secret.tex"), "PRIVATE TEXT");
-      try {
+      const linked = Result.try(() =>
         NodeFS.symlinkSync(
           NodePath.join(directory, "secret.tex"),
           NodePath.join(project, "linked.tex"),
-        );
-      } catch {
-        return;
-      }
+        ),
+      );
+      if (Result.isFailure(linked)) return;
       NodeFS.writeFileSync(NodePath.join(project, "main.tex"), "\\input{linked}");
       const prepared = yield* prepareLatexProject(NodePath.join(project, "main.tex"), workspace);
       expect(prepared.source).not.toContain("PRIVATE TEXT");

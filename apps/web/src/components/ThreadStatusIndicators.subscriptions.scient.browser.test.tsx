@@ -52,32 +52,45 @@ vi.mock(import("../state/vcs"), async (original) => {
     },
   };
 });
-vi.mock(import("../state/pullRequests"), async (importOriginal) => {
+// Replace only the linked summary query; its answers still land through the app's own handler.
+vi.mock(import("@t3tools/client-runtime/state/pull-requests"), async (importOriginal) => {
   const original = await importOriginal();
-  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const Effect = await import("effect/Effect");
+  const { Atom } = await import("effect/reactivity");
   const { ProjectId } = await import("@t3tools/contracts");
-  const summaries = Atom.family((number: number) =>
-    Atom.make(() => {
-      state.queries.push(`pr:${number}`);
-      return AsyncResult.success({
-        provider: SourceControlProviderKind.make("github"),
-        projectId: ProjectId.make("project-test"),
-        repository: "example/repo",
-        number,
-        title: "Observed linked PR",
-        url: `https://github.com/example/repo/pull/${number}`,
-        state: "open" as const,
-        headBranch: "feature/test",
-        baseBranch: "main",
-        updatedAt: "2026-09-04T00:00:00.000Z",
-      });
-    }),
-  );
-  return {
-    ...original,
-    linkedPullRequestDetailAtom: (({ input }: { input: { number: number } }) =>
-      summaries(input.number)) as never,
-  };
+  type Family = typeof original.createLinkedPullRequestSummaryAtomFamily;
+  type Target = Parameters<ReturnType<Family>>[0];
+  const createLinkedPullRequestSummaryAtomFamily = ((
+    _runtime: Parameters<Family>[0],
+    _refreshes: Parameters<Family>[1],
+    onAnswer: Parameters<Family>[2],
+  ) => {
+    const summaries = Atom.family((key: string) => {
+      const target = JSON.parse(key) as Target;
+      return Atom.make((get) =>
+        Effect.gen(function* () {
+          const { number } = target.input;
+          state.queries.push(`pr:${number}`);
+          const summary = {
+            provider: SourceControlProviderKind.make("github"),
+            projectId: ProjectId.make("project-test"),
+            repository: "example/repo",
+            number,
+            title: "Observed linked PR",
+            url: `https://github.com/example/repo/pull/${number}`,
+            state: "open" as const,
+            headBranch: "feature/test",
+            baseBranch: "main",
+            updatedAt: "2026-09-04T00:00:00.000Z",
+          };
+          if (onAnswer) yield* onAnswer(target, summary, get.registry);
+          return summary;
+        }),
+      );
+    });
+    return (target: Target) => summaries(JSON.stringify(target));
+  }) as unknown as Family;
+  return { ...original, createLinkedPullRequestSummaryAtomFamily };
 });
 import { ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
 

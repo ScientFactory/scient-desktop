@@ -1,4 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as DocumentText from "../provider/DocumentText.ts";
+import { formatScientCurrentInput } from "./ScientCurrentInput.ts";
+import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import { assert, it } from "@effect/vitest";
@@ -76,7 +79,10 @@ const testLayer = makeOrchestratorV2ReplayLayerWithRegistry(
     },
   ]),
   { runEffectWorker: false },
-).pipe(Layer.provideMerge(commandReceiptStoreLayer.pipe(Layer.provide(SqlitePersistenceMemory))));
+).pipe(
+  Layer.provideMerge(commandReceiptStoreLayer.pipe(Layer.provide(SqlitePersistenceMemory))),
+  Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
+);
 
 const recoveryLayer = threadManagementLayer.pipe(
   Layer.provideMerge(
@@ -110,11 +116,12 @@ const stageRecoveryUpload = Effect.fn("LegacyQueueAdmission.stageRecoveryUpload"
     createdBy: "user",
     creationSource: "web",
   });
-  const pendingId = createPendingAttachmentId();
+  const pendingId = createPendingAttachmentId("docx");
   assert.ok(pendingId);
   yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
-  const pendingPath = `${config.attachmentsDir}/${pendingId}.png`;
+  const pendingPath = `${config.attachmentsDir}/${pendingId}.docx`;
   yield* fs.writeFileString(pendingPath, "hi");
+  yield* fs.writeFileString(`${pendingPath}.txt`, "Retained extracted evidence");
   yield* writeQueue(threadId, {
     ...(yield* readQueue(threadId)),
     migrated: true,
@@ -126,10 +133,10 @@ const stageRecoveryUpload = Effect.fn("LegacyQueueAdmission.stageRecoveryUpload"
         modelSelection,
         attachments: [
           {
-            type: "image",
+            type: "file",
             id: ChatAttachmentId.make(pendingId),
-            name: "evidence.png",
-            mimeType: "image/png",
+            name: "evidence.docx",
+            mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             sizeBytes: 2,
           },
         ],
@@ -139,6 +146,44 @@ const stageRecoveryUpload = Effect.fn("LegacyQueueAdmission.stageRecoveryUpload"
     ],
   });
   return { fs, config, orchestrator, pendingPath };
+});
+
+const acceptedDocument = Effect.fn("LegacyQueueAdmission.acceptedDocument")(function* (
+  threadId: ThreadId,
+) {
+  const commandId = CommandId.make(`legacy-queue:${threadId}:qitem_recovery`);
+  const receipts = yield* CommandReceiptStoreV2;
+  const receipt = yield* receipts.getByCommandId(commandId);
+  assert.ok(Option.isSome(receipt));
+  assert.equal(receipt.value.status, "accepted");
+  assert.equal(receipt.value.threadId, threadId);
+  assert.equal(receipt.value.commandType, "legacy-queue.import");
+  const sink = yield* EventSinkV2;
+  const events = yield* sink.readByCommandId({ commandId }).pipe(Stream.runCollect);
+  const messages = events.flatMap(({ event }) =>
+    event.type === "message.updated" ? [event.payload] : [],
+  );
+  assert.equal(messages.length, 1);
+  const message = messages[0]!;
+  assert.equal(message.threadId, threadId);
+  assert.equal(message.id, MessageId.make(`legacy-queue:${threadId}:qitem_recovery`));
+  assert.equal(message.attachments.length, 1);
+  const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = resolveAttachmentPath({
+    attachmentsDir: config.attachmentsDir,
+    attachment: message.attachments[0]!,
+  });
+  assert.ok(path);
+  assert.equal(yield* fs.readFileString(path), "hi");
+  assert.equal(yield* fs.readFileString(`${path}.txt`), "Retained extracted evidence");
+  const prompt = yield* formatScientCurrentInput({
+    text: message.text,
+    attachments: message.attachments,
+    attachmentsDir: config.attachmentsDir,
+  });
+  assert.include(prompt, `text extracted to: ${path}.txt`);
+  return { path, receipt, events };
 });
 
 it.effect.each(
@@ -204,20 +249,35 @@ it.effect.each(
     } else assert.equal(Exit.isFailure(yield* Effect.exit(admission)), true);
     assert.equal((yield* readQueue(threadId)).items.length, 1);
     assert.equal(yield* fs.readFileString(pendingPath), "hi");
+    assert.equal(yield* fs.readFileString(`${pendingPath}.txt`), "Retained extracted evidence");
+    const committed = boundary === "interrupted-after" ? yield* acceptedDocument(threadId) : null;
     const files = yield* fs.readDirectory(config.attachmentsDir);
     assert.equal(
       files.length,
-      boundary === "interrupted-after" || boundary === "ambiguous" ? 2 : 1,
+      boundary === "interrupted-after" || boundary === "ambiguous" ? 4 : 2,
     );
     if (boundary === "rejected" || boundary === "ambiguous")
       yield* sql`DROP TRIGGER reject_legacy_commit`;
-    if (boundary === "ambiguous") return; // Uncertain evidence retains its copy for recovery.
+    if (boundary === "ambiguous") {
+      const claimed = files.filter(
+        (name) => !name.startsWith("pending-") && name.endsWith(".docx"),
+      );
+      assert.equal(claimed.length, 1);
+      assert.equal(yield* fs.readFileString(`${config.attachmentsDir}/${claimed[0]}`), "hi");
+      assert.equal(
+        yield* fs.readFileString(`${config.attachmentsDir}/${claimed[0]}.txt`),
+        "Retained extracted evidence",
+      );
+      return;
+    }
     assert.equal(yield* cutOverLegacyQueue(threadId), 1);
     const accepted = yield* orchestrator.getThreadProjection(threadId);
     assert.equal(accepted.messages.length, 1);
     assert.equal(accepted.runs[0]?.queueHeld, true);
     assert.equal((yield* readQueue(threadId)).items.length, 0);
-    assert.equal((yield* fs.readDirectory(config.attachmentsDir)).length, 2);
+    assert.equal((yield* fs.readDirectory(config.attachmentsDir)).length, 4);
+    const document = yield* acceptedDocument(threadId);
+    if (committed) assert.deepEqual(document, committed);
     const attachment = accepted.messages[0]!.attachments[0]!;
     assert.equal(
       yield* fs.readFileString(
@@ -235,7 +295,7 @@ it.effect.each(
 it.effect("releases only unused claims when two legacy admissions race the same receipt", () =>
   Effect.gen(function* () {
     const threadId = ThreadId.make("claim-raced-replay");
-    const { fs, config, orchestrator } = yield* stageRecoveryUpload(threadId);
+    const { fs, config, orchestrator, pendingPath } = yield* stageRecoveryUpload(threadId);
     const bothEntered = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     let count = 0;
@@ -257,15 +317,24 @@ it.effect("releases only unused claims when two legacy admissions race the same 
       cutOverLegacyQueue(threadId).pipe(Effect.provideService(OrchestratorV2, observed)),
     );
     yield* Deferred.await(bothEntered);
-    assert.equal((yield* fs.readDirectory(config.attachmentsDir)).length, 3);
+    assert.equal((yield* fs.readDirectory(config.attachmentsDir)).length, 6);
     yield* Deferred.succeed(release, undefined);
     yield* Fiber.join(first);
     yield* Fiber.join(second);
     const accepted = yield* orchestrator.getThreadProjection(threadId);
     assert.equal(accepted.messages.length, 1);
     assert.equal(accepted.runs.length, 1);
+    const document = yield* acceptedDocument(threadId);
+    assert.deepEqual(
+      (yield* fs.readDirectory(config.attachmentsDir)).toSorted(),
+      [pendingPath, `${pendingPath}.txt`, document.path, `${document.path}.txt`]
+        .map((path) => path.slice(config.attachmentsDir.length + 1))
+        .toSorted(),
+    );
+    assert.equal(yield* cutOverLegacyQueue(threadId), 0);
+    assert.deepEqual(yield* acceptedDocument(threadId), document);
     assert.equal((yield* readQueue(threadId)).items.length, 0);
-    assert.equal((yield* fs.readDirectory(config.attachmentsDir)).length, 2);
+    assert.equal((yield* fs.readDirectory(config.attachmentsDir)).length, 4);
     assert.equal(
       yield* fs.readFileString(
         resolveAttachmentPath({
@@ -318,7 +387,10 @@ it.effect(
       const acceptedPath = yield* Deferred.await(edited);
       yield* Fiber.interrupt(fiber);
       assert.equal(yield* fs.readFileString(acceptedPath), "hi");
+      const document = yield* acceptedDocument(threadId);
+      assert.equal(document.path, acceptedPath);
       assert.equal(yield* cutOverLegacyQueue(threadId), 1);
+      assert.deepEqual(yield* acceptedDocument(threadId), document);
       const current = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(current.messages[0]?.text, "Edited after acceptance");
       assert.deepEqual(current.messages[0]?.attachments, []);

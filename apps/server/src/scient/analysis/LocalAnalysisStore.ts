@@ -653,7 +653,7 @@ const make = Effect.gen(function* () {
       representation.fileName,
     );
     const info = yield* fs.stat(artifactPath).pipe(
-      Effect.map((value) => Option.some(value)),
+      Effect.asSome,
       Effect.orElseSucceed(() => Option.none()),
     );
     if (Option.isNone(info) || info.value.type !== "File") return null;

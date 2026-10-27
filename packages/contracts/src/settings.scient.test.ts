@@ -31,6 +31,8 @@ const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const decodeDroidSettings = Schema.decodeUnknownSync(DroidSettings);
+const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 
 describe("ServerSettings thread sections", () => {
   it("defaults to an empty catalog with General first, and round-trips a layout", () => {
@@ -292,16 +294,16 @@ describe("ServerSettings scientific computing", () => {
 describe("ServerSettings provider instance config", () => {
   it("preserves Scient driver configuration in the aligned instance map", () => {
     const droidId = ProviderInstanceId.make("droid");
-    const config = Schema.decodeUnknownSync(DroidSettings)({ cloudSessionSync: false });
+    const config = decodeDroidSettings({ cloudSessionSync: false });
     const decoded = decodeServerSettings({
       providerInstances: {
         [droidId]: { driver: ProviderDriverKind.make("droid"), enabled: true, config },
       },
     });
     expect(decoded.providerInstances[droidId]?.config).toEqual(config);
-    expect(
-      Schema.decodeUnknownSync(DroidSettings)(decoded.providerInstances[droidId]?.config),
-    ).toMatchObject({ cloudSessionSync: false });
+    expect(decodeDroidSettings(decoded.providerInstances[droidId]?.config)).toMatchObject({
+      cloudSessionSync: false,
+    });
   });
 
   it("preserves the full instance map in a patch", () => {
@@ -324,7 +326,7 @@ describe("ServerSettingsPatch legacy provider compatibility", () => {
     expect(patch.providers).toEqual({
       codex: { binaryPath: "/legacy/codex", opaque: { revision: 2 } },
     });
-    expect(() => Schema.encodeSync(ServerSettingsPatch)(patch)).toThrow(
+    expect(() => encodeServerSettingsPatch(patch)).toThrow(
       "The legacy providers patch is accepted from older clients only.",
     );
   });

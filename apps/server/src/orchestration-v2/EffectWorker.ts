@@ -114,7 +114,7 @@ export const layerExecutor: Layer.Layer<
     // SCIENT-FORK: conversation-fork outbox effects.
     const scientForkEffects = yield* makeScientForkEffects;
     return OrchestrationEffectExecutorV2.of({
-      execute: (effect, options) => {
+      execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
         switch (effect.request.type) {
           // SCIENT-FORK:START — conversation-fork outbox effects run in scient-fork.
@@ -263,7 +263,7 @@ export const layerExecutor: Layer.Layer<
                         Cause.pretty(Cause.fail(cause)),
                       )
                     ) {
-                      return yield* Effect.fail(cause);
+                      return yield* cause;
                     }
                     // An adapter failure is not a stop receipt. A concurrent
                     // release can still prove that this child's producer is gone.
@@ -809,7 +809,7 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
         }
-      },
+      }),
     });
   }),
 );
@@ -1195,7 +1195,3 @@ export const runDaemonWithOptions = (options: OrchestrationEffectDaemonOptions =
   );
 
 export const runDaemon = runDaemonWithOptions();
-
-const layerDaemon: Layer.Layer<never, never, OrchestrationEffectWorkerV2> = Layer.effectDiscard(
-  runDaemon.pipe(Effect.forkScoped),
-);

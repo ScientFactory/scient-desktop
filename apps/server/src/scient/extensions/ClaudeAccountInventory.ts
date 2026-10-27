@@ -68,6 +68,7 @@ export const probeClaudeAccountServers = Effect.fn("probeClaudeAccountServers")(
   function* (settings: ClaudeSettings, environment: NodeJS.ProcessEnv, cwd: string) {
     const env = yield* makeClaudeEnvironment(settings, environment);
     const executable = yield* resolveClaudeSdkExecutablePath(settings.binaryPath, env);
+    // @effect-diagnostics-next-line abortControllerInEffect:off -- the SDK's prompt generator is plain async code that must outlive this Effect until released.
     const abort = new AbortController();
     const q = yield* Effect.acquireRelease(
       Effect.sync(() =>

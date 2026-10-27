@@ -230,11 +230,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       currentRouteThreadKeyRef: route,
       queueContextKeyRef: { current: routeKey },
       queueEditsReady: true,
-      threadQueue: {
-        items: [],
-        awaitingCompletion: false,
-        refresh: async () => {},
-      },
       serverProjection: null,
       hasHeldQueuedRuns: false,
       onForkConversation: noop,

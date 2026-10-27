@@ -201,7 +201,8 @@ blindly replayed against a vanished runtime. Recovery persists outcomes before a
 Old database/queue readers hydrate saved facts into V2; they do not execute V1 commands.
 
 Native queued runs are the sole live queue authority. Admission, order, holds, and advancement
-belong to `Orchestrator`; `QueuedRunsControl` adapts them into the Scient `ThreadQueueStrip`.
+belong to `Orchestrator`; upstream's `QueuedRunsControl` shows them in the composer's drawer, with
+Scient's parts mounted from `scient/threadQueue/useScientQueueParts.tsx`.
 See [the queue contract](./scient-thread-queue.md) and
 [legacy import](./legacy-orchestration-migration.md).
 
@@ -265,6 +266,7 @@ ready. The HTTP listener can exist while command readiness is still gated.
 - [Scient conversation-fork architecture and T3 divergence](./scient-fork-divergence.md)
 - [Mobile navigation headers](./mobile-navigation.md)
 - [Scient product analytics](./product-analytics.md)
+- [Scient Accounts](./scient-accounts.md)
 - [Scripts](./scripts.md), [CI gates](./ci.md)
 - [D4 bootstrap record](./scient-next-d4-bootstrap.md)
 
