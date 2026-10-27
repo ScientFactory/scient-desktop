@@ -440,6 +440,7 @@ export const overleafPreviewForInvocation = Effect.fn("ScientOverleafToolkit.pre
       | ReadonlyArray<{ readonly key: string; readonly choice: ConflictChoice }>
       | undefined;
     readonly files?: FileDecisions | undefined;
+    readonly diff?: boolean | undefined;
   }) {
     const overleaf = yield* OverleafSync;
     const caller = yield* callerOf;
@@ -466,13 +467,27 @@ export const overleafPreviewForInvocation = Effect.fn("ScientOverleafToolkit.pre
     const preview = previewView(prepared.result, prepared.earlier);
     // A review or refusal carries what was settled first; a second recovery can't.
     const earlier = preview._tag === "recovered" ? settledView(prepared.earlier) : null;
+    const diff =
+      input.diff && preview._tag === "review"
+        ? yield* mapErrors(
+            overleaf.diff({
+              caller,
+              connectionId: input.connectionId,
+              reviewId: preview.review.reviewId,
+            }),
+          )
+        : undefined;
     return {
       lines: withLinkLine(link, [
         ...(earlier === null ? [] : [firstSettledLine(earlier)]),
         ...previewLines(preview),
+        ...(diff?._tag === "stale"
+          ? ["This review is no longer current. Preview again to read its diff."]
+          : []),
       ]),
       link,
       preview,
+      ...(diff === undefined ? {} : { diff }),
     };
   },
 );

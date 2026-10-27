@@ -9,6 +9,8 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import type { ScientOverleafDiffResult } from "@t3tools/contracts";
+
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -61,6 +63,7 @@ import {
   type OverleafReviewStaleReason,
   type OverleafReviewTakeRefusal,
 } from "./OverleafReviewRegistry.ts";
+import { readOverleafReviewDiff } from "./OverleafReviewDiff.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
 import type { ConflictChoice, Rename } from "./syncRules.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
@@ -620,6 +623,10 @@ const hook = (options: OverleafCoordinatorOptions, point: HookPoint): Effect.Eff
 export class OverleafCoordinator extends Context.Service<
   OverleafCoordinator,
   {
+    readonly diff: (input: {
+      readonly connectionId: string;
+      readonly reviewId: string;
+    }) => Effect.Effect<ScientOverleafDiffResult, OverleafCoordinatorError>;
     readonly prepare: (input: {
       readonly connectionId: string;
       readonly selections?: OverleafSelections;
@@ -1720,6 +1727,42 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     return { _tag: pushed._tag, attemptNumber } satisfies OverleafPublication;
   });
 
+  const diff: OverleafCoordinator["Service"]["diff"] = Effect.fn("OverleafCoordinator.diff")(
+    (input) =>
+      reserve(input.connectionId, () =>
+        Effect.gen(function* () {
+          const stale = { _tag: "stale", reason: "check-again" } as const;
+          const review = registry.current(input.connectionId, yield* now);
+          if (review === null || review.id !== input.reviewId) return stale;
+          const connection = yield* readActive(input.connectionId);
+          const section = yield* barrier.current(folderOf(connection));
+          const current =
+            connection.revision === review.binding.connectionRevision &&
+            section.epoch === review.binding.checkoutEpoch &&
+            credentialEpoch() === review.binding.credentialEpoch;
+          if (!current) return stale;
+          yield* verifyFolders(connection);
+          const repo = NodePath.join(
+            options.stateRoot,
+            "repositories",
+            `${connection.connectionId}.git`,
+          );
+          const result = yield* readOverleafReviewDiff(repos, repo, review);
+          yield* verifyFolders(connection);
+          const latest = yield* readActive(input.connectionId);
+          const latestSection = yield* barrier.current(folderOf(latest));
+          if (
+            latest.revision !== review.binding.connectionRevision ||
+            latestSection.epoch !== review.binding.checkoutEpoch ||
+            registry.current(input.connectionId, yield* now) !== review ||
+            credentialEpoch() !== review.binding.credentialEpoch
+          )
+            return stale;
+          return result;
+        }),
+      ),
+  );
+
   const prepare: OverleafCoordinator["Service"]["prepare"] = Effect.fn(
     "OverleafCoordinator.prepare",
   )((input) =>
@@ -2713,6 +2756,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   );
 
   return OverleafCoordinator.of({
+    diff,
     prepare,
     confirm,
     recover,

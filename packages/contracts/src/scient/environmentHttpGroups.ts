@@ -140,6 +140,8 @@ import {
   ScientOverleafConnectionList,
   ScientOverleafConnectionRequest,
   ScientOverleafDisconnectRequest,
+  ScientOverleafDiffRequest,
+  ScientOverleafDiffResult,
   ScientOverleafKeptCopies,
   ScientOverleafManageResult,
   ScientOverleafOperationError,
@@ -799,6 +801,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientOverleafConnectionRequest,
         success: ScientOverleafStatus,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("diff", "/api/scient/overleaf/v1/diff", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafDiffRequest,
+        success: ScientOverleafDiffResult,
         error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
       }).middleware(EnvironmentAuthenticatedAuth),
     )

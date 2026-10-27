@@ -107,6 +107,36 @@ export const ScientOverleafConnectionRequest = Schema.Struct({
 });
 export type ScientOverleafConnectionRequest = typeof ScientOverleafConnectionRequest.Type;
 
+export const ScientOverleafDiffRequest = Schema.Struct({
+  workspaceRoot: WorkspaceRoot,
+  connectionId: ConnectionId,
+  reviewId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+});
+export type ScientOverleafDiffRequest = typeof ScientOverleafDiffRequest.Type;
+
+export const ScientOverleafDiffFile = Schema.Union([
+  Schema.TaggedStruct("text", {
+    path: ManuscriptPath,
+    before: Schema.NullOr(Schema.String),
+    after: Schema.NullOr(Schema.String),
+  }),
+  Schema.TaggedStruct("not-shown", {
+    path: ManuscriptPath,
+    reason: Schema.Literals(["binary", "file-too-large", "total-limit"]),
+  }),
+]);
+export type ScientOverleafDiffFile = typeof ScientOverleafDiffFile.Type;
+
+export const ScientOverleafDiffResult = Schema.Union([
+  Schema.TaggedStruct("diff", {
+    reviewId: Schema.String,
+    incoming: Schema.Array(ScientOverleafDiffFile),
+    outgoing: Schema.Array(ScientOverleafDiffFile),
+  }),
+  Schema.TaggedStruct("stale", { reason: Schema.Literal("check-again") }),
+]);
+export type ScientOverleafDiffResult = typeof ScientOverleafDiffResult.Type;
+
 export const ScientOverleafConnectRequest = Schema.Struct({
   workspaceRoot: WorkspaceRoot,
   /** Relative to the workspace; empty links the workspace itself. */

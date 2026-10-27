@@ -742,6 +742,15 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     return { ...found, linkedElsewhere };
   });
 
+  const diff = Effect.fn("OverleafSync.diff")(function* (input: {
+    readonly caller: OverleafCaller;
+    readonly connectionId: string;
+    readonly reviewId: string;
+  }) {
+    const { guard } = yield* authorize(input.caller, input.connectionId);
+    return yield* engine(guard, coordinator.diff(input));
+  });
+
   const preview = Effect.fn("OverleafSync.preview")(function* (input: {
     readonly caller: OverleafCaller;
     readonly connectionId: string;
@@ -1255,6 +1264,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     connect,
     status,
     preview,
+    diff,
     sync,
     recover,
     keptCopies,
@@ -1351,6 +1361,7 @@ export const layer = Layer.unwrap(
           ...service,
           connect: guard(service.connect),
           preview: guard(service.preview),
+          diff: guard(service.diff),
           sync: guard(service.sync),
           recover: guard(service.recover),
           restoreKept: guard(service.restoreKept),

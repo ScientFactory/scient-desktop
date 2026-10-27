@@ -255,6 +255,19 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
           );
         }),
       )
+      .handle("diff", ({ endpoint, payload }) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* mapErrors(
+            overleaf.diff({
+              caller: workspace(payload.workspaceRoot),
+              connectionId: payload.connectionId,
+              reviewId: payload.reviewId,
+            }),
+          );
+        }),
+      )
       .handle("preview", ({ endpoint, payload }) =>
         Effect.gen(function* () {
           yield* annotateEnvironmentRequest(endpoint.name);
