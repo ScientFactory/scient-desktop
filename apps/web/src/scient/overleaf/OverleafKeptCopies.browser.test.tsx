@@ -89,6 +89,8 @@ const keptCopy = {
 
 function reset(linkedHere: boolean) {
   resetOverleafStoreForTests();
+  // The panel store is shared by every browser test file: start each test with no open tabs.
+  useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
   reveal.config.mockReturnValue(Atom.make(null));
   reveal.open.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   for (const mock of Object.values(client)) mock.mockReset();
