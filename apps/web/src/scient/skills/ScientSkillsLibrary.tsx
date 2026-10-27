@@ -77,7 +77,8 @@ function SkillCategoryDisclosure(props: {
 /** "◎ Scient skills": the section title wherever Scient's own skills are listed. */
 export function ScientSkillsTitle() {
   return (
-    <span className="inline-flex items-center gap-2.5">
+    // A block-level flex keeps the heading row at the text's height, like every other section title.
+    <span className="flex items-center gap-2.5">
       <ScientSymbol className="size-5" weight="strong" />
       Scient skills
     </span>

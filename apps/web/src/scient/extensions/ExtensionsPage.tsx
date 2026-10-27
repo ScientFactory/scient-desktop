@@ -162,13 +162,10 @@ export function ExtensionsTopBar({
   tab,
   kind,
   children,
-  aside,
 }: {
   readonly tab: ExtensionsTab;
   readonly kind: ExtensionKind | undefined;
   readonly children?: ReactNode;
-  /** A small link at the end of the kind row; the row keeps its height without one. */
-  readonly aside?: ReactNode;
 }) {
   const navigate = useNavigate();
   const show = (nextTab: ExtensionsTab, nextKind: ExtensionKind | undefined) =>
@@ -218,7 +215,16 @@ export function ExtensionsTopBar({
             </Toggle>
           ))}
         </ToggleGroup>
-        {aside}
+        <Link
+          to="/settings/extensions/all"
+          className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
+        >
+          Browse all MCP servers
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 transition-transform group-hover:translate-x-0.5"
+          />
+        </Link>
       </div>
     </div>
   );

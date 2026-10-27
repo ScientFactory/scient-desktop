@@ -1,6 +1,6 @@
 import type { DiscoverEntry, DiscoverSearchInput } from "@t3tools/contracts";
 import { Link, Navigate } from "@tanstack/react-router";
-import { ChevronRightIcon, SearchIcon } from "lucide-react";
+import { SearchIcon } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -344,24 +344,7 @@ function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
   return (
     <>
       <SettingsSearchTarget id={searchableSetting("extensions").id} className="outline-none">
-        <ExtensionsTopBar
-          tab="discover"
-          kind={kind}
-          aside={
-            kind === "skills" ? null : (
-              <Link
-                to="/settings/extensions/all"
-                className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
-              >
-                Browse all MCP servers
-                <ChevronRightIcon
-                  aria-hidden
-                  className="size-3.5 transition-transform group-hover:translate-x-0.5"
-                />
-              </Link>
-            )
-          }
-        >
+        <ExtensionsTopBar tab="discover" kind={kind}>
           <SearchField
             label={kind === "skills" ? "Search skills" : "Search plugins"}
             value={search}
