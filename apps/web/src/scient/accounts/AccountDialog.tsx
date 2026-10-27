@@ -1,3 +1,4 @@
+import { CliPasswordPicker } from "./CliPasswordStores";
 import { useState } from "react";
 import { useClientSettings } from "~/hooks/useSettings";
 import {
@@ -68,6 +69,8 @@ const OPTIONAL_FIELDS = new Set(["totp", "clientCert", "clientKey", "caCert"]);
 
 type ValueSource = AccountSecretSummary["source"]["type"];
 const LINK_LABELS: Readonly<Record<Exclude<ValueSource, "scient">, string>> = {
+  bitwarden: "Bitwarden item",
+  "proton-pass": "Proton Pass item",
   keychain: "Keychain item",
   "1password": "1Password item",
   "custom-model": "Custom models key",
@@ -104,6 +107,7 @@ function SecretField({
   const load = useAccountCommand(accountsState.keychainCandidates, environmentId);
   const label = FIELD_LABELS[field] ?? field;
   const links: ReadonlyArray<Exclude<ValueSource, "scient">> = [
+    ...(snapshot.stores.cli ? (["bitwarden", "proton-pass"] as const) : []),
     ...(snapshot.stores.keychain.available ? (["keychain"] as const) : []),
     ...(snapshot.stores.onePassword.state === "connected" ? (["1password"] as const) : []),
     ...(field === "token" && snapshot.customModelKeys.length > 0
@@ -114,7 +118,10 @@ function SecretField({
     setSource(next);
     setValue("");
     onChange(
-      next === saved?.source.type || next === "scient"
+      next === saved?.source.type ||
+        next === "scient" ||
+        next === "bitwarden" ||
+        next === "proton-pass"
         ? undefined
         : next === "keychain"
           ? { type: next, service, account }
@@ -233,6 +240,13 @@ function SecretField({
             />
           </div>
         )
+      ) : source === "bitwarden" || source === "proton-pass" ? (
+        <CliPasswordPicker
+          key={source}
+          store={source}
+          environmentId={environmentId}
+          onChange={onChange}
+        />
       ) : source === "1password" ? (
         <Input
           aria-label="1Password reference"

@@ -27,6 +27,7 @@ describe("Accounts client authorization", () => {
       permissions: [AuthSettingsWriteScope],
     };
     for (const method of [
+      WS_METHODS.accountsPasswordStore,
       WS_METHODS.accountsSave,
       WS_METHODS.accountsFillValues,
       WS_METHODS.accountsMatchSignIn,

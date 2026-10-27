@@ -97,6 +97,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const persistence = yield* AccountPersistence;
     const sources = yield* AccountSources;
+    const cliStores = sources.passwordStores;
     const vault = yield* AccountVault;
     const serviceScope = yield* Scope.Scope;
     const sourceControl = yield* Effect.serviceOption(SourceControlProviderRegistry);
@@ -171,6 +172,7 @@ export const layer = Layer.effect(
           scient: { protection },
           keychain: { available: protection === "keychain", platform: sources.platform },
           onePassword: state.onePasswordStatus,
+          cli: cliStores.statuses(),
         },
         approvals: [...pending.values()].map((entry) => entry.approval),
         recentActivity,
@@ -319,6 +321,10 @@ export const layer = Layer.effect(
         if (!secret) continue;
         const source: AccountValueSource = secret.source;
         switch (source.type) {
+          case "bitwarden":
+          case "proton-pass":
+            result[field] = yield* cliStores.resolve(source);
+            break;
           case "scient":
             result[field] = yield* readValue(account.values[field]);
             break;
@@ -407,14 +413,17 @@ export const layer = Layer.effect(
           continue;
         }
         const old = secrets[field];
-        const linked = change.type !== "scient" && Boolean(old?.copies?.length);
+        const readOnlyLink = change.type === "bitwarden" || change.type === "proton-pass";
+        const linked = change.type !== "scient" && !readOnlyLink && Boolean(old?.copies?.length);
         const linkedValue = !linked
           ? undefined
           : change.type === "keychain"
             ? yield* sources.keychain(change)
             : change.type === "custom-model"
               ? yield* sources.customModel(change.connectionId)
-              : yield* (yield* getOnePasswordClient).resolve(change.reference);
+              : change.type === "1password"
+                ? yield* (yield* getOnePasswordClient).resolve(change.reference)
+                : undefined;
         if (change.type === "scient" || linkedValue) {
           const value = change.type === "scient" ? Redacted.make(change.value) : linkedValue!;
           const name = valueName();
@@ -505,7 +514,12 @@ export const layer = Layer.effect(
             completed.push(destination);
             continue;
           }
-          if (destination.type === "custom-model") continue;
+          if (
+            destination.type === "custom-model" ||
+            destination.type === "bitwarden" ||
+            destination.type === "proton-pass"
+          )
+            continue;
           const vaultId =
             destination.type === "1password"
               ? "vaultId" in destination
@@ -789,6 +803,15 @@ export const layer = Layer.effect(
           ),
         ),
       ),
+      passwordStore: Effect.fn("AccountsService.passwordStore")((input) =>
+        locked(
+          Effect.gen(function* () {
+            const result = yield* cliStores.command(input);
+            yield* publish;
+            return result;
+          }),
+        ),
+      ),
       keychainCandidates: sources.candidates,
       connectOnePassword: Effect.fn("AccountsService.connectOnePassword")((input) =>
         locked(
@@ -979,7 +1002,11 @@ export const layer = Layer.effect(
               const source = account.summary.secrets.totp?.source;
               otp = yield* Effect.try({
                 try: () => {
-                  if (source?.type === "1password" && source.reference.endsWith("?attribute=otp"))
+                  if (
+                    ((source?.type === "bitwarden" || source?.type === "proton-pass") &&
+                      /^\d{6,8}$/.test(value)) ||
+                    (source?.type === "1password" && source.reference.endsWith("?attribute=otp"))
+                  )
                     return value;
                   const generator = value.startsWith("otpauth://")
                     ? URI.parse(value)

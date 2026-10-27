@@ -1,3 +1,4 @@
+import { CliPasswordStoreRow } from "./CliPasswordStores";
 import { useRef, useState } from "react";
 import type { AccountsSnapshot, EnvironmentId } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
@@ -152,6 +153,15 @@ export function PasswordStores({
           )
         }
       />
+      {(snapshot.stores.cli ? (["bitwarden", "proton-pass"] as const) : []).map((store) => (
+        <CliPasswordStoreRow
+          key={store}
+          store={store}
+          status={snapshot.stores.cli?.[store]}
+          environmentId={environmentId}
+          canWrite={canWrite}
+        />
+      ))}
       <p className="text-xs text-muted-foreground">
         Linked values are read when used; 1Password may cache them for five minutes, except one-time
         codes. No manual refresh needed.
