@@ -121,6 +121,39 @@ export const signedInSites = Effect.fn("DesktopAccounts.signedInSites")(function
   );
 });
 
+export const cookieMetadata = Effect.fn("DesktopAccounts.cookieMetadata")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* mainSender(event))) return null;
+  const input = decodeSites(raw);
+  if (Option.isNone(input)) return null;
+  const manager = yield* PreviewManager;
+  const scope = resolvePartitionScope(
+    input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
+    input.value.profileId,
+  );
+  return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
+    Effect.flatMap((session) =>
+      Effect.tryPromise({ try: () => session.cookies.get({}), catch: unavailable }),
+    ),
+    Effect.map((cookies) =>
+      cookies.flatMap((cookie) =>
+        cookie.domain === undefined
+          ? []
+          : [
+              {
+                domain: cookie.domain,
+                httpOnly: cookie.httpOnly === true,
+                ...(cookie.expirationDate === undefined ? {} : { expires: cookie.expirationDate }),
+              },
+            ],
+      ),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+});
+
 const signOutSite = Effect.fn("DesktopAccounts.signOutSite")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
@@ -161,6 +194,7 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   const ipc = yield* DesktopIpc;
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
+  yield* ipc.handle({ channel: Channels.COOKIE_METADATA, handler: cookieMetadata });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });
