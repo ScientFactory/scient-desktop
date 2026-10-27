@@ -16,7 +16,6 @@ import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
-import { Route as SettingsSyncedFoldersRouteImport } from './routes/settings.synced-folders'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
@@ -24,6 +23,7 @@ import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-reques
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
 import { Route as ChatSettingsVoiceRouteImport } from './routes/_chat.settings.voice'
+import { Route as ChatSettingsSyncedFoldersRouteImport } from './routes/_chat.settings.synced-folders'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
 import { Route as ChatSettingsSourceControlRouteImport } from './routes/_chat.settings.source-control'
 import { Route as ChatSettingsSnapShotRouteImport } from './routes/_chat.settings.snap-shot'
@@ -92,11 +92,6 @@ const ChatIndexRoute = ChatIndexRouteImport.update({
   path: '/',
   getParentRoute: () => ChatRoute,
 } as any)
-const SettingsSyncedFoldersRoute = SettingsSyncedFoldersRouteImport.update({
-  id: '/settings/synced-folders',
-  path: '/settings/synced-folders',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
   path: '/projects/$projectKey',
@@ -132,6 +127,12 @@ const ChatSettingsVoiceRoute = ChatSettingsVoiceRouteImport.update({
   path: '/voice',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsSyncedFoldersRoute =
+  ChatSettingsSyncedFoldersRouteImport.update({
+    id: '/synced-folders',
+    path: '/synced-folders',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsStorageRoute = ChatSettingsStorageRouteImport.update({
   id: '/storage',
   path: '/storage',
@@ -330,7 +331,6 @@ export interface FileRoutesByFullPath {
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/synced-folders': typeof SettingsSyncedFoldersRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/accounts': typeof ChatSettingsAccountsRoute
@@ -354,6 +354,7 @@ export interface FileRoutesByFullPath {
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
+  '/settings/synced-folders': typeof ChatSettingsSyncedFoldersRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
@@ -378,7 +379,6 @@ export interface FileRoutesByTo {
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/synced-folders': typeof SettingsSyncedFoldersRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -403,6 +403,7 @@ export interface FileRoutesByTo {
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
+  '/settings/synced-folders': typeof ChatSettingsSyncedFoldersRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
@@ -429,7 +430,6 @@ export interface FileRoutesById {
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
-  '/settings/synced-folders': typeof SettingsSyncedFoldersRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -454,6 +454,7 @@ export interface FileRoutesById {
   '/_chat/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/_chat/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
+  '/_chat/settings/synced-folders': typeof ChatSettingsSyncedFoldersRoute
   '/_chat/settings/voice': typeof ChatSettingsVoiceRoute
   '/_chat/settings/extensions_/all': typeof ChatSettingsExtensionsAllRoute
   '/_chat/settings/extensions_/installed': typeof ChatSettingsExtensionsInstalledRoute
@@ -481,7 +482,6 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/projects/$projectKey'
-    | '/settings/synced-folders'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/accounts'
@@ -505,6 +505,7 @@ export interface FileRouteTypes {
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
+    | '/settings/synced-folders'
     | '/settings/voice'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
@@ -529,7 +530,6 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/projects/$projectKey'
-    | '/settings/synced-folders'
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -554,6 +554,7 @@ export interface FileRouteTypes {
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/settings/storage'
+    | '/settings/synced-folders'
     | '/settings/voice'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
@@ -579,7 +580,6 @@ export interface FileRouteTypes {
     | '/_chat/settings'
     | '/_chat/usage'
     | '/projects/$projectKey'
-    | '/settings/synced-folders'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
@@ -604,6 +604,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/snap-shot'
     | '/_chat/settings/source-control'
     | '/_chat/settings/storage'
+    | '/_chat/settings/synced-folders'
     | '/_chat/settings/voice'
     | '/_chat/settings/extensions_/all'
     | '/_chat/settings/extensions_/installed'
@@ -625,7 +626,6 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
-  SettingsSyncedFoldersRoute: typeof SettingsSyncedFoldersRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -679,13 +679,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatIndexRouteImport
       parentRoute: typeof ChatRoute
     }
-    '/settings/synced-folders': {
-      id: '/settings/synced-folders'
-      path: '/settings/synced-folders'
-      fullPath: '/settings/synced-folders'
-      preLoaderRoute: typeof SettingsSyncedFoldersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/projects/$projectKey': {
       id: '/projects/$projectKey'
       path: '/projects/$projectKey'
@@ -733,6 +726,13 @@ declare module '@tanstack/react-router' {
       path: '/voice'
       fullPath: '/settings/voice'
       preLoaderRoute: typeof ChatSettingsVoiceRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/synced-folders': {
+      id: '/_chat/settings/synced-folders'
+      path: '/synced-folders'
+      fullPath: '/settings/synced-folders'
+      preLoaderRoute: typeof ChatSettingsSyncedFoldersRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/storage': {
@@ -991,6 +991,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsSnapShotRoute: typeof ChatSettingsSnapShotRoute
   ChatSettingsSourceControlRoute: typeof ChatSettingsSourceControlRoute
   ChatSettingsStorageRoute: typeof ChatSettingsStorageRoute
+  ChatSettingsSyncedFoldersRoute: typeof ChatSettingsSyncedFoldersRoute
   ChatSettingsVoiceRoute: typeof ChatSettingsVoiceRoute
   ChatSettingsExtensionsAllRoute: typeof ChatSettingsExtensionsAllRoute
   ChatSettingsExtensionsInstalledRoute: typeof ChatSettingsExtensionsInstalledRoute
@@ -1026,6 +1027,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsSnapShotRoute: ChatSettingsSnapShotRoute,
   ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,
   ChatSettingsStorageRoute: ChatSettingsStorageRoute,
+  ChatSettingsSyncedFoldersRoute: ChatSettingsSyncedFoldersRoute,
   ChatSettingsVoiceRoute: ChatSettingsVoiceRoute,
   ChatSettingsExtensionsAllRoute: ChatSettingsExtensionsAllRoute,
   ChatSettingsExtensionsInstalledRoute: ChatSettingsExtensionsInstalledRoute,
@@ -1081,7 +1083,6 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
-  SettingsSyncedFoldersRoute: SettingsSyncedFoldersRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
