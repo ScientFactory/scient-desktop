@@ -217,10 +217,12 @@ function MoreMenu({ label, children }: { readonly label: string; readonly childr
 export function DetailSection({
   title,
   count,
+  status,
   children,
 }: {
   readonly title: string;
   readonly count?: number;
+  readonly status?: ReactNode;
   readonly children: ReactNode;
 }) {
   return (
@@ -235,6 +237,11 @@ export function DetailSection({
             {" "}
             <span className="font-normal text-muted-foreground">{count}</span>
           </>
+        ) : null}
+        {status ? (
+          <span role="status" className="ml-3 font-normal text-muted-foreground">
+            {status}
+          </span>
         ) : null}
       </h2>
       {children}
@@ -986,7 +993,11 @@ function PluginDetail({ plugin }: { readonly plugin: ScientPluginSummary }) {
       description={plugin.description}
       feedback={<ActionFeedback feedback={actions.feedback} />}
     >
-      <PluginContents key={plugin.pluginId} input={{ pluginId: plugin.pluginId }} />
+      <PluginContents
+        key={plugin.pluginId}
+        pluginName={plugin.displayName}
+        input={{ pluginId: plugin.pluginId }}
+      />
       {plugin.components.some((component) => component.type !== "skill") ? (
         <DetailSection title="Includes">
           <GroupsCard
@@ -1144,6 +1155,7 @@ function ProviderPluginDetail({
       <PluginContents
         key={JSON.stringify([group.provider.instanceId, plugin.id, workspace])}
         provider={group.provider}
+        pluginName={name}
         input={{
           instanceId: group.provider.instanceId,
           pluginId: plugin.id,

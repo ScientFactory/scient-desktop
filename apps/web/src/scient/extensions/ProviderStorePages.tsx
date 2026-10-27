@@ -488,6 +488,7 @@ function StoreDetail({
       <PluginContents
         key={JSON.stringify([provider.instanceId, entry.id])}
         provider={provider}
+        pluginName={entry.displayName}
         canConnectApps={entry.installed}
         iconUrl={entry.iconUrl}
         input={{ instanceId: provider.instanceId, entryId: entry.id }}

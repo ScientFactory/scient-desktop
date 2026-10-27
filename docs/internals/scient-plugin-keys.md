@@ -130,9 +130,13 @@ or delivered; those adapter changes remain separate.
 Installed plugin pages show a Keys section. Each row uses the same API-key
 account picker as Add connector, populated by the server's `listBindable({})`
 projection. Choosing an account binds it; choosing the empty option unbinds it.
-Add key opens the existing Accounts dialog directly as an API-key account and
-binds only the id returned by a successful save. A failed binding leaves the
+Add key opens the existing Accounts dialog directly as an API-key account, prefills
+the plugin display name, and binds only the id returned by a successful save. A failed binding leaves the
 newly created account in Accounts for retry. The web never resolves a key value.
+
+The Keys heading carries its quiet status inline. Key rows use “Uses” without a
+leading dash. A newly created account stays selected while binding and query
+refresh settle; failures restore the server selection.
 
 Plugin cards and pages show Needs a key from server eligibility. A workspace
 plugin uses its environment/project identity for the status query; a global

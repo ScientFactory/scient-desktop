@@ -20,8 +20,6 @@ import { bindPluginKey, extensionsPluginKeys, unbindPluginKey } from "./extensio
 
 // oxlint-disable-next-line t3code/no-em-dash-copy -- Explicit product copy for this feature.
 const SCIENT_KEYS_UNAVAILABLE = "Needs a key — not available for Scient Agent yet";
-// oxlint-disable-next-line t3code/no-em-dash-copy -- Explicit one-line key row format for this feature.
-const USES_ACCOUNT = "— Uses";
 
 export function pluginKeyStatusLabel(state: PluginKeyState | null, provider?: ServerProvider) {
   if (!state || !state.keys.length) return null;
@@ -61,8 +59,10 @@ export function usePluginKeys(input: ExtensionPluginContentsInput) {
 export function PluginKeys({
   input,
   provider,
+  pluginName,
 }: {
   readonly input: ExtensionPluginContentsInput;
+  readonly pluginName: string;
   readonly provider?: ServerProvider | undefined;
 }) {
   const { environmentId, canWrite } = useExtensionsEnvironment();
@@ -74,41 +74,61 @@ export function PluginKeys({
   const unbind = useAtomCommand(unbindPluginKey, { reportFailure: true });
   const [adding, setAdding] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [created, setCreated] = useState<{
+    scope: string;
+    envName: string;
+    ref: string;
+    name: string;
+  } | null>(null);
+  const scope = JSON.stringify([environmentId, keys.target]);
+  const selection = created?.scope === scope ? created : null;
+  // Once the query acknowledges this binding, it owns selection again (including later revocation).
+  if (
+    selection &&
+    keys.data?.keys.some(
+      (key) => key.envName === selection.envName && key.accountRef === selection.ref,
+    )
+  )
+    setCreated(null);
   if (!keys.target || !keys.data?.keys.length) return null;
   const target = keys.target;
-  const change = async (envName: string, ref: string) => {
+  const change = async (envName: string, ref: string, createdName?: string) => {
     if (!canBind || busy) return;
     setBusy(true);
+    setCreated(createdName ? { scope, envName, ref, name: createdName } : null);
     try {
-      if (ref)
-        await bind({
+      if (ref) {
+        const result = await bind({
           environmentId,
           input: { ...target, envName, accountRef: VaultSecretRef.make(ref) },
         });
-      else await unbind({ environmentId, input: { ...target, envName } });
+        if (result._tag !== "Success") setCreated(null);
+      } else await unbind({ environmentId, input: { ...target, envName } });
+    } catch (error) {
+      setCreated(null);
+      throw error;
     } finally {
       setBusy(false);
     }
   };
   const label = pluginKeyStatusLabel(keys.data, provider);
   return (
-    <DetailSection title="Keys" count={keys.data.keys.length}>
-      {label ? (
-        <p role="status" className="px-3 pb-2 text-sm text-muted-foreground">
-          {label}
-        </p>
-      ) : null}
+    <DetailSection title="Keys" count={keys.data.keys.length} status={label}>
       {keys.data.keys.map((key) => (
         <div key={key.envName} className="flex min-h-14 flex-wrap items-center gap-3 px-3 py-3">
           <span className="min-w-0 flex-1 text-sm">{key.envName}</span>
-          <span className="text-sm text-muted-foreground">{USES_ACCOUNT}</span>
+          <span className="text-sm text-muted-foreground">Uses</span>
           <div className="w-52">
             <ApiKeyAccountPicker
               aria-label={`${key.envName} account`}
               size="sm"
               disabled={!canBind || busy}
-              value={key.accountRef ?? ""}
+              value={selection?.envName === key.envName ? selection.ref : (key.accountRef ?? "")}
               options={[
+                ...(selection?.envName === key.envName &&
+                !keys.data!.accounts.some((account) => account.ref === selection.ref)
+                  ? [{ value: selection.ref, name: selection.name }]
+                  : []),
                 ...keys.data!.accounts.map((account) => ({
                   value: account.ref,
                   name: account.name,
@@ -138,11 +158,11 @@ export function PluginKeys({
           account={null}
           canWrite={accounts.canWrite}
           initialApiKey={{
-            name: adding,
+            name: pluginName,
             envName: adding,
             sites: keys.data.keys.find((key) => key.envName === adding)?.origins ?? [],
           }}
-          onSaved={(accountId) => void change(adding, `account:${accountId}:token`)}
+          onSaved={(accountId) => void change(adding, `account:${accountId}:token`, pluginName)}
           onClose={() => setAdding(null)}
         />
       ) : null}

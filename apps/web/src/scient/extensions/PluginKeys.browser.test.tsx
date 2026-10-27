@@ -39,8 +39,22 @@ vi.mock("./ExtensionsPage", () => ({
   }),
 }));
 vi.mock("./ExtensionDetailPages", () => ({
-  DetailSection: ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <section aria-label={title}>{children}</section>
+  DetailSection: ({
+    title,
+    status,
+    children,
+  }: {
+    title: string;
+    status?: React.ReactNode;
+    children: React.ReactNode;
+  }) => (
+    <section aria-label={title}>
+      <h2>
+        {title}
+        {status ? <span role="status">{status}</span> : null}
+      </h2>
+      {children}
+    </section>
   ),
 }));
 vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
@@ -121,7 +135,7 @@ function setup() {
 
 it("binds an existing account, reflects revocation, and unbinds without copying a value", async () => {
   setup();
-  await using screen = await render(<PluginKeys input={input} />);
+  await using screen = await render(<PluginKeys pluginName="GitHub" input={input} />);
   await expect.element(page.getByRole("status")).toHaveTextContent("Needs a key");
   await page.getByRole("combobox", { name: "TOKEN account" }).selectOptions(existing);
   await expect.element(page.getByRole("status")).not.toBeInTheDocument();
@@ -139,7 +153,7 @@ it("binds an existing account, reflects revocation, and unbinds without copying 
     status: "needs-key",
     keys: [{ envName: "TOKEN", available: false, accountRef: existing }],
   };
-  await screen.rerender(<PluginKeys input={input} />);
+  await screen.rerender(<PluginKeys pluginName="GitHub" input={input} />);
   await expect.element(page.getByRole("status")).toHaveTextContent("Needs a key");
   await page.getByRole("combobox", { name: "TOKEN account" }).selectOptions("");
   await expect.element(page.getByRole("combobox", { name: "TOKEN account" })).toHaveValue("");
@@ -152,8 +166,9 @@ it("binds an existing account, reflects revocation, and unbinds without copying 
 
 it("creates an API-key account in Accounts before binding its returned id", async () => {
   setup();
-  await using _screen = await render(<PluginKeys input={input} />);
+  await using _screen = await render(<PluginKeys pluginName="GitHub" input={input} />);
   await page.getByRole("button", { name: "Add key", exact: true }).click();
+  await expect.element(page.getByLabelText("Name", { exact: true })).toHaveValue("GitHub");
   await page.getByLabelText("Key", { exact: true }).fill("synthetic-plugin-value");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
@@ -166,7 +181,7 @@ it("creates an API-key account in Accounts before binding its returned id", asyn
 it("keeps bindings read-only without the environment write grant", async () => {
   setup();
   state.canWrite = false;
-  await using _screen = await render(<PluginKeys input={input} />);
+  await using _screen = await render(<PluginKeys pluginName="GitHub" input={input} />);
   await expect.element(page.getByRole("combobox", { name: "TOKEN account" })).toBeDisabled();
   await expect.element(page.getByRole("button", { name: "Add key", exact: true })).toBeDisabled();
 });
@@ -174,12 +189,12 @@ it("keeps bindings read-only without the environment write grant", async () => {
 it("waits for a verified installed identity before showing bindings on a store detail page", async () => {
   setup();
   const storeInput = { instanceId: input.instanceId, entryId: "sample@synthetic" };
-  await using screen = await render(<PluginKeys input={storeInput} />);
+  await using screen = await render(<PluginKeys pluginName="GitHub" input={storeInput} />);
   await expect
     .element(page.getByRole("combobox", { name: "TOKEN account" }))
     .not.toBeInTheDocument();
   state.storeInstalled = true;
-  await screen.rerender(<PluginKeys input={storeInput} />);
+  await screen.rerender(<PluginKeys pluginName="GitHub" input={storeInput} />);
   await page.getByRole("combobox", { name: "TOKEN account" }).selectOptions(existing);
   expect(state.bind.mock.calls[0]?.[0].input.pluginId).toBe("sample@synthetic");
 });
@@ -187,10 +202,60 @@ it("waits for a verified installed identity before showing bindings on a store d
 it("explains why binding cannot enable a plugin that passes its key on the command line", async () => {
   setup();
   state.data = { ...state.data!, commandLineBlocked: true, status: "needs-key" };
-  await using _screen = await render(<PluginKeys input={input} />);
+  await using _screen = await render(<PluginKeys pluginName="GitHub" input={input} />);
   await expect
     .element(page.getByRole("status"))
     .toHaveTextContent(
       "Needs a key — this plugin passes its key on the command line, which Scient doesn't allow",
     );
+});
+
+it("keeps the new account selected through binding and stale query responses, then follows server changes", async () => {
+  setup();
+  const pending = Promise.withResolvers<{ _tag: "Success"; value: PluginKeyState }>();
+  state.bind.mockImplementation(() => pending.promise);
+  await using screen = await render(<PluginKeys pluginName="GitHub" input={input} />);
+  await page.getByRole("button", { name: "Add key", exact: true }).click();
+  await page.getByLabelText("Key", { exact: true }).fill("synthetic-new-key");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  const picker = page.getByRole("combobox", { name: "TOKEN account" });
+  await expect.element(picker).toHaveValue("account:acc_created001:token");
+  await expect.element(picker).toBeDisabled();
+  pending.resolve({ _tag: "Success", value: state.data! });
+  await expect.element(picker).not.toBeDisabled();
+  await expect.element(picker).toHaveValue("account:acc_created001:token");
+  state.data = {
+    ...state.data!,
+    status: "ready",
+    accounts: [{ ref: VaultSecretRef.make("account:acc_created001:token"), name: "GitHub" }],
+    keys: [
+      {
+        envName: "TOKEN",
+        available: true,
+        accountRef: VaultSecretRef.make("account:acc_created001:token"),
+        accountName: "GitHub",
+      },
+    ],
+  };
+  await screen.rerender(<PluginKeys pluginName="GitHub" input={input} />);
+  await expect.element(page.getByRole("status")).not.toBeInTheDocument();
+  state.data = {
+    ...state.data!,
+    status: "needs-key",
+    keys: [{ envName: "TOKEN", available: false }],
+  };
+  await screen.rerender(<PluginKeys pluginName="GitHub" input={input} />);
+  await expect.element(picker).toHaveValue("");
+});
+
+it("returns to the server's selection if binding the newly created account fails", async () => {
+  setup();
+  state.bind.mockResolvedValue({ _tag: "Failure" });
+  await using _screen = await render(<PluginKeys pluginName="GitHub" input={input} />);
+  await page.getByRole("button", { name: "Add key", exact: true }).click();
+  await page.getByLabelText("Key", { exact: true }).fill("synthetic-new-key");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+  await expect.element(page.getByRole("combobox", { name: "TOKEN account" })).toHaveValue("");
 });
