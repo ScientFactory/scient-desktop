@@ -1,0 +1,51 @@
+name: Overleaf Windows scratch qualification
+
+on:
+  push:
+    branches: [claude/scratch-ovwin-20261027]
+
+permissions:
+  contents: read
+
+jobs:
+  overleaf_windows:
+    name: Overleaf Windows
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+      - name: Resolve package cache path
+        id: package_cache_path
+        shell: pwsh
+        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
+      - name: Cache packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: overleaf-windows-packages-v1-${{ hashFiles('pnpm-lock.yaml') }}
+      - name: Install
+        run: vp install
+      - name: Set adversarial global Git defaults
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf true
+          git config --global core.fileMode true
+          git config --global core.longpaths false
+          git config --global core.safecrlf true
+          git config --global core.attributesFile "$env:RUNNER_TEMP/overleaf-global-attributes"
+          Set-Content "$env:RUNNER_TEMP/overleaf-global-attributes" '* text eol=crlf' -Encoding utf8
+          git config --global credential.helper '!exit 91'
+      - name: Require every Overleaf platform file without skips
+        run: node .github/scripts/overleaf-platform-tests.cjs
