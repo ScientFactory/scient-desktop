@@ -361,6 +361,9 @@ jobs:
             apps/server/src/scient/providerLifecycle \
             apps/server/src/scient/threadSections \
             apps/server/src/scient/workspace/CheckoutBarrier.ts \
+            apps/server/src/scient/workspace/NativeFilePublication.ts \
+            apps/server/src/scient/workspace/PlatformFileIdentity.ts \
+            apps/server/src/scient/workspace/WindowsNativeFile.ts \
             apps/server/src/sourceControl \
             apps/server/src/telemetry \
             apps/server/src/textGeneration \

@@ -52,11 +52,27 @@ function run() {
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "overleaf-platform-report-"));
   try {
     const output = path.join(scratch, "results.json");
-    execFileSync("vp", ["test", "run", ...FILES, "--reporter=json", `--outputFile=${output}`], {
-      cwd,
-      stdio: "inherit",
-      shell: HostProcess.Platform.defaultValue() === "win32",
-    });
+    try {
+      execFileSync("vp", ["test", "run", ...FILES, "--reporter=json", `--outputFile=${output}`], {
+        cwd,
+        stdio: "inherit",
+        shell: HostProcess.Platform.defaultValue() === "win32",
+      });
+    } catch (error) {
+      // The JSON report is the only record of which tests failed; surface it before cleanup.
+      if (fs.existsSync(output)) {
+        const report = JSON.parse(fs.readFileSync(output, "utf8"));
+        for (const result of report.testResults ?? [])
+          for (const assertion of result.assertionResults ?? [])
+            if (assertion.status !== "passed")
+              console.error(
+                `FAILED ${result.name} > ${assertion.fullName ?? assertion.title}: ${
+                  (assertion.failureMessages ?? []).join("\n").split("\n")[0] ?? assertion.status
+                }`,
+              );
+      }
+      throw error;
+    }
     validateReport(JSON.parse(fs.readFileSync(output, "utf8")), FILES);
     for (const file of FILES) console.log(`Qualified without skips: ${file}`);
   } finally {
