@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — plugin-scoped server policy preserves native plugin skills.
+import { codexPluginKeyConfig } from "../../provider/Drivers/PluginKeyProviderConfig.ts";
+// SCIENT-FORK:END
 import type { RuntimeCitationSource } from "@t3tools/contracts";
 import { extractCodexCitationSources } from "../../provider/codexCitations.ts";
 // SCIENT-FORK:START — running-fork text capture producer.
@@ -1370,6 +1373,9 @@ export function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      // SCIENT-FORK:START — native plugin transports cannot receive account keys directly.
+      ...codexPluginKeyConfig(mcpSession?.pluginKeyPolicies),
+      // SCIENT-FORK:END
       ...(mcpSession === undefined
         ? {}
         : {

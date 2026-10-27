@@ -147,8 +147,8 @@ access; visual acceptance in a desktop candidate remains unperformed.
 This foundation is not the complete plugin-key feature, including the smaller
 HTTP delivery milestone from the plan of record. Remaining work:
 
-3. Pre-start suppression of native servers. Credential eligibility and
-   “Needs a key” transitions are implemented; they do not yet prevent startup.
+3. Live qualification of generated native startup suppression. The adapter
+   policy is implemented, with the unverified-live limits recorded below.
 4. HTTP template validation and account-bound proxy injection through
    `resolveBound({ kind: "plugin-key", ... })`, retaining the original origin
    and project checks, plus provider-specific registration under original names.
@@ -158,3 +158,31 @@ HTTP delivery milestone from the plan of record. Remaining work:
    of binding, missing-key, unavailable-agent and revocation states.
 7. Authorized real-provider tool calls and visual acceptance. No live tokens
    are needed or permitted in fixtures or qualification logs.
+
+## Native startup suppression (unverified live)
+
+Before issuing/reusing a provider credential, session preparation reads installed,
+enabled plugins for that instance and workspace. Detected key requirements produce
+only a names/paths policy on the provider session, never account values or env.
+A changed policy replaces the credential; Claude's query reuse key includes it.
+A shared-session attachment derives its workspace from the destination thread.
+
+Claude's adapter disables the original `name@marketplace` entry in its inline
+SDK settings and explicitly loads its local path with `skipMcpDiscovery: true`.
+This retains the plugin's declared identity and non-MCP components while preventing
+its original MCP discovery. All MCP servers in that key-bearing plugin are
+withheld until Scient supplies supported replacements. A missing local path leaves
+the original plugin disabled; SDK settings supplied as a filename are refused
+rather than read or silently overriding that policy. No global strict-MCP flag
+is used. Codex's adapter emits the quoted plugin-scoped
+`plugins.<native-name>.mcp_servers.<server>.enabled = false` overrides for each
+reported server; other plugins and ordinary configured MCP servers are retained.
+Scient Agent receives no policy or process/configuration change.
+
+**Unverified live:** Claude's precedence between a disabled installed marketplace
+entry and the explicit local SDK load; preservation of actual skill/tool names;
+Codex's acceptance of this policy and effective native plugin identity on the
+installed CLI; shared-session handoffs. Unit tests qualify the generated config,
+not those live claims. Plugins whose local key requirements cannot be inspected
+remain outside this detected-key policy. HTTP replacement and stdio delivery are
+still pending; bound credential eligibility alone does not deliver a server.

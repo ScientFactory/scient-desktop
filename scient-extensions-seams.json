@@ -3,6 +3,8 @@
   "owner": "ScientFactory",
   "ownedRoots": ["apps/server/src/scient/extensions", "apps/web/src/scient/extensions"],
   "ownedFiles": [
+    "apps/server/src/provider/Drivers/PluginKeyProviderConfig.ts",
+    "apps/server/src/provider/Drivers/PluginKeyProviderConfig.test.ts",
     "apps/web/src/testUtils/shardWeights.json",
     "packages/contracts/src/scient/extensions.ts",
     "packages/contracts/src/scient/extensionRpcs.ts",

@@ -33,6 +33,15 @@ export type McpConnectorRegistrationReporter = (input: {
 }) => Effect.Effect<void>;
 // SCIENT-FORK:END
 
+// SCIENT-FORK:START — native plugin startup policy carries names and paths, never key values.
+export interface McpPluginKeyPolicy {
+  readonly pluginId: string;
+  readonly pluginName: string;
+  readonly path?: string;
+  readonly serverNames: ReadonlyArray<string>;
+}
+// SCIENT-FORK:END
+
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -44,6 +53,7 @@ export interface McpProviderSessionConfig {
   // SCIENT-FORK:START Scient Extensions connectors
   /** Connectors delivered with this credential, in a stable order. Empty when none. */
   readonly connectors: ReadonlyArray<McpProviderSessionConnector>;
+  readonly pluginKeyPolicies?: ReadonlyArray<McpPluginKeyPolicy>;
   /**
    * Receipts retain the outcome of the query that started last across sessions sharing this credential.
    * The issuing server binds the reporter to its own receipt store before connector registration.

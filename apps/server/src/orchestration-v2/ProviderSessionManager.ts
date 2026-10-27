@@ -1,3 +1,7 @@
+// SCIENT-FORK:START — prepare native key-server suppression before provider startup.
+import { preparePluginKeyStartup } from "../scient/extensions/PluginKeyStartup.ts";
+import { PluginKeyBindings } from "../scient/extensions/PluginKeyBindings.ts";
+// SCIENT-FORK:END
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import {
@@ -170,6 +174,11 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
 // SCIENT-FORK:START — running-fork text members live in ProviderTextSnapshotManagerShape.
+// SCIENT-FORK:START — credential reuse compares only non-secret startup policy.
+const samePluginKeyPolicies = (left: unknown, right: ReadonlyArray<unknown>) =>
+  JSON.stringify(left ?? []) === JSON.stringify(right);
+// SCIENT-FORK:END
+
 export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManagerShape {
   // SCIENT-FORK:END
   readonly shutdown: Effect.Effect<void>;
@@ -398,6 +407,9 @@ export const layerWithOptions = (
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      // SCIENT-FORK:START — optional for server fixtures without Extensions.
+      const pluginKeyBindings = yield* Effect.serviceOption(PluginKeyBindings);
+      // SCIENT-FORK:END
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
@@ -620,6 +632,7 @@ export const layerWithOptions = (
         >,
         // SCIENT-FORK:START Scient Extensions: receipts name sessions without a credential.
         providerSessionId: ProviderSessionId,
+        cwd?: string | null,
         // SCIENT-FORK:END
       ): Effect.Effect<PreparedMcpCredential> =>
         mcpPrepareLock.withLock(
@@ -699,6 +712,15 @@ export const layerWithOptions = (
             capabilities.add("accounts");
             // SCIENT-FORK:END
             const connectorPlan = yield* planConnectors(true);
+            // SCIENT-FORK:START — key-bearing native servers stay suppressed until Scient supplies them.
+            const pluginKeyPolicies = Option.isSome(pluginKeyBindings)
+              ? yield* preparePluginKeyStartup(
+                  providerRegistry,
+                  providerInstanceId,
+                  cwd ?? undefined,
+                )
+              : [];
+            // SCIENT-FORK:END
             // SCIENT-FORK:END
             const subagent = yield* projectionStore.getThread(threadId).pipe(
               Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
@@ -727,6 +749,9 @@ export const layerWithOptions = (
                 // Reuse binds the whole explicit policy, including owned Scient operations.
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
+                // SCIENT-FORK:START — do not reuse a credential with stale plugin startup policy.
+                samePluginKeyPolicies(existing.pluginKeyPolicies, pluginKeyPolicies) &&
+                // SCIENT-FORK:END
                 // SCIENT-FORK:START Scient Extensions: a changed connector set re-issues.
                 [...capabilities].every((capability) => resolved.capabilities.has(capability)) &&
                 ConnectorSessionDelivery.sameDeliveredConnectors(
@@ -782,6 +807,7 @@ export const layerWithOptions = (
             // Adapters amend this runtime's receipts.
             yield* mcpSessions.set({
               ...credential.config,
+              ...(pluginKeyPolicies.length ? { pluginKeyPolicies } : {}),
               ...(credential.config.connectors.length === 0
                 ? {}
                 : {
@@ -1695,12 +1721,26 @@ export const layerWithOptions = (
                 sessionKey(input.providerSessionId),
               );
               if (attachedEntry === undefined) return;
+              // SCIENT-FORK:START — a shared session may attach a thread in another workspace.
+              const attachedThread = yield* projectionStore
+                .getThread(input.threadId)
+                .pipe(Effect.orDie);
+              const attachedProject = Option.isSome(projectService)
+                ? yield* projectService.value.getById(attachedThread.projectId).pipe(Effect.orDie)
+                : Option.none();
+              const pluginCwd =
+                attachedThread.worktreePath ??
+                (Option.isSome(attachedProject)
+                  ? attachedProject.value.workspaceRoot
+                  : attachedEntry.runtime.providerSession.cwd);
+              // SCIENT-FORK:END
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.providerInstanceId,
                 attachedEntry.exposedRuntime,
                 // SCIENT-FORK:START Scient Extensions connector delivery
                 input.providerSessionId,
+                pluginCwd,
                 // SCIENT-FORK:END
               );
               preparedForCleanup = prepared;
@@ -2773,6 +2813,7 @@ export const layerWithOptions = (
                     adapter,
                     // SCIENT-FORK:START Scient Extensions connector delivery
                     input.providerSessionId,
+                    input.runtimePolicy.cwd,
                     // SCIENT-FORK:END
                   );
                   const mcpCredentialId = prepared.mcpCredentialId;
