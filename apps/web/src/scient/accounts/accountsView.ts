@@ -405,7 +405,7 @@ export function providerManagedAccounts(providers: ReadonlyArray<ServerProvider>
   return providers
     .filter((provider) => provider.enabled && provider.installed)
     .flatMap((provider): ReadonlyArray<ProviderManagedAccount> => {
-      if (provider.driver === "claude-code") {
+      if (provider.driver === "claudeAgent") {
         return (provider.mcpServers ?? [])
           .filter((server) => server.scope === "claudeai" && server.status === "connected")
           .map((server) => ({

@@ -330,7 +330,7 @@ it("does not automatically fill accounts the thread agent cannot use, while reta
 it("lists only signed-in provider connections, deduplicating apps across plugins", () => {
   const base: ServerProvider = {
     instanceId: ProviderInstanceId.make("synthetic-claude"),
-    driver: ProviderDriverKind.make("claude-code"),
+    driver: ProviderDriverKind.make("claudeAgent"),
     enabled: true,
     installed: true,
     status: "ready",
