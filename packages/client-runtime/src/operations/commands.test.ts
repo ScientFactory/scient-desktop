@@ -1,7 +1,6 @@
 // SCIENT-FORK:START
 import { PlanId } from "@t3tools/contracts";
 import { mergeThreadBack } from "./commands.ts";
-import { reorderQueuedRun } from "./commands.ts";
 import { promoteQueuedRun } from "./commands.ts";
 // SCIENT-FORK:END
 import {
@@ -720,12 +719,6 @@ describe("V2 environment commands", () => {
           targetThreadId: v2ThreadId,
           runId: RunId.make("run-2"),
         }).pipe(provide);
-        yield* reorderQueuedRun({
-          commandId: CommandId.make("reorder"),
-          threadId: v2ThreadId,
-          runId: RunId.make("run-3"),
-          beforeRunId: RunId.make("run-4"),
-        }).pipe(provide);
         yield* promoteQueuedRun({
           commandId: CommandId.make("promote"),
           threadId: v2ThreadId,
@@ -767,7 +760,6 @@ describe("V2 environment commands", () => {
         expect(commands).toMatchObject([
           { type: "thread.fork", sourcePoint: { type: "run", runId: "run-1" } },
           { type: "thread.merge_back", sourcePoint: { type: "run", runId: "run-2" } },
-          { type: "queued-run.reorder", runId: "run-3", beforeRunId: "run-4" },
           {
             type: "queued-message.promote-to-steer",
             queuedRunId: "run-3",
@@ -784,9 +776,9 @@ describe("V2 environment commands", () => {
             attachments: [{ id: "attachment-kept" }],
           },
         ]);
-        expect(commands[5]).not.toHaveProperty("attachments");
-        expect(commands[5]).not.toHaveProperty("context");
-        expect(commands[5]).not.toHaveProperty("selectedScientSkillNames");
+        expect(commands[4]).not.toHaveProperty("attachments");
+        expect(commands[4]).not.toHaveProperty("context");
+        expect(commands[4]).not.toHaveProperty("selectedScientSkillNames");
         // SCIENT-FORK:END
       }).pipe(Effect.provide(layerTestCrypto)),
   );

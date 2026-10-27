@@ -73,8 +73,11 @@ type ConnectionLayer = Layer.Layer<
   | HttpClient.HttpClient
 >;
 const controls = vi.hoisted(
-  (): { layer?: ConnectionLayer; navigate: ReturnType<typeof vi.fn> } => ({
-    navigate: vi.fn(),
+  (): {
+    layer?: ConnectionLayer;
+    navigate: ReturnType<typeof vi.fn<(options: unknown) => void>>;
+  } => ({
+    navigate: vi.fn<(options: unknown) => void>(),
   }),
 );
 
