@@ -123,5 +123,19 @@ describe("Scient attachment recovery assertions", () => {
     await vi.waitFor(() => expect(container.querySelector("img")?.getAttribute("src")).toBe(src));
     expect(container.querySelector("img")).not.toBe(first);
   });
+  it("omits the subheader when embedded in Scient's file panel", async () => {
+    using _setup = setup();
+    await using screen = await render(
+      <AttachmentFilePreview
+        name="document.html"
+        mimeType="text/html"
+        sizeBytes={100}
+        embedded
+        asset={{ environmentId: EnvironmentId.make("test-environment"), attachmentId: "html" }}
+      />,
+    );
+    await vi.waitFor(() => expect(screen.container.querySelector("iframe")).not.toBeNull());
+    expect(screen.container.querySelector("[data-surface-subheader]")).toBeNull();
+  });
 });
 // SCIENT-FORK:END

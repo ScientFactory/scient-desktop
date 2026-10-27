@@ -102,6 +102,9 @@ export function AttachmentFilePreview(props: {
   draftPdf?: { threadRef: ScopedThreadRef; contextId: string };
   // SCIENT-FORK:END
   origin?: string;
+  // SCIENT-FORK:START — Scient's file panel already shows the name and save action above.
+  embedded?: boolean;
+  // SCIENT-FORK:END
   onSaveCopy?: (() => void) | undefined;
   onRemove?: () => void;
   onClose?: () => void;
@@ -390,99 +393,106 @@ export function AttachmentFilePreview(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className={cn(FILE_SURFACE_SUBHEADER_CLASS)} data-surface-subheader>
-        <div className="flex min-w-0 flex-1 items-center scient-reading-ui text-xs">
-          <span className="shrink-0 px-0.5 text-muted-foreground">
-            {props.origin ?? "Attachment"}
-          </span>
-          <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
-          <span aria-current="page" className="min-w-0 truncate px-0.5 font-medium text-foreground">
-            {props.name}
-          </span>
-          {props.sizeBytes > 0 ? (
-            <span className="ml-2 shrink-0 text-muted-foreground">
-              {formatAttachmentSize(props.sizeBytes)}
+      {/* SCIENT-FORK:START — embedded previews keep only the body; the panel owns the header. */}
+      {props.embedded ? null : (
+        <div className={cn(FILE_SURFACE_SUBHEADER_CLASS)} data-surface-subheader>
+          <div className="flex min-w-0 flex-1 items-center scient-reading-ui text-xs">
+            <span className="shrink-0 px-0.5 text-muted-foreground">
+              {props.origin ?? "Attachment"}
             </span>
+            <ChevronRightIcon className="mx-1 size-3.5 shrink-0 text-muted-foreground/60" />
+            <span
+              aria-current="page"
+              className="min-w-0 truncate px-0.5 font-medium text-foreground"
+            >
+              {props.name}
+            </span>
+            {props.sizeBytes > 0 ? (
+              <span className="ml-2 shrink-0 text-muted-foreground">
+                {formatAttachmentSize(props.sizeBytes)}
+              </span>
+            ) : null}
+          </div>
+          {renderedMode ? (
+            <FileSurfaceAction
+              label={renderedToggleLabel(renderedMode, rendered)}
+              pressed={rendered}
+              onPress={() => setRendered((value) => !value)}
+            >
+              <MorphIcon
+                className="size-3.5"
+                icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
+              />
+            </FileSurfaceAction>
           ) : null}
-        </div>
-        {renderedMode ? (
-          <FileSurfaceAction
-            label={renderedToggleLabel(renderedMode, rendered)}
-            pressed={rendered}
-            onPress={() => setRendered((value) => !value)}
-          >
-            <MorphIcon
-              className="size-3.5"
-              icon={rendered ? Code2 : renderedMode === "table" ? Table2 : Eye}
-            />
-          </FileSurfaceAction>
-        ) : null}
-        {showsRawText ? (
-          <FileSurfaceAction
-            label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
-            pressed={wordWrap}
-            onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
-          >
-            <WrapTextIcon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-        {content || streamsText ? (
-          <FileSurfaceAction
-            label={isCopied ? "Copied" : content?.truncated ? "Copy preview" : "Copy contents"}
-            onPress={() => {
-              if (content) {
-                void copyToClipboard(content.text, undefined);
-                return;
-              }
-              const copy = copyContents.current;
-              if (!copy) {
-                toastManager.add({
-                  type: "error",
-                  title: "Could not copy file",
-                  description: "Wait for the file to finish loading before copying.",
-                });
-                return;
-              }
-              void copy()
-                .then((text) => copyToClipboard(text, undefined))
-                .catch((cause: unknown) =>
+          {showsRawText ? (
+            <FileSurfaceAction
+              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              pressed={wordWrap}
+              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            >
+              <WrapTextIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+          {content || streamsText ? (
+            <FileSurfaceAction
+              label={isCopied ? "Copied" : content?.truncated ? "Copy preview" : "Copy contents"}
+              onPress={() => {
+                if (content) {
+                  void copyToClipboard(content.text, undefined);
+                  return;
+                }
+                const copy = copyContents.current;
+                if (!copy) {
                   toastManager.add({
                     type: "error",
                     title: "Could not copy file",
-                    description: cause instanceof Error ? cause.message : "Try again.",
-                  }),
-                );
-            }}
-          >
-            <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
-          </FileSurfaceAction>
-        ) : null}
-        {url && !scientPdf ? (
-          <FileSurfaceAction
-            label={
-              props.onSaveCopy
-                ? "Save a copy to this device"
-                : saving
-                  ? "Preparing file…"
-                  : "Save file"
-            }
-            disabled={saving}
-            onPress={props.onSaveCopy ?? save}
-          >
-            <DownloadIcon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-        {props.onRemove ? (
-          <FileSurfaceAction label="Remove from draft" onPress={props.onRemove}>
-            <Trash2Icon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-        {props.onClose ? (
-          <FileSurfaceAction label="Close" onPress={props.onClose}>
-            <XIcon className="size-3.5" />
-          </FileSurfaceAction>
-        ) : null}
-      </div>
+                    description: "Wait for the file to finish loading before copying.",
+                  });
+                  return;
+                }
+                void copy()
+                  .then((text) => copyToClipboard(text, undefined))
+                  .catch((cause: unknown) =>
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not copy file",
+                      description: cause instanceof Error ? cause.message : "Try again.",
+                    }),
+                  );
+              }}
+            >
+              <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+            </FileSurfaceAction>
+          ) : null}
+          {url && !scientPdf ? (
+            <FileSurfaceAction
+              label={
+                props.onSaveCopy
+                  ? "Save a copy to this device"
+                  : saving
+                    ? "Preparing file…"
+                    : "Save file"
+              }
+              disabled={saving}
+              onPress={props.onSaveCopy ?? save}
+            >
+              <DownloadIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+          {props.onRemove ? (
+            <FileSurfaceAction label="Remove from draft" onPress={props.onRemove}>
+              <Trash2Icon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+          {props.onClose ? (
+            <FileSurfaceAction label="Close" onPress={props.onClose}>
+              <XIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
+        </div>
+      )}
+      {/* SCIENT-FORK:END */}
       {content?.truncated ? (
         <FileSurfaceNotice>
           Preview limited to the first 1 MB
