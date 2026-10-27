@@ -605,10 +605,11 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
-`e109dc8d89419ae8120110ab28a4c94c5a4f600b` is recorded in
+`a452c2dfdc54c0ee9bae5191610725c88bd9f367` is recorded in
 [the 2026-10-27 receipt](docs/internals/t3-upstream-sync-20261027-4cb29a56f6.md).
 Literal merge `778edf4cf086b666c42964b409480ba0c2821982` retains the 92 official
-commits after `dd5b5401e1`; official extension `5331a9f1be` retains the next 7.
+commits after `dd5b5401e1`; official extensions `5331a9f1be` and `825bc88442`
+retain the next 7 and 3.
 Settings adopt upstream's single design with Scient rows placed in its groups; MCP
 tools follow upstream's consolidated action tools; fx takes Scient's application
 bridge; the web queue takes upstream's Send now action without reordering. Scient
