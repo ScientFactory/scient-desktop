@@ -3,7 +3,7 @@ import { type ReactNode } from "react";
 
 import { EnvironmentId, ProjectId, type OrchestrationProjectShell } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { ProjectSkillsSettingsPage } from "./ProjectSkillsSettingsPage";
+import { ProjectSkills } from "./ProjectSkills";
 
 async function _setupFixture0(_fixture: _Fixture) {
   await undefined;
@@ -84,7 +84,7 @@ it("opens, switches, and closes projects from the shared source selector", async
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
-  await mount(_fixture, <ProjectSkillsSettingsPage />);
+  await mount(_fixture, <ProjectSkills environmentId={environmentId} />);
   const items = () => [
     ..._fixture.host.querySelectorAll<HTMLButtonElement>("button[aria-expanded]"),
   ];

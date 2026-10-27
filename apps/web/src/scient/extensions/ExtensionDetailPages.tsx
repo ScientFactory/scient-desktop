@@ -936,7 +936,11 @@ function componentGroups(
         key: `${component.type}:${component.name}`,
         name:
           component.type === "skill" ? (
-            <Link to="/settings/skills" className={cn(GHOST_LINK_CLASS, "text-foreground")}>
+            <Link
+              to="/settings/extensions"
+              search={{ kind: "skills" }}
+              className={cn(GHOST_LINK_CLASS, "text-foreground")}
+            >
               {component.name}
             </Link>
           ) : component.type === "mcp-tools" ? (

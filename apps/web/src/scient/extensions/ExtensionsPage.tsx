@@ -32,7 +32,12 @@ import { providersIgnoringCheckedAtAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { useEnvironmentScope } from "../../state/session";
 import { extensionsDiscoverCatalog, extensionsInventory } from "./extensionsState";
-import { callbackOriginOf } from "./extensionsView";
+import {
+  callbackOriginOf,
+  EXTENSION_KIND_LABELS,
+  EXTENSION_KINDS,
+  type ExtensionKind,
+} from "./extensionsView";
 import type { ProviderInventoryView } from "./providerInventory";
 import { useProviderInventory } from "./useProviderInventory";
 
@@ -144,33 +149,74 @@ export function ExtensionsPage({
 
 type ExtensionsTab = "discover" | "installed";
 
-/** "Discover | Installed" on the left, a page-specific control on the right. */
+const TAB_PATHS = {
+  discover: "/settings/extensions",
+  installed: "/settings/extensions/installed",
+} as const;
+
+/**
+ * "Discover | Installed" on the left, a page-specific control on the right,
+ * and below them which kind to show. Switching tab keeps the kind.
+ */
 export function ExtensionsTopBar({
   tab,
+  kind,
   children,
 }: {
   readonly tab: ExtensionsTab;
+  readonly kind: ExtensionKind | undefined;
   readonly children?: ReactNode;
 }) {
   const navigate = useNavigate();
+  const show = (nextTab: ExtensionsTab, nextKind: ExtensionKind | undefined) =>
+    void navigate({
+      to: TAB_PATHS[nextTab],
+      search: (current) => {
+        const { kind: _previous, ...rest } = current as { kind?: ExtensionKind };
+        return nextKind === undefined ? rest : { ...rest, kind: nextKind };
+      },
+    });
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <ToggleGroup
+          aria-label="Extensions"
+          variant="segmented"
+          value={[tab]}
+          onValueChange={(next) => {
+            const nextTab = next[0];
+            if ((nextTab === "discover" || nextTab === "installed") && nextTab !== tab) {
+              show(nextTab, kind);
+            }
+          }}
+        >
+          <Toggle value="discover">Discover</Toggle>
+          <Toggle value="installed">Installed</Toggle>
+        </ToggleGroup>
+        {children}
+      </div>
       <ToggleGroup
-        aria-label="Extensions"
-        variant="segmented"
-        value={[tab]}
+        aria-label="Show"
+        variant="pill"
+        size="sm"
+        className="-ms-3"
+        value={[kind ?? "all"]}
         onValueChange={(next) => {
-          if (next[0] === "discover" && tab !== "discover") {
-            void navigate({ to: "/settings/extensions" });
-          } else if (next[0] === "installed" && tab !== "installed") {
-            void navigate({ to: "/settings/extensions/installed" });
-          }
+          const value = next[0];
+          if (value === undefined || value === (kind ?? "all")) return;
+          show(
+            tab,
+            EXTENSION_KINDS.find((item) => item === value),
+          );
         }}
       >
-        <Toggle value="discover">Discover</Toggle>
-        <Toggle value="installed">Installed</Toggle>
+        <Toggle value="all">All</Toggle>
+        {EXTENSION_KINDS.map((item) => (
+          <Toggle key={item} value={item}>
+            {EXTENSION_KIND_LABELS[item]}
+          </Toggle>
+        ))}
       </ToggleGroup>
-      {children}
     </div>
   );
 }

@@ -483,3 +483,25 @@ export function entryNeedsToken(entry: DiscoverEntry | null): boolean {
     entry?.remotes.some((remote) => remote.url === "https://api.githubcopilot.com/mcp/") === true
   );
 }
+
+/** The kinds the Extensions page can narrow to; no kind shows all of them. */
+export const EXTENSION_KINDS = ["plugins", "skills", "connectors"] as const;
+export type ExtensionKind = (typeof EXTENSION_KINDS)[number];
+
+export const EXTENSION_KIND_LABELS: Readonly<Record<ExtensionKind, string>> = {
+  plugins: "Plugins",
+  skills: "Skills",
+  connectors: "Connectors",
+};
+
+/** `?kind=` from an Extensions address; anything else means all kinds. */
+export function extensionKindSearch(raw: Record<string, unknown>): { kind?: ExtensionKind } {
+  return EXTENSION_KINDS.find((kind) => kind === raw.kind) === undefined
+    ? {}
+    : { kind: raw.kind as ExtensionKind };
+}
+
+/** Whether a section of `kind` shows when the page is narrowed to `selected`. */
+export function showsKind(selected: ExtensionKind | undefined, kind: ExtensionKind): boolean {
+  return selected === undefined || selected === kind;
+}

@@ -170,6 +170,7 @@ vi.mock("../../components/settings/SettingInheritance", () => ({
   SettingInheritance: () => null,
 }));
 vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
+vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: string, scope: string) => {
     useStateVersion();

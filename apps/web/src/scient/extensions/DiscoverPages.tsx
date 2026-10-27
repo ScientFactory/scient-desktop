@@ -27,7 +27,14 @@ import {
 } from "./ExtensionsPage";
 import { ExtensionGrid } from "./ExtensionRow";
 import { extensionsDiscoverPage } from "./extensionsState";
-import { catalogEntries, isExtensionCategory, matchesQuery } from "./extensionsView";
+import {
+  catalogEntries,
+  type ExtensionKind,
+  isExtensionCategory,
+  matchesQuery,
+  showsKind,
+} from "./extensionsView";
+import { ScientSkillsLibrary } from "../skills/ScientSkillsLibrary";
 
 /** Search results that live on Installed; Discover forwards them there. */
 const INSTALLED_SEARCH_TARGETS: Readonly<Record<string, true>> = {
@@ -190,15 +197,15 @@ function DiscoverPager({
   );
 }
 
-function DiscoverHome() {
-  const { catalog, catalogError, inventory } = useExtensionsEnvironment();
+function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
+  const { environmentId, catalog, catalogError, inventory, providers } = useExtensionsEnvironment();
   const builtIns = inventory?.plugins.filter((plugin) => plugin.origin === "built-in") ?? [];
   return (
     <SettingsSearchTarget
       id={searchableSetting("extensions-discover").id}
       className="grid gap-10 outline-none"
     >
-      {catalogError ? (
+      {!showsKind(kind, "connectors") ? null : catalogError ? (
         <MutedLine>{catalogError}</MutedLine>
       ) : catalog === null ? (
         <MutedLine>Loading…</MutedLine>
@@ -225,7 +232,7 @@ function DiscoverHome() {
           </ExtensionsSection>
         ))
       )}
-      {builtIns.length > 0 ? (
+      {showsKind(kind, "plugins") && builtIns.length > 0 ? (
         <ExtensionsSection title="Built into Scient">
           <ExtensionGrid label="Built into Scient">
             {builtIns.map((plugin) => (
@@ -234,13 +241,20 @@ function DiscoverHome() {
           </ExtensionGrid>
         </ExtensionsSection>
       ) : null}
-      <ProviderStoreShelves />
-      <h2 className={SECTION_HEADING_CLASS}>
-        <Link to="/settings/extensions/all" className={SECTION_TITLE_LINK_CLASS}>
-          Browse all MCP servers
-          <SectionTitleChevron />
-        </Link>
-      </h2>
+      {showsKind(kind, "plugins") ? <ProviderStoreShelves /> : null}
+      {showsKind(kind, "skills") ? (
+        <ExtensionsSection title="Scient skills">
+          <ScientSkillsLibrary environmentId={environmentId} providers={providers} />
+        </ExtensionsSection>
+      ) : null}
+      {showsKind(kind, "connectors") ? (
+        <h2 className={SECTION_HEADING_CLASS}>
+          <Link to="/settings/extensions/all" className={SECTION_TITLE_LINK_CLASS}>
+            Browse all MCP servers
+            <SectionTitleChevron />
+          </Link>
+        </h2>
+      ) : null}
     </SettingsSearchTarget>
   );
 }
@@ -251,20 +265,27 @@ function DiscoverHome() {
  * The registry also lists catalog servers (in catalog shape, same name); the
  * catalog's rows win.
  */
-function DiscoverSearchResults({ query }: { readonly query: string }) {
+function DiscoverSearchResults({
+  query,
+  kind,
+}: {
+  readonly query: string;
+  readonly kind: ExtensionKind | undefined;
+}) {
   const { environmentId, catalog, inventory } = useExtensionsEnvironment();
   const curated = useEnvironmentQuery(
     extensionsDiscoverPage({ environmentId, input: { scope: "curated", query } }),
   );
-  const connectors = (inventory?.connectors ?? []).filter((connector) =>
-    matchesQuery(query, [
-      connector.displayName,
-      connector.serverName,
-      connector.description,
-      connector.url,
-    ]),
+  const connectors = (showsKind(kind, "connectors") ? (inventory?.connectors ?? []) : []).filter(
+    (connector) =>
+      matchesQuery(query, [
+        connector.displayName,
+        connector.serverName,
+        connector.description,
+        connector.url,
+      ]),
   );
-  const plugins = (inventory?.plugins ?? []).filter((plugin) =>
+  const plugins = (showsKind(kind, "plugins") ? (inventory?.plugins ?? []) : []).filter((plugin) =>
     matchesQuery(query, [plugin.displayName, plugin.description, plugin.publisher]),
   );
   const shownConnectorIds = new Set(connectors.map((connector) => connector.connectorId));
@@ -287,18 +308,22 @@ function DiscoverSearchResults({ query }: { readonly query: string }) {
       {plugins.map((plugin) => (
         <PluginItem key={plugin.pluginId} plugin={plugin} />
       ))}
-      <DiscoverPager input={{ scope: "curated", query }} hide={installedHere} />
-      <DiscoverPager
-        input={{ scope: "registry", query }}
-        seen={curatedNames}
-        hide={curatedPending ? () => true : installedHere}
-        pendingLabel="Searching the MCP Registry…"
-      />
+      {showsKind(kind, "connectors") ? (
+        <>
+          <DiscoverPager input={{ scope: "curated", query }} hide={installedHere} />
+          <DiscoverPager
+            input={{ scope: "registry", query }}
+            seen={curatedNames}
+            hide={curatedPending ? () => true : installedHere}
+            pendingLabel="Searching the MCP Registry…"
+          />
+        </>
+      ) : null}
     </ExtensionGrid>
   );
 }
 
-function Discover() {
+function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const searchTargetId = useSettingsSearchTargetId();
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), 300);
@@ -308,27 +333,29 @@ function Discover() {
   return (
     <>
       <SettingsSearchTarget id={searchableSetting("extensions").id} className="outline-none">
-        <ExtensionsTopBar tab="discover">
-          <SearchField label="Search extensions" value={search} onChange={setSearch} />
+        <ExtensionsTopBar tab="discover" kind={kind}>
+          {kind === "skills" ? null : (
+            <SearchField label="Search extensions" value={search} onChange={setSearch} />
+          )}
         </ExtensionsTopBar>
       </SettingsSearchTarget>
-      {query ? (
+      {query && kind !== "skills" ? (
         <>
-          <DiscoverSearchResults query={query} />
-          <ProviderStoreShelves query={query} />
+          <DiscoverSearchResults query={query} kind={kind} />
+          {showsKind(kind, "plugins") ? <ProviderStoreShelves query={query} /> : null}
         </>
       ) : (
-        <DiscoverHome />
+        <DiscoverHome kind={kind} />
       )}
     </>
   );
 }
 
 /** Settings ▸ Extensions: curated sections, built-ins, and search across everything. */
-export function DiscoverPage() {
+export function DiscoverPage({ kind }: { readonly kind?: ExtensionKind | undefined }) {
   return (
     <ExtensionsPage>
-      <Discover />
+      <Discover kind={kind} />
     </ExtensionsPage>
   );
 }
