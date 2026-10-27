@@ -101,20 +101,22 @@ your analysis, and keeps Scient's own files (`AGENTS.md`, `PROJECT.md`,
 `.scient/`) out of Overleaf. The dialog asks for:
 
 1. the Overleaf project's **link** or **ID**;
-2. the **project name**. Under it, **Goes in** shows the project's folder,
-   for example `~/Thesis`. It is made in the location Add project browses
-   from, named after the project; a folder that already is a project is used
-   as it is. **Change…** shows the **location** (the folder button opens your
-   computer's folder chooser; for a remote project, type a location on that
-   project's server) and the **paper folder**, which you name there,
-   for example `paper`; the path then reads `~/Thesis/paper`;
-3. your token, if none is saved yet.
+2. the **project name**. **Goes in** shows the destination, including the
+   paper's subfolder. The project is made in the location Add project browses
+   from; a folder that already is a project is used as it is. **Change…** shows
+   the **location** (the folder button opens your computer's folder chooser;
+   for a remote project, type a location on that project's server);
+3. the **paper folder**, visible from the start. It starts with the project
+   name and can be edited; an edited folder name stays as you set it when you
+   rename the project;
+4. your token, if none is saved yet.
 
-**Add** makes the project, links the paper folder and runs the first sync,
-then shows its result. If Overleaf refuses the link after the project is made,
-the dialog says so and keeps the project: fix the link and **Add** again,
-or close the dialog and connect later from the Files bar. Closing the dialog
-opens the new project.
+**Add** makes the project, links the paper folder and runs the first sync.
+Success closes the dialog, reports the result in a toast and opens the new
+project. A conflict or unfinished sync keeps its details in the dialog. If
+Overleaf refuses the link after the project is made, the dialog says so and
+keeps the project: fix the link and **Add** again, or close the dialog and
+connect later from the Files bar. Closing the dialog opens the new project.
 
 ## Sync
 
@@ -129,7 +131,9 @@ Before it syncs, Scient saves the folder's open editors in every open window.
 The same happens before anything else that may write the folder: reading the
 changes, restoring a kept copy and Undo. If an editor can't save (for example,
 Visual editor input that isn't converted yet), or a window doesn't answer,
-nothing is changed and the message names the file.
+nothing is changed and the message names the file. A clean tab for a deleted
+file does not block restoring a kept copy. If it holds unsaved edits, keep or
+discard those edits in its editor before trying again.
 
 Clicking Sync is the confirmation. Overleaf's changes come into the folder, then
 the folder's changes go to Overleaf. New files, deletions, renames and older
@@ -147,8 +151,9 @@ Diff** to see line changes inside this tab. **From Overleaf** shows changes sinc
 the last sync; **To Overleaf** shows the combined version this sync would send,
 compared with the last sync. Binary files and files beyond the preview limits
 are listed without their contents. If the review is no longer current, **Check
-again** reads a fresh one. After a sync, use **Check again** (or **See changes** in
-the chip's menu) to read what the next sync would bring in and send.
+again** reads a fresh one. The chip's **See changes** always reads what the
+next sync would bring in and send, showing **Reading changes…** while it
+reads; it waits if a sync is already running.
 
 ### The chip
 
@@ -266,6 +271,11 @@ as it is and named, and so is a file you keep only here: Undo never
 writes it. If collaborators changed the same files since, they merge
 like any other edit, and only a conflict stops. Only a send Overleaf accepted
 can be undone, among the last 64.
+
+A complete Undo closes the dialog and reports removed files, earlier versions
+put back and files recreated in a toast, followed by the sync result. Skipped
+files are named with their reasons; skipped, partial or failed results stay in
+the dialog so you can read them.
 
 ## Worktrees
 

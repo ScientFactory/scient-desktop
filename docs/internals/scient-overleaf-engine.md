@@ -893,10 +893,14 @@ coordinator's per-connection reservations.
   folder the link names inside that hold, asks every window to save that
   folder's open editors (`OverleafEditorSave`), and only then runs; the hold
   lasts to the end, so a relink can't move the folder between the save and the
-  operation's reads. A failed save refuses with `OverleafEditorUnsavedError`
+  operation's reads. A clean document with only a failed freshness read is
+  settled without saving, including a tab whose file was deleted; unsaved text,
+  conflicts and publication attention still stop the operation. A failed save
+  refuses with `OverleafEditorUnsavedError`
   (reason `editor-unsaved`, the files that could not be saved and the windows
   that did not answer) before anything is read or written; HTTP carries the
-  files as the operation error's `paths`. Callers never save editors
+  files as the operation error's `paths` and retains the editor's explanation
+  for the screen and agent. Callers never save editors
   themselves. The coordinator's confirmations inside a sync use
   server-made 64-character request IDs, which no client request ID can equal.
   **Cancel** asks the running sync to stop at its next stage boundary (before
