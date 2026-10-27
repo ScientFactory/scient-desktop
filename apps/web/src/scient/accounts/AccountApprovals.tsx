@@ -32,9 +32,9 @@ export function AccountHandoffs({
       {handoffs.map((handoff) => (
         <div
           key={handoff.handoffId}
-          className="mx-auto w-full max-w-2xl overflow-hidden rounded-lg border bg-card"
+          className="mx-auto w-full max-w-2xl overflow-hidden rounded-xl border bg-card shadow-sm"
         >
-          <div className="flex items-center gap-2 py-1 ps-3 pe-1 text-xs">
+          <div className="flex items-center gap-2 py-1.5 ps-3 pe-1.5 text-xs">
             <span
               aria-hidden
               className="size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground motion-reduce:animate-none"
@@ -64,7 +64,7 @@ export function AccountHandoffs({
               environmentId={environmentId}
               threadId={handoff.threadId}
               tabId={handoff.tabId}
-              className="h-96 border-t"
+              className="aspect-[16/10] border-t"
               fallback={
                 <div className="border-t px-3 py-1.5">
                   <Button
@@ -167,10 +167,37 @@ export function ThreadAccountApprovals({
   const { data, canWrite } = useAccounts(environmentId);
   if (!data) return null;
   const approvals = data.approvals.filter((approval) => approval.threadId === threadId);
-  const handoffs = (data.handoffs ?? []).filter((handoff) => handoff.threadId === threadId);
-  return approvals.length || handoffs.length ? (
+  return approvals.length ? (
     <div className="mb-2">
       <AccountApprovals environmentId={environmentId} approvals={approvals} canWrite={canWrite} />
+    </div>
+  ) : null;
+}
+
+/** A thread's sign-ins waiting for the user; they sit in the conversation and scroll with it. */
+export function useThreadAccountHandoffs(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+) {
+  const { data, canWrite } = useAccounts(environmentId);
+  const handoffs =
+    threadId === null
+      ? []
+      : (data?.handoffs ?? []).filter((handoff) => handoff.threadId === threadId);
+  return { handoffs, canWrite };
+}
+
+export function ThreadAccountHandoffs({
+  environmentId,
+  handoffs,
+  canWrite,
+}: {
+  environmentId: EnvironmentId;
+  handoffs: ReadonlyArray<AccountHandoff>;
+  canWrite: boolean;
+}) {
+  return handoffs.length ? (
+    <div className="chat-content-lane py-3">
       <AccountHandoffs environmentId={environmentId} handoffs={handoffs} canWrite={canWrite} />
     </div>
   ) : null;
