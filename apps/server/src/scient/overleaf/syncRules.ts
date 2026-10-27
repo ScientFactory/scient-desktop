@@ -352,10 +352,12 @@ export interface HeldFile {
 
 /** Files held back for conflict marks, each whole across base/folder/Overleaf paths
  * linked by renames: fresh, still-marked recorded, and other conflicted files,
- * unless released. While any file is held, a record found clean/nowhere is not
- * settled; a released path still kept by another held file is `unreleasable`. */
+ * unless released. Without disk-identity evidence, a clean/missing record may
+ * belong to another marked file; a released path still held is `unreleasable`. */
 export function heldFiles(input: {
   readonly recorded: ReadonlyArray<MarkerRecord>;
+  readonly recordedFileIds?: ReadonlyMap<string, string>;
+  readonly fileIds?: ReadonlyMap<string, string>;
   /** Folder paths where this sync writes new conflict material. */
   readonly fresh: ReadonlyArray<string>;
   readonly local: FileTree;
@@ -420,6 +422,25 @@ export function heldFiles(input: {
     released.add(path);
     return false;
   };
+  const knownIds = new Set(
+    input.recorded.flatMap((record) => {
+      const id = input.recordedFileIds?.get(record.path);
+      return id === undefined ? [] : [id];
+    }),
+  );
+  const recordedPlaces = new Set(
+    input.recorded.flatMap((record) => [
+      record.path,
+      ...record.folderPaths,
+      ...record.overleafPaths,
+    ]),
+  );
+  const markedPaths = [...input.local.keys()].filter(
+    (path) =>
+      ((recordedPlaces.has(path) || knownIds.has(input.fileIds?.get(path) ?? "")) &&
+        input.marked(path)) ||
+      input.conflicted(path),
+  );
   /** The paths of records found clean or found nowhere: not proven settled. */
   const unproven: string[] = [];
   for (const record of input.recorded) {
@@ -430,6 +451,26 @@ export function heldFiles(input: {
         ...input.localRenames.filter((rename) => known.includes(rename.from)).map((r) => r.to),
       ]),
     ].filter((path) => input.local.has(path));
+    const fileId = input.recordedFileIds?.get(record.path);
+    if (fileId !== undefined) {
+      const moved = markedPaths.find((path) => input.fileIds?.get(path) === fileId);
+      if (moved !== undefined) {
+        if (holds(moved, input.marked)) hold(moved, closeOverRenames([...known, moved], renames));
+        continue;
+      }
+      const clean = places.some(
+        (path) => input.fileIds?.get(path) === fileId && !input.marked(path),
+      );
+      // Atomic saves replace the inode. A clean replacement is settled only when
+      // every remaining marked file is accounted for by another recorded identity.
+      const accounted =
+        input.fresh.length === 0 &&
+        markedPaths.every((path) => {
+          const id = input.fileIds?.get(path);
+          return id !== undefined && knownIds.has(id);
+        });
+      if (clean || (places.some((path) => !input.marked(path)) && accounted)) continue;
+    }
     const current = places.find((path) => holds(path, input.marked));
     if (current !== undefined) hold(current, closeOverRenames([...known, current], renames));
     else if (places.some((path) => released.has(path))) continue;

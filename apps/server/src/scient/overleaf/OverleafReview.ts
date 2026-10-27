@@ -736,6 +736,14 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
   };
   const held = heldFiles({
     recorded: recordedMarkers,
+    recordedFileIds: new Map(
+      (connection.markerFileIds ?? []).map((entry) => [entry.path, entry.fileId]),
+    ),
+    fileIds: new Map(
+      [...inventory.captured].flatMap(([path, file]) =>
+        file.fileId === undefined ? [] : [[path, file.fileId]],
+      ),
+    ),
     fresh: markerPaths,
     local,
     remote,

@@ -317,6 +317,12 @@ const documentFields = {
   ).check(Schema.isMaxLength(FORCED_CONFLICT_LIMIT)),
   /** Files where Scient wrote conflict material that may still be unresolved. */
   markers: MarkerRecords,
+  /** Disk identities verified against the applied conflict material; older records lack them. */
+  markerFileIds: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ path: ManuscriptPath, fileId: Digest })).check(
+      Schema.isMaxLength(MANAGED_PATH_LIMIT),
+    ),
+  ),
   /** The applier's structural source copies in the folder; never captured, never deleted automatically. */
   stagingPaths: Schema.Array(Schema.String.check(Schema.isMaxLength(4_096))).check(
     Schema.isMaxLength(MANAGED_PATH_LIMIT),
@@ -361,7 +367,7 @@ export const OverleafConnectionDocument = Schema.Struct(documentFields).check(
 export type OverleafConnectionDocument = typeof OverleafConnectionDocument.Type;
 
 /** Version 1: conflict material recorded by folder path alone. */
-const { markers: _markers, ...version1Fields } = documentFields;
+const { markers: _markers, markerFileIds: _markerFileIds, ...version1Fields } = documentFields;
 const OverleafConnectionDocumentV1 = Schema.Struct({
   ...version1Fields,
   schemaVersion: Schema.Literal(1),

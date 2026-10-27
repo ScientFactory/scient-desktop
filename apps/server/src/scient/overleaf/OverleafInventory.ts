@@ -134,7 +134,18 @@ export function overleafPathExclusion(
   return manuscriptPathProblem(path) === null ? null : "invalid-path";
 }
 
+/** An inode plus its creation time, scoped to the device that supplied the opened file. */
+const overleafDiskFileId = (stat: {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly birthtimeNs: bigint;
+}) =>
+  NodeCrypto.createHash("sha256")
+    .update(`${stat.dev}:${stat.ino}:${stat.birthtimeNs}`)
+    .digest("hex");
+
 export interface OverleafCapturedFile {
+  readonly fileId?: string;
   readonly bytes: Uint8Array;
   /** `bytesRevision` of the bytes, the identity the applier checks against. */
   readonly revision: string;
@@ -472,7 +483,7 @@ export async function captureOverleafInventory(
       const named = await NodeFSP.lstat(absolute(path), { bigint: true }).catch(() => null);
       if (named === null || named.dev !== after.dev || named.ino !== after.ino)
         throw new Refused({ reason: "unstable", path });
-      return buffer.subarray(0, size);
+      return { bytes: buffer.subarray(0, size), fileId: overleafDiskFileId(after) };
     } catch (error) {
       if (error instanceof Refused) throw error;
       throw new Refused({ reason: "unreadable", path });
@@ -693,9 +704,9 @@ export async function captureOverleafInventory(
     };
     const capture = async (path: string) => {
       if (captured.size >= limits.managedFiles) throw new Refused({ reason: "managed-limit" });
-      const bytes = await readStable(path, account);
+      const { bytes, fileId } = await readStable(path, account);
       if (isOverleafLfsPointer(bytes)) throw new Refused({ reason: "lfs-pointer", path });
-      captured.set(path, { bytes, revision: bytesRevision(bytes) });
+      captured.set(path, { bytes, revision: bytesRevision(bytes), fileId });
     };
     for (const file of files) {
       if (managed.has(file.path) || requested.has(file.path) || sent.has(file.path)) {

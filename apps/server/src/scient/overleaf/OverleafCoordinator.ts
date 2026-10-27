@@ -1300,11 +1300,48 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       ...(plan ? { plan } : {}),
     });
     yield* hook(options, "applied");
-    yield* replaceWithPins(
-      repo,
-      connection,
-      yield* adoption(repo, connection, result, retention.directory),
-    );
+    const adopted = yield* adoption(repo, connection, result, retention.directory);
+    if (
+      result.outcome !== "replan" &&
+      link.kind === "sync-apply" &&
+      result.unitsDone &&
+      result.matchesTarget
+    ) {
+      const target = new Map(
+        (adopted.markers.length === 0
+          ? []
+          : yield* repos.readTree({ repo, tree: link.intentTree })
+        ).map((entry) => [entry.path, entry.oid]),
+      );
+      const markerFileIds: Array<{ path: string; fileId: string }> = [];
+      const captured =
+        adopted.markers.length === 0
+          ? null
+          : yield* Effect.promise(() =>
+              captureOverleafInventory({
+                folder: folderOf(adopted),
+                managedPaths: adopted.managedPaths,
+                localOnlyPaths: adopted.localOnlyPaths,
+                selectedAdditions: [],
+                sendLocalOnly: [],
+                requestedPaths: [],
+                stagingPaths: adopted.stagingPaths,
+                atCheckoutTop: adopted.folder.relativePath === "",
+              }),
+            );
+      if (captured?._tag === "captured")
+        for (const marker of adopted.markers) {
+          const file = captured.inventory.captured.get(marker.path);
+          const expected = target.get(marker.path);
+          if (file?.fileId === undefined || expected === undefined) continue;
+          const oid = NodeCrypto.createHash(expected.length === 40 ? "sha1" : "sha256")
+            .update(`blob ${file.bytes.length}\0`)
+            .update(file.bytes)
+            .digest("hex");
+          if (oid === expected) markerFileIds.push({ path: marker.path, fileId: file.fileId });
+        }
+      yield* replaceWithPins(repo, connection, { ...adopted, markerFileIds });
+    } else yield* replaceWithPins(repo, connection, adopted);
     yield* hook(options, "adopted");
     return {
       adopted: {

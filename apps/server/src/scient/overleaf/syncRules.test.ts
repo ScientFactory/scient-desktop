@@ -484,6 +484,25 @@ describe("heldFiles", () => {
     });
   });
 
+  it("keeps a clean replacement ambiguous when a marked file's disk identity is unknown", () => {
+    const result = held({
+      recorded: [record("a.tex"), record("b.tex")],
+      recordedFileIds: new Map([
+        ["a.tex", "old-a"],
+        ["b.tex", "old-b"],
+      ]),
+      fileIds: new Map([
+        ["a.tex", "new-a"],
+        ["b.tex", "unknown"],
+      ]),
+      local: tree({ "a.tex": "clean", "b.tex": "marks" }),
+      target: tree({ "a.tex": "clean", "b.tex": "marks" }),
+      marked: (path) => path === "b.tex",
+      conflicted: (path) => path === "b.tex",
+    });
+    expect(result.paths).toEqual(["a.tex", "b.tex"]);
+  });
+
   it("does not release a file whose path another held file keeps", () => {
     // a.tex's record also names b.tex: the marked b.tex keeps a.tex's path.
     const files = tree({ "a.tex": "guide", "b.tex": "m" });
