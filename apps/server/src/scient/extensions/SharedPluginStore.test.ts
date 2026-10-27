@@ -324,3 +324,41 @@ it.effect(
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("does not advertise key requirements until a local marketplace plugin is installed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { home, clone, path, write } = yield* fixture;
+      yield* write(path.join(clone, "plugins/review/.mcp.json"), {
+        mcpServers: { review: { headers: { Authorization: "Bearer ${REVIEW_TOKEN}" } } },
+      });
+      let installed = false;
+      const store = yield* makeSharedPluginStore({
+        kind: "claude",
+        claudeHome: home,
+        installed: () =>
+          Effect.succeed({
+            sequence: 1,
+            plugins: installed
+              ? [
+                  {
+                    id: "review",
+                    name: "review@claude-plugins-official",
+                    source: "local",
+                    enabled: true,
+                  },
+                ]
+              : [],
+          }),
+        run: () => Effect.fail({ message: "Read only" }),
+      });
+      expect(
+        (yield* store.contents!("review@claude-plugins-official")).requiredKeys,
+      ).toBeUndefined();
+      installed = true;
+      expect((yield* store.contents!("review@claude-plugins-official")).requiredKeys).toEqual([
+        "REVIEW_TOKEN",
+      ]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);

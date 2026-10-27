@@ -421,6 +421,14 @@ it.effect(
         yield* Effect.promise(async () => {
           await NodeFSP.mkdir(directory, { recursive: true });
           await NodeFSP.writeFile(path, "---\nname: search\n---\n# Search locally");
+          await NodeFSP.writeFile(
+            NodePath.join(root, "mcp.json"),
+            JSON.stringify({
+              mcpServers: {
+                sample: { headers: { Authorization: "Bearer ${SYNTHETIC_KEY}" } },
+              },
+            }),
+          );
         });
         const fixture = clientFixture([]);
         fixture.state.localPlugins = [plugin("local")];
@@ -432,6 +440,7 @@ it.effect(
           () => Effect.undefined,
           NodePath.join(cache, "other-cache"),
         );
+        expect((yield* store.contents("local")).requiredKeys).toEqual(["SYNTHETIC_KEY"]);
         expect((yield* store.contents("local")).skills).toMatchObject([
           { name: "search", documentAvailable: true, enabled: true },
         ]);

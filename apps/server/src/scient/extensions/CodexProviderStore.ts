@@ -19,6 +19,7 @@ import type * as CodexSchema from "effect-codex-app-server/schema";
 import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
 import {
   codexSkillRoot,
+  readLocalPluginRequiredKeys,
   readContainedPluginText,
   readContainedPluginIcon,
 } from "./LocalPluginContents.ts";
@@ -602,7 +603,16 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     withClient(
       Effect.fn("CodexProviderStore.contents")(function* (client: Client) {
         const { detail, item, installed } = yield* detailFor(client, id);
+        const source = detail.summary?.source ?? item.plugin.source;
+        const root = source.type === "local" || source.type === "git" ? source.path : undefined;
+        const requiredKeys =
+          installed && root
+            ? yield* Effect.tryPromise(() => readLocalPluginRequiredKeys(root)).pipe(
+                Effect.orElseSucceed(() => undefined),
+              )
+            : undefined;
         return {
+          ...(requiredKeys === undefined ? {} : { requiredKeys }),
           apps: yield* projectApps(client, detail.apps, true),
           mcpServers: detail.mcpServers.slice(0, 200).map((name) => ({ name })),
           skills: yield* Effect.forEach(

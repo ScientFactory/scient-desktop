@@ -861,3 +861,17 @@ Build the web client with `VITE_SCIENT_GITHUB_OAUTH_CLIENT_ID` to offer
 It stays hidden when unset; registering the Scient OAuth app and configuring the
 provider's callback/client requirements remain prerequisites for live sign-in.
 Only user-added URLs expose custom OAuth client settings.
+
+## Plugin key detection
+
+Plugin contents can carry `requiredKeys`, a bounded list of variable or declared
+sensitive-setting names detected from contained manifests. It never contains
+values. Only installed local contents can establish this list; an unavailable
+local root leaves it unknown. This field does not yet bind accounts, change
+plugin status, suppress native server startup, or deliver keys. The
+[plugin-key implementation record](scient-plugin-keys.md) documents provider
+capabilities, security boundaries and the remaining delivery work.
+
+Settings → Accounts also displays connected Claude account connectors and
+accessible Codex apps as read-only rows linking to that agent's Extensions page.
+Installing a plugin or offering a sign-in does not create an Accounts row.
