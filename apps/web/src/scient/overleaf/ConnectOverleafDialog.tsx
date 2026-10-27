@@ -98,13 +98,16 @@ export function ConnectOverleafDialog(props: {
   // The folder the person chose in this workspace: the parent for a new folder,
   // the folder itself for a link. Starts at the folder the dialog opened for.
   const [chosenFolder, setChosenFolder] = useState(folder);
-  const [name, setName] = useState("");
+  const [folderNameDraft, setName] = useState<string | null>(null);
   const [tokenDraft, setTokenDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ _tag: "form" });
   const [projectName, setProjectName] = useState("");
+  const name =
+    folderNameDraft ??
+    (newProject && folderNameProblem(projectName) === null ? workspaceFolderPath(projectName) : "");
   const [location, setLocation] = useState(newProject?.location ?? "");
-  // Location and Paper folder stay folded behind the path they make until Change… or an error about them.
+  // Location stays folded behind its path until Change… or an error about it.
   const [whereOpen, setWhereOpen] = useState(false);
   // Once made, the project stays: a refused link is tried again in it, never made twice.
   const [madeRoot, setMadeRoot] = useState<string | null>(null);
@@ -393,18 +396,18 @@ export function ConnectOverleafDialog(props: {
                             ) : null}
                           </div>
                         </div>
-                        <div className="grid gap-1.5">
-                          <Label htmlFor="overleaf-new-project-folder">Paper folder</Label>
-                          <Input
-                            id="overleaf-new-project-folder"
-                            size="sm"
-                            placeholder={EXAMPLE_FOLDER_NAME}
-                            value={name}
-                            onChange={(event) => setName(event.target.value)}
-                          />
-                        </div>
                       </>
                     ) : null}
+                    <div className="grid gap-1.5">
+                      <Label htmlFor="overleaf-new-project-folder">Paper folder</Label>
+                      <Input
+                        id="overleaf-new-project-folder"
+                        size="sm"
+                        placeholder={EXAMPLE_FOLDER_NAME}
+                        value={name}
+                        onChange={(event) => setName(event.target.value)}
+                      />
+                    </div>
                   </>
                 ) : (
                   <RadioGroup

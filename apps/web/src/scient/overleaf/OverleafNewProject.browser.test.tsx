@@ -177,17 +177,19 @@ describe("Add project ▸ Overleaf project", () => {
     await chooseOverleafProject();
 
     await expect.element(page.getByRole("dialog", { name: "Add Overleaf project" })).toBeVisible();
-    // Where Add project browses from; the paper's folder is named as "Bring it in as a new folder" names it.
-    // Once named, the path it makes shows; Location and Paper folder open with Change….
+    await expect.element(page.getByLabelText("Paper folder")).toBeVisible();
+    await expect.element(page.getByLabelText("Paper folder")).toHaveValue("");
     await expect.element(page.getByText("Goes in")).not.toBeInTheDocument();
     await page.getByLabelText("Project name").fill("Thesis");
-    // The project's folder shows; the paper's folder is appended once named.
-    await expect.element(page.getByText("~/Projects/Thesis", { exact: true })).toBeVisible();
+    await expect.element(page.getByLabelText("Paper folder")).toHaveValue("Thesis");
+    await expect.element(page.getByText("~/Projects/Thesis/Thesis", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Change…" }).click();
     await expect.element(page.getByLabelText("Location")).toHaveValue("~/Projects/");
-    // No name is assumed: "paper" is only the placeholder.
-    await expect.element(page.getByLabelText("Paper folder")).toHaveValue("");
+    // An explicitly edited folder name survives later changes to the project name.
     await page.getByLabelText("Paper folder").fill("paper");
+    await page.getByLabelText("Project name").fill("Renamed");
+    await expect.element(page.getByLabelText("Paper folder")).toHaveValue("paper");
+    await page.getByLabelText("Project name").fill("Thesis");
     await expect.element(page.getByText("~/Projects/Thesis/paper")).toBeVisible();
     // Linking a whole folder makes no sense for a project that doesn't exist yet.
     await expect
@@ -230,6 +232,27 @@ describe("Add project ▸ Overleaf project", () => {
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
     // Done lands in the new project.
     expect(openNewThread).toHaveBeenCalledExactlyOnceWith(projectRef);
+  });
+
+  it("submits on the first Add with an editable folder derived from the project name", async () => {
+    reset(true);
+    client.connectOverleaf.mockResolvedValue({
+      _tag: "done",
+      connection: { ...summary, folder: "My thesis" },
+    });
+    await using _screen = await render(<OverleafNewProjectDialogHost />);
+    await chooseOverleafProject();
+    await expect.element(page.getByLabelText("Paper folder")).toBeVisible();
+    await page.getByLabelText("Overleaf project").fill(ID);
+    await page.getByLabelText("Project name").fill("My thesis");
+    await expect.element(page.getByLabelText("Paper folder")).toHaveValue("My thesis");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await vi.waitFor(() => expect(client.syncOverleaf).toHaveBeenCalledOnce());
+    expect(client.connectOverleaf).toHaveBeenCalledWith(
+      environmentId,
+      expect.objectContaining({ folder: "My thesis", create: true }),
+    );
+    await page.getByRole("button", { name: "Done" }).click();
   });
 
   it("says plainly when the link is refused after the project is made, and keeps the project", async () => {
