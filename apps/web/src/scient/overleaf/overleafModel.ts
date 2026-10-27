@@ -673,17 +673,17 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
   }
 }
 
-/** What Undo does to a file a send changed: the reverse of the send. */
+/** What Undo will do to a file a send changed, as one short verb: the reverse of the send. */
 export function undoChangeLabel(change: ScientOverleafChange): string {
   switch (change.kind) {
     case "modified":
-      return "Earlier version";
+      return "Restore";
     case "added":
-      return "Removed";
+      return "Remove";
     case "deleted":
-      return "Back";
+      return "Recreate";
     case "renamed":
-      return "Old name back";
+      return "Rename back";
   }
 }
 

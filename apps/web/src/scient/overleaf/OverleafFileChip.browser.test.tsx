@@ -249,8 +249,8 @@ describe("OverleafFileChip", () => {
     await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
     await page.getByRole("menuitem", { name: "Undo last send…" }).click();
     await expect.element(page.getByText("Undo send #4")).toBeVisible();
-    await expect.element(page.getByText("Earlier version")).toBeVisible();
-    await expect.element(page.getByText("Removed")).toBeVisible();
+    await expect.element(page.getByText("Restore", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Remove", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await expect.element(page.getByText("Undo complete")).toBeVisible();
     await expect.element(page.getByText("Left as it is: notes.tex (edited since).")).toBeVisible();

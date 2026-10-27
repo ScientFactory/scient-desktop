@@ -359,7 +359,11 @@ describe("OverleafReviewPanel", () => {
     await page.getByRole("button", { name: "Undo send" }).click();
     await expect.element(page.getByText("Undo send #7")).toBeVisible();
     await expect
-      .element(page.getByRole("list", { name: "What Undo puts back" }).getByText("Removed"))
+      .element(
+        page
+          .getByRole("list", { name: "What Undo puts back" })
+          .getByText("Remove", { exact: true }),
+      )
       .toBeVisible();
   });
 
