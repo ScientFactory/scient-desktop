@@ -4,8 +4,12 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
+import {
+  publicationDigest,
+  validatePublicationArtifact,
+} from "@t3tools/shared/scientPublicationArtifact";
 import { expect, it } from "@effect/vitest";
+import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import { resolveNativeFilePublicationHelperPath } from "./NativeFilePublication.ts";
 
 it("admits only an executable host artifact with an intact production receipt and protocol", async () => {
@@ -17,10 +21,20 @@ it("admits only an executable host artifact with an intact production receipt an
   const helper = NodePath.join(root, binary);
   const receiptPath = NodePath.join(root, "publication-artifact.json");
   try {
-    NodeChildProcess.execFileSync(process.execPath, [
-      NodePath.resolve(import.meta.dirname, "../../../../../scripts/stage-file-exchange.ts"),
-      `--destination=${root}`,
-    ]);
+    if (platform === "win32") {
+      const staged = await filePublicationTestHelper();
+      await NodeFSP.copyFile(staged!, helper);
+      await NodeFSP.copyFile(
+        NodePath.join(NodePath.dirname(staged!), "publication-artifact.json"),
+        receiptPath,
+      );
+    } else {
+      NodeChildProcess.execFileSync(process.execPath, [
+        NodePath.resolve(import.meta.dirname, "../../../../../scripts/stage-file-exchange.ts"),
+        `--destination=${root}`,
+      ]);
+    }
+    await validatePublicationArtifact(helper);
     expect(await resolveNativeFilePublicationHelperPath(helper)).toBe(helper);
     const bytes = await NodeFSP.readFile(helper);
     const receipt = JSON.parse(await NodeFSP.readFile(receiptPath, "utf8"));
