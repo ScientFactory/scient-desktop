@@ -492,9 +492,6 @@ const holdOverleafConnection = <A, E, R>(
 /** Accepted sends `undoableSends` lists with their changes; older ones are undone by number. */
 const UNDOABLE_LISTED = 10;
 
-/** A kept copy's place in the retention folder, as `OverleafConnectionState` records it. */
-const KEPT_PATH =
-  /^[a-z0-9][a-z0-9-]{0,63}\/files\/step-\d{1,5}(?:-\d{1,5})?\/(?:retained|slot|provisional)$/u;
 /** The largest file a restore or listing reads: a kept copy or the folder's file. */
 const RESTORE_MAX_BYTES = 50 * 1024 * 1024;
 /** What one listing of kept copies reads at most: as much as one inventory may hold. */
@@ -948,12 +945,14 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
     const after = overleafRequiredPins(next);
     const held = yield* repos.listRefs({ repo });
     const forUndo = new Set(
-      next.attempts
-        .filter((attempt) => attempt.outcome === "accepted")
-        .flatMap((attempt) => [
-          `attempt/${attempt.attemptNumber}/parent`,
-          `attempt/${attempt.attemptNumber}/candidate`,
-        ]),
+      next.attempts.flatMap((attempt) =>
+        attempt.outcome === "accepted"
+          ? [
+              `attempt/${attempt.attemptNumber}/parent`,
+              `attempt/${attempt.attemptNumber}/candidate`,
+            ]
+          : [],
+      ),
     );
     for (const pin of after) {
       if (held.get(pin.name) === pin.oid) continue;
