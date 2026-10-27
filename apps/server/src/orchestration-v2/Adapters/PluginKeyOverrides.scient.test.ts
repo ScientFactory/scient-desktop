@@ -52,3 +52,29 @@ it("keeps Codex's original server key while disabling its native plugin transpor
   });
   expect(result.config[`mcp_servers.${alias}`]).toBeUndefined();
 });
+
+it("delivers only launcher paths for Claude and Codex stdio replacements", () => {
+  const launcher = {
+    serverName: "plugin:sample:api",
+    command: "/synthetic/node",
+    args: ["/private/synthetic/launcher.mjs", "/private/synthetic/env.json"],
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+  };
+  const mcpSession = { ...session, connectors: [], pluginKeyStdioServers: [launcher] };
+  const claude = claudeMcpQueryOverrides({ mcpSession, readOnlySandbox: false });
+  expect(claude.mcpServers?.[launcher.serverName]).toEqual({
+    type: "stdio",
+    command: launcher.command,
+    args: launcher.args,
+    env: launcher.env,
+  });
+  const codex = codexThreadRuntimeParams({
+    mcpSession: { ...mcpSession, pluginKeyStdioServers: [{ ...launcher, serverName: "api.v1" }] },
+  });
+  expect(codex.config['mcp_servers."api.v1"']).toEqual({
+    command: launcher.command,
+    args: launcher.args,
+    env: launcher.env,
+  });
+  expect(codex.config['plugins."sample@synthetic".mcp_servers."api.v1".enabled']).toBe(false);
+});

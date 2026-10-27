@@ -149,9 +149,9 @@ path are implemented and tested offline. Remaining work:
 
 1. Live qualification of Claude SDK loading/precedence and actual plugin tool
    names, and Codex's effective plugin id, policy acceptance and tool namespace.
-2. Stdio launcher files, 0600 enforcement, cleanup on all session exits, safe
-   command substitution and provider configuration tests. Stdio servers of
-   detected key-bearing plugins remain suppressed; keys never enter agent env.
+2. Live stdio delivery qualification in Claude/Codex, packaged Electron, and Linux.
+   Windows is withheld because Node's `execve` is unavailable there. Env-only
+   stdio delivery is implemented below; secret-bearing arguments stay suppressed.
 3. Local-root discovery for remote-only plugins without a verified cache path.
    Missing requirements remain unknown, rather than guessed from server names.
 4. Authorized real-provider tool calls and visual acceptance in a desktop
@@ -182,7 +182,7 @@ entry and the explicit local SDK load; preservation of actual skill/tool names;
 Codex's acceptance of this policy and effective native plugin identity on the
 installed CLI; shared-session handoffs. Unit tests qualify the generated config,
 not those live claims. Plugins whose local key requirements cannot be inspected
-remain outside this detected-key policy. HTTP replacement is implemented below; stdio delivery remains unsupported.
+remain outside this detected-key policy. HTTP and env-only stdio replacements are implemented below.
 Bound credential eligibility alone is not live-provider qualification.
 
 ## HTTP-header delivery
@@ -221,9 +221,72 @@ RPC that reads arbitrary paths. Remote plugins without either source remain
 unknown. Transient registrations store no credentials, are absent from the
 user's connector file/list and are capped at 1,000 per runtime. Old session
 bearers are still controlled by the existing MCP registry; a runtime restart
-releases registration metadata. Unsupported stdio servers stay suppressed.
+releases registration metadata. Unsupported stdio servers stay suppressed (see the launcher constraints below).
 
 Tests exercise real Accounts rotation/revocation and origin checks, configuration
 changes and agent ownership, adapter alias mapping, and the actual connector
 forwarding/redaction pipeline with a synthetic reflected credential and a mocked
 upstream fetch. They do not contact a real vendor or qualify provider behavior.
+
+## Stdio launcher (unverified live in providers)
+
+Claude and Codex replacements retain the same native server names as the HTTP
+path. Only the Scient runtime executable, a generated launcher script path, and
+one private envelope path enter provider configuration. Command, arguments and
+resolved keys stay inside the envelope; no bound key enters the agent's env or
+argv. The only launcher env setting is the non-secret Electron Node-mode flag.
+Scient Agent remains unavailable.
+
+The launcher uses the Accounts session writer under
+`secrets/accounts-sessions/<sha256(threadId)>`: directories are 0700, files are
+atomically written as 0600 using exclusive no-follow temporary opens. The JSON
+envelope contains the command, unchanged literal arguments, and expanded env
+settings. Known plugin-root placeholders are resolved by Scient; no shell is
+used. Empty declared key env entries receive their bound values. Other unresolved
+builtin templates are withheld rather than guessed.
+
+Before writing, every required key must resolve through `resolveBound` with the
+plugin-key consumer, agent, plugin id and project scope. No remote origin is
+invented for a local process. Unbound, removed, Off, project-restricted or globally
+disabled accounts withhold the server. Each preparation replaces an existing
+stdio credential and snapshots current bindings, rather than reusing an old file.
+An already running plugin retains its process env until that process ends; this
+is startup authorization, unlike HTTP's per-request resolution.
+
+The standalone launcher rejects missing files, symlinks, non-0600 permissions,
+wrong ownership and oversized envelopes. It consumes the envelope before exec,
+sets only the child process env, and uses POSIX `execve` with the original literal
+argv. It removes Electron's Node-mode flag from that env. Plugin stderr is sent
+to `/dev/null` so subprocess diagnostics cannot copy a bound key into provider
+logs; launcher failures use one fixed message. MCP stdout remains the plugin's
+protocol channel, so this does not sanitize a plugin's tool results.
+
+Session credential release/replacement removes the exact files owned by that
+credential, including unused envelopes; server scope shutdown removes leftovers.
+Cancellation cannot leave partially issued file ownership. Startup uses Accounts'
+existing 24-hour sweep for abandoned files, without deleting another active
+session's recent files. Consumed envelopes cannot be reused to restart a process;
+a fresh provider preparation supplies a new envelope.
+
+Servers with `${NAME}` (or declared secret `${user_config.NAME}`) in their arguments
+are withheld, even when the account is bound. The card and page say:
+“Needs a key — this plugin passes its key on the command line, which Scient doesn't allow”.
+Scient never expands a secret into the real server's argv. This guarantee covers
+Scient's launch configuration; the plugin itself remains trusted code capable of
+reading its env, producing tool results, or spawning other programs.
+
+Tests execute the real wrapper on macOS with synthetic credentials, verify env,
+literal argv, discarded stderr, 0600/0700 permissions, consumption, session/scope
+cleanup, startup sweeping, unavailable bindings and generated provider config.
+Claude SDK/Codex plugin replacement and packaged Electron execution remain
+**unverified live**. Linux is unverified on this host; Windows fails closed. Node single-executable
+(SEA) server deployments also withhold this path: their executable cannot run an
+external launcher module; they need a separately qualified Node launcher runtime.
+
+Remote-only discovery still requires a verified root. Codex can already derive a
+contained cache root from a provider-reported skill path, even for a remote source.
+A remote-only plugin with neither a local/git source path nor a verified cached
+skill path remains unknown. The provider detail contract does not identify a
+verified manifest root for this case; guessing cache paths from display names or
+opaque ids would risk inspecting another plugin's files. No user plugin cache or
+credential/config values were inspected to qualify this gap.

@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import { parseDocument } from "yaml";
 import * as Schema from "effect/Schema";
+import { pluginKeyHasSecretArgs, pluginKeyStdioServer } from "./PluginKeyStdioServers.ts";
 import { pluginKeyHttpServer } from "./PluginKeyHttpServers.ts";
 import { declaredPluginKeys, requiredServerKeys } from "./PluginRequiredKeys.ts";
 import { extensionIconData } from "./ExtensionIconData.ts";
@@ -237,4 +238,21 @@ export async function readLocalPluginKeyHttpServers(root: string) {
     const server = pluginKeyHttpServer(name, definition);
     return server ? [server] : [];
   });
+}
+
+/** Private transport settings never enter plugin contents RPC responses. */
+export async function readLocalPluginKeyStdioServers(root: string) {
+  if (!NodePath.isAbsolute(root)) throw new Error("The plugin root must be absolute.");
+  const contents = await readLocalPluginMcpContents(root);
+  if (contents.requiredKeys === undefined) return [];
+  return contents.definitions.flatMap(([name, definition]) => {
+    const server = pluginKeyStdioServer(name, definition, root);
+    return server ? [server] : [];
+  });
+}
+
+export async function readLocalPluginKeyCommandLineBlocked(root: string) {
+  if (!NodePath.isAbsolute(root)) throw new Error("The plugin root must be absolute.");
+  const contents = await readLocalPluginMcpContents(root);
+  return contents.definitions.some(([, definition]) => pluginKeyHasSecretArgs(definition));
 }

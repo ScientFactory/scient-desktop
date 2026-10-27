@@ -35,6 +35,7 @@ export const PluginKeyUnbindInput = Schema.Struct({
 });
 export const PluginKeyState = Schema.Struct({
   status: Schema.Literals(["ready", "needs-key"]),
+  commandLineBlocked: Schema.optional(Schema.Boolean),
   requirementsKnown: Schema.Boolean,
   writable: Schema.Boolean,
   keys: Schema.Array(

@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import { pluginKeyHttpOrigins } from "./PluginKeyHttpServers.ts";
-import { readLocalPluginContents, readLocalPluginKeyHttpServers } from "./LocalPluginContents.ts";
+import {
+  readLocalPluginContents,
+  readLocalPluginKeyHttpServers,
+  readLocalPluginKeyCommandLineBlocked,
+} from "./LocalPluginContents.ts";
 
 const decodePath = Schema.decodeUnknownOption(Schema.Struct({ path: Schema.String }));
 export const preparePluginKeyStartup = Effect.fn("PluginKeyStartup.prepare")(function* (
@@ -43,23 +47,31 @@ export const preparePluginKeyStartup = Effect.fn("PluginKeyStartup.prepare")(fun
   return policies;
 }, Effect.orDie);
 
-export const readPluginKeyOrigins = Effect.fn("PluginKeyStartup.readOrigins")(function* (
+export const readPluginKeyTransport = Effect.fn("PluginKeyStartup.readTransport")(function* (
   providers: ProviderRegistryShape,
   target: PluginKeyTarget,
 ) {
-  if (!target.agent) return new Map<string, string[]>();
+  if (!target.agent) return { origins: new Map<string, string[]>(), commandLineBlocked: false };
   const actions = yield* providers.getProviderPluginActionsForInstance(target.agent);
-  if (!actions || (yield* actions.isRetired)) return new Map<string, string[]>();
+  if (!actions || (yield* actions.isRetired))
+    return { origins: new Map<string, string[]>(), commandLineBlocked: false };
   const plugin = (yield* actions.listPlugins(target.cwd ? { cwd: target.cwd } : {})).plugins.find(
     (plugin) => plugin.id === target.pluginId,
   );
-  if (!plugin) return new Map<string, string[]>();
+  if (!plugin) return { origins: new Map<string, string[]>(), commandLineBlocked: false };
   const parsed = decodePath(plugin);
   const root =
     parsed._tag === "Some"
       ? parsed.value.path
       : yield* actions.store?.keyServerRoot?.(plugin.id) ?? Effect.void;
   return root
-    ? pluginKeyHttpOrigins(yield* Effect.tryPromise(() => readLocalPluginKeyHttpServers(root)))
-    : new Map<string, string[]>();
+    ? {
+        origins: pluginKeyHttpOrigins(
+          yield* Effect.tryPromise(() => readLocalPluginKeyHttpServers(root)),
+        ),
+        commandLineBlocked: yield* Effect.tryPromise(() =>
+          readLocalPluginKeyCommandLineBlocked(root),
+        ),
+      }
+    : { origins: new Map<string, string[]>(), commandLineBlocked: false };
 });

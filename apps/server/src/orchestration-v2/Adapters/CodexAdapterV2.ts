@@ -1400,6 +1400,12 @@ export function codexThreadRuntimeParams(input: {
                 },
               ]),
             ),
+            ...Object.fromEntries(
+              (mcpSession.pluginKeyStdioServers ?? []).map(({ serverName, ...config }) => [
+                `mcp_servers.${JSON.stringify(serverName)}`,
+                config,
+              ]),
+            ),
             // SCIENT-FORK:END Scient Extensions connectors
           }),
     },

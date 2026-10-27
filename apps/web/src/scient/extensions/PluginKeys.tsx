@@ -25,6 +25,9 @@ const USES_ACCOUNT = "— Uses";
 
 export function pluginKeyStatusLabel(state: PluginKeyState | null, provider?: ServerProvider) {
   if (!state || !state.keys.length) return null;
+  if (state.commandLineBlocked)
+    // oxlint-disable-next-line t3code/no-em-dash-copy -- Explicit product explanation for refused secret argv.
+    return "Needs a key — this plugin passes its key on the command line, which Scient doesn't allow";
   if (provider?.driver === "scient") return SCIENT_KEYS_UNAVAILABLE;
   return state.status === "needs-key" ? "Needs a key" : null;
 }

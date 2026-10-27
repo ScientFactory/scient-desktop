@@ -183,3 +183,14 @@ it("waits for a verified installed identity before showing bindings on a store d
   await page.getByRole("combobox", { name: "TOKEN account" }).selectOptions(existing);
   expect(state.bind.mock.calls[0]?.[0].input.pluginId).toBe("sample@synthetic");
 });
+
+it("explains why binding cannot enable a plugin that passes its key on the command line", async () => {
+  setup();
+  state.data = { ...state.data!, commandLineBlocked: true, status: "needs-key" };
+  await using _screen = await render(<PluginKeys input={input} />);
+  await expect
+    .element(page.getByRole("status"))
+    .toHaveTextContent(
+      "Needs a key — this plugin passes its key on the command line, which Scient doesn't allow",
+    );
+});

@@ -120,7 +120,7 @@ export const makePluginKeyBindings = Effect.fn("PluginKeyBindings.make")(functio
   const resolveKey = Effect.fn("PluginKeyBindings.resolveKey")(function* (
     input: PluginKeyTarget & {
       readonly envName: string;
-      readonly origin: string;
+      readonly origin?: string;
       readonly expectedRef?: import("@t3tools/contracts").VaultSecretRef | undefined;
     },
   ) {
@@ -141,7 +141,7 @@ export const makePluginKeyBindings = Effect.fn("PluginKeyBindings.make")(functio
         agent: input.agent ?? "scient",
         pluginId: input.pluginId,
         envName: input.envName,
-        origin: input.origin,
+        ...(input.origin === undefined ? {} : { origin: input.origin }),
         ...(input.projectId ? { projectId: input.projectId } : {}),
       })
       .pipe(Effect.mapError(unavailable));

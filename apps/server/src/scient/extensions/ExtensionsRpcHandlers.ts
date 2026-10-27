@@ -24,7 +24,7 @@ import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { PluginKeyBindings, pluginKeyAccountsEligibilityKey } from "./PluginKeyBindings.ts";
-import { readPluginKeyOrigins } from "./PluginKeyStartup.ts";
+import { readPluginKeyTransport } from "./PluginKeyStartup.ts";
 import { makePluginContents } from "./PluginContents.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
 import {
@@ -194,7 +194,7 @@ export const makeExtensionsRpcHandlers = ({
       ...(input.agent ? { instanceId: input.agent } : {}),
       ...(input.cwd ? { cwd: input.cwd } : {}),
     });
-    const origins = yield* readPluginKeyOrigins(providerRegistry, input).pipe(
+    const transport = yield* readPluginKeyTransport(providerRegistry, input).pipe(
       Effect.mapError(
         () =>
           new ExtensionsError({
@@ -203,7 +203,10 @@ export const makeExtensionsRpcHandlers = ({
           }),
       ),
     );
-    return yield* pluginKeys.list(input, detail.requiredKeys, origins);
+    const state = yield* pluginKeys.list(input, detail.requiredKeys, transport.origins);
+    return transport.commandLineBlocked
+      ? { ...state, status: "needs-key" as const, commandLineBlocked: true }
+      : state;
   });
   const keyMutation = Effect.fn("ExtensionsRpc.keyMutation")(function* (
     input: PluginKeyTarget & {

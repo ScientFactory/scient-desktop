@@ -55,6 +55,13 @@ export interface McpProviderSessionConfig {
   // SCIENT-FORK:START Scient Extensions connectors
   /** Connectors delivered with this credential, in a stable order. Empty when none. */
   readonly connectors: ReadonlyArray<McpProviderSessionConnector>;
+  /** Private envelope contents never enter provider config. */
+  readonly pluginKeyStdioServers?: ReadonlyArray<{
+    readonly serverName: string;
+    readonly command: string;
+    readonly args: ReadonlyArray<string>;
+    readonly env: Readonly<Record<string, string>>;
+  }>;
   readonly pluginKeyPolicies?: ReadonlyArray<McpPluginKeyPolicy>;
   readonly pluginKeyServerNames?: Readonly<Record<string, string>>;
   /**

@@ -1805,6 +1805,12 @@ export function claudeMcpQueryOverrides(input: {
           },
         ]),
       ),
+      ...Object.fromEntries(
+        (session.pluginKeyStdioServers ?? []).map(({ serverName, ...config }) => [
+          serverName,
+          { type: "stdio" as const, ...config, args: [...config.args] },
+        ]),
+      ),
       // SCIENT-FORK:END Scient Extensions connectors
     },
   };

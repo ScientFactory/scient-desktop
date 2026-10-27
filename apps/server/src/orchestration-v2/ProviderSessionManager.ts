@@ -2,6 +2,11 @@
 import { ConnectorRuntime } from "../scient/extensions/ExtensionsServices.ts";
 import { preparePluginKeyStartup } from "../scient/extensions/PluginKeyStartup.ts";
 import { preparePluginKeyHttpDelivery } from "../scient/extensions/PluginKeyHttpDelivery.ts";
+import { ServerConfig } from "../config.ts";
+import {
+  makePluginKeyStdioSessions,
+  preparePluginKeyStdio,
+} from "../scient/extensions/PluginKeyStdioSessions.ts";
 import { PluginKeyBindings } from "../scient/extensions/PluginKeyBindings.ts";
 // SCIENT-FORK:END
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -411,6 +416,11 @@ export const layerWithOptions = (
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       // SCIENT-FORK:START — optional for server fixtures without Extensions.
       const pluginKeyBindings = yield* Effect.serviceOption(PluginKeyBindings);
+      const pluginConfig = yield* Effect.serviceOption(ServerConfig);
+      const pluginStdioFiles =
+        Option.isSome(pluginConfig) && Option.isSome(pluginKeyBindings)
+          ? yield* makePluginKeyStdioSessions(pluginConfig.value.secretsDir).pipe(Effect.orDie)
+          : undefined;
       // SCIENT-FORK:END
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -723,6 +733,17 @@ export const layerWithOptions = (
                 )
               : [];
             // SCIENT-FORK:END
+            const pluginStdio =
+              Option.isSome(pluginKeyBindings) && pluginStdioFiles
+                ? yield* preparePluginKeyStdio(providerRegistry, pluginKeyBindings.value, {
+                    agent: providerInstanceId,
+                    policies: pluginKeyPolicies,
+                    projectId: yield* projectionStore.getThread(threadId).pipe(
+                      Effect.map((thread) => thread.projectId),
+                      Effect.orElseSucceed(() => undefined),
+                    ),
+                  }).pipe(Effect.orDie)
+                : [];
             const pluginHttpRuntime = yield* Effect.serviceOption(ConnectorRuntime);
             const pluginHttp =
               Option.isSome(pluginKeyBindings) && Option.isSome(pluginHttpRuntime)
@@ -774,6 +795,9 @@ export const layerWithOptions = (
                 resolved.capabilities.size === capabilities.size &&
                 (!capabilities.has("skills:read") || resolved.skillScope !== undefined) &&
                 // SCIENT-FORK:START — do not reuse a credential with stale plugin startup policy.
+                // Reissue stdio snapshots; unavailable accounts cannot reuse old delivery.
+                !existing.pluginKeyStdioServers?.length &&
+                pluginStdio.length === 0 &&
                 samePluginKeyPolicies(existing.pluginKeyPolicies, pluginKeyPolicies) &&
                 // SCIENT-FORK:END
                 // SCIENT-FORK:START Scient Extensions: a changed connector set re-issues.
@@ -809,6 +833,8 @@ export const layerWithOptions = (
               }
               dropMcpCredentialReservation(threadId, existing.providerSessionId);
             }
+            if (existing && pluginStdioFiles)
+              yield* pluginStdioFiles.clear(existing.providerSessionId).pipe(Effect.orDie);
             yield* mcpSessionRegistry.revokeThread(threadId);
             const credential = yield* mcpSessionRegistry.issue({
               threadId,
@@ -828,41 +854,59 @@ export const layerWithOptions = (
               // SCIENT-FORK:START Scient Extensions connector delivery
               connectors: connectorPlan.delivered,
             });
-            // Adapters amend this runtime's receipts.
-            yield* mcpSessions.set({
-              ...credential.config,
-              ...(pluginKeyPolicies.length ? { pluginKeyPolicies } : {}),
-              ...(pluginHttp.connectors.length
-                ? { pluginKeyServerNames: pluginHttp.serverNames }
-                : {}),
-              ...(credential.config.connectors.length === 0
-                ? {}
-                : {
-                    beginConnectorRegistration: connectorDelivery.registrationTrackerFor({
-                      threadId,
-                      providerSessionId: credential.config.providerSessionId,
+            // Failed or interrupted issuance removes launcher files before handing off ownership.
+            return yield* Effect.gen(function* () {
+              const pluginKeyStdioServers = pluginStdioFiles
+                ? yield* pluginStdioFiles
+                    .write(threadId, credential.config.providerSessionId, pluginStdio)
+                    .pipe(
+                      Effect.onError(() =>
+                        mcpSessionRegistry.revokeProviderSession(
+                          credential.config.providerSessionId,
+                        ),
+                      ),
+                      Effect.orDie,
+                    )
+                : [];
+              // Adapters amend this runtime's receipts.
+              yield* mcpSessions.set({
+                ...credential.config,
+                ...(pluginKeyPolicies.length ? { pluginKeyPolicies } : {}),
+                ...(pluginKeyStdioServers.length ? { pluginKeyStdioServers } : {}),
+                ...(pluginHttp.connectors.length
+                  ? { pluginKeyServerNames: pluginHttp.serverNames }
+                  : {}),
+                ...(credential.config.connectors.length === 0
+                  ? {}
+                  : {
+                      beginConnectorRegistration: connectorDelivery.registrationTrackerFor({
+                        threadId,
+                        providerSessionId: credential.config.providerSessionId,
+                      }),
                     }),
-                  }),
-            });
-            // SCIENT-FORK:END
-            // SCIENT-FORK:START Scient Extensions delivery receipt, recorded before the
-            // reservation: a failed or interrupted write revokes the unowned new credential.
-            yield* connectorDelivery
-              .record({
-                threadId,
-                providerInstanceId,
-                providerSessionId: credential.config.providerSessionId,
-                issuedAtMillis: yield* Clock.currentTimeMillis,
-                plan: connectorPlan,
-              })
-              .pipe(
-                Effect.onError(() =>
-                  clearMcpSession(threadId, credential.config.providerSessionId),
-                ),
-              );
-            // SCIENT-FORK:END
-            reserveMcpCredential(threadId, credential.config.providerSessionId);
-            return { mcpCredentialId: credential.config.providerSessionId, issued: true };
+              });
+              // SCIENT-FORK:END
+              // SCIENT-FORK:START Scient Extensions delivery receipt, recorded before the
+              // reservation: a failed or interrupted write revokes the unowned new credential.
+              yield* connectorDelivery
+                .record({
+                  threadId,
+                  providerInstanceId,
+                  providerSessionId: credential.config.providerSessionId,
+                  issuedAtMillis: yield* Clock.currentTimeMillis,
+                  plan: connectorPlan,
+                })
+                .pipe(
+                  Effect.onError(() =>
+                    clearMcpSession(threadId, credential.config.providerSessionId),
+                  ),
+                );
+              // SCIENT-FORK:END
+              reserveMcpCredential(threadId, credential.config.providerSessionId);
+              return { mcpCredentialId: credential.config.providerSessionId, issued: true };
+            }).pipe(
+              Effect.onError(() => clearMcpSession(threadId, credential.config.providerSessionId)),
+            );
           }),
         );
       /**
@@ -870,10 +914,22 @@ export const layerWithOptions = (
        */
       const clearMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
         mcpCredentialId === undefined
-          ? mcpSessionRegistry
-              .revokeThread(threadId)
-              .pipe(Effect.tap(() => mcpSessions.clear(threadId)))
+          ? mcpSessionRegistry.revokeThread(threadId).pipe(
+              Effect.tap(() =>
+                Effect.gen(function* () {
+                  const session = yield* mcpSessions.read(threadId);
+                  if (session && pluginStdioFiles)
+                    yield* pluginStdioFiles.clear(session.providerSessionId).pipe(Effect.orDie);
+                  yield* mcpSessions.clear(threadId);
+                }),
+              ),
+            )
           : mcpSessionRegistry.revokeProviderSession(mcpCredentialId).pipe(
+              Effect.tap(() =>
+                pluginStdioFiles
+                  ? pluginStdioFiles.clear(mcpCredentialId).pipe(Effect.orDie)
+                  : Effect.void,
+              ),
               Effect.tap(() =>
                 Effect.gen(function* () {
                   if ((yield* mcpSessions.read(threadId))?.providerSessionId === mcpCredentialId) {

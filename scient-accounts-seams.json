@@ -202,6 +202,11 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/server/src/scient/extensions/PluginKeyStdioSessions.ts",
+      "anchor": "makeSessionFiles",
+      "purpose": "Reuse Accounts private per-session directory, atomic 0600 writes and startup sweep for plugin-key launch envelopes."
+    },
+    {
       "path": "apps/web/src/scient/settings/settingsPageScopes.ts",
       "anchor": "Scient Accounts: scope account grants to one server.",
       "purpose": "Choose one environment for account state and project grant controls."
