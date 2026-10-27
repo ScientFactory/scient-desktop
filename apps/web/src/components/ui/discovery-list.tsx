@@ -21,10 +21,11 @@ export function DiscoveryListRow({
   readonly action?: ReactNode;
 }) {
   return (
+    // SCIENT-FORK:START — Scient Accounts uses a single thin focus border for discovery rows.
     <button
       type="button"
       {...props}
-      className="group flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64"
+      className="group flex w-full items-center gap-3 px-3 py-3 text-left hover:bg-accent/40 focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-muted-foreground disabled:pointer-events-none disabled:opacity-64"
     >
       {icon}
       <div className="flex min-w-0 flex-1 flex-col">
@@ -33,5 +34,6 @@ export function DiscoveryListRow({
       </div>
       {action}
     </button>
+    // SCIENT-FORK:END
   );
 }

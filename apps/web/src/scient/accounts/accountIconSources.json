@@ -1,0 +1,75 @@
+[
+  {
+    "domain": "apple.com",
+    "name": "apple",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/apple.svg",
+    "color": "#000000",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "1password.com",
+    "name": "1password",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/1password.svg",
+    "color": "#0572EC",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "bitwarden.com",
+    "name": "bitwarden",
+    "url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/bitwarden.svg",
+    "color": "#175DDC",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "domain": "proton.me",
+    "name": "proton-pass",
+    "url": "https://github.com/ProtonPass.png?size=460",
+    "license": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:chrome",
+    "name": "chrome",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/chrome.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:safari",
+    "name": "safari",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/safari.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:brave",
+    "name": "brave",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/brave.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:firefox",
+    "name": "firefox",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/firefox.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:opera",
+    "name": "opera",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/opera.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  },
+  {
+    "key": "browser:vivaldi",
+    "name": "vivaldi",
+    "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/vivaldi-icon.svg",
+    "license": "CC0-1.0; trademarks remain with their owners.",
+    "rendering": "Mark trimmed and centered at 70% on a white 256px opaque PNG tile."
+  }
+]

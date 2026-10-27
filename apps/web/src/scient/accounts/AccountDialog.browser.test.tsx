@@ -1,3 +1,5 @@
+import "~/index.css";
+import "./accounts.css";
 import { expect, it } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import {
@@ -35,6 +37,12 @@ it("opens the add-account picker outside the Extensions page", async () => {
   );
   // regression: extension icons once required the Extensions page and crashed this dialog.
   await expect.element(page.getByText("Any website")).toBeVisible();
+  await page.getByRole("button", { name: "Google", exact: false }).click();
+  await expect.element(page.getByRole("textbox", { name: "Username", exact: true })).toHaveFocus();
+  await page.getByLabelText("Password", { exact: true }).fill("synthetic-password");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Google", exact: false }).click();
+  await expect.element(page.getByLabelText("Password", { exact: true })).toHaveValue("");
 });
 
 it("preserves a site separator while the user enters another allowed site", async () => {
@@ -70,7 +78,8 @@ it("preserves a site separator while the user enters another allowed site", asyn
       onClose={() => undefined}
     />,
   );
-  const sites = page.getByRole("textbox", { name: "Sites", exact: true });
+  await expect.element(page.getByRole("textbox", { name: "Username", exact: true })).toHaveFocus();
+  const sites = page.getByRole("textbox", { name: "Site", exact: true });
   await sites.fill("example.com,");
   await expect.element(sites).toHaveValue("example.com,");
   await sites.fill("example.com, login.example.org");

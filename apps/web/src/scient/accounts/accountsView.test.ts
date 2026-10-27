@@ -98,6 +98,22 @@ describe("Accounts decisions", () => {
     expect(result[0]?.profiles[0]?.email).toBe("synthetic@example.com");
   });
 
+  it("keeps running-browser profiles discoverable from desktop metadata without treating them as importable", () => {
+    const result = mergeSourceProfiles(
+      [{ id: "chrome", name: "Chrome", profiles: [], unavailable: "browserRunning" }],
+      [
+        {
+          sourceId: "chrome",
+          directory: "Profile 1",
+          name: "Work",
+          email: "synthetic@example.invalid",
+        },
+      ],
+    );
+    expect(result[0]?.profiles.map((profile) => profile.name)).toEqual(["Work"]);
+    expect(result[0]?.unavailable).toBe("browserRunning");
+  });
+
   it("names imports after source profiles and resolves collisions within the name limit", () => {
     const taken = ["Work", "Work 2"];
     expect(importProfileName("Work", taken)).toBe("Work 3");

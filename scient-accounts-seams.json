@@ -26,7 +26,7 @@
   "upstreamMounts": [
     {
       "path": "packages/contracts/src/browserProfile.ts",
-      "anchor": "SCIENT-FORK:START — distinguish original browser storage from the new-tab preference.",
+      "anchor": "SCIENT-FORK:START \u2014 distinguish original browser storage from the new-tab preference.",
       "purpose": "Name the built-in original browser profile Main while preserving its default id."
     },
     {
@@ -208,6 +208,16 @@
       "path": "apps/desktop/src/electron/ElectronShell.ts",
       "anchor": "const store = openAccountStore(rawUrl, platform);",
       "purpose": "Open only fixed password-store app targets through the existing shell bridge."
+    },
+    {
+      "path": "apps/web/src/components/settings/BrowserImportWizard.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts shares the browser import quit step.",
+      "purpose": "Reuse the browser quit step in the Accounts browser picker."
+    },
+    {
+      "path": "apps/web/src/components/ui/discovery-list.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts uses a single thin focus border for discovery rows.",
+      "purpose": "Use one thin focus indicator on discovery rows."
     }
   ],
   "scientMounts": [

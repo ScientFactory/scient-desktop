@@ -39,7 +39,16 @@ export function AccessChip({
   const update = useAccountCommand(accountsState.setControls, environmentId);
   return (
     <Menu>
-      <MenuTrigger render={<Button size="xs" variant="outline" disabled={disabled} />}>
+      <MenuTrigger
+        data-account-access
+        render={
+          <Button
+            size="xs"
+            variant={access === "allowed" ? "ghost-muted" : "ghost"}
+            disabled={disabled}
+          />
+        }
+      >
         {ACCESS_LABELS[access]}
         <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
       </MenuTrigger>

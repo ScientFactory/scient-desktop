@@ -350,6 +350,10 @@ vi.mock("../../state/use-atom-command", () => ({
     state.commands[typeof command === "string" ? command : command.name],
 }));
 vi.mock("../../localApi", () => ({
+  readLocalApi: () => ({
+    dialogs: { confirm: state.confirm },
+    shell: { openExternal: state.openExternal },
+  }),
   ensureLocalApi: () => ({
     dialogs: { confirm: state.confirm },
     shell: { openExternal: state.openExternal },

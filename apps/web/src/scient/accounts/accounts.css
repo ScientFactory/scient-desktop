@@ -1,5 +1,14 @@
-.scient-accounts-settings :is(button, input, select):focus-visible {
+/* Accounts controls share a single focused border, including portalled dialogs. */
+:is(.scient-accounts-settings, [data-accounts-dialog])
+  :is([data-slot="button"], [data-slot="menu-trigger"], [data-slot="dialog-close"]):focus-visible {
   outline: none;
   box-shadow: none;
   border-color: var(--muted-foreground);
+}
+.scient-accounts-settings [data-slot="settings-row"] {
+  min-height: 60px;
+  padding-block: 10px;
+}
+.scient-accounts-settings[data-agent-access="false"] [data-account-access] {
+  opacity: 0.4;
 }

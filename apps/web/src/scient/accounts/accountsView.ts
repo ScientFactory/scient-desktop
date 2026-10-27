@@ -99,7 +99,17 @@ export function mergeSourceProfiles(
   return sources.map((source) => ({
     ...source,
     profiles: [
-      ...new Map(source.profiles.map((profile) => [profile.directory, profile])).values(),
+      ...new Map([
+        ...source.profiles.map((profile) => [profile.directory, profile] as const),
+        ...(source.unavailable === "browserRunning"
+          ? details
+              .filter((detail) => detail.sourceId === source.id)
+              .map(
+                (detail) =>
+                  [detail.directory, { directory: detail.directory, name: detail.name }] as const,
+              )
+          : []),
+      ]).values(),
     ].map((profile) => ({
       ...profile,
       ...details.find(
@@ -126,6 +136,10 @@ export function importProfileName(sourceName: string, taken: ReadonlyArray<strin
  * favicons. They identify third-party services without affiliation or endorsement.
  */
 const ICON_BY_DOMAIN: Readonly<Record<string, string>> = ACCOUNT_ICONS;
+
+export function browserIconUrl(id: string): string | undefined {
+  return ICON_BY_DOMAIN[`browser:${id}`];
+}
 
 /** Where each service lets you see, revoke and create the keys or sign-ins Accounts holds. */
 const MANAGE_PAGES: Readonly<Record<string, string>> = {

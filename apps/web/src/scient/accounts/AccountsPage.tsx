@@ -12,6 +12,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { providersIgnoringCheckedAtAtom } from "~/state/server";
 import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
 import { Link } from "@tanstack/react-router";
+import { ExtensionIcon } from "~/scient/extensions/ExtensionRow";
 import { KeyRoundIcon, PlusIcon } from "lucide-react";
 import type {
   ConnectorSummary,
@@ -40,7 +41,6 @@ import {
 } from "~/components/ui/dialog";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
-import { previewBridge } from "~/components/preview/previewBridge";
 import { toastManager } from "~/components/ui/toast";
 import { extensionsInventory } from "~/scient/extensions/extensionsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
@@ -253,6 +253,7 @@ export function AccountRow({
 
 function ManagedAccountRow({
   row,
+  environmentId,
 }: {
   row: {
     kind: "github" | "custom-model" | "extension" | "claude" | "codex";
@@ -261,55 +262,57 @@ function ManagedAccountRow({
     detail?: string | undefined;
     href: "/settings/source-control" | "/settings/custom-models" | "/settings/extensions/installed";
   };
+  environmentId: EnvironmentId;
 }) {
-  const iconUrl = accountIconUrl(
-    row.kind === "github" ? ["github.com"] : row.detail ? [row.detail] : [],
-    row.name,
+  const name = row.name.replace(/^claude\.ai[ :·-]*/i, "");
+  const domain =
+    managedHost(row.detail) ??
+    (row.kind === "github" ? "github.com" : row.kind === "claude" ? "claude.ai" : undefined);
+  const content = (
+    <>
+      <ExtensionIcon name={name} environmentId={environmentId} />
+      <span className="grid min-w-0 flex-1 gap-1">
+        <span className="truncate text-sm font-medium">{name}</span>
+        {domain ? <span className="truncate text-xs text-muted-foreground">{domain}</span> : null}
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {row.kind === "github"
+          ? "Source Control"
+          : row.kind === "custom-model"
+            ? "Custom models"
+            : row.kind === "claude"
+              ? "Claude"
+              : row.kind === "codex"
+                ? "Codex"
+                : "Extensions"}{" "}
+        ›
+      </span>
+    </>
   );
-  return (
-    <SettingsRow
-      title={
-        <span className="flex min-w-0 items-center gap-3">
-          {iconUrl ? (
-            <AccountLogo src={iconUrl} className="size-9 self-center rounded-lg" />
-          ) : (
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-              <KeyRoundIcon className="size-4 text-muted-foreground" />
-            </span>
-          )}
-          <span className="grid min-w-0 gap-1">
-            <span className="truncate">{row.name}</span>
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              {row.detail ? (
-                <span className="truncate text-xs text-muted-foreground">{row.detail} ·</span>
-              ) : null}
-              {row.instanceId ? (
-                <Link
-                  to="/settings/extensions/store/$instanceId"
-                  params={{ instanceId: row.instanceId }}
-                  className="shrink-0 text-xs text-muted-foreground hover:underline"
-                >
-                  Managed in {row.kind === "claude" ? "Claude" : "Codex"}
-                </Link>
-              ) : (
-                <Link
-                  to={row.href}
-                  className="shrink-0 text-xs text-muted-foreground hover:underline"
-                >
-                  Managed in{" "}
-                  {row.kind === "github"
-                    ? "Source Control"
-                    : row.kind === "custom-model"
-                      ? "Custom models"
-                      : "Extensions"}
-                </Link>
-              )}
-            </span>
-          </span>
-        </span>
-      }
-    />
+  const className =
+    "flex min-h-15 items-center gap-3 rounded-lg px-4 py-2 text-foreground hover:bg-accent/40 focus-visible:outline focus-visible:outline-1 focus-visible:outline-muted-foreground";
+  return row.instanceId ? (
+    <Link
+      to="/settings/extensions/store/$instanceId"
+      params={{ instanceId: row.instanceId }}
+      className={className}
+    >
+      {content}
+    </Link>
+  ) : (
+    <Link to={row.href} className={className}>
+      {content}
+    </Link>
   );
+}
+
+function managedHost(value: string | undefined) {
+  if (!value) return undefined;
+  try {
+    return new URL(value.includes("://") ? value : `https://${value}`).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 function AccountsContent({
@@ -355,15 +358,14 @@ function AccountsContent({
     })) ?? []),
   ];
   return (
-    <div className="scient-accounts-settings grid gap-8">
-      <SettingsSection title="Agent access">
+    <div className="scient-accounts-settings grid gap-8" data-agent-access={snapshot.agentAccess}>
+      <SettingsSection title="Agent access" hideTitle>
         <SettingsRow
           id="accounts-agent-access"
-          title="Agent access"
-          description="Agents can sign in and use keys from your accounts. Each account and profile has its own setting below."
+          title="Let agents use your accounts"
           control={
             <Switch
-              aria-label="Agent access"
+              aria-label="Let agents use your accounts"
               checked={snapshot.agentAccess}
               disabled={!canWrite}
               onCheckedChange={(enabled) => void setAccess({ enabled })}
@@ -381,7 +383,7 @@ function AccountsContent({
       <SettingsSection
         id="accounts-list"
         title="Accounts"
-        headerAction={
+        titleAction={
           <Menu>
             <MenuTrigger
               render={
@@ -392,9 +394,6 @@ function AccountsContent({
             </MenuTrigger>
             <MenuPopup align="end">
               <MenuItem onClick={() => setDialog("add")}>Add an account…</MenuItem>
-              {previewBridge ? (
-                <MenuItem onClick={() => setDialog("import")}>Import from your browser…</MenuItem>
-              ) : null}
               <MenuItem onClick={() => passwordFileRef.current?.click()}>
                 Import passwords…
               </MenuItem>
@@ -402,10 +401,21 @@ function AccountsContent({
           </Menu>
         }
       >
-        {!snapshot.accounts.length && !managedRows.length ? (
+        {!snapshot.accounts.length ? (
           <SettingsRow
-            title="No accounts yet"
-            description="Add an account or import your passwords."
+            title={
+              <span className="flex items-center gap-2">
+                No accounts{" "}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={!canWrite}
+                  onClick={() => setDialog("add")}
+                >
+                  Add an account
+                </Button>
+              </span>
+            }
           />
         ) : null}
         {snapshot.accounts.map((account) => (
@@ -418,10 +428,18 @@ function AccountsContent({
             onActivity={setActivity}
           />
         ))}
-        {managedRows.map((row) => (
-          <ManagedAccountRow key={`${row.kind}:${row.id}`} row={row} />
-        ))}
       </SettingsSection>
+      {managedRows.length ? (
+        <SettingsSection title="Signed in elsewhere">
+          {managedRows.map((row) => (
+            <ManagedAccountRow
+              key={`${row.kind}:${row.id}`}
+              row={row}
+              environmentId={environmentId}
+            />
+          ))}
+        </SettingsSection>
+      ) : null}
       <BrowserProfiles
         environmentId={environmentId}
         snapshot={snapshot}
@@ -451,6 +469,7 @@ function AccountsContent({
         <BrowserImportDialog
           environmentId={environmentId}
           canWrite={canWrite}
+          snapshot={snapshot}
           onClose={() => setDialog(null)}
         />
       ) : null}

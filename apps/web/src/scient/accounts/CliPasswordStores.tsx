@@ -19,7 +19,7 @@ import { useAccountCommand, usePasswordStorePermission } from "./useAccounts";
 
 const cliStoreNames = { bitwarden: "Bitwarden", "proton-pass": "Proton Pass" };
 const STATUS_WORDS: Readonly<Record<CliPasswordStatus["state"], string | undefined>> = {
-  "not-connected": "Not connected",
+  "not-connected": undefined,
   "not-installed": "Not installed",
   unauthenticated: "Signed out in its app",
   locked: undefined,
@@ -70,7 +70,7 @@ export function CliPasswordStoreRow({
                 ? ["Connected", current?.email].filter(Boolean).join(" · ")
                 : state === "locked"
                   ? ["Locked", current?.email].filter(Boolean).join(" · ")
-                  : (STATUS_WORDS[state] ?? "Not connected")
+                  : STATUS_WORDS[state]
             }
           />
         }

@@ -41,7 +41,7 @@ export function OnePasswordDialog({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogPopup>
+      <DialogPopup data-accounts-dialog>
         <DialogHeader>
           <DialogTitle>Connect 1Password</DialogTitle>
         </DialogHeader>
@@ -125,7 +125,11 @@ export function PasswordStores({
                 linux: "Secret Service",
               }[snapshot.stores.keychain.platform]
             }
-            status={snapshot.stores.keychain.available ? "Available" : "Unavailable"}
+            status={
+              snapshot.stores.keychain.platform === "macos" || snapshot.stores.keychain.available
+                ? undefined
+                : "Unavailable"
+            }
             domain={snapshot.stores.keychain.platform === "macos" ? "apple.com" : undefined}
           />
         }
@@ -140,7 +144,7 @@ export function PasswordStores({
                 ? `Connected · ${status.label}`
                 : status.state === "error"
                   ? "Connection needs attention"
-                  : "Not connected"
+                  : undefined
             }
           />
         }

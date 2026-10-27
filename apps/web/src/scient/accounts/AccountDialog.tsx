@@ -44,6 +44,7 @@ import {
   type CatalogueEntry,
 } from "./accountsView";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { SaveStores } from "./SaveStores";
 
 const decodeSave = Schema.decodeOption(AccountSaveInput);
@@ -289,7 +290,7 @@ function SitesField({
 }) {
   const [draft, setDraft] = useState(sites.join(", "));
   return (
-    <AccountField label="Sites">
+    <AccountField label="Site">
       <Input
         value={draft}
         onChange={(event) => {
@@ -314,115 +315,19 @@ function DetailsFields({
   details: AccountDetails;
   onChange: (details: AccountDetails) => void;
 }) {
-  const profiles = resolveBrowserProfiles(
-    useClientSettings((settings) => settings.browserProfiles),
-  );
   return (
     <>
       {"sites" in details ? (
         <SitesField sites={details.sites} onChange={(sites) => onChange({ ...details, sites })} />
       ) : null}
       {details.kind === "website" || details.kind === "library" ? (
-        <>
-          <AccountField label="Username">
-            <Input
-              value={details.username ?? ""}
-              autoComplete="off"
-              onChange={(event) => onChange({ ...details, username: event.target.value })}
-            />
-          </AccountField>
-          <AccountField label="Sign-in address">
-            <Input
-              value={details.loginUrl ?? ""}
-              onChange={(event) => {
-                const { loginUrl: _, ...rest } = details;
-                onChange(event.target.value ? { ...details, loginUrl: event.target.value } : rest);
-              }}
-              placeholder="Optional"
-            />
-          </AccountField>
-          <AccountField label="Browser profile">
-            <NativeSelect
-              value={details.profileId ?? ""}
-              onChange={(event) => {
-                const { profileId: _, ...rest } = details;
-                onChange(event.target.value ? { ...details, profileId: event.target.value } : rest);
-              }}
-            >
-              <option value="">Default</option>
-              {profiles
-                .filter((profile) => profile.kind !== "incognito" && profile.id !== "default")
-                .map((profile) => (
-                  <option key={profile.id} value={profile.id}>
-                    {profile.name}
-                  </option>
-                ))}
-            </NativeSelect>
-          </AccountField>
-          {details.kind === "library" ? (
-            <AccountField label="Library proxy">
-              <Input
-                value={details.proxyUrl}
-                onChange={(event) => onChange({ ...details, proxyUrl: event.target.value })}
-                placeholder="https://…/{url}"
-              />
-            </AccountField>
-          ) : null}
-        </>
-      ) : null}
-      {details.kind === "api-key" ? (
-        <>
-          <AccountField label="Environment variable">
-            <Input
-              value={details.envName ?? ""}
-              onChange={(event) => {
-                const { envName: _, ...rest } = details;
-                onChange(event.target.value ? { ...details, envName: event.target.value } : rest);
-              }}
-            />
-          </AccountField>
-          <AccountField label="Authentication">
-            <NativeSelect
-              value={details.auth.type}
-              onChange={(event) => {
-                const type = event.target.value as typeof details.auth.type;
-                onChange({
-                  ...details,
-                  auth:
-                    type === "bearer"
-                      ? { type }
-                      : type === "basic"
-                        ? { type, username: "" }
-                        : { type, name: "" },
-                });
-              }}
-            >
-              <option value="bearer">Bearer</option>
-              <option value="header">Header</option>
-              <option value="basic">Basic</option>
-              <option value="query">Query</option>
-            </NativeSelect>
-          </AccountField>
-          {details.auth.type !== "bearer" ? (
-            <AccountField label={details.auth.type === "basic" ? "Username" : "Parameter name"}>
-              <Input
-                value={"name" in details.auth ? details.auth.name : details.auth.username}
-                onChange={(event) =>
-                  onChange({
-                    ...details,
-                    auth:
-                      details.auth.type === "basic"
-                        ? { ...details.auth, username: event.target.value }
-                        : {
-                            type: details.auth.type === "query" ? "query" : "header",
-                            name: event.target.value,
-                          },
-                  })
-                }
-              />
-            </AccountField>
-          ) : null}
-        </>
+        <AccountField label="Username">
+          <Input
+            value={details.username ?? ""}
+            autoComplete="off"
+            onChange={(event) => onChange({ ...details, username: event.target.value })}
+          />
+        </AccountField>
       ) : null}
       {details.kind === "database" ? (
         <>
@@ -465,6 +370,127 @@ function DetailsFields({
   );
 }
 
+function MoreOptionsFields({
+  details,
+  onChange,
+}: {
+  details: AccountDetails;
+  onChange: (details: AccountDetails) => void;
+}) {
+  const profiles = resolveBrowserProfiles(
+    useClientSettings((settings) => settings.browserProfiles),
+  );
+  return (
+    <>
+      {details.kind === "website" || details.kind === "library" ? (
+        <details className="grid gap-3">
+          <summary className="cursor-pointer text-sm text-muted-foreground">More options</summary>
+          <div className="grid gap-4 pt-3">
+            <AccountField label="Sign-in address">
+              <Input
+                value={details.loginUrl ?? ""}
+                onChange={(event) => {
+                  const { loginUrl: _, ...rest } = details;
+                  onChange(
+                    event.target.value ? { ...details, loginUrl: event.target.value } : rest,
+                  );
+                }}
+                placeholder="Optional"
+              />
+            </AccountField>
+            <AccountField label="Browser profile">
+              <NativeSelect
+                value={details.profileId ?? ""}
+                onChange={(event) => {
+                  const { profileId: _, ...rest } = details;
+                  onChange(
+                    event.target.value ? { ...details, profileId: event.target.value } : rest,
+                  );
+                }}
+              >
+                <option value="">New tabs profile</option>
+                {profiles
+                  .filter((profile) => profile.kind !== "incognito" && profile.id !== "default")
+                  .map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+              </NativeSelect>
+            </AccountField>
+            {details.kind === "library" ? (
+              <AccountField label="Library proxy">
+                <Input
+                  value={details.proxyUrl}
+                  onChange={(event) => onChange({ ...details, proxyUrl: event.target.value })}
+                  placeholder="https://…/{url}"
+                />
+              </AccountField>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+      {details.kind === "api-key" ? (
+        <details>
+          <summary className="cursor-pointer text-sm text-muted-foreground">More options</summary>
+          <div className="grid gap-4 pt-3">
+            <AccountField label="Environment variable">
+              <Input
+                value={details.envName ?? ""}
+                onChange={(event) => {
+                  const { envName: _, ...rest } = details;
+                  onChange(event.target.value ? { ...details, envName: event.target.value } : rest);
+                }}
+              />
+            </AccountField>
+            <AccountField label="Authentication">
+              <NativeSelect
+                value={details.auth.type}
+                onChange={(event) => {
+                  const type = event.target.value as typeof details.auth.type;
+                  onChange({
+                    ...details,
+                    auth:
+                      type === "bearer"
+                        ? { type }
+                        : type === "basic"
+                          ? { type, username: "" }
+                          : { type, name: "" },
+                  });
+                }}
+              >
+                <option value="bearer">Bearer</option>
+                <option value="header">Header</option>
+                <option value="basic">Basic</option>
+                <option value="query">Query</option>
+              </NativeSelect>
+            </AccountField>
+            {details.auth.type !== "bearer" ? (
+              <AccountField label={details.auth.type === "basic" ? "Username" : "Parameter name"}>
+                <Input
+                  value={"name" in details.auth ? details.auth.name : details.auth.username}
+                  onChange={(event) =>
+                    onChange({
+                      ...details,
+                      auth:
+                        details.auth.type === "basic"
+                          ? { ...details.auth, username: event.target.value }
+                          : {
+                              type: details.auth.type === "query" ? "query" : "header",
+                              name: event.target.value,
+                            },
+                    })
+                  }
+                />
+              </AccountField>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+    </>
+  );
+}
+
 export function AccountDialog({
   environmentId,
   snapshot,
@@ -486,6 +512,13 @@ export function AccountDialog({
   };
   onSaved?: (accountId: AccountId) => void;
 }) {
+  const focusEmptyField = useStableCallback((node: HTMLDivElement | null) => {
+    const inputs = node?.querySelectorAll<HTMLInputElement>("input");
+    const first = [...(inputs ?? [])].find(
+      (input) => !input.value && !input.closest("details:not([open])"),
+    );
+    first?.focus();
+  });
   const [query, setQuery] = useState("");
   const [details, setDetails] = useState<AccountDetails | null>(
     account?.details ??
@@ -552,7 +585,7 @@ export function AccountDialog({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogPopup>
+      <DialogPopup data-accounts-dialog>
         <DialogHeader>
           <DialogTitle>{account ? "Edit account" : "Add an account"}</DialogTitle>
         </DialogHeader>
@@ -611,10 +644,9 @@ export function AccountDialog({
                 </DiscoveryList>
               </>
             ) : (
-              <>
+              <div className="grid gap-4" ref={focusEmptyField}>
                 <AccountField label="Name">
                   <Input
-                    autoFocus
                     value={name}
                     onChange={(event) => setName(event.target.value)}
                     maxLength={80}
@@ -638,6 +670,7 @@ export function AccountDialog({
                     }
                   />
                 ))}
+                <MoreOptionsFields details={details} onChange={setDetails} />
                 {Object.values(secrets).some((input) => input.type === "scient") ? (
                   <SaveStores
                     kept={account ? Object.values(account.secrets)[0] : undefined}
@@ -646,7 +679,7 @@ export function AccountDialog({
                     onChange={setSaveTo}
                   />
                 ) : null}
-              </>
+              </div>
             )}
             {error ? (
               <p role="alert" className="text-sm text-destructive-foreground">
@@ -657,6 +690,24 @@ export function AccountDialog({
         </DialogPanel>
         {details ? (
           <DialogFooter>
+            {!account && !initialApiKey ? (
+              <div className="mr-auto">
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    setDetails(null);
+                    setSecrets({});
+                    setError(false);
+                  }}
+                >
+                  Back
+                </Button>
+              </div>
+            ) : null}
+            <Button variant="outline" disabled={busy} onClick={onClose}>
+              Cancel
+            </Button>
             <Button disabled={!canWrite || busy} onClick={() => void submit()}>
               Save
             </Button>

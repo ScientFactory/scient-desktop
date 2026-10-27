@@ -8,7 +8,7 @@ export function StoreTitle({
   domain,
 }: {
   name: string;
-  status: string;
+  status?: string | undefined;
   domain?: string | undefined;
 }) {
   const icon = accountIconUrl(domain ? [domain] : [], name);
@@ -23,7 +23,7 @@ export function StoreTitle({
       )}
       <span className="grid min-w-0 gap-1">
         <span>{name}</span>
-        <span className="truncate text-xs text-muted-foreground">{status}</span>
+        {status ? <span className="truncate text-xs text-muted-foreground">{status}</span> : null}
       </span>
     </span>
   );

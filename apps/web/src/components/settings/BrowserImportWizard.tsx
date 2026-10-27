@@ -177,7 +177,8 @@ export function BrowserImportWizard({
   );
 }
 
-function QuitStep({
+// SCIENT-FORK:START — Scient Accounts shares the browser import quit step.
+export function QuitStep({
   source,
   onCancel,
   onRechecked,
@@ -203,6 +204,7 @@ function QuitStep({
     </>
   );
 }
+// SCIENT-FORK:END
 
 function cookieCountLabel(count: number | undefined): string | undefined {
   if (count === undefined) return undefined;
