@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useClientSettings } from "~/hooks/useSettings";
 import {
   AccountSaveInput,
+  type AccountId,
   type AccountDetails,
   type AccountSecretInput,
   type AccountWriteStore,
@@ -456,16 +457,25 @@ export function AccountDialog({
   account,
   canWrite,
   onClose,
+  initialApiKey,
+  onSaved,
 }: {
   environmentId: EnvironmentId;
   snapshot: AccountsSnapshot;
   account: AccountSummary | null;
   canWrite: boolean;
   onClose: () => void;
+  initialApiKey?: { readonly name: string; readonly envName: string };
+  onSaved?: (accountId: AccountId) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [details, setDetails] = useState<AccountDetails | null>(account?.details ?? null);
-  const [name, setName] = useState(account?.name ?? "");
+  const [details, setDetails] = useState<AccountDetails | null>(
+    account?.details ??
+      (initialApiKey
+        ? { kind: "api-key", sites: [], auth: { type: "bearer" }, envName: initialApiKey.envName }
+        : null),
+  );
+  const [name, setName] = useState(account?.name ?? initialApiKey?.name ?? "");
   const [secrets, setSecrets] = useState<Record<string, AccountSecretInput>>({});
   const [saveTo, setSaveTo] = useState<ReadonlyArray<AccountWriteStore>>([{ type: "scient" }]);
   const [error, setError] = useState(false);
@@ -508,6 +518,7 @@ export function AccountDialog({
     setBusy(false);
     if (result.ok) {
       setSecrets({});
+      onSaved?.(result.value.accountId);
       onClose();
     }
   };

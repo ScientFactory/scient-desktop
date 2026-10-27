@@ -1,3 +1,4 @@
+import { PluginKeys } from "./PluginKeys";
 import { ExtensionContentDialog } from "./ExtensionContentDialog";
 import { ConnectorToolsList } from "./ConnectorToolsList";
 import { DialogFooter } from "../../components/ui/dialog";
@@ -402,6 +403,7 @@ export function PluginContents({
       {contents.data.deferred ? (
         <MutedLine>Skills and tools appear after you install it.</MutedLine>
       ) : null}
+      <PluginKeys input={input} provider={provider} />
       <PluginContentsView
         contents={value}
         iconUrl={pluginIcon}

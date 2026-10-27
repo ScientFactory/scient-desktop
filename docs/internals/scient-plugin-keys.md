@@ -125,15 +125,30 @@ activity/last-use-only events are excluded to prevent status refresh loops.
 This is credential eligibility, not a claim that a native server is suppressed
 or delivered; those adapter changes remain separate.
 
+## Keys UI
+
+Installed plugin pages show a Keys section. Each row uses the same API-key
+account picker as Add connector, populated by the server's `listBindable({})`
+projection. Choosing an account binds it; choosing the empty option unbinds it.
+Add key opens the existing Accounts dialog directly as an API-key account and
+binds only the id returned by a successful save. A failed binding leaves the
+newly created account in Accounts for retry. The web never resolves a key value.
+
+Plugin cards and pages show Needs a key from server eligibility. A workspace
+plugin uses its environment/project identity for the status query; a global
+page has no project and cannot claim a project-restricted account is ready.
+Scient Agent shows its explicit unavailable message for detected key requirements.
+Write controls obey both environment grants and the binding store's availability.
+Browser tests cover binding, revocation, unbinding, account creation and read-only
+access; visual acceptance in a desktop candidate remains unperformed.
+
 ## Remaining implementation and qualification
 
 This foundation is not the complete plugin-key feature, including the smaller
 HTTP delivery milestone from the plan of record. Remaining work:
 
-2. Keys rows using `listBindable({})`, the existing Accounts add flow, and binding
-   approval. Do not offer a binding as usable before delivery is available.
-3. Server-authoritative eligibility and “Needs a key” transitions on account
-   Off/removal/rotation, with pre-start suppression of the native servers.
+3. Pre-start suppression of native servers. Credential eligibility and
+   “Needs a key” transitions are implemented; they do not yet prevent startup.
 4. HTTP template validation and account-bound proxy injection through
    `resolveBound({ kind: "plugin-key", ... })`, retaining the original origin
    and project checks, plus provider-specific registration under original names.

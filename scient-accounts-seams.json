@@ -298,7 +298,7 @@
     },
     {
       "path": "apps/web/src/scient/extensions/AddConnectorDialog.tsx",
-      "anchor": "Use an existing account",
+      "anchor": "ApiKeyAccountPicker",
       "purpose": "Offer API-key accounts from the selected environment whose sites match the connector."
     },
     {
