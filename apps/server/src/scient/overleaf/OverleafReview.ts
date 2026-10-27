@@ -164,6 +164,11 @@ export interface OverleafReview {
    * marks this review writes are never among them.
    */
   readonly unresolvedMarkers: ReadonlyArray<string>;
+  /** Clean folder files held because their identity may belong to marked work. */
+  readonly heldWithMarked: ReadonlyArray<{
+    readonly path: string;
+    readonly markedPaths: ReadonlyArray<string>;
+  }>;
   /** Files with marks sent as they are in this review, as `releaseMarked` asked. */
   readonly released: ReadonlyArray<string>;
   /** Every conflict has an allowed choice. */
@@ -839,6 +844,21 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     warnings.push({ kind: "editable-total-exceeded", bytes: editableBytes });
 
   const unresolvedMarkers = held.unresolved.map((file) => file.path);
+  const marked = new Set([...unresolvedMarkers, ...markerPaths]);
+  const heldBy = new Map<string, Set<string>>();
+  const linkHeld = (path: string, markedPath: string) => {
+    const dependencies = heldBy.get(path) ?? new Set<string>();
+    dependencies.add(markedPath);
+    heldBy.set(path, dependencies);
+  };
+  for (const file of held.unresolved) for (const path of file.links) linkHeld(path, file.path);
+  for (const record of held.carried)
+    if (marked.has(record.path))
+      for (const path of [record.path, ...record.folderPaths, ...record.overleafPaths])
+        linkHeld(path, record.path);
+  const heldWithMarked = held.paths
+    .filter((path) => (local.has(path) || candidate.has(path)) && !marked.has(path))
+    .map((path) => ({ path, markedPaths: sorted(heldBy.get(path) ?? []) }));
 
   const binding: OverleafReviewBinding = {
     connectionId: connection.connectionId,
@@ -890,9 +910,14 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
     conflicts,
     warnings,
     unresolvedMarkers,
+    heldWithMarked,
     released: held.released,
     confirmable: conflicts.every((conflict) => conflict.chosen !== null),
-    upToDate: incoming.length === 0 && outgoing.length === 0 && conflicts.length === 0,
+    upToDate:
+      incoming.length === 0 &&
+      outgoing.length === 0 &&
+      conflicts.length === 0 &&
+      held.paths.length === 0,
     collisions: sorted(requested),
     additions: [
       ...inventory.selectedAdditions.map((addition) => ({ ...addition, selected: true })),

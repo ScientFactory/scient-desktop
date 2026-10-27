@@ -186,6 +186,7 @@ export interface OverleafReviewView {
   readonly warnings: OverleafReview["warnings"];
   /** Files held back for their conflict marks: they wait, everything else is sent. */
   readonly unresolvedMarkers: ReadonlyArray<string>;
+  readonly heldWithMarked: OverleafReview["heldWithMarked"];
   /** Files with marks this review sends as they are, as `files.release` asked. */
   readonly released: ReadonlyArray<string>;
   readonly collisions: ReadonlyArray<string>;
@@ -217,6 +218,7 @@ const viewOverleafReview = (review: OverleafReview): OverleafReviewView => ({
   })),
   warnings: review.warnings,
   unresolvedMarkers: review.unresolvedMarkers,
+  heldWithMarked: review.heldWithMarked,
   released: review.released,
   collisions: review.collisions,
   selectedAdditions: review.binding.selectedAdditions,

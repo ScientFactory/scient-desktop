@@ -82,6 +82,7 @@ const firstSync: ScientOverleafSyncResult = {
     conflicts: [],
     warnings: [{ kind: "first-sync" }],
     unresolvedMarkers: [],
+    heldWithMarked: [],
     released: [],
     collisions: [],
     selectedAdditions: [],

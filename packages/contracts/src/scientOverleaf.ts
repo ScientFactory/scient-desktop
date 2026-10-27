@@ -311,6 +311,13 @@ export const ScientOverleafReview = Schema.Struct({
   warnings: Schema.Array(ScientOverleafWarning),
   /** Files held back for their conflict marks: they wait, everything else is sent. */
   unresolvedMarkers: Schema.Array(ManuscriptPath),
+  /** Clean files waiting on marked work because their identity is uncertain. */
+  heldWithMarked: Schema.Array(
+    Schema.Struct({
+      path: ManuscriptPath,
+      markedPaths: Schema.Array(ManuscriptPath),
+    }),
+  ),
   /** Files with marks this review sends as they are, as `files.release` asked. */
   released: Schema.Array(ManuscriptPath),
   collisions: Schema.Array(ManuscriptPath),
