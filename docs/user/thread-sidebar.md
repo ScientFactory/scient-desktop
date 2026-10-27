@@ -31,10 +31,10 @@ turn, not by when the server noticed it was inactive.
 
 Scient keeps ordinary work attached to a project. Development scratch conversations use the candidate-owned isolated scratch workspace; they do not restore the retired Quick Chat workspace.
 
-Change these rules in **Settings > General**. The change is written to every connected environment
+Change these rules in **Settings > Threads**. The change is written to every connected environment
 whose server supports shared settings. An environment that is offline or needs a server update
 keeps its old value and does not appear in mismatch warnings. When a connected environment whose
-server supports shared settings holds a different value, **Settings > General** shows a warning
+server supports shared settings holds a different value, **Settings > Threads** shows a warning
 that names it. Choose **Apply to all** to write your current values to the environments named in
 the warning. The same applies to the new-thread workspace mode and the source control writing
 style.
@@ -43,6 +43,11 @@ To send the same prompt to several models on web or desktop, **Shift-click** mod
 in a new thread's model picker to add or remove them. A regular click returns to a
 single model. Choose a base branch and send. Each selection starts a separate thread
 and worktree while you stay in the new thread composer. This requires a Git project.
+
+On mobile, **New thread** starts in the current thread's project, or else in the
+last project you opened or chose on that device. If neither is available, the
+project picker opens. Turn off **Settings → General → Use last project** to
+choose a project every time.
 
 ## Pin and reorder threads
 
@@ -117,8 +122,8 @@ To generate a fresh title from the conversation, open a thread's context menu an
 **Regenerate title**. While Scient is generating it, the action reads **Regenerating…** and cannot
 be selected again. The option is hidden when the connected environment needs a server update.
 
-To change how titles are written, add **Thread title instructions** in **Settings → General →
-Text generation**, such as a length limit or an identifier to put first. They apply to new and
+To change how titles are written, add **Thread title instructions** in **Settings → Threads →
+Text generation**, under Advanced, such as a length limit or an identifier to put first. They apply to new and
 regenerated titles. Select a project to give it its own instructions. An empty project value
 disables extra instructions for that project; clearing its override restores the environment value.
 Older Scient apps cannot see project title instructions, so changing or resetting the project's
@@ -291,7 +296,7 @@ confirmation brings the section and its threads back. If **Section** is missing 
 menu, update the Scient server running that thread's environment. The mobile app does not show
 sections yet; it keeps its usual layout.
 
-## Fold working threads (beta)
+## Fold working threads
 
 Threads that are working or waiting on work they will resume from move into a collapsed
 **Working** section below the active list.
@@ -301,8 +306,8 @@ there. A thread returns to the top of the active list when it finishes, fails, o
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
 
-This is off by default. Turn it on with **Settings → Beta → Working section** on web and desktop,
-or **Settings → Thread behavior → Working section** on iOS and Android. Each device keeps its own
+This is off by default. Turn it on with **Settings → General → Working section** on web and desktop,
+or **Settings → General → Working section** on iOS and Android. Each device keeps its own
 choice.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
@@ -343,7 +348,7 @@ threads whose pull request merged. A closed pull request can also settle an idle
 thread. An empty thread's inactivity counts from when it was created.
 Work in progress, pending questions or approvals, and background work the agent
 is waiting on prevent automatic settlement. An open pull request does not prevent inactivity
-settlement unless you turn on **Keep threads with a PR** in **Settings → General**,
+settlement unless you turn on **Keep threads with a PR** in **Settings → Threads**,
 but an old closed or merged pull request does not settle work you
 resumed after it closed. Only your own messages count as resuming. A turn that
 finished background work or a pull request watch starts on its own does not.
@@ -353,7 +358,7 @@ choose **Auto-settle behavior**, and pick **Disabled**. The current option is ch
 **Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
 is disabled.
 
-Change these rules in **Settings → General** on web and desktop, or **Settings → Thread behavior** on mobile.
+Change these rules in **Settings → Threads**.
 They continue to run when your apps are closed. On web and desktop, choose an environment at the
 top to change only its rules, or **All environments** to update connected environments together.
 Mixed values show where the selected environments disagree. Mobile applies these
@@ -396,12 +401,12 @@ VM, a desktop, a laptop, a Mac mini, or a Mac Studio. In the hosted web app and 
 where every environment is remote, each row wears its machine so you can tell them apart at a
 glance. The same icon appears wherever an environment is named: the thread tooltip, the command
 palette, the "Run on" picker, the pull request server filter, the provider settings device tabs,
-and the environment lists under **Settings → Connections**. On mobile it appears in the thread
+and the environment lists under **Settings → Environments**. On mobile it appears in the thread
 lists, the archive, the new-task environment picker, and the Environments and storage settings.
 
 Servers pick the icon themselves from the hardware they run on. A Mac reports its model, a Linux
 machine reports its chassis type and whether it is a virtual machine, and anything without a usable
-signal shows a generic server. To override it, open **Settings → Connections** and choose an icon
+signal shows a generic server. To override it, open **Settings → Sharing & access** and choose an icon
 for that environment; **Automatic** goes back to what the server detected. The choice is stored on
 that server, so every device that connects to it sees the same icon.
 
@@ -442,8 +447,7 @@ the continuation finishes. If the queue was held by a restart, resume it then.
 
 When the provider reports a reset time, choose **Resume at reset** to schedule a
 continuation. You can cancel it from the thread. Enable **Resume after
-usage limits** in **Settings → General** on web and desktop, or **Settings → Thread
-behavior** on mobile, to schedule limit stops by default.
+usage limits** in **Settings → Threads** to schedule limit stops by default.
 The environment must be running when the reset arrives; it resumes overdue
 continuations after a restart. Stopping the thread, sending a new message,
 archiving, or settling it prevents a pending continuation from starting.

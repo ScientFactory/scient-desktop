@@ -625,6 +625,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     composerRef.current?.restoreAfterTimelineReachedEnd();
   };
   const onToolOutputCollapsedAtEndStable = useStableCallback(onToolOutputCollapsedAtEnd);
+  // SCIENT-FORK: upstream follows footer growth here. Scient's reading end is the latest
+  // answer, so footer rows (state line, queued turns) never move a reader resting there.
 
   // SCIENT-FORK:START — the end-control hook owns the pill, the unread count
   // and the follow modes (its onReachedEnd/onLeftEnd above). The tool-activity

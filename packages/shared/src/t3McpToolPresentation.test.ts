@@ -1,18 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { T3_MCP_TOOL_NAMES, resolveT3McpToolPresentation } from "./t3McpToolPresentation.ts";
+import {
+  T3_MCP_TOOL_NAMES,
+  resolveT3McpSummaryAction,
+  resolveT3McpToolDefinition,
+  resolveT3McpToolPresentation,
+} from "./t3McpToolPresentation.ts";
 
 describe("resolveT3McpToolPresentation", () => {
   it("recognizes every T3 tool across provider prefixes and completion suffixes", () => {
     for (const tool of T3_MCP_TOOL_NAMES) {
       const presentation = resolveT3McpToolPresentation(tool);
       for (const prefix of [
-        // SCIENT-FORK:START — Scient's own server names.
-        "mcp__scient__",
-        "scient.",
-        "scient/",
-        "mcp_scient_",
-        // SCIENT-FORK:END
         "mcp__t3-code__",
         "mcp__t3_code__",
         "mcp__t3code__",
@@ -39,31 +38,33 @@ describe("resolveT3McpToolPresentation", () => {
   });
 });
 
-// SCIENT-FORK:START
-// regression: 794ff29ed2 merge: complete orchestration v2 alignment with Scient main
-it("recognizes owned and historical tools across provider prefixes and completion suffixes", () => {
-  for (const tool of T3_MCP_TOOL_NAMES) {
-    const presentation = resolveT3McpToolPresentation(tool);
-    for (const prefix of [
-      "mcp__scient__",
-      "scient.",
-      "scient/",
-      "mcp_scient_",
-      "mcp__t3-code__",
-      "mcp__t3_code__",
-      "mcp__t3code__",
-      "T3-code.",
-      "t3_code/",
-      "t3code:",
-      "mcp_t3-code_",
-      "T3 Code ",
-      "t3-code · ",
-    ]) {
-      expect(resolveT3McpToolPresentation(`${prefix}${tool} completed`), tool).toEqual(
-        presentation,
-      );
-    }
-    expect(resolveT3McpToolPresentation(`mcp__another-server__${tool}`), tool).toBeNull();
-  }
+describe("resolveT3McpToolDefinition", () => {
+  it("labels an action tool call as the action it ran", () => {
+    expect(
+      resolveT3McpToolDefinition("mcp__t3-code__preview_act", { action: "type" })?.labels,
+    ).toEqual(resolveT3McpToolDefinition("preview_type")?.labels);
+    expect(resolveT3McpToolDefinition("t3_thread_transfer", { action: "fork" })?.displayName).toBe(
+      resolveT3McpToolDefinition("t3_thread_fork")?.displayName,
+    );
+    expect(resolveT3McpToolDefinition("preview_act", { action: "unknown" })?.labels[2]).toBe(
+      "Used",
+    );
+  });
 });
-// SCIENT-FORK:END
+
+describe("resolveT3McpSummaryAction", () => {
+  it("summarizes an action tool by the action each call ran", () => {
+    expect(resolveT3McpSummaryAction("mcp__t3-code__t3_queue", { action: "list" })).toBe(
+      "queue-list",
+    );
+    expect(resolveT3McpSummaryAction("t3_queue", { action: "edit" })).toBe("queue-edit");
+    expect(resolveT3McpSummaryAction("t3_thread_transfer", { action: "status" })).toBe(
+      "thread-transfers",
+    );
+    expect(resolveT3McpSummaryAction("t3_thread_configure", {})).toBe("thread-configuration");
+    expect(resolveT3McpSummaryAction("schedule_task", { scheduledTaskId: "task-1" })).toBe(
+      "schedule-update",
+    );
+    expect(resolveT3McpSummaryAction("delegate_task", { task: "x" })).toBe("delegate");
+  });
+});

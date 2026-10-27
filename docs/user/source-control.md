@@ -120,7 +120,7 @@ state. Clearing a migrated token does not leave an adopted legacy copy behind.
 - Show a file tree next to a review's **Code** tab, or a thread's **Diff** panel, to browse the
   changed files as folders and jump straight to any of them. The toolbar toggle remembers your
   choice.
-- Enable **Settings → General → Proactive panels** to open a newly linked review automatically and
+- Enable **Settings → Diffs & pull requests → Proactive panels** to open a newly linked review automatically and
   switch to the completed turn's diff when agent work finishes
 - Open the review directly in your browser with one click
 - If Scient cannot load a GitHub pull request, including when GitHub rate-limits requests, use
@@ -328,7 +328,7 @@ supports approving waiting fork workflows and opening a revert pull request for 
 
 ## Trusted pull request sharing
 
-Pull request sharing is off by default. In **Settings → Connections → Pull request sharing**
+Pull request sharing is off by default. In **Settings → Environments → Pull request sharing**
 (**Pull request routing** under **Environments** on mobile), choose **Read PRs** or
 **Read and act** only for environments you trust to share their source control access. Enable
 both the original environment and the environment answering its requests on that client.

@@ -122,7 +122,7 @@ there is no separate shortcut list to maintain.
 
 ## Composer controls
 
-In **Settings → General → Send shortcut**, choose whether Enter sends, requires
+In **Settings → Chat → Send shortcut**, choose whether Enter sends, requires
 `mod+Enter` for multiline prompts, or always requires `mod+Enter`. `Shift+Enter`
 inserts a new line. This applies to the web and desktop composer at desktop widths.
 
@@ -130,7 +130,7 @@ inserts a new line. This applies to the web and desktop composer at desktop widt
 `mod+Enter` to do the opposite for one message, even when the send shortcut
 requires a modifier. `mod+Alt+Enter` sends, keeps that thread running in the
 background, and opens a fresh new-thread composer. In a new thread, `mod+Enter`
-does the same. Change these shortcuts in **Settings → Keybindings** under
+does the same. Change these shortcuts in **Settings → Shortcuts** under
 **Composer: Opposite Queue or Steer Action**, **Composer: Start in Background**,
 or **Composer: Send and Start New Thread**. These bindings take priority over the
 send shortcut. Click the send button to use the configured follow-up behavior.
@@ -189,8 +189,8 @@ to show only actions.
 In a new thread, `Cmd+Shift+H` moves the draft to the next machine.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
-also sends. To make Return insert a new line instead, change the Return key
-behavior in Settings → Keyboard.
+also sends. To make Return insert a new line instead, change **Send shortcut** in
+Settings → Chat.
 
 Common searchable commands include opening the command palette, creating a
 thread, toggling the terminal or right panel, finding a project file, searching
@@ -366,6 +366,11 @@ current machine when available. It uses the same flow as **No project** in the p
 Background submission from a new thread is the exception. `mod+enter` starts that thread and opens
 another new thread with the same workspace mode and base branch. **New worktree** remains selected,
 but the new thread does not reuse the worktree created for the thread that just started.
+
+In the desktop app, `mod+w` closes the focused terminal or the active right-panel
+tab. When nothing remains to close, it does nothing; it never closes the window. In a browser, `mod+w`
+closes the browser tab; rebind `rightPanel.close` and `terminal.close` to an available
+shortcut such as `alt+w`.
 
 `mod+shift+t` reopens the last closed tab across the app, including files,
 diffs, pull requests, browsers, and devices, in the order you closed them.

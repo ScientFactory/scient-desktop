@@ -218,35 +218,6 @@ it("flushes the latest captured position on pagehide before the storage debounce
   expect(saved.offsetWithinRow).toBe(receipt.offsetWithinRow);
 });
 
-it("keeps a held thread's exact reading and follow receipt through scroll, pagehide and unmount", async (context) => {
-  await using _fixture = _createFixture(context);
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  const key = "geometry:held-follow-receipt";
-  const entries = Array.from({ length: 20 }, (_, i) => entry(i));
-  await render(_fixture, key, entries);
-  await vi.waitFor(() => {
-    expect(readTimelinePosition(key)).toBeDefined();
-  });
-  await scroll(() => _fixture.listRef.current!.scrollToOffset({ offset: 300, animated: false }));
-  await advanceClock(_fixture);
-  const captured = readTimelinePosition(key)!;
-  const saved = { ...captured, atEnd: false, followingPromptId: "message-19" };
-  rememberTimelinePosition(key, saved);
-
-  await render(_fixture, key, entries, { paintOnly: true });
-  const node = _fixture.listRef.current!.getScrollableNode()!;
-  node.scrollTop += 35;
-  node.dispatchEvent(new Event("scroll"));
-  await advanceClock(_fixture);
-  expect(readTimelinePosition(key)).toEqual(saved);
-  window.dispatchEvent(new Event("pagehide"));
-  expect(readTimelinePosition(key)).toEqual(saved);
-  await _fixture.root0?.unmount();
-  _fixture.root0 = undefined;
-  expect(readTimelinePosition(key)).toEqual(saved);
-});
-
 it("does not offer a jump into reserved blank space but reports a hidden answer", async (context) => {
   await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
@@ -1084,6 +1055,33 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   ).toBe(answerEnd);
   expect(reports.at(-1)?.predicate, JSON.stringify(reports.at(-1))).toBe(true);
   expect(_fixture.host!.querySelector("[data-reader-end-control]")).toBeNull();
+});
+
+it("leaves a scroll without reader input where it is while a fresh open settles at the end", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+
+  const key = "geometry:open-settling-scroll";
+  const onPositioned = vi.fn();
+  await render(
+    _fixture,
+    key,
+    Array.from({ length: 30 }, (_, i) => entry(i)),
+    { onPositionedThreadKeyChange: onPositioned },
+  );
+  const node = _fixture.listRef.current!.getScrollableNode()!;
+  await vi.waitFor(() => {
+    expect(node.scrollTop).toBeGreaterThan(0);
+  });
+  expect(onPositioned).not.toHaveBeenCalledWith(key);
+  // A screen reader moving to the first heading scrolls with no wheel, touch, press or key.
+  node.scrollTop = 0;
+  node.dispatchEvent(new Event("scroll"));
+  await vi.waitFor(() => {
+    expect(onPositioned).toHaveBeenCalledWith(key);
+  });
+  await advanceClock(_fixture, 256);
+  expect(node.scrollTop).toBe(0);
 });
 
 function _createFixture(context: TestContext) {

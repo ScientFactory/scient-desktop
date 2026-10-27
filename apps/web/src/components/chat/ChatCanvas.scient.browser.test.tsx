@@ -4,34 +4,12 @@ import "../../index.css";
 import { act, render } from "../../../test/render";
 import { ChatCanvas } from "./ChatCanvas";
 import { useChatCanvas } from "./ChatCanvasContext";
-function Preview({
-  _fixture,
-  x,
-}: {
-  x: number;
-} & {
-  _fixture: _Fixture;
-}) {
+import { createChatCanvasStore } from "./canvasStore";
+function Probe({ _fixture }: { _fixture: _Fixture }) {
   const current = useChatCanvas();
   useLayoutEffect(() => {
     _fixture.publishCanvas(current);
   }, [_fixture, current]);
-  const reportPreview = current?.reportPreview;
-  useLayoutEffect(() => {
-    reportPreview?.({
-      key: "browser:one",
-      width: 240,
-      source: {
-        width: 240,
-        height: 365,
-      },
-      position: {
-        x,
-        y: 12,
-      },
-      lastInteraction: "drag",
-    });
-  }, [reportPreview, x]);
   return null;
 }
 function layoutFont(size = 16) {
@@ -55,7 +33,19 @@ function find(_fixture: _Fixture, open: boolean, previewX = 1548) {
         height: 1000,
       }}
     >
-      <ChatCanvas composerOverlayElement={null} detailsCardTopInset={open ? 48 : 0}>
+      <ChatCanvas
+        store={_fixture.store}
+        threadRef={null}
+        preview={{
+          key: "browser:one",
+          width: 240,
+          source: { width: 240, height: 365 },
+          position: { x: previewX, y: 12 },
+          lastInteraction: "drag",
+        }}
+        composerOverlayElement={null}
+        detailsCardTopInset={open ? 48 : 0}
+      >
         {open ? (
           <div
             data-thread-find-bar
@@ -68,12 +58,11 @@ function find(_fixture: _Fixture, open: boolean, previewX = 1548) {
             }}
           />
         ) : null}
-        <Preview _fixture={_fixture} x={previewX} />
+        <Probe _fixture={_fixture} />
       </ChatCanvas>
     </div>
   );
-}
-// regression: f92afe79c9 fix(web): find bar and thread details panel stop covering each other (#17858)
+} // regression: f92afe79c9 fix(web): find bar and thread details panel stop covering each other (#17858)
 it.each([16, 24])(
   "keeps a preview below Find and releases its space on close at a %spx root font",
   async (size) => {
@@ -109,7 +98,9 @@ it("remeasures the open bar when its font size changes without resizing the canv
 function _createFixture() {
   let _published_canvas = undefined! as ReturnType<typeof useChatCanvas>;
   const stack = new AsyncDisposableStack();
+  const store = createChatCanvasStore();
   return {
+    store,
     get canvas() {
       return _published_canvas;
     },

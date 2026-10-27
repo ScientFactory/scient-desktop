@@ -49,14 +49,14 @@ function Probe({
     threadExists: true,
     threadDeleted: false,
     detailLoaded: props.detailLoaded,
-    displayedThreadKey: timeline.displayThreadKey,
-    timelineEmpty: timeline.entries.length === 0,
+    displayedThreadKey: props.routeThreadKey,
+    timelineEmpty: timeline.length === 0,
   });
   useLayoutEffect(() => {
     if (props.detailLoaded) {
       rememberReadyThreadTimeline({
         threadKey: props.routeThreadKey,
-        entries: timeline.entries,
+        entries: timeline,
       });
     }
     _fixture.publishProbed({ landing, reveal, timeline });
@@ -65,7 +65,7 @@ function Probe({
     <section>
       <h1>{props.routeThreadKey}</h1>
       <div data-landing-surface inert={landing.pending} className={reveal.messagesClassName}>
-        {timeline.entries.map((row) => (
+        {timeline.map((row) => (
           <p key={row}>{row}</p>
         ))}
       </div>
@@ -102,7 +102,7 @@ describe("fork landing in the chat view", () => {
       detailLoaded: false,
     });
     expect(_fixture.probed.landing).toMatchObject({ pending: false, landed: false });
-    expect(_fixture.probed.timeline).toEqual({ entries: [], displayThreadKey: origin });
+    expect(_fixture.probed.timeline).toEqual([]);
     expect(_fixture.probed.reveal.messagesClassName).toBeUndefined();
     expect(_fixture.probed.reveal.onPositionedThreadKeyChange).toBeUndefined();
     expect(_fixture.probed.reveal.syncStatusHidden).toBe(false);
@@ -129,7 +129,7 @@ describe("fork landing in the chat view", () => {
       true,
     );
     // Nothing from the origin is held under the fork's header.
-    expect(_fixture.probed.timeline).toEqual({ entries: [], displayThreadKey: fork });
+    expect(_fixture.probed.timeline).toEqual([]);
     expect(_fixture.container.querySelector("h1")?.textContent).toBe(fork);
     expect(_fixture.container.textContent).not.toContain(`${origin} row`);
 
@@ -179,7 +179,7 @@ describe("fork landing in the chat view", () => {
         _fixture.container.querySelector("[data-landing-surface]")?.hasAttribute("inert"),
       ).toBe(false);
       expect(_fixture.probed.reveal.messagesClassName).not.toContain("opacity-0");
-      expect(_fixture.probed.timeline).toEqual({ entries: [], displayThreadKey: fork });
+      expect(_fixture.probed.timeline).toEqual([]);
       expect(_fixture.container.querySelector("h1")?.textContent).toBe(fork);
       expect(_fixture.container.textContent).not.toContain(`${origin} row`);
     } finally {

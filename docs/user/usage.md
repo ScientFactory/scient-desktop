@@ -2,7 +2,7 @@
 
 Open **Usage** from the sidebar or the command palette, or press `mod+u` on web and
 desktop when the terminal is not focused. Customize `usage.open` in
-**Settings → Keybindings**.
+**Settings → Shortcuts**.
 
 Use the Usage page to understand which providers and models are doing the work,
 compare activity over time, and estimate the token cost of recent project work.
@@ -207,4 +207,4 @@ press `C`, `T`, or `L` for Cost, Tokens, or Limits while not typing in a field.
 Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
 24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
 Press `Escape` to return to the previous page. Customize these shortcuts in
-**Settings → Keybindings**.
+**Settings → Shortcuts**.

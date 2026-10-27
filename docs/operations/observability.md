@@ -113,7 +113,7 @@ If OTLP is not configured, metrics still exist in-process, but you will not have
 `apps/server/src/observability/EventLoopMonitor.ts` samples the server's event loop every 30 s. When
 the loop stalled for more than 2 s since the previous sample, it records a root
 `server.eventLoop.stall` span with a warning. The span has trace level `Warn`, so it stays when
-`T3CODE_TRACE_MIN_LEVEL` is `Warn`. The warning shows in Settings > Diagnostics unless OTLP logs are
+`T3CODE_TRACE_MIN_LEVEL` is `Warn`. The warning shows in Settings > Maintenance > Diagnostics unless OTLP logs are
 on. The span time is when the sample ran, not when the stall happened.
 
 The trace file rotates in well under an hour on a busy server, so each stall is also appended as one

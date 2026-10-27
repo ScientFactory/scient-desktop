@@ -73,6 +73,7 @@ export const SCIENT_AWARENESS_DELIVERY = {
   codex: "developer-instructions",
   cursor: "unsupported-no-private-system-seam",
   droid: "system-prompt-append",
+  fx: "unsupported-no-private-system-seam",
   grok: "rules-append",
   // Native sessionMcp exposes tools; MSP does not expose a private system prompt seam.
   muse: "unsupported-no-private-system-seam",

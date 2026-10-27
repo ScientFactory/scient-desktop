@@ -17,7 +17,7 @@ Scient, provider/model categories, and which features or Settings sections you
 visit. They do not upload the Usage page's broader local transcript history or
 private custom model names. Missing provider counts stay unknown.
 
-Use **Share usage and reliability** in Settings → General → Privacy and analytics
+Use **Share usage and reliability** in Settings → About → Privacy and analytics
 to turn sharing off or on. Sharing covers feature usage, reliability and
 analytics-delivery counters; it never includes your conversations, files, or
 credentials. **What’s shared?** in Settings explains exclusions, storage and

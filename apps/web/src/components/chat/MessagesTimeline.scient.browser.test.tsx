@@ -240,7 +240,7 @@ async function click(element: HTMLElement) {
   await act(async () => element.click());
 }
 describe("MessagesTimeline activity announcements", () => {
-  it("keeps one announcer from the empty view into the first turn and silences held content", async () => {
+  it("keeps one announcer from the empty view into the first turn", async () => {
     const props = baseProps();
     await using screen = await render(<MessagesTimeline {...props} timelineEntries={[]} />);
     const region = screen.container.querySelector<HTMLElement>('[aria-live="polite"].sr-only')!;
@@ -255,8 +255,6 @@ describe("MessagesTimeline activity announcements", () => {
     await screen.rerender(<MessagesTimeline {...running} timelineEntries={[]} />);
     expect(screen.container.querySelector('[aria-live="polite"].sr-only')).toBe(region);
     await expect.element(region).toHaveTextContent("Working");
-    await screen.rerender(<MessagesTimeline {...running} timelineEntries={[]} paintOnly />);
-    await expect.element(region).toBeEmptyDOMElement();
     await screen.rerender(
       <MessagesTimeline
         {...running}

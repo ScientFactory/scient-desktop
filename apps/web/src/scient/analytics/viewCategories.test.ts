@@ -49,7 +49,7 @@ it("never uses panel identity, path or titles as categories", () => {
 });
 it("reports every settings page by name, never as other", async () => {
   expect(settingsCategory("/settings/documents")).toBe("documents");
-  expect(settingsCategory("/settings/storage")).toBe("storage");
+  expect(settingsCategory("/settings/maintenance")).toBe("storage");
   expect(SETTINGS_ANALYTICS_SECTIONS.size).toBeGreaterThan(10);
   const contract = await contractSettingsSections();
   expect(contract).toContain("other");

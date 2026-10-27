@@ -169,6 +169,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           expanded && "w-full",
         )}
       >
+        <MessageAuthorHeading>Automation</MessageAuthorHeading>
         <FoldedMessageHeader
           icon={CalendarClockIcon}
           label="Automation"
@@ -338,6 +339,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
       : null,
   );
+  const senderLabel = senderShell?.title.trim() || "Agent";
   const resolvedContext = resolveUserMessageContext(
     userMessage.attribution === "guest" ? { ...row.message, text: userMessage.text } : row.message,
   );
@@ -489,10 +491,18 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           folded && expanded && "w-full",
         )}
       >
+        {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
+        <MessageAuthorHeading>
+          {folded
+            ? senderLabel
+            : userMessage.guestName === undefined
+              ? "You"
+              : `${userMessage.guestName} (guest)`}
+        </MessageAuthorHeading>
         {folded ? (
           <FoldedMessageHeader
             icon={MessagesSquareIcon}
-            label={senderShell?.title.trim() || "Agent"}
+            label={senderLabel}
             summary={foldSummary}
             expanded={expanded}
             onToggle={() => setExpanded((value) => !value)}
@@ -508,9 +518,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               folded && !ctx.findActive && "max-h-96 overflow-auto",
             )}
           >
-            <MessageAuthorHeading>
-              {userMessage.guestName === undefined ? "You" : `${userMessage.guestName} (guest)`}
-            </MessageAuthorHeading>
             {/* SCIENT-FORK:START — the folded shell retains the image gallery and video controls. */}
             <ScientChatImageGallery
               className="mb-2 max-w-[420px]"

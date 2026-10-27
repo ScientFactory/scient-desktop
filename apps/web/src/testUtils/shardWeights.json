@@ -126,7 +126,6 @@
   "src/components/chat/useComposerSend.browser.test.tsx": 1.693,
   "src/components/chat/useLocalDispatchState.browser.test.tsx": 0.121,
   "src/components/chat/useThreadFindNavigation.browser.test.tsx": 0.139,
-  "src/components/chat/useThreadSnoozeClock.logic.test.ts": 0.02,
   "src/components/chat/useThreadTimelineEntries.browser.test.tsx": 0.1,
   "src/components/chat/useTimelineEndControl.browser.test.tsx": 0.235,
   "src/components/chat/V2LifecycleRow.logic.test.ts": 0.009,

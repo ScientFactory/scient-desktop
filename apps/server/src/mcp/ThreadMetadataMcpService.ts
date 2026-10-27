@@ -36,14 +36,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function threadLookupFailure(
-  error: ThreadManagementService.ThreadManagementError,
-): OrchestratorMcpFailure {
-  return error._tag === "ThreadManagementThreadNotFoundError"
-    ? failure("thread_not_found", error.message)
-    : failure("orchestration_error", error.message);
-}
-
 function stablePart(value: string): string {
   return encodeURIComponent(value);
 }
@@ -70,7 +62,6 @@ function commandId(input: {
 function metadataCommand(input: {
   readonly commandId: CommandId;
   readonly threadId: ThreadId;
-  readonly projectId: OrchestrationV2AppThread["projectId"];
   readonly update: ThreadMetadataMcpUpdateInput;
 }): Extract<OrchestrationV2Command, { readonly type: "thread.metadata.update" }> {
   switch (input.update.action) {
@@ -87,23 +78,6 @@ function metadataCommand(input: {
         commandId: input.commandId,
         threadId: input.threadId,
         regenerateTitle: true,
-      };
-    case "link_pull_request":
-      return {
-        type: "thread.metadata.update",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        linkedPullRequest: {
-          projectId: input.projectId,
-          ...input.update.pullRequest!,
-        },
-      };
-    case "unlink_pull_request":
-      return {
-        type: "thread.metadata.update",
-        commandId: input.commandId,
-        threadId: input.threadId,
-        linkedPullRequest: null,
       };
   }
 }
@@ -192,12 +166,11 @@ const make = Effect.gen(function* () {
         (candidate) => callerShell == null || candidate.projectId === callerShell.projectId,
       );
     }
-    const target = yield* threadManagement
-      .getProjectThreadRecords(
-        { projectId: callerShell?.projectId ?? shell.projectId, threadId },
-        [],
-      )
-      .pipe(Effect.mapError(threadLookupFailure));
+    // SCIENT-FORK:START — A thread credential cannot update another project's thread.
+    if (callerShell != null && shell.projectId !== callerShell.projectId) {
+      return yield* failure("thread_not_found", `Thread ${threadId} was not found.`);
+    }
+    // SCIENT-FORK:END
     const requestKey =
       input.clientRequestId === undefined
         ? yield* crypto.randomUUIDv4().pipe(Effect.orDie)
@@ -213,7 +186,6 @@ const make = Effect.gen(function* () {
         metadataCommand({
           commandId: updateCommandId,
           threadId,
-          projectId: target.thread.projectId,
           update: input,
         }),
       )

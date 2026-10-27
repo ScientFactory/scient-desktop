@@ -11,8 +11,30 @@ import { createHighlighterCore, type HighlighterCore, type ThemeRegistrationAny 
 import { createOnigurumaEngine } from "shiki/engine/oniguruma";
 
 import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { READABLE_LIGHT_THEME_NAME, readableSyntaxColor } from "~/lib/readableSyntaxTheme";
 
 const highlighterReady = StateEffect.define<void>();
+
+type PierreTheme = (typeof import("@pierre/theme/pierre-light"))["default"];
+
+// resolveDiffThemeName names the readable light palette, a Pierre Diffs theme Shiki cannot load.
+function readableLightTheme(theme: PierreTheme): ThemeRegistrationAny {
+  return {
+    ...theme,
+    name: READABLE_LIGHT_THEME_NAME,
+    tokenColors: theme.tokenColors.map((rule) =>
+      rule.settings.foreground
+        ? {
+            ...rule,
+            settings: {
+              ...rule.settings,
+              foreground: readableSyntaxColor(rule.settings.foreground),
+            },
+          }
+        : rule,
+    ),
+  } as ThemeRegistrationAny;
+}
 
 // The app's shared highlighter has no Mermaid lexer, so Mermaid sources get a
 // small Shiki instance of their own, loaded only when one is edited.
@@ -21,7 +43,7 @@ export function getMermaidHighlighter(): Promise<HighlighterCore> {
   mermaidHighlighter ??= createHighlighterCore({
     // Pierre's themes are TextMate themes typed as deeply readonly.
     themes: [
-      import("@pierre/theme/pierre-light").then((theme) => theme.default as ThemeRegistrationAny),
+      import("@pierre/theme/pierre-light").then((theme) => readableLightTheme(theme.default)),
       import("@pierre/theme/pierre-dark").then((theme) => theme.default as ThemeRegistrationAny),
     ],
     langs: [import("shiki/langs/mermaid.mjs")],
