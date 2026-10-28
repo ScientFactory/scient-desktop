@@ -132,7 +132,7 @@ export function isValidSearchUrlTemplate(template: string): boolean {
 
 /**
  * The search URL template for the chosen engine. An unusable custom template
- * falls back to DuckDuckGo so a query typed in the address bar always searches.
+ * falls back to Google so a query typed in the address bar always searches.
  */
 export function resolveSearchUrlTemplate(settings: {
   readonly browserSearchEngine: BrowserSearchEngine;
@@ -142,7 +142,9 @@ export function resolveSearchUrlTemplate(settings: {
     return BROWSER_SEARCH_URL_TEMPLATES[settings.browserSearchEngine];
   }
   const custom = settings.browserCustomSearchUrl.trim();
-  return isValidSearchUrlTemplate(custom) ? custom : BROWSER_SEARCH_URL_TEMPLATES.duckduckgo;
+  // SCIENT-FORK:START — an unusable custom template falls back to Google, Scient's default.
+  return isValidSearchUrlTemplate(custom) ? custom : BROWSER_SEARCH_URL_TEMPLATES.google;
+  // SCIENT-FORK:END
 }
 
 export function resolveAddressBarInput(
