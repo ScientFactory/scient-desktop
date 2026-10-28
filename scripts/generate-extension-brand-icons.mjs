@@ -208,6 +208,37 @@ const roundedTile = (pixels, width, height) => {
     return covered >= 12;
   });
 };
+// App icons drawn with a glass rim have their own rounded corner, which our tile corner would cut
+// through. Repaint everything outside an inset rounded square with the colour just inside it.
+const extendInnerEdge = (data, width, height) => {
+  const out = Buffer.from(data);
+  const inset = Math.round(width * 0.03);
+  const radius = Math.round(width * 0.24);
+  const margin = Math.round(width * 0.012);
+  const nearest = (x, y, s, r) => {
+    let qx = Math.min(Math.max(x, s), width - 1 - s);
+    let qy = Math.min(Math.max(y, s), height - 1 - s);
+    const cx = qx < s + r ? s + r : qx > width - 1 - s - r ? width - 1 - s - r : undefined;
+    const cy = qy < s + r ? s + r : qy > height - 1 - s - r ? height - 1 - s - r : undefined;
+    if (cx !== undefined && cy !== undefined) {
+      const d = Math.hypot(x - cx, y - cy);
+      if (d > r) {
+        qx = cx + ((x - cx) / d) * r;
+        qy = cy + ((y - cy) / d) * r;
+      } else [qx, qy] = [x, y];
+    }
+    return [qx, qy];
+  };
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const [ox, oy] = nearest(x, y, inset, radius);
+      if (Math.abs(ox - x) < 0.5 && Math.abs(oy - y) < 0.5) continue;
+      const [sx, sy] = nearest(x, y, inset + margin, radius - margin);
+      const from = (Math.round(sy) * width + Math.round(sx)) * 4;
+      data.copy(out, (y * width + x) * 4, from, from + 4);
+    }
+  return out;
+};
 const render = async (bytes, source, brand) => {
   bytes = await decodeIcon(bytes);
   const meta = await sharp(bytes).metadata();
@@ -226,6 +257,7 @@ const render = async (bytes, source, brand) => {
     data,
     info: { width, height },
   } = decoded;
+  if (source.glassEdge) data = extendInnerEdge(data, width, height);
   if (source.extendBackground) {
     const rgb = Buffer.from(source.background.slice(1), "hex");
     const seen = new Uint8Array(width * height);

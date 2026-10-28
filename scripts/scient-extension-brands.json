@@ -734,7 +734,8 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "jpeg",
-      "outputBytes": 3624
+      "outputBytes": 3510,
+      "glassEdge": true
     },
     "website": "https://clickup.com"
   },
@@ -1362,7 +1363,8 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "jpeg",
-      "outputBytes": 3422
+      "outputBytes": 2920,
+      "glassEdge": true
     }
   },
   {
@@ -1604,7 +1606,8 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "jpeg",
-      "outputBytes": 3542
+      "outputBytes": 3410,
+      "glassEdge": true
     }
   },
   {
@@ -1845,7 +1848,8 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "jpeg",
-      "outputBytes": 4786
+      "outputBytes": 3624,
+      "glassEdge": true
     }
   },
   {
@@ -2285,7 +2289,8 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "jpeg",
-      "outputBytes": 3914
+      "outputBytes": 3326,
+      "glassEdge": true
     }
   },
   {
@@ -3343,7 +3348,8 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "jpeg",
-      "outputBytes": 4982
+      "outputBytes": 4460,
+      "glassEdge": true
     }
   },
   {
@@ -3508,7 +3514,8 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "jpeg",
-      "outputBytes": 3282
+      "outputBytes": 2150,
+      "glassEdge": true
     }
   },
   {
