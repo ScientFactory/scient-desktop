@@ -383,7 +383,7 @@ describe("managed runtime mutation lock ownership", () => {
             notify();
           });
         let finished = 0;
-        const pending = Promise.all(
+        const pending = Promise.allSettled(
           Array.from({ length: 3 }, () =>
             tryAcquireManagedRuntimeMutationLock(path).finally(() => {
               finished += 1;
@@ -401,7 +401,11 @@ describe("managed runtime mutation lock ownership", () => {
           else await parked;
         }
         fsHooks.schedule = undefined;
-        const contenders = await pending;
+        const contenders = (await pending).map((outcome) => {
+          if (outcome.status === "rejected")
+            throw new Error(`seed ${seed}`, { cause: outcome.reason });
+          return outcome.value;
+        });
         const owners = contenders.filter((lock) => lock !== undefined);
 
         expect(owners, `seed ${seed}`).toHaveLength(1);
