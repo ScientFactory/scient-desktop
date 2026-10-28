@@ -6,23 +6,23 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "a56ecdafa7c944286f3b45aa51486be4ffe079fd",
-  "reviewedThrough": "a56ecdafa7c944286f3b45aa51486be4ffe079fd",
-  "reviewedAt": "2026-10-27",
-  "reviewRecord": "docs/internals/t3-upstream-sync-20261027-a56ecdafa7.md",
+  "integrationBase": "8e76f945d2e1aacfad5da52b92ae7b547ae0ee6f",
+  "reviewedThrough": "8e76f945d2e1aacfad5da52b92ae7b547ae0ee6f",
+  "reviewedAt": "2026-10-28",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261028-8e76f945d2.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "d17d8f60cecccf6580a9f50c9672d0cd1e8ed3e9",
-  "lastRefreshPreviousOfficialTip": "e9236274a3a6e0c731a7df4092db1e686f039068",
-  "lastRefreshOfficialTip": "a56ecdafa7c944286f3b45aa51486be4ffe079fd",
+  "lastRefreshBase": "b3ea3c2fd48441e00f85247920decf96afcc1541",
+  "lastRefreshPreviousOfficialTip": "a56ecdafa7c944286f3b45aa51486be4ffe079fd",
+  "lastRefreshOfficialTip": "8e76f945d2e1aacfad5da52b92ae7b547ae0ee6f",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 15,
-  "lastRefreshMerge": "92002fb3417a5ccaaa5fbd1527578bb491a29464",
-  "lastRefreshBranch": "codex/t3-sync-a56ecdafa7-20261027",
+  "lastRefreshRangeCount": 102,
+  "lastRefreshMerge": "f3c25c6c49cf8cc3e76a61ddb71553ffb5029f2e",
+  "lastRefreshBranch": "codex/t3-sync-8e76f945d2-20261028",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -43,5 +43,5 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshVerifiedAt": "2026-10-27T19:26:00Z"
+  "lastRefreshVerifiedAt": "2026-10-28T11:34:00Z"
 }

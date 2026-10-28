@@ -605,6 +605,21 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`8e76f945d2e1aacfad5da52b92ae7b547ae0ee6f` is recorded in
+[the 2026-10-28 8e76f945d2 receipt](docs/internals/t3-upstream-sync-20261028-8e76f945d2.md).
+Literal merge `f3c25c6c49cf8cc3e76a61ddb71553ffb5029f2e` has owned base
+`b3ea3c2fd48441e00f85247920decf96afcc1541` and the frozen official target as parents,
+retaining the 102 official commits after `a56ecdafa7`; owned-main catch-up
+`0f956df756f3c2a866b1d9df672ea4320728e3c7` includes `eaf4ccdd8e`. Update-time thread
+continuation and thread-continuation gating are removed with upstream; thread links
+use upstream's v2 format while older links still parse; upstream's peer links land
+as migrations 074-076 with `scient_*` tool names; Labs keeps upstream's page.
+Upstream's dead-code sweep also removes the Scient code that only it reached, and
+every Scient React effect now states its reason. Native V2, immutable migrations,
+storage identities and cloud, telemetry, relay, updater, mobile publication and
+release controls remain. Release remains separate.
+
+The previous committed alignment through
 `a56ecdafa7c944286f3b45aa51486be4ffe079fd` is recorded in
 [the 2026-10-27 a56ecdafa7 receipt](docs/internals/t3-upstream-sync-20261027-a56ecdafa7.md)
 ([Scient PR #684](https://github.com/ScientFactory/scient-desktop/pull/684)).
