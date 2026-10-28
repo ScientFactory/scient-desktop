@@ -3502,7 +3502,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "--exclude=node_modules/node-pty/third_party/conpty*",
       "--exclude=node_modules/@ff-labs/fff-bin-win32-*",
       "--exclude=node_modules/@yuuang/ffi-rs-win32-*",
-      "--exclude=node_modules/@msgpackr-extract/msgpackr-extract-win32-*",
       "--exclude=node_modules/@napi-rs/canvas-win32-*",
       "--exclude=node_modules/@napi-rs/keyring-win32-*",
       "--exclude=node_modules/@cursor/sdk-win32-*",
@@ -3661,8 +3660,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so",
           "node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi.dll",
           "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so",
-          "node_modules/@msgpackr-extract/msgpackr-extract-win32-x64/addon.node",
-          "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
           "node_modules/@napi-rs/canvas-win32-x64-msvc/skia.win32-x64-msvc.node",
           "node_modules/@napi-rs/canvas-win32-arm64-msvc/skia.win32-arm64-msvc.node",
           "node_modules/@napi-rs/canvas/js-binding.js",
@@ -3734,10 +3731,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ]) {
           assert.include(listing, wrapper);
         }
-        assert.include(
-          listing,
-          "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
-        );
         for (const excluded of [
           "prebuilds/darwin-",
           "prebuilds/win32-",
@@ -3745,7 +3738,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "third_party/conpty",
           "fff-bin-win32-",
           "ffi-rs-win32-",
-          "msgpackr-extract-win32-",
           "canvas-win32-",
           "keyring-win32-",
           "sdk-win32-",

@@ -15,6 +15,7 @@ import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQ
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeHttp from "node:http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -40,6 +41,7 @@ import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -237,17 +239,6 @@ const layerApplicationObservability = EventLoopMonitor.layer.pipe(
   Layer.provideMerge(layerResourceAttribution),
 );
 
-const layerPtyAdapter = Layer.unwrap(
-  Effect.gen(function* () {
-    if (typeof Bun !== "undefined") {
-      const BunPtyAdapter = yield* Effect.promise(() => import("./terminal/BunPtyAdapter.ts"));
-      return BunPtyAdapter.layer;
-    } else {
-      const NodePtyAdapter = yield* Effect.promise(() => import("./terminal/NodePtyAdapter.ts"));
-      return NodePtyAdapter.layer;
-    }
-  }),
-);
 // Share rotation state so driver loggers cannot race.
 const layerProviderEventLoggers = Layer.effect(
   ProviderEventLoggers.ProviderEventLoggers,
@@ -269,6 +260,8 @@ const layerProviderEventLoggers = Layer.effect(
     return { native: store.logger("native"), canonical: store.logger("canonical") };
   }),
 );
+
+const layerPtyAdapter = NodePtyAdapter.layer;
 
 const layerServerSettings = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
@@ -367,17 +360,7 @@ const layerHttpServer = Layer.unwrap(
   }),
 );
 
-const layerPlatformServices = Layer.unwrap(
-  Effect.gen(function* () {
-    if (typeof Bun !== "undefined") {
-      const { layer } = yield* Effect.promise(() => import("@effect/platform-bun/BunServices"));
-      return DocumentText.layer.pipe(Layer.provideMerge(layer));
-    } else {
-      const { layer } = yield* Effect.promise(() => import("@effect/platform-node/NodeServices"));
-      return DocumentText.layer.pipe(Layer.provideMerge(layer));
-    }
-  }),
-);
+const layerPlatformServices = DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
 

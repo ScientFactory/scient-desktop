@@ -973,7 +973,6 @@
   "src/telemetry/ProviderLifecycleAnalytics.test.ts": 0.446,
   "src/telemetry/ScientMcpAnalytics.test.ts": 0.307,
   "src/telemetry/SourceImportAnalytics.test.ts": 2.588,
-  "src/terminal/BunPtyAdapter.test.ts": 0.199,
   "src/terminal/Manager.test.ts": 3.241,
   "src/terminal/NodePtyAdapter.test.ts": 0.279,
   "src/terminal/nodePtyConsoleList.test.ts": 0.121,
