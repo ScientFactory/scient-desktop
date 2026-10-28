@@ -558,7 +558,11 @@ describe.skipIf(!windows)("Windows retention placement", () => {
       const first = await locate(null);
       if (first._tag !== "ready") throw new Error(`Vault refused: ${first.reason}`);
       // Every right but adding subfolders; the folder stays private to the user and SYSTEM.
-      const sid = /^O:(S-[\d-]+)/u.exec(await security(first.directory))![1];
+      const sid = NodeChildProcess.execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-Command", "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"],
+        { encoding: "utf8" },
+      ).trim();
       NodeChildProcess.execFileSync("icacls.exe", [
         first.directory,
         "/grant:r",
