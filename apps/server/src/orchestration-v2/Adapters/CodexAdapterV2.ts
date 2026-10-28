@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — plugin-scoped server policy preserves native plugin skills.
+import { codexPluginKeyConfig } from "../../provider/Drivers/PluginKeyProviderConfig.ts";
+// SCIENT-FORK:END
 import type { RuntimeCitationSource } from "@t3tools/contracts";
 import { extractCodexCitationSources } from "../../provider/codexCitations.ts";
 // SCIENT-FORK:START — running-fork text capture producer.
@@ -1370,6 +1373,9 @@ export function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      // SCIENT-FORK:START — native plugin transports cannot receive account keys directly.
+      ...codexPluginKeyConfig(mcpSession?.pluginKeyPolicies),
+      // SCIENT-FORK:END
       ...(mcpSession === undefined
         ? {}
         : {
@@ -1387,11 +1393,17 @@ export function codexThreadRuntimeParams(input: {
             // above, so the user's MCP configuration stays in place beside them.
             ...Object.fromEntries(
               mcpSession.connectors.map((connector) => [
-                `mcp_servers.${connector.serverName}`,
+                `mcp_servers.${mcpSession.pluginKeyServerNames?.[connector.serverName] === undefined ? connector.serverName : JSON.stringify(mcpSession.pluginKeyServerNames[connector.serverName])}`,
                 {
                   url: connector.url,
                   http_headers: { Authorization: mcpSession.authorizationHeader },
                 },
+              ]),
+            ),
+            ...Object.fromEntries(
+              (mcpSession.pluginKeyStdioServers ?? []).map(({ serverName, ...config }) => [
+                `mcp_servers.${JSON.stringify(serverName)}`,
+                config,
               ]),
             ),
             // SCIENT-FORK:END Scient Extensions connectors

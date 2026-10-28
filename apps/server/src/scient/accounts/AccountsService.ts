@@ -4,6 +4,9 @@
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
 import type {
+  AccountHandoff,
+  CliPasswordStoreInput,
+  CliPasswordStoreResult,
   AccountMatchSignInInput,
   AccountMatchSignInResult,
   AccountActivityEntry,
@@ -75,7 +78,18 @@ export type AccountAuthorization =
     };
 
 export interface AccountsServiceShape {
+  readonly setHandoff: (
+    handoff: AccountHandoff,
+    reveal?: Effect.Effect<void, AccountsError>,
+  ) => Effect.Effect<void, AccountsError>;
+  readonly removeHandoff: (handoffId: string) => Effect.Effect<void>;
+  readonly handoffCancelled: (handoffId: string) => Effect.Effect<boolean>;
+  readonly showHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;
+  readonly cancelHandoff: (handoffId: string) => Effect.Effect<void, AccountsError>;
   // Client surface (RPC).
+  readonly passwordStore: (
+    input: CliPasswordStoreInput,
+  ) => Effect.Effect<CliPasswordStoreResult, AccountsError>;
   readonly snapshot: Effect.Effect<AccountsSnapshot, AccountsError>;
   readonly changes: Stream.Stream<AccountsSnapshot>;
   readonly save: (input: AccountSaveInput) => Effect.Effect<AccountSaveResult, AccountsError>;
@@ -114,10 +128,18 @@ export interface AccountsServiceShape {
     input: AccountMatchSignInInput,
   ) => Effect.Effect<AccountMatchSignInResult, AccountsError>;
 
+  /** Lock-free authorization epoch. Undefined while the state needs initialization. */
+  readonly bindingRevision?: Effect.Effect<number | undefined>;
+  readonly recordBoundDenial?: (
+    ref: VaultSecretRef,
+    consumer: AccountKeyConsumer,
+  ) => Effect.Effect<void>;
+
   // Extensions bindings: the saved binding is the user's approval for Ask access.
   readonly resolveBound: (
     ref: VaultSecretRef,
     consumer: AccountKeyConsumer,
+    options?: { readonly auditAllowed?: boolean },
   ) => Effect.Effect<Redacted.Redacted<string>, AccountsError>;
   /** Without an origin, every API-key account is offered. */
   readonly listBindable: (input: {

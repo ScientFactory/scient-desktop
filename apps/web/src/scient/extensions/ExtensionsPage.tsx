@@ -32,7 +32,12 @@ import { providersIgnoringCheckedAtAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { useEnvironmentScope } from "../../state/session";
 import { extensionsDiscoverCatalog, extensionsInventory } from "./extensionsState";
-import { callbackOriginOf } from "./extensionsView";
+import {
+  callbackOriginOf,
+  EXTENSION_KIND_LABELS,
+  EXTENSION_KINDS,
+  type ExtensionKind,
+} from "./extensionsView";
 import type { ProviderInventoryView } from "./providerInventory";
 import { useProviderInventory } from "./useProviderInventory";
 
@@ -56,6 +61,11 @@ export interface ExtensionsEnvironment {
 }
 
 const ExtensionsEnvironmentContext = createContext<ExtensionsEnvironment | null>(null);
+
+/** Null outside ExtensionsPage, e.g. in the Accounts dialogs that reuse extension icons. */
+export function useOptionalExtensionsEnvironment(): ExtensionsEnvironment | null {
+  return useContext(ExtensionsEnvironmentContext);
+}
 
 export function useExtensionsEnvironment(): ExtensionsEnvironment {
   const value = useContext(ExtensionsEnvironmentContext);
@@ -144,33 +154,83 @@ export function ExtensionsPage({
 
 type ExtensionsTab = "discover" | "installed";
 
-/** "Discover | Installed" on the left, a page-specific control on the right. */
+const TAB_PATHS = {
+  discover: "/settings/extensions",
+  installed: "/settings/extensions/installed",
+} as const;
+
+/**
+ * "Discover | Installed" on the left, a page-specific control on the right,
+ * and below them which kind to show. Switching tab keeps the kind.
+ */
 export function ExtensionsTopBar({
   tab,
+  kind,
   children,
 }: {
   readonly tab: ExtensionsTab;
+  readonly kind: ExtensionKind | undefined;
   readonly children?: ReactNode;
 }) {
   const navigate = useNavigate();
+  const show = (nextTab: ExtensionsTab, nextKind: ExtensionKind | undefined) =>
+    void navigate({
+      to: TAB_PATHS[nextTab],
+      search: (current) => {
+        const { kind: _previous, ...rest } = current as { kind?: ExtensionKind };
+        return nextKind === undefined ? rest : { ...rest, kind: nextKind };
+      },
+    });
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <ToggleGroup
-        aria-label="Extensions"
-        variant="segmented"
-        value={[tab]}
-        onValueChange={(next) => {
-          if (next[0] === "discover" && tab !== "discover") {
-            void navigate({ to: "/settings/extensions" });
-          } else if (next[0] === "installed" && tab !== "installed") {
-            void navigate({ to: "/settings/extensions/installed" });
-          }
-        }}
-      >
-        <Toggle value="discover">Discover</Toggle>
-        <Toggle value="installed">Installed</Toggle>
-      </ToggleGroup>
-      {children}
+    <div className="grid gap-4">
+      {/* Fixed heights: the bar stays put whichever tab, kind or control is showing. */}
+      <div className="flex min-h-9 flex-wrap items-center justify-between gap-3">
+        <ToggleGroup
+          aria-label="Extensions"
+          variant="segmented"
+          value={[tab]}
+          onValueChange={(next) => {
+            const nextTab = next[0];
+            if ((nextTab === "discover" || nextTab === "installed") && nextTab !== tab) {
+              show(nextTab, kind);
+            }
+          }}
+        >
+          <Toggle value="discover">Discover</Toggle>
+          <Toggle value="installed">Installed</Toggle>
+        </ToggleGroup>
+        {children}
+      </div>
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
+        <ToggleGroup
+          aria-label="Show"
+          variant="pill"
+          size="sm"
+          className="-ms-3"
+          value={[kind ?? "plugins"]}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (value === undefined || value === (kind ?? "plugins")) return;
+            show(tab, value === "skills" ? "skills" : undefined);
+          }}
+        >
+          {EXTENSION_KINDS.map((item) => (
+            <Toggle key={item} value={item}>
+              {EXTENSION_KIND_LABELS[item]}
+            </Toggle>
+          ))}
+        </ToggleGroup>
+        <Link
+          to="/settings/extensions/all"
+          className={`${SECTION_TITLE_LINK_CLASS} text-sm text-muted-foreground hover:text-foreground`}
+        >
+          Browse all MCP servers
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3.5 transition-transform group-hover:translate-x-0.5"
+          />
+        </Link>
+      </div>
     </div>
   );
 }

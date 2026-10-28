@@ -471,6 +471,12 @@ jobs:
           --reporter=json
           --outputFile.json="$TEST_REPORT"
 
+      # Browser tests run source modules; this boots the production chunk graph.
+      - name: Boot the built web client
+        run: |
+          vp run --filter @t3tools/web build
+          node apps/web/scripts/verify-built-boot.ts
+
       # SCIENT-FORK:START — measure timing budgets separately from parallel correctness tests.
       - name: Test scientific editor performance
         if: ${{ !cancelled() && matrix.shard == 1 }}

@@ -131,7 +131,6 @@ export function useReaderScrollInput({
  */
 export function useSaveReadingPosition({
   listRef,
-  paintOnly = false,
   restoringThreadPosition,
   readingListLoaded,
   positionHistoryLoading,
@@ -150,8 +149,6 @@ export function useSaveReadingPosition({
   workGroupViewState,
 }: {
   listRef: RefObject<LegendListRef | null>;
-  /** A held timeline paints its previous thread without changing its reading receipt. */
-  paintOnly?: boolean;
   restoringThreadPosition: boolean;
   readingListLoaded: boolean;
   positionHistoryLoading: boolean;
@@ -177,7 +174,6 @@ export function useSaveReadingPosition({
     const state = listRef.current?.getState?.();
     if (
       threadKey !== listIdentityKey ||
-      paintOnly ||
       restoringThreadPosition ||
       !readingListLoaded ||
       positionHistoryLoading ||
@@ -256,7 +252,6 @@ export interface RestingAtReadingEnd {
 export function useReadingBookkeepingFrame({
   handleScroll,
   listRef,
-  paintOnly = false,
   contentInsetEndAdjustment,
   restingAtReadingEndRef,
   readerInputRef,
@@ -272,8 +267,6 @@ export function useReadingBookkeepingFrame({
 }: {
   handleScroll: () => void;
   listRef: RefObject<LegendListRef | null>;
-  /** A held timeline has no active reader-position owner. */
-  paintOnly?: boolean;
   contentInsetEndAdjustment: number;
   restingAtReadingEndRef: RefObject<RestingAtReadingEnd | null>;
   readerInputRef: RefObject<boolean>;
@@ -300,7 +293,6 @@ export function useReadingBookkeepingFrame({
   // the last message's text where it was. New rows, streaming, reveals, and
   // content the reader just toggled never move the reader.
   const idleEndKeeping =
-    !paintOnly &&
     !isWorking &&
     !revealActive &&
     !interactionSettling &&
@@ -545,6 +537,18 @@ export function useReadingPositionRestore({
     const index = restoreRowIndex;
     const targetRowId = rows[index]?.id;
     if (cancelPositionRestoreRef) cancelPositionRestoreRef.current = cancelRestoration;
+    // Placing at the end only ever scrolls down (or clamps at the end). Moving up without
+    // wheel, touch, press or key input (a screen reader moving to a heading) is the reader's.
+    let lastScrollTop = viewport?.scrollTop ?? 0;
+    const onScrollAwayFromEnd = () => {
+      if (!viewport) return;
+      const top = viewport.scrollTop;
+      const movedUp = top < lastScrollTop - 1;
+      lastScrollTop = top;
+      if (movedUp && viewport.scrollHeight - viewport.clientHeight - top > 1) {
+        cancelForNavigation();
+      }
+    };
     const cleanup = () => {
       cancelled = true;
       if (cancelPositionRestoreRef?.current === cancelRestoration) {
@@ -555,6 +559,7 @@ export function useReadingPositionRestore({
       viewport?.removeEventListener("touchmove", cancelForNavigation);
       viewport?.removeEventListener("pointerdown", cancelForNavigation);
       viewport?.ownerDocument.removeEventListener("keydown", onScrollKey);
+      viewport?.removeEventListener("scroll", onScrollAwayFromEnd);
     };
     if (positionHistoryLoading || waitingForReadingHistory) return cleanup;
     // Left while following: back to where the follow is now (chat/liveFollowOffset.ts).
@@ -576,6 +581,9 @@ export function useReadingPositionRestore({
         },
       });
       return cleanup;
+    }
+    if (!position || index < 0) {
+      viewport?.addEventListener("scroll", onScrollAwayFromEnd, { passive: true });
     }
     const scrolling =
       position && index >= 0

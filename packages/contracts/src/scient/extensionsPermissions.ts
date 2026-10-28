@@ -1,6 +1,8 @@
 import { AuthSettingsWriteScope } from "../auth.ts";
 import { SCIENT_EXTENSION_WS_METHODS as methods } from "./extensionRpcs.ts";
 export const SCIENT_EXTENSION_GUARDED_RPC_SCOPES = {
+  [methods.extensionsPluginKeyBind]: AuthSettingsWriteScope,
+  [methods.extensionsPluginKeyUnbind]: AuthSettingsWriteScope,
   [methods.providerPluginsAct]: AuthSettingsWriteScope,
   [methods.extensionsConnectorAdd]: AuthSettingsWriteScope,
   [methods.extensionsConnectorStartSignIn]: AuthSettingsWriteScope,

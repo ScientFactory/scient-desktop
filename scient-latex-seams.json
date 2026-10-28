@@ -142,11 +142,6 @@
       "purpose": "Expose the existing controlled editor so LaTeX Source and Visual share one existing save coordinator without forking the editor; let its PDF reader quote into the panel's conversation (citeThread, Ask in chat)."
     },
     {
-      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
-      "anchor": "debounceMs = FILE_SAVE_DEBOUNCE_MS",
-      "purpose": "Permit a LaTeX-specific save debounce while preserving the default for other file editors."
-    },
-    {
       "path": "packages/client-runtime/src/rpc/client.ts",
       "anchor": "subscribeDocumentBindingChanges",
       "purpose": "Classify the document-binding RPC method as a subscription in the inherited transport client."
@@ -230,6 +225,13 @@
       "path": "scripts/effect-budget.json",
       "anchor": "\"apps/web/src/scient/latex/LatexMathField.tsx\"",
       "purpose": "The shared React effect budget records existing Scient latex lifecycle owners; new effects still require their own scoped justification and lint validation."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+      "anchor": "debounceMs = FILE_SAVE_DEBOUNCE_MS",
+      "purpose": "Permit a LaTeX-specific save debounce while preserving the default for other file editors."
     }
   ]
 }

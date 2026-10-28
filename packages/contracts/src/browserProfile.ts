@@ -29,7 +29,9 @@ export const DEFAULT_BROWSER_PROFILE_ID: BrowserProfileId = "default";
 export const INCOGNITO_BROWSER_PROFILE_ID: BrowserProfileId = "incognito";
 
 export const BUILT_IN_BROWSER_PROFILES: ReadonlyArray<BrowserProfile> = [
-  { id: DEFAULT_BROWSER_PROFILE_ID, name: "Default", kind: "persistent" },
+  // SCIENT-FORK:START — distinguish original browser storage from the new-tab preference.
+  { id: DEFAULT_BROWSER_PROFILE_ID, name: "Main", kind: "persistent" },
+  // SCIENT-FORK:END
   { id: INCOGNITO_BROWSER_PROFILE_ID, name: "Incognito", kind: "incognito" },
 ];
 

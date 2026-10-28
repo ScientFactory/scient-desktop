@@ -4,6 +4,7 @@ import type {
   ProviderStorePage,
   ProviderStoreSearchInput,
 } from "@t3tools/contracts";
+import { storeCategories } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -46,6 +47,7 @@ const Catalog = Schema.Struct({
   plugins: Schema.Array(Schema.Unknown),
 });
 const Plugin = Schema.Struct({
+  category: Schema.optional(Schema.String),
   name: Name,
   source: Schema.Union([
     Schema.String,
@@ -357,6 +359,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
           entry: {
             id,
             name: plugin.name,
+            ...(plugin.category ? { category: plugin.category } : {}),
             marketplace: source.name,
             displayName:
               plugin.displayName?.trim() ||
@@ -398,10 +401,15 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
     function* (input: Omit<ProviderStoreSearchInput, "instanceId">) {
       const result = yield* listing();
       const terms = (input.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-      const matching = result.entries.filter(({ entry }) =>
-        terms.every((term) =>
-          `${entry.name} ${entry.description} ${entry.marketplace}`.toLowerCase().includes(term),
-        ),
+      const matching = result.entries.filter(
+        ({ entry }) =>
+          (!input.category ||
+            storeCategories(entry.name, entry.category).some(
+              (category) => category === input.category,
+            )) &&
+          terms.every((term) =>
+            `${entry.name} ${entry.description} ${entry.marketplace}`.toLowerCase().includes(term),
+          ),
       );
       if (input.preview)
         matching.sort(
@@ -420,6 +428,7 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
         officialStoreConfigured: result.officialStoreConfigured,
       } satisfies ProviderStorePage;
     },
+    Effect.timeout("8 seconds"),
     Effect.mapError(() => ({ message: "Could not read the configured plugin marketplaces." })),
   );
   const entry: NonNullable<ProviderPluginActions["store"]>["entry"] = Effect.fn(
@@ -534,10 +543,11 @@ export const makeSharedPluginStore = Effect.fn("makeSharedPluginStore")(function
       if (!item) return yield* Effect.fail({ message: "This plugin is no longer in the store." });
       if (!item.pluginDir || !(yield* fs.exists(item.pluginDir))) return item.inline;
       const root = yield* pluginRoot(id);
-      return yield* Effect.tryPromise({
+      const contents = yield* Effect.tryPromise({
         try: () => readLocalPluginContents(root),
         catch: () => ({ message: "Could not read this plugin's contents." }),
       });
+      return item.entry.installed ? contents : { ...contents, requiredKeys: undefined };
     }),
     skillDocument: (id, skillId) =>
       pluginRoot(id).pipe(

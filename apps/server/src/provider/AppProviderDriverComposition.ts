@@ -11,6 +11,7 @@ import {
   type GrokRuntimeResolution,
   type GrokRuntimeResolverInput,
 } from "@t3tools/provider-grok/server";
+import { makeFxDriver } from "@t3tools/provider-fx/server";
 import { ProviderHost } from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -147,6 +148,9 @@ export const GrokDriver = makeGrokDriver<GrokCompositionRequirements, GrokCompos
   application: scientAcpApplicationBridge,
   resolveRuntime: resolveGrokRuntime,
 });
+
+/** fx speaks ACP without a private system seam, so it gets Scient prompts but no awareness. */
+export const FxDriver = makeFxDriver({ application: scientAcpProviderBridge });
 
 export type AcpRegistryCompositionEnv = AcpRegistryDriverEnv | ServerSettingsService;
 

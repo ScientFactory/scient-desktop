@@ -3,11 +3,15 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  AccountBrowserSessions,
+  CliPasswordStoreInput,
+  CliPasswordStoreResult,
   AccountMatchSignInInput,
   AccountMatchSignInResult,
   AccountActivityEntry,
   AccountActivityInput,
   AccountApprovalRespondInput,
+  AccountHandoffCancelInput,
   AccountFillValues,
   AccountFillValuesInput,
   AccountRemoveInput,
@@ -30,6 +34,7 @@ import {
 
 /** Spread into rpc.ts WS_METHODS. */
 export const SCIENT_ACCOUNT_WS_METHODS = {
+  accountsPasswordStore: "accounts.passwordStore",
   accountsSnapshot: "accounts.snapshot",
   accountsSubscribeChanges: "accounts.subscribeChanges",
   accountsSave: "accounts.save",
@@ -39,6 +44,8 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSetAgentAccess: "accounts.setAgentAccess",
   accountsProfileUpdate: "accounts.profiles.update",
   accountsProfileRemove: "accounts.profiles.remove",
+  accountsHandoffShow: "accounts.handoffs.show",
+  accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
   accountsActivity: "accounts.activity",
   accountsKeychainCandidates: "accounts.keychain.candidates",
@@ -51,9 +58,22 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
 
 const AccountsRpcError = Schema.Union([AccountsError, EnvironmentAuthorizationError]);
 const Empty = Schema.Struct({});
+export const WsAccountsPasswordStoreRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsPasswordStore,
+  {
+    payload: CliPasswordStoreInput,
+    success: CliPasswordStoreResult,
+    error: AccountsRpcError,
+  },
+);
 
 export const WsAccountsSnapshotRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSnapshot, {
-  payload: Empty,
+  payload: Schema.Struct({
+    browserSessions: Schema.optional(AccountBrowserSessions),
+    browserSessionSourceId: Schema.optional(Schema.String.check(Schema.isMaxLength(80))),
+    /** The user's default browser profile, used by accounts that don't name one. */
+    defaultProfileId: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  }),
   success: AccountsSnapshot,
   error: AccountsRpcError,
 });
@@ -143,5 +163,16 @@ export const WsAccountsFillValuesRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
 export const WsAccountsMatchSignInRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsMatchSignIn, {
   payload: AccountMatchSignInInput,
   success: AccountMatchSignInResult,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsHandoffCancelRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsHandoffCancel,
+  { payload: AccountHandoffCancelInput, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsHandoffShowRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsHandoffShow, {
+  payload: AccountHandoffCancelInput,
+  success: Empty,
   error: AccountsRpcError,
 });

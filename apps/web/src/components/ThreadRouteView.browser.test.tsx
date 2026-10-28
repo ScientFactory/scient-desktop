@@ -49,6 +49,7 @@ import { describe, expect, it as browserIt, vi } from "vite-plus/test";
 import {
   clearComposerDraftsEnvironment,
   DraftId,
+  subscribeDraftThreadPromotion,
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -72,8 +73,11 @@ type ConnectionLayer = Layer.Layer<
   | HttpClient.HttpClient
 >;
 const controls = vi.hoisted(
-  (): { layer?: ConnectionLayer; navigate: ReturnType<typeof vi.fn> } => ({
-    navigate: vi.fn(),
+  (): {
+    layer?: ConnectionLayer;
+    navigate: ReturnType<typeof vi.fn<(options: unknown) => void>>;
+  } => ({
+    navigate: vi.fn<(options: unknown) => void>(),
   }),
 );
 
@@ -94,6 +98,11 @@ vi.mock("../connection/runtime", async () => {
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   useNavigate: () => controls.navigate,
+  // A promoted draft redirects by rendering <Navigate>; record it like a navigate call.
+  Navigate: (props: Record<string, unknown>) => {
+    controls.navigate(props);
+    return null;
+  },
 }));
 vi.mock("./ui/sidebar", () => ({
   SidebarInset: ({ children }: PropsWithChildren) => <div>{children}</div>,
@@ -269,6 +278,7 @@ function makeTransport(input?: { active?: boolean }) {
         subscribeServerConfig: client.subscribeServerConfig,
         ready: Effect.void,
         probe: Effect.void,
+        inboundFrames: Effect.succeed(0),
         closed: Effect.never,
       };
       const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -698,6 +708,13 @@ describe("ThreadRouteView canonical detail admission", () => {
                 threadId: ref.threadId,
               },
             );
+          // The app starts promotion in appInit; the route only follows the redirect it leaves.
+          const stopPromotion = subscribeDraftThreadPromotion({
+            registry: _fixture.registry,
+            threadShellAtom: environmentThreadShells.quietThreadShellAtom,
+            threadRefsAtom: environmentThreadShells.threadRefsAtom,
+          });
+          _fixture.cleanup.defer(() => stopPromotion());
           const renderDraft = async () =>
             await _fixture.root0.rerender(
               <RegistryContext.Provider value={_fixture.registry}>

@@ -2,6 +2,7 @@ import type { DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
 import { act, render } from "../../../test/render";
 import { SidebarProvider } from "../ui/sidebar";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
   return {
     update: null as DesktopUpdateState | null,
+    hasUpdates: false,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -34,10 +36,11 @@ vi.mock("../../env", async (importOriginal) => ({
 }));
 vi.mock("./useUpdateEverything", () => ({
   useUpdateEverything: () => ({
-    hasUpdates: false,
-    summary: "",
+    hasUpdates: mocks.hasUpdates,
+    summary: "Update everything",
     lines: [],
     restarts: [],
+    skipped: [],
     otherServers: [],
     run: vi.fn(),
   }),
@@ -79,8 +82,9 @@ const RELEASE_NOTES: DesktopUpdateState["releaseNotes"] = [
   { version: "0.0.50-nightly.2", items: ["Faster sidebar."], totalItems: 1 },
 ];
 
-function setup(update: DesktopUpdateState | null) {
+function setup(update: DesktopUpdateState | null, { hasUpdates = false } = {}) {
   mocks.update = update;
+  mocks.hasUpdates = hasUpdates;
 }
 
 function publish(update: DesktopUpdateState | null) {
@@ -129,3 +133,6 @@ describe("SidebarUpdatePill release notes", () => {
     await vi.waitFor(() => expect(releaseNotes()).not.toBeNull());
   });
 });
+
+// SCIENT-FORK: upstream's "update everything" focus cases exercise UpdateEverythingDialog, which
+// Scient replaces with the pass question beside the pill; the pill shows only this app's update.

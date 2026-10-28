@@ -36,6 +36,22 @@ const lane = {
 
 export const accountsState = {
   snapshot,
+  passwordStore: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:passwordStore",
+    tag: WS_METHODS.accountsPasswordStore,
+    ...lane,
+  }),
+  /** The current snapshot on demand, for actions that outlive the Accounts page. */
+  readSnapshot: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:read-snapshot",
+    tag: WS_METHODS.accountsSnapshot,
+  }),
+  websiteSnapshot: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+    label: "accounts:website-snapshot",
+    tag: WS_METHODS.accountsSnapshot,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  }),
   save: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:save",
     tag: WS_METHODS.accountsSave,
@@ -69,6 +85,16 @@ export const accountsState = {
   removeProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:removeProfile",
     tag: WS_METHODS.accountsProfileRemove,
+    ...lane,
+  }),
+  showHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:showHandoff",
+    tag: WS_METHODS.accountsHandoffShow,
+    ...lane,
+  }),
+  cancelHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:cancelHandoff",
+    tag: WS_METHODS.accountsHandoffCancel,
     ...lane,
   }),
   respondApproval: createEnvironmentRpcCommand(connectionAtomRuntime, {

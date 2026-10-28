@@ -22,27 +22,44 @@ const SETTINGS_PAGE_SECTIONS: Partial<
   Readonly<Record<SettingsPath, ReadonlyArray<{ label: string; targetId: string }>>>
 > = {
   "/settings/general": [
-    { label: "Organization", targetId: "organization" },
-    { label: "Behavior", targetId: "behavior" },
-    { label: "Projects & threads", targetId: "projects-and-threads" },
+    { label: "Notifications", targetId: "notifications" },
+    { label: "Sidebar", targetId: "sidebar" },
     { label: "Confirmations", targetId: "confirmations" },
-    { label: "Text generation", targetId: "text-generation" },
-    { label: "About", targetId: "about" },
-    { label: "Legacy features", targetId: "legacy-features" },
+    { label: "Display", targetId: "display" },
   ],
   "/settings/appearance": [
     { label: "Colors & themes", targetId: "appearance" },
     { label: "Interface", targetId: "appearance-interface" },
-    { label: "Motion", targetId: "motion" },
     { label: "Typography", targetId: "typography" },
   ],
-  "/settings/source-control": [
-    { label: "Version control", targetId: "source-control" },
-    { label: "Text generation", targetId: "source-control-text-generation" },
+  "/settings/threads": [
+    { label: "New projects", targetId: "new-projects" },
+    { label: "New threads", targetId: "project-defaults" },
+    { label: "Usage limits", targetId: "usage-limits" },
+    { label: "Auto-settle", targetId: "auto-settle" },
+    { label: "Text generation", targetId: "text-generation" },
+    { label: "Forks", targetId: "forks" },
   ],
-  "/settings/connections": [
-    { label: "This environment", targetId: "connections-environment" },
-    { label: "Remote environments", targetId: "remote-environments" },
+  "/settings/browser": [
+    { label: "Agent access", targetId: "browser-agent-access" },
+    { label: "Browsing", targetId: "browser" },
+    { label: "Recordings", targetId: "browser-recordings" },
+  ],
+  "/settings/source-control": [
+    { label: "Repositories", targetId: "source-control-defaults" },
+    { label: "Version control", targetId: "source-control" },
+    { label: "Writing & review", targetId: "source-control-text-generation" },
+  ],
+  "/settings/maintenance": [
+    { label: "Updates", targetId: "updates" },
+    { label: "Background activity", targetId: "background" },
+    { label: "Artifacts and logs", targetId: "storage-artifacts" },
+    { label: "Diagnostics", targetId: "diagnostics-section" },
+  ],
+  "/settings/about": [
+    { label: "App", targetId: "about" },
+    { label: "Privacy and analytics", targetId: "scient-analytics" },
+    { label: "Legal", targetId: "legal" },
   ],
 };
 

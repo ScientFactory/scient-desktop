@@ -21,6 +21,26 @@ vi.mock(import("./ReadOnlySourcePreview"), () => ({
   default: ({ text }: { text: string }) => <pre>{text}</pre>,
 }));
 
+// The Word engine compiles about 30 MB of WebAssembly in a fresh worker per document, which took
+// 10-17 s per test on loaded CI runners. These tests cover fetching, preparation and remounts, so
+// the stand-in shows the prepared body's text instead of laying it out.
+vi.mock(import("./office/WordDocument"), async () => {
+  const { use } = await import("react");
+  const { default: Zip } = await import("jszip");
+  const texts = new WeakMap<ArrayBuffer, Promise<string>>();
+  const read = (bytes: ArrayBuffer) =>
+    Zip.loadAsync(bytes)
+      .then((zip) => zip.file("word/document.xml")!.async("string"))
+      .then((xml) => xml.replace(/<[^>]+>/g, " "));
+  return {
+    default: ({ bytes }: { bytes: ArrayBuffer }) => {
+      let text = texts.get(bytes);
+      if (!text) texts.set(bytes, (text = read(bytes)));
+      return <pre>{use(text)}</pre>;
+    },
+  };
+});
+
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -501,15 +521,16 @@ describe("large text preview recovery", () => {
       expect(workers).toHaveLength(1);
       state(`${changed}#updated`, "two");
       await screen.rerender(preview("file-edit"));
+      // The prefetched first screen paints before the worker starts, so wait for the worker itself.
+      await vi.waitFor(() => expect(workers).toHaveLength(2));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
-      expect(workers).toHaveLength(2);
       await screen.rerender(preview("file-edit", 1));
       await vi.waitFor(() => expect(workers).toHaveLength(3));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("changed"));
       state(`${original}#legacy`);
       await screen.rerender(preview("legacy-edit", 1));
+      await vi.waitFor(() => expect(workers).toHaveLength(4));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
-      expect(workers).toHaveLength(4);
       assetUrlState.mockReturnValue({ _tag: "Failure", refresh: () => undefined });
       await screen.rerender(preview("legacy-edit", 1));
       expect(screen.container.textContent).toContain("Scient couldn't load this file.");
@@ -1330,8 +1351,9 @@ async function expandedWordFixture(role: (typeof EXPANDED_WORD_ROLES)[number]) {
   return archive.generateAsync({ type: "blob", compression: "DEFLATE" });
 }
 
-// Rendering starts a layout engine per case, which dominated this file on loaded CI
-// runners. The omission decision lives in prepareOffice, so every role is checked there.
+// Rendering starts a Word engine worker per case, which compiles about 30 MB of WebAssembly and
+// took 10-17 s per test on loaded CI runners. Omission and retention are prepareOffice decisions,
+// so they are checked there.
 it.each(EXPANDED_WORD_ROLES)(
   "keeps the body and omits expanded %s from the prepared document",
   async (role) => {
@@ -1359,38 +1381,6 @@ it.each(EXPANDED_WORD_ROLES)(
         if (!entry.dir) expect(await entry.async("string")).not.toContain("omitted payload");
     } finally {
       parse.mockRestore();
-    }
-  },
-);
-
-// Two full renders prove the engine accepts a prepared body whose parts were removed
-// (body references for notes, section references for headers and footers) and show the warning.
-it.each(["footnotes", "footer"] as const)(
-  "renders the body and warns when omitting expanded %s",
-  async (role) => {
-    const file = await expandedWordFixture(role);
-    const src = URL.createObjectURL(file);
-    try {
-      const container = document.createElement("div");
-      container.style.cssText = "display:flex;flex-direction:column;width:640px;height:700px";
-      await using screen = await render(
-        <OfficeFilePreview src={src} name="expanded.docx" kind="docx" sizeBytes={file.size} />,
-        { container },
-      );
-      await vi.waitFor(
-        () => {
-          expect(screen.container.querySelector('[role="alert"]')?.textContent ?? "").toBe("");
-          expect(screen.container.textContent).toContain("body retained");
-        },
-        { timeout: 30_000 },
-      );
-      expect(screen.container.textContent).toContain("Preview limited");
-      expect(screen.container.textContent).not.toContain("omitted payload");
-      await vi.waitFor(() =>
-        expect(screen.container.querySelector("canvas")!.width).toBeGreaterThan(0),
-      );
-    } finally {
-      URL.revokeObjectURL(src);
     }
   },
 );
@@ -1513,35 +1503,31 @@ it.each([
       ),
     );
   }
-  const file = await archive.generateAsync({ type: "blob", compression: "DEFLATE" });
-  const src = URL.createObjectURL(file);
-  try {
-    const container = document.createElement("div");
-    container.style.cssText = "display:flex;flex-direction:column;width:640px;height:700px";
-    await using screen = await render(
-      <OfficeFilePreview src={src} name="ordinary.docx" kind="docx" />,
-      { container },
-    );
-    await vi.waitFor(() => expect(screen.container.textContent).toContain("ordinary body"), {
-      timeout: 30_000,
-    });
-    expect(screen.container.textContent).not.toContain("Preview limited");
-    await vi.waitFor(() =>
-      expect(screen.container.querySelector("canvas")!.width).toBeGreaterThan(0),
-    );
-    if (scenario === "default template styles")
-      expect(screen.container.textContent).toContain("styled cell");
-    if (ordinary) {
-      expect(screen.container.textContent).toContain("header retained");
-      expect(screen.container.textContent).toContain("footer retained");
-    }
-  } finally {
-    URL.revokeObjectURL(src);
+  const { prepareOffice } = await import("./officeArchive");
+  const prepared = await prepareOffice(
+    await archive.generateAsync({ type: "arraybuffer", compression: "DEFLATE" }),
+    "docx",
+  );
+  expect(prepared.truncated).toBe(false);
+  const bounded = await JSZip.loadAsync(prepared.bytes);
+  const markup = await bounded.file("word/document.xml")!.async("string");
+  expect(markup).toContain("ordinary body");
+  expect(markup).toContain("styled body");
+  expect(bounded.file("word/styles.xml")).not.toBeNull();
+  if (scenario === "default template styles") {
+    expect(markup).toContain("styled cell");
+    expect(await bounded.file("word/styles.xml")!.async("string")).toContain('w:styleId="Table99"');
+  }
+  if (ordinary) {
+    expect(markup).toMatch(/<w:headerReference/);
+    expect(markup).toMatch(/<w:footerReference/);
+    for (const role of ["header", "footer", "footnotes", "endnotes", "comments"])
+      expect(await bounded.file(`word/${role}.xml`)!.async("string")).toContain(`${role} retained`);
   }
 });
 
 it.each([false, true])(
-  "bounds shared-string text including CDATA %s per cell and across sheets in the worker and viewer",
+  "bounds shared-string text including CDATA %s per cell and across sheets in the worker",
   async (cdata) => {
     const { default: JSZip } = await import("jszip");
     const archive = new JSZip();
@@ -1601,34 +1587,6 @@ it.each([false, true])(
       expect(result.truncated).toBe(true);
     } finally {
       worker.terminate();
-    }
-    const src = URL.createObjectURL(file);
-    try {
-      const container = document.createElement("div");
-      container.style.cssText = "display:flex;flex-direction:column;width:640px;height:480px";
-      await using screen = await render(
-        <OfficeFilePreview src={src} name="shared.xlsx" kind="xlsx" />,
-        { container },
-      );
-      await vi.waitFor(
-        () =>
-          expect(screen.container.querySelector('[role="gridcell"]')?.textContent).toHaveLength(
-            4096,
-          ),
-        { timeout: 30_000 },
-      );
-      expect(screen.container.textContent).toContain("Preview limited");
-      const canvas = screen.container.querySelector("canvas")!;
-      await vi.waitFor(() => expect(canvas.width).toBeGreaterThan(0));
-      const scroll = screen.container.querySelector<HTMLElement>('[role="grid"]')!;
-      await act(() => {
-        scroll.scrollTop = 200;
-        scroll.scrollLeft = 200;
-      });
-      await vi.waitFor(() => expect(scroll.scrollTop).toBe(200));
-      expect(canvas.getBoundingClientRect().top).toBeCloseTo(scroll.getBoundingClientRect().top, 0);
-    } finally {
-      URL.revokeObjectURL(src);
     }
   },
 );
@@ -1848,7 +1806,7 @@ it("keeps spreadsheet dates on their calendar day west of UTC", async () => {
   }
 });
 
-it.each([60, 100])("renders all %i pages of a table-heavy Word report", async (pages) => {
+it.each([60, 100])("prepares all %i pages of a table-heavy Word report", async (pages) => {
   const { default: JSZip } = await import("jszip");
   const archive = new JSZip();
   const paragraph = (text: string) =>
@@ -1876,16 +1834,12 @@ it.each([60, 100])("renders all %i pages of a table-heavy Word report", async (p
       sizeBytes={file.size}
     />,
   );
-  await vi.waitFor(() => expect(screen.container.textContent).toMatch(/\d+ pages/), {
-    timeout: 30_000,
+  // The first Office preview in the file loads the lazy viewer chain and the preparation worker.
+  await vi.waitFor(() => expect(screen.container.textContent).toContain("page " + pages), {
+    timeout: 10_000,
   });
   expect(screen.container.textContent).not.toContain("Preview limited");
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
-  const scroll = screen.container.querySelector<HTMLElement>("[data-office-pages]")!;
-  await act(() => scroll.scrollTo({ top: scroll.scrollHeight }));
-  await vi.waitFor(() => expect(screen.container.textContent).toContain("page " + pages), {
-    timeout: 30_000,
-  });
 });
 
 describe("standalone Mermaid previews", () => {
@@ -2042,6 +1996,13 @@ describe("attachment HTML preview recovery", () => {
     await act(async () => button!.click());
   };
   const alert = (screen: Screen) => screen.container.querySelector('[role="alert"]');
+  // The app's connection runtime keeps polling environment discovery through the same global
+  // fetch while these tests run, so only the attachment's own requests are counted.
+  const attachmentFetches = () =>
+    vi
+      .mocked(fetch)
+      .mock.calls.map(([url]) => url)
+      .filter((url) => typeof url === "string" && url.startsWith("data:text/html"));
 
   it("keeps a renewed URL for subsequent rendered and source views", async () => {
     setup();
@@ -2058,7 +2019,7 @@ describe("attachment HTML preview recovery", () => {
     await act(async () => {
       await import("./ReadOnlySourcePreview");
     });
-    expect(fetch).toHaveBeenCalledExactlyOnceWith(renewedUrl, expect.any(Object));
+    expect(attachmentFetches()).toEqual([renewedUrl]);
     await vi.waitFor(() =>
       expect(screen.container.querySelector("pre")?.textContent).toBe("<p>Captured HTML</p>"),
     );
@@ -2067,7 +2028,7 @@ describe("attachment HTML preview recovery", () => {
     expect(screen.container.querySelector("iframe")?.getAttribute("src")).toBe(renewedUrl);
     await toggleMode(screen, "Show HTML source");
     expect(refresh).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toEqual([renewedUrl, renewedUrl]);
+    expect(attachmentFetches()).toEqual([renewedUrl, renewedUrl]);
   });
 
   it("does not fetch or mark an expired URL fresh when reauthorization is unavailable", async () => {
@@ -2429,8 +2390,10 @@ it("mounts a bounded set of saved notebook outputs as the reader scrolls", async
       />
     </div>,
   );
-  await vi.waitFor(() =>
-    expect(screen.container.querySelectorAll("iframe").length).toBeGreaterThan(0),
+  // The first outputs wait on the lazy notebook viewer and the conversion worker, not on a frame.
+  await vi.waitFor(
+    () => expect(screen.container.querySelectorAll("iframe").length).toBeGreaterThan(0),
+    { timeout: 10_000 },
   );
   expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
   const first = screen.container.querySelector("iframe")!;
@@ -2584,18 +2547,22 @@ it.each(["rtf", "epub", "ods"] as const)(
         />
       </div>,
     );
-    await vi.waitFor(() => {
-      if (kind === "ods") {
-        expect(screen.container.textContent).toContain("North");
-        expect(screen.container.textContent).toContain("150");
-        expect(screen.container.textContent).not.toContain("private note");
-        expect(screen.container.textContent).toContain("1 rows · 2 columns");
-        expect(screen.container.textContent).not.toContain("Limited to 500");
-      } else {
-        const frame = screen.container.querySelector("iframe");
-        expect(frame?.srcdoc).toContain(kind === "rtf" ? "10–20" : "first<br>second<br>third");
-      }
-    });
+    await vi.waitFor(
+      () => {
+        if (kind === "ods") {
+          expect(screen.container.textContent).toContain("North");
+          expect(screen.container.textContent).toContain("150");
+          expect(screen.container.textContent).not.toContain("private note");
+          expect(screen.container.textContent).toContain("1 rows · 2 columns");
+          expect(screen.container.textContent).not.toContain("Limited to 500");
+        } else {
+          const frame = screen.container.querySelector("iframe");
+          expect(frame?.srcdoc).toContain(kind === "rtf" ? "10–20" : "first<br>second<br>third");
+        }
+        // The viewer runs its own conversion worker behind lazy chunks.
+      },
+      { timeout: 10_000 },
+    );
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   },
 );

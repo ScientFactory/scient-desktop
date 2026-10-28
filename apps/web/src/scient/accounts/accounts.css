@@ -1,0 +1,10 @@
+/* One thin, darker focus line on Accounts controls, including portalled dialogs; upstream
+   draws a double ring. Kept outside Tailwind's layers so the ring utilities cannot win. */
+:is(.scient-accounts-settings, [data-accounts-dialog])
+  :is(button, a, [role="button"]):focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--muted-foreground);
+}
+.scient-accounts-settings[data-agent-access="false"] [data-account-access] {
+  opacity: 0.4;
+}

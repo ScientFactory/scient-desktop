@@ -7,6 +7,7 @@ import {
   type ProjectListDirectoryInput,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
@@ -327,6 +328,32 @@ describe("Files panel search", () => {
     await expect.poll(screen.visiblePaths).toContain("src/lib/util.ts");
     await chooseFromFilesMenu(screen.container, "Collapse all folders");
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+  });
+  it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
+    setup();
+    files.directories = { "": [entry("README.md")] };
+    await using screen = await renderPanel();
+    await expect.poll(screen.visiblePaths).toEqual(["README.md"]);
+    const row = screen.container
+      .querySelector("file-tree-container")!
+      .shadowRoot!.querySelector<HTMLElement>('[data-item-path="README.md"]')!;
+
+    const dataTransfer = new DataTransfer();
+    row.dispatchEvent(
+      new DragEvent("dragstart", { bubbles: true, cancelable: true, composed: true, dataTransfer }),
+    );
+    // The tree selects the row the drag picked up; mid-drag that must not open it.
+    row.click();
+    await expect.poll(() => row.getAttribute("aria-selected")).toBe("true");
+
+    expect(dataTransfer.getData(COMPOSER_MENTION_DRAG_TYPE)).toContain("README.md");
+    expect(props.onOpenFile).not.toHaveBeenCalled();
+
+    row.dispatchEvent(new DragEvent("dragend", { bubbles: true, composed: true, dataTransfer }));
+    await expect.poll(() => row.getAttribute("aria-selected")).not.toBe("true");
+
+    row.click();
+    await expect.poll(() => props.onOpenFile.mock.calls.length).toBe(1);
   });
 
   // SCIENT-FORK:START — Overleaf in the Files panel

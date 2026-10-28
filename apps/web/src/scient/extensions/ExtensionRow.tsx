@@ -1,12 +1,16 @@
-import { isExtensionIconDataUri, type ExtensionAudience } from "@t3tools/contracts";
+import {
+  isExtensionIconDataUri,
+  type EnvironmentId,
+  type ExtensionAudience,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { PuzzleIcon, type LucideIcon } from "lucide-react";
+import { PlugIcon, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { extensionMarkLayout } from "./extensionIconLayout";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
-import { useExtensionsEnvironment } from "./ExtensionsPage";
+import { useOptionalExtensionsEnvironment } from "./ExtensionsPage";
 import { extensionsBrandIcon, extensionsProviderStoreEntry } from "./extensionsState";
 import { WorksWithValue } from "./WorksWith";
 
@@ -175,7 +179,7 @@ function ExtensionIconTile({
   const [sample, setSample] = useState<{ url: string; rendered: string }>();
   const rendered =
     image && (renderedIcons.get(image) ?? (sample?.url === image ? sample.rendered : image));
-  const Icon = Glyph ?? (image === undefined ? PuzzleIcon : undefined);
+  const Icon = Glyph ?? (image === undefined ? PlugIcon : undefined);
   return (
     <span
       aria-hidden
@@ -209,6 +213,8 @@ function ExtensionIconTile({
 
 type ExtensionIconProps = Parameters<typeof ExtensionIconTile>[0] & {
   readonly providerPlugin?: Extract<ExtensionTarget, { kind: "provider-plugin" }> | undefined;
+  /** Needed outside ExtensionsPage; inside it the page's environment wins. */
+  readonly environmentId?: EnvironmentId | undefined;
 };
 
 export function ExtensionIcon(props: ExtensionIconProps) {
@@ -219,13 +225,15 @@ export function ExtensionIcon(props: ExtensionIconProps) {
 }
 
 function ResolvedExtensionIcon(props: ExtensionIconProps) {
-  const { environmentId, providers } = useExtensionsEnvironment();
+  const page = useOptionalExtensionsEnvironment();
+  const environmentId = page?.environmentId ?? props.environmentId;
+  const providers = page?.providers ?? [];
   const target = props.providerPlugin;
   const provider =
     target && providers.find((provider) => provider.instanceId === target.instanceId);
   const plugin = provider?.plugins?.find((plugin) => plugin.id === target?.pluginId);
   const own = useEnvironmentQuery(
-    provider && target
+    environmentId && provider && target
       ? extensionsProviderStoreEntry({
           environmentId,
           input: {
@@ -237,7 +245,7 @@ function ResolvedExtensionIcon(props: ExtensionIconProps) {
       : null,
   );
   const result = useEnvironmentQuery(
-    props.name.length <= 200
+    environmentId && props.name.length <= 200
       ? extensionsBrandIcon({ environmentId, input: { names: [props.name] } })
       : null,
   );
@@ -260,6 +268,7 @@ export function ExtensionRow({
   iconUrl,
   glyph,
   tagline,
+  facts,
   status,
   trailing,
   feedback,
@@ -271,6 +280,7 @@ export function ExtensionRow({
   readonly iconUrl?: string | undefined;
   readonly glyph?: LucideIcon | undefined;
   readonly tagline?: string | undefined;
+  readonly facts?: string | undefined;
   /** "Needs sign-in", "Off": plain muted text after the name. */
   readonly status?: string | null | undefined;
   readonly trailing?: ReactNode;
@@ -301,6 +311,7 @@ export function ExtensionRow({
             ) : null}
           </div>
           {tagline ? <p className="truncate text-xs text-muted-foreground">{tagline}</p> : null}
+          {facts ? <p className="text-xs text-muted-foreground">{facts}</p> : null}
         </div>
         {trailing ? <div className="relative z-10 shrink-0">{trailing}</div> : null}
       </div>

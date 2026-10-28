@@ -1,3 +1,4 @@
+import { validateCuratedAddress } from "./extensionsView";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -100,4 +101,23 @@ it("offers sign-in only when the grant is needed and keeps account connector ide
   expect(providerServerDisplayName(server)).toBe("Gmail");
   expect(server.name).toBe("claude.ai Gmail");
   expect(providerServerDisplayName({ ...server, scope: "user" })).toBe(server.name);
+});
+
+// Tenant endpoints must never accept an alternate host, credentials or query parameters.
+describe("curated tenant addresses", () => {
+  it("accepts one tenant label and refuses URL components outside the template", () => {
+    const template = "https://<tenant>.mcp.benchling.com/mcp";
+    expect(validateCuratedAddress("https://my-lab.mcp.benchling.com/mcp", template)).toBeNull();
+    for (const url of [
+      "http://lab.mcp.benchling.com/mcp",
+      "https://a.b.mcp.benchling.com/mcp",
+      "https://lab.mcp.benchling.com.evil/mcp",
+      "https://user@lab.mcp.benchling.com/mcp",
+      "https://lab.mcp.benchling.com/mcp?key=x",
+      "https://lab.mcp.benchling.com/other",
+      "invalid",
+    ]) {
+      expect(validateCuratedAddress(url, template)).not.toBeNull();
+    }
+  });
 });

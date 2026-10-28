@@ -95,6 +95,20 @@ export interface ConnectorSignInCallbackOutcome {
 }
 
 export interface ConnectorRuntimeShape {
+  readonly registerPluginKeyHttp?: (input: {
+    readonly connectorId: ConnectorId;
+    readonly serverName: string;
+    readonly displayName: string;
+    readonly url: string;
+    readonly projectId: ProjectId | undefined;
+    readonly authorize: (scope: McpInvocationScope | undefined) => Effect.Effect<
+      {
+        readonly headers: Readonly<Record<string, string>>;
+        readonly secrets: ReadonlyArray<string>;
+      },
+      ExtensionsError
+    >;
+  }) => Effect.Effect<EligibleConnector, ExtensionsError>;
   readonly list: () => Effect.Effect<{
     readonly revision: number;
     readonly connectors: ReadonlyArray<ConnectorSummary>;

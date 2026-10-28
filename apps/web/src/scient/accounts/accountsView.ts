@@ -1,7 +1,10 @@
 import * as Schema from "effect/Schema";
 import {
+  type ServerProvider,
+  type ProviderInstanceId,
   ProfilePictureDataUri,
   INCOGNITO_BROWSER_PROFILE_ID,
+  DEFAULT_BROWSER_PROFILE_ID,
   type DesktopLoginForm,
   ProfileColor,
   ACCOUNT_SECRET_FIELDS,
@@ -32,6 +35,20 @@ export function siteMatchesUrl(site: string, url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** A site's saved accounts that sign in with this profile (no profile means the new-tab one). */
+export function profileAccounts(
+  accounts: ReadonlyArray<AccountSummary>,
+  url: string,
+  profileId: string,
+  newTabProfileId: string,
+) {
+  return matchingAccounts(accounts, url, profileId).filter(
+    ({ details }) =>
+      ("profileId" in details ? (details.profileId ?? newTabProfileId) : newTabProfileId) ===
+      profileId,
+  );
 }
 
 export function matchingAccounts(
@@ -97,7 +114,17 @@ export function mergeSourceProfiles(
   return sources.map((source) => ({
     ...source,
     profiles: [
-      ...new Map(source.profiles.map((profile) => [profile.directory, profile])).values(),
+      ...new Map([
+        ...source.profiles.map((profile) => [profile.directory, profile] as const),
+        ...(source.unavailable === "browserRunning"
+          ? details
+              .filter((detail) => detail.sourceId === source.id)
+              .map(
+                (detail) =>
+                  [detail.directory, { directory: detail.directory, name: detail.name }] as const,
+              )
+          : []),
+      ]).values(),
     ].map((profile) => ({
       ...profile,
       ...details.find(
@@ -125,9 +152,23 @@ export function importProfileName(sourceName: string, taken: ReadonlyArray<strin
  */
 const ICON_BY_DOMAIN: Readonly<Record<string, string>> = ACCOUNT_ICONS;
 
+export function browserIconUrl(id: string): string | undefined {
+  return ICON_BY_DOMAIN[`browser:${id}`];
+}
+
 /** Where each service lets you see, revoke and create the keys or sign-ins Accounts holds. */
 const MANAGE_PAGES: Readonly<Record<string, string>> = {
   "github.com": "https://github.com/settings/tokens",
+  "gitlab.com": "https://gitlab.com/-/user_settings/personal_access_tokens",
+  "openrouter.ai": "https://openrouter.ai/settings/keys",
+  "aistudio.google.com": "https://aistudio.google.com/apikey",
+  "mistral.ai": "https://console.mistral.ai/home?profile_dialog=api-keys",
+  "zotero.org": "https://www.zotero.org/settings/keys",
+  "ncbi.nlm.nih.gov": "https://www.ncbi.nlm.nih.gov/account/settings/",
+  "semanticscholar.org": "https://www.semanticscholar.org/product/api",
+  "elsevier.com": "https://dev.elsevier.com/apikey/manage",
+  "kaggle.com": "https://www.kaggle.com/settings",
+  "wandb.ai": "https://wandb.ai/authorize",
   "huggingface.co": "https://huggingface.co/settings/tokens",
   "openai.com": "https://platform.openai.com/api-keys",
   "anthropic.com": "https://console.anthropic.com/settings/keys",
@@ -216,8 +257,72 @@ export const accountCatalogue = [
     tool: "gcloud",
     variables: ["CLOUDSDK_AUTH_ACCESS_TOKEN"],
   },
+  { name: "OpenRouter", kind: "api-key", site: "openrouter.ai", envName: "OPENROUTER_API_KEY" },
+  {
+    name: "Google Gemini",
+    kind: "api-key",
+    site: "aistudio.google.com",
+    envName: "GEMINI_API_KEY",
+  },
+  { name: "Mistral", kind: "api-key", site: "console.mistral.ai", envName: "MISTRAL_API_KEY" },
+  { name: "Zotero", kind: "api-key", site: "zotero.org", envName: "ZOTERO_API_KEY" },
+  { name: "NCBI / PubMed", kind: "api-key", site: "ncbi.nlm.nih.gov", envName: "NCBI_API_KEY" },
+  {
+    name: "Semantic Scholar",
+    kind: "api-key",
+    site: "semanticscholar.org",
+    envName: "SEMANTIC_SCHOLAR_API_KEY",
+  },
+  {
+    name: "Elsevier / Scopus",
+    kind: "api-key",
+    site: "dev.elsevier.com",
+    envName: "ELSEVIER_API_KEY",
+  },
+  { name: "Kaggle", kind: "api-key", site: "kaggle.com", envName: "KAGGLE_KEY" },
+  { name: "Weights & Biases", kind: "api-key", site: "wandb.ai", envName: "WANDB_API_KEY" },
+  { name: "Overleaf", kind: "website", site: "overleaf.com" },
+  { name: "ORCID", kind: "website", site: "orcid.org" },
+  {
+    name: "GitLab token",
+    kind: "cli-login",
+    site: "gitlab.com",
+    tool: "glab",
+    variables: ["GITLAB_TOKEN"],
+  },
 ] as const;
 export type CatalogueEntry = (typeof accountCatalogue)[number];
+
+export const accountCatalogueGroups = [
+  {
+    name: "AI models",
+    entries: ["OpenAI", "Anthropic", "OpenRouter", "Google Gemini", "Mistral"],
+  },
+  {
+    name: "Research",
+    entries: [
+      "Overleaf",
+      "Zotero",
+      "NCBI / PubMed",
+      "Semantic Scholar",
+      "Elsevier / Scopus",
+      "ORCID",
+    ],
+  },
+  { name: "Universities & libraries", entries: ["HUJI", "OpenAthens library", "Moodle", "Google"] },
+  {
+    name: "Developer tools",
+    entries: [
+      "GitHub token",
+      "GitLab token",
+      "Cloudflare / wrangler",
+      "AWS",
+      "gcloud",
+      "Postgres database",
+    ],
+  },
+  { name: "Data & ML", entries: ["Hugging Face", "Kaggle", "Weights & Biases"] },
+] satisfies ReadonlyArray<{ name: string; entries: ReadonlyArray<CatalogueEntry["name"]> }>;
 
 export function catalogueDetails(entry: CatalogueEntry | null, website = ""): AccountDetails {
   if (!entry) return { kind: "website", sites: website ? [website] : [] };
@@ -267,17 +372,23 @@ export function capturedSignInInput(
   const existing = matchingAccounts(accounts, capture.url, capture.profileId).find(
     (account) =>
       (account.details.kind === "website" || account.details.kind === "library") &&
-      account.details.username === capture.username,
+      (account.details.username === capture.username ||
+        ((account.details.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === capture.profileId &&
+          !account.details.username &&
+          !account.secrets.password)),
   );
   return {
     ...(existing ? { accountId: existing.accountId } : {}),
     name: existing?.name ?? new URL(origin).hostname,
-    details: existing?.details ?? {
-      kind: "website",
-      sites: [origin],
-      username: capture.username,
-      profileId: capture.profileId,
-    },
+    details:
+      existing?.details.kind === "website"
+        ? { ...existing.details, username: capture.username }
+        : (existing?.details ?? {
+            kind: "website",
+            sites: [origin],
+            username: capture.username,
+            profileId: capture.profileId,
+          }),
     secrets: { password: { type: "scient", value: capture.password } },
   };
 }
@@ -390,3 +501,74 @@ export function toggleScope(
     : current.filter((id) => id !== entry.projectId);
   return { type: "projects", projectIds: next };
 }
+
+type ProviderManagedAccount = {
+  kind: "claude" | "codex";
+  id: string;
+  instanceId: ProviderInstanceId;
+  name: string;
+  href: "/settings/extensions/installed";
+};
+
+export function providerManagedAccounts(providers: ReadonlyArray<ServerProvider>) {
+  return providers
+    .filter((provider) => provider.enabled && provider.installed)
+    .flatMap((provider): ReadonlyArray<ProviderManagedAccount> => {
+      if (provider.driver === "claudeAgent") {
+        return (provider.mcpServers ?? [])
+          .filter((server) => server.scope === "claudeai" && server.status === "connected")
+          .map((server) => ({
+            kind: "claude" as const,
+            id: JSON.stringify([provider.instanceId, server.name]),
+            instanceId: provider.instanceId,
+            // Claude names its own connectors "claude.ai <name>"; the row already says Claude.
+            name: server.name.replace(/^claude\.ai[ :·-]*/i, ""),
+            href: "/settings/extensions/installed" as const,
+          }));
+      }
+      if (provider.driver !== "codex") return [];
+      const apps = new Map(
+        (provider.plugins ?? [])
+          .flatMap((plugin) => plugin.apps ?? [])
+          .filter((app) => app.connected)
+          .map((app) => [app.id ?? app.name, app]),
+      );
+      return [...apps].map(([id, app]) => ({
+        kind: "codex" as const,
+        id: JSON.stringify([provider.instanceId, id]),
+        instanceId: provider.instanceId,
+        name: app.name,
+        href: "/settings/extensions/installed" as const,
+      }));
+    });
+}
+
+const KEY_PREFIXES = [
+  ["sk-ant-", "Anthropic"],
+  ["sk-or-", "OpenRouter"],
+  ["sk-proj-", "OpenAI"],
+  ["sk-", "OpenAI"],
+  ["hf_", "Hugging Face"],
+  ["ghp_", "GitHub token"],
+  ["github_pat_", "GitHub token"],
+  ["gho_", "GitHub token"],
+  ["glpat-", "GitLab token"],
+  ["AIza", "Google Gemini"],
+] as const;
+
+export function recognizeAccountKey(value: string): CatalogueEntry | undefined {
+  const key = value.trim();
+  if (/\s/.test(key)) return undefined;
+  const match = KEY_PREFIXES.find(
+    ([prefix]) => key.startsWith(prefix) && key.length > prefix.length,
+  );
+  return match && accountCatalogue.find((entry) => entry.name === match[1]);
+}
+
+export const CLI_LOGIN_COMMANDS: Readonly<Record<string, string>> = {
+  gh: "gh auth login --web",
+  aws: "aws configure sso",
+  wrangler: "wrangler login",
+  gcloud: "gcloud auth login",
+  glab: "glab auth login",
+};

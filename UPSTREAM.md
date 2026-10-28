@@ -75,6 +75,9 @@ follows the whole response's end, traces and tools included, at a calmer pace): 
 reaching the top margin, past it only to show a message pushed below the fold, never
 past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
 cancels pending placement and bounded following; scrolling down, clicks and selection do not.
+An upward scroll away from the end without reader input (assistive technology) also ends a
+fresh-open end restore. Footer metadata never moves the reader: upstream's footer-growth follow
+(`onFooterGrow`) is not composed (marked in `useTimelineFollow.ts`).
 Keys count only when they scroll the timeline: focus in it or nowhere, no modifier, not in a
 field (a menu's arrow keys or a shortcut leave the follow be).
 While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
@@ -221,7 +224,9 @@ Scient owns held-queue release in `orchestration-v2/scient-fork/QueuedRunSend.ts
 releases a held queue for any client send that starts or queues a run, except after worktree setup
 failed without a worktree. Scient releases it only for an ordinary direct send that starts its own
 run, including after such a failure, where the queue follows that checkout turn. A plain send that
-Stop turns into a queued message joins the held queue. Upstream's release block in `Orchestrator.ts`
+Stop turns into a queued message joins the held queue. A stop made so a queued message runs next
+(a `/goal`, or Send now into a running compaction) does not hold the queue
+(`scient/orchestration/TerminalQueueHold.ts`). Upstream's release block in `Orchestrator.ts`
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
 `SteeringCompletion.integration.test.ts` assert Scient's rule.
 
@@ -230,7 +235,8 @@ The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
 `scient/threadQueue/useScientQueueParts.tsx` and enter the upstream file only through
 `SCIENT-FORK queue-scient-parts` sections: the held-queue Send rule, failed-start Retry,
 command errors, the edit row after extraction and the delayed "Queuing…" status. Take
-upstream's changes to the rest of the file as they are.
+upstream's changes to the rest of the file as they are, including its single Send now action
+without reordering; agents still reorder through `scient_queue`.
 
 Scient owns the early-Stop exception in `orchestration-v2/scient-fork/PendingStartInterrupt.ts`
 and `PendingStartOwner.ts`. Keep native receipt protection there, with paired
@@ -599,6 +605,34 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`a56ecdafa7c944286f3b45aa51486be4ffe079fd` is recorded in
+[the 2026-10-27 a56ecdafa7 receipt](docs/internals/t3-upstream-sync-20261027-a56ecdafa7.md)
+([Scient PR #684](https://github.com/ScientFactory/scient-desktop/pull/684)).
+Literal merge `92002fb3417a5ccaaa5fbd1527578bb491a29464` has owned base
+`d17d8f60cecccf6580a9f50c9672d0cd1e8ed3e9` and the frozen official target as parents,
+retaining the 15 official commits after `e9236274a3`. A hung delegated-task stop
+now times out so later runs can start; draft model reconciliation runs at app
+start; the upload queue alone records finished draft uploads; Alchemy moves to
+2.0.0-beta.84 while the relay deploy workflow stays disabled. Scient's release
+runbook, Native V2, storage identities and cloud, telemetry, relay, updater,
+mobile publication and release controls remain. Release remains separate.
+
+The previous committed alignment through
+`e9236274a3a6e0c731a7df4092db1e686f039068` is recorded in
+[the 2026-10-27 4cb29a56f6 receipt](docs/internals/t3-upstream-sync-20261027-4cb29a56f6.md)
+([Scient PR #678](https://github.com/ScientFactory/scient-desktop/pull/678)).
+Literal merge `778edf4cf086b666c42964b409480ba0c2821982` retains the 92 official
+commits after `dd5b5401e1`; official extensions `5331a9f1be`, `825bc88442`,
+`cd1eeaa6e0`, `b229dcb1cf`, `a2fdbcf0b0`, `cde42c1b92` and `07694becc0` retain the next 7, 3, 8, 8, 1, 3 and 1.
+Settings adopt upstream's single design with Scient rows placed in its groups; MCP
+tools follow upstream's consolidated action tools; fx takes Scient's application
+bridge; the web queue takes upstream's Send now action without reordering. Scient
+keeps its file-save registry, reading-end policy, held-queue policy and tagged
+mini-player content. Typecheck, lint, seam checks, affected suites, build and
+desktop smoke pass; exact-head CI qualifies the PR. Owner visual acceptance and
+release remain separate steps.
+
+The previous committed alignment through
 `dd5b5401e1f240f4314af29edf431369d182f386` is recorded in
 [the 2026-10-26 receipt](docs/internals/t3-upstream-sync-20261026-10629afaac.md).
 Literal merge `cd00c855fd6bc05f153e8390ee5dd9685e283186` retains the 192 official
@@ -606,8 +640,8 @@ commits after `5b35402623`; owned-main catch-ups `2f5ac15cf3` and `421f6276e2`
 retain owned main through `b4966ac4eb916b183ca8c38a325e7ba5385d5fd1`; official
 extensions `606c164fc9` (#672) and `c23258e6e7` retain the next 50 and 7
 commits. Typecheck, lint, seam checks and affected suites pass; exact-head CI
-qualifies each PR. Owner visual acceptance and release remain separate steps. The
-[previous receipt](docs/internals/t3-upstream-sync-20261025-5b35402623.md)
+qualified each PR. Its
+[preceding receipt](docs/internals/t3-upstream-sync-20261025-5b35402623.md)
 retains its own boundaries and evidence. Native V2, scientific capabilities,
 immutable migrations, storage compatibility and cloud, telemetry, relay,
 updater, mobile publication and release controls remain.

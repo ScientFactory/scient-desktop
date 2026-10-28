@@ -145,6 +145,27 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
   return { client, calls, state, notify };
 }
 describe("Codex provider store", () => {
+  it.effect("carries store categories and filters before pagination with subject overrides", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const research = plugin("zotero", {
+          interface: { ...plugin("zotero").interface!, category: "Education & Research" },
+        });
+        const data = plugin("warehouse", {
+          interface: { ...plugin("warehouse").interface!, category: "Data & Analytics" },
+        });
+        const fixture = clientFixture([research, data]);
+        const store = yield* makeCodexProviderStore(() => Effect.succeed(fixture.client));
+        const page = yield* store.search({ category: "data", limit: 1 });
+        expect(page.total).toBe(1);
+        expect(page.entries[0]).toMatchObject({ name: "warehouse", category: "Data & Analytics" });
+        expect(
+          (yield* store.search({ category: "writing" })).entries.map((entry) => entry.name),
+        ).toEqual(["zotero"]);
+      }),
+    ),
+  );
+
   it.effect("resolves curated cross-store names to a unique canonical plugin id", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -421,6 +442,14 @@ it.effect(
         yield* Effect.promise(async () => {
           await NodeFSP.mkdir(directory, { recursive: true });
           await NodeFSP.writeFile(path, "---\nname: search\n---\n# Search locally");
+          await NodeFSP.writeFile(
+            NodePath.join(root, "mcp.json"),
+            JSON.stringify({
+              mcpServers: {
+                sample: { headers: { Authorization: "Bearer ${SYNTHETIC_KEY}" } },
+              },
+            }),
+          );
         });
         const fixture = clientFixture([]);
         fixture.state.localPlugins = [plugin("local")];
@@ -430,8 +459,9 @@ it.effect(
         const store = yield* makeCodexProviderStore(
           () => Effect.succeed(fixture.client),
           () => Effect.undefined,
-          NodePath.join(cache, "other-cache"),
+          cache,
         );
+        expect((yield* store.contents("local")).requiredKeys).toEqual(["SYNTHETIC_KEY"]);
         expect((yield* store.contents("local")).skills).toMatchObject([
           { name: "search", documentAvailable: true, enabled: true },
         ]);
@@ -442,6 +472,14 @@ it.effect(
         expect(fixture.calls.filter((call) => call.method === "plugin/read")).toHaveLength(1);
         expect(fixture.calls.some((call) => call.method === "plugin/list")).toBe(false);
         expect(fixture.calls.filter((call) => call.method === "plugin/installed")).toHaveLength(1);
+
+        fixture.state.summary = plugin("local", { source: { type: "remote" } });
+        fixture.state.localPlugins = [plugin("local", { version: "cached-remote" })];
+        yield* store.search({ refresh: true });
+        expect((yield* store.contents("local")).requiredKeys).toEqual(["SYNTHETIC_KEY"]);
+        expect(yield* store.keyServerRoot("local")).toBe(
+          yield* Effect.promise(() => NodeFSP.realpath(root)),
+        );
 
         fixture.state.skills = [
           { name: "search", path: NodePath.join(NodeOS.tmpdir(), "outside/SKILL.md") },

@@ -1,3 +1,4 @@
+import { usePluginKeys, pluginKeyStatusLabel } from "./PluginKeys";
 import { AddConnectorDialog } from "./AddConnectorDialog";
 import type {
   ConnectorSummary,
@@ -37,7 +38,8 @@ import {
   connectorActions,
   connectorStatusText,
   entryName,
-  entryNeedsToken,
+  entryNeedsSetup,
+  entryFacts,
   entryTagline,
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
@@ -204,6 +206,9 @@ export function ConnectorItem({
       name={entry ? entryName(entry) : connector.displayName}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
       tagline={(entry ? entryTagline(entry) : undefined) ?? connector.description ?? connector.url}
+      facts={entryFacts(entry)
+        .map(([, value]) => value)
+        .join(" · ")}
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>
@@ -251,6 +256,9 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
         name={name}
         iconUrl={entry.iconUrl}
         tagline={entryTagline(entry)}
+        facts={entryFacts(entry)
+          .map(([, value]) => value)
+          .join(" · ")}
         status={actions.busy === "add" ? "Adding…" : null}
         trailing={
           entry.installedConnectorId === undefined ? (
@@ -260,7 +268,7 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
               aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
               disabled={actions.canAdd && actions.locked}
               onClick={() =>
-                entryNeedsToken(entry)
+                entryNeedsSetup(entry)
                   ? setShowToken(true)
                   : actions.canAdd
                     ? void actions.add()
@@ -355,6 +363,12 @@ export function ProviderPluginItem({
   readonly workspace: string | undefined;
 }) {
   const actions = useProviderPluginActions(provider, label, plugin, workspace);
+  const keyState = usePluginKeys({
+    instanceId: provider.instanceId,
+    pluginId: plugin.id,
+    ...(workspace ? { cwd: workspace } : {}),
+  });
+  const keyStatus = pluginKeyStatusLabel(keyState.data, provider);
   const name = plugin.displayName ?? plugin.name;
   const target: ExtensionTarget = {
     kind: "provider-plugin",
@@ -373,13 +387,15 @@ export function ProviderPluginItem({
       status={
         !plugin.enabled
           ? "Off"
-          : plugin.apps?.length
-            ? plugin.apps.some((app) => !app.enabled)
-              ? "Disabled in Codex"
-              : plugin.apps.every((app) => app.connected)
-                ? "Connected"
-                : "Needs sign-in"
-            : null
+          : keyStatus
+            ? keyStatus
+            : plugin.apps?.length
+              ? plugin.apps.some((app) => !app.enabled)
+                ? "Disabled in Codex"
+                : plugin.apps.every((app) => app.connected)
+                  ? "Connected"
+                  : "Needs sign-in"
+              : null
       }
       trailing={
         <ItemMenu name={name} target={target}>

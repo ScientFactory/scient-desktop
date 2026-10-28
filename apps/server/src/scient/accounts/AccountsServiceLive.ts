@@ -9,6 +9,7 @@ import {
   defaultAccountControls,
   type AccountActivityEntry,
   type AccountApproval,
+  type AccountHandoff,
   type AccountApprovalDecision,
   type AccountControls,
   type AccountSecretSummary,
@@ -97,6 +98,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const persistence = yield* AccountPersistence;
     const sources = yield* AccountSources;
+    const cliStores = sources.passwordStores;
     const vault = yield* AccountVault;
     const serviceScope = yield* Scope.Scope;
     const sourceControl = yield* Effect.serviceOption(SourceControlProviderRegistry);
@@ -105,6 +107,7 @@ export const layer = Layer.effect(
     let state: AccountsState = emptyState;
     let recentActivity: ReadonlyArray<AccountActivityEntry> = [];
     let initialized = false;
+    let bindingRevision = 0;
     let protection: "keychain" | "file" = "file";
     let onePasswordClient: OnePasswordClient | undefined;
     const cache = new Map<
@@ -118,6 +121,9 @@ export const layer = Layer.effect(
         target.type,
         target.type === "account" ? target.accountId : target.profileId,
       ]);
+    const handoffs = new Map<string, AccountHandoff>();
+    const handoffReveals = new Map<string, Effect.Effect<void, AccountsError>>();
+    const cancelledHandoffs = new Set<string>();
     const pending = new Map<
       string,
       {
@@ -170,14 +176,17 @@ export const layer = Layer.effect(
           scient: { protection },
           keychain: { available: protection === "keychain", platform: sources.platform },
           onePassword: state.onePasswordStatus,
+          cli: cliStores.statuses(),
         },
+        handoffs: [...handoffs.values()],
         approvals: [...pending.values()].map((entry) => entry.approval),
         recentActivity,
         customModelKeys,
         managedElsewhere,
       } satisfies AccountsSnapshot;
     });
-    const publish = Effect.gen(function* () {
+    const publish = Effect.fn("AccountsService.publish")(function* (invalidateKeys = true) {
+      if (invalidateKeys) bindingRevision++;
       yield* PubSub.publish(events, yield* snapshotNow);
     });
     const initialize = Effect.gen(function* () {
@@ -194,11 +203,16 @@ export const layer = Layer.effect(
       state = loaded;
       recentActivity = log.slice(-500);
       initialized = true;
-      yield* publish;
+      yield* publish();
     });
     const locked = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       writes.withPermits(1)(Effect.uninterruptible(initialize.pipe(Effect.andThen(effect))));
-    const commit = Effect.fn("AccountsService.commit")(function* (next: AccountsState) {
+    const commit = Effect.fn("AccountsService.commit")(function* (
+      next: AccountsState,
+      usageOnly = false,
+    ) {
+      // Invalidate before the first write: cache hits must not bypass an in-flight revocation.
+      if (!usageOnly) bindingRevision++;
       yield* persistence
         .write("accounts-state", yield* encodePrivateJson(AccountsState, next))
         .pipe(
@@ -209,7 +223,7 @@ export const layer = Layer.effect(
           ),
         );
       state = next;
-      yield* publish;
+      yield* publish(!usageOnly);
     });
     const appendActivity = Effect.fn("AccountsService.appendActivity")(function* (
       entry: Omit<AccountActivityEntry, "at">,
@@ -222,7 +236,7 @@ export const layer = Layer.effect(
       ].slice(-500);
       yield* persistence.write("accounts-activity", yield* encodePrivateJson(Activity, next));
       recentActivity = next;
-      yield* publish;
+      yield* publish(false);
     });
     const findAccount = (accountId: AccountId) =>
       state.accounts.find((account) => account.summary.accountId === accountId);
@@ -312,6 +326,10 @@ export const layer = Layer.effect(
         if (!secret) continue;
         const source: AccountValueSource = secret.source;
         switch (source.type) {
+          case "bitwarden":
+          case "proton-pass":
+            result[field] = yield* cliStores.resolve(source);
+            break;
           case "scient":
             result[field] = yield* readValue(account.values[field]);
             break;
@@ -400,14 +418,17 @@ export const layer = Layer.effect(
           continue;
         }
         const old = secrets[field];
-        const linked = change.type !== "scient" && Boolean(old?.copies?.length);
+        const readOnlyLink = change.type === "bitwarden" || change.type === "proton-pass";
+        const linked = change.type !== "scient" && !readOnlyLink && Boolean(old?.copies?.length);
         const linkedValue = !linked
           ? undefined
           : change.type === "keychain"
             ? yield* sources.keychain(change)
             : change.type === "custom-model"
               ? yield* sources.customModel(change.connectionId)
-              : yield* (yield* getOnePasswordClient).resolve(change.reference);
+              : change.type === "1password"
+                ? yield* (yield* getOnePasswordClient).resolve(change.reference)
+                : undefined;
         if (change.type === "scient" || linkedValue) {
           const value = change.type === "scient" ? Redacted.make(change.value) : linkedValue!;
           const name = valueName();
@@ -498,7 +519,12 @@ export const layer = Layer.effect(
             completed.push(destination);
             continue;
           }
-          if (destination.type === "custom-model") continue;
+          if (
+            destination.type === "custom-model" ||
+            destination.type === "bitwarden" ||
+            destination.type === "proton-pass"
+          )
+            continue;
           const vaultId =
             destination.type === "1password"
               ? "vaultId" in destination
@@ -605,7 +631,62 @@ export const layer = Layer.effect(
     });
 
     const service = AccountsService.of({
+      setHandoff: Effect.fn("AccountsService.setHandoff")((handoff, reveal) =>
+        locked(
+          Effect.gen(function* () {
+            if (cancelledHandoffs.has(handoff.handoffId)) return;
+            handoffs.set(handoff.handoffId, handoff);
+            if (reveal) handoffReveals.set(handoff.handoffId, reveal);
+            yield* publish(false);
+          }),
+        ),
+      ),
+      removeHandoff: Effect.fn("AccountsService.removeHandoff")((handoffId) =>
+        locked(
+          Effect.gen(function* () {
+            handoffs.delete(handoffId);
+            handoffReveals.delete(handoffId);
+            cancelledHandoffs.delete(handoffId);
+            yield* publish(false);
+          }),
+        ).pipe(Effect.ignore),
+      ),
+      handoffCancelled: Effect.fn("AccountsService.handoffCancelled")((handoffId) =>
+        Effect.sync(() => cancelledHandoffs.has(handoffId)),
+      ),
+      showHandoff: Effect.fn("AccountsService.showHandoff")(function* (handoffId) {
+        const reveal = yield* locked(
+          Effect.sync(() => (handoffs.has(handoffId) ? handoffReveals.get(handoffId) : undefined)),
+        );
+        if (!reveal) return yield* failure("not-found", "The sign-in is no longer waiting.");
+        yield* reveal;
+      }),
+      cancelHandoff: Effect.fn("AccountsService.cancelHandoff")((handoffId) =>
+        locked(
+          Effect.gen(function* () {
+            if (!handoffs.has(handoffId))
+              return yield* failure("not-found", "The sign-in is no longer waiting.");
+            cancelledHandoffs.add(handoffId);
+            handoffs.delete(handoffId);
+            yield* publish(false);
+          }),
+        ),
+      ),
       snapshot: locked(snapshotNow),
+      recordBoundDenial: Effect.fn("AccountsService.recordBoundDenial")((ref, consumer) => {
+        const id = boundAccountId(ref);
+        return Option.isSome(id)
+          ? locked(
+              appendActivity({
+                target: { type: "account", accountId: id.value },
+                action: "request",
+                decision: "denied",
+                ...consumerActivity(consumer),
+              }),
+            ).pipe(Effect.ignore)
+          : Effect.void;
+      }),
+      bindingRevision: Effect.sync(() => (initialized ? bindingRevision : undefined)),
       changes: Stream.fromPubSub(events),
       save: Effect.fn("AccountsService.saveInput")((input) =>
         locked(
@@ -766,6 +847,15 @@ export const layer = Layer.effect(
               .slice(-(input.limit ?? 500))
               .toReversed(),
           ),
+        ),
+      ),
+      passwordStore: Effect.fn("AccountsService.passwordStore")((input) =>
+        locked(
+          Effect.gen(function* () {
+            const result = yield* cliStores.command(input);
+            yield* publish();
+            return result;
+          }),
         ),
       ),
       keychainCandidates: sources.candidates,
@@ -958,7 +1048,11 @@ export const layer = Layer.effect(
               const source = account.summary.secrets.totp?.source;
               otp = yield* Effect.try({
                 try: () => {
-                  if (source?.type === "1password" && source.reference.endsWith("?attribute=otp"))
+                  if (
+                    ((source?.type === "bitwarden" || source?.type === "proton-pass") &&
+                      /^\d{6,8}$/.test(value)) ||
+                    (source?.type === "1password" && source.reference.endsWith("?attribute=otp"))
+                  )
                     return value;
                   const generator = value.startsWith("otpauth://")
                     ? URI.parse(value)
@@ -1052,7 +1146,7 @@ export const layer = Layer.effect(
                 };
                 const answer = yield* Deferred.make<AccountApprovalDecision>();
                 pending.set(approval.approvalId, { approval, scope, answer });
-                yield* publish;
+                yield* publish();
                 return { kind: "pending" as const, approval, answer, audit };
               }),
             );
@@ -1086,7 +1180,7 @@ export const layer = Layer.effect(
                     Effect.uninterruptible(
                       Effect.gen(function* () {
                         pending.delete(prepared.approval.approvalId);
-                        yield* publish;
+                        yield* publish();
                       }),
                     ),
                   )
@@ -1108,7 +1202,7 @@ export const layer = Layer.effect(
           ),
         ),
       ),
-      resolveBound: Effect.fn("AccountsService.resolveBound")((ref, consumer) =>
+      resolveBound: Effect.fn("AccountsService.resolveBound")((ref, consumer, options) =>
         locked(
           Effect.gen(function* () {
             const { origin } = consumer;
@@ -1124,12 +1218,13 @@ export const layer = Layer.effect(
               agentAccessOff(state.agentAccess, controls.access) ||
               (consumer.kind === "plugin-key" && !inScope(controls.scope, consumer.projectId))
             ) {
-              yield* appendActivity({
-                target: { type: "account", accountId: accountId.value },
-                action: "request",
-                decision: "denied",
-                ...consumerActivity(consumer),
-              }).pipe(Effect.ignore);
+              if (consumer.kind !== "plugin-key")
+                yield* appendActivity({
+                  target: { type: "account", accountId: accountId.value },
+                  action: "request",
+                  decision: "denied",
+                  ...consumerActivity(consumer),
+                }).pipe(Effect.ignore);
               return yield* failure("denied", "The account is unavailable for this service.");
             }
             const values = yield* resolve(accountId.value, ["token"]);
@@ -1138,7 +1233,14 @@ export const layer = Layer.effect(
             return values.token;
           }),
         ).pipe(
+          Effect.tapError(() =>
+            consumer.kind === "plugin-key"
+              ? service.recordBoundDenial!(ref, consumer)
+              : Effect.void,
+          ),
           Effect.tap(() => {
+            if (consumer.kind === "plugin-key" && options?.auditAllowed === false)
+              return Effect.void;
             const accountId = boundAccountId(ref);
             return Option.isSome(accountId)
               ? service.recordUse({
@@ -1169,6 +1271,7 @@ export const layer = Layer.effect(
                       ...(entry.signInOutcome ? { lastSignInOutcome: entry.signInOutcome } : {}),
                     },
                   }),
+                  true,
                 );
             }
           }),

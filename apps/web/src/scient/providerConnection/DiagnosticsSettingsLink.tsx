@@ -1,9 +1,9 @@
 import { Link, useRouter } from "@tanstack/react-router";
 
 // No-break spaces keep the path on one line, so a narrow card never starts a line with ">".
-const LABEL = "Settings > Diagnostics";
+const LABEL = "Settings > Maintenance > Diagnostics";
 
-/** "Settings > Diagnostics", linking to that page where the app's router is present. */
+/** "Settings > Maintenance > Diagnostics", linking to that page where the app's router is present. */
 export function DiagnosticsSettingsLink() {
   const router = useRouter({ warn: false });
   if (!router) return <span>{LABEL}</span>;

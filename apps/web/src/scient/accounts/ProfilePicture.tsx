@@ -15,18 +15,24 @@ export function ProfilePicture({
   size?: "sm" | "md";
 }) {
   const visual = profilePresentation({ picture, color });
-  const frame = size === "sm" ? "size-5 text-[10px]" : "size-9 text-sm";
+  const frame = size === "sm" ? "size-5 text-[10px]" : "size-10 text-sm";
   return visual.picture ? (
-    <img alt="" src={visual.picture} className={cn("shrink-0 rounded-full object-cover", frame)} />
+    <img alt="" src={visual.picture} className={cn("shrink-0 rounded-[25%] object-cover", frame)} />
   ) : (
     <span
       aria-hidden
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full bg-muted",
-        visual.color && "text-white",
+        "flex shrink-0 items-center justify-center rounded-[25%] bg-primary/10 text-primary",
         frame,
       )}
-      style={visual.color ? { backgroundColor: visual.color } : undefined}
+      style={
+        visual.color
+          ? {
+              backgroundColor: `color-mix(in srgb, ${visual.color} 20%, var(--background))`,
+              color: "var(--foreground)",
+            }
+          : undefined
+      }
     >
       {name.slice(0, 1).toUpperCase()}
     </span>

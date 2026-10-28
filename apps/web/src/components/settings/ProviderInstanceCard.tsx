@@ -41,7 +41,6 @@ import {
 } from "@t3tools/shared/model";
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { useClientSettings } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
@@ -721,7 +720,6 @@ export function ProviderInstanceCard({
 
   const urlAuthAction = liveProvider?.auth.action;
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
-  const redesign = useClientSettings((settings) => settings.redesignEnabled);
   const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
     onCopy: ({ providerName }) => {
       toastManager.add({
@@ -1044,7 +1042,7 @@ export function ProviderInstanceCard({
         data-slot="settings-row"
         className={cn(
           "group relative isolate flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
-          selected ? "bg-muted/45 redesign:bg-foreground/[0.06]" : "hover:bg-muted/25",
+          selected ? "bg-foreground/[0.06]" : "hover:bg-muted/25",
         )}
       >
         <div
@@ -1159,7 +1157,7 @@ export function ProviderInstanceCard({
     </div>
   );
 
-  // The New design gives provider status its own row instead of hanging it under the name field.
+  // Provider status gets its own row instead of hanging under the name field.
   const statusContent = (
     <>
       <ProviderStatusDiagnostic detail={statusDiagnostic}>
@@ -1239,11 +1237,7 @@ export function ProviderInstanceCard({
         variant="plain"
       >
         {/* SCIENT-FORK:START — keep status and URL authentication above the models-first tabs. */}
-        {redesign ? (
-          <SettingsRow title="Status" status={statusContent} />
-        ) : (
-          <div className="px-3 text-xs text-muted-foreground sm:px-4">{statusContent}</div>
-        )}
+        <SettingsRow title="Status" status={statusContent} />
         {/* SCIENT-FORK:END */}
       </SettingsSection>
       {/* Scient keeps the models-first view; configuration uses upstream settings rows. */}

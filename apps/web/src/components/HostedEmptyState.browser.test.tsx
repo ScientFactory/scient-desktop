@@ -175,6 +175,6 @@ it("routes a disabled local computer to Connections without installation or clou
   expect(screen.container.textContent).not.toMatch(/npx|T3 Code|Sign in/);
   expect(screen.container.querySelector('a[href*="t3.codes"]')).toBeNull();
   expect(discovery.register).not.toHaveBeenCalled();
-  await screen.getByRole("link", { name: "Open Connections" }).click();
+  await screen.getByRole("link", { name: "Open Environments" }).click();
   expect(screen.router?.state.location.pathname).toBe("/settings/connections");
 });

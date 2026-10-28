@@ -11,9 +11,12 @@ export function makeDesktopAccountsBridge(
 ): DesktopAccountsBridge {
   return {
     originBoundFill: true,
+    readBrowserPasswords: (input) => ipc.invoke(Channels.READ_BROWSER_PASSWORDS, input),
     sourceProfiles: () => ipc.invoke(Channels.SOURCE_PROFILES),
     signedInSites: (profileId, environmentId) =>
       ipc.invoke(Channels.SIGNED_IN_SITES, { profileId, environmentId }),
+    cookieMetadata: (profileId, environmentId) =>
+      ipc.invoke(Channels.COOKIE_METADATA, { profileId, environmentId }),
     signOutSite: (profileId, site, environmentId) =>
       ipc.invoke(Channels.SIGN_OUT_SITE, { profileId, site, environmentId }),
     fill: (input) => ipc.invoke(Channels.FILL, input),

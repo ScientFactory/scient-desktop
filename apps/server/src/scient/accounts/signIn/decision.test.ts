@@ -144,3 +144,24 @@ describe("sign-in submission guard", () => {
     expect(decideSignInContinuation(page, [], 6, undefined).type).toBe("failed");
   });
 });
+
+it("assigns hand-off kinds only on an allowed site", () => {
+  for (const kind of ["captcha", "passkey", "push"] as const)
+    expect(decideSignIn({ ...page, challenge: kind }, ["example.com"], available)).toMatchObject({
+      type: "needs-user",
+      kind,
+    });
+  expect(
+    decideSignIn({ ...page, otp: "#code" }, ["example.com"], { ...available, otp: false }),
+  ).toMatchObject({ kind: "code" });
+  expect(decideSignIn(page, ["example.com"], { ...available, password: false })).toMatchObject({
+    kind: "other",
+  });
+  expect(
+    decideSignIn(
+      { ...page, challenge: "push", origin: "https://unrelated.test" },
+      ["example.com"],
+      available,
+    ),
+  ).toMatchObject({ kind: undefined });
+});

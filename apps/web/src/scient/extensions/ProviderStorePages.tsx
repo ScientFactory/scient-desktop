@@ -35,7 +35,7 @@ import {
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
-function storeAvailable(provider: ServerProvider) {
+export function storeAvailable(provider: ServerProvider) {
   return (
     provider.enabled &&
     provider.installed &&
@@ -44,7 +44,7 @@ function storeAvailable(provider: ServerProvider) {
   );
 }
 
-function StoreInstall({
+export function StoreInstall({
   provider,
   entry,
   refresh,
@@ -488,6 +488,7 @@ function StoreDetail({
       <PluginContents
         key={JSON.stringify([provider.instanceId, entry.id])}
         provider={provider}
+        pluginName={entry.displayName}
         canConnectApps={entry.installed}
         iconUrl={entry.iconUrl}
         input={{ instanceId: provider.instanceId, entryId: entry.id }}
@@ -542,7 +543,7 @@ export function ProviderStoreDetailPage(props: {
   readonly entryId: string;
 }) {
   return (
-    <ExtensionsPage>
+    <ExtensionsPage loadProviderInventory>
       <StoreDetail key={JSON.stringify(props)} {...props} />
     </ExtensionsPage>
   );

@@ -52,6 +52,7 @@ const props = {
   threadId: base.thread.id,
   optimisticMessages: [],
   editingRunId: null,
+  editBlockedReason: null,
   onEditQueuedRun: () => undefined,
   onCancelEdit: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;

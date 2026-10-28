@@ -93,7 +93,7 @@ const signIn = metadata(
   Tool.make("scient_account_sign_in", {
     ...common,
     description:
-      "Sign in with a website or library account on your browser tab, including stored two-factor codes. Returns signed-in only after confirmation, password-rejected or code-rejected without repeating rejected credentials, needs-user for CAPTCHA, passkey or device approval, or failed.",
+      "Sign in with a website or library account on your browser tab, with stored two-factor codes. Returns signed-in, password-rejected or code-rejected (never retried), needs-user, or failed. Waits up to 3 minutes while the user does a CAPTCHA, passkey or approval in the browser.",
     parameters: Schema.Struct({ accountId: AccountId, tabId: Schema.optional(PreviewTabId) }),
     success: Schema.Struct({
       outcome: AccountSignInOutcome,

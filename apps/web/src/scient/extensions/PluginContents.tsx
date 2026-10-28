@@ -1,3 +1,4 @@
+import { PluginKeys } from "./PluginKeys";
 import { ExtensionContentDialog } from "./ExtensionContentDialog";
 import { ConnectorToolsList } from "./ConnectorToolsList";
 import { DialogFooter } from "../../components/ui/dialog";
@@ -331,11 +332,13 @@ function PluginContentsView({
 
 export function PluginContents({
   input,
+  pluginName,
   provider,
   canConnectApps = true,
   iconUrl,
 }: {
   readonly input: ExtensionPluginContentsInput;
+  readonly pluginName: string;
   readonly provider?: ServerProvider | undefined;
   readonly canConnectApps?: boolean | undefined;
   readonly iconUrl?: string | undefined;
@@ -402,6 +405,7 @@ export function PluginContents({
       {contents.data.deferred ? (
         <MutedLine>Skills and tools appear after you install it.</MutedLine>
       ) : null}
+      <PluginKeys input={input} provider={provider} pluginName={pluginName} />
       <PluginContentsView
         contents={value}
         iconUrl={pluginIcon}

@@ -109,10 +109,7 @@ it("rejects ambiguous IDs, duplicate transport names and tools without operation
 it("keeps new native browser actions behind the captured Preview grant", () => {
   for (const [tool, id] of [
     ["preview_dialog", "browser.dialog"],
-    ["preview_hover", "browser.hover"],
-    ["preview_select", "browser.select"],
-    ["preview_drag", "browser.drag"],
-    ["preview_upload", "browser.upload"],
+    ["preview_act", "browser.act"],
   ]) {
     const operation = scientOperationCatalog.forTool(tool!)!;
     expect(operation.id).toBe(id);

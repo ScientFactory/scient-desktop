@@ -221,11 +221,6 @@
       "purpose": "Preserve dirty buffers across conditional-write conflicts."
     },
     {
-      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
-      "anchor": "expectedRevision",
-      "purpose": "Compose the upstream save hook with Scient revision-checked writes and explicit conflict recovery."
-    },
-    {
       "path": "apps/web/src/components/files/projectFilesQueryState.ts",
       "anchor": "revision",
       "purpose": "Carry authoritative file revisions through the shared file-query projection."
@@ -301,14 +296,9 @@
       "purpose": "Pass Scient's file-surface props (citations, presentation, renames, source links) to the file preview panel."
     },
     {
-      "path": "apps/web/src/components/preview/useAgentOpenedPreviews.ts",
-      "anchor": "PreviewMiniPlayerState[\"content\"]",
-      "purpose": "The device-session hook consumes tagged mini-player content without taking browser reconciliation from the app-lifetime service or treating scientific figures as devices."
-    },
-    {
       "path": "apps/web/src/components/preview/agentOpenedPreviews.ts",
       "anchor": "applyScientBrowserHideRequests",
-      "purpose": "The sole app-lifetime browser service applies Scient hide requests and routes forced reveals through the active-file departure owner; service and departure tests cover these policies."
+      "purpose": "The sole app-lifetime browser service applies Scient hide requests and routes forced reveals through the active-file departure owner; its device snapshot reads tagged mini-player content so scientific figures are never treated as devices. Service and departure tests cover these policies."
     },
     {
       "path": "apps/web/src/components/files/PreviewImageContent.tsx",
@@ -324,6 +314,13 @@
       "path": "scripts/effect-budget.json",
       "anchor": "\"apps/web/src/scient/analysis/AnalysisArtifactStrip.tsx\"",
       "purpose": "The shared React effect budget records existing Scient analysis lifecycle owners; new effects still require their own scoped justification and lint validation."
+    }
+  ],
+  "scientMounts": [
+    {
+      "path": "apps/web/src/components/files/useFileSaveCoordinator.ts",
+      "anchor": "expectedRevision",
+      "purpose": "Compose Scient's retained save hook (upstream removed it for fileSaveSessions) with Scient revision-checked writes and explicit conflict recovery."
     }
   ]
 }

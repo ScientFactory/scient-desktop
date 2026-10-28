@@ -31,6 +31,8 @@ import {
 } from "../../../test/render";
 import { page, userEvent } from "vite-plus/test/browser";
 
+// The Add-account dialog opens sites in Scient's browser; these tests never do.
+vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => async () => false }));
 vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
 vi.mock("../../components/ChatMarkdown", () => ({
   default: ({ text }: { text: string }) => <div>{text}</div>,
@@ -53,6 +55,10 @@ const state = vi.hoisted(() => ({
   discoverOutcomes: {} as Record<string, "pending" | { readonly error: string }>,
   /** `extensions.discover.entry` answers by name; catalog entries answer too. */
   entries: {} as Record<string, DiscoverEntry>,
+  storePages: {} as Record<
+    string,
+    { entries: ProviderStoreEntry[]; total: number; nextCursor?: string }
+  >,
   storeEntry: null as ProviderStoreEntry | null,
   contentApps: undefined as ExtensionPluginContents["apps"] | undefined,
   queryTargets: [] as unknown[],
@@ -154,6 +160,7 @@ vi.mock("../../components/settings/SettingsScopeSentence", () => ({
 vi.mock("../../hooks/useSettings", () => ({
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE: "",
   usePrimarySettingsAvailable: () => true,
+  useClientSettings: () => [],
 }));
 vi.mock("../../components/settings/scopedSettings", () => ({
   isProjectScopedSettingKey: () => false,
@@ -169,6 +176,7 @@ vi.mock("../../components/settings/SettingInheritance", () => ({
   SettingInheritance: () => null,
 }));
 vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
+vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: string, scope: string) => {
     useStateVersion();
@@ -190,6 +198,17 @@ vi.mock("../../state/query", async () => {
       useStateVersion();
       if (atom === null) return { data: null, error: null, failure: null, isPending: false };
       state.queryTargets.push(atom);
+      if (atom.kind === "plugin-keys")
+        return {
+          data: {
+            status: "ready",
+            keys: [],
+            accounts: [],
+            writable: true,
+            requirementsKnown: true,
+          },
+          error: null,
+        };
       if (atom.kind === "contents") {
         const plugin = state.inventory?.plugins.find(
           (item) => item.pluginId === atom.input?.pluginId,
@@ -258,9 +277,27 @@ vi.mock("./extensionsState", async () => {
     state.registry?.set(changes(environmentId), AsyncResult.success({ revision }));
   };
   const idle = { busy: null, error: null, blockedSignInUrl: null, signInStartedAt: null };
-  const storeAtom = Atom.family((key: string) => Object.assign(Atom.make(null), JSON.parse(key)));
+  const storeAtom = Atom.family((key: string) =>
+    Object.assign(
+      Atom.make(() => {
+        const target = JSON.parse(key);
+        return target.kind === "store"
+          ? AsyncResult.success(
+              state.storePages[String(target.input.instanceId)] ?? { entries: [], total: 0 },
+            )
+          : null;
+      }),
+      JSON.parse(key),
+    ),
+  );
   return {
     extensionsBrandIcon: () => null,
+    extensionsPluginKeys: (input: { environmentId: string; input: Record<string, unknown> }) => ({
+      kind: "plugin-keys",
+      ...input,
+    }),
+    bindPluginKey: { permissionAtom: () => Atom.make(true) },
+    unbindPluginKey: {},
     extensionsPluginContents: ({
       environmentId,
       input,
@@ -332,6 +369,10 @@ vi.mock("../../state/use-atom-command", () => ({
     state.commands[typeof command === "string" ? command : command.name],
 }));
 vi.mock("../../localApi", () => ({
+  readLocalApi: () => ({
+    dialogs: { confirm: state.confirm },
+    shell: { openExternal: state.openExternal },
+  }),
   ensureLocalApi: () => ({
     dialogs: { confirm: state.confirm },
     shell: { openExternal: state.openExternal },
@@ -661,6 +702,7 @@ function setup() {
   state.registry = AtomRegistry.make();
   state.queryTargets = [];
   state.storeEntry = null;
+  state.storePages = {};
   state.contentApps = undefined;
   state.hash = "";
   state.navigate.mockReset();
@@ -934,7 +976,7 @@ describe("Discover", () => {
     state.discoverOutcomes = { [curatedKey]: "pending" };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "note",
     );
     expect(fixture.section("Popular")).toBeNull();
@@ -975,7 +1017,7 @@ describe("Discover", () => {
     state.discoverOutcomes = { [registryKey]: "pending" };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "granola",
     );
     const results = () => fixture.section("Search results");
@@ -1007,6 +1049,51 @@ describe("Discover", () => {
     expect(results().querySelector("[data-discover-error]")).toBeNull();
   });
 
+  it("keeps picks visible while registry is pending and groups store alternatives", async () => {
+    await using fixture = setup();
+    const pick = entry("scient.curated/scite", {
+      title: "Scite",
+      categories: ["papers"],
+      agentStores: { codex: "scite" },
+    });
+    state.discoverPages[JSON.stringify({ scope: "curated", category: "papers" })] = {
+      entries: [pick],
+      fetchedAt: "2026-10-21T00:00:00.000Z",
+    };
+    state.discoverOutcomes[JSON.stringify({ scope: "registry", category: "papers" })] = "pending";
+    const plugin = (name: string): ProviderStoreEntry => ({
+      id: name,
+      name,
+      displayName: name === "scite" ? "Scite" : "Zotero",
+      marketplace: "test",
+      description: "Reference library",
+      kind: "codex",
+      installed: false,
+      includes: [],
+      apps: [],
+    });
+    state.storePages[codex] = { entries: [plugin("scite"), plugin("zotero")], total: 2 };
+    state.commands.providerAct.mockResolvedValue({ _tag: "Success", value: { providers: [] } });
+    await fixture.render(<CategoryPage category="papers" />);
+    expect(fixture.rowNames()).toEqual(["Scite", "Zotero"]);
+    expect(fixture.container.textContent).toContain("Also add from Codex");
+    expect(fixture.container.textContent).toContain("Not checked by Scient");
+    expect(fixture.container.textContent).toContain("Codex only");
+    await userEvent.click(buttonIn(fixture.container, "Add to Codex")!);
+    expect(state.commands.providerAct).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: "local",
+        input: { instanceId: codex, action: { type: "install", entryId: "zotero" } },
+      }),
+    );
+    const search = fixture.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search this category"]',
+    )!;
+    await userEvent.fill(search, "Zotero");
+    expect(fixture.rowNames()).toEqual(["Zotero"]);
+    expect(fixture.container.textContent).toContain("No picks match this search.");
+  });
+
   it("queries the registry for All MCP servers and the catalog for categories", async () => {
     await using fixture = setup();
     await fixture.render(<AllServersPage />);
@@ -1015,11 +1102,11 @@ describe("Discover", () => {
       environmentId: "local",
       input: { scope: "registry" },
     });
-    await fixture.render(<CategoryPage category="research" />);
+    await fixture.render(<CategoryPage category="papers" />);
     expect(state.queryTargets).toContainEqual({
       kind: "discover",
       environmentId: "local",
-      input: { scope: "curated", category: "research" },
+      input: { scope: "curated", category: "papers" },
     });
   });
 
@@ -1075,8 +1162,9 @@ describe("Discover", () => {
     expect(linkIn(fixture.container, "Discover")?.getAttribute("href")).toBe(
       "/settings/extensions",
     );
-    expect(fixture.rowNames(fixture.section("Popular"))).toEqual(["Notion"]);
-    expect(buttonIn(fixture.container, "Load more")).not.toBeNull();
+    expect(fixture.rowNames(fixture.section("Scient’s picks"))).toEqual(["Notion"]);
+    expect(fixture.container.textContent).not.toContain("More from the MCP Registry");
+    expect(fixture.container.textContent).not.toContain("From your agents’ stores");
 
     await fixture.render(<CategoryPage category="nonsense" />);
     expect(fixture.container.textContent).toContain("This category does not exist.");
@@ -1769,7 +1857,7 @@ describe("Detail pages", () => {
     const synapse = entry("scient.curated/synapse", {
       title: "Synapse",
       tagline: "Biomedical research data",
-      categories: ["research"],
+      categories: ["papers"],
     });
     state.entries = { [synapse.name]: synapse };
     await fixture.render(<ServerDetailPage name="scient.curated/synapse" />);
@@ -1795,7 +1883,7 @@ describe("Detail pages", () => {
     };
     await fixture.render(<DiscoverPage />);
     await userEvent.type(
-      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search extensions"]')!,
+      fixture.container.querySelector<HTMLInputElement>('input[aria-label="Search plugins"]')!,
       "synapse",
     );
     expect(fixture.rowNames(fixture.section("Search results"))).toEqual(["Synapse"]);
@@ -1812,7 +1900,7 @@ describe("Detail pages", () => {
         version: "3.1.0",
         websiteUrl: "https://www.full.example/docs",
         repositoryUrl: "https://github.com/acme/full",
-        categories: ["featured", "research"],
+        categories: ["featured", "papers"],
       }),
       "scient.curated/bare": entry("scient.curated/bare", {
         title: "Bare",
@@ -1831,7 +1919,7 @@ describe("Detail pages", () => {
       "Version",
       "Source",
     ]);
-    expect(fixture.aboutValue("Category")).toBe("Research");
+    expect(fixture.aboutValue("Category")).toBe("Papers");
     expect(fixture.aboutValue("Website")).toBe("full.example");
     expect(fixture.aboutValue("Source")).toBe("Scient catalog");
 

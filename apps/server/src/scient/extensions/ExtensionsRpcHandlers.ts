@@ -5,6 +5,7 @@
 import {
   ExtensionsError,
   type ExtensionsChangedEvent,
+  type PluginKeyTarget,
   type ExtensionsInventory,
   type ServerProviders,
   WS_METHODS,
@@ -21,6 +22,9 @@ import * as Stream from "effect/Stream";
 import { ProviderRegistry, type ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
+import { AccountsService } from "../accounts/AccountsService.ts";
+import { PluginKeyBindings, pluginKeyAccountsEligibilityKey } from "./PluginKeyBindings.ts";
+import { readPluginKeyTransport } from "./PluginKeyStartup.ts";
 import { makePluginContents } from "./PluginContents.ts";
 import { connectorProviderSupport } from "./ConnectorProviderSupport.ts";
 import {
@@ -87,6 +91,8 @@ export const providerSupportChanges = (
 export const changeFeedLayer = Layer.effect(
   ExtensionsChangeFeed,
   Effect.gen(function* () {
+    const keyBindings = yield* Effect.serviceOption(PluginKeyBindings);
+    const accounts = yield* Effect.serviceOption(AccountsService);
     const connectors = yield* ConnectorRuntime;
     const plugins = yield* ScientPluginRegistry;
     const receipts = yield* ExtensionDeliveryReceipts;
@@ -105,6 +111,16 @@ export const changeFeedLayer = Layer.effect(
       [
         Stream.map(connectors.changes, () => undefined),
         plugins.changes,
+        ...(Option.isSome(keyBindings) ? [keyBindings.value.changes] : []),
+        ...(Option.isSome(accounts)
+          ? [
+              accounts.value.changes.pipe(
+                Stream.map(pluginKeyAccountsEligibilityKey),
+                Stream.changes,
+                Stream.map(() => undefined),
+              ),
+            ]
+          : []),
         Stream.map(receipts.changes, () => undefined),
         supportChanges,
       ],
@@ -131,6 +147,7 @@ export const makeExtensionsRpcHandlers = ({
   providerPlugins,
   providerRegistry,
   changeFeed,
+  pluginKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly connectorRuntime: ConnectorRuntimeShape;
   readonly pluginRegistry: ScientPluginRegistryShape;
@@ -139,6 +156,7 @@ export const makeExtensionsRpcHandlers = ({
   readonly providerPlugins: ProviderPluginManagementShape;
   readonly providerRegistry: ProviderRegistryShape;
   readonly changeFeed: ExtensionsChangeFeedShape;
+  readonly pluginKeys?: PluginKeyBindings["Service"] | undefined;
 }) => {
   const traceAttributes = { "rpc.aggregate": "extensions" } as const;
   const inventory = Effect.fn("ExtensionsRpc.inventory")(function* () {
@@ -165,7 +183,65 @@ export const makeExtensionsRpcHandlers = ({
   });
 
   const contents = makePluginContents(providerRegistry, pluginRegistry);
+  const keyStatus = Effect.fn("ExtensionsRpc.keyStatus")(function* (input: PluginKeyTarget) {
+    if (!pluginKeys)
+      return yield* new ExtensionsError({
+        reason: "state-unavailable",
+        message: "Plugin key bindings are unavailable.",
+      });
+    const detail = yield* contents.read({
+      pluginId: input.pluginId,
+      ...(input.agent ? { instanceId: input.agent } : {}),
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+    });
+    const transport = yield* readPluginKeyTransport(providerRegistry, input).pipe(
+      Effect.mapError(
+        () =>
+          new ExtensionsError({
+            reason: "state-unavailable",
+            message: "Could not check this plugin's key destinations.",
+          }),
+      ),
+    );
+    const state = yield* pluginKeys.list(input, detail.requiredKeys, transport.origins);
+    return transport.commandLineBlocked
+      ? { ...state, status: "needs-key" as const, commandLineBlocked: true }
+      : state;
+  });
+  const keyMutation = Effect.fn("ExtensionsRpc.keyMutation")(function* (
+    input: PluginKeyTarget & {
+      readonly envName: string;
+      readonly accountRef?: import("@t3tools/contracts").VaultSecretRef;
+    },
+  ) {
+    if (!pluginKeys)
+      return yield* new ExtensionsError({
+        reason: "state-unavailable",
+        message: "Plugin key bindings are unavailable.",
+      });
+    if (input.accountRef) {
+      const status = yield* keyStatus(input);
+      if (!status.keys.some((key) => key.envName === input.envName))
+        return yield* new ExtensionsError({
+          reason: "invalid-input",
+          message: "This key is not declared by the installed plugin.",
+        });
+      yield* pluginKeys.bind({
+        ...(input.agent ? { agent: input.agent } : {}),
+        pluginId: input.pluginId,
+        envName: input.envName,
+        accountRef: input.accountRef,
+      });
+    } else yield* pluginKeys.unbind(input);
+    return yield* keyStatus(input);
+  });
   return WsExtensionsRpcGroup.of({
+    [WS_METHODS.extensionsPluginKeys]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginKeys, keyStatus(input), traceAttributes),
+    [WS_METHODS.extensionsPluginKeyBind]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginKeyBind, keyMutation(input), traceAttributes),
+    [WS_METHODS.extensionsPluginKeyUnbind]: (input) =>
+      observeRpcEffect(WS_METHODS.extensionsPluginKeyUnbind, keyMutation(input), traceAttributes),
     [WS_METHODS.extensionsBrandIcon]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsBrandIcon,

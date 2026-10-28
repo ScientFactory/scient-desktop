@@ -149,13 +149,6 @@ export default function FileBrowserPanel({
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
-  useEffect(() => {
-    const capturePointer = (event: MouseEvent) => {
-      contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
-    };
-    document.addEventListener("contextmenu", capturePointer, true);
-    return () => document.removeEventListener("contextmenu", capturePointer, true);
-  }, []);
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
@@ -450,32 +443,21 @@ export default function FileBrowserPanel({
     };
   }, [entryKindsRef, isSearching, model, selectedPath, selectedPathRevealId, treeControllerRef]);
 
-  // Capture dragstart before the tree selects the row so selection sees the drag flag.
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const panel = panelRef.current;
-    if (panel === null) {
-      return;
-    }
-    const handleDragStart = (event: DragEvent) => dragMention.handleDragStart(event);
-    const handleDragEnd = () =>
-      dragMention.handleDragEnd((path) => model.getItem(path)?.deselect());
-    panel.addEventListener("dragstart", handleDragStart, true);
-    panel.addEventListener("dragend", handleDragEnd);
-    return () => {
-      panel.removeEventListener("dragstart", handleDragStart, true);
-      panel.removeEventListener("dragend", handleDragEnd);
-    };
-  }, [dragMention, model]);
-
   const currentSearchError = hasCurrentSearch ? pathSearch.error : null;
   const hideTreeForSearch = isSearching && treeSearch.matchingPaths.length === 0;
 
   return (
+    // SCIENT-FORK: Scient's reading UI scopes this panel.
     <div
-      ref={panelRef}
       className="scient-reading-ui flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
+      // Capture runs before the tree's shadow-internal row handler opens the menu.
+      onContextMenuCapture={(event) => {
+        contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+      }}
+      // Capture dragstart before the tree selects the row so selection sees the drag flag.
+      onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
+      onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
     >
       <div
         className="@container/file-browser-header flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-2 in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8 in-data-[preview-panel-mode=inline]:border-b-transparent in-data-[preview-panel-mode=inline]:pt-1"

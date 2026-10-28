@@ -124,11 +124,20 @@ async function setup() {
     });
     return null;
   }
-  const ui = (input: FileSaveOptions) => (
-    <StrictMode>
-      <Surface {...input} />
-    </StrictMode>
-  );
+  // A distinct component type, like the editor and rendered-markdown surfaces,
+  // so switching to it unmounts one save holder and mounts another.
+  function MarkdownSurface(input: FileSaveOptions) {
+    return <Surface {...input} />;
+  }
+  const surfaces = { editor: Surface, markdown: MarkdownSurface };
+  const ui = (input: FileSaveOptions, surface: keyof typeof surfaces = "editor") => {
+    const Holder = surfaces[surface];
+    return (
+      <StrictMode>
+        <Holder {...input} />
+      </StrictMode>
+    );
+  };
   const actions = () => latestActions!;
   async function mount(input = props) {
     sessionKeys.add(projectFileOperationKey(input));
@@ -148,9 +157,9 @@ async function setup() {
     actions,
     mount,
     reconstruct,
-    rerender: (input: FileSaveOptions) => {
+    rerender: (input: FileSaveOptions, surface?: keyof typeof surfaces) => {
       sessionKeys.add(projectFileOperationKey(input));
-      return screen!.rerender(ui(input));
+      return screen!.rerender(ui(input, surface));
     },
     unmount: async () => {
       await screen?.[Symbol.asyncDispose]();
@@ -400,6 +409,51 @@ it("flushes on unmount and ignores the released editor callback", async () => {
   expect(writes).toHaveBeenCalledOnce();
   expect(writes.mock.calls[0]?.[0].input.contents).toBe("B");
 });
+
+it.each([{ inFlight: true }, { inFlight: false }])(
+  "writes a pending draft once when the file switches surfaces under StrictMode, write in flight=$inFlight",
+  async ({ inFlight }) => {
+    await using fixture = await setup();
+    const write = Promise.withResolvers<void>();
+    const completed = Promise.withResolvers<void>();
+    const writes = vi.fn(async (_request: Request) => {
+      await write.promise;
+      return AsyncResult.success({ revision: "rdraft" });
+    });
+    runtime.write = writes;
+    const options: FileSaveOptions = {
+      ...props,
+      onPendingChange: (_path, pending) => {
+        runtime.pending = pending;
+        if (!pending) completed.resolve();
+      },
+    };
+    await fixture.mount(options);
+    await act(async () => {
+      runtime.projectedSource = "draft";
+      fixture.actions().change("draft");
+      if (inFlight) {
+        void fixture.actions().flush();
+        await vi.waitFor(() => expect(writes).toHaveBeenCalledOnce());
+      }
+    });
+
+    await fixture.rerender(options, "markdown");
+    write.resolve();
+    let saved = false;
+    await act(async () => {
+      await vi.runAllTimersAsync();
+      saved = await fixture.actions().flush();
+    });
+    await completed.promise;
+
+    expect(writes.mock.calls.map(([request]) => request.input)).toEqual([
+      expect.objectContaining({ contents: "draft", expectedRevision: "rA" }),
+    ]);
+    expect(saved).toBe(true);
+    expect(runtime.pending).toBe(false);
+  },
+);
 
 // SCIENT-FORK:START — the server's editor flush reaches a mounted editor by its file.
 describe("folder flush of a mounted editor", () => {

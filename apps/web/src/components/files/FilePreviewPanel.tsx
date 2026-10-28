@@ -109,7 +109,6 @@ import { useTheme } from "~/hooks/useTheme";
 // SCIENT-FORK:START — the file list's state moved to usePanelFilesOpen
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 // SCIENT-FORK:END
-import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
@@ -448,15 +447,13 @@ function WorkspaceVideoPreview(props: {
   // SCIENT-FORK:START — persisted threads use rooted locators; drafts use the upstream draft resource.
   const resource = workspaceViewerAssetResource(props, "media-file");
   // SCIENT-FORK:END
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    props.workspaceMutationId ?? undefined,
+  );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
-  useWorkspaceMutationRefresh({
-    mutationId: props.workspaceMutationId,
-    resourceKey: JSON.stringify([props.environmentId, resource]),
-    refresh: () => {
-      void refreshAssetUrl().catch(() => undefined);
-    },
-  });
   // SCIENT-FORK:START — native watcher changes refresh the media locator.
   useScientViewerRefreshKey(props.refreshKey, refreshAssetUrl);
   // SCIENT-FORK:END
@@ -514,17 +511,14 @@ function WorkspaceAudioPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    props.workspaceMutationId ?? undefined,
+  );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
-  useWorkspaceMutationRefresh({
-    mutationId: props.workspaceMutationId,
-    resourceKey: JSON.stringify([props.environmentId, resource]),
-    refresh: () => {
-      void refreshAssetUrl().catch(() => undefined);
-    },
-  });
   // SCIENT-FORK:START — native watcher changes also clear a failed audio locator.
   useScientViewerRefreshKey(props.refreshKey, refreshAssetUrl, setFailedUrl);
   // SCIENT-FORK:END
@@ -3019,8 +3013,13 @@ export function WorkspaceLargeTextPreview(props: {
       description: cause instanceof Error ? cause.message : "Try again.",
     });
   };
+  // Each workspace mutation re-mints the URL, so an edited file loads its new bytes.
   // SCIENT-FORK:START — the existing watcher invalidates the bounded reader too.
-  const assetUrl = useAssetUrlState(props.environmentId, resource, String(props.refreshKey));
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    resource,
+    `${props.workspaceMutationId ?? ""}:${props.refreshKey}`,
+  );
   // SCIENT-FORK:END
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const contentRevision = JSON.stringify([

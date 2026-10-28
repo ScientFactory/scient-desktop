@@ -16,7 +16,7 @@ model picker can open the same compact setup flow. On mobile, open
 **Settings > Environments** and choose **Set up Antigravity** for the host
 environment.
 
-Once the runtime is installed, you can also sign in from **Settings > Provider accounts** in the
+Once the runtime is installed, you can also sign in from **Settings > Providers** in the
 mobile app.
 
 1. If Antigravity is missing, choose **Install Antigravity**. Scient downloads
@@ -178,7 +178,7 @@ until a session, a refresh, or a sign-out reports something new.
 
 To check access and reload models, use **Refresh provider status** in web or desktop
 provider settings, or **Refresh models** in mobile thread settings. If asked to
-sign in again, use provider settings on web or desktop, or **Provider accounts** on mobile.
+sign in again, use provider settings on web or desktop, or **Settings > Providers** on mobile.
 
 Legacy `agy` credentials use the older provider-owned credential store and are
 kept for legacy-session compatibility. Removing the ACP runtime does not erase

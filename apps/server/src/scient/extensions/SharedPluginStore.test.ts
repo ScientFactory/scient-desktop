@@ -33,7 +33,12 @@ const fixture = Effect.gen(function* () {
   yield* write(path.join(clone, ".claude-plugin", "marketplace.json"), {
     name: "claude-plugins-official",
     plugins: [
-      { name: "review", description: "Reviews code", source: "./plugins/review" },
+      {
+        name: "review",
+        category: "development",
+        description: "Reviews code",
+        source: "./plugins/review",
+      },
       { name: "other", source: "./plugins/other" },
       { name: "-unsafe", source: "./plugins/unsafe" },
     ],
@@ -75,6 +80,24 @@ describe("shared marketplace store", () => {
       sharedPluginIcon("unknown", undefined, "claude-plugins-official", "someone"),
     ).toBeUndefined();
   });
+  it.effect("preserves manifest categories and filters before paging", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { home } = yield* fixture;
+        const store = yield* makeSharedPluginStore({
+          kind: "claude",
+          claudeHome: home,
+          installed: () => Effect.succeed({ sequence: 1, plugins: [] }),
+          run: () => Effect.die("read only"),
+        });
+        const page = yield* store.search({ category: "code", limit: 1 });
+        expect(page.total).toBe(1);
+        expect(page.entries[0]).toMatchObject({ name: "review", category: "development" });
+        expect((yield* store.search({ category: "biology" })).entries).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps healthy marketplaces usable and names a failed source", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -323,4 +346,42 @@ it.effect(
         });
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not advertise key requirements until a local marketplace plugin is installed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { home, clone, path, write } = yield* fixture;
+      yield* write(path.join(clone, "plugins/review/.mcp.json"), {
+        mcpServers: { review: { headers: { Authorization: "Bearer ${REVIEW_TOKEN}" } } },
+      });
+      let installed = false;
+      const store = yield* makeSharedPluginStore({
+        kind: "claude",
+        claudeHome: home,
+        installed: () =>
+          Effect.succeed({
+            sequence: 1,
+            plugins: installed
+              ? [
+                  {
+                    id: "review",
+                    name: "review@claude-plugins-official",
+                    source: "local",
+                    enabled: true,
+                  },
+                ]
+              : [],
+          }),
+        run: () => Effect.fail({ message: "Read only" }),
+      });
+      expect(
+        (yield* store.contents!("review@claude-plugins-official")).requiredKeys,
+      ).toBeUndefined();
+      installed = true;
+      expect((yield* store.contents!("review@claude-plugins-official")).requiredKeys).toEqual([
+        "REVIEW_TOKEN",
+      ]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );

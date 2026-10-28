@@ -10,6 +10,7 @@ import {
   type BrowserImportSourceDefinition,
 } from "../../preview/BrowserImport/Sources.ts";
 import { DesktopAccountsError } from "./errors.ts";
+import { countBrowserPasswords } from "./browserPasswords.ts";
 import { parseChromiumProfileMetadata } from "./profileMetadata.ts";
 
 const profilePicture = Effect.fn("DesktopAccounts.profilePicture")(function* (
@@ -71,7 +72,12 @@ export const discoverSourceProfiles = Effect.fn("DesktopAccounts.sourceProfiles"
       const picture = info
         ? yield* profilePicture(context, root, info.directory, info.pictureFile)
         : undefined;
+      const passwordCount =
+        definition.engine === "chromium"
+          ? yield* countBrowserPasswords(context.path.join(root, profile.directory, "Login Data"))
+          : undefined;
       result.push({
+        ...(passwordCount === undefined ? {} : { passwordCount }),
         sourceId: definition.id,
         directory: profile.directory,
         name: info?.name ?? profile.name,

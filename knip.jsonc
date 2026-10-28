@@ -21,7 +21,8 @@
       // worktree setup (from t3.json) run directly. release-desktop.yml bundles the
       // Windows verify script with esbuild through a path knip does not trace,
       // electron-builder loads the macOS signer by path, and mobile-e2e.ts runs
-      // agent-device's CLI by path.
+      // agent-device's CLI by path. release-desktop.yml runs the desktop launch
+      // check through xvfb-run, which knip does not trace.
       "entry": [
         // These fixture scripts are injected into a browser page by path.
         "fixtures/*/*.js",
@@ -31,6 +32,7 @@
         "setup-worktree.ts",
         "sign-macos.ts",
         "publication-after-sign.ts",
+        "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
         // release-smoke.ts runs it by path to check the branded nightly release name.
         "resolve-nightly-release.ts",
@@ -68,7 +70,6 @@
         "scripts/qualify-omp-rpc.ts",
         "scripts/qualifyScientAgentManagedRuntime.ts",
         "scripts/qualify-muse-runtime.ts",
-        "scripts/evaluate-thread-titles.ts",
         "scripts/fetch-expo-schema.ts",
         "scripts/probe-claude-fork-local-rollback-replay.ts",
         "scripts/update-test-shard-weights.ts",

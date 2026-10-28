@@ -7,10 +7,16 @@ export function decideSignIn(
   available: { username: boolean; password: boolean; otp: boolean },
 ) {
   if (!matchesAccountOrigin(page.origin, sites))
-    return { type: "needs-user", message: "Continue sign-in on an allowed site." } as const;
+    return {
+      type: "needs-user",
+      kind: undefined,
+      message: "Continue sign-in on an allowed site.",
+    } as const;
+  if (page.signedIn) return { type: "signed-in" } as const;
   if (page.challenge)
     return {
       type: "needs-user",
+      kind: page.challenge,
       message:
         page.challenge === "captcha"
           ? "Complete the CAPTCHA in the browser."
@@ -18,7 +24,6 @@ export function decideSignIn(
             ? "Use your passkey in the browser."
             : "Approve sign-in on your device.",
     } as const;
-  if (page.signedIn) return { type: "signed-in" } as const;
   const fields = [
     ...(page.username ? [{ field: "username" as const, selector: page.username }] : []),
     ...(page.password ? [{ field: "password" as const, selector: page.password }] : []),
@@ -27,11 +32,13 @@ export function decideSignIn(
   if (fields.length === 0)
     return {
       type: "needs-user",
+      kind: "other",
       message: "Finish sign-in in the browser; its status could not be confirmed.",
     } as const;
   if (fields.some(({ field }) => !available[field]))
     return {
       type: "needs-user",
+      kind: page.otp && !available.otp ? "code" : "other",
       message: "Enter the missing sign-in information in the browser.",
     } as const;
   return { type: "fill", fields, submit: page.submit } as const;

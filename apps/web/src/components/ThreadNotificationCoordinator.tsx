@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Account approvals and sign-in hand-offs use thread notifications.
+import { watchAccountNotifications } from "../scient/accounts/accountNotifications";
+// SCIENT-FORK:END
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -74,8 +77,13 @@ export function startThreadNotifications(
   // Completions fire from a timer, so read settings, focus and route when presenting.
   const present = (
     environmentId: EnvironmentId,
-    state: NotificationState,
+    // SCIENT-FORK:START — Account attention can originate in a delegated thread.
+    state: Pick<NotificationState, "thread" | "status">,
+    // SCIENT-FORK:END
     kind: ThreadNotificationKind,
+    // SCIENT-FORK:START — Account attention keeps shared notification settings and navigation.
+    accountNotice?: { title: string; body: string },
+    // SCIENT-FORK:END
   ) => {
     const { thread, status } = state;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
@@ -83,8 +91,11 @@ export function startThreadNotifications(
       environmentId?: string;
       threadId?: string;
     };
+    // SCIENT-FORK:START — Account attention uses its instruction as the notification title.
+    const accountTitle = accountNotice?.title;
     const title =
-      kind === "completion"
+      accountTitle ??
+      (kind === "completion"
         ? "Thread completed"
         : status === "approval"
           ? "Approval needed"
@@ -94,7 +105,8 @@ export function startThreadNotifications(
               ? "Thread failed"
               : status === "request"
                 ? "Guest request"
-                : "Input needed";
+                : "Input needed");
+    // SCIENT-FORK:END
     if (hasNotificationSound(mode)) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
@@ -109,7 +121,9 @@ export function startThreadNotifications(
       const toastId = toastManager.add({
         type: kind === "completion" ? "success" : status === "failed" ? "error" : "warning",
         title,
-        description: thread.title,
+        // SCIENT-FORK:START — Account attention includes its safe instruction.
+        description: accountNotice?.body ?? thread.title,
+        // SCIENT-FORK:END
         data: {
           hideCopyButton: true,
           leadingIcon:
@@ -145,7 +159,9 @@ export function startThreadNotifications(
       return;
     try {
       const notification = new Notification(title, {
-        body: thread.title,
+        // SCIENT-FORK:START — Account attention includes its safe instruction.
+        body: accountNotice?.body ?? thread.title,
+        // SCIENT-FORK:END
         tag: threadNotificationTag(environmentId, thread.id),
         silent: true,
         // Windows drops clicks after a toast moves into Notification Center.
@@ -243,7 +259,33 @@ export function startThreadNotifications(
       },
       { immediate: true },
     );
+    // SCIENT-FORK:START — Observe account attention even when its thread is not open.
+    const unsubscribeAccounts = watchAccountNotifications(
+      registry,
+      environmentId,
+      (threadId, title, body) => {
+        const state = entry.previous.get(threadId);
+        if (state) present(environmentId, state, "input", { title, body });
+        else {
+          const shell = registry.get(environmentShell.stateValueAtom(environmentId));
+          const raw = Option.isSome(shell.snapshot)
+            ? shell.snapshot.value.threads.find((thread) => thread.id === threadId)
+            : undefined;
+          if (raw)
+            present(
+              environmentId,
+              { thread: presentThreadShell(environmentId, raw, null), status: "input" },
+              "input",
+              { title, body },
+            );
+        }
+      },
+    );
+    // SCIENT-FORK:END
     entry.unsubscribe = () => {
+      // SCIENT-FORK:START — Dispose the account observer with its environment.
+      unsubscribeAccounts();
+      // SCIENT-FORK:END
       unsubscribeShell();
       entry.gate.clear();
     };

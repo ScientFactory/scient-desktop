@@ -1,11 +1,13 @@
 import {
   BrowserProfileId,
+  BrowserImportSourceId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   EnvironmentId,
   DesktopPreviewTabInputSchema,
 } from "@t3tools/contracts";
 import * as Electron from "electron";
 import * as Effect from "effect/Effect";
+import { readBrowserPasswords } from "./browserPasswords.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { DesktopIpc, type DesktopIpcInvokeEvent } from "../../ipc/DesktopIpc.ts";
@@ -121,6 +123,39 @@ export const signedInSites = Effect.fn("DesktopAccounts.signedInSites")(function
   );
 });
 
+export const cookieMetadata = Effect.fn("DesktopAccounts.cookieMetadata")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* mainSender(event))) return null;
+  const input = decodeSites(raw);
+  if (Option.isNone(input)) return null;
+  const manager = yield* PreviewManager;
+  const scope = resolvePartitionScope(
+    input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
+    input.value.profileId,
+  );
+  return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
+    Effect.flatMap((session) =>
+      Effect.tryPromise({ try: () => session.cookies.get({}), catch: unavailable }),
+    ),
+    Effect.map((cookies) =>
+      cookies.flatMap((cookie) =>
+        cookie.domain === undefined
+          ? []
+          : [
+              {
+                domain: cookie.domain,
+                httpOnly: cookie.httpOnly === true,
+                ...(cookie.expirationDate === undefined ? {} : { expires: cookie.expirationDate }),
+              },
+            ],
+      ),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+});
+
 const signOutSite = Effect.fn("DesktopAccounts.signOutSite")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
@@ -157,10 +192,32 @@ const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
   return yield* discoverSourceProfiles();
 });
 
+const decodePasswordSource = Schema.decodeUnknownOption(
+  Schema.Struct({
+    sourceId: BrowserImportSourceId,
+    directory: Schema.String.check(Schema.isMaxLength(256)),
+  }),
+);
+/** A Chromium profile's saved passwords as CSV for the Accounts importer, read from a snapshot. */
+const readBrowserPasswordsCsv = Effect.fn("DesktopAccounts.readBrowserPasswordsCsv")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* mainSender(event))) return null;
+  const decoded = decodePasswordSource(raw);
+  if (Option.isNone(decoded)) return yield* unavailable();
+  return yield* readBrowserPasswords(decoded.value.sourceId, decoded.value.directory);
+});
+
 export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(function* () {
   const ipc = yield* DesktopIpc;
+  yield* ipc.handle({
+    channel: Channels.READ_BROWSER_PASSWORDS,
+    handler: readBrowserPasswordsCsv,
+  });
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
+  yield* ipc.handle({ channel: Channels.COOKIE_METADATA, handler: cookieMetadata });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });

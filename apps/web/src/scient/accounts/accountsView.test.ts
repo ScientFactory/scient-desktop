@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   BROWSER_PROFILE_NAME_MAX_LENGTH,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
   AccountId,
   defaultAccountControls,
   defaultBrowserProfileRecord,
@@ -8,6 +11,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  providerManagedAccounts,
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
@@ -94,6 +98,22 @@ describe("Accounts decisions", () => {
     expect(result[0]?.profiles[0]?.email).toBe("synthetic@example.com");
   });
 
+  it("keeps running-browser profiles discoverable from desktop metadata without treating them as importable", () => {
+    const result = mergeSourceProfiles(
+      [{ id: "chrome", name: "Chrome", profiles: [], unavailable: "browserRunning" }],
+      [
+        {
+          sourceId: "chrome",
+          directory: "Profile 1",
+          name: "Work",
+          email: "synthetic@example.invalid",
+        },
+      ],
+    );
+    expect(result[0]?.profiles.map((profile) => profile.name)).toEqual(["Work"]);
+    expect(result[0]?.unavailable).toBe("browserRunning");
+  });
+
   it("names imports after source profiles and resolves collisions within the name limit", () => {
     const taken = ["Work", "Work 2"];
     expect(importProfileName("Work", taken)).toBe("Work 3");
@@ -144,6 +164,12 @@ describe("Accounts decisions", () => {
       username: "synthetic",
       password: "synthetic-password",
     };
+    expect(capturedSignInInput(capture, []).details).toEqual({
+      kind: "website",
+      sites: ["https://example.com"],
+      username: "synthetic",
+      profileId: "work",
+    });
     expect(capturedSignInInput(capture, [own]).accountId).toBe(own.accountId);
     expect(
       capturedSignInInput({ ...capture, username: "someone-else" }, [own]).accountId,
@@ -321,4 +347,77 @@ it("does not automatically fill accounts the thread agent cannot use, while reta
   expect(canAutomaticallyFill(controls, true, undefined)).toBe(true);
   const account = { ...website(), controls: { ...controls, access: "off" as const } };
   expect(matchingAccounts([account], "https://example.com", "default")).toEqual([account]);
+});
+
+it("lists only signed-in provider connections, deduplicating apps across plugins", () => {
+  const base: ServerProvider = {
+    instanceId: ProviderInstanceId.make("synthetic-claude"),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    mcpServers: [
+      { name: "Signed in", status: "connected", scope: "claudeai" },
+      { name: "Sign in required", status: "needs-auth", scope: "claudeai" },
+      { name: "Local server", status: "connected", scope: "local" },
+      { name: "Unknown", status: "unknown", scope: "claudeai" },
+    ],
+  };
+  const apps = [
+    { name: "Connected app", connected: true, enabled: false },
+    { name: "Available app", connected: false, enabled: true },
+  ];
+  const codex = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-codex"),
+    driver: ProviderDriverKind.make("codex"),
+    plugins: [
+      { id: "first", name: "First", source: "local" as const, enabled: true, apps },
+      { id: "second", name: "Second", source: "local" as const, enabled: false, apps },
+    ],
+  };
+  expect(
+    providerManagedAccounts([base, codex]).map((row) => [row.kind, row.name, row.instanceId]),
+  ).toEqual([
+    ["claude", "Signed in", base.instanceId],
+    ["codex", "Connected app", codex.instanceId],
+  ]);
+  expect(
+    providerManagedAccounts([
+      { ...base, mcpServers: [] },
+      { ...codex, plugins: [] },
+    ]),
+  ).toEqual([]);
+  expect(
+    providerManagedAccounts([
+      { ...base, enabled: false },
+      { ...codex, installed: false },
+    ]),
+  ).toEqual([]);
+});
+
+it("recognizes key prefixes without retaining values or guessing unknown keys", async () => {
+  const { recognizeAccountKey } = await import("./accountsView");
+  for (const [key, name] of [
+    ["sk-ant-synthetic", "Anthropic"],
+    ["sk-or-synthetic", "OpenRouter"],
+    ["sk-proj-synthetic", "OpenAI"],
+    ["sk-synthetic", "OpenAI"],
+    ["hf_synthetic", "Hugging Face"],
+    ["ghp_synthetic", "GitHub token"],
+    ["github_pat_synthetic", "GitHub token"],
+    ["gho_synthetic", "GitHub token"],
+    ["glpat-synthetic", "GitLab token"],
+    ["AIzaSynthetic", "Google Gemini"],
+  ])
+    expect(recognizeAccountKey(key!)?.name).toBe(name);
+  expect(recognizeAccountKey("unknown")).toBeUndefined();
+  expect(recognizeAccountKey("sk-")).toBeUndefined();
+  expect(recognizeAccountKey("sk-synthetic extra")).toBeUndefined();
 });

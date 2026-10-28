@@ -77,6 +77,57 @@ export const OnePasswordReference = TrimmedNonEmptyString.check(
 );
 export type OnePasswordReference = typeof OnePasswordReference.Type;
 
+export const CliPasswordStore = Schema.Literals(["bitwarden", "proton-pass"]);
+export type CliPasswordStore = typeof CliPasswordStore.Type;
+const CliIdentifier = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(512),
+  Schema.isPattern(/^[A-Za-z0-9][^\s/?#]*$/),
+);
+const cliPasswordFields = {
+  connection: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  itemId: CliIdentifier,
+  vaultId: Schema.optional(CliIdentifier),
+  field: TrimmedNonEmptyString.check(Schema.isMaxLength(256), Schema.isPattern(/^[^/?#]+$/)),
+};
+export const CliPasswordSource = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("bitwarden"), ...cliPasswordFields }),
+  Schema.Struct({ type: Schema.Literal("proton-pass"), ...cliPasswordFields }),
+]);
+export type CliPasswordSource = typeof CliPasswordSource.Type;
+export const CliPasswordStatus = Schema.Struct({
+  state: Schema.Literals([
+    "not-installed",
+    "not-connected",
+    "unauthenticated",
+    "locked",
+    "unlocked",
+    "unavailable",
+  ]),
+  connection: Schema.optional(Schema.String),
+  email: Schema.optional(Schema.String),
+  serverUrl: Schema.optional(Schema.String),
+});
+export type CliPasswordStatus = typeof CliPasswordStatus.Type;
+export const CliPasswordItem = Schema.Struct({
+  itemId: CliIdentifier,
+  vaultId: Schema.optional(CliIdentifier),
+  name: Schema.String,
+  fields: Schema.Array(Schema.String),
+});
+export type CliPasswordItem = typeof CliPasswordItem.Type;
+export const CliPasswordStoreInput = Schema.Struct({
+  store: CliPasswordStore,
+  action: Schema.Literals(["status", "connect", "disconnect", "list"]),
+  password: Schema.optional(Schema.String.check(Schema.isMaxLength(65536))),
+  query: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+});
+export type CliPasswordStoreInput = typeof CliPasswordStoreInput.Type;
+export const CliPasswordStoreResult = Schema.Struct({
+  status: CliPasswordStatus,
+  items: Schema.Array(CliPasswordItem),
+});
+export type CliPasswordStoreResult = typeof CliPasswordStoreResult.Type;
+
 const KeychainName = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
 
 /** The read source of a secret field or the location of a saved copy. */
@@ -84,6 +135,7 @@ export const AccountValueSource = Schema.Union([
   Schema.Struct({ type: Schema.Literal("scient") }),
   Schema.Struct({ type: Schema.Literal("keychain"), service: KeychainName, account: KeychainName }),
   Schema.Struct({ type: Schema.Literal("1password"), reference: OnePasswordReference }),
+  CliPasswordSource,
   /** The key of a Custom models connection, stored once by Custom models. */
   Schema.Struct({ type: Schema.Literal("custom-model"), connectionId: TrimmedNonEmptyString }),
 ]);
@@ -142,7 +194,7 @@ export const ApiKeyAuth = Schema.Union([
 ]);
 export type ApiKeyAuth = typeof ApiKeyAuth.Type;
 
-export const CliLoginTool = Schema.Literals(["gh", "wrangler", "aws", "gcloud", "other"]);
+export const CliLoginTool = Schema.Literals(["gh", "glab", "wrangler", "aws", "gcloud", "other"]);
 export type CliLoginTool = typeof CliLoginTool.Type;
 
 export const CliLoginVariable = Schema.Struct({
@@ -219,6 +271,7 @@ export const AccountSummary = Schema.Struct({
   /** Set only when something is wrong. */
   statusMessage: Schema.optional(TrimmedNonEmptyString),
   lastSignInOutcome: Schema.optional(AccountSignInOutcome),
+  signedOut: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   lastUsedAt: Schema.optional(IsoDateTime),
@@ -348,6 +401,9 @@ export const AccountStoresStatus = Schema.Struct({
     platform: Schema.Literals(["macos", "windows", "linux"]),
   }),
   onePassword: OnePasswordStatus,
+  cli: Schema.optional(
+    Schema.Struct({ bitwarden: CliPasswordStatus, "proton-pass": CliPasswordStatus }),
+  ),
 });
 export type AccountStoresStatus = typeof AccountStoresStatus.Type;
 
@@ -359,6 +415,23 @@ export const AccountCustomModelKey = Schema.Struct({
 });
 export type AccountCustomModelKey = typeof AccountCustomModelKey.Type;
 
+export const AccountHandoff = Schema.Struct({
+  handoffId: TrimmedNonEmptyString,
+  threadId: ThreadId,
+  accountId: AccountId,
+  accountName: TrimmedNonEmptyString,
+  site: TrimmedNonEmptyString,
+  /** The sign-in's browser tab, shown live in the conversation. */
+  tabId: Schema.optional(TrimmedNonEmptyString),
+  kind: Schema.Literals(["push", "captcha", "passkey", "code", "other"]),
+  number: Schema.optional(Schema.String.check(Schema.isPattern(/^\d{1,3}$/))),
+  startedAt: IsoDateTime,
+  expiresAt: IsoDateTime,
+});
+export type AccountHandoff = typeof AccountHandoff.Type;
+
+export const AccountHandoffCancelInput = Schema.Struct({ handoffId: TrimmedNonEmptyString });
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
@@ -366,6 +439,7 @@ export const AccountsSnapshot = Schema.Struct({
   profiles: Schema.Array(BrowserProfileRecord),
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
+  handoffs: Schema.optional(Schema.Array(AccountHandoff)),
   recentActivity: Schema.Array(AccountActivityEntry),
   customModelKeys: Schema.Array(AccountCustomModelKey),
   managedElsewhere: Schema.optional(
@@ -395,6 +469,7 @@ export const AccountSecretInput = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("keychain"), service: KeychainName, account: KeychainName }),
   Schema.Struct({ type: Schema.Literal("1password"), reference: OnePasswordReference }),
+  CliPasswordSource,
   Schema.Struct({ type: Schema.Literal("custom-model"), connectionId: TrimmedNonEmptyString }),
   Schema.Struct({ type: Schema.Literal("clear") }),
 ]);
@@ -547,3 +622,18 @@ export class AccountsError extends Schema.TaggedError<AccountsError>()("Accounts
   ]),
   message: TrimmedNonEmptyString,
 }) {}
+
+/** Value-free desktop session observations; missing profiles mean unknown. */
+export const AccountBrowserSessions = Schema.Array(
+  Schema.Struct({
+    profileId: Schema.String,
+    cookies: Schema.Array(
+      Schema.Struct({
+        domain: Schema.String,
+        expires: Schema.optional(Schema.Number),
+        httpOnly: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  }),
+);
+export type AccountBrowserSessions = typeof AccountBrowserSessions.Type;

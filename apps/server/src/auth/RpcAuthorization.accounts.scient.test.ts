@@ -49,6 +49,8 @@ it.effect(
         reader[WS_METHODS.accountsSetAgentAccess]({ enabled: false }),
         reader[WS_METHODS.accountsProfileUpdate]({ profileId: "synthetic", color: "#aabbcc" }),
         reader[WS_METHODS.accountsProfileRemove]({ profileId: "synthetic" }),
+        reader[WS_METHODS.accountsHandoffCancel]({ handoffId: "synthetic-wait" }),
+        reader[WS_METHODS.accountsHandoffShow]({ handoffId: "synthetic-wait" }),
         reader[WS_METHODS.accountsApprovalRespond]({
           approvalId: "apr_synthetic123",
           decision: "once",
@@ -58,6 +60,11 @@ it.effect(
           token: syntheticValue(),
         }),
         reader[WS_METHODS.accountsOnePasswordDisconnect]({}),
+        reader[WS_METHODS.accountsPasswordStore]({
+          store: "bitwarden",
+          action: "connect",
+          password: "synthetic",
+        }),
         reader[WS_METHODS.accountsImportPasswords]({
           format: "auto",
           content: "name,url,username,password",

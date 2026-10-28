@@ -26,7 +26,11 @@ import { isElectron } from "./env";
 // SCIENT-FORK:START desktop-reload-save-coordination
 import { startDesktopReloadHandling } from "./lib/desktopReload";
 // SCIENT-FORK:END desktop-reload-save-coordination
-import { useComposerDraftStore } from "./composerDraftStore";
+import {
+  subscribeComposerDraftModelReconciliation,
+  subscribeDraftThreadPromotion,
+  useComposerDraftStore,
+} from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
 import {
@@ -45,7 +49,11 @@ import { startProviderAuthDelivery } from "./providerAuthDelivery";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { primaryServerConfigAtom } from "./state/server";
+import { environmentShell } from "./state/shell";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
+import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
+import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
+import { environmentThreadShells } from "./state/threads";
 import { resolveThreadRouteTarget } from "./threadRoutes";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
@@ -61,9 +69,6 @@ function startClientAppearance(): void {
     }
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
-    }
-    if (previous?.redesignEnabled !== settings.redesignEnabled) {
-      root.toggleAttribute("data-redesign", settings.redesignEnabled);
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
@@ -180,7 +185,21 @@ export function startAppServices(): AppRouter {
   startPreviewTitleRecording();
   startBrowserProfileReporting();
   installChatRouteCommands(router);
+  installCommandPaletteCommands(router);
+  registerOpenFavoriteEditorCommand();
   startThreadOverlayRetention(router);
+  // Drafts promote as their server threads arrive, wherever the user is.
+  subscribeDraftThreadPromotion({
+    registry: appAtomRegistry,
+    threadShellAtom: environmentThreadShells.quietThreadShellAtom,
+    threadRefsAtom: environmentThreadShells.threadRefsAtom,
+  });
+  subscribeComposerDraftModelReconciliation({
+    registry: appAtomRegistry,
+    threadShellAtom: environmentThreadShells.threadShellAtom,
+    threadRefsAtom: environmentThreadShells.threadRefsAtom,
+    shellStateAtom: environmentShell.stateAtom,
+  });
   startMainAppLocationTracking(router);
   startBackgroundThreadAnnouncements(appAtomRegistry, router);
   startThreadVisitedMigration(appAtomRegistry);

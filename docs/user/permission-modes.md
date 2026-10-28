@@ -4,7 +4,7 @@ A permission mode controls how much the AI can do on its own and when it stops
 to ask you. It changes the approval boundary, not the quality of the model or
 the instructions you gave it.
 
-Set the default for new threads in **Settings → General → New threads → Permissions**.
+Set the default for new threads in **Settings → Threads → New threads → Permissions**.
 Projects can override the environment default. New threads use this setting rather than the
 mode of the thread you were viewing. The initial default is **Full access**; existing threads
 and modes you choose in a draft keep their permissions.
@@ -20,8 +20,9 @@ without prompting; commands and anything else still stop for approval.
 **Auto**: routine actions proceed without you; risky ones still ask. Providers enforce permissions
 differently, and some read-only actions can proceed in **Supervised**. How this is enforced depends
 on the provider: Codex delegates routine approvals to an AI reviewer, Claude uses its own auto
-permission mode, Cursor uses Smart Auto review, and Grok reviews automatically and sends you the
-commands its review blocks. Providers without an equivalent (such as OpenCode and Antigravity)
+permission mode, Cursor uses Smart Auto review, Grok reviews automatically and sends you the
+commands its review blocks, and fx handles routine actions itself and sends you anything it still
+asks about. Providers without an equivalent (such as OpenCode and Antigravity)
 fall back to asking, like Supervised.
 
 **Full access**: allow commands and edits without prompts. The default. The agent runs
@@ -32,6 +33,9 @@ runs in **Supervised**.
 
 Approvals appear inline in the conversation. Approve or reject one and the agent continues from
 there.
+
+Scient offers no **Auto-accept edits** or **Full access** for fx. An fx thread already set to either
+runs in **Supervised**.
 
 Grok offers no **Auto-accept edits**. A Grok thread already set to it runs in **Supervised**. Its
 file-change approvals offer **Allow all edits this session**, while its command approvals have no

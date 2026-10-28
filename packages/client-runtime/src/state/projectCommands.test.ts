@@ -518,6 +518,7 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
+    inboundFrames: Effect.succeed(0),
   };
   const state = yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE);
   const supervisor = EnvironmentSupervisor.of({
