@@ -26,7 +26,11 @@ import * as SqlError from "effect/sql/SqlError";
 
 import * as ServerConfig from "../../config.ts";
 import { makeRuntimeSqliteLayer } from "../../persistence/Sqlite.ts";
-import { directoryIdentity, syncDirectory } from "../workspace/RetainedFileMutation.ts";
+import {
+  directoryIdentity,
+  replaceByRename,
+  syncDirectory,
+} from "../workspace/RetainedFileMutation.ts";
 import {
   locateOverleafRetention,
   type OverleafVolumeFileIdentity,
@@ -520,7 +524,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     const temporary = await writeTemporary(file, contents);
     try {
       await hook("before-publish", file);
-      await NodeFSP.rename(temporary, file);
+      await replaceByRename(temporary, file);
     } catch (error) {
       // A temporary left by a crash is removed at the next lease acquisition.
       await NodeFSP.rm(temporary, { force: true });

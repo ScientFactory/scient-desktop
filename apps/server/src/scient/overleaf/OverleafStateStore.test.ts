@@ -1081,6 +1081,25 @@ describe("OverleafStateStore", () => {
       ),
     );
 
+    it.live("refuses a proven retention folder that has since become read-only", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* temporaryRoot();
+          const checkout = NodePath.join(root, "checkout");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+          const { store } = yield* openStore(NodePath.join(root, "state"), undefined, fakeVolume);
+          const prepared = yield* prepare(store, checkout);
+          yield* Effect.acquireRelease(
+            Effect.promise(() => NodeFSP.chmod(prepared.directory, 0o500)),
+            () => Effect.promise(() => NodeFSP.chmod(prepared.directory, 0o700)),
+          );
+          expect(yield* refusal(prepare(store, checkout, prepared.identity))).toBe(
+            "read-only-parent",
+          );
+        }),
+      ),
+    );
+
     it.live("refuses a symlinked retention folder", () =>
       Effect.scoped(
         Effect.gen(function* () {

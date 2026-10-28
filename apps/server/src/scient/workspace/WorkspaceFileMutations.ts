@@ -3,7 +3,6 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeTimersPromises from "node:timers/promises";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   ProjectDeleteFileInput,
@@ -61,6 +60,7 @@ import {
   publicationLeaseBindings,
   decodeRetainedRecord,
   readRetainedRecord,
+  replaceByRename,
   type RetainedRecord,
   retainedFileNames,
   retainedMutationReceipt,
@@ -315,6 +315,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         recoveryId: cause.recoveryId,
         retainedPaths: [...cause.retainedPaths],
         publicationOutcome: "retained-attention",
+        cause,
       });
     }
     if (cause instanceof PlainPublicationUnchangedError)
@@ -1286,22 +1287,6 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           ),
         )
       : Effect.void;
-  const replaceByRename = async (from: string, to: string) => {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await NodeFSP.rename(from, to);
-      } catch (cause) {
-        // Windows refuses to replace a file another program briefly holds open (indexers, antivirus).
-        if (
-          HostProcess.Platform.defaultValue() !== "win32" ||
-          attempt >= 4 ||
-          !["EPERM", "EACCES", "EBUSY"].some((code) => isNodeError(cause, code))
-        )
-          throw cause;
-        await NodeTimersPromises.setTimeout(50 * 2 ** attempt);
-      }
-    }
-  };
   /**
    * A publishing call failed: return if the desired bytes are in place, report a known
    * refusal if the target is exactly as before, and otherwise keep the outcome unknown.

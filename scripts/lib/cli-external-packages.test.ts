@@ -9,6 +9,11 @@ import * as Schema from "effect/Schema";
 import serverPackageJson from "../../apps/server/package.json" with { type: "json" };
 
 import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
+// SCIENT-FORK
+import {
+  readWorkspaceLockfile,
+  withLockedRequiredPeers,
+} from "./scient-stage-locked-dependencies.ts";
 
 import {
   isRuntimeExternalCliDependency,
@@ -237,20 +242,24 @@ it.layer(NodeServices.layer)("external package dependency closure", (it) => {
       );
 
       const staged = new Set<string>();
-      const queue = Object.keys(selectCliRuntimeExternalDependencies(server.dependencies ?? {}));
+      // SCIENT-FORK:START — the roots the build stages: server externals plus their
+      // locked required peers. zod stays bundleable for @factory/droid-sdk's own zod v3.
+      const lockfile = yield* readWorkspaceLockfile(
+        path.resolve(path.dirname(NodeURL.fileURLToPath(import.meta.url)), "../.."),
+      );
+      const roots = yield* withLockedRequiredPeers({
+        lockfile,
+        importers: ["apps/server"],
+        dependencies: selectCliRuntimeExternalDependencies(server.dependencies ?? {}),
+      });
+      const queue = Object.keys(roots);
+      // SCIENT-FORK:END
       for (const name of queue) {
         if (staged.has(name)) continue;
         staged.add(name);
         const manifest = installed.get(name);
-        // SCIENT-FORK: the stage's package-manager install auto-installs peers, so a
-        // peer of a staged external is present without being a listed root. zod must
-        // stay bundleable: @factory/droid-sdk requires its own bundled zod v3.
         queue.push(
-          ...Object.keys({
-            ...manifest?.dependencies,
-            ...manifest?.optionalDependencies,
-            ...manifest?.peerDependencies,
-          }),
+          ...Object.keys({ ...manifest?.dependencies, ...manifest?.optionalDependencies }),
         );
       }
 

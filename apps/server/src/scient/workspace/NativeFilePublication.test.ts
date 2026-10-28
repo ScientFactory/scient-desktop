@@ -4,12 +4,14 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import {
   bindNativeFilePublicationParent,
   ensureNativePrivateRetentionDirectory,
   checkNativePrivateRetentionDirectory,
+  closeNativeHelperServers,
+  invokeNativeHelper,
   nativeFilePublicationCapabilities,
   observedDirectoryBinding,
   withNativeFilePublicationLease,
@@ -308,3 +310,57 @@ it.skipIf(helper === undefined)(
     }
   },
 );
+
+/**
+ * A stand-in for the Windows helper: `--serve=1` answers framed questions until its
+ * input ends, except that a question about "stuck" is never answered; any other run
+ * answers its own question once.
+ */
+const fakeServingHelper = async (root: string) => {
+  const path = NodePath.join(root, "helper-serving");
+  await NodeFSP.writeFile(
+    path,
+    `#!${process.execPath}
+if (process.argv[2] !== "--serve=1") {
+  process.stdout.write("launched " + process.argv[4] + "\\n");
+  process.exit(0);
+}
+let input = Buffer.alloc(0), stuck = false;
+process.stdin.on("data", (chunk) => {
+  input = Buffer.concat([input, chunk]);
+  while (input.length >= 4 && input.length >= 4 + input.readUInt32BE(0)) {
+    const args = input.subarray(4, 4 + input.readUInt32BE(0)).toString().split("\\0");
+    input = input.subarray(4 + input.readUInt32BE(0));
+    if (args[2] === "stuck") stuck = true;
+    if (!stuck) process.stdout.write("served " + args[2] + "\\n" + '{"version":1,"served":0}' + "\\n");
+  }
+});
+process.stdin.on("end", () => {
+  process.stderr.write("left while stuck");
+  process.exit(0);
+});
+`,
+    { mode: 0o700 },
+  );
+  return path;
+};
+
+describe.skipIf(!posix)("the long-lived Windows helper", () => {
+  it("launches a question on its own while the helper is busy, so none waits behind another", () =>
+    inScratch("scient-served-", async (root) => {
+      using _host = vi.spyOn(HostProcess.Platform, "defaultValue").mockReturnValue("win32");
+      const helper = await fakeServingHelper(root);
+      const info = (path: string) => invokeNativeHelper(helper, ["--windows=1", "info", path]);
+      expect(await info("first")).toBe("served first\n");
+      const stuck = info("stuck");
+      expect(await info("second")).toBe("launched second\n");
+      const closing = closeNativeHelperServers();
+      await expect(stuck).rejects.toThrow(/server exit=0, stderr=left while stuck/u);
+      await closing;
+      expect(await info("after")).toBe("served after\n");
+      // A path whose UTF-8 exceeds one frame still fits a Windows command line.
+      const wide = "界".repeat(22_000);
+      expect(await info(wide)).toBe(`launched ${wide}\n`);
+      await closeNativeHelperServers();
+    }));
+});

@@ -1,11 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import * as NodeChildProcess from "node:child_process";
-import * as NodeUtil from "node:util";
 import * as Schema from "effect/Schema";
 import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
 
 import {
   ensureNativePrivateRetentionDirectory,
+  invokeNativeHelper,
   resolveNativeFilePublicationHelperPath,
 } from "./NativeFilePublication.ts";
 
@@ -17,7 +16,6 @@ export class WindowsNativeFileError extends Error {
   }
 }
 
-const run = NodeUtil.promisify(NodeChildProcess.execFile);
 const Reply = Schema.Struct({
   code: Schema.Number,
   flags: Schema.Number,
@@ -41,7 +39,7 @@ async function invokeWindows(args: string[], helper?: string) {
     helper ??
     (await resolveNativeFilePublicationHelperPath(process.env.SCIENT_FILE_PUBLICATION_HELPER));
   if (!executable) throw new WindowsNativeFileError("helper-unavailable");
-  return (await run(executable, args, { windowsHide: true, maxBuffer: 65536 })).stdout;
+  return invokeNativeHelper(executable, args);
 }
 const decodeFlags = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.Number)));
 export async function windowsNativeFlags(paths: ReadonlyArray<string>, helper?: string) {

@@ -260,6 +260,14 @@ only disk-loaded runtime roots and their npm shrinkwrapped closure are installed
 on the remote host. The Electron-only FFF ASAR loader patch is unnecessary in
 this plain filesystem package.
 
+Desktop packages stage those same roots from `pnpm-lock.yaml`
+(`scripts/lib/scient-stage-locked-dependencies.ts`). Every required peer of the staged
+closure becomes a root at its locked version, because Electron Builder collects
+only dependencies and optional dependencies. A stage that resolves any package
+the lockfile does not pin fails the build. macOS arm64 and Linux x64 builds then
+start the packaged server from the extracted archive before anything uploads,
+so Linux packaging in PR CI catches a missing runtime package before merge.
+
 Required CI qualification builds the real tarball on Linux, installs the same
 bytes outside the workspace on Linux, macOS and Windows, probes native file
 search, canvas, Cursor helpers and concurrent terminals, then verifies HTTP
