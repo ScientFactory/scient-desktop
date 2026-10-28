@@ -166,14 +166,14 @@ const servedQuery = (args: ReadonlyArray<string>) =>
   (args[0] === "--directory=1" && args[1] === "bind");
 
 /**
- * A Windows launch costs tens of milliseconds, so one long-lived helper per binary
- * answers read-only questions in order. It holds the event loop only while one waits
- * and exits after a second idle, since a running helper locks its binary; if it fails,
- * its waiting questions fail and the next question starts a new process.
+ * Windows launches are slow, so one long-lived helper per binary answers read-only
+ * questions one at a time; a question asked while it is busy launches on its own.
+ * It exits after a second idle, since a running helper locks its binary.
  */
 interface HelperServer {
-  readonly ask: (frame: Buffer) => Promise<string>;
-  /** Ends the helper after its waiting questions; `hold` keeps Node alive until it exits. */
+  /** Undefined while busy: the caller launches the question on its own. */
+  readonly ask: (frame: Buffer) => Promise<string> | undefined;
+  /** Ends the helper after its question; `hold` keeps Node alive until it exits. */
   readonly close: (hold: boolean) => Promise<void>;
 }
 /** Helpers taking questions, by binary. */
@@ -182,10 +182,15 @@ const servers = new Map<string, HelperServer>();
 const running = new Set<HelperServer>();
 function helperServer(helperPath: string): HelperServer {
   const child = NodeChildProcess.spawn(helperPath, ["--serve=1"], {
-    stdio: ["pipe", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   });
-  const handles = [child, child.stdin, child.stdout] as unknown as NodeJS.RefCounted[];
+  const handles = [
+    child,
+    child.stdin,
+    child.stdout,
+    child.stderr,
+  ] as unknown as NodeJS.RefCounted[];
   const hold = (held: boolean) => {
     for (const handle of handles) {
       if (held) handle.ref();
@@ -203,9 +208,10 @@ function helperServer(helperPath: string): HelperServer {
       if (child.pid === undefined) exited();
     });
   });
-  const waiting: Array<PromiseWithResolvers<string>> = [];
+  let answering: PromiseWithResolvers<string> | undefined;
   let buffer = "",
     reply = "",
+    stderr = "",
     closing = false,
     idle: ReturnType<typeof setTimeout> | undefined;
   const stopRouting = () => {
@@ -214,13 +220,16 @@ function helperServer(helperPath: string): HelperServer {
   };
   const retire = (reason: string) => {
     stopRouting();
-    for (const waiter of waiting.splice(0))
-      waiter.reject(
-        new NativeFilePublicationError(`Native publication reply unknown: ${reason}`, null),
-      );
+    answering?.reject(
+      new NativeFilePublicationError(
+        `Native publication reply unknown: ${reason}, stderr=${stderr}`,
+        null,
+      ),
+    );
+    answering = undefined;
     child.kill();
   };
-  // Questions already sent are answered before the helper reads the end of its input.
+  // A question already sent is answered before the helper reads the end of its input.
   const close = (held: boolean) => {
     stopRouting();
     if (held) hold(true);
@@ -228,6 +237,10 @@ function helperServer(helperPath: string): HelperServer {
     closing = true;
     return closed;
   };
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    if (stderr.length < 4096) stderr += chunk.slice(0, 4096 - stderr.length);
+  });
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     buffer += chunk;
@@ -240,17 +253,19 @@ function helperServer(helperPath: string): HelperServer {
         if (reply.length > 65536) retire("reply overflow");
         continue;
       }
-      const waiter = waiting.shift();
-      if (served[1] === "0") waiter?.resolve(reply);
+      const waiter = answering;
+      if (!waiter) return retire("reply without a question");
+      answering = undefined;
+      if (served[1] === "0") waiter.resolve(reply);
       else
-        waiter?.reject(
+        waiter.reject(
           new NativeFilePublicationError(
-            `Native publication reply unknown: exit=${served[1]}`,
+            `Native publication reply unknown: exit=${served[1]}, stderr=${stderr}`,
             null,
           ),
         );
       reply = "";
-      if (waiting.length === 0 && !closing) {
+      if (!closing) {
         hold(false);
         // @effect-diagnostics-next-line globalTimers:off -- The helper process owns this plain-Promise lifecycle.
         idle = setTimeout(() => void close(false), 1000);
@@ -262,12 +277,12 @@ function helperServer(helperPath: string): HelperServer {
   child.on("close", (code) => retire(`server exit=${code}`));
   child.stdin.on("error", (error) => retire(error.message));
   const ask = (frame: Buffer) => {
+    if (answering) return undefined;
     clearTimeout(idle);
-    const waiter = Promise.withResolvers<string>();
-    waiting.push(waiter);
+    answering = Promise.withResolvers<string>();
     hold(true);
     child.stdin.write(frame);
-    return waiter.promise;
+    return answering.promise;
   };
   const server = { ask, close };
   running.add(server);
@@ -298,7 +313,8 @@ export async function invokeNativeHelper(
       server = helperServer(helperPath);
       servers.set(helperPath, server);
     }
-    return server.ask(Buffer.concat([header, body]));
+    const answer = server.ask(Buffer.concat([header, body]));
+    if (answer) return answer;
   }
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const child = NodeChildProcess.spawn(helperPath, args, {

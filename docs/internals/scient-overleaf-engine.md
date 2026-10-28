@@ -109,10 +109,12 @@ record kept in the same folder):
 - A Windows process launch costs tens of milliseconds, and a sync asks the
   helper hundreds of read-only questions (identity, flags, privacy and
   directory binding). One long-lived helper process (`--serve=1`) answers them
-  in order, about a millisecond each; it answers nothing else, so every lease
-  and namespace change still runs in its own process. It exits after a second
-  idle, because a running helper locks its binary against upgrade or deletion. Before this, receiving
-  one file took about 950 launches and 50 seconds.
+  one at a time, about a millisecond each; a question asked while it is busy
+  runs in its own process, so a slow question never holds up another. It answers
+  nothing else, so every lease and namespace change still runs in its own
+  process. It exits after a second idle, because a running helper locks its
+  binary against upgrade or deletion. Before this, receiving one file took about
+  950 launches and 50 seconds.
 - The helper's capabilities are asked once per helper binary (path, device,
   inode, size, change time) and root (canonical path and volume); a replaced
   helper or a root on another volume asks again.
