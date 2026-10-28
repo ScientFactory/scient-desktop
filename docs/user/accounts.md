@@ -38,6 +38,11 @@ small toolbar chip to choose another, or the key button to fill again. Incognito
 After you submit a login form, Scient offers to save a new sign-in or update a changed password.
 An unchanged password produces no prompt. Capture requires a `<form>` element.
 
+In Add an account, **Sign in with the browser** opens the site in Scient's browser. Sign in however
+the site allows, then press **Done** on the notification; the account is saved with that browser
+profile. If you type a password, Scient offers to save it as usual. When you come back to a site from
+Google, your university or another sign-in service, Scient offers to save that site too.
+
 Choose several stores when saving. Updates change every existing copy. If an external write
 fails, Scient keeps the password and reports the failed store. A 1Password vault that rejects a
 write is hidden from the choices until you reconnect 1Password; no setup step is needed.

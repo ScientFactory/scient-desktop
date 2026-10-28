@@ -11,6 +11,7 @@ export function makeDesktopAccountsBridge(
 ): DesktopAccountsBridge {
   return {
     originBoundFill: true,
+    readBrowserPasswords: (input) => ipc.invoke(Channels.READ_BROWSER_PASSWORDS, input),
     sourceProfiles: () => ipc.invoke(Channels.SOURCE_PROFILES),
     signedInSites: (profileId, environmentId) =>
       ipc.invoke(Channels.SIGNED_IN_SITES, { profileId, environmentId }),

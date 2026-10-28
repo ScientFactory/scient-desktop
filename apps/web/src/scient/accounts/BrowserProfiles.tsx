@@ -1,3 +1,5 @@
+import { clickableAccountRow } from "./clickableAccountRow";
+import { usePrimaryEnvironmentId } from "~/state/environments";
 import * as DateTime from "effect/DateTime";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import {
@@ -10,15 +12,20 @@ import {
   type AccountsSnapshot,
   type EnvironmentId,
   type BrowserProfileRecord,
+  type ClientSettings,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { Button } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { DraftInput } from "~/components/ui/draft-input";
-import { ChevronDownIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
-import { Checkbox } from "~/components/ui/checkbox";
+import { QuitStep } from "~/components/settings/BrowserImportWizard";
+import { usePermissionStatus } from "~/components/permissions/usePermissionStatus";
+import { AccountLogo } from "./AccountLogo";
+import { Collapsible, CollapsibleTrigger, CollapsiblePanel } from "~/components/ui/collapsible";
 import { DiscoveryList, DiscoveryListRow } from "~/components/ui/discovery-list";
 import {
   Dialog,
@@ -51,15 +58,38 @@ import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
+  browserIconUrl,
   importProfileName,
   mergeProfiles,
   matchExistingProfile,
   mergeSourceProfiles,
 } from "./accountsView";
 
+const RUNNING_BROWSER_COPY = "open, quit to import";
+
 const decodeProfileUpdate = Schema.decodeOption(BrowserProfileRecordUpdateInput);
 
 type SourceMatch = NonNullable<ReturnType<typeof matchExistingProfile>>;
+
+function BrowserLogo({ id, name }: { id: string; name: string }) {
+  const icon = browserIconUrl(id);
+  return icon ? (
+    <AccountLogo src={icon} className="size-10 rounded-[25%]" />
+  ) : (
+    <ProfilePicture name={name} />
+  );
+}
+
+/**
+ * The built-in Main profile is only the starting point: once the user has a profile of their
+ * own, the first one opens new tabs instead.
+ */
+function withOwnDefault(current: ClientSettings): ClientSettings {
+  const own = current.browserProfiles.filter((profile) => profile.kind === "persistent");
+  return current.browserDefaultProfileId === DEFAULT_BROWSER_PROFILE_ID && own[0]
+    ? { ...current, browserDefaultProfileId: own[0].id }
+    : current;
+}
 
 function profileError() {
   toastManager.add({ type: "error", title: "Browser profile action failed" });
@@ -102,7 +132,7 @@ function SignedInSitesDialog({
   const shown = (sites ?? []).filter((site) => site.domain.includes(query.trim().toLowerCase()));
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogPopup>
+      <DialogPopup data-accounts-dialog>
         <DialogHeader>
           <div className="flex items-center gap-3">
             <ProfilePicture
@@ -164,69 +194,124 @@ function SignedInSitesDialog({
 export function BrowserImportDialog({
   environmentId,
   canWrite,
+  snapshot,
   onClose,
 }: {
   environmentId: EnvironmentId;
   canWrite: boolean;
+  snapshot: AccountsSnapshot;
   onClose: () => void;
 }) {
   const [sources, setSources] = useState<ReturnType<typeof mergeSourceProfiles>>([]);
+  const [passwords, setPasswords] = useState(true);
+  // Only the local desktop can read another browser's saved passwords.
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const readPasswords =
+    environmentId === primaryEnvironmentId
+      ? window.desktopBridge?.accounts?.readBrowserPasswords
+      : undefined;
+  const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
+  const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
+  const [quitting, setQuitting] = useState<ReturnType<typeof mergeSourceProfiles>[number] | null>(
+    null,
+  );
+  const [imported, setImported] = useState<ReadonlySet<string>>(new Set());
+  const isImported = (
+    source: ReturnType<typeof mergeSourceProfiles>[number],
+    profile: (typeof source.profiles)[number],
+  ) =>
+    imported.has(JSON.stringify([source.id, profile.directory])) ||
+    snapshot.profiles.some(
+      (item) =>
+        item.source?.browser === source.id &&
+        item.source.profileName === profile.name &&
+        item.source.email === profile.email,
+    );
   const load = async () => {
-    try {
-      const [sources, details] = await Promise.all([
-        previewBridge?.listBrowserImportSources() ?? [],
-        window.desktopBridge?.accounts?.sourceProfiles().catch(() => []) ?? [],
-      ]);
-      setSources(mergeSourceProfiles(sources, details));
-    } catch {
-      profileError();
-    }
-  };
-  // oxlint-disable-next-line t3code/react-effect-budget -- List the browsers' profiles from the desktop when the import view opens; ignore a late answer after it closes.
-  useEffect(() => {
-    let live = true;
-    void Promise.all([
+    const [sources, details] = await Promise.all([
       previewBridge?.listBrowserImportSources() ?? [],
       window.desktopBridge?.accounts?.sourceProfiles().catch(() => []) ?? [],
-    ])
-      .then(([sources, details]) => {
-        if (live) setSources(mergeSourceProfiles(sources, details));
-      })
-      .catch(profileError);
-    return () => {
-      live = false;
-    };
-  }, []);
-  const runImport = async () => {
+    ]);
+    return mergeSourceProfiles(sources, details);
+  };
+  const permission = usePermissionStatus(
+    async () => {
+      const loaded = await load();
+      setSources(loaded);
+      setLoaded(true);
+      return {
+        fullDiskAccess: !loaded.some((source) => source.unavailable === "needsFullDiskAccess"),
+      };
+    },
+    { fullDiskAccess: false },
+    !busy && (!loaded || sources.some((source) => source.unavailable === "needsFullDiskAccess")),
+  );
+  const selectedProfiles = sources.flatMap((source) =>
+    source.profiles.filter((profile) =>
+      selected.has(JSON.stringify([source.id, profile.directory])),
+    ),
+  );
+  // Chromium profiles carry a count; other browsers' passwords come from their CSV exports.
+  const withPasswords = selectedProfiles.filter((profile) => profile.passwordCount !== undefined);
+  const selectedPasswordCount = withPasswords.length
+    ? withPasswords.reduce((sum, profile) => sum + (profile.passwordCount ?? 0), 0)
+    : undefined;
+  const runImport = async (loaded = sources) => {
     if (!canWrite || !previewBridge || inFlight.current) return;
+    const running = loaded.find(
+      (source) =>
+        source.unavailable === "browserRunning" &&
+        source.profiles.some((profile) =>
+          selected.has(JSON.stringify([source.id, profile.directory])),
+        ),
+    );
+    if (running) {
+      setQuitting(running);
+      return;
+    }
+    setQuitting(null);
     inFlight.current = true;
     setBusy(true);
     const done = new Set<string>();
+    const passwordTotals = { imported: 0, skipped: 0, failed: false };
     try {
-      for (const source of sources)
+      for (const source of loaded)
         for (const profile of source.profiles) {
           const key = JSON.stringify([source.id, profile.directory]);
           if (!selected.has(key) || source.unavailable) continue;
+          // A profile imported before keeps its sign-ins; only its passwords can still come in.
+          const already = isImported(source, profile);
           const profileId = `profile-${randomUUID()}`;
-          const outcome = await importBrowserCookiesIntoTarget(
-            previewBridge,
-            source,
-            environmentId,
-            {
-              sourceProfileDirectory: profile.directory,
-              target: { kind: "new", profileId },
-              profileName: profile.name,
-            },
-          );
-          if (outcome.kind === "blocked") {
+          const outcome = already
+            ? null
+            : await importBrowserCookiesIntoTarget(previewBridge, source, environmentId, {
+                sourceProfileDirectory: profile.directory,
+                target: { kind: "new", profileId },
+                profileName: profile.name,
+              });
+          if (outcome?.kind === "blocked") {
             toastManager.add({ type: "error", title: BROWSER_IMPORT_FAILURE_COPY[outcome.reason] });
             continue;
           }
+          if (passwords && readPasswords && profile.passwordCount !== undefined) {
+            const csv = await readPasswords({
+              sourceId: source.id,
+              directory: profile.directory,
+            }).catch(() => null);
+            const result = csv
+              ? await importPasswords({ format: "chrome", content: csv.content })
+              : null;
+            if (csv && result?.ok) {
+              passwordTotals.imported += result.value.created + result.value.updated;
+              passwordTotals.skipped += csv.skipped + result.value.skipped;
+            } else passwordTotals.failed = true;
+          }
           done.add(key);
+          if (already) continue;
           const record = decodeProfileUpdate({
             profileId,
             ...(profile.picture ? { picture: profile.picture } : {}),
@@ -241,6 +326,17 @@ export function BrowserImportDialog({
           if (Option.isSome(record)) await updateRecord(record.value);
           else profileError();
         }
+      if (done.size > 0) void persistClientSettingsUpdate(withOwnDefault).catch(profileError);
+      if (passwordTotals.failed)
+        toastManager.add({ type: "error", title: "Could not import saved passwords" });
+      else if (passwordTotals.imported || passwordTotals.skipped)
+        toastManager.add({
+          type: "success",
+          title: passwordTotals.skipped
+            ? `Imported ${passwordTotals.imported} passwords, ${passwordTotals.skipped} skipped`
+            : `Imported ${passwordTotals.imported} passwords`,
+        });
+      setImported((current) => new Set([...current, ...done]));
       setSelected((current) => new Set([...current].filter((key) => !done.has(key))));
       if (done.size === selected.size) onClose();
     } catch {
@@ -256,83 +352,195 @@ export function BrowserImportDialog({
         if (!open && !busy) onClose();
       }}
     >
-      <DialogPopup>
-        <DialogHeader>
-          <DialogTitle>Import from your browser</DialogTitle>
-        </DialogHeader>
-        <DialogPanel>
-          <div className="grid gap-5">
-            {sources.map((source) => (
-              <div key={source.id} className="grid gap-2">
-                <h3 className="text-sm font-medium">{source.name}</h3>
-                {source.unavailable ? (
-                  <div className="grid gap-2">
-                    <p className="text-xs text-muted-foreground">
-                      {BROWSER_IMPORT_FAILURE_COPY[source.unavailable]}
-                    </p>
-                    {source.unavailable === "needsFullDiskAccess" ? (
-                      <Button
-                        size="xs"
-                        variant="outline"
-                        onClick={() =>
-                          void readLocalApi()
-                            ?.shell.openSystemSettings("full-disk-access")
-                            .catch(profileError)
-                        }
-                      >
-                        Open System Settings
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : (
-                  source.profiles.map((profile) => {
-                    const key = JSON.stringify([source.id, profile.directory]);
-                    return (
-                      <label key={key} className="flex items-center gap-3 text-sm">
-                        <Checkbox
-                          disabled={busy || !canWrite}
-                          checked={selected.has(key)}
-                          onCheckedChange={(checked) =>
-                            setSelected((current) => {
-                              const next = new Set(current);
-                              if (checked) next.add(key);
-                              else next.delete(key);
-                              return next;
-                            })
+      <DialogPopup data-accounts-dialog>
+        {quitting ? (
+          <QuitStep
+            source={quitting}
+            onCancel={() => setQuitting(null)}
+            onRechecked={() => {
+              void load()
+                .then((loaded) => {
+                  setSources(loaded);
+                  void runImport(loaded);
+                })
+                .catch(profileError);
+            }}
+          />
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>Import from a browser</DialogTitle>
+            </DialogHeader>
+            <DialogPanel scrollAreaClassName="min-h-0 flex-1">
+              <DiscoveryList>
+                {sources
+                  .filter((source) => source.unavailable !== "notInstalled")
+                  .flatMap((source) =>
+                    source.unavailable === "needsFullDiskAccess"
+                      ? [
+                          <div
+                            key={source.id}
+                            className="flex min-h-15 items-center gap-3 px-3 py-2"
+                          >
+                            <BrowserLogo id={source.id} name={source.name} />
+                            <span className="grid min-w-0 flex-1 text-sm">
+                              <span>{source.name}</span>
+                              <span className="text-xs text-muted-foreground">
+                                Needs Full Disk Access
+                              </span>
+                            </span>
+                            <div className="shrink-0">
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                onClick={() =>
+                                  void readLocalApi()
+                                    ?.shell.openSystemSettings("full-disk-access")
+                                    .catch(profileError)
+                                }
+                              >
+                                Open Settings <ArrowRightIcon />
+                              </Button>
+                            </div>
+                          </div>,
+                        ]
+                      : source.profiles.map((profile) => {
+                          const key = JSON.stringify([source.id, profile.directory]);
+                          const alreadyImported = isImported(source, profile);
+                          const passwordsOnly =
+                            alreadyImported &&
+                            !!readPasswords &&
+                            profile.passwordCount !== undefined;
+                          const checked = selected.has(key);
+                          return (
+                            <DiscoveryListRow
+                              key={key}
+                              role="checkbox"
+                              aria-checked={checked}
+                              aria-label={`${profile.name} · ${source.name}`}
+                              disabled={
+                                busy ||
+                                !canWrite ||
+                                (alreadyImported && !passwordsOnly) ||
+                                (!!source.unavailable && source.unavailable !== "browserRunning")
+                              }
+                              icon={
+                                profile.picture ? (
+                                  <ProfilePicture
+                                    name={profile.name}
+                                    picture={profile.picture}
+                                    color={profile.color}
+                                  />
+                                ) : (
+                                  <BrowserLogo id={source.id} name={profile.name} />
+                                )
+                              }
+                              title={profile.name}
+                              description={
+                                alreadyImported
+                                  ? [source.name, profile.email, passwordsOnly && "Imported"]
+                                      .filter(Boolean)
+                                      .join(" · ")
+                                  : source.unavailable === "browserRunning"
+                                    ? `${source.name} · ${RUNNING_BROWSER_COPY}`
+                                    : source.unavailable
+                                      ? BROWSER_IMPORT_FAILURE_COPY[source.unavailable]
+                                      : [source.name, profile.email].filter(Boolean).join(" · ")
+                              }
+                              action={
+                                alreadyImported && !passwordsOnly ? (
+                                  <span className="text-xs text-muted-foreground">Imported</span>
+                                ) : (
+                                  <span
+                                    aria-hidden
+                                    className={`flex size-4 shrink-0 items-center justify-center rounded border ${checked ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}
+                                  >
+                                    {checked ? <CheckIcon className="size-3" /> : null}
+                                  </span>
+                                )
+                              }
+                              onClick={() =>
+                                setSelected((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(key)) next.delete(key);
+                                  else next.add(key);
+                                  return next;
+                                })
+                              }
+                            />
+                          );
+                        }),
+                  )}
+                {loaded &&
+                sources.every(
+                  (source) =>
+                    source.unavailable === "notInstalled" ||
+                    (source.profiles.length === 0 && source.unavailable !== "needsFullDiskAccess"),
+                ) ? (
+                  <div className="px-3 py-3 text-sm text-muted-foreground">No browsers found</div>
+                ) : null}
+                {sources.some((source) => source.unavailable === "notInstalled") ? (
+                  <Collapsible>
+                    <CollapsibleTrigger
+                      render={
+                        <DiscoveryListRow
+                          icon={null}
+                          title={<span className="text-muted-foreground">More browsers</span>}
+                          description={null}
+                          action={
+                            <ChevronRightIcon className="size-4 text-muted-foreground in-data-panel-open:rotate-90" />
                           }
                         />
-                        <ProfilePicture
-                          name={profile.name}
-                          picture={profile.picture}
-                          color={profile.color}
-                        />
-                        <span>
-                          {profile.name}
-                          {profile.email ? (
-                            <span className="block text-xs text-muted-foreground">
-                              {profile.email}
-                            </span>
-                          ) : null}
-                        </span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            ))}
-          </div>
-        </DialogPanel>
-        <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={() => void load()}>
-            Refresh
-          </Button>
-          <Button
-            disabled={busy || !canWrite || selected.size === 0}
-            onClick={() => void runImport()}
-          >
-            Import
-          </Button>
-        </DialogFooter>
+                      }
+                    />
+                    <CollapsiblePanel animate={false}>
+                      {sources
+                        .filter((source) => source.unavailable === "notInstalled")
+                        .map((source) => (
+                          <div
+                            key={source.id}
+                            className="flex items-center gap-3 border-t border-border/60 px-3 py-3"
+                          >
+                            <BrowserLogo id={source.id} name={source.name} />
+                            <div className="flex min-w-0 flex-1 flex-col">
+                              <span className="truncate text-sm font-medium">{source.name}</span>
+                              <span className="text-xs text-muted-foreground">Not installed</span>
+                            </div>
+                          </div>
+                        ))}
+                    </CollapsiblePanel>
+                  </Collapsible>
+                ) : null}
+              </DiscoveryList>
+              {readPasswords && selectedPasswordCount !== undefined ? (
+                <label className="flex items-center gap-2 py-3 text-sm">
+                  <Checkbox
+                    checked={passwords}
+                    onCheckedChange={setPasswords}
+                    disabled={busy || !canWrite}
+                  />
+                  Also import saved passwords ({selectedPasswordCount})
+                </label>
+              ) : null}
+              {permission.error ? (
+                <p role="status" className="mt-2 text-xs text-muted-foreground">
+                  {permission.error}
+                </p>
+              ) : null}
+            </DialogPanel>
+            <DialogFooter>
+              <Button variant="outline" disabled={busy} onClick={onClose}>
+                Cancel
+              </Button>
+              <Button
+                disabled={busy || !canWrite || selected.size === 0}
+                onClick={() => void runImport()}
+              >
+                Import ({selected.size})
+              </Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogPopup>
     </Dialog>
   );
@@ -363,7 +571,12 @@ export function BrowserProfiles({
   const [renaming, setRenaming] = useState<string | null>(null);
   const [viewingSites, setViewingSites] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles);
+  const profiles = mergeProfiles(settings.browserProfiles, snapshot.profiles).filter(
+    (profile) =>
+      profile.id !== DEFAULT_BROWSER_PROFILE_ID ||
+      settings.browserProfiles.length === 0 ||
+      settings.browserDefaultProfileId === DEFAULT_BROWSER_PROFILE_ID,
+  );
   const disabled = !canWrite || !hydrated || busy;
   const changeSettings = async (update: Parameters<typeof persistClientSettingsUpdate>[0]) => {
     try {
@@ -486,19 +699,19 @@ export function BrowserProfiles({
     <SettingsSection
       id="accounts-browser-profiles"
       title="Browser profiles"
-      headerAction={
+      titleAction={
         <Menu>
           <MenuTrigger
             render={
               <Button
-                size="xs"
-                variant="outline"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Add profile"
                 disabled={disabled || settings.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT}
               />
             }
           >
-            Add profile
-            <ChevronDownIcon aria-hidden className="-me-1 size-3 shrink-0 opacity-50" />
+            <PlusIcon />
           </MenuTrigger>
           <MenuPopup>
             <MenuItem
@@ -506,7 +719,7 @@ export function BrowserProfiles({
                 void act(async () => {
                   await persistClientSettingsUpdate((current) => {
                     if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return current;
-                    return {
+                    return withOwnDefault({
                       ...current,
                       browserProfiles: [
                         ...current.browserProfiles,
@@ -521,14 +734,14 @@ export function BrowserProfiles({
                           kind: "persistent",
                         },
                       ],
-                    };
+                    });
                   });
                 })
               }
             >
-              Blank profile
+              New profile
             </MenuItem>
-            {previewBridge ? <MenuItem onClick={onImport}>From another browser…</MenuItem> : null}
+            {previewBridge ? <MenuItem onClick={onImport}>Import from a browser…</MenuItem> : null}
           </MenuPopup>
         </Menu>
       }
@@ -536,10 +749,11 @@ export function BrowserProfiles({
       {profiles.map((profile) => (
         <SettingsRow
           key={profile.id}
+          {...clickableAccountRow(() => setViewingSites(profile.id))}
+          aria-label={`Signed-in sites for ${profile.name}`}
           title={
             <div className="flex items-center gap-3">
               <ProfilePicture
-                size="sm"
                 name={profile.name}
                 picture={profile.record.picture}
                 color={profile.record.color}
@@ -565,18 +779,21 @@ export function BrowserProfiles({
                   }}
                 />
               ) : (
-                <button
-                  type="button"
-                  className="flex min-w-0 items-baseline gap-2 text-left outline-none focus-visible:underline"
-                  onClick={() => setViewingSites(profile.id)}
-                >
-                  <span className="truncate text-sm text-foreground">{profile.name}</span>
+                <span className="grid min-w-0 gap-1 text-left">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-sm text-foreground">{profile.name}</span>
+                    {settings.browserDefaultProfileId === profile.id ? (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        New tabs
+                      </span>
+                    ) : null}
+                  </span>
                   {profile.record.source?.email ? (
                     <span className="truncate text-xs text-muted-foreground">
                       {profile.record.source.email}
                     </span>
                   ) : null}
-                </button>
+                </span>
               )}
             </div>
           }
@@ -635,7 +852,7 @@ export function BrowserProfiles({
                     }))
                   }
                 >
-                  Set as default
+                  Use for new tabs
                 </MenuItem>
                 {previewBridge && profile.record.source ? (
                   <MenuItem onClick={() => void act(() => refresh(profile.id, profile.record))}>
@@ -665,15 +882,17 @@ export function BrowserProfiles({
                         await clear(profile.id);
                         const result = await removeRecord({ profileId: profile.id });
                         if (!result.ok) return;
-                        await persistClientSettingsUpdate((current) => ({
-                          ...current,
-                          browserProfiles: current.browserProfiles.filter(
-                            (item) => item.id !== profile.id,
-                          ),
-                          ...(current.browserDefaultProfileId === profile.id
-                            ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
-                            : {}),
-                        }));
+                        await persistClientSettingsUpdate((current) =>
+                          withOwnDefault({
+                            ...current,
+                            browserProfiles: current.browserProfiles.filter(
+                              (item) => item.id !== profile.id,
+                            ),
+                            ...(current.browserDefaultProfileId === profile.id
+                              ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
+                              : {}),
+                          }),
+                        );
                       })
                     }
                   >
@@ -695,7 +914,7 @@ export function BrowserProfiles({
       ) : null}
       {linking ? (
         <Dialog open onOpenChange={(open) => !open && setLinking(null)}>
-          <DialogPopup>
+          <DialogPopup data-accounts-dialog>
             <DialogHeader>
               <DialogTitle>Match to browser profile</DialogTitle>
             </DialogHeader>

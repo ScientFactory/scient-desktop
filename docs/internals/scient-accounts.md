@@ -151,6 +151,23 @@ sign-in/settings guidance. Detection and discovery errors leave the normal previ
 page text is never included in the note. The discovery tool still checks every eligible profile
 up to its limit and returns its existing access labels, first match and skipped names.
 
+### Browser password import
+
+Import from a browser offers **Also import saved passwords (n)**, on by default, when a selected
+profile is from a Chromium browser (Chrome, Edge, Brave, Vivaldi, Opera, Arc, Helium) on the local
+desktop. The count comes from Login Data without decrypting anything.
+
+- On Import, Electron main snapshots Login Data, decrypts it with the cookie importer's Safe Storage
+  key (the macOS Keychain prompt appears here, not before) and returns CSV to the renderer, which
+  sends it to `accountsImportPasswords` like a picked CSV file. Dedupe, controls and store writes
+  are the CSV importer's; new website accounts work in every profile.
+- Blacklisted, empty, Android and undecryptable rows are skipped and counted; unknown encryption
+  versions fail closed. The snapshot is deleted on success or failure and key buffers are zeroed.
+- Linux uses the cookie keys (v10, Secret Service v11); Windows only legacy v10. App-bound (v20)
+  encryption is not bypassed.
+- Safari and Firefox can't be read directly: export their passwords and use Accounts ▸ + ▸ Import
+  passwords….
+
 ### Website session status
 
 When Accounts opens, regains focus, receives account changes or completes a profile-site sign-out,
@@ -314,13 +331,14 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 
 ## The user's side
 
-- **Settings → Accounts**: the global switch, browser profile cards, accounts, password stores.
+- **Settings → Accounts**: accounts with the global switch, browser profiles, Other sign-ins, then password stores.
   Built from the existing settings components; labels say what a thing is and status appears only
   when something is wrong. It sits in the Agents group after Extensions. Profiles moved here from
   the Browser page, which links to Accounts; the rest of the browser settings stay there.
 - **Logos** for known services live in `accountIcons.json` as square, opaque tiles: a brand tile
   as is, a transparent mark trimmed and centred at 70% on white. `AccountLogo` draws them with no
-  padding, so each takes its frame's shape.
+  padding, so each takes its frame's shape. Bundled artwork sources and rendering metadata
+  are recorded in `apps/web/src/scient/accounts/accountIconSources.json`.
 - **Profile cards** show the picture and name from the source browser (Chrome's Google picture or
   avatar colour, else a coloured initial), the source and email, the signed-in sites and the access
   chip. "Add profile" lists every profile found on the machine with picture, name and email; picking
@@ -410,3 +428,25 @@ retain their existing semaphore and ordering. The Accounts add form can be opene
 from a Keys row with its declared environment name and allowed origins, then
 Extensions binds the saved account id. There is no copy into plugin config or a
 provider environment. The existing proxy redacts reflected values in responses.
+
+### Assisted adding
+
+- **Search** covers the bundled catalogue, sites the user's Scient browser profiles are signed in to
+  (domain metadata only) and matching Keychain items (debounced). "Search the web" is an explicit
+  last row that opens a search in Scient's browser; typing sends nothing.
+- **Sign in with the browser** opens the site in the chosen profile and shows a "Sign in to <name>,
+  then press Done" notification. A typed password is offered by the browser's usual save prompt.
+  Done keeps any other sign-in (Google, SSO, an existing session) as a website account with no
+  password that uses that profile's session. Scient does not guess completion from cookies: many
+  sites set session cookies before anyone signs in.
+- **Signing in while browsing**: returning from a known identity provider (Google, Microsoft, Apple,
+  GitHub, ORCID, Okta, Shibboleth) with a new HttpOnly cookie for the site offers "Save <site> to
+  Accounts?" once per site and profile, never in incognito or for a site already saved. Only cookie
+  domain, expiry and HttpOnly flags are read. Remote server browsers and browser-only clients can't
+  read cookie metadata, so they get neither offer.
+- Browser-sign-in rows name the profile agents use; the usual Signed out / Sign in again applies.
+- **API keys**: Get a key opens the service's key page in the default browser. A pasted key with a
+  known prefix picks its catalogue entry and goes straight into the key input, never into search
+  or React state.
+- **Command-line logins** show the tool's own login command to copy; Scient doesn't import CLI
+  sessions.

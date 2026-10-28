@@ -2190,7 +2190,7 @@ it.live(
         expect(byDefault).toMatchObject({
           defaultProfileId: "profile-work",
           profiles: [
-            { id: "default", name: "Default" },
+            { id: "default", name: "Main" },
             { id: "incognito", name: "Incognito", incognito: true },
             { id: "profile-work", name: "Work" },
           ],
@@ -2199,7 +2199,7 @@ it.live(
         expect(unknown).toMatchObject({
           _tag: "PreviewAutomationExecutionError",
           reason:
-            'No browser profile is named "Personal". Use one of: Default (id default), Incognito (id incognito), Work (id profile-work).',
+            'No browser profile is named "Personal". Use one of: Main (id default), Incognito (id incognito), Work (id profile-work).',
         });
       }),
     ).pipe(Effect.provide(layer)),

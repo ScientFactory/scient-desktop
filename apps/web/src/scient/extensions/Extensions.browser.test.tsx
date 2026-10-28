@@ -31,6 +31,8 @@ import {
 } from "../../../test/render";
 import { page, userEvent } from "vite-plus/test/browser";
 
+// The Add-account dialog opens sites in Scient's browser; these tests never do.
+vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => async () => false }));
 vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
 vi.mock("../../components/ChatMarkdown", () => ({
   default: ({ text }: { text: string }) => <div>{text}</div>,
@@ -350,6 +352,10 @@ vi.mock("../../state/use-atom-command", () => ({
     state.commands[typeof command === "string" ? command : command.name],
 }));
 vi.mock("../../localApi", () => ({
+  readLocalApi: () => ({
+    dialogs: { confirm: state.confirm },
+    shell: { openExternal: state.openExternal },
+  }),
   ensureLocalApi: () => ({
     dialogs: { confirm: state.confirm },
     shell: { openExternal: state.openExternal },
