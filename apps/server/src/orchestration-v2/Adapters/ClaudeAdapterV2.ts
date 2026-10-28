@@ -38,6 +38,7 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivity";
 import { field, text } from "../unknownField.ts";
+import { mergeWorkflowAgentMetadata, type WorkflowAgentMetadata } from "../workflowAgentAnswers.ts";
 import {
   initialWorkflowAgentTranscriptCursor,
   readWorkflowAgentTranscript,
@@ -60,6 +61,7 @@ import {
   type ForkSessionResult,
   getSessionMessages,
   getSubagentMessages,
+  type HookCallback,
   query,
   resolveSettings as resolveClaudeSettings,
   type Options as ClaudeQueryOptions,
@@ -204,6 +206,7 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 // SCIENT-FORK:START Scient instruction owners
 import {
   SCIENT_CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS,
+  SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   SCIENT_ORCHESTRATION_INSTRUCTIONS,
 } from "../../provider/ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
@@ -1571,6 +1574,17 @@ function parseClaudeInteger(text: string): number {
   return Number.parseInt(value, 10);
 }
 
+// Native subagents start from their task, not this session's system prompt.
+const subagentDeviceInstructions: HookCallback = () =>
+  Promise.resolve({
+    hookSpecificOutput: {
+      hookEventName: "SubagentStart",
+      // SCIENT-FORK:START Scient device copy
+      additionalContext: SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+      // SCIENT-FORK:END
+    },
+  });
+
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
@@ -1583,6 +1597,8 @@ export function makeClaudeQueryOptions(input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly scientAwareness?: string;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  /** The thread's T3 MCP session holds the `device` capability. */
+  readonly deviceToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
   readonly disallowedTools?: ReadonlyArray<string>;
@@ -1647,6 +1663,7 @@ export function makeClaudeQueryOptions(input: {
           ...compactQuerySettings,
           env: { ...compactQuerySettings?.env, ENABLE_TOOL_SEARCH: input.toolSearchOverride },
         } as ClaudeSdkSettings);
+  const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
@@ -1707,6 +1724,9 @@ export function makeClaudeQueryOptions(input: {
       ].join("\n\n"),
       // SCIENT-FORK:END Scient granted awareness and runtime instruction composition
     },
+    ...(deviceInstructions
+      ? { hooks: { SubagentStart: [{ hooks: [subagentDeviceInstructions] }] } }
+      : {}),
     ...(Object.keys(extraArgs).length === 0 ? {} : { extraArgs }),
   };
   const additionalDirectories = [
@@ -4756,6 +4776,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               readonly finalTranscriptRead: boolean;
               readonly agentId: string | undefined;
               readonly transcriptCursor: WorkflowAgentTranscriptCursor;
+              readonly transcriptMetadata: WorkflowAgentMetadata;
               readonly nextItemOrdinal: number;
               readonly toolCalls: Map<string, ActiveClaudeToolCall>;
               readonly textShown: boolean;
@@ -5997,8 +6018,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const now = yield* DateTime.now;
           const seen = yield* Ref.get(workflowMemberStates);
           const transcriptDir = input.workflow.runHandles?.transcriptDir;
+          const membersWithMetadata = input.workflow.agents.slice();
 
-          for (const member of input.workflow.agents) {
+          for (const [memberIndex, member] of input.workflow.agents.entries()) {
             if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
               return;
             const memberKey = `${input.coordinator.childThreadId}:agent:${member.index}`;
@@ -6227,6 +6249,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               previous === undefined || restarted || previous.agentId !== agentId
                 ? initialWorkflowAgentTranscriptCursor
                 : previous.transcriptCursor;
+            let transcriptMetadata =
+              previous === undefined || restarted || previous.agentId !== agentId
+                ? {}
+                : previous.transcriptMetadata;
             let textShown = !restarted && previous?.textShown === true;
             let resultShown = !restarted && previous?.resultShown === true;
             let turnEnded = !restarted && previous?.turnEnded === true;
@@ -6271,6 +6297,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   transcriptRead = true;
                   const advanced = read.value.cursor.offset !== transcriptCursor.offset;
                   transcriptCursor = read.value.cursor;
+                  transcriptMetadata = mergeWorkflowAgentMetadata(
+                    read.value.lines,
+                    transcriptMetadata,
+                  );
                   for (const line of read.value.lines) {
                     if (yield* projectSubagentTranscriptLine(target, line)) textShown = true;
                     turnEnded = isClaudeTranscriptTurnEnd(line);
@@ -6292,6 +6322,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* Effect.sleep(waitLeft);
                 if (!(yield* drain())) return;
               }
+            }
+            if (
+              transcriptRead &&
+              (transcriptMetadata.effort !== member.effort ||
+                transcriptMetadata.speed !== member.speed)
+            ) {
+              membersWithMetadata[memberIndex] = {
+                ...member,
+                effort: transcriptMetadata.effort,
+                speed: transcriptMetadata.speed,
+              };
             }
             if (settled) {
               // Open calls receive no results after their member settles.
@@ -6340,6 +6381,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     textShown &&
                     input.coordinator.task.status !== "running"),
                 transcriptCursor,
+                transcriptMetadata,
                 nextItemOrdinal,
                 toolCalls,
                 textShown,
@@ -6350,6 +6392,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 completedAt,
               }),
             );
+          }
+          if (
+            membersWithMetadata.some((member, index) => member !== input.workflow.agents[index])
+          ) {
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId) !== input.coordinator)
+              return;
+            input.coordinator.task = {
+              ...input.coordinator.task,
+              workflow: { ...input.workflow, agents: membersWithMetadata },
+            };
+            yield* emitProviderEvent({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: input.coordinator.task,
+            });
           }
         });
 
@@ -10412,6 +10469,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(mcpOverrides.mcpServers === undefined
                 ? {}
                 : { mcpServers: mcpOverrides.mcpServers }),
+              deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
               permissionMode: queryPolicy.permissionMode,
               ...(queryPolicy.allowDangerouslySkipPermissions === undefined
                 ? {}

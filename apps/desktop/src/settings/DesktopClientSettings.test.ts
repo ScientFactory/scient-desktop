@@ -37,7 +37,6 @@ const clientSettings: ClientSettings = {
   // SCIENT-FORK:END scient-desktop-settings
   confirmThreadUnpin: false,
   contextWindowMeterEnabled: false,
-  composerCollapseOnScroll: true,
   diffFilesCollapsed: true,
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",
@@ -68,7 +67,8 @@ const clientSettings: ClientSettings = {
   },
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
-  sidebarThreadPreviewCount: 6,
+  boringSidebarEnabled: false,
+  boringSidebarMultilineRows: false,
   legacySidebarEnabled: false,
   sidebarWorkingShelfEnabled: false,
   loadBalancingEnabled: false,

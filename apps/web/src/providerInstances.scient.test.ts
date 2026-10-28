@@ -1,9 +1,8 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
-  deriveProviderInstanceEntries,
+  providerInstanceEntriesFor,
   resolveDefaultModelSettingsSelection,
-  sortProviderInstanceEntries,
 } from "./providerInstances";
 
 function provider(input: {
@@ -46,9 +45,9 @@ const model = (slug: string, isCustom = false, isDefault = false) => ({
   capabilities: {},
 });
 
-describe("sortProviderInstanceEntries", () => {
+describe("providerInstanceEntriesFor", () => {
   it("uses canonical provider order and keeps custom instances beneath their default", () => {
-    const entries = deriveProviderInstanceEntries([
+    const providers = [
       provider({ provider: ProviderDriverKind.make("cursor"), instanceId: "cursor" }),
       provider({
         provider: ProviderDriverKind.make("antigravity"),
@@ -61,9 +60,12 @@ describe("sortProviderInstanceEntries", () => {
       }),
       provider({ provider: ProviderDriverKind.make("antigravity"), instanceId: "antigravity" }),
       provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
-    ]);
+    ];
+    const settings = { providerInstances: {}, projectSettingsOverrides: {} };
 
-    expect(sortProviderInstanceEntries(entries).map((entry) => entry.instanceId)).toEqual([
+    expect(
+      providerInstanceEntriesFor(providers, settings, null).map((entry) => entry.instanceId),
+    ).toEqual([
       "codex",
       "claudeAgent",
       "antigravity",

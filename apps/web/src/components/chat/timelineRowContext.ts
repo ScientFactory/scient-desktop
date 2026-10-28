@@ -1,6 +1,9 @@
+import type { ToolCallDiffTarget } from "../../diffPanelStore";
+// SCIENT-FORK:START — send motion, agent-spawn rows and message forks read these row types.
 import { type TimelineSendMotion } from "./timelineEntranceMotion";
 import { type AgentPanelModel } from "@t3tools/client-runtime/state/subagentRuntime";
 import { type ChatMessage } from "../../types";
+// SCIENT-FORK:END
 import type {
   ProviderApprovalDecision,
   RuntimeRequestId,
@@ -75,6 +78,7 @@ export interface TimelineRowSharedState {
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
+  onOpenToolDiff: ((target: ToolCallDiffTarget) => void) | undefined;
   /** Unset where there is no diff to open, so the timeline shows no "Open diff" button. */
   onOpenTurnDiff: ((runId: RunId, filePath?: string) => void) | undefined;
   /**

@@ -1882,6 +1882,16 @@ describe("OrchestratorMcpService provider resolution", () => {
           models: ["oc/m12", "oc/m01", "oc/m03", "oc/m04", "oc/m05", "oc/m06", "oc/m07", "oc/m08"],
           omitted: 3,
         });
+        // A word naming the provider matches all its models, so legacy ones stay out.
+        assert.deepEqual(listing(yield* capabilitiesWith("Codex")), [
+          { id: codexInstanceId, models: ["gpt-6", "gpt-4", "gpt-3", "my-alpha"], omitted: 1 },
+          { id: opencodeInstanceId, models: [], omitted: 0 },
+        ]);
+        assert.deepEqual(listing(yield* capabilitiesWith("codex gpt 5"))[0], {
+          id: codexInstanceId,
+          models: ["gpt-5"],
+          omitted: 0,
+        });
       }),
     );
 
@@ -3002,7 +3012,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           },
         }),
       ];
-      const calls = { tasks: 0, threads: [] as ProjectId[] };
+      const calls = { tasks: 0, threads: [] as Array<ProjectId | undefined> };
       const layer = layerOrchestratorService.pipe(
         Layer.provide(
           Layer.mergeAll(
@@ -3013,7 +3023,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               listProjectThreads: ({ projectId: target }) =>
                 Effect.sync(() => {
                   calls.threads.push(target);
-                  return [{ ...callerShell, projectId: target }];
+                  return [{ ...callerShell, projectId: target ?? projectId }];
                 }),
             }),
             ServerSettings.layerTest(),
@@ -3076,6 +3086,10 @@ describe("OrchestratorMcpService provider resolution", () => {
           .listThreads(callerScope, { projectId: foreignProjectId })
           .pipe(Effect.flip);
         assert.equal(refused.code, "thread_not_found");
+        const allProjects = yield* mcp
+          .listThreads(callerScope, { allProjects: true })
+          .pipe(Effect.flip);
+        assert.equal(allProjects.code, "thread_not_found");
         assert.deepEqual(calls.threads, []);
         const implicit = yield* mcp.listThreads(callerScope, {});
         const explicit = yield* mcp.listThreads(callerScope, { projectId });
@@ -3618,6 +3632,74 @@ describe("OrchestratorMcpService thread lookup", () => {
       ).pipe(Effect.flip);
       assert.include(allowed.message, `mcp:${bareId}`);
     }),
+  );
+});
+
+describe("OrchestratorMcpService thread list", () => {
+  const client: McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment:thread-list"),
+    requestNamespace: "client:thread-list",
+    thread: undefined,
+    client: { sessionId: "thread-list", label: "Claude Code", access: "full-access" },
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+  };
+  const shell = (id: string, projectId: string, snoozed: boolean) => ({
+    ...liveThreadShell(ThreadId.make(id)),
+    projectId: ProjectId.make(projectId),
+    status: "completed" as const,
+    snoozedUntil: snoozed ? DateTime.makeUnsafe("2099-01-01T00:00:00Z") : null,
+  });
+  const shells = [
+    shell("thread:a-snoozed", "project:a", true),
+    shell("thread:a-awake", "project:a", false),
+    shell("thread:b-snoozed", "project:b", true),
+  ];
+  const service = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          listProjectThreads: (input) =>
+            Effect.succeed(
+              shells.filter(
+                (thread) => input.projectId === undefined || thread.projectId === input.projectId,
+              ),
+            ),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        // SCIENT-FORK:START — Scient's service also requires the provider session manager.
+        Layer.mock(ProviderSessionManagerV2)({}),
+        // SCIENT-FORK:END
+      ),
+    ),
+  );
+
+  it.effect("lists snoozed threads across every project with allProjects", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      const listed = yield* mcp.listThreads(client, {
+        allProjects: true,
+        projectId: ProjectId.make("project:a"),
+        snoozed: true,
+      });
+      assert.equal(listed.projectId, null);
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => [thread.threadId, thread.projectId]),
+        [
+          ["thread:a-snoozed", "project:a"],
+          ["thread:b-snoozed", "project:b"],
+        ],
+      );
+    }).pipe(Effect.provide(service)),
   );
 });
 

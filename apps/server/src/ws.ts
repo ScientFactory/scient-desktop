@@ -721,6 +721,7 @@ function hasCompatibleOrchestrationProtocol(url: URL): boolean {
 
 function shouldUseBoundedThreadSnapshot(input: {
   readonly acceptBoundedSnapshot?: boolean;
+  readonly acceptDeferredWork?: boolean;
 }): boolean {
   return input.acceptBoundedSnapshot === true;
 }
@@ -832,6 +833,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     readonly afterSequence?: number;
     readonly requestCompletionMarker?: boolean;
     readonly acceptBoundedSnapshot?: boolean;
+    readonly acceptDeferredWork?: boolean;
     readonly acceptCompactTurnItems?: boolean;
     readonly acceptDedupedBodies?: boolean;
     readonly acceptCompactIds?: boolean;
@@ -919,6 +921,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
         useBoundedSnapshot
           ? threadManagement.getThreadSnapshotWindow(input.threadId, {
               rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+              deferWork: input.acceptDeferredWork === true,
               userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
             })
           : threadManagement.getThreadSnapshot(input.threadId)
@@ -948,11 +951,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
               projection: dedupeBodies ? dedupeSnapshotBodies(projection) : projection,
             };
           })();
-      return withLiveDedupe(
-        Stream.concat(
-          Stream.concat(rpcInitialItems([snapshotItem]), completionMarker),
-          eventStreamFrom(snapshotSequence),
-        ),
+      return rpcInitialItems([snapshotItem]).pipe(
+        Stream.concat(completionMarker),
+        Stream.concat(eventStreamFrom(snapshotSequence)),
+        withLiveDedupe,
       );
     });
 
@@ -1021,11 +1023,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       if (plan.mode === "snapshot") {
         return yield* snapshotThenLive();
       }
-      return withLiveDedupe(
-        Stream.concat(
-          Stream.concat(rpcInitialItems(replay), completionMarker),
-          eventStreamFrom(highWater),
-        ),
+      return rpcInitialItems(replay).pipe(
+        Stream.concat(completionMarker),
+        Stream.concat(eventStreamFrom(highWater)),
+        withLiveDedupe,
       );
     }
 

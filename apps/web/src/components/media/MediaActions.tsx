@@ -15,7 +15,6 @@ import {
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState, type ReactElement } from "react";
 
@@ -55,7 +54,7 @@ function allowsHostMedia(session: SessionGrantInput | null) {
 function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
   if (environmentId === null) return true;
   const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
-  return result._tag !== "Failure" && allowsHostMedia(Option.getOrNull(AsyncResult.value(result)));
+  return result._tag !== "Failure" && allowsHostMedia(AsyncResult.getOrElse(result, () => null));
 }
 
 /** Explicit byte operations get fresh capabilities without replacing a player's active source. */

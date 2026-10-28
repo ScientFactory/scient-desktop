@@ -294,9 +294,9 @@ const FULL_CATALOG_DRIVERS: ReadonlySet<string> = new Set(["codex", "claudeAgent
 const LISTED_MODEL_LIMIT = 8;
 
 /**
- * Picks the models orchestrator_capabilities shows for one provider. Hidden
- * models never appear. With search terms, lists matches; otherwise lists pinned
- * models (custom, favorite, the caller's own) plus the provider's non-legacy
+ * Picks the models orchestrator_capabilities shows for one provider. Hidden models never
+ * appear. Search words naming the provider are dropped; other words list matches. With no
+ * words left, lists pinned models (custom, favorite, the caller's own) plus non-legacy
  * models, or only the first few in the user's model order for large catalogs.
  */
 function listCapabilityModels(input: {
@@ -311,10 +311,13 @@ function listCapabilityModels(input: {
   const visible = input.provider.models
     .filter((model) => model.isCustom || !input.preferences?.hiddenModels.includes(model.slug))
     .toSorted((a, b) => (rank.get(a.slug) ?? rank.size) - (rank.get(b.slug) ?? rank.size));
-  if (input.searchTerms.length > 0) {
+  const { instanceId, driver, displayName } = input.provider;
+  const providerText = `${instanceId} ${driver} ${displayName ?? ""}`.toLowerCase();
+  const modelTerms = input.searchTerms.filter((term) => !providerText.includes(term));
+  if (modelTerms.length > 0) {
     const matches = visible.filter((model) => {
       const text = `${model.slug} ${model.name} ${model.subProvider ?? ""}`.toLowerCase();
-      return input.searchTerms.every((term) => text.includes(term));
+      return modelTerms.every((term) => text.includes(term));
     });
     const listed = matches.slice(0, LISTED_MODEL_LIMIT);
     return { listed, omitted: matches.length - listed.length };
@@ -764,6 +767,7 @@ function listItemFromShell(
 ): OrchestratorMcpThreadListItem {
   return {
     threadId: shell.id,
+    projectId: shell.projectId,
     title: shell.title,
     link: formatThreadLink({ environmentId, threadId: shell.id }),
     createdBy: shell.createdBy,
@@ -2851,13 +2855,18 @@ const make = Effect.gen(function* () {
     ),
     listThreads: Effect.fn("OrchestratorMcpService.listThreads")(function* (scope, input) {
       const { parent } = yield* loadCaller(scope);
-      const projectId = yield* resolveProjectTarget(parent, input.projectId);
-      // SCIENT-FORK:START — Explicit list targets do not widen a thread credential's project.
-      yield* assertLiveCallerForOtherProject(scope, parent, projectId);
+      const projectId = input.allProjects
+        ? null
+        : yield* resolveProjectTarget(parent, input.projectId);
+      // SCIENT-FORK:START — Explicit list targets, including allProjects, do not widen a thread credential's project.
+      if (projectId === null && parent !== undefined) {
+        return yield* failure("thread_not_found", "allProjects is outside the calling project.");
+      }
+      if (projectId !== null) yield* assertLiveCallerForOtherProject(scope, parent, projectId);
       // SCIENT-FORK:END
       const projectThreads = yield* threadManagement
         .listProjectThreads({
-          projectId,
+          projectId: projectId ?? undefined,
           includeSubagents: input.includeSubagents !== false,
         })
         .pipe(

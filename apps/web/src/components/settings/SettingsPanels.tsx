@@ -63,11 +63,7 @@ import {
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import { isMacPlatform } from "../../lib/utils";
 import { useEnvironmentProviders } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -427,19 +423,6 @@ export function LegacyFeaturesSection() {
           />
         }
       />
-      <SettingsRow
-        {...searchableSetting("legacy-sidebar")}
-        description="Restore per-project thread trees instead of the default flat sidebar."
-        control={
-          <Switch
-            checked={settings.legacySidebarEnabled}
-            onCheckedChange={(checked) =>
-              updateSettings({ legacySidebarEnabled: Boolean(checked) })
-            }
-            aria-label="Sidebar (legacy)"
-          />
-        }
-      />
     </SettingsSection>
   );
 }
@@ -549,7 +532,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you. The boring sidebar in Labs has no Working section."
           resetAction={
             settings.sidebarWorkingShelfEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
@@ -828,32 +811,6 @@ export function ChatSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("composer-collapse")}
-          description="Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again."
-          resetAction={
-            settings.composerCollapseOnScroll !==
-            DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll ? (
-              <SettingResetButton
-                label="collapse composer on scroll"
-                onClick={() =>
-                  updateSettings({
-                    composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.composerCollapseOnScroll}
-              onCheckedChange={(checked) =>
-                updateSettings({ composerCollapseOnScroll: Boolean(checked) })
-              }
-              aria-label="Collapse composer on scroll"
-            />
           }
         />
         <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
@@ -1220,12 +1177,10 @@ export function ThreadsSettingsPanel() {
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
-  const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(textGenerationProviders),
-      settings,
-      target?.projectId ?? null,
-    ),
+  const textGenerationModelInstanceEntries = providerInstanceEntriesFor(
+    textGenerationProviders,
+    settings,
+    target?.projectId ?? null,
   );
   const hasTextGenerationProvider = textGenerationModelInstanceEntries.some(
     (entry) => entry.enabled && entry.isAvailable,

@@ -21,7 +21,7 @@ import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
-import { buildScientOrchestrationPromptForFirstRun } from "../../provider/ScientProviderInstructions.ts";
+import { buildScientOrchestrationPrompt } from "../../provider/ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import {
@@ -533,7 +533,7 @@ export function layer(
         instanceId: CURSOR_DEFAULT_INSTANCE_ID,
         environment: yield* HostProcess.Environment,
         // SCIENT-FORK:START — replay through Scient's provider instructions and turn receipts.
-        orchestrationPromptForFirstRun: buildScientOrchestrationPromptForFirstRun,
+        orchestrationPromptForFirstRun: buildScientOrchestrationPrompt,
         runtimeInstructions: buildScientRuntimeInstructions,
         turnStartError: (turnIdentity, cause) =>
           turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),

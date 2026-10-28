@@ -1,5 +1,5 @@
-import { Check, Copy, Maximize2, Minimize2 } from "lucide";
-import { useRef, useState, type ComponentProps } from "react";
+import { Check, Copy } from "lucide";
+import { useRef, type ComponentProps } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
@@ -15,8 +15,7 @@ import { reportMarkdownActionFailure } from "./markdownActionFailure";
 
 export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table">) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  // SCIENT-FORK:START — tables start readable, independently of code word-wrap.
-  const [expanded, setExpanded] = useState(true);
+  // SCIENT-FORK:START — one direction for the table and its scroll viewport.
   const tableDirection = dir === "rtl" ? "rtl" : "ltr";
   // SCIENT-FORK:END
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard<"markdown" | "csv">({
@@ -24,7 +23,6 @@ export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table
     onError: (cause, format) =>
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause),
   });
-  const expandLabel = expanded ? "Collapse table cells" : "Expand table cells";
   const copyLabel = copied ? "Copied" : "Copy table";
 
   const handleCopy = (format: "markdown" | "csv") => {
@@ -42,7 +40,6 @@ export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table
     <div
       ref={containerRef}
       className="chat-markdown-table-container"
-      data-expanded={expanded ? "true" : "false"}
       // SCIENT-FORK:START — one direction for the table and its scroll viewport.
       dir={tableDirection}
       // SCIENT-FORK:END
@@ -61,24 +58,7 @@ export function MarkdownTable({ children, dir, ...props }: ComponentProps<"table
       </ScrollArea>
       {/* SCIENT-FORK:END */}
       {/* Stays within the row's px-1: the chat lane clips sideways overflow. */}
-      <div className="mt-0.5 -mx-1 flex items-center justify-between select-none">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                variant={expanded ? "secondary" : "ghost-muted"}
-                size="icon-xs"
-                aria-pressed={expanded}
-                onClick={() => setExpanded((value) => !value)}
-                aria-label={expandLabel}
-              />
-            }
-          >
-            <MorphIcon className="size-3" icon={expanded ? Minimize2 : Maximize2} />
-          </TooltipTrigger>
-          <TooltipPopup side="top">{expandLabel}</TooltipPopup>
-        </Tooltip>
+      <div className="mt-0.5 -mx-1 flex items-center justify-end select-none">
         <Menu>
           <Tooltip>
             <TooltipTrigger

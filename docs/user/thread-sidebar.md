@@ -180,7 +180,7 @@ automatic positions separately.
 
 When **Working section (beta)** is on, the default sidebar uses that feature's own ordering
 instead. Automatic placement still works in Sections view. Search results keep their search order;
-the mobile app and legacy sidebar keep their existing behavior.
+the mobile app keeps its existing behavior.
 
 ## Start a new thread
 
@@ -315,6 +315,18 @@ cannot drag or move threads within it. Your saved order returns when you turn it
 
 This belongs to the default Pinned and Active layout. Turn off **Group by section** to use it;
 the Sections view replaces that layout and never folds threads into a shelf.
+
+### Group threads by project (beta)
+
+Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
+threads in a folder for each project. A project with no active threads has no folder until you
+pick it in the project filter. Click a folder to open or close it. A closed folder shows how
+many threads it holds, and a dot when one of them needs you. Use the pen button on a folder, or
+right-click it, to start a thread in that project. Pinned threads stay above the folders, and
+Snoozed and Settled stay below them. In this mode you cannot drag threads, and the Working section
+is off. Each device keeps its own choice.
+Folders replace the default Pinned and Active layout; with **Group by section** on, the Sections
+view shows instead.
 
 ## Settle finished work
 

@@ -31,6 +31,9 @@ import { ScanTextIcon } from "lucide-react";
 import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
 import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
 import { subagentWorkflowIdsFor } from "~/scient/presentation/subagentRowGroups";
+import { threadEnvironment } from "../../state/threads";
+import { useAtomCommand } from "../../state/use-atom-command";
+import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
@@ -68,6 +71,7 @@ import {
   use,
   useContext,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -81,12 +85,12 @@ import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
 import { ArrowRightIcon, BotIcon, CircleAlertIcon } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
+import { Skeleton } from "../ui/skeleton";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
   type RememberedTimelinePosition,
-  timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -259,6 +263,7 @@ interface MessagesTimelineProps {
   displayThreadKey?: string;
   /** Off where another region already speaks the thread's status, like a subagent's bar. */
   announceTurnStatus?: boolean;
+  onOpenToolDiff?: (target: ToolCallDiffTarget) => void;
   onOpenTurnDiff?: (runId: RunId, filePath?: string) => void;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
@@ -317,12 +322,6 @@ interface MessagesTimelineProps {
   // to its end.
   onUnreadBelowChange?: (count: number) => void;
   // SCIENT-FORK:END
-  /**
-   * Whether the real rows extend past the viewport above the composer.
-   * Reported after scrolls, row size changes, and viewport resizes.
-   */
-  onContentOverflowChange?: (overflows: boolean) => void;
-  onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
   /** The footer's content grew, such as a new queued turn or status line. */
   onFooterGrow?: () => void;
@@ -400,6 +399,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   routeThreadKey,
   displayThreadKey,
   announceTurnStatus = true,
+  onOpenToolDiff,
   onOpenTurnDiff,
   onOpenThread,
   renderHtmlRender,
@@ -446,8 +446,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — the unread count below.
   onUnreadBelowChange,
   // SCIENT-FORK:END
-  onContentOverflowChange,
-  onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
   // SCIENT-FORK:START
@@ -486,11 +484,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — the reading end, the loaded list and older-history paging for the restore.
   // Whether the latest run is unfinished: its latest content is then the reading end.
   const turnUnfinished = latestTurnUnfinished(runningRunId, latestRun?.status);
-  const turnUnfinishedRef = useRef(turnUnfinished);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed turn state to a ref read by scroll and restore callbacks
-  useLayoutEffect(() => {
-    turnUnfinishedRef.current = turnUnfinished;
-  });
   const [readingListLoaded, setReadingListLoaded] = useState(false);
   const requestedReadingPages = useRef({ key: listIdentityKey, cursors: new Set<string>() });
   // Runs before the restore target's paging effect, which reads these cursors.
@@ -592,9 +585,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   }, []);
 
-  // SCIENT-FORK:START — a toggle never pins the end; the toggled row keeps its place, and
-  // collapsing at the reading end still reports it (no settling identity, no end pin).
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string, collapsed = false) => {
+  // SCIENT-FORK:START — a toggle never pins the end; the toggled row keeps its place
+  // (no settling identity, no end pin).
+  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string) => {
     disclosureAnchorKeyRef.current = anchorKey;
     setDisclosureToggleSettling(true);
     if (disclosureSettleFrameRef.current !== null) {
@@ -609,18 +602,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
         disclosureSettleSecondFrameRef.current = null;
-        // Wait for row measurement and the disclosure click's blur check.
-        // Closing output can reveal the end without a scroll event.
-        if (
-          collapsed &&
-          readerAtReadingEnd(
-            listRef.current?.getState(),
-            contentInsetEndAdjustment,
-            turnUnfinishedRef.current,
-          ) === true
-        ) {
-          onToolOutputCollapsedAtEnd?.();
-        }
       });
     });
   };
@@ -644,7 +625,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey, expandedWorkGroupIds.has(groupId));
+    suspendEndScrollMaintenanceForDisclosure(anchorKey);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
@@ -1013,34 +994,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     size: true,
     shouldRestorePosition: shouldRestoreVisibleContentPosition,
   };
-  const measureContentOverflow = () =>
-    timelineContentOverflowsViewport(listRef.current?.getState?.(), {
-      composerInset: contentInsetEndAdjustment,
-      anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
-    });
-  // Read next frame, after LegendList's layout effects settle row positions.
-  const contentOverflowFrameRef = useRef<number | null>(null);
-  const cancelContentOverflowFrame = () => {
-    if (contentOverflowFrameRef.current !== null) {
-      cancelAnimationFrame(contentOverflowFrameRef.current);
-      contentOverflowFrameRef.current = null;
-    }
-  };
-  const reportContentOverflow = () => {
-    if (!onContentOverflowChange || contentOverflowFrameRef.current !== null) return;
-    contentOverflowFrameRef.current = requestAnimationFrame(() => {
-      contentOverflowFrameRef.current = null;
-      onContentOverflowChange(measureContentOverflow());
-    });
-  };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending content-overflow measurement frame on unmount
-  useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures LegendList content overflow after rows are added or removed
-  useLayoutEffect(() => {
-    cancelContentOverflowFrame();
-    onContentOverflowChange?.(measureContentOverflow());
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Added or removed rows change the content height.
-  }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
   // SCIENT-FORK:START — remember the reading position by row identity; the unread badge's
   // unit; where the reader rests at the reading end.
@@ -1212,7 +1165,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
     lastBookkeepingScrollRef.current = scrollNow;
     // SCIENT-FORK:END
-    reportContentOverflow();
     scheduleMinimapRefresh();
   };
 
@@ -1267,7 +1219,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
       setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
-      reportContentOverflow();
     };
 
     const frame = requestAnimationFrame(measure);
@@ -1279,7 +1230,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       stopObserving();
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Rows and chat width resize the content without resizing the viewport.
-  }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
+  }, [timelineViewportElement, rows.length, chatWidth]);
 
   const sharedState: TimelineRowSharedState = {
     pendingApprovals: pendingApprovalsByRequestId,
@@ -1312,6 +1263,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onAppFullscreenChange,
     onFileDownload,
     openPullRequest,
+    onOpenToolDiff,
     onOpenTurnDiff,
     onOpenThread,
     renderHtmlRender,
@@ -1417,10 +1369,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
-  const setTimelineList = (list: LegendListRef | null) => {
+  // Stable so the list attaches once per mount, not on every render.
+  const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
     registerTimeline?.(list?.getScrollableNode() ?? null);
-  };
+  });
 
   useThreadFindPositionReader({
     threadKey: listIdentityKey,
@@ -1480,10 +1433,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
       >
-        <div
-          className="@container/chat-lane chat-content-lane overflow-x-clip"
-          data-timeline-root="true"
-        >
+        <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
           <AudioPreviewUnmountContext value={onAudioUnmount}>
             <TimelineRowContent row={item} />
           </AudioPreviewUnmountContext>
@@ -1501,10 +1451,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       {unmatchedPendingApprovals.size > 0 ? (
         <TimelineRowCtx value={sharedState}>
           <div className="messages-timeline-row-frame">
-            <div
-              className="@container/chat-lane chat-content-lane overflow-x-clip"
-              data-timeline-root="true"
-            >
+            <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
               <WorkLogBlock>
                 {[...unmatchedPendingApprovals.values()].map((approval) => (
                   <TimelinePendingApprovalRow key={approval.requestId} approval={approval} />
@@ -1771,7 +1718,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           {/* SCIENT-FORK:END */}
         </WorkLogBlock>
       ) : null}
-      {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
+      {row.kind === "turn-fold" ? <TurnFoldTimelineRow key={row.id} row={row} /> : null}
       {/* SCIENT-FORK:START — "Conversation forked here" (scient/fork/ForkMarkerSeparator.tsx). */}
       {row.kind === "fork-marker" ? <ForkMarkerTimelineRow row={row} /> : null}
       {/* SCIENT-FORK:END */}
@@ -1878,49 +1825,124 @@ function ContextCompactionTimelineRow({
   );
 }
 
+function useDeferredWorkLoading(
+  row: { expanded: boolean; deferredWorkItemIds?: ReadonlyArray<string> },
+  onToggle: () => void,
+) {
+  const ctx = use(TimelineRowCtx);
+  const loadWork = useAtomCommand(threadEnvironment.loadEarlierHistory, { reportFailure: false });
+  const ref = parseScopedThreadKey(ctx.routeThreadKey);
+  const environmentId = ref?.environmentId;
+  const threadId = ref?.threadId;
+  const anchorsKey = row.deferredWorkItemIds?.join("\n") ?? "";
+  const [failed, setFailed] = useState(false);
+  const load = () => {
+    if (!anchorsKey || environmentId === undefined || threadId === undefined) return;
+    void Promise.all(
+      anchorsKey
+        .split("\n")
+        .map((workAnchorId) => loadWork({ environmentId, input: { threadId, workAnchorId } })),
+    ).then((results) =>
+      setFailed(
+        results.some((result) => result._tag === "Failure" || result.value._tag === "error"),
+      ),
+    );
+  };
+  const loadOnExpand = useEffectEvent(load);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restored expanded folds load their deferred server history on mount.
+  useEffect(() => {
+    if (row.expanded && anchorsKey && environmentId && threadId) loadOnExpand();
+  }, [row.expanded, anchorsKey, environmentId, threadId]);
+  const error = anchorsKey && failed ? "Couldn't load work. Click to retry." : null;
+  const loading = ref !== null && row.expanded && anchorsKey !== "" && !failed;
+  const toggle = () => {
+    setFailed(false);
+    if (error && row.expanded) load();
+    else onToggle();
+  };
+
+  return { loading, error, toggle };
+}
+
+function WorkHistorySkeleton() {
+  return (
+    <div role="status" aria-label="Loading work history" className="space-y-2 px-1 pb-1 pt-3">
+      {[0, 1, 2].map((index) => (
+        <div key={index} className="flex items-center gap-2" aria-hidden="true">
+          <Skeleton className="size-3 shrink-0" />
+          <Skeleton
+            shape="pill"
+            className={index === 0 ? "h-2.5 w-2/5" : index === 1 ? "h-2.5 w-3/5" : "h-2.5 w-1/3"}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
+    ctx.onToggleTurnFold(row.runId),
+  );
 
   return (
-    <div className="group/timeline-row relative flex items-center gap-1 border-b border-border/60 pb-2 pe-0.5 pt-1">
-      <button
-        type="button"
-        aria-expanded={row.expanded}
-        data-scroll-anchor-ignore
-        onClick={() => ctx.onToggleTurnFold(row.runId)}
-        className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      >
-        <span>{row.label}</span>
-        <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
-      </button>
-      <TimelineRowTimestamp
-        createdAt={row.createdAt}
-        timestampFormat={ctx.timestampFormat}
-        className="ms-auto"
-      />
+    <div className="group/timeline-row border-b border-border/60 pb-2 pe-0.5 pt-1">
+      <div className="relative flex items-center gap-1">
+        <button
+          type="button"
+          aria-expanded={row.expanded}
+          data-scroll-anchor-ignore
+          onClick={toggle}
+          aria-busy={loading}
+          className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        >
+          <span>
+            {row.label}
+            {error ? ` · ${error}` : ""}
+          </span>
+          <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
+        </button>
+        <TimelineRowTimestamp
+          createdAt={row.createdAt}
+          timestampFormat={ctx.timestampFormat}
+          className="ms-auto"
+        />
+      </div>
+      {loading ? <WorkHistorySkeleton /> : null}
     </div>
   );
 }
 
 function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "attempt-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
+    ctx.onToggleAttemptFold(row.attemptId),
+  );
 
   return (
-    <button
-      type="button"
-      aria-expanded={row.expanded}
-      data-scroll-anchor-ignore
-      data-superseded-attempt-id={row.attemptId}
-      onClick={() => ctx.onToggleAttemptFold(row.attemptId)}
-      className="flex w-full cursor-pointer select-none items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-    >
-      <MorphIcon
-        className="size-3.5 shrink-0 text-muted-foreground"
-        icon={row.expanded ? ChevronDown : ChevronRight}
-      />
-      <span className="text-xs font-medium text-foreground/80">{row.label}</span>
-      <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
-    </button>
+    <div>
+      <button
+        type="button"
+        aria-expanded={row.expanded}
+        data-scroll-anchor-ignore
+        data-superseded-attempt-id={row.attemptId}
+        onClick={toggle}
+        aria-busy={loading}
+        className="flex w-full cursor-pointer select-none items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      >
+        <MorphIcon
+          className="size-3.5 shrink-0 text-muted-foreground"
+          icon={row.expanded ? ChevronDown : ChevronRight}
+        />
+        <span className="text-xs font-medium text-foreground/80">
+          {row.label}
+          {error ? ` · ${error}` : ""}
+        </span>
+        <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
+      </button>
+      {loading ? <WorkHistorySkeleton /> : null}
+    </div>
   );
 }
 

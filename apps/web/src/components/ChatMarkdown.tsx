@@ -77,6 +77,7 @@ import {
 import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { InlineAudioPreview } from "./files/InlineAudioPreview";
+import { HostImageUrlContext } from "./chat/hostImageUrl";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -1769,6 +1770,24 @@ const CHAT_MARKDOWN_COMPONENTS = {
           // SCIENT-FORK:END
           actionsSource={actionsSource}
           originalUrl={originalUrl}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
+    const hostImageUrl = use(HostImageUrlContext);
+    if (imageSource._tag === "WorkspaceFile" && kind === "image" && hostImageUrl !== null) {
+      const hostSrc = hostImageUrl(imageSource.path);
+      return (
+        <ChatMarkdownImage
+          key={hostSrc}
+          src={hostSrc}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          className={className}
+          style={authoredSizeStyle}
+          imageProps={imageProps}
+          actionsSource={{ kind, name: altText || kind, src: hostSrc }}
           onImageExpand={imageExpand}
         />
       );

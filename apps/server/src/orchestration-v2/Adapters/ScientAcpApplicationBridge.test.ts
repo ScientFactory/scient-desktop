@@ -12,15 +12,34 @@ describe("Scient ACP application bridge", () => {
   it("keeps Scient prompt and runtime copy on the shared non-awareness bridge", () => {
     const prompt = scientAcpProviderBridge.composePrompt?.({
       prompt: "Continue.",
-      state: { interactionMode: "default", hasT3Mcp: true },
+      state: { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: true },
     });
     const runtime = scientAcpProviderBridge.runtimeInstructions?.({ harness: "ACP" });
 
     assert.include(prompt, "Scient interaction mode: Default");
     assert.include(prompt, "## Scient browser");
     assert.include(prompt, "Scient orchestration");
+    assert.include(prompt, "## Scient devices");
     assert.include(runtime, "running in Scient through the ACP harness");
     assert.notInclude(runtime, "T3 Code");
+  });
+
+  it("leaves the device block to awareness on the awareness bridge", () => {
+    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: true } as const;
+    const prompt = scientAcpApplicationBridge.composePrompt({ prompt: "Continue.", state });
+    const awareness = scientAcpApplicationBridge.scientAwareness(new Set(["device"]));
+
+    assert.notInclude(prompt, "## Scient devices");
+    assert.include(prompt, "Scient orchestration");
+    assert.include(awareness, "## Scient devices");
+    assert.equal(
+      scientAcpApplicationBridge.composePrompt({
+        prompt: "Again.",
+        state,
+        previousState: { ...state, hasDeviceTools: false },
+      }),
+      "Again.",
+    );
   });
 
   it("builds awareness only from capabilities granted to this session", () => {

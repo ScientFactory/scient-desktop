@@ -104,7 +104,7 @@ import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useRemoteOpenState } from "~/remoteOpen";
-import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
+import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 // SCIENT-FORK:START — the file list's state moved to usePanelFilesOpen
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -1563,7 +1563,9 @@ export default function FilePreviewPanel({
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
-  const wordWrap = useClientSettings((settings) => settings.wordWrap);
+  const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
+  const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
@@ -2347,7 +2349,7 @@ export default function FilePreviewPanel({
             <FileSurfaceAction
               label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
               pressed={wordWrap}
-              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+              onPress={() => setWordWrapOverride(!wordWrap)}
             >
               <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
@@ -2651,6 +2653,7 @@ export default function FilePreviewPanel({
               onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
               revealLine={currentRevealLine}
               revealRequestId={revealRequestId}
+              wordWrap={wordWrap}
             />
           ) : relativePath &&
             absolutePath &&
@@ -3005,6 +3008,7 @@ export function WorkspaceLargeTextPreview(props: {
   onSaveCopy?: (() => void) | undefined;
   revealLine: number | null;
   revealRequestId: number;
+  wordWrap: boolean;
 }) {
   const resource = {
     _tag: "media-file",
@@ -3091,6 +3095,7 @@ export function WorkspaceLargeTextPreview(props: {
           delimiter={props.delimiter}
           revealLine={props.revealLine}
           revealRequestId={props.revealRequestId}
+          wordWrap={props.wordWrap}
         />
       </Suspense>
     </>

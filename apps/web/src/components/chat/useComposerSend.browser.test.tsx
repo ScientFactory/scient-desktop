@@ -192,8 +192,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
     const handle: ChatComposerHandle = {
       focusAtEnd: noop,
       focusAt: noop,
-      restoreAfterTimelineReachedEnd: noop,
-      collapseForTimelineScrollKey: noop,
       addDroppedFiles: noop,
       addDroppedFolders: noop,
       hasPendingAttachments: () => countPreparingComposerImages(composerTargetKey(target)) > 0,

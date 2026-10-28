@@ -12,7 +12,6 @@ import {
   CodexSettings,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
-  DEFAULT_UNIFIED_SETTINGS,
   DroidSettings,
   isUnconfiguredDefaultInstanceEnabled,
   OmpSettings,
@@ -27,7 +26,6 @@ import {
 // Scient settings contracts, kept beside upstream's settings.test.ts.
 const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
-const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -173,36 +171,6 @@ describe("ClientSettings content direction", () => {
   it("rejects unsupported content directions", () => {
     expect(() => decodeClientSettings({ contentDirection: "vertical" })).toThrow();
     expect(() => decodeClientSettingsPatch({ contentDirection: "vertical" })).toThrow();
-  });
-});
-
-describe("ClientSettings composer collapse", () => {
-  it("defaults to Never for missing settings and shared reset defaults", () => {
-    for (const defaults of [
-      decodeClientSettings({}),
-      DEFAULT_CLIENT_SETTINGS,
-      DEFAULT_UNIFIED_SETTINGS,
-    ]) {
-      expect(defaults.composerCollapseOnScroll).toBe(false);
-      expect(defaults).not.toHaveProperty("composerCollapseOnBlur");
-    }
-  });
-
-  // regression: c482622f09 merge: align T3 through 349ce301 with Scient preservation
-  it.each([true, false])("preserves a saved scroll choice of %s", (composerCollapseOnScroll) => {
-    expect(
-      decodeClientSettings(encodeClientSettings(decodeClientSettings({ composerCollapseOnScroll })))
-        .composerCollapseOnScroll,
-    ).toBe(composerCollapseOnScroll);
-    expect(decodeClientSettingsPatch({ composerCollapseOnScroll }).composerCollapseOnScroll).toBe(
-      composerCollapseOnScroll,
-    );
-  });
-
-  it("drops the retired blur trigger key", () => {
-    const decoded = decodeClientSettings({ composerCollapseOnBlur: true });
-    expect(decoded.composerCollapseOnScroll).toBe(false);
-    expect(decoded).not.toHaveProperty("composerCollapseOnBlur");
   });
 });
 

@@ -9,10 +9,8 @@ import { useNavigate } from "@tanstack/react-router";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
+  providerInstanceEntriesFor,
   resolveDefaultModelSettingsSelection,
-  sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -67,13 +65,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     storedSelection,
   );
   // SCIENT-FORK:END
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(providers),
-      settings,
-      target?.projectId ?? null,
-    ),
-  );
+  const entries = providerInstanceEntriesFor(providers, settings, target?.projectId ?? null);
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
     providers,

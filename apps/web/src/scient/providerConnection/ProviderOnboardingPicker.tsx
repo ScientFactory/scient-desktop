@@ -20,7 +20,7 @@ import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-r
 import { useEffect, useState } from "react";
 
 import { ModelPickerNewChatFooter } from "../../components/chat/ModelPickerNewChatFooter";
-import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
+import { ComposerControl } from "../../components/chat/ComposerControl";
 import { composerFloatingLayerProps } from "../../components/chat/composerEventScope";
 import {
   DRIVER_OPTIONS,
@@ -259,7 +259,7 @@ export function ProviderOnboardingPicker(props: {
                 ref={pickerTriggerRef}
                 aria-label={reconnectEntry ? triggerLabel : "Choose and connect your AI"}
                 className={cn(
-                  "-ms-px min-w-0 justify-between whitespace-nowrap ps-0",
+                  "min-w-0 justify-between whitespace-nowrap",
                   props.compact ? "max-w-48 shrink-0" : "max-w-60 shrink sm:max-w-64",
                 )}
                 data-provider-onboarding-trigger="true"
@@ -285,7 +285,6 @@ export function ProviderOnboardingPicker(props: {
                 </span>
               ) : null}
             </span>
-            <ComposerControlChevron />
           </PopoverTrigger>
           <PopoverPopup
             {...composerFloatingLayerProps}

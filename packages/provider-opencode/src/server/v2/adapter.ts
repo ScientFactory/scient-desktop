@@ -109,7 +109,10 @@ export interface OpenCode2AdapterOptions {
   readonly runtimeGuidance?: (capabilities: ReadonlySet<string> | undefined) => string;
   // SCIENT-FORK:START — optional host copy keeps the package generic by default.
   /** Host-owned orchestration text; the package keeps its generic T3 default. */
-  readonly orchestrationSystemPrompt?: (hasMcp: boolean) => string | undefined;
+  readonly orchestrationSystemPrompt?: (
+    hasMcp: boolean,
+    hasDeviceTools: boolean,
+  ) => string | undefined;
   /** Host-owned runtime text; the package keeps its generic T3 default. */
   readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
   // SCIENT-FORK:END
@@ -3220,7 +3223,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           harness: "OpenCode",
           model: turnInput.modelSelection.model,
         }),
-        (options.orchestrationSystemPrompt ?? t3OrchestrationSystemPrompt)(mcpAvailable),
+        (options.orchestrationSystemPrompt ?? t3OrchestrationSystemPrompt)(
+          mcpAvailable,
+          mcpSession?.capabilities?.has("device") === true,
+        ),
         // SCIENT-FORK:END
       ]
         .filter((part) => part !== undefined && part.length > 0)

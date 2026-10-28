@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -275,11 +276,13 @@ function sameFrame(
   strict = false,
 ): boolean {
   const normalize = (frame: unknown) =>
-    stableStringify(
-      strict
-        ? normalizeReplayFrame(frame, true)
-        : normalizeThreadRequest(normalizeReplayFrame(frame), ignoredConfigKeys),
-    );
+    strict
+      ? stableStringify(normalizeReplayFrame(frame, true))
+      : pipe(
+          normalizeReplayFrame(frame),
+          (request) => normalizeThreadRequest(request, ignoredConfigKeys),
+          stableStringify,
+        );
   return normalize(left) === normalize(right);
 }
 

@@ -18,7 +18,9 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
 // The real source view highlights through a worker pool; the text it receives is what matters here.
 // Never load the original: its highlighter graph can outlast waitFor on a cold CI browser.
 vi.mock(import("./ReadOnlySourcePreview"), () => ({
-  default: ({ text }: { text: string }) => <pre>{text}</pre>,
+  default: ({ text, wordWrap }: { text: string; wordWrap?: boolean }) => (
+    <pre data-word-wrap={String(wordWrap)}>{text}</pre>
+  ),
 }));
 
 // The Word engine compiles about 30 MB of WebAssembly in a fresh worker per document, which took
@@ -41,6 +43,7 @@ vi.mock(import("./office/WordDocument"), async () => {
   };
 });
 
+import { getClientSettings } from "~/hooks/useSettings";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -497,6 +500,7 @@ describe("large text preview recovery", () => {
           refreshKey={0}
           revealLine={null}
           revealRequestId={0}
+          wordWrap
         />
       </div>
     );
@@ -2199,8 +2203,10 @@ it("refreshes authorization and retries a failed streamed attachment", async () 
       />,
     );
     await screen.getByRole("button", { name: "Details", exact: true }).click();
-    await vi.waitFor(() =>
-      expect(screen.container.textContent).toContain("This file contains binary data."),
+    // A cold large-text worker can take longer than waitFor's default to boot on CI.
+    await vi.waitFor(
+      () => expect(screen.container.textContent).toContain("This file contains binary data."),
+      { timeout: 10_000 },
     );
     await screen.getByRole("button", { name: "Try again", exact: true }).click();
     await vi.waitFor(() => expect(screen.container.textContent).toContain("recovered text"));
@@ -2260,7 +2266,10 @@ it("copies every indexed line rather than the mounted preview rows", async () =>
     <LargeTextViewer name="whole.txt" text={text} delimiter={null} copyContents={copyContents} />,
   );
   await vi.waitFor(() => expect(screen.container.textContent).toContain("line-0"));
-  await vi.waitFor(async () => expect(await copyContents.current!()).toBe(text));
+  // Copy rejects until the worker finishes indexing, which a cold worker can delay past waitFor's default on CI.
+  await vi.waitFor(async () => expect(await copyContents.current!()).toBe(text), {
+    timeout: 10_000,
+  });
   const first = copyContents.current!();
   await expect(copyContents.current!()).rejects.toThrow("Another copy is in progress.");
   expect(await first).toBe(text);
@@ -2327,8 +2336,6 @@ it("loads a font attachment through the lazy preview", async () => {
   const { default: fontUrl } =
     await import("../../../node_modules/@betteroffice/fonts/assets/Carlito-Regular.ttf?url");
   const file = await (await fetch(fontUrl)).blob();
-  // Both lazy chunks can take longer than waitFor allows to load cold on CI.
-  await Promise.all([import("./FontFilePreview"), import("./FontViewer")]);
   await using screen = await render(
     <AttachmentFilePreview
       name="Carlito.ttf"
@@ -2337,12 +2344,16 @@ it("loads a font attachment through the lazy preview", async () => {
       file={file}
     />,
   );
-  await vi.waitFor(() => {
-    const frame = screen.container.querySelector("iframe");
-    expect(frame?.title).toBe("Carlito.ttf");
-    expect(frame?.srcdoc).toContain("@font-face");
-    expect(frame?.srcdoc).toContain("The quick brown fox");
-  });
+  // Two cold lazy chunks plus decoding a 600 KB font can take longer than waitFor's default on CI.
+  await vi.waitFor(
+    () => {
+      const frame = screen.container.querySelector("iframe");
+      expect(frame?.title).toBe("Carlito.ttf");
+      expect(frame?.srcdoc).toContain("@font-face");
+      expect(frame?.srcdoc).toContain("The quick brown fox");
+    },
+    { timeout: 10_000 },
+  );
   expect(screen.container.querySelector('[role="alert"]')).toBeNull();
 });
 
@@ -2378,6 +2389,23 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
 });
 
 // Scient PDF rendering/asset guards live in scient/pdf/pdfRendering.scient.browser.test.tsx and pdfAssetDelivery.scient.test.ts.
+
+it("unwraps one text attachment without turning off the word wrap setting", async () => {
+  const file = new Blob(["a long line"], { type: "text/plain" });
+  await using screen = await render(
+    <AttachmentFilePreview
+      name="notes.txt"
+      mimeType={file.type}
+      sizeBytes={file.size}
+      file={file}
+    />,
+  );
+  await screen.getByRole("button", { name: "Disable word wrap" }).click();
+  await expect.element(screen.getByRole("button", { name: "Enable word wrap" })).toBeVisible();
+  expect(getClientSettings().wordWrap).toBe(true);
+  expect(screen.container.querySelector("pre")?.dataset.wordWrap).toBe("false");
+});
+
 it("mounts a bounded set of saved notebook outputs as the reader scrolls", async () => {
   const notebook = {
     nbformat: 4,

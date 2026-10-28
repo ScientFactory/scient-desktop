@@ -12,9 +12,10 @@ import { SCIENT_AGENT_COPY_DIFFERENCES, scientAgentToolCopy } from "./ScientAgen
 import { buildScientAwareness } from "./ScientAwareness.ts";
 import {
   buildScientAcpPromptWithInstructions,
-  buildScientOrchestrationPromptForFirstRun,
+  buildScientOrchestrationPrompt,
   buildScientOrchestrationSystemPrompt,
   SCIENT_CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS,
+  SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   SCIENT_ORCHESTRATION_INSTRUCTIONS,
 } from "./ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
@@ -50,16 +51,26 @@ const agentText: Record<string, string> = {
     awareness,
     runtime("Claude Code"),
     SCIENT_ORCHESTRATION_INSTRUCTIONS + SCIENT_CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS,
+    SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   ].join("\n"),
   "acp, acpRegistry": [
     ...(["default", "plan"] as const).map((interactionMode) =>
-      buildScientAcpPromptWithInstructions({ prompt, state: { interactionMode, hasT3Mcp: true } }),
+      buildScientAcpPromptWithInstructions({
+        prompt,
+        state: { interactionMode, hasT3Mcp: true, hasDeviceTools: true },
+      }),
     ),
     awareness,
     runtime("ACP"),
   ].join("\n"),
   cursor: [
-    buildScientOrchestrationPromptForFirstRun({ prompt, runOrdinal: 1, hasT3Mcp: true }),
+    buildScientOrchestrationPrompt({
+      prompt,
+      hasT3Mcp: true,
+      hasDeviceTools: true,
+      orchestrationDelivered: false,
+      deviceInstructionsDelivered: false,
+    }),
     runtime("Cursor"),
   ].join("\n"),
   opencode: [buildScientOrchestrationSystemPrompt(true), awareness, runtime("OpenCode")].join("\n"),
@@ -68,7 +79,7 @@ const agentText: Record<string, string> = {
 };
 
 // T3's product and tool names; `t3-thread://` links and `T3_*` variables are compatibility names.
-const T3_NAME = /\bT3\b|\bt3_[a-z]|\bt3-code\b|mcp__t3_/g;
+const T3_NAME = /\bT3\b|\bt3_[a-z]|\bt3-code\b|mcp__t3[-_]/g;
 
 it("gives every provider's agent Scient's names, built from upstream's current copy", () => {
   for (const [channel, text] of Object.entries(agentText)) {

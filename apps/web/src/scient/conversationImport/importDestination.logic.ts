@@ -17,9 +17,7 @@ import { resolveNewThreadModelSelectionOverride } from "../../lib/chatThreadActi
 import { sortThreads, type ThreadSortInput } from "@t3tools/client-runtime/state/thread-sort";
 import {
   NO_PROVIDER_MODEL_SELECTION,
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
+  providerInstanceEntriesFor,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { resolveAntigravityDraftSelection } from "../providerConnection/antigravityDraftSelection";
@@ -72,9 +70,7 @@ export function newChatModelSelection(input: {
   };
   // A draft thread's own selection, as the chat view builds it.
   const threadModelSelection = projectDefault ?? NO_PROVIDER_MODEL_SELECTION;
-  const entries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings, project.id),
-  );
+  const entries = providerInstanceEntriesFor(providers, settings, project.id);
   const { selectedProviderEntry } = resolveComposerProviderSelection({
     entries,
     candidateInstanceIds: [

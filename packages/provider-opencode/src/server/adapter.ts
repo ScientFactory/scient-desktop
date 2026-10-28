@@ -427,7 +427,10 @@ export interface OpenCodeAdapterV2Options {
   readonly runtimeGuidance?: (capabilities: ReadonlySet<string> | undefined) => string;
   // SCIENT-FORK:START — optional host copy keeps the package generic by default.
   /** Host-owned orchestration text; the package keeps its generic T3 default. */
-  readonly orchestrationSystemPrompt?: (hasMcp: boolean) => string | undefined;
+  readonly orchestrationSystemPrompt?: (
+    hasMcp: boolean,
+    hasDeviceTools: boolean,
+  ) => string | undefined;
   /** Host-owned runtime text; the package keeps its generic T3 default. */
   readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
   // SCIENT-FORK:END
@@ -988,7 +991,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         // SCIENT-FORK:START — select host copy without changing MCP availability gating.
         const orchestrationSystemPrompt = (
           options.orchestrationSystemPrompt ?? t3OrchestrationSystemPrompt
-        )(hasT3Mcp);
+        )(hasT3Mcp, mcpSession?.capabilities?.has("device") === true);
         // SCIENT-FORK:END
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>

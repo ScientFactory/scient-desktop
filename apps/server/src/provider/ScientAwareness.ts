@@ -1,5 +1,6 @@
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 
+import { SCIENT_DEVICE_TOOL_INSTRUCTIONS } from "./ScientProviderInstructions.ts";
 import {
   CANONICAL_SCIENT_TOOL_PROJECTION,
   type ScientToolProjection,
@@ -20,10 +21,6 @@ Scient's preview tools drive the browser the user also sees. For browser work, u
 export const SCIENT_PREVIEW_AWARENESS = buildScientPreviewAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
 );
-
-/** Included only when the session may drive the environment's mobile devices. */
-const SCIENT_DEVICE_AWARENESS = `## Scient devices
-The \`device_*\` tools control iOS Simulators and Android Emulators on this environment. For mobile verification, call \`device_list\`, then \`device_open\` so the user can watch the device in Scient's Device panel. Drive it with the \`agent-device\` CLI placed on PATH for this session, preserving the host configuration and session flags returned by \`device_open\`. Prefer interactive snapshot refs over coordinates, and use \`device_screenshot\` when visual inspection is needed. Platform tools such as \`xcrun simctl\` and \`adb\` remain available for anything they do not cover, such as builds, logs, or port forwarding. If \`device_list\` reports a platform unavailable, report that instead of trying another route.`;
 
 /** Included only when the session may build project documents. */
 const buildScientDocumentAwareness = (tools: ScientToolProjection): string => `## Scient PDF builds
@@ -66,7 +63,8 @@ export function buildScientAwareness(
     SCIENT_CORE_AWARENESS,
     ...(capabilities?.has("preview") ? [buildScientPreviewAwareness(tools)] : []),
     ...(capabilities?.has("compute:inventory") ? [buildScientComputeAwareness(tools)] : []),
-    ...(capabilities?.has("device") ? [SCIENT_DEVICE_AWARENESS] : []),
+    // Included only when the session may drive the environment's mobile devices.
+    ...(capabilities?.has("device") ? [SCIENT_DEVICE_TOOL_INSTRUCTIONS] : []),
     ...(capabilities?.has("documents:build")
       ? [buildScientDocumentAwareness(tools), buildScientOverleafAwareness(tools)]
       : []),

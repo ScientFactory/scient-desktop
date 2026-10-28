@@ -11,10 +11,12 @@ import {
   MessageId,
   NodeId,
   NonNegativeInt,
+  PositiveInt,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
   ThreadId,
+  TrimmedNonEmptyString,
   TurnId,
   TurnItemId,
 } from "../baseSchemas.ts";
@@ -38,6 +40,14 @@ export const makeTurnItemBaseFields = (
         itemId: TurnItemId,
         runId: Schema.NullOr(RunId),
         status: OrchestrationV2TurnItemStatus,
+      }),
+    ),
+    /** Wire-only cursor for collapsed work; persisted items keep their complete history. */
+    deferredWork: Schema.optionalKey(
+      Schema.Struct({
+        cursor: TrimmedNonEmptyString,
+        itemCount: PositiveInt,
+        lastOrdinal: NonNegativeInt,
       }),
     ),
     toolNonExecutionKind: Schema.optional(Schema.String),
@@ -69,6 +79,13 @@ interface OrchestrationV2TurnItemBaseFields {
       readonly itemId: typeof TurnItemId;
       readonly runId: Schema.NullOr<typeof RunId>;
       readonly status: typeof TurnItemStatus;
+    }>
+  >;
+  readonly deferredWork: Schema.optionalKey<
+    Schema.Struct<{
+      readonly cursor: typeof TrimmedNonEmptyString;
+      readonly itemCount: typeof PositiveInt;
+      readonly lastOrdinal: typeof NonNegativeInt;
     }>
   >;
   readonly toolNonExecutionKind: Schema.optional<typeof Schema.String>;

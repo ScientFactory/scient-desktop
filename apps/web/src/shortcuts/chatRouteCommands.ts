@@ -118,12 +118,18 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
-        // Pre-hydration settings are the defaults, where the legacy sidebar is off.
+        // The boring sidebar's folders already show the context, so it starts in
+        // the current project like the legacy sidebar did.
+        const { boringSidebarEnabled, legacySidebarEnabled } = getClientSettings();
         if (
+          !boringSidebarEnabled &&
+          // SCIENT-FORK:START — Scient's target-picker rule: always open it, so Add
+          // project stays one step away (T3: only with more than one project).
           shouldOpenNewThreadTargetPicker({
-            legacySidebarEnabled: getClientSettings().legacySidebarEnabled,
+            legacySidebarEnabled,
             projectGroupCount: readProjectGroupCount(),
           })
+          // SCIENT-FORK:END
         ) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });

@@ -232,8 +232,10 @@ Match verification to the claim: markup assertions do not establish native
 interaction, and mocked providers do not establish real-provider compatibility.
 Keep automated verification and the user's visual acceptance distinct.
 
-Browser and computer interaction require user authorization within the task.
-Do not ask again when the conversation already provides it.
+Verify user-visible frontend changes in a real browser or simulator without
+asking first. The primary agent does this once after integrating; subagents do
+not launch their own dev servers. Use synthetic state, never the user's live
+profile.
 
 ## Git, upstream, and delivery
 

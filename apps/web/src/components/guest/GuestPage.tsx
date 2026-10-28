@@ -27,7 +27,6 @@ import { ArrowUpIcon, PaperclipIcon, XIcon } from "lucide-react";
 import { ChevronDownIcon } from "lucide-react";
 // SCIENT-FORK:END
 import {
-  createRef,
   useEffect,
   useReducer,
   useRef,
@@ -44,10 +43,10 @@ import { useTheme } from "~/hooks/useTheme";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { deriveActiveWorkStartedAt, derivePhase } from "~/session-logic";
-import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { ComposerControl, ComposerControlIcon } from "../chat/ComposerControl";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
 import { GuestMessageAttachments } from "../chat/GuestMessageAttachments";
+import { HostImageUrlContext } from "../chat/hostImageUrl";
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyle";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
@@ -62,6 +61,7 @@ import {
   applyGuestStreamEvent,
   formatGuestExpiry,
   guestAttachmentUrl,
+  guestMediaUrl,
   createGuestAttachmentUrls,
   guestFilesProblem,
   initialGuestStreamState,
@@ -348,7 +348,6 @@ function NameForm({
 // The timeline needs an environment id to key its rows. Nothing behind it loads on this page;
 // see isGuestPage.
 const GUEST_ENVIRONMENT_ID = EnvironmentId.make("guest");
-const NO_COMPOSER = createRef<ChatComposerHandle>();
 const NO_TURN_DIFFS: ReadonlyArray<never> = [];
 const NO_OPTIMISTIC_MESSAGES: ReadonlyArray<never> = [];
 const ignore = () => {};
@@ -389,6 +388,7 @@ function GuestThread({
   const openFile = useStableCallback((file: { readonly id: string }) =>
     openInNewTab(guestAttachmentUrl(shareId, file.id)),
   );
+  const hostImageUrl = useStableCallback((path: string) => guestMediaUrl(shareId, path));
   const activityRun = deriveThreadActivityRun(projection);
   const runtime = deriveThreadStructureRuntime(projection);
   const runlessWorkStartedAt = deriveRunlessWorkStartedAt(projection);
@@ -401,7 +401,6 @@ function GuestThread({
   // SCIENT-FORK:END
   const follow = useTimelineFollow({
     legendListRef: listRef,
-    composerRef: NO_COMPOSER,
     composerOverlayElement: null,
     composerTimelineInset: 0,
     routeThreadKey: threadKey,
@@ -459,52 +458,54 @@ function GuestThread({
         <ExpiryLabel expiresAt={expiresAt} />
       </header>
       <div className="relative min-h-0 flex-1">
-        <MessagesTimeline
-          listRef={listRef}
-          timelineEntries={entries}
-          isWorking={isWorking}
-          activeTurnStartedAt={workStartedAt}
-          latestRun={activityRun}
-          runningRunId={runningRunId}
-          turnDiffSummaries={NO_TURN_DIFFS}
-          runs={projection.runs}
-          routeThreadKey={threadKey}
-          onOpenThread={ignore}
-          supportsConversationRollback={false}
-          onRevertToTurnCount={ignore}
-          isRevertingCheckpoint={false}
-          onImageExpand={openExpandedImage}
-          onFileOpen={openFile}
-          onFileDownload={openFile}
-          renderHtmlRender={renderHtmlRender}
-          turnItemSource={turnItemSource}
-          activeThreadEnvironmentId={GUEST_ENVIRONMENT_ID}
-          markdownCwd={undefined}
-          resolvedTheme={resolvedTheme}
-          timestampFormat="locale"
-          workspaceRoot={undefined}
-          anchorMessageId={null}
-          onAnchorReady={ignore}
-          onAnchorSizeChanged={ignore}
-          contentInsetEndAdjustment={0}
-          emptyPlaceholderInset={0}
-          // SCIENT-FORK:START — Scient's reading end (chat/useTimelineFollow.ts).
-          onIsAtEndChange={follow.onIsAtEndChange}
-          onManualNavigation={follow.cancelTimelinePositioning}
-          // SCIENT-FORK:END
-          cancelPositionRestoreRef={follow.cancelPositionRestoreRef}
-          footer={
-            unplaced.length === 0 ? null : (
-              <ol ref={footerRef} className="chat-content-lane flex flex-col gap-4 pb-4">
-                {unplaced.map((message) => (
-                  <li key={message.id}>
-                    <UnplacedGuestMessage shareId={shareId} message={message} />
-                  </li>
-                ))}
-              </ol>
-            )
-          }
-        />
+        <HostImageUrlContext value={hostImageUrl}>
+          <MessagesTimeline
+            listRef={listRef}
+            timelineEntries={entries}
+            isWorking={isWorking}
+            activeTurnStartedAt={workStartedAt}
+            latestRun={activityRun}
+            runningRunId={runningRunId}
+            turnDiffSummaries={NO_TURN_DIFFS}
+            runs={projection.runs}
+            routeThreadKey={threadKey}
+            onOpenThread={ignore}
+            supportsConversationRollback={false}
+            onRevertToTurnCount={ignore}
+            isRevertingCheckpoint={false}
+            onImageExpand={openExpandedImage}
+            onFileOpen={openFile}
+            onFileDownload={openFile}
+            renderHtmlRender={renderHtmlRender}
+            turnItemSource={turnItemSource}
+            activeThreadEnvironmentId={GUEST_ENVIRONMENT_ID}
+            markdownCwd={undefined}
+            resolvedTheme={resolvedTheme}
+            timestampFormat="locale"
+            workspaceRoot={undefined}
+            anchorMessageId={null}
+            onAnchorReady={ignore}
+            onAnchorSizeChanged={ignore}
+            contentInsetEndAdjustment={0}
+            emptyPlaceholderInset={0}
+            // SCIENT-FORK:START — Scient's reading end (chat/useTimelineFollow.ts).
+            onIsAtEndChange={follow.onIsAtEndChange}
+            onManualNavigation={follow.cancelTimelinePositioning}
+            // SCIENT-FORK:END
+            cancelPositionRestoreRef={follow.cancelPositionRestoreRef}
+            footer={
+              unplaced.length === 0 ? null : (
+                <ol ref={footerRef} className="chat-content-lane flex flex-col gap-4 pb-4">
+                  {unplaced.map((message) => (
+                    <li key={message.id}>
+                      <UnplacedGuestMessage shareId={shareId} message={message} />
+                    </li>
+                  ))}
+                </ol>
+              )
+            }
+          />
+        </HostImageUrlContext>
         {/* SCIENT-FORK:START — Scient's reading end replaces the shared Scroll to end button. */}
         {follow.showScrollToBottom ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">
