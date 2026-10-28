@@ -364,13 +364,13 @@ const curated = (
 
 const CURATED_FIXTURE: ReadonlyArray<CuratedServer> = [
   // Declared in an order that differs from the section order.
-  curated("figure", ["design"]),
-  curated("semantic", ["featured", "research"], {
+  curated("figure", ["figures"]),
+  curated("semantic", ["featured", "papers"], {
     tagline: "Search papers and citations",
     icon: ICON_URIS.semantic,
   }),
-  curated("kaggle", ["data", "research"]),
-  ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["research"])),
+  curated("kaggle", ["data", "papers"]),
+  ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["papers"])),
   curated("hub", ["featured", "data"], {
     url: "https://hub.example/mcp/",
     registry: { name: "ac.inference.sh/mcp", version: "2.0.1" },
@@ -394,12 +394,12 @@ describe("curated Discover catalog", () => {
         ]),
       ).toEqual([
         ["featured", 2, 2],
-        ["research", 9, 6],
+        ["papers", 9, 6],
         ["data", 3, 3],
-        ["design", 1, 1],
+        ["figures", 1, 1],
       ]);
       const research = catalog.sections[1]!;
-      expect(research.title).toBe("Research");
+      expect(research.title).toBe("Papers & evidence");
       // Primary members first, in catalog order; secondary members after them.
       expect(research.entries.map((entry) => entry.title)).toEqual([
         "semantic",
@@ -421,7 +421,7 @@ describe("curated Discover catalog", () => {
         title: "semantic",
         description: "semantic description.",
         tagline: "Search papers and citations",
-        categories: ["featured", "research"],
+        categories: ["featured", "papers"],
         websiteUrl: "https://semantic.example",
         remotes: [
           { type: "streamable-http", url: "https://semantic.example/mcp", requiresInput: false },
@@ -471,7 +471,7 @@ describe("curated Discover catalog", () => {
       ]);
       const search = yield* discover.search({
         scope: "curated",
-        category: "research",
+        category: "papers",
         query: "SEMANTIC",
       });
       expect(search.entries.map((entry) => entry.installedConnectorId)).toEqual([
@@ -486,7 +486,7 @@ describe("curated Discover catalog", () => {
       const discover = yield* ExtensionsDiscover;
       const all = yield* discover.search({
         scope: "curated",
-        category: "research",
+        category: "papers",
         limit: 2,
         cursor: "ignored",
       });
@@ -495,13 +495,13 @@ describe("curated Discover catalog", () => {
       // Every term must match name, tagline or description.
       const papers = yield* discover.search({
         scope: "curated",
-        category: "research",
+        category: "papers",
         query: "paper-3 description",
       });
       expect(papers.entries.map((entry) => entry.title)).toEqual(["paper-3"]);
       const byTagline = yield* discover.search({
         scope: "curated",
-        category: "research",
+        category: "papers",
         query: "citations",
       });
       expect(byTagline.entries.map((entry) => entry.title)).toEqual(["semantic"]);
@@ -547,7 +547,9 @@ describe("curated Discover catalog", () => {
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(10);
+      expect(size, category).toBeLessThanOrEqual(category === "featured" ? 6 : 40);
+      // Earth and social science fill with the catalog expansion that follows this commit.
+      if (category === "earth" || category === "social-science") continue;
       expect(size, category).toBeGreaterThan(0);
     }
   });
@@ -663,7 +665,7 @@ describe("Discover entry lookup and global search", () => {
         name: "scient.curated/paper-6",
         title: "paper-6",
         tagline: "paper-6 tagline",
-        categories: ["research"],
+        categories: ["papers"],
         installable: true,
       });
       // Curated names never reach the registry.
@@ -770,7 +772,7 @@ describe("split Discover search", () => {
     const http = harness(registryRoutes, [
       ...CURATED_FIXTURE,
       // Not in the registry by name, but publishing a registry server's remote URL.
-      curated("voice", ["communication"], { url: "https://easyvoice.ae/api/mcp" }),
+      curated("voice", ["teamwork"], { url: "https://easyvoice.ae/api/mcp" }),
     ]);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
@@ -782,7 +784,7 @@ describe("split Discover search", () => {
       expect(fromRegistry).toEqual(fromCurated);
       // A URL alias takes the curated name, so clients can dedup by `name`.
       const voice = registryHub.entries.find((entry) => entry.title === "voice");
-      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["communication"] });
+      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["teamwork"] });
       expect(registryHub.entries.some((entry) => entry.name === "ae.easyvoice/tts")).toBe(false);
       const names = registryHub.entries.map((entry) => entry.name);
       expect(new Set(names).size).toBe(names.length);
@@ -819,7 +821,7 @@ describe("split Discover search", () => {
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
       expect(
-        (yield* Effect.flip(discover.search({ scope: "registry", category: "research" }))).reason,
+        (yield* Effect.flip(discover.search({ scope: "registry", category: "papers" }))).reason,
       ).toBe("invalid-input");
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(http.layer()));

@@ -1034,11 +1034,11 @@ describe("Discover", () => {
       environmentId: "local",
       input: { scope: "registry" },
     });
-    await fixture.render(<CategoryPage category="research" />);
+    await fixture.render(<CategoryPage category="papers" />);
     expect(state.queryTargets).toContainEqual({
       kind: "discover",
       environmentId: "local",
-      input: { scope: "curated", category: "research" },
+      input: { scope: "curated", category: "papers" },
     });
   });
 
@@ -1788,7 +1788,7 @@ describe("Detail pages", () => {
     const synapse = entry("scient.curated/synapse", {
       title: "Synapse",
       tagline: "Biomedical research data",
-      categories: ["research"],
+      categories: ["papers"],
     });
     state.entries = { [synapse.name]: synapse };
     await fixture.render(<ServerDetailPage name="scient.curated/synapse" />);
@@ -1831,7 +1831,7 @@ describe("Detail pages", () => {
         version: "3.1.0",
         websiteUrl: "https://www.full.example/docs",
         repositoryUrl: "https://github.com/acme/full",
-        categories: ["featured", "research"],
+        categories: ["featured", "papers"],
       }),
       "scient.curated/bare": entry("scient.curated/bare", {
         title: "Bare",
@@ -1850,7 +1850,7 @@ describe("Detail pages", () => {
       "Version",
       "Source",
     ]);
-    expect(fixture.aboutValue("Category")).toBe("Research");
+    expect(fixture.aboutValue("Category")).toBe("Papers");
     expect(fixture.aboutValue("Website")).toBe("full.example");
     expect(fixture.aboutValue("Source")).toBe("Scient catalog");
 

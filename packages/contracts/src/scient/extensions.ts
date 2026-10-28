@@ -313,14 +313,17 @@ export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 /** Scient-curated catalog sections. Registry servers without curation appear only under "all". */
 export const ExtensionCategory = Schema.Literals([
   "featured",
-  "research",
+  "papers",
   "biology",
-  "math-cs",
+  "chemistry",
+  "earth",
+  "physics-math",
+  "social-science",
   "data",
-  "code",
   "writing",
-  "communication",
-  "design",
+  "figures",
+  "code",
+  "teamwork",
 ]);
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
