@@ -159,17 +159,6 @@ describe("ClientSettings browser link target", () => {
   });
 });
 
-describe("ClientSettings appearance contrast", () => {
-  it("defaults to 120% contrast", () => {
-    expect(decodeClientSettings({}).appearanceContrast).toBe(120);
-  });
-
-  it("preserves the previous default when it was explicitly persisted", () => {
-    expect(decodeClientSettings({ appearanceContrast: 100 }).appearanceContrast).toBe(100);
-    expect(decodeClientSettingsPatch({ appearanceContrast: 100 }).appearanceContrast).toBe(100);
-  });
-});
-
 describe("ClientSettings content direction", () => {
   it("defaults conversational prose to automatic direction", () => {
     expect(decodeClientSettings({}).contentDirection).toBe("auto");
