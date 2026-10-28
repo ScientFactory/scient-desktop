@@ -13,6 +13,7 @@ export {
 } from "./extensionAudience.ts";
 
 export * from "./providerStore.ts";
+export { storeCategories } from "./storeCategories.ts";
 export * from "./pluginContents.ts";
 export * from "./pluginKeys.ts";
 
@@ -337,7 +338,7 @@ export type DiscoverSearchScope = typeof DiscoverSearchScope.Type;
 export const DiscoverSearchInput = Schema.Struct({
   scope: DiscoverSearchScope,
   query: Schema.optional(Schema.String),
-  /** Restrict a `curated` search to one category; invalid with `registry`. */
+  /** Curated membership or server-owned Registry keyword searches. */
   category: Schema.optional(ExtensionCategory),
   /** `registry` only: the registry's paging cursor. */
   cursor: Schema.optional(TrimmedNonEmptyString),
@@ -400,6 +401,7 @@ export const DiscoverEntryInput = Schema.Struct({ name: TrimmedNonEmptyString })
 export type DiscoverEntryInput = typeof DiscoverEntryInput.Type;
 
 export const DiscoverPage = Schema.Struct({
+  message: Schema.optional(Schema.String),
   entries: Schema.Array(DiscoverEntry),
   nextCursor: Schema.optional(TrimmedNonEmptyString),
   fetchedAt: IsoDateTime,

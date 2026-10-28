@@ -743,6 +743,27 @@ describe("split Discover search", () => {
     return { requests, layer };
   };
 
+  it.effect(
+    "bounds hanging category searches and reports their failure without hiding picks",
+    () => {
+      const registry = hangingRegistry();
+      return Effect.gen(function* () {
+        const discover = yield* ExtensionsDiscover;
+        const fiber = yield* discover
+          .search({ scope: "registry", category: "biology" })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust(Duration.seconds(8));
+        const page = yield* Fiber.join(fiber);
+        expect(page.entries).toEqual([]);
+        expect(page.message).toContain("could not finish");
+        expect(registry.requests).toHaveLength(4);
+        expect(
+          (yield* discover.search({ scope: "curated", category: "papers" })).entries.length,
+        ).toBeGreaterThan(0);
+      }).pipe(Effect.provide(registry.layer));
+    },
+  );
+
   it.effect("answers curated searches locally, even while the registry hangs", () => {
     const registry = hangingRegistry();
     return Effect.gen(function* () {
@@ -816,14 +837,66 @@ describe("split Discover search", () => {
     }).pipe(Effect.provide(http.layer()));
   });
 
-  it.effect("rejects a registry search restricted to a category", () => {
-    const http = harness(registryRoutes, CURATED_FIXTURE);
-    return Effect.gen(function* () {
-      const discover = yield* ExtensionsDiscover;
-      expect(
-        (yield* Effect.flip(discover.search({ scope: "registry", category: "papers" }))).reason,
-      ).toBe("invalid-input");
-      expect(http.requests).toHaveLength(0);
-    }).pipe(Effect.provide(http.layer()));
-  });
+  it.effect(
+    "merges category keyword pages, deduplicates names and endpoints, and caches reads",
+    () => {
+      const alias = {
+        server: {
+          name: "org.example/alias",
+          version: "1.0.0",
+          remotes: [{ type: "streamable-http", url: "https://unique.example/mcp/" }],
+        },
+        _meta: { "io.modelcontextprotocol.registry/official": { status: "active" } },
+      };
+      const http = harness(
+        () =>
+          Response.json({
+            ...recordedPage,
+            servers: [
+              ...recordedPage.servers,
+              alias,
+              {
+                ...alias,
+                server: {
+                  ...alias.server,
+                  name: "org.example/alias-other",
+                  remotes: [
+                    { type: "streamable-http", url: "https://unique.example/mcp#fragment" },
+                  ],
+                },
+              },
+            ],
+          }),
+        CURATED_FIXTURE,
+      );
+      return Effect.gen(function* () {
+        const discover = yield* ExtensionsDiscover;
+        const first = yield* discover.search({ scope: "registry", category: "biology" });
+        expect(http.requests.map((url) => url.searchParams.get("search"))).toEqual([
+          "genomics",
+          "protein",
+          "clinical",
+          "bioinformatics",
+        ]);
+        expect(first.entries.length).toBeGreaterThan(0);
+        expect(new Set(first.entries.map((entry) => entry.name)).size).toBe(first.entries.length);
+        const urls = first.entries.flatMap((entry) =>
+          entry.remotes.map((remote) => canonicalConnectorUrl(remote.url)),
+        );
+        expect(new Set(urls).size).toBe(urls.length);
+        yield* discover.search({ scope: "registry", category: "biology" });
+        expect(http.requests).toHaveLength(4);
+        if (first.nextCursor) {
+          const next = yield* discover.search({
+            scope: "registry",
+            category: "biology",
+            cursor: first.nextCursor,
+          });
+          expect(next.entries).toEqual([]);
+        }
+        const featured = yield* discover.search({ scope: "registry", category: "featured" });
+        expect(featured.entries).toEqual([]);
+      }).pipe(Effect.provide(http.layer()));
+    },
+  );
 });

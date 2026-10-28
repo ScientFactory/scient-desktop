@@ -35,7 +35,7 @@ import {
 import { WorksWithValue } from "./WorksWith";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 
-function storeAvailable(provider: ServerProvider) {
+export function storeAvailable(provider: ServerProvider) {
   return (
     provider.enabled &&
     provider.installed &&
@@ -44,7 +44,7 @@ function storeAvailable(provider: ServerProvider) {
   );
 }
 
-function StoreInstall({
+export function StoreInstall({
   provider,
   entry,
   refresh,
