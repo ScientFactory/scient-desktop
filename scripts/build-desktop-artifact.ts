@@ -7,6 +7,13 @@ import {
   resolveWslPrebuildArch,
   stageWslNodePtyPrebuild,
 } from "./scient/wslNodePty.ts";
+import {
+  readWorkspaceLockfile,
+  seedStageLockfile,
+  verifyStageFollowsLockfile,
+  withLockedRequiredPeers,
+  type WorkspaceLockfile,
+} from "./lib/scient-stage-locked-dependencies.ts";
 // SCIENT-FORK:END
 
 import * as NodeFSP from "node:fs/promises";
@@ -1169,7 +1176,8 @@ export const stageWindowsNativeResources = Effect.fn("desktopArtifact.stageWindo
   ),
 );
 
-export const STAGE_INSTALL_ARGS = ["install", "--prod"] as const;
+// SCIENT-FORK: the stage starts from the workspace lockfile (seedStageLockfile), whose importers it never matches.
+export const STAGE_INSTALL_ARGS = ["install", "--prod", "--no-frozen-lockfile"] as const;
 export const DESKTOP_ELECTRON_LANGUAGES = ["en-US"] as const;
 // SCIENT-FORK:START — Scient conversation file associations.
 import {
@@ -3537,6 +3545,8 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   readonly arch: typeof BuildArch.Type;
   readonly appVersion: string;
   readonly runtimeExternalDependencies: Record<string, string>;
+  // SCIENT-FORK
+  readonly workspaceLockfile: WorkspaceLockfile;
   readonly fffNodeVersion: string;
   readonly allowBuilds: Record<string, boolean>;
   readonly patchedDependencies: Record<string, string>;
@@ -3571,14 +3581,20 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     path.join(serverStageDir, "apps/server/dist/synctex-runtime/linux-x64"),
   );
 
-  const sidecarDependencies = {
-    ...input.runtimeExternalDependencies,
-    // The sidecar serves two processes: the Windows primary loads win32
-    // natives, and the WSL backend loads the matching Linux natives (fff via
-    // ffi-rs) from the extracted copy of this same tree.
-    ...resolveFffNativeDependencies("win", input.arch, input.fffNodeVersion),
-    ...resolveFffNativeDependencies("linux", input.arch, input.fffNodeVersion),
-  };
+  // SCIENT-FORK: required peers ship as roots, at their locked versions.
+  const sidecarDependencies = yield* withLockedRequiredPeers({
+    lockfile: input.workspaceLockfile,
+    importers: ["apps/server"],
+    packageExtensions: STAGE_PACKAGE_EXTENSIONS,
+    dependencies: {
+      ...input.runtimeExternalDependencies,
+      // The sidecar serves two processes: the Windows primary loads win32
+      // natives, and the WSL backend loads the matching Linux natives (fff via
+      // ffi-rs) from the extracted copy of this same tree.
+      ...resolveFffNativeDependencies("win", input.arch, input.fffNodeVersion),
+      ...resolveFffNativeDependencies("linux", input.arch, input.fffNodeVersion),
+    },
+  });
   const sidecarPatchedDependencies = createStagePatchedDependencies(
     input.patchedDependencies,
     sidecarDependencies,
@@ -3613,6 +3629,8 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
   }
 
   yield* Effect.log("[desktop-artifact] Installing server sidecar runtime externals...");
+  // SCIENT-FORK
+  yield* seedStageLockfile({ repoRoot: input.repoRoot, stageDir: serverStageDir });
   const installCommand = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
   yield* runCommand(
     ChildProcess.make(installCommand.command, installCommand.args, {
@@ -3621,6 +3639,11 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
     }),
     { label: "vp install --prod (server sidecar)", verbose: input.verbose },
   );
+  // SCIENT-FORK
+  yield* verifyStageFollowsLockfile({
+    workspace: input.workspaceLockfile,
+    stageDir: serverStageDir,
+  });
 
   // SCIENT-FORK:START
   yield* stageWslNodePtyPrebuild({
@@ -4304,6 +4327,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const resolvedServerRuntimeExternalDependencies = selectCliRuntimeExternalDependencies(
     resolvedServerDependencies,
   );
+  // SCIENT-FORK
+  const workspaceLockfile = yield* readWorkspaceLockfile(repoRoot);
   const resolvedDesktopRuntimeDependencies = yield* Effect.try({
     try: () => resolveDesktopRuntimeDependencies(desktopPackageJson.dependencies, workspaceCatalog),
     catch: (cause) =>
@@ -4640,16 +4665,22 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   // desktop main-process runtime deps, while the server bundle's deps live in
   // the server.asar sidecar (see stageWindowsServerSidecar). macOS and Linux
   // merge the two external dependency sets into one app.asar.
-  const stageDependencies =
-    options.platform === "win"
-      ? { ...resolvedDesktopRuntimeDependencies }
-      : resolveMergedStageDependencies({
-          platform: options.platform,
-          serverDependencies: resolvedServerDependencies,
-          desktopDependencies: resolvedDesktopRuntimeDependencies,
-          arch: options.arch,
-          fffNodeVersion: serverPackageJson.dependencies["@ff-labs/fff-node"],
-        });
+  // SCIENT-FORK: electron-builder drops peers; each required peer ships as a locked root.
+  const stageDependencies = yield* withLockedRequiredPeers({
+    lockfile: workspaceLockfile,
+    importers: ["apps/server", "apps/desktop"],
+    packageExtensions: STAGE_PACKAGE_EXTENSIONS,
+    dependencies:
+      options.platform === "win"
+        ? { ...resolvedDesktopRuntimeDependencies }
+        : resolveMergedStageDependencies({
+            platform: options.platform,
+            serverDependencies: resolvedServerDependencies,
+            desktopDependencies: resolvedDesktopRuntimeDependencies,
+            arch: options.arch,
+            fffNodeVersion: serverPackageJson.dependencies["@ff-labs/fff-node"],
+          }),
+  });
   const stagePatchedDependencies = createStagePatchedDependencies(
     workspacePatchedDependencies,
     stageDependencies,
@@ -4717,6 +4748,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   }
 
   yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
+  // SCIENT-FORK
+  yield* seedStageLockfile({ repoRoot, stageDir: stageAppDir });
   const installCommand = yield* resolveSpawnCommand("vp", [...STAGE_INSTALL_ARGS]);
   yield* runCommand(
     ChildProcess.make(installCommand.command, installCommand.args, {
@@ -4725,6 +4758,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     }),
     { label: "vp install --prod", verbose: options.verbose },
   );
+  // SCIENT-FORK
+  yield* verifyStageFollowsLockfile({ workspace: workspaceLockfile, stageDir: stageAppDir });
   yield* stageClerkPasskeyNativeBinaries(stageAppDir, options.platform, options.arch);
   yield* stageKeyringNativeBinaries(stageAppDir, options.platform, options.arch);
   const cursorSdkResourcesPath = path.join(stageAppDir, "apps/desktop/prod-resources/cursor-sdk");
@@ -4747,6 +4782,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       arch: options.arch,
       appVersion,
       runtimeExternalDependencies: resolvedServerRuntimeExternalDependencies,
+      workspaceLockfile,
       fffNodeVersion: serverPackageJson.dependencies["@ff-labs/fff-node"],
       allowBuilds: workspaceAllowBuilds,
       patchedDependencies: workspacePatchedDependencies,
@@ -4994,6 +5030,13 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       resourcesDir: resources,
       stageResourcesDir: stageProdResourcesDir,
     });
+    // SCIENT-FORK: Linux CI qualifies every PR; prove the packaged server starts there too.
+    if (options.platform === "linux" && hostPlatform === "linux" && hostArch === options.arch) {
+      yield* verifyPackagedBundleIsSelfContained({
+        asarPath: path.join(resources, "app.asar"),
+        verbose: options.verbose,
+      });
+    }
   }
   yield* fs.makeDirectory(options.outputDir, { recursive: true });
 
