@@ -11,44 +11,54 @@
       "sourceWidth": 300,
       "sourceHeight": 300,
       "sourceFormat": "png",
-      "outputBytes": 3218
-    }
+      "outputBytes": 3444,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "activecampaign",
     "names": ["activecampaign"],
     "website": "https://www.activecampaign.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/active-campaign-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 391,
-      "sourceFormat": "svg",
-      "outputBytes": 3700
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8a/d6/4a/8ad64afd-88a4-f7b6-6dc9-d88be296c7e0/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 1239908329,
+      "sellerName": "ActiveCampaign, LLC",
+      "appName": "ActiveCampaign",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1239908329",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 13430
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "adobe",
     "names": ["adobe", "adobe-for-creativity"],
     "website": "https://www.adobe.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/adobe.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 91,
-      "sourceHeight": 80,
-      "sourceFormat": "svg",
-      "outputBytes": 2982
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/e3/3f/4a/e33f4aee-7b24-d734-b642-75fc8cd759d4/AppIcon-0-0-1x_U007epad-0-9-0-85-220.png/512x512bb.jpg",
+      "appId": 1458660369,
+      "sellerName": "Adobe Inc.",
+      "appName": "Adobe Fresco: Draw & Paint App",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1458660369",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 1092
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "aikido",
@@ -62,42 +72,55 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 1588,
-      "mode": "mark"
-    }
+      "outputBytes": 1686,
+      "mode": "mark",
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "airtable",
     "names": ["airtable"],
     "website": "https://www.airtable.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/airtable.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 215,
-      "sourceFormat": "svg",
-      "outputBytes": 3114
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/32/59/68/325968ab-3114-64ce-9891-1bf4886207ad/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 914172636,
+      "sellerName": "Formagrid Inc.",
+      "appName": "Airtable",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=914172636",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 2126
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "airwallex",
     "names": ["airwallex", "airwallex-agentos", "airwallex-dev"],
     "website": "https://www.airwallex.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_0000000010848211808b76f0ce78b1b5&cdn=1&cp=pi&ma=32054400&ts=0&p=pi&cid=8&sig=6d5a996f6fe4c46a21e0904730be4c967abc2aca1989d77944f015db790dc6b8&v=0",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 3156
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a2/01/e6/a201e603-cfaa-91de-c225-622ba4de5085/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 1537521807,
+      "sellerName": "Airwallex PTY LTD",
+      "appName": "Airwallex",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1537521807",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4702
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "aiven",
@@ -111,8 +134,10 @@
       "sourceWidth": 96,
       "sourceHeight": 96,
       "sourceFormat": "svg",
-      "outputBytes": 4372
-    }
+      "outputBytes": 4956,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "altimate-code",
@@ -126,10 +151,12 @@
       "sourceWidth": 239,
       "sourceHeight": 189,
       "sourceFormat": "svg",
-      "outputBytes": 2270,
+      "outputBytes": 2502,
       "mode": "mark",
-      "background": "#000000"
-    }
+      "background": "#000000",
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "amd",
@@ -165,8 +192,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4750
-    }
+      "outputBytes": 5110,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "apollo",
@@ -180,8 +209,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 5642
-    }
+      "outputBytes": 5642,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "apollo-skills",
@@ -195,8 +226,10 @@
       "sourceWidth": 128,
       "sourceHeight": 128,
       "sourceFormat": "svg",
-      "outputBytes": 4474
-    }
+      "outputBytes": 4482,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "appwrite",
@@ -213,8 +246,10 @@
       "sourceWidth": 90,
       "sourceHeight": 91,
       "sourceFormat": "svg",
-      "outputBytes": 2192
-    }
+      "outputBytes": 2462,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "arxiv-community",
@@ -233,26 +268,32 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4208
-    }
+      "outputBytes": 4718,
+      "type": "fallback"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "asana",
     "names": ["asana"],
     "website": "https://asana.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/asana-logo.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 251,
-      "sourceHeight": 232,
-      "sourceFormat": "svg",
-      "outputBytes": 2666
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/69/aa/d8/69aad815-f9d0-18c3-ff0c-7b5638c6203f/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 489969512,
+      "sellerName": "Asana, Inc.",
+      "appName": "Asana: Work Management",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=489969512",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 2812
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "astronomer",
@@ -266,8 +307,10 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 3176
-    }
+      "outputBytes": 3468,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "atlan",
@@ -281,8 +324,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3190
-    }
+      "outputBytes": 3480,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "atlassian",
@@ -296,36 +341,44 @@
     ],
     "website": "https://www.atlassian.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/atlassian.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "svg",
-      "outputBytes": 2572
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/41/38/ef/4138ef7d-0ec9-9782-6029-04b69aa60f26/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 1006972087,
+      "sellerName": "Atlassian Pty Ltd",
+      "appName": "Jira Cloud by Atlassian",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1006972087",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 2230
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "auth0",
     "names": ["auth0"],
     "website": "https://auth0.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/auth0.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
-      "sourceFormat": "svg",
-      "outputBytes": 4094
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/9a/4e/91/9a4e91e9-f8fe-9322-b4d2-e5e4b38a3dc2/AppIcon-0-0-1x_U007emarketing-0-11-0-0-85-220.png/512x512bb.jpg",
+      "appId": 1093447833,
+      "sellerName": "Auth0 Inc",
+      "appName": "Auth0 Guardian",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1093447833",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3394
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "aws",
@@ -348,18 +401,22 @@
     ],
     "website": "https://aws.amazon.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/aws_light.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 304,
-      "sourceHeight": 182,
-      "sourceFormat": "svg",
-      "outputBytes": 4554
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/89/a6/ef/89a6eff6-4232-c993-b881-189a0d875e9b/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 580990573,
+      "sellerName": "AMZN Mobile LLC",
+      "appName": "AWS Console",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=580990573",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3546
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "azure",
@@ -383,8 +440,44 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 2362
-    }
+      "outputBytes": 2490,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "benchling-docs",
+    "names": ["benchling-docs", "benchling developer documentation"],
+    "website": "https://docs.benchling.com",
+    "source": {
+      "kind": "official",
+      "url": "https://docs.benchling.com/api/fern-docs/favicon.ico",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "fallback",
+      "rendering": "mark",
+      "sourceWidth": 32,
+      "sourceHeight": 46,
+      "sourceFormat": "svg",
+      "outputBytes": 4756
+    },
+    "outputs": ["curated"]
+  },
+  {
+    "key": "benchling-lab",
+    "names": ["benchling-lab", "benchling lab data"],
+    "website": "https://www.benchling.com",
+    "source": {
+      "kind": "official",
+      "url": "https://www.benchling.com/icon.svg",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "mark",
+      "sourceWidth": 32,
+      "sourceHeight": 46,
+      "sourceFormat": "svg",
+      "outputBytes": 4756
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "bigdata-com",
@@ -398,8 +491,27 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 2318
-    }
+      "outputBytes": 2486,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "bigquery",
+    "names": ["bigquery", "google bigquery"],
+    "website": "https://cloud.google.com/bigquery",
+    "source": {
+      "kind": "official",
+      "url": "https://www.gstatic.com/cgc/super_cloud_gradient.png",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "mark",
+      "sourceWidth": 192,
+      "sourceHeight": 192,
+      "sourceFormat": "png",
+      "outputBytes": 3620
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "biorender",
@@ -412,9 +524,11 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 4834
+      "outputBytes": 4834,
+      "type": "own-tile"
     },
-    "website": "https://www.biorender.com"
+    "website": "https://www.biorender.com",
+    "outputs": ["curated"]
   },
   {
     "key": "biorxiv",
@@ -429,8 +543,10 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 2762
-    }
+      "outputBytes": 3012,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "blackrock",
@@ -454,18 +570,22 @@
     "names": ["box"],
     "website": "https://www.box.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/box.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/2c/b8/36/2cb8362c-ebd2-a52c-5eba-e5824a98fcf8/AppIconAppStore-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "appId": 290853822,
+      "sellerName": "Box, Inc.",
+      "appName": "Box: The power of Content + AI",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=290853822",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
       "sourceWidth": 512,
-      "sourceHeight": 277,
-      "sourceFormat": "svg",
-      "outputBytes": 4188
-    }
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3976
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "bright-data",
@@ -495,8 +615,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3600
-    }
+      "outputBytes": 3600,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "buildkite",
@@ -513,26 +635,32 @@
       "sourceWidth": 256,
       "sourceHeight": 171,
       "sourceFormat": "svg",
-      "outputBytes": 1760
-    }
+      "outputBytes": 1880,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "canva",
     "names": ["canva"],
     "website": "https://www.canva.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/canva.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 80,
-      "sourceHeight": 80,
-      "sourceFormat": "svg",
-      "outputBytes": 4812
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/54/f2/7b/54f27b60-a3a3-62bc-8bc7-2cf1ce516731/AppIcon-0-0-1x_U007epad-0-11-0-85-220.png/512x512bb.jpg",
+      "appId": 897446215,
+      "sellerName": "Canva Pty Ltd",
+      "appName": "Canva AI Photo & Video Editor",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=897446215",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 5214
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "carbone",
@@ -546,9 +674,11 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 2128,
-      "mode": "mark"
-    }
+      "outputBytes": 2288,
+      "mode": "mark",
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "carta",
@@ -580,8 +710,10 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 4708
-    }
+      "outputBytes": 5140,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "chrome-devtools",
@@ -600,8 +732,10 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4536
-    }
+      "outputBytes": 5112,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "chronograph",
@@ -615,8 +749,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 364
-    }
+      "outputBytes": 364,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "circle-skills",
@@ -630,23 +766,32 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4430
-    }
+      "outputBytes": 5016,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "circleback",
     "names": ["circleback"],
     "website": "https://circleback.ai",
     "source": {
-      "kind": "official",
-      "url": "https://circleback.ai/apple-touch-icon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 1024,
-      "sourceHeight": 1024,
-      "sourceFormat": "png",
-      "outputBytes": 3184
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/6b/08/c9/6b08c929-eb36-5740-5bfd-1317bbdb9fa1/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 6738971048,
+      "sellerName": "Circleback AI, Inc.",
+      "appName": "Circleback - AI Meeting Notes",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6738971048",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3136
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "ckeditor",
@@ -660,24 +805,32 @@
       "sourceWidth": 180,
       "sourceHeight": 181,
       "sourceFormat": "png",
-      "outputBytes": 3246
-    }
+      "outputBytes": 3246,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "claude",
     "names": ["claude"],
     "website": "https://claude.ai",
     "source": {
-      "kind": "official",
-      "url": "repo:apps/marketing/public/harnesses/claude-ai-icon.svg",
-      "rendering": "mark",
-      "background": "#ffffff",
-      "licenseNote": "Brand-owned artwork already bundled by Scient; trademarks remain with Anthropic.",
-      "sourceWidth": 256,
-      "sourceHeight": 257,
-      "sourceFormat": "svg",
-      "outputBytes": 5048
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/00/7c/eb007c0a-a26e-eb3e-9f89-cb1c37049237/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 6473753684,
+      "sellerName": "Anthropic PBC",
+      "appName": "Claude by Anthropic",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6473753684",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 5824
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "clay",
@@ -691,8 +844,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3560
-    }
+      "outputBytes": 3966,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "clickhouse",
@@ -711,26 +866,32 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 996
-    }
+      "outputBytes": 1002,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "clickup",
     "names": ["clickup"],
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/clickup.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 64,
-      "sourceHeight": 64,
-      "sourceFormat": "svg",
-      "outputBytes": 3490
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a7/08/75/a7087597-1a0e-b897-18e2-2ebe4e9551cc/AppIcon-0-0-1x_U007epad-0-11-0-85-220.png/512x512bb.jpg",
+      "appId": 1535098836,
+      "sellerName": "Mango Technologies, Inc.",
+      "appName": "ClickUp: Tasks, Chat, Docs, AI",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1535098836",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3624
     },
-    "website": "https://clickup.com"
+    "website": "https://clickup.com",
+    "outputs": ["curated"]
   },
   {
     "key": "clinical-trials",
@@ -745,8 +906,10 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 2228
-    }
+      "outputBytes": 2410,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "cloudflare-docs",
@@ -763,8 +926,10 @@
       "sourceWidth": 256,
       "sourceHeight": 116,
       "sourceFormat": "svg",
-      "outputBytes": 1880
-    }
+      "outputBytes": 2180,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "cloudinary",
@@ -781,8 +946,10 @@
       "sourceWidth": 256,
       "sourceHeight": 168,
       "sourceFormat": "svg",
-      "outputBytes": 4032
-    }
+      "outputBytes": 4406,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "cockroachdb",
@@ -796,26 +963,32 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 1616
-    }
+      "outputBytes": 1616,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "coda",
     "names": ["coda"],
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/coda-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 275,
-      "sourceFormat": "svg",
-      "outputBytes": 1596
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/92/8d/f0/928df0c3-42c0-6fdf-0c44-3058741946e3/Superhuman-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 1397968110,
+      "sellerName": "Coda Project, Inc",
+      "appName": "Superhuman Docs",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1397968110",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4590
     },
-    "website": "https://coda.io"
+    "website": "https://coda.io",
+    "outputs": ["curated"]
   },
   {
     "key": "coderabbit",
@@ -832,8 +1005,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4518
-    }
+      "outputBytes": 4926,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "codspeed",
@@ -847,8 +1022,10 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 3088
-    }
+      "outputBytes": 3418,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "confidence",
@@ -862,8 +1039,10 @@
       "sourceWidth": 32,
       "sourceHeight": 32,
       "sourceFormat": "svg",
-      "outputBytes": 1720
-    }
+      "outputBytes": 1710,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "confluent",
@@ -877,8 +1056,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 5800
-    }
+      "outputBytes": 6240,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "consensus",
@@ -891,9 +1072,11 @@
       "sourceWidth": 200,
       "sourceHeight": 200,
       "sourceFormat": "svg",
-      "outputBytes": 3296
+      "outputBytes": 3548,
+      "type": "fallback"
     },
-    "website": "https://consensus.app"
+    "website": "https://consensus.app",
+    "outputs": ["curated"]
   },
   {
     "key": "context7",
@@ -907,8 +1090,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2606
-    }
+      "outputBytes": 2606,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "convex",
@@ -925,28 +1110,49 @@
       "sourceWidth": 128,
       "sourceHeight": 132,
       "sourceFormat": "svg",
-      "outputBytes": 4538
-    }
+      "outputBytes": 5104,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "coursera",
     "names": ["coursera", "learn-with-coursera"],
     "website": "https://www.coursera.org",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/coursera.svg",
-      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
-      "color": "#0056D2",
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/0f/2d/f4/0f2df45d-7b89-7834-8cba-ca4458efbe7b/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg",
+      "appId": 736535961,
+      "sellerName": "Coursera, Inc.",
+      "appName": "Coursera: Grow your career",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=736535961",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3034
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "crossref",
+    "names": ["crossref", "crossref (community)"],
+    "website": "https://www.crossref.org",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://assets.crossref.org/logo/crossref-logo-200.svg",
       "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
-      "brandSource": "https://about.coursera.org/press",
       "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
+      "sourceWidth": 200,
+      "sourceHeight": 130,
       "sourceFormat": "svg",
-      "outputBytes": 4620
-    }
+      "outputBytes": 3870
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "crowdsec",
@@ -960,8 +1166,10 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 6486
-    }
+      "outputBytes": 7050,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "crowdstrike",
@@ -975,8 +1183,10 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 4488
-    }
+      "outputBytes": 5048,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "dash0",
@@ -995,8 +1205,27 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 2390
-    }
+      "outputBytes": 2554,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "data-commons",
+    "names": ["data-commons"],
+    "website": "https://datacommons.org",
+    "source": {
+      "kind": "official",
+      "url": "https://datacommons.org/images/favicon.png",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "fallback",
+      "rendering": "tile",
+      "sourceWidth": 192,
+      "sourceHeight": 192,
+      "sourceFormat": "png",
+      "outputBytes": 2778
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "databricks",
@@ -1013,26 +1242,51 @@
       "sourceWidth": 256,
       "sourceHeight": 276,
       "sourceFormat": "svg",
-      "outputBytes": 6986
-    }
+      "outputBytes": 7672,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "datacite",
+    "names": ["datacite", "datacite (community)"],
+    "website": "https://datacite.org",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://github.com/datacite.png?size=512",
+      "mode": "mark",
+      "organizationUrl": "https://github.com/datacite",
+      "licenseNote": "Organisation avatar identifying its service; trademarks remain with owners.",
+      "rendering": "mark",
+      "sourceWidth": 460,
+      "sourceHeight": 460,
+      "sourceFormat": "png",
+      "outputBytes": 4466
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "datadog",
     "names": ["datadog"],
     "website": "https://www.datadoghq.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/datadog.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 274,
-      "sourceFormat": "svg",
-      "outputBytes": 6582
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/20/62/29/20622923-631a-f736-2274-b9e0b3de8b79/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "appId": 1391380318,
+      "sellerName": "Datadog, Inc.",
+      "appName": "Datadog",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1391380318",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 6864
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "datahub",
@@ -1046,8 +1300,10 @@
       "sourceWidth": 121,
       "sourceHeight": 120,
       "sourceFormat": "svg",
-      "outputBytes": 5582
-    }
+      "outputBytes": 5998,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "datarobot",
@@ -1061,8 +1317,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 884
-    }
+      "outputBytes": 884,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "dataverse",
@@ -1076,8 +1334,10 @@
       "sourceWidth": 96,
       "sourceHeight": 96,
       "sourceFormat": "svg",
-      "outputBytes": 3666
-    }
+      "outputBytes": 4020,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "deepeval",
@@ -1091,8 +1351,10 @@
       "sourceWidth": 142,
       "sourceHeight": 140,
       "sourceFormat": "svg",
-      "outputBytes": 2380
-    }
+      "outputBytes": 2624,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "deepwiki",
@@ -1109,9 +1371,11 @@
       "sourceWidth": 128,
       "sourceHeight": 128,
       "sourceFormat": "png",
-      "outputBytes": 1724
+      "outputBytes": 1866,
+      "type": "fallback"
     },
-    "website": "https://deepwiki.com"
+    "website": "https://deepwiki.com",
+    "outputs": ["curated"]
   },
   {
     "key": "desktop-commander",
@@ -1125,26 +1389,51 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3860
-    }
+      "outputBytes": 3994,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "dimensions",
+    "names": ["dimensions", "dimensions analytics"],
+    "website": "https://www.dimensions.ai",
+    "source": {
+      "kind": "official",
+      "type": "fallback",
+      "url": "https://www.dimensions.ai/wp-content/uploads/2019/05/favicon.ico",
+      "mode": "mark",
+      "allowLowResolution": true,
+      "licenseNote": "Official website favicon; trademarks remain with their owners.",
+      "rendering": "mark",
+      "sourceWidth": 48,
+      "sourceHeight": 48,
+      "sourceFormat": "png",
+      "outputBytes": 4586
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "discord",
     "names": ["discord"],
     "website": "https://discord.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/discord.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 199,
-      "sourceFormat": "svg",
-      "outputBytes": 3210
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/69/3b/7e/693b7e6b-55ba-51ba-2608-6b38dabd6021/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 985746746,
+      "sellerName": "Discord Inc.",
+      "appName": "Discord - Talk, Play, Hang Out",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=985746746",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4958
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "dominodatalab",
@@ -1158,26 +1447,32 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 2962
-    }
+      "outputBytes": 2962,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "dropbox",
     "names": ["dropbox"],
     "website": "https://www.dropbox.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/dropbox.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 128,
-      "sourceHeight": 128,
-      "sourceFormat": "svg",
-      "outputBytes": 5442
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/97/c1/4a/97c14a87-c3d9-549d-b093-b72699eed291/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "appId": 327630330,
+      "sellerName": "Dropbox, Inc.",
+      "appName": "Dropbox: Cloud Storage Backup",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=327630330",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4450
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "duckdb",
@@ -1196,8 +1491,10 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 2662
-    }
+      "outputBytes": 2922,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "duende",
@@ -1211,9 +1508,11 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 2920,
-      "mode": "mark"
-    }
+      "outputBytes": 3282,
+      "mode": "mark",
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "dynatrace",
@@ -1230,8 +1529,45 @@
       "sourceWidth": 256,
       "sourceHeight": 260,
       "sourceFormat": "svg",
-      "outputBytes": 3744
-    }
+      "outputBytes": 4084,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "earthquakes",
+    "names": ["earthquakes", "earthquakes usgs/emsc", "earthquakes usgs/emsc (community)"],
+    "website": "https://earthquake.usgs.gov",
+    "source": {
+      "kind": "official",
+      "type": "fallback",
+      "url": "https://github.com/usgs.png?size=512",
+      "mode": "mark",
+      "allowLowResolution": true,
+      "rendering": "mark",
+      "sourceWidth": 80,
+      "sourceHeight": 80,
+      "sourceFormat": "png",
+      "outputBytes": 4774
+    },
+    "outputs": ["curated"]
+  },
+  {
+    "key": "elicit",
+    "names": ["elicit"],
+    "website": "https://elicit.com",
+    "source": {
+      "kind": "official",
+      "url": "https://framerusercontent.com/images/GWXKVhGBLC34aTLlmLIMsRVb4.png",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "tile",
+      "sourceWidth": 180,
+      "sourceHeight": 180,
+      "sourceFormat": "png",
+      "outputBytes": 3934
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "ensembl-community",
@@ -1246,8 +1582,48 @@
       "sourceWidth": 150,
       "sourceHeight": 150,
       "sourceFormat": "svg",
-      "outputBytes": 2642
-    }
+      "outputBytes": 2904,
+      "type": "fallback"
+    },
+    "outputs": ["curated"]
+  },
+  {
+    "key": "europe-pmc",
+    "names": ["europe-pmc", "europe pmc (community)"],
+    "website": "https://europepmc.org",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://github.com/EuropePMC.png?size=512",
+      "mode": "mark",
+      "organizationUrl": "https://github.com/EuropePMC",
+      "licenseNote": "Organisation avatar identifying its service; trademarks remain with owners.",
+      "rendering": "mark",
+      "sourceWidth": 390,
+      "sourceHeight": 390,
+      "sourceFormat": "png",
+      "outputBytes": 5644
+    },
+    "outputs": ["curated"]
+  },
+  {
+    "key": "eurostat",
+    "names": ["eurostat", "eurostat (community)"],
+    "website": "https://ec.europa.eu/eurostat",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://ec.europa.eu/eurostat/o/estat-theme-ecl/images/header/estat-logo-horizontal.svg",
+      "mode": "mark",
+      "svgViewBox": "124.5 0 36.25896 21.682102",
+      "rendering": "mark",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "svg",
+      "outputBytes": 6160,
+      "background": "#003399"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "exa",
@@ -1264,8 +1640,10 @@
       "sourceWidth": 256,
       "sourceHeight": 311,
       "sourceFormat": "svg",
-      "outputBytes": 3738
-    }
+      "outputBytes": 4036,
+      "type": "fallback"
+    },
+    "outputs": ["brand", "curated"]
   },
   {
     "key": "excalidraw",
@@ -1283,9 +1661,11 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 5284
+      "outputBytes": 5942,
+      "type": "fallback"
     },
-    "website": "https://excalidraw.com"
+    "website": "https://excalidraw.com",
+    "outputs": ["curated"]
   },
   {
     "key": "expo",
@@ -1302,8 +1682,27 @@
       "sourceWidth": 256,
       "sourceHeight": 231,
       "sourceFormat": "svg",
-      "outputBytes": 2250
-    }
+      "outputBytes": 2514,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "faostat",
+    "names": ["faostat", "faostat (community)"],
+    "website": "https://www.fao.org/faostat",
+    "source": {
+      "kind": "official",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/d/db/FAO_logo.svg",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "mark",
+      "sourceWidth": 257,
+      "sourceHeight": 261,
+      "sourceFormat": "svg",
+      "outputBytes": 11398
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "fastly",
@@ -1320,8 +1719,10 @@
       "sourceWidth": 512,
       "sourceHeight": 199,
       "sourceFormat": "svg",
-      "outputBytes": 3770
-    }
+      "outputBytes": 4090,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "fiftyone",
@@ -1335,27 +1736,33 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 4924,
-      "mode": "mark"
-    }
+      "outputBytes": 5404,
+      "mode": "mark",
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "figma",
     "names": ["figma"],
     "website": "https://www.figma.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/figma.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 54,
-      "sourceHeight": 80,
-      "sourceFormat": "svg",
-      "outputBytes": 2548
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/12/06/ed/1206ed39-909c-c0d9-e567-dee2a4d7a842/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 1152747299,
+      "sellerName": "Figma, Inc.",
+      "appName": "Figma",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1152747299",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3422
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "firebase",
@@ -1372,8 +1779,10 @@
       "sourceWidth": 600,
       "sourceHeight": 600,
       "sourceFormat": "svg",
-      "outputBytes": 2916
-    }
+      "outputBytes": 3086,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "firecrawl",
@@ -1390,23 +1799,51 @@
       "sourceWidth": 50,
       "sourceHeight": 72,
       "sourceFormat": "svg",
-      "outputBytes": 2784
-    }
+      "outputBytes": 3110,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "fireflies",
     "names": ["fireflies"],
     "source": {
-      "kind": "official",
-      "url": "https://fireflies.ai/apple-icon.png?81a7679a0c7e6094",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 1756
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/9c/f8/a6/9cf8a6d8-e782-75a0-40b5-6a7e24e49f88/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 6463164203,
+      "sellerName": "FIREFLIES.AI CORP.",
+      "appName": "Fireflies: AI notetaker",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6463164203",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 1138
     },
-    "website": "https://fireflies.ai"
+    "website": "https://fireflies.ai",
+    "outputs": ["curated"]
+  },
+  {
+    "key": "fred",
+    "names": ["fred"],
+    "website": "https://fred.stlouisfed.org",
+    "source": {
+      "kind": "official",
+      "type": "fallback",
+      "url": "https://fred.stlouisfed.org/favicon.ico",
+      "mode": "mark",
+      "allowLowResolution": true,
+      "licenseNote": "Official website favicon; trademarks remain with their owners.",
+      "rendering": "mark",
+      "sourceWidth": 16,
+      "sourceHeight": 16,
+      "sourceFormat": "png",
+      "outputBytes": 2420
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "fullstory",
@@ -1420,9 +1857,11 @@
       "sourceWidth": 61,
       "sourceHeight": 61,
       "sourceFormat": "svg",
-      "outputBytes": 2564,
-      "mode": "mark"
-    }
+      "outputBytes": 2752,
+      "mode": "mark",
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "gamma",
@@ -1437,9 +1876,11 @@
       "sourceFormat": "png",
       "outputBytes": 3782,
       "mode": "tile",
-      "trimFrame": true
+      "trimFrame": true,
+      "type": "own-tile"
     },
-    "website": "https://gamma.app"
+    "website": "https://gamma.app",
+    "outputs": ["curated"]
   },
   {
     "key": "gc-ai",
@@ -1453,26 +1894,32 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 1520
-    }
+      "outputBytes": 1608,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "github",
     "names": ["github"],
     "website": "https://github.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/github-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 250,
-      "sourceFormat": "svg",
-      "outputBytes": 2946
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/73/b6/8e/73b68eb7-dba4-8907-a817-16c41d353e3a/AppIcon-0-0-1x_U007epad-0-1-P3-85-220.png/512x512bb.jpg",
+      "appId": 1477376905,
+      "sellerName": "GitHub",
+      "appName": "GitHub",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1477376905",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4388
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "gitkraken",
@@ -1489,8 +1936,10 @@
       "sourceWidth": 256,
       "sourceHeight": 224,
       "sourceFormat": "svg",
-      "outputBytes": 6216
-    }
+      "outputBytes": 6862,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "gitlab",
@@ -1507,44 +1956,54 @@
       "sourceWidth": 32,
       "sourceHeight": 32,
       "sourceFormat": "svg",
-      "outputBytes": 3212
-    }
+      "outputBytes": 3530,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "gmail",
     "names": ["gmail"],
     "website": "https://mail.google.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/gmail.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/c3/e6/4a/c3e64abe-aa7c-ff57-9bfb-a5529bd3e2fc/gmail_2026_ios-0-0-1x_U007epad-0-0-0-1-0-0-0-0-85-220.png/512x512bb.jpg",
+      "appId": 422689480,
+      "sellerName": "Google LLC",
+      "appName": "Gmail - Email by Google",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=422689480",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
       "sourceWidth": 512,
-      "sourceHeight": 399,
-      "sourceFormat": "svg",
-      "outputBytes": 2660
-    }
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3666
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "google-calendar",
     "names": ["gcal", "google calendar"],
     "website": "https://calendar.google.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/google-calendar.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/98/fb/9c/98fb9c78-3260-9fec-2b90-81bbfaad52f2/calendar_2026_ios-0-0-1x_U007epad-0-0-0-1-0-0-sRGB-0-0-85-220.png/512x512bb.jpg",
+      "appId": 909319292,
+      "sellerName": "Google LLC",
+      "appName": "Google Calendar: Get Organized",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=909319292",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
       "sourceWidth": 512,
       "sourceHeight": 512,
-      "sourceFormat": "svg",
-      "outputBytes": 2620
-    }
+      "sourceFormat": "jpeg",
+      "outputBytes": 4216
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "google-cloud",
@@ -1566,36 +2025,44 @@
     ],
     "website": "https://cloud.google.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/google-cloud.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 800,
-      "sourceHeight": 800,
-      "sourceFormat": "svg",
-      "outputBytes": 3262
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ad/e9/04/ade9049c-8210-3c72-0015-3be29131e20d/logo_google_cloud_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.jpg",
+      "appId": 1005120814,
+      "sellerName": "Google LLC",
+      "appName": "Google Cloud",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1005120814",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3750
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "google-drive",
     "names": ["gdrive", "google drive"],
     "website": "https://drive.google.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/drive.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 87,
-      "sourceHeight": 78,
-      "sourceFormat": "svg",
-      "outputBytes": 2942
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/b2/b6/75/b2b675cf-4e20-9ff2-99b8-6e6f5944adcd/drive_2026_ios-0-0-1x_U007epad-0-0-0-1-0-0-sRGB-0-0-85-220.png/512x512bb.jpg",
+      "appId": 507874739,
+      "sellerName": "Google LLC",
+      "appName": "Google Drive",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=507874739",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3542
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "govtribe",
@@ -1609,45 +2076,73 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2112,
-      "mode": "mark"
-    }
+      "outputBytes": 2226,
+      "mode": "mark",
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "grafana",
     "names": ["grafana", "grafana-assistant", "grafana-cloud-mcp", "grafana-mcp"],
     "website": "https://grafana.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/grafana.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 279,
-      "sourceFormat": "svg",
-      "outputBytes": 4638
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/7f/b1/0a/7fb10a5d-4797-2102-75ec-57546c3ab514/AppIcon-0-0-1x_U007ephone-0-1-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 1669759048,
+      "sellerName": "Raintank Inc.",
+      "appName": "Grafana",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1669759048",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 5982
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "granola",
     "names": ["granola"],
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/granola-light.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 32,
-      "sourceHeight": 32,
-      "sourceFormat": "svg",
-      "outputBytes": 3698
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/eb/f8/f5/ebf8f505-5255-ab30-b154-0a57169a1f6d/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 6739429409,
+      "sellerName": "Granola inc",
+      "appName": "Granola - AI Meeting Notes",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6739429409",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 6010
     },
-    "website": "https://www.granola.ai"
+    "website": "https://www.granola.ai",
+    "outputs": ["curated"]
+  },
+  {
+    "key": "grants-gov",
+    "names": ["grants-gov", "grants.gov", "grants.gov (community)"],
+    "website": "https://www.grants.gov",
+    "source": {
+      "kind": "official",
+      "type": "fallback",
+      "url": "https://www.grants.gov/favicon.ico",
+      "mode": "mark",
+      "allowLowResolution": true,
+      "rendering": "mark",
+      "sourceWidth": 64,
+      "sourceHeight": 64,
+      "sourceFormat": "png",
+      "outputBytes": 2660
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "greptile",
@@ -1661,8 +2156,10 @@
       "sourceWidth": 2048,
       "sourceHeight": 2048,
       "sourceFormat": "png",
-      "outputBytes": 4202
-    }
+      "outputBytes": 4202,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "growthbook",
@@ -1679,8 +2176,10 @@
       "sourceWidth": 256,
       "sourceHeight": 272,
       "sourceFormat": "svg",
-      "outputBytes": 3826
-    }
+      "outputBytes": 4170,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "guru",
@@ -1694,8 +2193,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3184
-    }
+      "outputBytes": 3490,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "hex",
@@ -1708,26 +2209,35 @@
       "sourceWidth": 280,
       "sourceHeight": 280,
       "sourceFormat": "svg",
-      "outputBytes": 1854,
+      "outputBytes": 1826,
       "mode": "mark",
-      "background": "#01011b"
+      "background": "#01011b",
+      "type": "fallback"
     },
-    "website": "https://hex.tech"
+    "website": "https://hex.tech",
+    "outputs": ["curated"]
   },
   {
     "key": "heygen",
     "names": ["heygen", "hyperframes"],
     "website": "https://www.heygen.com",
     "source": {
-      "kind": "codex-plugin",
-      "url": "https://files.openai.com/content?id=file_00000000f65481f5be80e30031681e94&cdn=1&cp=pi&ma=31104000&ts=0&p=pi&cid=8&sig=980a71cd94b25fabbb4bce7031f5f194abfe67ec2c84a7da21fad79c7e971ab5&v=0",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/46/99/b8/4699b8d1-7044-8ac9-c90d-162657742d32/AppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 6711356409,
+      "sellerName": "HeyGen Technology Inc.",
+      "appName": "AI Avatar Generator - HeyGen",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6711356409",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
       "sourceWidth": 512,
       "sourceHeight": 512,
-      "sourceFormat": "png",
-      "outputBytes": 4150
-    }
+      "sourceFormat": "jpeg",
+      "outputBytes": 5244
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "honeycomb",
@@ -1741,8 +2251,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2864
-    }
+      "outputBytes": 3032,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "hostinger",
@@ -1761,28 +2273,32 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 2102
-    }
+      "outputBytes": 2220,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "hubspot",
     "names": ["hubspot", "hubspot-sales"],
     "website": "https://www.hubspot.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/hubspot.svg",
-      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
-      "color": "#FF7A59",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
-      "brandSource": "https://www.hubspot.com/style-guide",
-      "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
-      "sourceFormat": "svg",
-      "outputBytes": 3270
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/38/29/35/38293567-c1bb-3020-4d75-75fe5c97d92d/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 1107711722,
+      "sellerName": "HubSpot",
+      "appName": "HubSpot",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1107711722",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3746
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "hugging-face",
@@ -1799,8 +2315,10 @@
       "sourceWidth": 95,
       "sourceHeight": 88,
       "sourceFormat": "svg",
-      "outputBytes": 5020
-    }
+      "outputBytes": 5482,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "hunter",
@@ -1814,23 +2332,55 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 2740
-    }
+      "outputBytes": 2884,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "inaturalist",
+    "names": ["inaturalist", "inaturalist (community)"],
+    "website": "https://www.inaturalist.org",
+    "source": {
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/04/7c/1a/047c1a4e-8a8f-74fa-e98d-4a2941965e1f/AppIcon-0-0-1x_U007emarketing-0-8-0-0-85-220.png/512x512bb.jpg",
+      "appId": 421397028,
+      "sellerName": "iNaturalist",
+      "appName": "iNaturalist Classic",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=421397028",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3392
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "incident-io",
     "names": ["incident-io"],
     "website": "https://incident.io",
     "source": {
-      "kind": "official",
-      "url": "https://incident.io/icons/icon-512x512.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/0f/ab/49/0fab4934-7069-853c-c8b0-b6a31911e0ce/default-0-0-1x_U007ephone-0-1-85-220.png/512x512bb.jpg",
+      "appId": 6471268530,
+      "sellerName": "Pineapple Technology Ltd",
+      "appName": "incident.io",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6471268530",
+      "sellerVerificationUrl": "https://incident.io/legal/privacy",
+      "mode": "tile",
       "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
       "sourceWidth": 512,
       "sourceHeight": 512,
-      "sourceFormat": "png",
-      "outputBytes": 2986
-    }
+      "sourceFormat": "jpeg",
+      "outputBytes": 4786
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "informatica",
@@ -1849,22 +2399,62 @@
     "omitted": "Rejected the GitHub generated identicon; official icon sources are only 59 px."
   },
   {
+    "key": "inspire",
+    "names": ["inspire", "cern inspire hep", "cern inspire hep (community)"],
+    "website": "https://inspirehep.net",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://github.com/inspirehep.png?size=512",
+      "mode": "mark",
+      "organizationUrl": "https://github.com/inspirehep",
+      "licenseNote": "Organisation avatar identifying its service; trademarks remain with owners.",
+      "rendering": "mark",
+      "sourceWidth": 460,
+      "sourceHeight": 460,
+      "sourceFormat": "png",
+      "outputBytes": 2268
+    },
+    "outputs": ["curated"]
+  },
+  {
     "key": "intercom",
     "names": ["intercom"],
     "website": "https://www.intercom.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/intercom-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 263,
-      "sourceFormat": "svg",
-      "outputBytes": 1936
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ad/b6/2e/adb62e41-6a9d-4bf5-cee3-7ce235839f34/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 739927601,
+      "sellerName": "Intercom, Incorporated",
+      "appName": "Intercom Conversations",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=739927601",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 2734
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "interpro",
+    "names": ["interpro", "interpro (community)"],
+    "website": "https://www.ebi.ac.uk/interpro",
+    "source": {
+      "kind": "official",
+      "url": "https://www.ebi.ac.uk/interpro/assets/icons-and-manifests/e60/apple-touch-icon-1024x1024.png",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "tile",
+      "sourceWidth": 1024,
+      "sourceHeight": 1024,
+      "sourceFormat": "png",
+      "outputBytes": 3334
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "jfrog",
@@ -1881,8 +2471,10 @@
       "sourceWidth": 256,
       "sourceHeight": 248,
       "sourceFormat": "svg",
-      "outputBytes": 6938
-    }
+      "outputBytes": 7512,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "kaggle",
@@ -1896,9 +2488,11 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 1650
+      "outputBytes": 1712,
+      "type": "own-tile"
     },
-    "website": "https://www.kaggle.com"
+    "website": "https://www.kaggle.com",
+    "outputs": ["curated"]
   },
   {
     "key": "klaviyo",
@@ -1912,8 +2506,10 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 734
-    }
+      "outputBytes": 772,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "langfuse",
@@ -1930,8 +2526,10 @@
       "sourceWidth": 256,
       "sourceHeight": 161,
       "sourceFormat": "svg",
-      "outputBytes": 4986
-    }
+      "outputBytes": 5474,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "laravel-boost",
@@ -1948,8 +2546,10 @@
       "sourceWidth": 256,
       "sourceHeight": 264,
       "sourceFormat": "svg",
-      "outputBytes": 6104
-    }
+      "outputBytes": 6548,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "leadfeeder",
@@ -1963,41 +2563,54 @@
       "sourceWidth": 500,
       "sourceHeight": 500,
       "sourceFormat": "svg",
-      "outputBytes": 1358
-    }
+      "outputBytes": 1358,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "legalzoom",
     "names": ["legalzoom"],
     "website": "https://www.legalzoom.com",
     "source": {
-      "kind": "codex-app",
-      "url": "https://files.openai.com/content?id=file_00000000098471f6bd9aaab8ccef8131&cdn=1&cp=pi&ma=32745600&ts=0&p=pi&cid=1&sig=3365264582da9a861b0753c4dd3e42a815bb428276f27a8fedd9b52773b99d9e",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 1324
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/72/9a/ba/729abaf5-7a6d-425b-1038-a5f93a5d1b9d/LZAppIcon-0-0-1x_U007ephone-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 6760735891,
+      "sellerName": "LegalZoom.com, Inc.",
+      "appName": "LegalZoom",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6760735891",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4212
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "linear",
     "names": ["linear"],
     "website": "https://linear.app",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/linear.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 200,
-      "sourceHeight": 200,
-      "sourceFormat": "svg",
-      "outputBytes": 4378
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/c1/57/27/c15727c8-4923-d9ee-c262-ae217aba24e5/Linear-0-0-1x_U007epad-0-0-0-1-0-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 1645587184,
+      "sellerName": "Linear Orbit, Inc.",
+      "appName": "Linear Mobile",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1645587184",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 6594
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "linq-alpha",
@@ -2011,8 +2624,10 @@
       "sourceWidth": 128,
       "sourceHeight": 128,
       "sourceFormat": "png",
-      "outputBytes": 2120
-    }
+      "outputBytes": 2260,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "logfire",
@@ -2026,8 +2641,10 @@
       "sourceWidth": 139,
       "sourceHeight": 120,
       "sourceFormat": "svg",
-      "outputBytes": 4462
-    }
+      "outputBytes": 4992,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "logrocket",
@@ -2041,8 +2658,10 @@
       "sourceWidth": 64,
       "sourceHeight": 65,
       "sourceFormat": "svg",
-      "outputBytes": 2980
-    }
+      "outputBytes": 2980,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "lovable",
@@ -2059,8 +2678,10 @@
       "sourceWidth": 121,
       "sourceHeight": 122,
       "sourceFormat": "svg",
-      "outputBytes": 2208
-    }
+      "outputBytes": 2566,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "lumen",
@@ -2077,8 +2698,10 @@
       "sourceWidth": 256,
       "sourceHeight": 515,
       "sourceFormat": "svg",
-      "outputBytes": 4858
-    }
+      "outputBytes": 5492,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "lusha",
@@ -2092,8 +2715,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "webp",
-      "outputBytes": 4142
-    }
+      "outputBytes": 4566,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "mapbox",
@@ -2110,8 +2735,44 @@
       "sourceWidth": 256,
       "sourceHeight": 254,
       "sourceFormat": "svg",
-      "outputBytes": 3064
-    }
+      "outputBytes": 3290,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "materials-project-docs",
+    "names": ["materials-project-docs", "materials project documentation"],
+    "website": "https://docs.materialsproject.org",
+    "source": {
+      "kind": "official",
+      "url": "https://docs.materialsproject.org/~gitbook/image?url=https%3A%2F%2F2369879881-files.gitbook.io%2F%7E%2Ffiles%2Fv0%2Fb%2Fgitbook-x-prod.appspot.com%2Fo%2Fspaces%252F-MhdHkeirg8PPHDHWitE%252Ficon%252FPdP8QklApmJ2EQkvQ13D%252FMP%2520Logo%2520Square%2520Small.png%3Falt%3Dmedia%26token%3D17726326-fd6f-41c5-b79a-a29223ecb2ea&width=180&height=180&sign=6c52b03e81b7e13b307f4f07607c020d&sv=3",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "tile",
+      "sourceWidth": 180,
+      "sourceHeight": 180,
+      "sourceFormat": "jpeg",
+      "outputBytes": 6812
+    },
+    "outputs": ["curated"]
+  },
+  {
+    "key": "maven-bio",
+    "names": ["maven-bio"],
+    "website": "https://mavenbio.com",
+    "source": {
+      "kind": "official",
+      "url": "https://mavenbio.com/icons/favicon.svg",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "fallback",
+      "rendering": "mark",
+      "sourceWidth": 48,
+      "sourceHeight": 48,
+      "sourceFormat": "svg",
+      "outputBytes": 2812
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "mcp-apps",
@@ -2125,26 +2786,32 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 4302
-    }
+      "outputBytes": 4302,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "mercadopago",
     "names": ["mercadopago"],
     "website": "https://mercadopago.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/mercado-pago.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 150,
-      "sourceHeight": 104,
-      "sourceFormat": "svg",
-      "outputBytes": 6386
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/82/86/42/828642b5-4c32-1717-e3c5-041046383b87/App_Icon-0-0-1x_U007ephone-0-1-0-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 925436649,
+      "sellerName": "MercadoLibre S.A.",
+      "appName": "Mercado Pago: cuenta digital",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=925436649",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 9680
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "mergify",
@@ -2158,8 +2825,10 @@
       "sourceWidth": 25,
       "sourceHeight": 25,
       "sourceFormat": "svg",
-      "outputBytes": 2756
-    }
+      "outputBytes": 2984,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "mermaid-chart",
@@ -2172,9 +2841,11 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2356
+      "outputBytes": 2356,
+      "type": "own-tile"
     },
-    "website": "https://www.mermaidchart.com"
+    "website": "https://www.mermaidchart.com",
+    "outputs": ["curated"]
   },
   {
     "key": "microsoft-learn",
@@ -2191,8 +2862,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 1056
-    }
+      "outputBytes": 994,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "mintlify",
@@ -2209,26 +2882,32 @@
       "sourceWidth": 19,
       "sourceHeight": 19,
       "sourceFormat": "svg",
-      "outputBytes": 2870
-    }
+      "outputBytes": 3074,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "miro",
     "names": ["miro"],
     "website": "https://miro.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/miro-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "svg",
-      "outputBytes": 4120
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b6/8a/38/b68a3838-6a6c-c6b9-899d-4136a0168304/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "appId": 1180074773,
+      "sellerName": "Realtimeboard Inc.",
+      "appName": "Miro: your visual workspace",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1180074773",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4524
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "mlflow",
@@ -2247,26 +2926,32 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4282
-    }
+      "outputBytes": 4662,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "monday",
     "names": ["monday", "monday-com", "monday-crm", "monday.com"],
     "website": "https://monday.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/monday-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 156,
-      "sourceFormat": "svg",
-      "outputBytes": 2888
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/80/26/8b/80268ba8-c521-23e9-b23a-90f39a76aa53/AppIcon-Monday-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 1290128888,
+      "sellerName": "monday.com Ltd.",
+      "appName": "monday.com - AI Work Platform",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1290128888",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3914
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "mongodb",
@@ -2283,8 +2968,10 @@
       "sourceWidth": 120,
       "sourceHeight": 258,
       "sourceFormat": "svg",
-      "outputBytes": 1928
-    }
+      "outputBytes": 2176,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "motherduck",
@@ -2297,10 +2984,31 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2126,
-      "background": "#f4efea"
+      "outputBytes": 2322,
+      "background": "#f4efea",
+      "type": "own-tile"
     },
-    "website": "https://motherduck.com"
+    "website": "https://motherduck.com",
+    "outputs": ["curated"]
+  },
+  {
+    "key": "nasa-earthdata",
+    "names": ["nasa-earthdata"],
+    "website": "https://www.earthdata.nasa.gov",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://github.com/nasa.png?size=512",
+      "mode": "mark",
+      "organizationUrl": "https://github.com/nasa",
+      "licenseNote": "Organisation avatar identifying its service; trademarks remain with owners.",
+      "rendering": "mark",
+      "sourceWidth": 460,
+      "sourceHeight": 460,
+      "sourceFormat": "png",
+      "outputBytes": 8024
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "neon",
@@ -2317,8 +3025,10 @@
       "sourceWidth": 64,
       "sourceHeight": 64,
       "sourceFormat": "svg",
-      "outputBytes": 1232
-    }
+      "outputBytes": 1344,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "netlify",
@@ -2335,8 +3045,10 @@
       "sourceWidth": 256,
       "sourceHeight": 226,
       "sourceFormat": "svg",
-      "outputBytes": 1740
-    }
+      "outputBytes": 1876,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "netsuite",
@@ -2348,16 +3060,22 @@
     ],
     "website": "https://www.netsuite.com",
     "source": {
-      "kind": "official",
-      "url": "https://www.netsuite.com/apple-touch-icon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/19/ca/fb/19cafb9e-8f0b-d237-e0ea-a4b3ed3f88e4/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "appId": 1449263734,
+      "sellerName": "Oracle America, Inc.",
+      "appName": "NetSuite",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1449263734",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
       "sourceFormat": "jpeg",
-      "outputBytes": 3200,
-      "mode": "mark"
-    }
+      "outputBytes": 5034
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "new-relic",
@@ -2374,8 +3092,10 @@
       "sourceWidth": 256,
       "sourceHeight": 296,
       "sourceFormat": "svg",
-      "outputBytes": 2722
-    }
+      "outputBytes": 2916,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "nightvision",
@@ -2389,8 +3109,10 @@
       "sourceWidth": 250,
       "sourceHeight": 250,
       "sourceFormat": "svg",
-      "outputBytes": 2760
-    }
+      "outputBytes": 2944,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "nimble",
@@ -2404,8 +3126,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3870
-    }
+      "outputBytes": 4284,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "noibu",
@@ -2419,26 +3143,32 @@
       "sourceWidth": 334,
       "sourceHeight": 334,
       "sourceFormat": "png",
-      "outputBytes": 2058
-    }
+      "outputBytes": 2230,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "notion",
     "names": ["notion"],
     "website": "https://www.notion.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/notion.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 268,
-      "sourceFormat": "svg",
-      "outputBytes": 2834
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/17/a6/b9/17a6b901-c46f-ef67-c7b5-288195b768b8/AppIconProd-0-0-1x_U007epad-0-0-0-1-0-0-85-220.png/512x512bb.jpg",
+      "appId": 1232780281,
+      "sellerName": "Notion Labs, Incorporated",
+      "appName": "Notion: Notes, Tasks, AI",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1232780281",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3472
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "nvidia",
@@ -2455,8 +3185,10 @@
       "sourceWidth": 351,
       "sourceHeight": 259,
       "sourceFormat": "svg",
-      "outputBytes": 4338
-    }
+      "outputBytes": 4636,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "oeis-community",
@@ -2471,8 +3203,10 @@
       "sourceWidth": 64,
       "sourceHeight": 64,
       "sourceFormat": "svg",
-      "outputBytes": 2506
-    }
+      "outputBytes": 2778,
+      "type": "fallback"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "open-targets",
@@ -2485,27 +3219,33 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 1344
+      "outputBytes": 1448,
+      "type": "own-tile"
     },
-    "website": "https://platform.opentargets.org"
+    "website": "https://platform.opentargets.org",
+    "outputs": ["curated"]
   },
   {
     "key": "openai",
     "names": ["OpenAI", "Codex", "codex-app-tools", "Codex Document Control"],
     "website": "https://openai.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/openai.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 611,
-      "sourceHeight": 611,
-      "sourceFormat": "svg",
-      "outputBytes": 5004
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/42/3b/1d/423b1d61-1b55-0bca-d3b9-1ce597c7b4b0/AppIcon-0-0-1x_U007epad-0-0-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 6448311069,
+      "sellerName": "OpenAI OpCo, LLC",
+      "appName": "ChatGPT",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6448311069",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 7370
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "openalex",
@@ -2518,9 +3258,11 @@
       "sourceWidth": 512,
       "sourceHeight": 481,
       "sourceFormat": "png",
-      "outputBytes": 2096
+      "outputBytes": 2254,
+      "type": "own-tile"
     },
-    "website": "https://openalex.org"
+    "website": "https://openalex.org",
+    "outputs": ["curated"]
   },
   {
     "key": "oracle",
@@ -2533,51 +3275,85 @@
     ],
     "website": "https://www.oracle.com",
     "source": {
-      "kind": "website",
-      "url": "https://www.oracle.com/asset/web/favicons/favicon-192.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/9e/c7/52/9ec752ab-994f-eaf1-805f-86596c5db6c4/AppIcon-0-0-1x_U007emarketing-0-6-0-0-85-220.png/512x512bb.jpg",
+      "appId": 1534250806,
+      "sellerName": "Oracle America, Inc.",
+      "appName": "Oracle Cloud Infrastructure",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1534250806",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4444
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "osf",
+    "names": ["osf", "osf via wanatux", "osf via wanatux (community)"],
+    "website": "https://osf.io",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://github.com/CenterForOpenScience.png?size=512",
+      "mode": "mark",
+      "organizationUrl": "https://github.com/CenterForOpenScience",
+      "licenseNote": "Organisation avatar identifying its service; trademarks remain with owners.",
       "rendering": "mark",
-      "sourceWidth": 192,
-      "sourceHeight": 192,
+      "sourceWidth": 460,
+      "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 2322
-    }
+      "outputBytes": 5474
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "outlook-calendar",
     "names": ["outlook calendar"],
     "website": "https://outlook.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/microsoft-outlook.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 570,
-      "sourceHeight": 540,
-      "sourceFormat": "svg",
-      "outputBytes": 4440
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/68/d7/e4/68d7e488-404f-0cc3-b90e-b68aca7adffc/AppIcon-outlook.prod-0-0-1x_U007epad-0-1-0-0-0-85-220.png/512x512bb.jpg",
+      "appId": 951937596,
+      "sellerName": "Microsoft Corporation",
+      "appName": "Microsoft Outlook",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=951937596",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3322
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "outlook-email",
     "names": ["outlook email"],
     "website": "https://outlook.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/microsoft-outlook.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 570,
-      "sourceHeight": 540,
-      "sourceFormat": "svg",
-      "outputBytes": 4440
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/68/d7/e4/68d7e488-404f-0cc3-b90e-b68aca7adffc/AppIcon-outlook.prod-0-0-1x_U007epad-0-1-0-0-0-85-220.png/512x512bb.jpg",
+      "appId": 951937596,
+      "sellerName": "Microsoft Corporation",
+      "appName": "Microsoft Outlook",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=951937596",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3322
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "outputai",
@@ -2591,44 +3367,54 @@
       "sourceWidth": 764,
       "sourceHeight": 764,
       "sourceFormat": "svg",
-      "outputBytes": 1492
-    }
+      "outputBytes": 1492,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "pagerduty",
     "names": ["pagerduty"],
     "website": "https://pagerduty.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/pagerduty-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 372,
-      "sourceFormat": "svg",
-      "outputBytes": 1754
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/2f/08/52/2f085228-32a9-cb2f-4201-1cfd014dcefc/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 594039512,
+      "sellerName": "PagerDuty Inc.",
+      "appName": "PagerDuty",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=594039512",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 1646
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "paypal",
     "names": ["paypal"],
     "website": "https://developer.paypal.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/paypal.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 37,
-      "sourceHeight": 45,
-      "sourceFormat": "svg",
-      "outputBytes": 2532
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/b4/38/91/b43891b7-c530-3cc4-8f1c-7b22c7864fb6/AppIcon-0-0-1x_U007ephone-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 283646709,
+      "sellerName": "PayPal, Inc.",
+      "appName": "PayPal - Pay, Send, Save",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=283646709",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 2158
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "pendo",
@@ -2649,8 +3435,10 @@
       "sourceWidth": 152,
       "sourceHeight": 152,
       "sourceFormat": "svg",
-      "outputBytes": 1418
-    }
+      "outputBytes": 1664,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "pigment",
@@ -2664,8 +3452,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2892
-    }
+      "outputBytes": 3114,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "pinecone",
@@ -2682,8 +3472,10 @@
       "sourceWidth": 256,
       "sourceHeight": 288,
       "sourceFormat": "svg",
-      "outputBytes": 4454
-    }
+      "outputBytes": 4932,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "pixeltable",
@@ -2697,8 +3489,10 @@
       "sourceWidth": 460,
       "sourceHeight": 460,
       "sourceFormat": "png",
-      "outputBytes": 3510
-    }
+      "outputBytes": 3732,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "planetscale",
@@ -2715,8 +3509,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 2876
-    }
+      "outputBytes": 2934,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "playwright",
@@ -2733,8 +3529,27 @@
       "sourceWidth": 400,
       "sourceHeight": 400,
       "sourceFormat": "svg",
-      "outputBytes": 4162
-    }
+      "outputBytes": 4514,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "pluto-bio",
+    "names": ["pluto-bio"],
+    "website": "https://pluto.bio",
+    "source": {
+      "kind": "official",
+      "url": "https://pluto.bio/brand/mark.svg",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "mark",
+      "sourceWidth": 769,
+      "sourceHeight": 914,
+      "sourceFormat": "svg",
+      "outputBytes": 2020
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "posthog",
@@ -2751,8 +3566,10 @@
       "sourceWidth": 50,
       "sourceHeight": 30,
       "sourceFormat": "svg",
-      "outputBytes": 3930
-    }
+      "outputBytes": 4170,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "postiz",
@@ -2771,8 +3588,10 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4306
-    }
+      "outputBytes": 4684,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "postman",
@@ -2789,8 +3608,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 4602
-    }
+      "outputBytes": 4966,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "preset",
@@ -2804,8 +3625,10 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 2460
-    }
+      "outputBytes": 2626,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "prisma",
@@ -2822,8 +3645,44 @@
       "sourceWidth": 256,
       "sourceHeight": 310,
       "sourceFormat": "svg",
-      "outputBytes": 2468
-    }
+      "outputBytes": 2664,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "protocols-io",
+    "names": ["protocols-io", "protocols.io"],
+    "website": "https://www.protocols.io",
+    "source": {
+      "kind": "official",
+      "url": "https://www.protocols.io/img/apple-touch-icon.png",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "mark",
+      "sourceWidth": 180,
+      "sourceHeight": 180,
+      "sourceFormat": "png",
+      "outputBytes": 4008
+    },
+    "outputs": ["curated"]
+  },
+  {
+    "key": "pubchem",
+    "names": ["pubchem", "pubchem (community)"],
+    "website": "https://pubchem.ncbi.nlm.nih.gov",
+    "source": {
+      "kind": "official",
+      "url": "https://pubchem.ncbi.nlm.nih.gov/pcfe/favicon/apple-touch-icon.png",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "fallback",
+      "rendering": "mark",
+      "sourceWidth": 180,
+      "sourceHeight": 180,
+      "sourceFormat": "png",
+      "outputBytes": 5048
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "pubmed",
@@ -2842,8 +3701,10 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3288
-    }
+      "outputBytes": 3632,
+      "type": "fallback"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "pydantic-ai",
@@ -2860,8 +3721,10 @@
       "sourceWidth": 256,
       "sourceHeight": 222,
       "sourceFormat": "svg",
-      "outputBytes": 4494
-    }
+      "outputBytes": 5020,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "qdrant",
@@ -2878,8 +3741,10 @@
       "sourceWidth": 57,
       "sourceHeight": 64,
       "sourceFormat": "svg",
-      "outputBytes": 3344
-    }
+      "outputBytes": 3594,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "qodo",
@@ -2898,8 +3763,10 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4822
-    }
+      "outputBytes": 5342,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "qt",
@@ -2916,8 +3783,10 @@
       "sourceWidth": 54,
       "sourceHeight": 43,
       "sourceFormat": "svg",
-      "outputBytes": 3516
-    }
+      "outputBytes": 3718,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "quarkus",
@@ -2934,28 +3803,32 @@
       "sourceWidth": 256,
       "sourceHeight": 257,
       "sourceFormat": "svg",
-      "outputBytes": 4038
-    }
+      "outputBytes": 4220,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "quickbooks",
     "names": ["intuit-quickbooks", "quickbooks"],
     "website": "https://quickbooks.intuit.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/quickbooks.svg",
-      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
-      "color": "#2CA01C",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
-      "brandSource": "https://design.intuit.com/quickbooks/brand",
-      "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
-      "sourceFormat": "svg",
-      "outputBytes": 4136
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/07/c3/d9/07c3d9e7-efca-6429-f5ba-fde42f689ab0/QBMAppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg",
+      "appId": 584606479,
+      "sellerName": "Intuit Inc.",
+      "appName": "Intuit QuickBooks for Business",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=584606479",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4282
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "railway",
@@ -2972,8 +3845,27 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 2478
-    }
+      "outputBytes": 2598,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "rcsb-pdb",
+    "names": ["rcsb-pdb"],
+    "website": "https://www.rcsb.org",
+    "source": {
+      "kind": "official",
+      "url": "https://www.rcsb.org/img/rcsb-apple-touch-icon.jpg",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "tile",
+      "sourceWidth": 170,
+      "sourceHeight": 170,
+      "sourceFormat": "jpeg",
+      "outputBytes": 10536
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "redis",
@@ -2990,8 +3882,10 @@
       "sourceWidth": 256,
       "sourceHeight": 220,
       "sourceFormat": "svg",
-      "outputBytes": 4816
-    }
+      "outputBytes": 5228,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "render",
@@ -3008,8 +3902,10 @@
       "sourceWidth": 800,
       "sourceHeight": 800,
       "sourceFormat": "svg",
-      "outputBytes": 1306
-    }
+      "outputBytes": 1406,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "resend",
@@ -3026,8 +3922,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 1688
-    }
+      "outputBytes": 1800,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "revenuecat",
@@ -3046,8 +3944,10 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4472
-    }
+      "outputBytes": 4734,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "rill",
@@ -3061,59 +3961,76 @@
       "sourceWidth": 128,
       "sourceHeight": 128,
       "sourceFormat": "svg",
-      "outputBytes": 2674
-    }
+      "outputBytes": 3014,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "rootly",
     "names": ["rootly"],
     "website": "https://rootly.com",
     "source": {
-      "kind": "official",
-      "url": "https://rootly.com/brand/rootly-logo-glyph-black.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 320,
-      "sourceHeight": 320,
-      "sourceFormat": "svg",
-      "outputBytes": 2814
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/96/be/70/96be7080-c382-63ee-1109-d534836aef65/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "appId": 6478240412,
+      "sellerName": "Rootly Inc.",
+      "appName": "Rootly",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6478240412",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 2688
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "runway",
     "names": ["runway", "runway-api"],
     "website": "https://runwayml.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/runway.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 300,
-      "sourceHeight": 300,
-      "sourceFormat": "svg",
-      "outputBytes": 2908
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/79/fd/2f/79fd2fc3-ab3a-aab5-b135-235a34ea0b19/runway-0-0-1x_U007ephone-0-1-85-220.png/512x512bb.jpg",
+      "appId": 1665024375,
+      "sellerName": "Runway AI, Inc.",
+      "appName": "Runway: AI Image & Video",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1665024375",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3502
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "salesforce",
     "names": ["agentforce-adlc", "salesforce", "salesforce-development"],
     "website": "https://www.salesforce.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/salesforce.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 999,
-      "sourceHeight": 699,
-      "sourceFormat": "svg",
-      "outputBytes": 4356
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/70/56/d9/7056d962-b6a7-d098-902e-a7db2bb76836/SalesforceAppIcon-0-0-1x_U007epad-0-1-0-0-0-85-220.png/512x512bb.jpg",
+      "appId": 404249815,
+      "sellerName": "salesforce.com",
+      "appName": "Salesforce",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=404249815",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3140
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "sanity",
@@ -3130,8 +4047,10 @@
       "sourceWidth": 12,
       "sourceHeight": 12,
       "sourceFormat": "svg",
-      "outputBytes": 4764
-    }
+      "outputBytes": 5360,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "sap",
@@ -3149,34 +4068,44 @@
     ],
     "website": "https://www.sap.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/sap.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/14/31/a3/1431a3db-6f40-1c1f-0e21-994d1cf3479e/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 426562526,
+      "sellerName": "SAP SE",
+      "appName": "SAP SuccessFactors Mobile",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=426562526",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
       "sourceWidth": 512,
-      "sourceHeight": 254,
-      "sourceFormat": "svg",
-      "outputBytes": 3264
-    }
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4584
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "scandit",
     "names": ["scandit", "scandit-sdk"],
     "website": "https://www.scandit.com",
     "source": {
-      "kind": "website",
-      "url": "https://www.scandit.com/apple-touch-icon.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 838,
-      "mode": "mark"
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/99/4c/37/994c3703-9c9a-673b-6a03-ac3c58142a01/AppIcon-0-0-1x_U007emarketing-0-5-0-85-220.png/512x512bb.jpg",
+      "appId": 1613733334,
+      "sellerName": "Scandit AG",
+      "appName": "Scandit Express",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1613733334",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3260
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "scholar-gateway",
@@ -3189,9 +4118,11 @@
       "sourceWidth": 201,
       "sourceHeight": 201,
       "sourceFormat": "svg",
-      "outputBytes": 5374
+      "outputBytes": 5820,
+      "type": "fallback"
     },
-    "website": "https://scholargateway.ai"
+    "website": "https://scholargateway.ai",
+    "outputs": ["curated"]
   },
   {
     "key": "scite",
@@ -3204,9 +4135,11 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2494
+      "outputBytes": 2494,
+      "type": "own-tile"
     },
-    "website": "https://scite.ai"
+    "website": "https://scite.ai",
+    "outputs": ["curated"]
   },
   {
     "key": "semantic-scholar",
@@ -3224,9 +4157,11 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 4218
+      "outputBytes": 4534,
+      "type": "fallback"
     },
-    "website": "https://www.semanticscholar.org"
+    "website": "https://www.semanticscholar.org",
+    "outputs": ["curated"]
   },
   {
     "key": "semgrep",
@@ -3240,8 +4175,10 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "svg",
-      "outputBytes": 3234
-    }
+      "outputBytes": 3452,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "sentry",
@@ -3258,8 +4195,10 @@
       "sourceWidth": 256,
       "sourceHeight": 227,
       "sourceFormat": "svg",
-      "outputBytes": 3916
-    }
+      "outputBytes": 4180,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "serena",
@@ -3272,16 +4211,22 @@
     "names": ["servicenow", "servicenow-sdk"],
     "website": "https://www.servicenow.com",
     "source": {
-      "kind": "website",
-      "url": "https://www.servicenow.com/content/dam/servicenow-assets/public/en-us/images/apple-touch-icon/180x180.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 180,
-      "sourceHeight": 180,
-      "sourceFormat": "png",
-      "outputBytes": 3136,
-      "mode": "mark"
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ff/e7/6f/ffe76f94-5187-50fd-e643-079a31c24a5c/SNAppIcon-0-0-1x_U007emarketing-0-8-0-0-85-220.png/512x512bb.jpg",
+      "appId": 1446951408,
+      "sellerName": "ServiceNow Inc.",
+      "appName": "ServiceNow Agent",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1446951408",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 2900
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "shippo",
@@ -3295,62 +4240,76 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 3314
-    }
+      "outputBytes": 3630,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "shopify",
     "names": ["liquid-lsp", "liquid-skills", "shopify", "shopify-ai-toolkit"],
     "website": "https://www.shopify.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/shopify.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 292,
-      "sourceFormat": "svg",
-      "outputBytes": 3438
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/e4/9f/37/e49f37e4-0199-8651-063a-28ea7fd0c807/AppIcon-com.jadedpixel.shopify-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 371294472,
+      "sellerName": "Shopify Inc.",
+      "appName": "Shopify: Sell. Run a business.",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=371294472",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4982
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "slack",
     "names": ["slack"],
     "website": "https://slack.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/slack-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "svg",
-      "outputBytes": 3310
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/5f/88/57/5f88579b-9082-4c7c-d578-3da3be4e4366/slack_icon_prod-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 618783545,
+      "sellerName": "SLACK TECHNOLOGIES L.L.C.",
+      "appName": "Slack",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=618783545",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4586
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "snowflake",
     "names": ["snowflake", "snowflake-cortex-code"],
     "website": "https://www.snowflake.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/snowflake-icon.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 255,
-      "sourceFormat": "svg",
-      "outputBytes": 5054
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/bc/36/d7/bc36d721-b3b2-65b2-2d10-12a1a5cb7d85/app-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 6755540372,
+      "sellerName": "Snowflake Computing INC.",
+      "appName": "Snowflake CoWork",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6755540372",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 7970
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "sonarqube",
@@ -3364,8 +4323,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 5818
-    }
+      "outputBytes": 6384,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "sonatype",
@@ -3384,8 +4345,10 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3772
-    }
+      "outputBytes": 4268,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "sourcegraph",
@@ -3402,26 +4365,32 @@
       "sourceWidth": 800,
       "sourceHeight": 800,
       "sourceFormat": "svg",
-      "outputBytes": 4258
-    }
+      "outputBytes": 4576,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "spotify",
     "names": ["save-to-spotify", "spotify", "spotify-ads-api"],
     "website": "https://www.spotify.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/spotify.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "svg",
-      "outputBytes": 4248
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8b/f2/6a/8bf26ab9-3ced-cb5c-a2b3-19f65e7f5cc6/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg",
+      "appId": 324684580,
+      "sellerName": "Spotify",
+      "appName": "Spotify: Music and Podcasts",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=324684580",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 7100
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "stack-overflow",
@@ -3437,9 +4406,11 @@
       "sourceWidth": 256,
       "sourceHeight": 304,
       "sourceFormat": "svg",
-      "outputBytes": 3324
+      "outputBytes": 3684,
+      "type": "fallback"
     },
-    "website": "https://stackoverflow.com"
+    "website": "https://stackoverflow.com",
+    "outputs": ["curated"]
   },
   {
     "key": "stackhawk",
@@ -3458,46 +4429,54 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 8720
-    }
+      "outputBytes": 9730,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "stripe",
     "names": ["stripe"],
     "website": "https://stripe.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/stripe.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "svg",
-      "outputBytes": 1530
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/6e/0f/df/6e0fdf0b-7fa7-3013-b4c1-d8e1c8680417/Icon-0-0-1x_U007ephone-0-1-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 978516833,
+      "sellerName": "Stripe, LLC",
+      "appName": "Stripe Dashboard",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=978516833",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3282
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "sumup",
     "names": ["sumup"],
     "website": "https://www.sumup.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/sumup.svg",
-      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
-      "color": "#1E1C1C",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
-      "brandSource": "https://circuit.sumup.com/?path=/docs/brand-sumuplogo--docs",
-      "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
-      "sourceFormat": "svg",
-      "outputBytes": 1972
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f7/ba/50/f7ba5095-76a6-cb1d-79fa-c3332553008b/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg",
+      "appId": 514879214,
+      "sellerName": "SumUp Limited",
+      "appName": "SumUp Business",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=514879214",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 1814
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "supabase",
@@ -3514,9 +4493,11 @@
       "sourceWidth": 109,
       "sourceHeight": 113,
       "sourceFormat": "svg",
-      "outputBytes": 1762
+      "outputBytes": 1914,
+      "type": "own-tile"
     },
-    "background": "#1c1c1c"
+    "background": "#1c1c1c",
+    "outputs": ["curated"]
   },
   {
     "key": "superdesign",
@@ -3530,8 +4511,10 @@
       "sourceWidth": 26,
       "sourceHeight": 30,
       "sourceFormat": "svg",
-      "outputBytes": 3568
-    }
+      "outputBytes": 3926,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "synapse",
@@ -3544,9 +4527,11 @@
       "sourceWidth": 144,
       "sourceHeight": 144,
       "sourceFormat": "png",
-      "outputBytes": 3312
+      "outputBytes": 3660,
+      "type": "own-tile"
     },
-    "website": "https://www.synapse.org"
+    "website": "https://www.synapse.org",
+    "outputs": ["curated"]
   },
   {
     "key": "synthflow",
@@ -3560,8 +4545,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 3590
-    }
+      "outputBytes": 3896,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "taosdata",
@@ -3588,8 +4575,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 1990
-    }
+      "outputBytes": 2164,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "teamcity-cli",
@@ -3606,44 +4595,54 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 3618
-    }
+      "outputBytes": 3818,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "teams",
     "names": ["microsoft teams", "teams"],
     "website": "https://www.microsoft.com/microsoft-teams",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/microsoft-teams.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 36,
-      "sourceHeight": 38,
-      "sourceFormat": "svg",
-      "outputBytes": 3312
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/d4/a3/14/d4a314ce-5709-5f15-4b50-2f385257f4ae/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg",
+      "appId": 1113153706,
+      "sellerName": "Microsoft Corporation",
+      "appName": "Microsoft Teams",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1113153706",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3030
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "telegram",
     "names": ["telegram"],
     "website": "https://telegram.org",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/telegram.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "svg",
-      "outputBytes": 3888
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/49/45/33/49453346-cd15-c622-d6eb-5f4f99ca82fa/Telegram-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+      "appId": 686449807,
+      "sellerName": "Telegram FZ-LLC",
+      "appName": "Telegram Messenger",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=686449807",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 5778
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "terraform",
@@ -3660,8 +4659,10 @@
       "sourceWidth": 50,
       "sourceHeight": 72,
       "sourceFormat": "svg",
-      "outputBytes": 2064
-    }
+      "outputBytes": 2238,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "tinyfish",
@@ -3675,26 +4676,32 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 6056
-    }
+      "outputBytes": 6610,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "todoist",
     "names": ["todoist"],
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/todoist.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 152,
-      "sourceHeight": 152,
-      "sourceFormat": "svg",
-      "outputBytes": 4220
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f6/af/bf/f6afbf1c-7ef3-b907-6178-a83837628e3b/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+      "appId": 572688855,
+      "sellerName": "Todoist Inc.",
+      "appName": "Todoist: To Do List & Calendar",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=572688855",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 5972
     },
-    "website": "https://www.todoist.com"
+    "website": "https://www.todoist.com",
+    "outputs": ["curated"]
   },
   {
     "key": "together-ai",
@@ -3711,8 +4718,10 @@
       "sourceWidth": 256,
       "sourceHeight": 239,
       "sourceFormat": "svg",
-      "outputBytes": 3588
-    }
+      "outputBytes": 3986,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "twilio",
@@ -3729,8 +4738,10 @@
       "sourceWidth": 64,
       "sourceHeight": 64,
       "sourceFormat": "svg",
-      "outputBytes": 5920
-    }
+      "outputBytes": 6542,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "uniprot-community",
@@ -3745,8 +4756,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 5488
-    }
+      "outputBytes": 5658,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "unity",
@@ -3763,8 +4776,10 @@
       "sourceWidth": 256,
       "sourceHeight": 263,
       "sourceFormat": "svg",
-      "outputBytes": 3706
-    }
+      "outputBytes": 3860,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "unreal-engine",
@@ -3781,8 +4796,27 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "svg",
-      "outputBytes": 3984
-    }
+      "outputBytes": 4352,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "us-census",
+    "names": ["us-census", "us census (community)"],
+    "website": "https://www.census.gov",
+    "source": {
+      "kind": "official",
+      "url": "https://www.census.gov/etc.clientlibs/census/clientlibs/common-site/resources/icons/apple-touch-icon-180x180.png",
+      "licenseNote": "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.",
+      "type": "own-tile",
+      "rendering": "tile",
+      "sourceWidth": 180,
+      "sourceHeight": 180,
+      "sourceFormat": "png",
+      "outputBytes": 2778
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "valtown",
@@ -3796,18 +4830,26 @@
       "sourceWidth": 16,
       "sourceHeight": 16,
       "sourceFormat": "svg",
-      "outputBytes": 1380
-    }
+      "outputBytes": 1460,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "vanguard",
     "names": ["vanguard", "vanguard-advisor-tools"],
     "website": "https://advisors.vanguard.com",
     "source": {
-      "kind": "official",
-      "url": "https://github.com/vanguard.png?size=460",
-      "rendering": "pending",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted."
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/2b/38/0d/2b380d57-d80e-ef88-39f6-e29cfefd05c9/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 335186209,
+      "sellerName": "The Vanguard Group, Inc.",
+      "appName": "Vanguard: Save, Invest, Retire",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=335186209",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners."
     },
     "omitted": "No verified high-resolution brand mark available; official favicon is 32 px."
   },
@@ -3823,8 +4865,10 @@
       "sourceWidth": 180,
       "sourceHeight": 180,
       "sourceFormat": "png",
-      "outputBytes": 4548
-    }
+      "outputBytes": 5054,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "vercel",
@@ -3841,8 +4885,10 @@
       "sourceWidth": 256,
       "sourceHeight": 222,
       "sourceFormat": "svg",
-      "outputBytes": 1204
-    }
+      "outputBytes": 1290,
+      "type": "own-tile"
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "vibe-prospecting",
@@ -3856,8 +4902,10 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2700
-    }
+      "outputBytes": 2700,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "villagesql",
@@ -3871,8 +4919,10 @@
       "sourceWidth": 412,
       "sourceHeight": 333,
       "sourceFormat": "svg",
-      "outputBytes": 3510
-    }
+      "outputBytes": 3784,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "windsor-ai",
@@ -3886,8 +4936,10 @@
       "sourceWidth": 300,
       "sourceHeight": 300,
       "sourceFormat": "png",
-      "outputBytes": 3524
-    }
+      "outputBytes": 3750,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "wingspan",
@@ -3901,64 +4953,76 @@
       "sourceWidth": 256,
       "sourceHeight": 256,
       "sourceFormat": "png",
-      "outputBytes": 2724
-    }
+      "outputBytes": 2906,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "wix",
     "names": ["wix"],
     "website": "https://dev.wix.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/wix.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/6e/fa/b6/6efab6d6-4f52-a2f6-30d6-02a452f6a38b/AppIcon-0-0-1x_U007emarketing-0-8-0-0-85-220.png/512x512bb.jpg",
+      "appId": 1099748482,
+      "sellerName": "WIX.COM, INC.",
+      "appName": "Spaces: Follow Businesses",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1099748482",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
       "sourceWidth": 512,
-      "sourceHeight": 202,
-      "sourceFormat": "svg",
-      "outputBytes": 2730
-    }
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3660
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "wolfram",
     "names": ["Wolfram"],
     "website": "https://www.wolfram.com",
     "source": {
-      "kind": "simple-icons",
-      "url": "https://cdn.jsdelivr.net/npm/simple-icons@16.36.0/icons/wolfram.svg",
-      "licenseNote": "Simple Icons 16.36.0: CC0-1.0; trademarks remain with their owners.",
-      "color": "#DD1100",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md",
-      "brandSource": "https://company.wolfram.com/press-center/wolfram-corporate",
-      "rendering": "mark",
-      "sourceWidth": 24,
-      "sourceHeight": 24,
-      "sourceFormat": "svg",
-      "outputBytes": 9308
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/96/10/08/96100822-d560-3f0e-733e-d70758d255df/WolframAlpha-AppIcon-0-0-1x_U007emarketing-0-6-0-85-220.png/512x512bb.jpg",
+      "appId": 334989259,
+      "sellerName": "Wolfram Group LLC",
+      "appName": "WolframAlpha Classic",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=334989259",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 5468
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "wordpress",
     "names": ["build-with-wordpress", "wordpress"],
     "website": "https://wordpress.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/wordpress.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/70/34/7d/70347d33-3a50-329a-4ea1-752c1472c5da/AppIconLegacy-0-0-1x_U007epad-0-0-0-1-0-0-sRGB-85-220.png/512x512bb.jpg",
+      "appId": 335703880,
+      "sellerName": "Automattic, Inc.",
+      "appName": "WordPress – Website Builder",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=335703880",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
       "sourceWidth": 512,
       "sourceHeight": 512,
-      "sourceFormat": "svg",
-      "outputBytes": 7748
-    }
+      "sourceFormat": "jpeg",
+      "outputBytes": 7466
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "workos",
@@ -3975,16 +5039,45 @@
       "sourceWidth": 256,
       "sourceHeight": 222,
       "sourceFormat": "svg",
-      "outputBytes": 3060
-    }
+      "outputBytes": 3406,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "world-bank",
+    "names": ["world-bank", "world bank data360"],
+    "website": "https://data360.worldbank.org",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://github.com/worldbank.png?size=512",
+      "mode": "mark",
+      "organizationUrl": "https://github.com/worldbank",
+      "licenseNote": "Organisation avatar identifying its service; trademarks remain with owners.",
+      "rendering": "mark",
+      "sourceWidth": 460,
+      "sourceHeight": 460,
+      "sourceFormat": "png",
+      "outputBytes": 8896
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "you-com",
     "names": ["you com", "youdotcom-agent-skills"],
     "website": "https://you.com",
     "source": {
-      "kind": "website",
-      "url": "https://you.com/favicon.ico?favicon.2oo7buuzhxlge.ico"
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/0c/10/e5/0c10e5ae-0fe7-5c94-9783-df1f7dc70f24/AppIcon-0-0-1x_U007epad-0-1-0-85-220.jpeg/512x512bb.jpg",
+      "appId": 1600782099,
+      "sellerName": "SuSea, Inc.",
+      "appName": "You.com - Enterprise grade AI",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1600782099",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners."
     },
     "omitted": "Available site icon was only 16 pixels and visibly pixelated at 64 pixels; rejected after visual review."
   },
@@ -4005,8 +5098,29 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3582
-    }
+      "outputBytes": 4006,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
+  },
+  {
+    "key": "zenodo",
+    "names": ["zenodo", "zenodo (community)"],
+    "website": "https://zenodo.org",
+    "source": {
+      "kind": "official",
+      "type": "own-tile",
+      "url": "https://github.com/zenodo.png?size=512",
+      "mode": "mark",
+      "organizationUrl": "https://github.com/zenodo",
+      "licenseNote": "Organisation avatar identifying its service; trademarks remain with owners.",
+      "rendering": "mark",
+      "sourceWidth": 460,
+      "sourceHeight": 460,
+      "sourceFormat": "png",
+      "outputBytes": 3090
+    },
+    "outputs": ["curated"]
   },
   {
     "key": "zilliz",
@@ -4020,41 +5134,48 @@
       "sourceWidth": 512,
       "sourceHeight": 512,
       "sourceFormat": "png",
-      "outputBytes": 4412
-    }
+      "outputBytes": 4916,
+      "type": "own-tile"
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "zocks",
     "names": ["zocks", "zocks-advisor"],
     "website": "https://www.zocks.com",
     "source": {
-      "kind": "official",
-      "url": "https://cdn.prod.website-files.com/67f74eda1b8c9b4c09dc5893/68e8aee2fb5a42ad37ccfb2f_Fav_%20256%20x%20256.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "png",
-      "outputBytes": 2386,
-      "mode": "mark"
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/28/89/7b/28897bbe-dcbe-275d-6b02-763963b02f99/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.png/512x512bb.jpg",
+      "appId": 6443466353,
+      "sellerName": "Zocks Communications, Inc.",
+      "appName": "Zocks",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=6443466353",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 2404
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "zoho",
     "names": ["catalyst-by-zoho", "zoho"],
     "website": "https://www.zoho.com",
     "source": {
-      "kind": "gilbarbara/logos",
-      "url": "https://raw.githubusercontent.com/gilbarbara/logos/main/logos/zoho.svg",
-      "licenseNote": "gilbarbara/logos: CC0-1.0; trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/gilbarbara/logos/blob/main/LICENSE.txt",
-      "rendering": "mark",
-      "sourceWidth": 512,
-      "sourceHeight": 220,
-      "sourceFormat": "svg",
-      "outputBytes": 3884
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/47/a8/5c/47a85cd9-be63-c802-9aa5-ee61870da37e/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "appId": 444908810,
+      "sellerName": "Zoho Corporation",
+      "appName": "Zoho CRM - Sales & Marketing",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=444908810",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners."
     },
     "omitted": "Available artwork is a wordmark that is illegible in a row tile; omitted after whole-pack visual review."
   },
@@ -4063,49 +5184,66 @@
     "names": ["zoom", "zoom-plugin"],
     "website": "https://www.zoom.com",
     "source": {
-      "kind": "svgl",
-      "url": "https://svgl.app/library/zoom.svg",
-      "licenseNote": "SVGL collection: MIT (see brandIcons/NOTICE); trademarks remain with their owners.",
-      "mode": "mark",
-      "background": "#ffffff",
-      "licenseUrl": "https://github.com/pheralb/svgl/blob/main/LICENSE",
-      "rendering": "mark",
-      "sourceWidth": 256,
-      "sourceHeight": 256,
-      "sourceFormat": "svg",
-      "outputBytes": 4682
-    }
+      "kind": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/98/69/60/9869606e-7bd2-1fa4-4398-7b079ba8ae57/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg",
+      "appId": 546505307,
+      "sellerName": "Zoom Communications, Inc.",
+      "appName": "Zoom Workplace",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=546505307",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "type": "app-store",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 4404
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "zoominfo",
     "names": ["zoominfo"],
     "website": "https://www.zoominfo.com",
     "source": {
-      "kind": "official",
-      "url": "https://cws-zoominfo-assets.zoominfo.com/Contentful/favicon/favicon-512x512-1.png",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/35/87/d2/3587d274-afeb-1a61-446f-1a97b1d624cb/AppIcon-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+      "appId": 1493170277,
+      "sellerName": "Zoom Information, Inc.",
+      "appName": "ZoomInfo",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1493170277",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
       "sourceWidth": 512,
       "sourceHeight": 512,
-      "sourceFormat": "png",
-      "outputBytes": 2656,
-      "mode": "mark"
-    }
+      "sourceFormat": "jpeg",
+      "outputBytes": 2396
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "zscaler",
     "names": ["zscaler"],
     "website": "https://zscaler.com",
     "source": {
-      "kind": "official",
-      "url": "https://zscaler.com/favicons/safari-pinned-tab.svg",
-      "licenseNote": "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.",
-      "rendering": "mark",
-      "sourceWidth": 32,
-      "sourceHeight": 32,
-      "sourceFormat": "svg",
-      "outputBytes": 3710
-    }
+      "kind": "app-store",
+      "type": "app-store",
+      "url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/c4/06/5a/c4065a1d-b8e6-537a-d2c4-79fe350fba81/AppIcon-0-0-1x_U007emarketing-0-11-0-85-220.jpeg/512x512bb.jpg",
+      "appId": 1216875274,
+      "sellerName": "Zscaler inc",
+      "appName": "Zscaler Client Connector",
+      "lookupUrl": "https://itunes.apple.com/lookup?id=1216875274",
+      "mode": "tile",
+      "rendering": "tile",
+      "licenseNote": "App icons identify their services; trademarks remain with their owners.",
+      "sourceWidth": 512,
+      "sourceHeight": 512,
+      "sourceFormat": "jpeg",
+      "outputBytes": 3676
+    },
+    "outputs": ["brand"]
   },
   {
     "key": "zyte",
@@ -4124,7 +5262,9 @@
       "sourceWidth": 24,
       "sourceHeight": 24,
       "sourceFormat": "svg",
-      "outputBytes": 3124
-    }
+      "outputBytes": 3552,
+      "type": "fallback"
+    },
+    "outputs": ["brand"]
   }
 ]

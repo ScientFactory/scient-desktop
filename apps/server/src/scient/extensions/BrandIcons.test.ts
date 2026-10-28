@@ -2,11 +2,41 @@ import { isExtensionIconDataUri } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { normalizeBrandIconName } from "./BrandIconNames.ts";
 import { resolveBrandIcon } from "./BrandIcons.ts";
+import sourceList from "../../../../../scripts/scient-extension-brands.json" with { type: "json" };
 import aliases from "./brandIcons/aliases.json" with { type: "json" };
 import icons from "./brandIcons/brandIcons.json" with { type: "json" };
 import curated from "./discover/curatedIcons.json" with { type: "json" };
 
 describe("bundled extension brand icons", () => {
+  it("records a source for every shipped logo", () => {
+    const sources: Array<{
+      key: string;
+      source?: {
+        url?: string;
+        type?: string;
+        appId?: number;
+        sellerName?: string;
+        repositorySource?: string;
+      };
+    }> = sourceList;
+    for (const key of Object.keys({ ...curated, ...icons })) {
+      const source = sources.find((entry) => entry.key === key)?.source;
+      expect(
+        Boolean(
+          source?.url &&
+          (/^https?:/.test(source.url) ||
+            (source.url.startsWith("data:image/") && source.repositorySource)),
+        ),
+        key,
+      ).toBe(true);
+      expect(["app-store", "own-tile", "fallback"], key).toContain(source?.type);
+      if (source?.type === "app-store") {
+        expect(source.appId, key).toBeGreaterThan(0);
+        expect(source.sellerName, key).toBeTruthy();
+      }
+    }
+  });
+
   it("normalizes provider prefixes, marketplace suffixes, separators and whitespace", () => {
     expect(normalizeBrandIconName("  Claude.ai Google_- Drive@official  ")).toBe("google drive");
   });

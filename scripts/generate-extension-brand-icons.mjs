@@ -7,9 +7,7 @@ const root = new URL("../", import.meta.url);
 const pack = new URL("apps/server/src/scient/extensions/brandIcons/", root);
 const listPath = new URL("scient-extension-brands.json", import.meta.url);
 const brands = JSON.parse(await NodeFSP.readFile(listPath, "utf8"));
-const curated = JSON.parse(
-  await NodeFSP.readFile(new URL("../discover/curatedIcons.json", pack), "utf8"),
-);
+const curated = {};
 const normalize = (name) => name.trim().toLowerCase().replace(/[-_]/g, " ").replace(/\s+/g, " ");
 const cache = new URL(".logs/icon-sources/", root);
 await NodeFSP.mkdir(cache, { recursive: true });
@@ -210,14 +208,27 @@ const roundedTile = (pixels, width, height) => {
 };
 const render = async (bytes, source, brand) => {
   bytes = await decodeIcon(bytes);
+  if (source.svgViewBox) {
+    bytes = Buffer.from(
+      bytes
+        .toString()
+        .replace(/viewBox="[^"]+"/, `viewBox="${source.svgViewBox}"`)
+        .replace(/width="[^"]+"/, 'width="512"')
+        .replace(/height="[^"]+"/, 'height="512"'),
+    );
+  }
   const meta = await sharp(bytes).metadata();
-  if (meta.format !== "svg" && Math.min(meta.width, meta.height) < 128)
+  if (
+    !source.allowLowResolution &&
+    meta.format !== "svg" &&
+    Math.min(meta.width, meta.height) < 128
+  )
     throw new Error(`Low resolution ${meta.width}×${meta.height}`);
   if (meta.format === "svg" && source.kind === "repository" && source.color)
     bytes = Buffer.from(bytes.toString().replace(/fill="#[a-f0-9]+"/gi, `fill="${source.color}"`));
   if (meta.format === "svg" && source.color)
     bytes = Buffer.from(bytes.toString().replace("<svg", `<svg fill="${source.color}"`));
-  const decoded = await sharp(bytes, { density: meta.format === "svg" ? 1200 : 72 })
+  const decoded = await sharp(bytes, { density: meta.format === "svg" ? 300 : 72 })
     .resize(1024, 1024, { fit: "inside" })
     .ensureAlpha()
     .raw()
@@ -347,7 +358,7 @@ const render = async (bytes, source, brand) => {
     if (right < left) throw new Error("No visible mark");
     const resized = await sharp(cleanMark)
       .extract({ left, top, width: right - left + 1, height: bottom - top + 1 })
-      .resize(179, 179, { fit: "inside" })
+      .resize(source.markSize ?? 198, source.markSize ?? 198, { fit: "inside" })
       .png()
       .toBuffer();
     tile = await sharp({ create: { width: 256, height: 256, channels: 3, background } })
@@ -357,7 +368,11 @@ const render = async (bytes, source, brand) => {
   }
   const stats = await sharp(tile).stats();
   if (stats.entropy < 0.1) throw new Error("Blank icon");
-  const webp = await sharp(tile).webp({ quality: 90, effort: 6 }).toBuffer();
+  let webp;
+  for (const quality of [90, 85, 80, 75, 65]) {
+    webp = await sharp(tile).webp({ quality, effort: 6 }).toBuffer();
+    if (webp.length <= 25_600) break;
+  }
   if (webp.length > 25_600) throw new Error(`Tile exceeds 25 KB: ${webp.length}`);
   return {
     data: `data:image/webp;base64,${webp.toString("base64")}`,
@@ -376,7 +391,7 @@ const failures = {};
 let cursor = 0;
 await NodeFSP.mkdir(pack, { recursive: true });
 const license =
-  "Brand-owned artwork used to identify the service; trademarks remain with their respective owners. No open artwork license asserted.";
+  "App icons and brand-owned artwork identify their services; trademarks remain with their respective owners. No open artwork license asserted.";
 await Promise.all(
   Array.from({ length: 8 }, async () => {
     while (cursor < brands.length) {
@@ -386,8 +401,29 @@ await Promise.all(
       let candidates = [];
       const add = (url, extra = {}) =>
         candidates.push({ kind: "official", url, licenseNote: license, ...extra });
-      if (brand.source?.rendering && !refreshSources) candidates.push(brand.source);
-      else {
+      if (brand.source?.url && (!refreshSources || brand.source.kind === "app-store")) {
+        if (brand.source.kind === "app-store") {
+          const lookup = JSON.parse((await fetchResource(brand.source.lookupUrl)).toString())
+            .results?.[0];
+          if (
+            lookup?.trackId !== brand.source.appId ||
+            lookup?.sellerName !== brand.source.sellerName
+          )
+            throw new Error(`App Store identity changed: ${brand.key}`);
+          candidates.push({
+            ...brand.source,
+            url: lookup.artworkUrl512 ?? lookup.artworkUrl100,
+            mode: "tile",
+          });
+        } else {
+          candidates.push(brand.source);
+          if (!brand.source.rendering && brand.website) {
+            try {
+              for (const url of await siteIcons(brand.website)) add(url);
+            } catch {}
+          }
+        }
+      } else {
         const key = simpleNames[brand.key] ?? slug(brand.key);
         const vector = svgl.find((item) => slug(item.title) === key);
         if (vector)
@@ -436,6 +472,15 @@ await Promise.all(
           result = await render(await fetchResource(source.url), source, brand);
           brand.source = {
             ...source,
+            type:
+              source.type ??
+              (source.kind === "app-store"
+                ? "app-store"
+                : source.url.includes("favicon") ||
+                    source.kind === "gilbarbara/logos" ||
+                    source.kind === "simple-icons"
+                  ? "fallback"
+                  : "own-tile"),
             rendering: result.mode,
             sourceWidth: result.width,
             sourceHeight: result.height,
@@ -479,8 +524,8 @@ await Promise.all(
         fill,
         flagged: fill < 0.55 || fill > 0.92,
       });
-      if (Object.hasOwn(curated, brand.key)) curated[brand.key] = result.data;
-      else icons[brand.key] = result.data;
+      if (brand.outputs.includes("curated")) curated[brand.key] = result.data;
+      if (brand.outputs.includes("brand")) icons[brand.key] = result.data;
       for (const name of [brand.key, ...brand.names]) {
         const key = normalize(name);
         if (aliases[key] && aliases[key] !== brand.key) throw new Error(`Ambiguous alias: ${key}`);

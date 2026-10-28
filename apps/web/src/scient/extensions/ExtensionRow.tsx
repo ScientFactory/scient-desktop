@@ -112,11 +112,11 @@ function ExtensionLink({
 
 type ExtensionIconSize = "row" | "large" | "avatar";
 
-/** Avatar icons share the row size and use a round frame. */
+/** App icons use the same rounded square at every size. */
 const ICON_FRAME: Readonly<Record<ExtensionIconSize, string>> = {
-  row: "size-10 rounded-[25%]",
-  large: "size-16 rounded-[25%]",
-  avatar: "size-10 rounded-full",
+  row: "size-10 rounded-[22%]",
+  large: "size-16 rounded-[22%]",
+  avatar: "size-10 rounded-[22%]",
 };
 
 const renderedIcons = new Map<string, string>();
