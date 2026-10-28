@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
-import type { SqlError } from "effect/sql/SqlError";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "./Migrations.ts";
 // SCIENT-FORK:START — independent schema ledger; never consumes a T3 migration number.
@@ -14,42 +14,6 @@ import {
   cleanupRetiredThreadFilesystem,
   type RetiredThreadFilesystemPaths,
 } from "./RetiredThreadAttachmentCleanup.ts";
-
-type RuntimeSqliteLayerConfig = {
-  readonly filename: string;
-  readonly readerWorker?: boolean;
-  readonly checkpointWorker?: boolean;
-  readonly spanAttributes?: Record<string, unknown>;
-  // SCIENT-FORK:START — open options for the Overleaf state store's own SQLite file.
-  /**
-   * Applied while the Bun client opens the file. The Node client sets no busy
-   * timeout and no journal mode on open, so it needs neither.
-   */
-  readonly busyTimeout?: Duration.Input;
-  readonly disableWAL?: boolean;
-  // SCIENT-FORK:END
-};
-
-type Loader = {
-  layer: (config: RuntimeSqliteLayerConfig) => Layer.Layer<SqlClient.SqlClient, SqlError>;
-};
-const defaultSqliteClientLoaders = {
-  bun: () => import("@effect/sql-sqlite-bun/SqliteClient"),
-  node: () => import("@t3tools/shared/nodeSqliteClient"),
-} satisfies Record<string, () => Promise<Loader>>;
-
-const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
-  config: RuntimeSqliteLayerConfig,
-) {
-  const runtime = process.versions.bun !== undefined ? "bun" : "node";
-  const loader = defaultSqliteClientLoaders[runtime];
-  const clientModule = yield* Effect.promise<Loader>(loader);
-  return clientModule.layer(config);
-}, Layer.unwrap);
-// SCIENT-FORK:START — the Overleaf state store opens its own SQLite file, without V2 setup.
-export { makeRuntimeSqliteLayer };
-// SCIENT-FORK:END
-
 import { initializeV2Database } from "./initializeV2Database.ts";
 import { refreshLegacyV1Snapshot } from "./refreshLegacyV1Snapshot.ts";
 import * as ServerConfig from "../config.ts";
@@ -107,7 +71,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
       terminalLogsDir: path.join(stateDir, "logs", "terminals"),
       providerLogsDir: path.join(stateDir, "logs", "provider"),
     }),
-    makeRuntimeSqliteLayer({
+    NodeSqliteClient.layer({
       filename: dbPath,
       readerWorker: true,
       // Run checkpoint fsyncs off the event loop so slow disk flushes cannot stall clients.
@@ -122,7 +86,7 @@ export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (d
 
 export const layerMemory = Layer.provideMerge(
   layerSetup(),
-  makeRuntimeSqliteLayer({ filename: ":memory:" }),
+  NodeSqliteClient.layer({ filename: ":memory:" }),
 );
 
 export const layerConfig = Layer.unwrap(

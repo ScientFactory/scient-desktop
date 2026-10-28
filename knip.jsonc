@@ -87,7 +87,6 @@
       // CLI archive and desktop sidecar stage them from this manifest.
       "ignoreDependencies": [
         "@effect/platform-node-shared",
-        "msgpackr-extract",
         "@t3tools/web",
         "@napi-rs/canvas",
         "@napi-rs/keyring",

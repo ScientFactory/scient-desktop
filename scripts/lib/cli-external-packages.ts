@@ -1,63 +1,51 @@
 /** Keep bundler externals and staged runtime dependency roots aligned. */
 // Filesystem-loaded externals need dependencies outside the bundle.
 export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
-  // Cursor ships computed Webpack imports and platform helper packages. Its
-  // installed JS dependency tree stays on disk with the SDK. Those dependency
-  // names remain bundleable at other providers' locked import resolutions.
+  // Cursor ships computed Webpack imports and platform helper packages.
   "@cursor/sdk",
   // Playwright reads package.json and browsers.json beside its runtime modules.
   "playwright-core",
   "node-pty",
-  // PDF.js loads this native canvas implementation through createRequire at
-  // runtime, which the bundler cannot see. Keep the wrapper and its
-  // platform-specific packages available on the real filesystem.
-  "@napi-rs/canvas",
-  // The server loads undici through createRequire to keep fetch on HTTP/1.1 under Node 26
-  // (apps/server/src/outboundHttp.ts), which the bundler cannot see.
-  "undici",
   "ffi-rs",
   "@yuuang/",
   "@ff-labs/",
   "@napi-rs/keyring",
-  // SCIENT-FORK:START — Scient Accounts: the 1Password SDK loads WASM and native libraries from disk.
+  // SCIENT-FORK:START — Scient-only disk loaders: PDF.js loads @napi-rs/canvas through
+  // createRequire, and the Accounts 1Password SDK loads WASM and native libraries.
+  "@napi-rs/canvas",
   "@1password/",
   // SCIENT-FORK:END
   "@clerk/electron-passkeys",
-  "@msgpackr-extract/",
-  "msgpackr-extract",
   "node-gyp-build",
   "node-addon-api",
-  // Required by node-gyp-build-optional-packages. Not native, but in the
-  // closure: without it, WSL gets MODULE_NOT_FOUND while Windows is fine.
-  "detect-libc",
   "bufferutil",
   "utf-8-validate",
 ] as const;
 
-/**
- * Node never takes these conditional imports, but their bun:* specifiers cannot resolve during bundling.
- * Externalize only the entry point; their unused dependency closure need not stay on disk.
- */
-export const CLI_BUILD_ONLY_EXTERNAL_PREFIXES = [
-  "@effect/platform-bun",
-  "@effect/sql-sqlite-bun",
-] as const;
-
-export const CLI_EXTERNAL_PACKAGE_PREFIXES = [
-  ...CLI_RUNTIME_EXTERNAL_PREFIXES,
-  ...CLI_BUILD_ONLY_EXTERNAL_PREFIXES,
+// Match Cursor dependency boundaries so zod does not externalize zod-to-json-schema.
+const CURSOR_RUNTIME_DEPENDENCIES = [
+  "@bufbuild/protobuf",
+  "@connectrpc/connect",
+  "@connectrpc/connect-node",
+  "@connectrpc/connect-web",
+  "@statsig/js-client",
+  "@statsig/client-core",
+  // SCIENT-FORK: zod stays bundled so @factory/droid-sdk keeps its own zod v3; the
+  // stage ships Cursor's zod 4 on disk as a locked required peer.
+  "undici",
+  "@fastify/busboy",
 ] as const;
 
 export function isRuntimeExternalCliDependency(id: string): boolean {
-  return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return (
+    CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix)) ||
+    CURSOR_RUNTIME_DEPENDENCIES.some((name) => id === name || id.startsWith(`${name}/`))
+  );
 }
 
 /** Use neverBundle: false from alwaysBundle means no opinion and leaves transitive packages bundled. */
 export function isExternalCliDependency(id: string): boolean {
-  return (
-    isRuntimeExternalCliDependency(id) ||
-    CLI_BUILD_ONLY_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix))
-  );
+  return isRuntimeExternalCliDependency(id);
 }
 
 export function shouldBundleCliDependency(id: string): boolean {

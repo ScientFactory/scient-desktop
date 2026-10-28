@@ -218,25 +218,16 @@ describe("t3 pair", () => {
             runCli(["pair", "--base-dir", baseDir, "--tailscale"]).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(HostProcess.Platform, "linux"),
-              Effect.provideService(
-                FetchHttpClient.Fetch,
-                Object.assign(
-                  async (
-                    input: Parameters<typeof fetch>[0],
-                    init?: Parameters<typeof fetch>[1],
-                  ) => {
-                    if (String(input).startsWith(origin)) return fetch(input, init);
-                    assert.equal(
-                      String(input),
-                      "https://pair-test.tail.ts.net/.well-known/t3/environment",
-                    );
-                    return serving
-                      ? Response.json(testDescriptor)
-                      : new Response(null, { status: 503 });
-                  },
-                  { preconnect: fetch.preconnect },
-                ),
-              ),
+              Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
+                if (String(input).startsWith(origin)) return fetch(input, init);
+                assert.equal(
+                  String(input),
+                  "https://pair-test.tail.ts.net/.well-known/t3/environment",
+                );
+                return serving
+                  ? Response.json(testDescriptor)
+                  : new Response(null, { status: 503 });
+              }),
             ),
           );
 

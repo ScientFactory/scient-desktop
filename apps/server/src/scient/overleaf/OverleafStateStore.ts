@@ -25,7 +25,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
 import * as ServerConfig from "../../config.ts";
-import { makeRuntimeSqliteLayer } from "../../persistence/Sqlite.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { directoryIdentity, syncDirectory } from "../workspace/RetainedFileMutation.ts";
 import {
   locateOverleafRetention,
@@ -387,7 +387,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     const scope = yield* Scope.make();
     yield* Effect.gen(function* () {
       const context = yield* Layer.buildWithScope(
-        makeRuntimeSqliteLayer({ filename: leasePath, busyTimeout: 0, disableWAL: true }),
+        NodeSqliteClient.layer({ filename: leasePath }),
         scope,
       );
       const sql = Context.get(context, SqlClient.SqlClient);
