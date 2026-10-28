@@ -204,6 +204,7 @@ export function ProviderOnboardingPicker(props: {
       props.fallbackSelection,
     selectedEntry ? props.modelPreferences?.[selectedEntry.instanceId]?.hiddenModels : undefined,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the ready provider selection to the host selection path and closes the picker
   useEffect(() => {
     if (
       overlay.instanceId !== null ||

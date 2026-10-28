@@ -92,11 +92,13 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   );
   const servers = supportedBulkServerTargets(behindServers, exactArtifactAvailable);
   const committedServersRef = useRef(servers);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed eligibility to the module-level update-run store
   useLayoutEffect(() => {
     committedServersRef.current = servers;
     // A failed server's Retry rechecks the same eligibility.
     publishQualifiedUpdateRunServers(servers);
   }, [committedServersRef, servers]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- withdraws published eligibility when the sidebar owner unmounts
   useLayoutEffect(
     () => () => {
       // A delayed pass or retry cannot retain eligibility after its sidebar owner leaves.
@@ -122,9 +124,11 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const providers = useProviderUpdates();
   const updateServer = useServerUpdate();
 
-  const { summary, lines } = describeUpdateEverything({
+  const view = describeUpdateEverything({
     localVersion: localUpdateVersion,
+    localMachines: machines.filter((machine) => machine.hostedByThisApp),
     servers,
+    skipped,
     // SCIENT-FORK:START — managed runtimes are part of the pass.
     providerMachines: [
       ...providers.machines.map((machine) => ({
@@ -144,10 +148,8 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     hasUpdates:
       servers.length > 0 || providers.machines.length > 0 || managedRuntimes.targets.length > 0,
     // SCIENT-FORK:END
-    summary,
-    lines,
+    ...view,
     restarts,
-    skipped,
     // SCIENT-FORK:START — the sidebar's circle for other machines and providers.
     otherServers,
     // SCIENT-FORK:END

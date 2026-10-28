@@ -282,7 +282,6 @@ interface LiveSessionEntry {
   };
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
-  readonly lastActivityAtMs: number;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
@@ -1130,7 +1129,9 @@ export const layerWithOptions = (
               request.status === "pending" &&
               request.responseCapability.type === "live" &&
               request.responseCapability.providerSessionId === providerSessionId &&
-              DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt),
+              DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt) &&
+              // Shutdown reconciliation decides which questions can survive the lost callback.
+              !(input.reason === "server_shutdown" && request.kind === "user_input"),
           );
 
           for (const request of releasedRequests) {
@@ -1655,7 +1656,6 @@ export const layerWithOptions = (
           ),
           Effect.forkIn(layerScope),
         );
-        const lastActivityAtMs = yield* Clock.currentTimeMillis;
         yield* Ref.update(sessions, (latest) => {
           const latestEntry = latest.get(key);
           if (
@@ -1670,7 +1670,6 @@ export const layerWithOptions = (
             ...latestEntry,
             idleGeneration: generation,
             idleFiber,
-            lastActivityAtMs,
             ...(options?.providerActivity === true ? { pinnedSinceMs: null } : {}),
           });
           return updated;
@@ -1700,22 +1699,7 @@ export const layerWithOptions = (
       ) =>
         withActivityError(
           providerSessionId,
-          Effect.gen(function* () {
-            const lastActivityAtMs = yield* Clock.currentTimeMillis;
-            yield* Ref.update(sessions, (current) => {
-              const entry = current.get(sessionKey(providerSessionId));
-              if (entry === undefined) {
-                return current;
-              }
-              const updated = new Map(current);
-              updated.set(sessionKey(providerSessionId), {
-                ...entry,
-                lastActivityAtMs,
-              });
-              return updated;
-            });
-            yield* scheduleIdleReleaseInternal(providerSessionId, options);
-          }),
+          scheduleIdleReleaseInternal(providerSessionId, options),
         );
 
       const attachThread = (input: {
@@ -1924,7 +1908,6 @@ export const layerWithOptions = (
           providerSessionId,
           Effect.gen(function* () {
             const key = sessionKey(providerSessionId);
-            const now = yield* Clock.currentTimeMillis;
             const idleFiber = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined) {
@@ -1935,7 +1918,6 @@ export const layerWithOptions = (
                 ...entry,
                 busyTurns: new Set(entry.busyTurns).add(turnKey),
                 idleFiber: null,
-                lastActivityAtMs: now,
                 pinnedSinceMs: null,
               });
               return [entry.idleFiber, updated] as const;
@@ -1953,7 +1935,6 @@ export const layerWithOptions = (
           providerSessionId,
           Effect.gen(function* () {
             const key = sessionKey(providerSessionId);
-            const now = yield* Clock.currentTimeMillis;
             yield* Ref.update(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined) {
@@ -1965,7 +1946,6 @@ export const layerWithOptions = (
               updated.set(key, {
                 ...entry,
                 busyTurns,
-                lastActivityAtMs: now,
               });
               return updated;
             });
@@ -3060,7 +3040,6 @@ export const layerWithOptions = (
                             eventSubscribers,
                             sessionScope,
                           );
-                          const now = yield* Clock.currentTimeMillis;
                           const entry: LiveSessionEntry = {
                             attachedThreadIds: new Set([input.threadId]),
                             loadedProviderThreadKeyByThread: new Map(),
@@ -3086,7 +3065,6 @@ export const layerWithOptions = (
                               : {}),
                             idleGeneration: 0,
                             busyTurns: new Set(),
-                            lastActivityAtMs: now,
                             idleFiber: null,
                             pinnedSinceMs: null,
                             idleThreadUnloads: new Map(),

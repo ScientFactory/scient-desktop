@@ -55,6 +55,8 @@ const props = {
   editBlockedReason: null,
   onEditQueuedRun: () => undefined,
   onCancelEdit: () => undefined,
+  timestampFormat: "locale",
+  onOpenThread: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
 
 function queuedRun(ordinal: number, held: boolean): OrchestrationV2Run {

@@ -195,7 +195,6 @@ export function makeAntigravityAcpAdapterFlavor(
         Effect.provideService(Path.Path, options.path),
       ),
     // Loading history replays tool calls; resume avoids replay.
-    preferResumeSession: true,
     subagentsIdleOnTurnCompletion: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
     // A command can keep running after Antigravity returns end_turn. Retain

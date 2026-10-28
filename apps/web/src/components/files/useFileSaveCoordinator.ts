@@ -126,6 +126,7 @@ export function useFileSaveCoordinator({
   const writeFile = useProjectFileWriter();
   const latestRevision = useRef(revision);
   const latestSource = useRef(initialSource);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps latestSource in step with the incoming source for the imperative save session
   useLayoutEffect(() => {
     latestSource.current = initialSource;
   }, [initialSource]);
@@ -135,6 +136,7 @@ export function useFileSaveCoordinator({
   const [reviewRequired, setReviewRequired] = useState(false);
   const [currentMissing, setCurrentMissing] = useState(false);
   const latestAttention = useRef(publicationAttention);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps latestAttention in step with publication attention for the imperative save session
   useLayoutEffect(() => {
     latestAttention.current = publicationAttention;
   }, [publicationAttention]);
@@ -144,6 +146,7 @@ export function useFileSaveCoordinator({
     onSaveFailure,
     onSaveResolutionApplied,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps latestCallbacks current so the save session reaches the latest handlers
   useLayoutEffect(() => {
     latestCallbacks.current = {
       onPendingChange,
@@ -152,6 +155,7 @@ export function useFileSaveCoordinator({
       onSaveResolutionApplied,
     };
   }, [onPendingChange, onSaveConfirmed, onSaveFailure, onSaveResolutionApplied]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps latestRevision in step with the revision prop for the imperative save session
   useEffect(() => {
     latestRevision.current = revision;
   }, [revision]);
@@ -193,12 +197,16 @@ export function useFileSaveCoordinator({
 
   // StrictMode replays effect setup. Retired leases stay inert, while deferred
   // final cleanup lets the replay rejoin the same live persistence session.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sets up the persistence session lease while enabled and releases it on unmount
   useEffect(() => (enabled ? session.setup() : undefined), [session, enabled]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs revision and source into the imperative file-save session
   useEffect(
     () => session.syncRevision(revision, initialSource),
     [session, revision, initialSource],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds publication attention into the imperative file-save session
   useEffect(() => session.observeAttention(publicationAttention), [session, publicationAttention]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies an external save resolution to the imperative file-save session
   useEffect(() => {
     if (saveResolution?.relativePath === relativePath) session.resolve(saveResolution);
   }, [session, relativePath, saveResolution]);

@@ -212,6 +212,7 @@ function SidebarUpdateControl() {
   const releaseNotesTriggerId = useId();
   // SCIENT-FORK:START — one ready notice and install owner, anchored to this control.
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the imperative ready notice when its owner unmounts
   useEffect(() => () => updateReadyNoticeRef.current?.close(), []);
   // Resolves true when the app is relaunching; a bulk pass passes `reportError` for its summary.
   const installFromFooter = (

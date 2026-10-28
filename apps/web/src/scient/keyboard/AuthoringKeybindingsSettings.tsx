@@ -75,6 +75,7 @@ export function AuthoringKeybindingsSettings({
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [mathOptionsCard, setMathOptionsCard] = useState<HTMLDivElement | null>(null);
   const isEditing = editing !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for pointerdown outside the editing control on the document while a keybinding is being edited
   useEffect(() => {
     if (!isEditing) return;
     const cancelOutside = (event: PointerEvent) => {

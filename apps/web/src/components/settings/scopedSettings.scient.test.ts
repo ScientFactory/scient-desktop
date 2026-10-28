@@ -49,7 +49,6 @@ describe("model selection patches at project scope", () => {
               ...DEFAULT_SERVER_SETTINGS,
               projectSettingsOverrides: { [projectId]: overrides },
             },
-            environment: { capabilities: { projectSettingsOverrides: true } },
           },
         },
       ],

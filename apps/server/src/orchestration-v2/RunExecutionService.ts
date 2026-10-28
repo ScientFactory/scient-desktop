@@ -706,6 +706,7 @@ export const layer: Layer.Layer<
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
+        // SCIENT-FORK:START — a failed start receipt settles as the terminal provider turn.
         const terminalProviderTurn =
           input.abandonedProviderTurn ??
           (input.failedStartReceipt === undefined
@@ -715,7 +716,8 @@ export const layer: Layer.Layer<
                 status: "failed" as const,
                 completedAt,
               });
-        const finalizedAttempt: OrchestrationV2RunAttempt | null = {
+        // SCIENT-FORK:END
+        const finalizedAttempt: OrchestrationV2RunAttempt = {
           ...input.attempt,
           status: input.terminal.status,
           completedAt,
@@ -845,21 +847,19 @@ export const layer: Layer.Layer<
                     payload: terminalProviderTurn,
                   },
                 ]),
+            // SCIENT-FORK:START
             ...cascadedSubagentEvents,
-            ...(finalizedAttempt === null
-              ? []
-              : [
-                  {
-                    id: yield* allocateEventId(),
-                    type: "run-attempt.updated" as const,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    providerInstanceId: input.run.providerInstanceId,
-                    occurredAt: completedAt,
-                    payload: finalizedAttempt,
-                  },
-                ]),
+            // SCIENT-FORK:END
+            {
+              id: yield* allocateEventId(),
+              type: "run-attempt.updated" as const,
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              nodeId: input.rootNode.id,
+              providerInstanceId: input.run.providerInstanceId,
+              occurredAt: completedAt,
+              payload: finalizedAttempt,
+            },
             ...(input.terminal.status === "interrupted"
               ? [
                   {

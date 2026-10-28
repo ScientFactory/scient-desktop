@@ -103,12 +103,7 @@ import { defaultUrlTransform } from "react-markdown";
 import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
 // SCIENT-FORK:END
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
-// SCIENT-FORK:START — older saved links retain their explicit environment.
-import {
-  parseEnvironmentQualifiedThreadLinkHref,
-  parseThreadLinkHref,
-} from "@t3tools/shared/threadLinks";
-// SCIENT-FORK:END
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 // SCIENT-FORK:START — a streaming answer is revealed line by line (
@@ -488,7 +483,7 @@ type MarkdownServerConfigFields = ReturnType<typeof markdownServerConfigFields>;
 
 function markdownServerConfigFields(config: ServerConfig | null) {
   return {
-    pullRequestsEnabled: config?.environment.capabilities.pullRequests === true,
+    pullRequestsEnabled: config !== null,
     availableEditors: config?.availableEditors ?? NO_MARKDOWN_EDITORS,
     revealInFileManagerLabel:
       config?.shellRevealInFileManager === true && config.availableEditors.includes("file-manager")
@@ -597,6 +592,7 @@ function useChatMarkdownState({
     setLocalMedia(null);
   }
   // Layout cleanup blocks stale requests from reaching onImageExpand before paint.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- layout cleanup invalidates media requests still loading for the old scope before paint
   useLayoutEffect(
     () => () => {
       mediaRequestId.current += 1;
@@ -783,9 +779,7 @@ function useChatMarkdownState({
     if (parseComposerCitationHref(href)) return href;
     // SCIENT-FORK:END
     if (parseComposerContextHref(href)) return href;
-    // SCIENT-FORK:START — keep saved qualified thread URLs through Markdown sanitization.
-    if (parseEnvironmentQualifiedThreadLinkHref(href) || parseThreadLinkHref(href)) return href;
-    // SCIENT-FORK:END
+    if (parseThreadLinkHref(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   };
@@ -1261,24 +1255,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const citation = href ? parseComposerCitationHref(href) : null;
     // SCIENT-FORK:END
     if (citation) return <AssistantCitationChip citation={citation} />;
-    // SCIENT-FORK:START — older saved links retain their explicit environment.
-    const qualifiedThread = href ? parseEnvironmentQualifiedThreadLinkHref(href) : null;
-    const linkedThreadId = qualifiedThread?.threadId ?? (href ? parseThreadLinkHref(href) : null);
-    const linkedEnvironmentId = qualifiedThread?.environmentId ?? environmentId;
-    if (linkedThreadId) {
-      const label = hastPlainTextDeep(node) || linkedThreadId;
-      return linkedEnvironmentId ? (
-        <MarkdownThreadLink
-          environmentId={linkedEnvironmentId}
-          threadId={linkedThreadId}
-          label={label}
-          environmentQualified={qualifiedThread !== null}
-        />
+    const threadLink = href ? parseThreadLinkHref(href) : null;
+    if (threadLink) {
+      const written = hastPlainTextDeep(node);
+      // An autolink's text is its own URL, which is no label.
+      const label = written && parseThreadLinkHref(written) === null ? written : null;
+      return environmentId ? (
+        <MarkdownThreadLink environmentId={environmentId} link={threadLink} label={label} />
       ) : (
-        <span>{label}</span>
+        <span>{label ?? "Thread"}</span>
       );
     }
-    // SCIENT-FORK:END
     const contextReference = href ? parseComposerContextHref(href) : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;

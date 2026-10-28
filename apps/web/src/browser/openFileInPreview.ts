@@ -30,11 +30,7 @@ import {
 } from "~/previewStateStore";
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 import { useHtmlPdfSourceStore } from "~/scient/documentExport/htmlPdfSourceStore";
-import {
-  browserDefaultOpenProfileId,
-  browserDefaultOpenViewport,
-  resolveBrowserDefaults,
-} from "./browserDefaults";
+import { resolveBrowserDefaults } from "./browserDefaults";
 
 /** Classifies a link target; host-file authorization keeps literal extensions. */
 export const isBrowserPreviewFile = (path: string): boolean =>
@@ -125,8 +121,8 @@ export async function openUrlInPreview<E>(input: {
     input: {
       threadId: input.threadRef.threadId,
       url: input.url,
-      viewport: browserDefaultOpenViewport(defaults),
-      profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
+      viewport: defaults.viewport,
+      profileId: input.profileId ?? defaults.profileId,
       ...(runtime === undefined ? {} : { runtime }),
     },
   });

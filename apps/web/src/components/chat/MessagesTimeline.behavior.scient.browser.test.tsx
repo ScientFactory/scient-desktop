@@ -94,7 +94,6 @@ type Entry = TimelineProps["timelineEntries"][number];
 function baseProps(): Omit<TimelineProps, "timelineEntries"> {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
     turnDiffSummaries: [],
@@ -103,7 +102,6 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,

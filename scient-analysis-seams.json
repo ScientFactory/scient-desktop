@@ -309,11 +309,6 @@
       "path": "apps/web/src/components/files/filePreviewMode.ts",
       "anchor": "computeSourceLanguageForPath",
       "purpose": "Keep Python and MATLAB source in the scientific file surface instead of the generic truncated-text fallback; filePreviewMode.scient.test.ts guards the deciding inputs."
-    },
-    {
-      "path": "scripts/effect-budget.json",
-      "anchor": "\"apps/web/src/scient/analysis/AnalysisArtifactStrip.tsx\"",
-      "purpose": "The shared React effect budget records existing Scient analysis lifecycle owners; new effects still require their own scoped justification and lint validation."
     }
   ],
   "scientMounts": [

@@ -16,7 +16,7 @@ layer("059_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 73 }, (_, index) => index + 1).filter((id) => id !== 50),
+        Array.from({ length: 76 }, (_, index) => index + 1).filter((id) => id !== 50),
       );
     }),
   );
@@ -45,6 +45,9 @@ layer("059_OrchestrationV2", (it) => {
         [71, "WebhookDedupe"],
         [72, "ShellStopRequestIndex"],
         [73, "ThreadMessageSearch"],
+        [74, "PeerLinks"],
+        [75, "PeerLinkFence"],
+        [76, "WaitingLinkRequestIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -83,6 +86,9 @@ layer("059_OrchestrationV2", (it) => {
         { migration_id: 71, name: "WebhookDedupe" },
         { migration_id: 72, name: "ShellStopRequestIndex" },
         { migration_id: 73, name: "ThreadMessageSearch" },
+        { migration_id: 74, name: "PeerLinks" },
+        { migration_id: 75, name: "PeerLinkFence" },
+        { migration_id: 76, name: "WaitingLinkRequestIndex" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

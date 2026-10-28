@@ -65,6 +65,7 @@ function BibliographyFile(props: {
     authoritativeSnapshot: query.authoritativeData,
   });
   const refresh = query.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the bibliography file over the environment connection when the refresh identity changes
   useEffect(() => refresh(), [refresh]);
   const changes = useAtomValue(
     projectEnvironment.fileChanges({ environmentId, input: { cwd, relativePath: path } }),
@@ -72,6 +73,7 @@ function BibliographyFile(props: {
   const change = Option.getOrNull(AsyncResult.value(changes));
   const seenChange = useRef(change);
   const sessionOpen = lease !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the file over the environment connection when the change watcher fires while no session owns it
   useEffect(() => {
     if (change === seenChange.current) return;
     seenChange.current = change;
@@ -88,6 +90,7 @@ function BibliographyFile(props: {
   const saved = useEffectEvent(() => {
     props.callbacks?.onSaved();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the lease document-saved notifications until the lease changes
   useEffect(() => (lease === null ? undefined : onDocumentSaved(lease, () => saved())), [lease]);
   const apply = useStableCallback(async (expected: string, next: string) => {
     if (lease === null) return false;
@@ -118,6 +121,7 @@ function BibliographyFile(props: {
   const readOnly = lease === null || snapshot?.editingBlocked === true;
   const update = props.update;
   const loading = query.isPending || pending || (lease === null && disk === null && error === null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this bibliography file state into the panel file registry when it changes
   useEffect(() => {
     update({
       id: `bib:${path}`,
@@ -304,6 +308,7 @@ export function LatexReferencesPanel(props: {
     publishedCatalog.current = { listener: catalogChanged, entries };
     catalogChanged(entries);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the entry catalog to the parent through its imperative callback
   useEffect(() => publishCatalog(candidates, catalogChanged), [candidates, catalogChanged]);
   const target = draft
     ? documents.find(
@@ -316,12 +321,14 @@ export function LatexReferencesPanel(props: {
       : null;
   const raw = draft ? draftSource(draft) : null;
   const dirty = !!draft && (draft.isNew || raw !== draft.entry.raw);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the reference-draft registry entry in step with the current draft
   useEffect(() => {
     if (dirty && draft) referenceDrafts.set(props.draftKey, draft);
     else referenceDrafts.delete(props.draftKey);
   }, [props.draftKey, draft, dirty]);
   const draftReporter = props.onDraftChange;
   const filePending = Object.values(files).some((file) => file.pending);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports pending state to the parent through its imperative callback until unmount
   useEffect(() => {
     draftReporter(dirty || saving || filePending);
     return () => draftReporter(false);
@@ -366,6 +373,7 @@ export function LatexReferencesPanel(props: {
       }
     }
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search input DOM node on the next animation frame when a focus request arrives
   useEffect(() => {
     if (focusRequest > 0)
       requestAnimationFrame(() => input.current?.focus({ preventScroll: true }));

@@ -12,6 +12,6 @@ export function useRetryCachedAssetFailure(assetUrl: AssetUrlState): void {
       assetUrl.refresh();
     }
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Only a failure present at mount was cached by an earlier mount; retry it once.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Only a failure present at mount was cached by an earlier mount; retry it once.
   useEffect(() => retry(), []);
 }

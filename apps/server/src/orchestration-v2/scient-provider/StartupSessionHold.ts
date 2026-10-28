@@ -1,5 +1,4 @@
 import type { ProviderSessionId } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import type * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
@@ -12,7 +11,6 @@ type IdleEntry = {
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
-  readonly lastActivityAtMs: number;
 };
 
 /**
@@ -81,7 +79,6 @@ export const makeStartupSessionReservations = <Entry extends IdleEntry>(deps: {
       },
     ) {
       const key = deps.sessionKey(providerSessionId);
-      const now = yield* Clock.currentTimeMillis;
       const generation = suppressed.generation + 1;
       const claimed = yield* Ref.modify(deps.sessions, (current) => {
         const entry = current.get(key);
@@ -97,7 +94,6 @@ export const makeStartupSessionReservations = <Entry extends IdleEntry>(deps: {
           ...entry,
           idleGeneration: generation,
           idleFiber: null,
-          lastActivityAtMs: now,
         });
         return [{ previous: entry.idleFiber }, updated] as const;
       });

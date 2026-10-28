@@ -36,7 +36,6 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
-import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 import { CommandReceiptStoreV2 } from "../CommandReceiptStore.ts";
 import { EventSinkV2 } from "../EventSink.ts";
@@ -46,7 +45,10 @@ import { ProjectStoreV2 } from "../ProjectStore.ts";
 import { ThreadCommandExecutor } from "../ThreadCommandExecutor.ts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
-import { ScientForkCheckpointBaseline } from "./ForkCheckpointBaseline.ts";
+import {
+  checkpointRefForThreadTurn,
+  ScientForkCheckpointBaseline,
+} from "./ForkCheckpointBaseline.ts";
 import {
   planConversationFork,
   ConversationForkPlanError,

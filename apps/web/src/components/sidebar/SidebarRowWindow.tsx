@@ -36,6 +36,7 @@ export function SidebarRowWindow({
     sortableRef?.(node);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus into the row body once it mounts
   useLayoutEffect(() => {
     if (!renderBody || !restoreFocus.current) return;
     restoreFocus.current = false;
@@ -44,6 +45,7 @@ export function SidebarRowWindow({
       ?.focus({ preventScroll: true });
   }, [renderBody]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a native drag ends outside React; window drop and dragend clear it
   useEffect(() => {
     if (!hasNativeDrag) return;
     const clearDrag = () => setHasNativeDrag(false);

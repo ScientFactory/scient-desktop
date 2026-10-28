@@ -80,6 +80,7 @@ function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the elapsed-time DOM node in step with a 1s interval via direct text writes
   useEffect(() => {
     if (!live || !startedAt) {
       return;
@@ -324,6 +325,7 @@ function PhaseSection({
   const [open, setOpen] = useState(defaultOpen || phase.state === "running");
   const previousState = useRef(phase.state);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the section when the runtime workflow phase transitions to running; manual toggles stick
   useEffect(() => {
     if (previousState.current !== "running" && phase.state === "running") {
       setOpen(true);

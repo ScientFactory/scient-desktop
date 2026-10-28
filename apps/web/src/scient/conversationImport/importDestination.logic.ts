@@ -14,7 +14,7 @@ import {
 import { resolveComposerProviderSelection } from "../../components/ChatView.logic";
 import { deriveEffectiveComposerModelState } from "../../composerDraftStore";
 import { resolveNewThreadModelSelectionOverride } from "../../lib/chatThreadActions";
-import { sortThreads, type ThreadSortInput } from "../../lib/threadSort";
+import { sortThreads, type ThreadSortInput } from "@t3tools/client-runtime/state/thread-sort";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   applyProviderInstanceSettings,

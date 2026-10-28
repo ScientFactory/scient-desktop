@@ -76,6 +76,7 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
     setPreviousReferenceInput({ record: props.record, style: style });
     setReference({ status: "loading" });
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the citation module and formats the reference, ignoring stale completions
   useEffect(() => {
     let active = true;
     void loadCitationModule().then(
@@ -100,6 +101,7 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
     };
   }, [props.record, style]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending style-close timer on unmount
   useEffect(() => cancelStyleClose, [cancelStyleClose]);
 
   return (

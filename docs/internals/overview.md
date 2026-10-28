@@ -34,24 +34,17 @@ subscription.
 
 ### Pull request linking compatibility
 
-Web, desktop, mobile, and environments upgrade independently. Negotiate linking through the
-environment descriptor, never through a client version or an assumed coordinated release:
+Every protocol-2 environment advertises `threadPullRequests`. Once an environment's server config
+has loaded, clients use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread
+lookup. Before that, they hide linking actions.
 
-| Environment capability                | Client behavior                                                                                                   |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `threadPullRequests: true`            | Use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread lookup.                         |
-| Only `threadPullRequestLinking: true` | Use `linkedPullRequest` and the existing `thread.meta.update` single-link operation. Do not call multi-link RPCs. |
-| Neither flag                          | Hide linking actions; existing branch-discovered PR display remains available.                                    |
-
-V2 environments retain the linking capability and derived `linkedPullRequest` field, and use
-native `thread.metadata.update` for single-link metadata. The old `thread.meta.update` command
-belongs to older hosts; V2 rejects unsupported legacy-only commands with a client-update error.
-The retained message-boundary fork wire command is an explicit exception routed to a V2 service. That hostless field includes only
-links in the thread project's own repository; cross-host and cross-repository links require the
-multi-link protocol. New clients accept snapshots that
-omit `pullRequests`. Retain the legacy wire fields, projection column, and replay support; this feature
-does not schedule their removal. Missing new capabilities must also override cached multi-link data
-after an environment downgrade.
+Environments keep advertising `threadPullRequestLinking` and emitting the derived
+`linkedPullRequest` field, because older clients still read them. That hostless field includes
+only links in the thread project's own repository. V2 environments use native
+`thread.metadata.update` for single-link metadata. The old `thread.meta.update` command belongs
+to older hosts; V2 rejects unsupported legacy-only commands with a client-update error. The retained
+message-boundary fork wire command is an explicit exception routed to a V2 service. Retain the
+legacy wire fields, projection column, and replay support.
 
 [`ws.ts`][ws] serves the group. `websocketRpcRouteLayer` mounts `GET /ws`, authenticates the upgrade
 through `EnvironmentAuth.authenticateWebSocketUpgrade`, then hands the socket to

@@ -17,10 +17,12 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as ProjectSetupScriptRunner from "./ProjectSetupScriptRunner.ts";
 
@@ -68,6 +70,9 @@ const makeHarness = Effect.fn(function* (options: {
       Layer.mergeAll(
         terminals,
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.succeed(null),
+        }),
         ServerSettings.layerTest(),
         NodeCrypto.layer,
       ),
@@ -208,11 +213,11 @@ type TerminalOverrides = Pick<TerminalManager.TerminalManager["Service"], "open"
 const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
   Layer.succeed(TerminalManager.TerminalManager, {
     attachStream: () => Effect.die(new Error("unused")),
+    attachOutputStream: () => Stream.die(new Error("unused")),
     observeStream: () => Effect.die(new Error("unused")),
     resyncStream: () => Effect.die(new Error("unused")),
     resize: () => Effect.void,
     clear: () => Effect.void,
-    restart: () => Effect.die(new Error("unused")),
     close: () => Effect.void,
     hasRunningSessionsForThread: () => Effect.succeed(false),
     closeIdle: () => Effect.void,
@@ -228,6 +233,11 @@ const testLayer = (
 ) =>
   ProjectSetupScriptRunner.layer.pipe(
     Layer.provideMerge(makeProjectServiceLayer(project)),
+    // SCIENT-FORK:START — the runner consults the thread's projection before scripting it.
+    Layer.provideMerge(
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) }),
+    ),
+    // SCIENT-FORK:END
     Layer.provideMerge(makeTerminalManagerLayer(terminal)),
     Layer.provide(settings),
     Layer.provideMerge(NodeCrypto.layer),
@@ -808,13 +818,23 @@ it.effect.each(
     });
     // Built in the test's scope, which also owns the delayed command write.
     const runner = yield* ProjectSetupScriptRunner.make.pipe(
-      Effect.provide(Layer.mergeAll(projectLayer, settingsLayer, terminalLayer, NodeCrypto.layer)),
+      Effect.provide(
+        Layer.mergeAll(
+          projectLayer,
+          settingsLayer,
+          terminalLayer,
+          // SCIENT-FORK: the runner consults the thread's projection before scripting it.
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadShell: () => Effect.succeed(null),
+          }),
+          NodeCrypto.layer,
+        ),
+      ),
     );
     const operation = runner.runForThread({
       threadId: "thread-1",
       projectId: "project-1",
       worktreePath: "/repo/worktree",
-      preferredTerminalId: "settle-fixture",
       trigger: "settle",
       startCommand: (write) =>
         lock.withLock(
@@ -839,7 +859,7 @@ it.effect.each(
     // The command is offered only once the shell is ready.
     yield* TestClock.adjust("3 seconds");
     expect(writes).toEqual([]);
-    expect(closed).toEqual(["settle-fixture"]);
+    expect(closed).toEqual([expect.stringMatching(/^settle-/)]);
   }).pipe(
     Effect.provide(Layer.merge(ServerSettings.layerTest(), ThreadCommandExecutor.layer)),
     Effect.provideService(HostProcess.Platform, "linux"),

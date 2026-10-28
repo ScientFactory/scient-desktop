@@ -137,7 +137,6 @@ export const layer = HttpApiBuilder.group(
         .handle("unlink", () => cloudIntegrationDisabled())
         .handle("preferences", () => cloudIntegrationDisabled())
         .handle("health", () => cloudIntegrationDisabled())
-        .handle("mintCredential", () => cloudIntegrationDisabled())
         .handle("t3MintCredential", () => cloudIntegrationDisabled());
     }
 
@@ -180,11 +179,6 @@ export const layer = HttpApiBuilder.group(
       )
       .handle("health", ({ payload }) =>
         toHttpError(cloudLink.answerHealthRequest(payload)).pipe(
-          Effect.tap(() => appendCloudCredentialResponseHeaders),
-        ),
-      )
-      .handle("mintCredential", ({ payload }) =>
-        toHttpError(cloudLink.mintCredential(payload)).pipe(
           Effect.tap(() => appendCloudCredentialResponseHeaders),
         ),
       )

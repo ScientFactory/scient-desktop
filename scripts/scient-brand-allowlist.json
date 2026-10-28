@@ -633,5 +633,25 @@
     "rules": ["bare-t3"],
     "kind": "internal",
     "reason": "Unchanged upstream CSS comment describes the donor theme colour; it is not rendered product copy. The alignment protocol preserves accurate upstream developer comments."
+  },
+  {
+    "path": "apps/web/src/components/settings/LinkMachineSelect.tsx",
+    "line": "{machine.connectOnly ? \"T3 Connect\" : \"Not connected\"}",
+    "rules": ["t3-connect"],
+    "kind": "dormant-cloud",
+    "reason": "Connect-only machines come from a T3 Connect account, which is unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false."
+  },
+  {
+    "path": "apps/web/src/components/sidebar/UpdateEverythingDialog.tsx",
+    "rules": ["inherited-brand", "bare-t3"],
+    "kind": "unmounted-upstream",
+    "reason": "Scient's SidebarUpdatePill replaces this upstream dialog and never mounts it; the file is kept unchanged for alignment."
+  },
+  {
+    "path": "packages/source-control-github/src/shared/definition.ts",
+    "line": "appName: \"T3 Code for GitHub\",",
+    "rules": ["inherited-brand", "bare-t3"],
+    "kind": "external-name",
+    "reason": "The registered name of T3's GitHub App. App sign-in stays off unless the operator sets T3CODE_GITHUB_APP_CLIENT_ID, which Scient builds do not ship."
   }
 ]

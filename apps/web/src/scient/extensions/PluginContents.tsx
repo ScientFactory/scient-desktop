@@ -348,7 +348,7 @@ export function PluginContents({
   const atom = extensionsPluginContents({ environmentId, input });
   const contents = useEnvironmentQuery(atom);
   const prefetches = useRef(new Map<string, () => void>());
-  // oxlint-disable-next-line t3code/react-effect-budget -- Hover prefetches subscribe to query atoms outside render; release them when the plugin page goes away.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hover prefetches subscribe to query atoms outside render; release them when the plugin page goes away.
   useEffect(() => {
     const mounted = prefetches.current;
     return () => {

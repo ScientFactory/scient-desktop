@@ -428,6 +428,7 @@ export function layer<E, R>(input: {
   readonly launchArgs: string;
   readonly environment?: ProviderInstanceEnvironment;
 }) {
+  // SCIENT-FORK:START Pi replay registry uses the Scient Pi composition
   const layerServerConfig = Layer.effect(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(input.scenario).pipe(Effect.orDie),
@@ -457,6 +458,7 @@ export function layer<E, R>(input: {
           }),
       ),
     ),
+    // SCIENT-FORK:END
   ).pipe(
     Layer.provide(input.spawner),
     Layer.provide(

@@ -29,26 +29,26 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     const outside = EffectAcpErrors.AcpRequestError.invalidParams(
       `Path '${input.requestPath}' is outside the session workspace.`,
     );
-    let ancestor = resolved;
-    const missingComponents: string[] = [];
+    // Canonicalize the deepest existing ancestor, so a link above missing directories cannot escape.
+    let candidate = resolved;
+    const missingSuffix: Array<string> = [];
     let real: string;
     while (true) {
-      const canonical = yield* input.fileSystem.realPath(ancestor).pipe(Effect.option);
+      const canonical = yield* input.fileSystem.realPath(candidate).pipe(Effect.option);
       if (Option.isSome(canonical)) {
-        real = path.join(canonical.value, ...missingComponents);
+        real = path.join(canonical.value, ...missingSuffix);
         break;
       }
-      // Missing directories may be created only after containment is known.
-      // An existing unreadable entry or dangling link is never a new directory.
-      const entryExists = yield* input.fileSystem.readLink(ancestor).pipe(
+      // Walk up only past missing entries, never dangling or unreadable links.
+      const entryExists = yield* input.fileSystem.readLink(candidate).pipe(
         Effect.as(true),
-        Effect.catch(() => input.fileSystem.exists(ancestor)),
+        Effect.catch(() => input.fileSystem.exists(candidate)),
         Effect.orElseSucceed(() => true),
       );
-      const parent = path.dirname(ancestor);
-      if (entryExists || parent === ancestor) return yield* outside;
-      missingComponents.unshift(path.basename(ancestor));
-      ancestor = parent;
+      const parent = path.dirname(candidate);
+      if (entryExists || parent === candidate) return yield* outside;
+      missingSuffix.unshift(path.basename(candidate));
+      candidate = parent;
     }
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),

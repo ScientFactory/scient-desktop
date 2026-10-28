@@ -88,6 +88,7 @@ export function useEnvironmentFileRefresh(input: {
     setRefreshToken((current) => current + 1);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- advances the file-change cursor against the change subscription and refreshes the preview when it passes
   useEffect(() => {
     const observation = advanceEnvironmentFileChangeCursor(
       cursorRef.current,

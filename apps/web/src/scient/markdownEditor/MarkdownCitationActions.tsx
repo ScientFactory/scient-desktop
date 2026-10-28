@@ -40,6 +40,7 @@ export function MarkdownCitationActions({
       { environmentId, threadId, cwd, path },
       window.getSelection(),
     );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals the citation in the editor viewport through the imperative controller until dismissed
   useEffect(() => {
     if (!viewport || !reveal || revealId === undefined) return;
     return revealMarkdownCitation(controller, reveal);

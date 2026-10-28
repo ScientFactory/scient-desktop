@@ -6,7 +6,6 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
-  ProviderInstanceConfigMap,
   ThreadId,
   TurnId,
   type OrchestrationV2ThreadProjection,
@@ -26,7 +25,10 @@ import * as Stream from "effect/Stream";
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
-import { layerFromPath as makeSqlitePersistenceLive } from "../persistence/Sqlite.ts";
+import {
+  layerFromPath as makeSqlitePersistenceLive,
+  layerMemory as sqliteLayerMemory,
+} from "../persistence/Sqlite.ts";
 import { buildScientRuntimeInstructions } from "../provider/ScientRuntimeInstructions.ts";
 import { buildScientAwareness } from "../provider/ScientAwareness.ts";
 import * as CodexAdapterV2 from "./Adapters/CodexAdapterV2.ts";
@@ -37,10 +39,12 @@ import { EventSinkV2 } from "./EventSink.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
-import { layerFromDrivers as makeDriverLayer } from "./ProviderAdapterRegistry.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { layerFromAdaptersEffect } from "./ProviderAdapterRegistry.ts";
+import { DEFAULT_CODEX_SETTINGS } from "./Adapters/CodexAdapterV2.replay.testkit.ts";
 import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
-import { ProjectionStoreV2, layerMemory } from "./ProjectionStore.ts";
+import { ProjectionStoreV2, layer as projectionStoreLayer } from "./ProjectionStore.ts";
 import { ConversationForkService } from "./scient-fork/ConversationForkService.ts";
 import {
   layerWithRegistry as makeOrchestratorV2ReplayLayerWithRegistry,
@@ -49,8 +53,8 @@ import {
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
-const decodeInstanceConfigMap = Schema.decodeUnknownEffect(ProviderInstanceConfigMap);
 const encodeEvidence = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const projectionStoreMemory = projectionStoreLayer.pipe(Layer.provideMerge(sqliteLayerMemory));
 
 function makeCodexReplayTurn(input: {
   readonly id: string;
@@ -394,25 +398,24 @@ it.live(
               } satisfies CodexClient.CodexAppServerClient["Service"];
             }),
         });
-        const configMap = yield* decodeInstanceConfigMap({
-          codex: {
-            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-            config: { homePath: home },
+        const registry = layerFromAdaptersEffect(
+          CodexAdapterV2.createCodexAdapterV2({
+            instanceId: modelSelection.instanceId,
+            displayName: undefined,
             environment: [
-              { name: "HOME", value: home },
-              { name: "CODEX_HOME", value: home },
+              { name: "HOME", value: home, sensitive: false },
+              { name: "CODEX_HOME", value: home, sensitive: false },
             ],
-          },
-        });
-        const registry = makeDriverLayer({
-          drivers: [CodexAdapterV2.CodexAdapterV2Driver],
-          configMap,
-        }).pipe(
+            enabled: true,
+            config: { ...DEFAULT_CODEX_SETTINGS, homePath: home },
+          }).pipe(Effect.map((adapter) => [adapter])),
+        ).pipe(
           Layer.provide(
             Layer.mergeAll(
               factoryLayer,
               Layer.succeed(ServerConfig.ServerConfig, config),
               allocatorLayer,
+              McpProviderSessions.layer,
               NodeServices.layer,
             ),
           ),
@@ -713,7 +716,7 @@ it.live(
                 source: yield* store.getThreadProjection(threadId),
                 child: yield* store.getThreadProjection(forkId),
               };
-            }).pipe(Effect.provide(layerMemory));
+            }).pipe(Effect.provide(projectionStoreMemory));
             assert.deepEqual(rebuilt.source.messages, completed.messages);
             assert.deepEqual(rebuilt.source.turnItems, completed.turnItems);
             // Inherited history lives in the SQL fork-history table, not the event log;

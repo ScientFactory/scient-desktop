@@ -95,7 +95,6 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 function timelineProps() {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
@@ -105,7 +104,6 @@ function timelineProps() {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
-    onRollbackCheckpoint: () => {},
     providerStatuses: [],
     runs: [],
     supportsConversationRollback: false,

@@ -1539,7 +1539,9 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
             const replay = yield* ProjectionStore.ProjectionStoreV2;
             for (const row of persisted) yield* replay.apply(row.event);
             return yield* replay.getThreadProjection(harness.threadId);
-          }).pipe(Effect.provide(ProjectionStore.layerMemory));
+          }).pipe(
+            Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+          );
           assert.equal(
             rebuilt.messages.find((entry) => entry.id === message.message.id)?.text,
             expected,
@@ -1945,7 +1947,7 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
           const replayed = yield* ProjectionStore.ProjectionStoreV2;
           for (const row of stored) yield* replayed.apply(row.event);
           return yield* replayed.getThreadProjection(harness.threadId);
-        }).pipe(Effect.provide(ProjectionStore.layerMemory));
+        }).pipe(Effect.provide(ProjectionStore.layer.pipe(Layer.provide(SqlitePersistenceMemory))));
         assert.deepEqual(
           rebuilt.messages.find((message) => message.id === first.message.id)?.attachments,
           first.message.attachments,

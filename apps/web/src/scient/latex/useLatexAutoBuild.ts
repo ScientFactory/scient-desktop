@@ -32,6 +32,7 @@ export function useLatexAutoBuild(input: {
   const wasVisible = useRef(false);
   const openingPending = useRef(false);
   const policy = useRef("");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the auto-build policy against the compiler connection, resetting attempt tracking on policy or visibility changes
   useEffect(() => {
     const nextPolicy = `${documentKey ?? ""}\0${mode}`;
     if (policy.current !== nextPolicy) {

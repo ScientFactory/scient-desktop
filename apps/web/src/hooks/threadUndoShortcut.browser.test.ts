@@ -7,7 +7,7 @@ import { fakeTimers } from "../../test/render";
 import { randomUUID } from "../lib/utils";
 import { registerShortcutClaim } from "../scient/keyboard/ownership";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
-import * as ThreadUndo from "./threadUndo";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { installThreadUndoShortcut } from "./threadUndoShortcut";
 
 function setup(noticeVisible = true, enabled?: () => boolean) {

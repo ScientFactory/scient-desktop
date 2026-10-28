@@ -27,14 +27,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
-import {
-  type CreateProjectInput,
-  type DeleteProjectInput,
-  type UpdateProjectInput,
-  createProject,
-  deleteProject,
-  updateProject,
-} from "../operations/commands.ts";
+import { createProject, deleteProject, updateProject } from "../operations/commands.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createFileMetadataAtoms } from "./fileMetadata.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
@@ -203,19 +196,19 @@ export function createProjectEnvironmentAtoms<R, E>(
       optimisticFileFamily(projectFileOperationKey(target)),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:create",
-      execute: (input: CreateProjectInput) => createProject(input),
+      execute: createProject,
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
     update: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:update",
-      execute: (input: UpdateProjectInput) => updateProject(input),
+      execute: updateProject,
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),
     delete: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:project:delete",
-      execute: (input: DeleteProjectInput) => deleteProject(input),
+      execute: deleteProject,
       scheduler: projectScheduler,
       concurrency: projectConcurrency,
     }),

@@ -12,6 +12,7 @@ export interface LatexSourceIdentity {
 export function useLatexSourceIdentity(source: string, enabled = true): LatexSourceIdentity | null {
   const [identity, setIdentity] = useState<LatexSourceIdentity | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hashes the source with async WebCrypto, ignoring replies after unmount or source change
   useEffect(() => {
     if (!enabled) return;
     if (!globalThis.crypto?.subtle) return;

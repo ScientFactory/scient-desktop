@@ -213,6 +213,7 @@ export function ProviderRuntimeSection(props: {
     setLocalFailure(null);
     setStartedOperation(null);
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets plan and operation tracking refs when the provider instance changes
   useEffect(() => {
     if (providerInstanceIdRef.current === provider.instanceId) return;
     providerInstanceIdRef.current = provider.instanceId;
@@ -244,6 +245,7 @@ export function ProviderRuntimeSection(props: {
       }
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settles the started runtime operation once the server operation leaves the active state
   useEffect(() => {
     if (!startedOperationId || serverOperation?.operationId !== startedOperationId) return;
     if (isActiveProviderRuntimeOperation(serverOperation)) return;
@@ -417,6 +419,7 @@ export function ProviderRuntimeSection(props: {
     if (actionFailure) throw actionFailure.cause;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests the initial runtime plan once per provider instance and action
   useEffect(() => {
     if (!props.initialAction || !runtimeActions) return;
     const requestKey = `${provider.instanceId}:${props.initialAction}`;
@@ -429,6 +432,7 @@ export function ProviderRuntimeSection(props: {
     setPreparedPlan(null);
     onPlanOpenChange?.(false);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discards a prepared runtime plan when another plan supersedes it
   useEffect(() => {
     if (!preparedPlan || plan) return;
     discardPlan();

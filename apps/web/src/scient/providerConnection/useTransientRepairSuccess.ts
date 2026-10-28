@@ -28,8 +28,10 @@ export function useTransientRepairSuccess(open: boolean) {
     }, REPAIR_SUCCESS_NOTICE_MS);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the success-message timer on unmount
   useEffect(() => cancelTimer, [cancelTimer]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the transient success state when the surface closes
   useEffect(() => {
     if (!open) clear();
   }, [clear, open]);

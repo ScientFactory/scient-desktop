@@ -1602,7 +1602,6 @@ effectIt.effect("a stale outbox start cannot execute the newer retry attempt", (
       attemptCount: 1,
       availableAt: timestamp,
       leaseOwner: "fixture-worker",
-      leaseExpiresAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,
       completedAt: null,

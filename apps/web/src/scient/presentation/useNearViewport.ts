@@ -10,6 +10,7 @@ export function useNearViewport(): {
     observedNearViewport || (element !== null && typeof IntersectionObserver === "undefined");
   if (isNearViewport && !observedNearViewport) setNearViewport(true);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the element DOM node's viewport proximity via IntersectionObserver
   useEffect(() => {
     if (element == null || isNearViewport) return;
     const observer = new IntersectionObserver(

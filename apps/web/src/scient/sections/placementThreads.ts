@@ -10,9 +10,10 @@ export function automaticPlacementThreads(
   threads: readonly EnvironmentThreadShell[],
   serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>,
   now: string,
+  delegatedUnderParent: ReadonlySet<string>,
 ) {
   return sortActiveThreadsByOrderKey(
-    filterSidebarV2VisibleThreads(threads, null).filter((thread) => {
+    filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent).filter((thread) => {
       const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
       return (
         thread.pinnedAt == null &&

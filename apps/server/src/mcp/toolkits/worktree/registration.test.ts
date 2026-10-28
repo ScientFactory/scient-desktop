@@ -41,6 +41,10 @@ import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { DeviceToolkit } from "../device/tools.ts";
@@ -88,7 +92,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
-  ServerSettings.layerTest({}),
+  ServerSettings.layerTest({ linkedEnvironmentsEnabled: true }),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
@@ -159,6 +163,14 @@ it.effect.each(
         Layer.provide(layerEnvironment),
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(StubServicesLive),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(PeerForwarding.PeerForwarding)({}),
+            Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+            Layer.mock(PeerLinks.PeerLinks)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          ),
+        ),
         Layer.build,
       );
 

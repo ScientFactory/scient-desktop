@@ -25,7 +25,7 @@ import { readLocalApi } from "../../localApi";
 import { useEnvironmentMachines, useEnvironments } from "../../state/environments";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useUiStateStore } from "../../uiStateStore";
-import { readThreadShell } from "../../state/entities";
+import { readThreadShell, useDelegatedUnderParent } from "../../state/entities";
 import { sortByPlacement } from "./automaticPlacement";
 import { placementEligible } from "./placementEligibility";
 import { automaticPlacementThreads } from "./placementThreads";
@@ -143,6 +143,7 @@ export function useSidebarSections(input: {
   const layouts = catalogs.catalogs;
   const { setThreadSection } = useThreadSectionActions();
   // Section creation outside the sidebar records the same selected project.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the sidebar section scope in the module-level store until unmount
   useEffect(() => {
     setSidebarSectionScope(scopeProjectRefs);
     return () => setSidebarSectionScope(null);
@@ -150,6 +151,7 @@ export function useSidebarSections(input: {
   const { environments } = useEnvironments();
   const machineById = useEnvironmentMachines();
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const delegatedUnderParent = useDelegatedUnderParent();
   // One machine catching up or offline holds only its own threads' placement.
   const frozenKey = useAtomValue(frozenPlacementEnvironmentsKeyAtom);
   const frozenEnvironmentIds = frozenKey ? frozenKey.split("\n") : [];
@@ -237,7 +239,7 @@ export function useSidebarSections(input: {
     return groupThreadsBySection({
       layouts,
       pinned: [],
-      active: automaticPlacementThreads(input.threads, serverConfigs, now),
+      active: automaticPlacementThreads(input.threads, serverConfigs, now, delegatedUnderParent),
     });
   })();
   const placementInputs = completeGroups.map((group) => ({

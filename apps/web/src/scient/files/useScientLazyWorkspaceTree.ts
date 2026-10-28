@@ -64,6 +64,7 @@ export function useScientLazyWorkspaceTree(directoryView: ProjectDirectoryView) 
   const [treeSnapshot, setTreeSnapshot] =
     useState<LazyWorkspaceTreeSnapshot>(INITIAL_TREE_SNAPSHOT);
   const directoryViewRef = useRef(directoryView);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the directory view for the tree controller to read
   useLayoutEffect(() => {
     directoryViewRef.current = directoryView;
   });
@@ -74,10 +75,12 @@ export function useScientLazyWorkspaceTree(directoryView: ProjectDirectoryView) 
     .filter((entry) => entry.kind === "directory")
     .map((entry) => `${entry.relativePath}/`);
   const entryKindsRef = useRef<ReadonlyMap<string, ProjectDirectoryEntry["kind"]>>(entryKinds);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring entry kinds for the tree controller to read
   useLayoutEffect(() => {
     entryKindsRef.current = entryKinds;
   });
   const treeEntriesRef = useRef(treeSnapshot.entries);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring tree entries for the tree controller to read
   useLayoutEffect(() => {
     treeEntriesRef.current = treeSnapshot.entries;
   });
@@ -143,6 +146,7 @@ export function useScientLazyWorkspaceTreeLoading({
     throw squashAtomCommandFailure(result);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the LazyWorkspaceTreeController resource, started on mount and destroyed on unmount
   useEffect(() => {
     setTreeSnapshot(INITIAL_TREE_SNAPSHOT);
     const controller = new LazyWorkspaceTreeController({
@@ -162,10 +166,12 @@ export function useScientLazyWorkspaceTreeLoading({
     };
   }, [directoryViewRef, loadDirectory, model, setTreeSnapshot, treeControllerRef, treeEntriesRef]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the directory view to the imperative tree controller when it changes
   useEffect(() => {
     void treeControllerRef.current?.setView(directoryView);
   }, [directoryView, treeControllerRef]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- primes search-result paths into the tree controller, ignoring completion after cancel or controller swap
   useEffect(() => {
     if (!isSearching || searchResultKey === null) return;
     if (pathSearch.entries.length === 0) return;

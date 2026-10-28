@@ -12,7 +12,6 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
-  workEntryIndicatesToolSuccess,
 } from "./presentation.js";
 
 function commandItem(
@@ -63,7 +62,6 @@ describe("workEntryIndicatesToolFailure", () => {
         structuredPayload,
       };
       expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(failed);
-      expect(workEntryIndicatesToolSuccess(entry)).toBe(!failed);
       expect(JSON.stringify(toolItemForDisplay(structuredPayload))).not.toContain('"output":');
     },
   );
@@ -91,7 +89,6 @@ describe("workEntryIndicatesToolFailure", () => {
     };
     expect(workEntryIndicatesToolFailure(entry)).toBe(false);
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(false);
-    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
     expect(workEntryIndicatesToolFailure({ ...entry, toolLifecycleStatus: "failed" })).toBe(true);
   });
 
@@ -128,7 +125,6 @@ describe("resolveWorkEntryToolPresentation", () => {
       "Failed to clone a repository",
     );
     expect(workEntryDisplayIndicatesToolFailure(entry)).toBe(true);
-    expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
     const childFailure = {
       ...entry,
       label: "T3-code.task_status",
@@ -136,7 +132,6 @@ describe("resolveWorkEntryToolPresentation", () => {
       toolData: { output: { taskId: "child", status: "failed", summary: "command not found" } },
     };
     expect(workEntryDisplayIndicatesToolFailure(childFailure)).toBe(false);
-    expect(workEntryIndicatesToolSuccess(childFailure)).toBe(true);
   });
   it.each([
     "mcp__t3-code__preview_click",

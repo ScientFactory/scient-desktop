@@ -94,6 +94,7 @@ export interface ReaderSearch {
 export function ReaderSearchField(props: ReaderSearch & { readonly label: string }) {
   const input = useRef<HTMLInputElement>(null);
   const { focusRequest } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when a focus request arrives
   useEffect(() => {
     if (!focusRequest) return;
     input.current?.focus();
@@ -205,6 +206,7 @@ export function DocumentReaderControls(props: {
   const host = useContext(ReaderBarHostContext);
   const hostSlot = host?.slot ?? null;
   const onHosted = host?.onHosted;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports this controls bar as hosted to the reader bar host until unmount
   useLayoutEffect(() => {
     if (!onHosted || hostSlot === null) return;
     onHosted(true);

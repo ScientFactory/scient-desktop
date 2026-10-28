@@ -237,9 +237,11 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
   const [held, setHeld] = useState<HeldLayout | null>(null);
   const [pendingDrops, setPendingDrops] = useState(0);
   const onInteractionChange = props.onInteractionChange;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports drag and pending-drop interaction state to the parent callback
   useEffect(() => {
     onInteractionChange?.(drag !== null || pendingDrops > 0);
   }, [drag, onInteractionChange, pendingDrops]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports interaction end to the parent callback on unmount
   useEffect(() => () => onInteractionChange?.(false), [onInteractionChange]);
   const listRef = useRef<HTMLUListElement>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -293,6 +295,7 @@ export function SidebarSectionsView(props: SidebarSectionsViewProps) {
 
   // A held layout expires on its own, and stops applying (below) as soon as the
   // live order catches up with it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the dragged order on a timer until the live order catches up
   useEffect(() => {
     if (held === null) return;
     const timer = setTimeout(
@@ -968,6 +971,7 @@ function SectionNameInput(props: {
   const [name, setName] = useState(props.initialName);
   const settledRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the rename input DOM node on mount
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();

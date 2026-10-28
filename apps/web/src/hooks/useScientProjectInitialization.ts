@@ -8,7 +8,7 @@ import {
   inspectScientProjectForOpening,
   type ScientProjectInitializationDecision,
 } from "../lib/scientProjectInitialization";
-import { inferProjectTitleFromPath } from "../lib/projectPaths";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import { readPreparedConnection } from "../state/session";
 
 function errorMessage(error: unknown): string {
@@ -42,6 +42,7 @@ export function useScientProjectInitialization() {
     resolve(decision);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels a pending initialization decision when its owner unmounts
   useEffect(
     () => () => {
       decisionRef.current?.("cancel");

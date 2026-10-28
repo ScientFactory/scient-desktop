@@ -198,12 +198,12 @@ export function useRightPanelTabHistory(input: {
   const { threadRef, runAfterPendingFileSave } = input;
   const threadKey = threadRef ? scopedThreadKey(threadRef) : null;
   const guardRef = useRef(runAfterPendingFileSave);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Tab history calls the guard outside React, so it reads the latest one from a ref.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Tab history calls the guard outside React, so it reads the latest one from a ref.
   useLayoutEffect(() => {
     guardRef.current = runAfterPendingFileSave;
   }, [runAfterPendingFileSave]);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribes to the thread's tab history for as long as the thread is shown.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribes to the thread's tab history for as long as the thread is shown.
   useEffect(() => {
     if (!threadKey) return;
     return watchTabHistory(threadKey, (target, run) => guardRef.current(target, run));
@@ -225,7 +225,7 @@ export function useRightPanelTabHistory(input: {
     if (command === "navigation.back") goBackInTab(threadRef, active.id);
     else goForwardInTab(threadRef, active.id);
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- ⌘[ and ⌘] are captured before thread navigation while focus is in a file tab.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ⌘[ and ⌘] are captured before thread navigation while focus is in a file tab.
   useEffect(() => {
     const handler = (event: KeyboardEvent) => onKeyDown(event);
     document.addEventListener("keydown", handler, true);

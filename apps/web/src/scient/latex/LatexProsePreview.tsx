@@ -147,6 +147,7 @@ export function LatexProsePreview({
     if (element.current)
       return appendLatexProsePreview(element.current, source, editor, rootSource);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- repaints the preview DOM node when the source or references change
   useLayoutEffect(
     () => paintPreview(source, editor, rootSource, references),
     [source, editor, rootSource, references],

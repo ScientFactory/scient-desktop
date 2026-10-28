@@ -30,11 +30,13 @@ import type { OrchestrationV2ContextTransfer } from "@t3tools/contracts";
 import { ScanTextIcon } from "lucide-react";
 import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
 import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
+import { subagentWorkflowIdsFor } from "~/scient/presentation/subagentRowGroups";
 import { AudioPreviewUnmountContext } from "../files/AudioPreview";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
+import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { deriveTimelineMinimapItems } from "./timelineMinimapItems";
 import {
@@ -54,6 +56,9 @@ import { observeResize } from "~/lib/observeResize";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
+const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
+const EMPTY_RESPONDING_REQUEST_IDS: TimelineRowSharedState["respondingRequestIds"] = [];
+
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
@@ -70,7 +75,7 @@ import {
   type SyntheticEvent,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { type TimelineEntry } from "../../session-logic";
+import { type PendingApproval, type TimelineEntry } from "../../session-logic";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
 import { ArrowRightIcon, BotIcon, CircleAlertIcon } from "lucide-react";
@@ -87,6 +92,7 @@ import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
+import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
   resolveTimelineMinimapHasPersistentGutter,
@@ -95,7 +101,6 @@ import {
   resolveTimelineMinimapVisibleRange,
   resolveTimelineMinimapHitStripWidth,
   timelineTurnFoldRunIdsByEntryId,
-  worktreeSetupAgentStarted,
   type MessagesTimelineRow,
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
@@ -173,7 +178,7 @@ function TimelineListFooter({
   readonly children?: ReactNode;
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- reports growth of the footer's content, which the list does not follow
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports growth of the footer's content, which the list does not follow
   useLayoutEffect(() => {
     const content = contentRef.current;
     if (!content || !onGrow) return;
@@ -207,6 +212,11 @@ export interface MessagesTimelineHistoryControls {
 }
 
 interface MessagesTimelineProps {
+  pendingApprovals?: ReadonlyArray<PendingApproval>;
+  heldApprovalRequestIds?: ReadonlySet<string> | undefined;
+  respondingRequestIds?: TimelineRowSharedState["respondingRequestIds"];
+  canOperateThread?: boolean;
+  onRespondToApproval?: TimelineRowSharedState["onRespondToApproval"];
   citationRequest?: AssistantCitationRequest | null;
   citationHistory?: CitedHistory;
   onCiteAssistantText?: (
@@ -219,7 +229,6 @@ interface MessagesTimelineProps {
   // SCIENT-FORK:END
   isWorking: boolean;
   runlessWorkActive?: boolean;
-  activeTurnInProgress: boolean;
   activeTurnStartedAt?: string | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
@@ -254,9 +263,12 @@ interface MessagesTimelineProps {
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
   turnItemSource?: TimelineRowSharedState["turnItemSource"];
+  /** The thread this one is a subagent of; `open` is absent when it cannot be opened from here. */
   parentThreadLink?: {
-    readonly threadId: ThreadId;
     readonly title: string;
+    /** Where it runs, when that is another environment. */
+    readonly environmentLabel?: string;
+    readonly open?: () => void;
   } | null;
 
   workflowOpening?: WorkflowOpening | null;
@@ -264,10 +276,6 @@ interface MessagesTimelineProps {
     readonly sourceThreadId: ThreadId;
     readonly runId: RunId;
   }) => Promise<void>;
-  onRollbackCheckpoint: (input: {
-    readonly checkpointId: string;
-    readonly scopeId: string;
-  }) => void;
   supportsConversationRollback: boolean;
   threadStartCheckpointReady?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
@@ -349,6 +357,11 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 }
 
 const ConversationTimeline = memo(function ConversationTimeline({
+  pendingApprovals = EMPTY_PENDING_APPROVALS,
+  heldApprovalRequestIds,
+  respondingRequestIds = EMPTY_RESPONDING_REQUEST_IDS,
+  canOperateThread = false,
+  onRespondToApproval,
   citationRequest = null,
   citationHistory = CITED_HISTORY_LOADING,
   onCiteAssistantText,
@@ -358,7 +371,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:END
   isWorking,
   runlessWorkActive = false,
-  activeTurnInProgress,
   activeTurnStartedAt = null,
   worktreeSetup = null,
   footer = null,
@@ -395,7 +407,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   parentThreadLink = null,
   workflowOpening = null,
   onForkFromRun,
-  onRollbackCheckpoint,
   supportsConversationRollback,
   threadStartCheckpointReady = false,
   availableRevertTurnCounts,
@@ -476,12 +487,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // Whether the latest run is unfinished: its latest content is then the reading end.
   const turnUnfinished = latestTurnUnfinished(runningRunId, latestRun?.status);
   const turnUnfinishedRef = useRef(turnUnfinished);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed turn state to a ref read by scroll and restore callbacks
   useLayoutEffect(() => {
     turnUnfinishedRef.current = turnUnfinished;
   });
   const [readingListLoaded, setReadingListLoaded] = useState(false);
   const requestedReadingPages = useRef({ key: listIdentityKey, cursors: new Set<string>() });
   // Runs before the restore target's paging effect, which reads these cursors.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the per-thread paging cursor ref before the restore's paging effect reads it
   useLayoutEffect(() => {
     if (requestedReadingPages.current.key !== listIdentityKey) {
       requestedReadingPages.current = { key: listIdentityKey, cursors: new Set() };
@@ -567,6 +580,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels pending disclosure-settle animation frames when the timeline unmounts
   useEffect(() => {
     return () => {
       if (disclosureSettleFrameRef.current !== null) {
@@ -655,6 +669,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const previousLatestRunRef = useRef({ identity: listIdentityKey, run: latestRun });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands a run's disclosure when the server reports it interrupted, comparing against the previous committed run
   useEffect(() => {
     const { identity, run: previous } = previousLatestRunRef.current;
     previousLatestRunRef.current = { identity: listIdentityKey, run: latestRun };
@@ -769,18 +784,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   // SCIENT-FORK:START — match the row header's liveness so a finished
   // sub-agent stops reading as live work.
-  const subagentWorkflowIds = new Map(
-    (agentPanelModel?.workflows ?? []).flatMap((group) => [
-      [group.workflow.id, group.workflow.id] as const,
-      ...group.phases
-        .flatMap((phase) => phase.members)
-        .map((member) => [member.id, group.workflow.id] as const),
-      ...group.unphasedMembers.map((member) => [member.id, group.workflow.id] as const),
-    ]),
-  );
+  const subagentWorkflowIds = subagentWorkflowIdsFor(agentPanelModel);
   // SCIENT-FORK:END
+  const pendingApprovalsByRequestId = new Map(
+    pendingApprovals
+      .filter((approval) => !heldApprovalRequestIds?.has(approval.requestId))
+      .map((approval) => [approval.requestId, approval]),
+  );
+  const pendingApprovalRequestIds = new Set(pendingApprovalsByRequestId.keys());
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
+    pendingApprovalRequestIds,
     latestRun,
     runningRunId,
     expandedRunIds: visibleExpandedRunIds,
@@ -805,6 +819,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const stableRows = useStableRows(rawRows, listIdentityKey);
   const { rows, exit: workingRowExit } = useWorkingRowExit(stableRows, listIdentityKey);
   // SCIENT-FORK:END
+  const unmatchedPendingApprovals = new Map(pendingApprovalsByRequestId);
+  if (unmatchedPendingApprovals.size > 0) {
+    for (const row of rows) {
+      const entries =
+        row.kind === "work" ? row.groupedEntries : row.kind === "work-live" ? [row.entry] : [];
+      for (const entry of entries) {
+        const item = entry.projectedItem?.item;
+        if (item?.type === "approval_request") unmatchedPendingApprovals.delete(item.requestId);
+      }
+    }
+  }
   // SCIENT-FORK:START — ChatView owns the follow; a finished one ends there too.
   // A finished reveal (revealed or cancelled) no longer holds off idle end keeping.
   const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
@@ -881,6 +906,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     restoring: restoringThreadPosition,
     abandonedThreadKey: abandonedPositionKey,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the positioned thread to the landing fork after the list commits its position
   useLayoutEffect(() => {
     onPositionedThreadKeyChange?.(positionedListThreadKey);
   }, [onPositionedThreadKeyChange, positionedListThreadKey]);
@@ -987,15 +1013,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     size: true,
     shouldRestorePosition: shouldRestoreVisibleContentPosition,
   };
-  const timelineListFooter = (
-    <TimelineListFooter
-      composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
-      onGrow={onFooterGrow}
-    >
-      {footer}
-    </TimelineListFooter>
-  );
-
   const measureContentOverflow = () =>
     timelineContentOverflowsViewport(listRef.current?.getState?.(), {
       composerInset: contentInsetEndAdjustment,
@@ -1016,7 +1033,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onContentOverflowChange(measureContentOverflow());
     });
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending content-overflow measurement frame on unmount
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures LegendList content overflow after rows are added or removed
   useLayoutEffect(() => {
     cancelContentOverflowFrame();
     onContentOverflowChange?.(measureContentOverflow());
@@ -1105,6 +1124,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending minimap refresh frame on unmount
   useEffect(
     () => () => {
       if (minimapRefreshFrameRef.current !== null) {
@@ -1213,11 +1233,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     anchoredEndSpace,
     disclosureToggleSettling,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads LegendList's scroll position on the next frame when rows or the handler change
   useEffect(() => {
     handleScrollOnNextFrame();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new scroll handler or added or removed rows move the scroll position.
   }, [handleScroll, handleScrollOnNextFrame, rows.length]);
   // A resized window or panel changes the viewport without a scroll or row event.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the list viewport's size with ResizeObserver to re-read the scroll position
   useEffect(() => {
     const viewport = readingListLoaded ? listRef.current?.getScrollableNode() : null;
     if (!viewport) return;
@@ -1225,6 +1247,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }, [handleScrollOnNextFrame, listRef, readingListLoaded]);
   // SCIENT-FORK:END
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the timeline viewport with ResizeObserver to size the minimap gutter and hit strip
   useEffect(() => {
     if (!timelineViewportElement) {
       return;
@@ -1259,6 +1282,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }, [timelineViewportElement, rows.length, reportContentOverflow, chatWidth]);
 
   const sharedState: TimelineRowSharedState = {
+    pendingApprovals: pendingApprovalsByRequestId,
+    respondingRequestIds,
+    canOperateThread,
+    onRespondToApproval,
     citationRequest: readyCitationRequest,
     listRef,
     timestampFormat,
@@ -1291,7 +1318,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     turnItemSource,
     workflowOpening,
     onForkFromRun,
-    onRollbackCheckpoint,
     onToggleTurnFold,
     onToggleAttemptFold,
     onToggleWorkGroup,
@@ -1340,7 +1366,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     isCompacting: compactionAwaitingRow,
     isRevertingCheckpoint,
     backgroundWorktreeSetup,
-    activeTurnInProgress,
     awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
     latestRunId: latestRun?.runId ?? null,
@@ -1369,10 +1394,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
         <div className="chat-content-lane pt-1 sm:pt-2">
           <TimelineSystemDivider
             label="Subagent of"
-            detail={parentThreadLink.title}
+            detail={
+              parentThreadLink.environmentLabel === undefined
+                ? parentThreadLink.title
+                : `${parentThreadLink.title} on ${parentThreadLink.environmentLabel}`
+            }
             icon={BotIcon}
-            actionLabel="Open parent thread"
-            onAction={() => onOpenThread(parentThreadLink.threadId)}
+            {...(parentThreadLink.open === undefined
+              ? {}
+              : { actionLabel: "Open parent thread", onAction: parentThreadLink.open })}
           />
         </div>
       </div>
@@ -1462,6 +1492,30 @@ const ConversationTimeline = memo(function ConversationTimeline({
     </TimelineRowCtx>
   );
   const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  const timelineListFooter = (
+    <TimelineListFooter
+      composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
+      onGrow={onFooterGrow}
+    >
+      {footer}
+      {unmatchedPendingApprovals.size > 0 ? (
+        <TimelineRowCtx value={sharedState}>
+          <div className="messages-timeline-row-frame">
+            <div
+              className="@container/chat-lane chat-content-lane overflow-x-clip"
+              data-timeline-root="true"
+            >
+              <WorkLogBlock>
+                {[...unmatchedPendingApprovals.values()].map((approval) => (
+                  <TimelinePendingApprovalRow key={approval.requestId} approval={approval} />
+                ))}
+              </WorkLogBlock>
+            </div>
+          </div>
+        </TimelineRowCtx>
+      ) : null}
+    </TimelineListFooter>
+  );
 
   const forwardMinimapWheel = (event: WheelEvent) => {
     const scrollNode = listRef.current?.getScrollableNode();
@@ -1470,6 +1524,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   if (
     rows.length === 0 &&
+    unmatchedPendingApprovals.size === 0 &&
     !isWorking &&
     parentThreadLink === null &&
     historyControls === undefined &&

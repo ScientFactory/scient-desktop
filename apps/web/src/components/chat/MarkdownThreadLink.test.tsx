@@ -1,14 +1,18 @@
 import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
 
-const { reads } = vi.hoisted(() => ({ reads: vi.fn() }));
+const { reads, shells } = vi.hoisted(() => ({
+  reads: vi.fn(),
+  shells: new Map<string, { environmentId: string; id: string; title: string }>(),
+}));
 vi.mock("../../state/entities", () => ({
-  useThreadShell: (ref: unknown) => {
+  useThreadShell: (ref: ScopedThreadRef | null) => {
     reads(ref);
-    return null;
+    return ref === null ? null : (shells.get(`${ref.environmentId}/${ref.threadId}`) ?? null);
   },
   useThreadRefs: () => [],
   useProject: () => null,
@@ -23,52 +27,43 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 const environmentId = EnvironmentId.make("remote");
+const otherEnvironmentId = EnvironmentId.make("lab");
 const threadId = ThreadId.make("thread-1");
 
+function setup(shell: { environmentId: EnvironmentId; title: string }) {
+  reads.mockClear();
+  shells.clear();
+  shells.set(`${shell.environmentId}/${threadId}`, { ...shell, id: threadId });
+}
+
 describe("MarkdownThreadLink identity", () => {
-  it("copies new links with an ID-only href and renders inside the message environment", () => {
-    reads.mockClear();
+  it("resolves an ID-only link inside the message environment", () => {
+    setup({ environmentId, title: "Current title" });
     const html = renderToStaticMarkup(
       <MarkdownThreadLink
         environmentId={environmentId}
-        threadId={threadId}
+        link={parseThreadLinkHref("t3-thread://v1/thread-1")!}
         label="Written title"
       />,
     );
+    expect(reads).toHaveBeenCalledWith(expect.objectContaining({ environmentId, threadId }));
     expect(html).toContain('href="/remote/thread-1"');
-    expect(html).toContain('data-markdown-copy="[Written title](t3-thread://v1/thread-1)"');
+    expect(html).toContain('data-markdown-copy="[Current title](t3-thread://v2/remote/thread-1)"');
   });
 
-  it("retains an old cross-environment link when copying instead of converting it to local identity", () => {
-    reads.mockClear();
+  it("retains an old cross-environment link's environment instead of converting it to local identity", () => {
+    setup({ environmentId: otherEnvironmentId, title: "Saved title" });
     const html = renderToStaticMarkup(
       <MarkdownThreadLink
         environmentId={environmentId}
-        threadId={threadId}
+        link={parseThreadLinkHref("t3-thread://v1/lab/thread-1")!}
         label="Saved title"
-        environmentQualified
       />,
     );
-    expect(html).toContain('href="/remote/thread-1"');
-    expect(html).toContain('data-markdown-copy="[Saved title](t3-thread://v1/remote/thread-1)"');
-    expect(reads).toHaveBeenCalledWith(expect.objectContaining({ environmentId, threadId }));
-  });
-  it("does not decode a missing qualified literal-percent identity a second time", () => {
-    reads.mockClear();
-    const literalId = ThreadId.make("thread%2F1");
-    const html = renderToStaticMarkup(
-      <MarkdownThreadLink
-        environmentId={environmentId}
-        threadId={literalId}
-        label="Saved title"
-        environmentQualified
-      />,
+    expect(reads).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: otherEnvironmentId, threadId }),
     );
-    expect(html).toContain('href="/remote/thread%2F1"');
-    expect(reads).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({ environmentId, threadId: literalId }),
-    );
-    expect(reads).toHaveBeenNthCalledWith(2, null);
+    expect(html).toContain('href="/lab/thread-1"');
+    expect(html).toContain('data-markdown-copy="[Saved title](t3-thread://v2/lab/thread-1)"');
   });
 });

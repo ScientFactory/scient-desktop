@@ -151,9 +151,11 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   const mountedRef = useRef(true);
   const linkOpenRequestRef = useRef(0);
   const linkFeedbackToastRef = useRef<ReturnType<typeof anchoredToastManager.add> | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the markdown path set for link-resolution callbacks to read
   useLayoutEffect(() => {
     markdownPathSetRef.current = markdownPathSet;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring whether directory entries are truncated for link-resolution callbacks to read
   useLayoutEffect(() => {
     entriesTruncatedRef.current = entriesQuery.data?.truncated ?? true;
   });
@@ -179,6 +181,7 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
     });
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks component liveness in a ref and dismisses the link feedback toast on unmount
   useEffect(() => {
     mountedRef.current = true;
     return () => {

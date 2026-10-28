@@ -82,6 +82,7 @@ export function useProviderSignInOpening(
   operationId: string | null,
 ): ProviderSignInOpening | null {
   const { environmentId, instanceId } = key;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- counts this surface in the sign-in openings registry until unmount
   useEffect(() => {
     const surface = signInKeyOf({ environmentId, instanceId });
     surfaces.set(surface, (surfaces.get(surface) ?? 0) + 1);

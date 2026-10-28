@@ -90,6 +90,7 @@ function FigurePicker(
   const [pendingUpload, setPendingUpload] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const live = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks component liveness in a ref so async upload replies do not set state after unmount
   useEffect(() => {
     live.current = true;
     return () => {
@@ -101,6 +102,7 @@ function FigurePicker(
     setLocalFile(file);
     setLocalUrl(file ? URL.createObjectURL(file) : null);
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- revokes the preview object URL resource when the chosen file changes or on unmount
   useEffect(
     () => (localUrl === null ? undefined : () => URL.revokeObjectURL(localUrl)),
     [localUrl],
@@ -110,6 +112,7 @@ function FigurePicker(
   const asset = useAssetUrlState(props.environmentId, resource);
   const preview = localUrl ?? (asset._tag === "Success" ? asset.url : null);
   const input = useRef<HTMLInputElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the file input DOM node on mount
   useEffect(() => {
     input.current?.focus();
   }, []);

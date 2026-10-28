@@ -32,7 +32,6 @@ import {
   type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
-import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -51,7 +50,6 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
 import { cursorContextWindowTokens, cursorSdkModelSelection } from "./sdkModel.ts";
 import { probeCursorSkills, hasCursorSkillMention, rewriteCursorSkillMentions } from "./skills.ts";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { t3OrchestrationPromptForFirstRun } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -63,11 +61,6 @@ import {
 } from "@t3tools/provider-core/server/attachmentPrompt";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
-  ProviderAdapterDriverCreateError,
-  type ProviderAdapterDriver,
-  type ProviderAdapterDriverCreateInput,
-} from "@t3tools/provider-core/server/adapterDriver";
-import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
@@ -76,9 +69,8 @@ import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
-export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
+const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
-const DEFAULT_CURSOR_SETTINGS = Schema.decodeSync(CursorSettings)({});
 const isTurnStartError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
 
 export const CursorProviderCapabilitiesV2 = {
@@ -884,7 +876,6 @@ interface CursorLiveAgent {
 
 export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
-  readonly settings: CursorSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly getModels?: () => ReadonlyArray<ServerProviderModel>;
   readonly turnStartError?: CursorTurnStartErrorMapper;
@@ -2808,62 +2799,3 @@ export type CursorAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
-
-export interface CursorAdapterV2DriverOptions {
-  readonly turnStartError?: CursorTurnStartErrorMapper;
-  // SCIENT-FORK:START — pass host instruction copy through the provider driver.
-  readonly orchestrationPromptForFirstRun?: typeof t3OrchestrationPromptForFirstRun;
-  readonly runtimeInstructions?: typeof buildRuntimeInstructions;
-  // SCIENT-FORK:END
-}
-
-export function makeCursorAdapterV2Driver(
-  options: CursorAdapterV2DriverOptions = {},
-): ProviderAdapterDriver<CursorSettings, CursorAdapterV2DriverEnv> {
-  return {
-    driverKind: CURSOR_DRIVER_KIND,
-    configSchema: CursorSettings,
-    defaultConfig: (): CursorSettings => DEFAULT_CURSOR_SETTINGS,
-    create: Effect.fn("CursorAdapterV2Driver.create")(
-      function* (input: ProviderAdapterDriverCreateInput<CursorSettings>) {
-        const hostEnvironment = yield* HostProcess.Environment;
-        return yield* makeCursorAdapterV2({
-          instanceId: input.instanceId,
-          settings: {
-            ...input.config,
-            enabled: input.enabled,
-          },
-          environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-          ...(options.turnStartError ? { turnStartError: options.turnStartError } : {}),
-          // SCIENT-FORK:START — retain optional host text at the adapter boundary.
-          ...(options.orchestrationPromptForFirstRun === undefined
-            ? {}
-            : { orchestrationPromptForFirstRun: options.orchestrationPromptForFirstRun }),
-          ...(options.runtimeInstructions === undefined
-            ? {}
-            : { runtimeInstructions: options.runtimeInstructions }),
-          // SCIENT-FORK:END
-        });
-      },
-      (effect, input) =>
-        effect.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterDriverCreateError({
-                driver: CURSOR_DRIVER_KIND,
-                instanceId: input.instanceId,
-                detail: "Failed to create Cursor Agent SDK adapter.",
-                cause,
-              }),
-          ),
-        ),
-    ),
-  };
-}
-
-/**
- * Default native Cursor adapter for hosts without application-owned prompt policy.
- *
- * @public
- */
-export const CursorAdapterV2Driver = makeCursorAdapterV2Driver();

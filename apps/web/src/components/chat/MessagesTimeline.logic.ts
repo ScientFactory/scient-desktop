@@ -1,5 +1,4 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
-export { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
@@ -29,7 +28,6 @@ import {
   contextCompactionTokenCounts,
   type ToolGroupSummaryKind,
 } from "@t3tools/client-runtime/work-log/presentation";
-export { toolGroupAction } from "@t3tools/client-runtime/work-log/presentation";
 import {
   deriveRevertTurnCountByUserMessageId,
   formatDuration,
@@ -57,15 +55,13 @@ import {
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
   type RunAttemptId,
+  type RuntimeRequestId,
   RunId,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
-import {
-  resolveT3McpToolDefinition,
-  type T3McpToolPresentation,
-} from "@t3tools/shared/t3McpToolPresentation";
+import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
@@ -345,7 +341,7 @@ export function shouldFollowWorkGroupAppend(
   );
 }
 
-export interface TimelineEndState {
+interface TimelineEndState {
   readonly isAtEnd?: boolean;
   readonly isNearEnd?: boolean;
   readonly contentLength?: number;
@@ -529,14 +525,6 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
   return bMs > aMs ? b : a;
 }
 
-export interface TimelineDurationMessage {
-  id: string;
-  role: "user" | "assistant" | "system";
-  createdAt: string;
-  updatedAt: string;
-  streaming: boolean;
-}
-
 export type TimelineLatestRun = Pick<
   ThreadRunSummary,
   "runId" | "status" | "startedAt" | "completedAt" | "turnEnded"
@@ -583,7 +571,7 @@ type MessagesTimelineRowContent =
       id: string;
       createdAt: string | null;
       /** A running compaction owns the working row, so its divider appears only once it ends. */
-      compacting?: string;
+      compacting?: true;
     }
   | {
       kind: "thinking";
@@ -604,8 +592,7 @@ type MessagesTimelineRowContent =
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
-      // SCIENT-FORK:START — Scient's mark and trace icons (scient/presentation/traceIcons.ts).
-      summaryToolIcon?: "browser" | "device" | "scient" | "t3-code" | "pull-request";
+      // SCIENT-FORK:START — Scient's trace icons (scient/presentation/traceIcons.ts).
       summaryTraceIcon?: TraceIconOverride;
       // SCIENT-FORK:END
       hasFailure: boolean;
@@ -646,7 +633,6 @@ type MessagesTimelineRowContent =
       createdAt: string;
       message: ChatMessage;
       projectedItem?: OrchestrationV2ProjectedTurnItem;
-      durationStart: string;
       showAssistantMeta: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
@@ -710,30 +696,9 @@ export interface StableMessagesTimelineRowsState {
   result: MessagesTimelineRow[];
 }
 
-export function computeMessageDurationStart(
-  messages: ReadonlyArray<TimelineDurationMessage>,
-): Map<string, string> {
-  const result = new Map<string, string>();
-  let lastBoundary: string | null = null;
-
-  for (const message of messages) {
-    if (message.role === "user") {
-      lastBoundary = message.createdAt;
-    }
-    result.set(message.id, lastBoundary ?? message.createdAt);
-    if (message.role === "assistant" && !message.streaming) {
-      lastBoundary = message.updatedAt;
-    }
-  }
-
-  return result;
-}
-
 function workGroupId(timelineEntryId: string): string {
   return `work-group:${timelineEntryId}`;
 }
-
-export type TimelineToolPresentation = T3McpToolPresentation;
 
 function expandedWorkGroupRow(
   groupId: string,
@@ -1487,6 +1452,7 @@ function deriveTimelineTurnFolds(
 
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
   // SCIENT-FORK:START — hides the fork-initialization handoff event.
   contextTransfers?: ReadonlyArray<OrchestrationV2ContextTransfer> | undefined;
   // SCIENT-FORK:END
@@ -1507,7 +1473,6 @@ export function deriveMessagesTimelineRows(input: {
   // SCIENT-FORK:END
   threadStartCheckpointReady?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
-  liveAgentTaskIds?: ReadonlySet<string> | undefined;
   // SCIENT-FORK:START — subagent rows group by workflow (scient/presentation/subagentRowGroups.ts).
   subagentWorkflowIds?: ReadonlyMap<string, string> | undefined;
   // SCIENT-FORK:END
@@ -1520,6 +1485,13 @@ export function deriveMessagesTimelineRows(input: {
       !isForkInitializationHandoff(entry.projectedItem, input.contextTransfers),
   );
   // SCIENT-FORK:END
+  const isPendingApproval = (entry: WorkLogEntry) => {
+    const item = entry.projectedItem?.item;
+    return (
+      item?.type === "approval_request" &&
+      input.pendingApprovalRequestIds?.has(item.requestId) === true
+    );
+  };
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   // SCIENT-FORK:START — files-changed chips on every assistant message of a turn.
   const turnDiffSummaryByRunId = new Map<RunId, TurnDiffSummary>();
@@ -1548,9 +1520,6 @@ export function deriveMessagesTimelineRows(input: {
   const leadingForkMarker = leadingForkMarkerRow(input);
   if (leadingForkMarker) nextRows.push(leadingForkMarker);
   // SCIENT-FORK:END
-  const durationStartByMessageId = computeMessageDurationStart(
-    timelineEntries.flatMap((entry) => (entry.kind === "message" ? [entry.message] : [])),
-  );
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
@@ -1599,6 +1568,14 @@ export function deriveMessagesTimelineRows(input: {
       }
     }
   }
+  if (input.pendingApprovalRequestIds?.size) {
+    for (const entry of timelineEntries) {
+      if (entry.kind === "work" && isPendingApproval(entry.entry)) {
+        collapsedEntryIds.delete(entry.id);
+        collapsedSupersededEntryIds.delete(entry.id);
+      }
+    }
+  }
   const runIdIsActiveResponse = (runId: RunId | null | undefined) =>
     runId == null ? runlessWorkActive : activeVisualResponseRunIds.has(runId);
   const workEntryIsInActiveRun = (entry: WorkLogEntry) =>
@@ -1622,6 +1599,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.itemType === "system_notice" ||
         entry.entry.itemType === "notification" ||
         entry.entry.questionAnswer !== undefined ||
+        isPendingApproval(entry.entry) ||
         !runIdIsActiveResponse(entry.entry.runId) ||
         entry.entry.sourceActivityKind === "context-compaction" ||
         collapsedEntryIds.has(entry.id) ||
@@ -1651,7 +1629,8 @@ export function deriveMessagesTimelineRows(input: {
   const latestToolKeepsActivityLive =
     latestRunningToolEntry !== undefined ||
     (latestVisibleToolEntry !== undefined &&
-      workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry));
+      workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry) &&
+      !input.pendingApprovalRequestIds?.size);
   const latestToolFailed =
     latestRunningToolEntry === undefined &&
     latestVisibleToolEntry !== undefined &&
@@ -1745,20 +1724,17 @@ export function deriveMessagesTimelineRows(input: {
     activeRunIsCompaction && !compactionRunFinished ? unsettledRunId : null;
   // Compacting on return holds back the message the user just sent, so the working row says why
   // it is waiting. Any other compaction shows only its live divider, never both.
-  const activeCompactionRunId =
-    runningCompactionRunId !== null && compactionRuns.get(runningCompactionRunId) === "onReturn"
-      ? runningCompactionRunId
-      : activeCompactionEntry?.entry.runId != null &&
-          resumeCompactionAgeByEntryId.has(activeCompactionEntry.id)
-        ? activeCompactionEntry.entry.runId
-        : null;
-  const compactingLabel = (() => {
-    if (activeCompactionRunId === null) return undefined;
-    const age = activeCompactionEntry
-      ? resumeCompactionAgeByEntryId.get(activeCompactionEntry.id)
+  const compactsOnReturn =
+    runningCompactionRunId !== null && compactionRuns.get(runningCompactionRunId) === "onReturn";
+  // The question is answered mid-turn, so the row times this compaction, not the turn.
+  const resumeCompactionEntry =
+    activeCompactionEntry?.entry.runId != null &&
+    resumeCompactionAgeByEntryId.has(activeCompactionEntry.id)
+      ? activeCompactionEntry
       : undefined;
-    return age ? `Compacting after ${age} idle…` : IDLE_COMPACTING_LABELS.onReturn;
-  })();
+  const activeCompactionRunId = compactsOnReturn
+    ? runningCompactionRunId
+    : (resumeCompactionEntry?.entry.runId ?? null);
   const appendWorkingRow = () => {
     if (compactionOnlyRunFinished) return;
     if (runningCompactionRunId !== null && activeCompactionRunId === null) return;
@@ -1774,10 +1750,13 @@ export function deriveMessagesTimelineRows(input: {
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",
-      // SCIENT-FORK:START
-      createdAt: startedAt ?? null,
-      // SCIENT-FORK:END
-      ...(compactingLabel ? { compacting: compactingLabel } : {}),
+      createdAt:
+        (compactsOnReturn ? undefined : resumeCompactionEntry?.entry.createdAt) ??
+        // SCIENT-FORK:START
+        startedAt ??
+        // SCIENT-FORK:END
+        null,
+      ...(activeCompactionRunId !== null ? { compacting: true as const } : {}),
     });
   };
   let hasActivityRow = false;
@@ -1928,6 +1907,7 @@ export function deriveMessagesTimelineRows(input: {
       }
       // SCIENT-FORK:END
       if (
+        isPendingApproval(timelineEntry.entry) ||
         (timelineEntry.entry.runId != null && failedRunIds.has(timelineEntry.entry.runId)) ||
         (timelineEntry.entry.itemType === "error" &&
           timelineEntry.entry.toolLifecycleStatus === "failed") ||
@@ -1959,6 +1939,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.entry.itemType === "system_notice" ||
           nextEntry.entry.itemType === "notification" ||
           nextEntry.entry.questionAnswer !== undefined ||
+          isPendingApproval(nextEntry.entry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
           collapsedEntryIds.has(nextEntry.id) ||
           collapsedSupersededEntryIds.has(nextEntry.id) ||
@@ -2036,13 +2017,6 @@ export function deriveMessagesTimelineRows(input: {
           const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
           const singleEntry =
             visibleGroupedEntries.length === 1 ? (visibleGroupedEntries[0] ?? null) : null;
-          const usesSingleToolCallLabel =
-            singleEntry !== null &&
-            workLogEntryIsToolLike(singleEntry) &&
-            toolGroupAction(singleEntry) !== "edit";
-          const summaryToolIcon = usesSingleToolCallLabel
-            ? resolveWorkEntryToolPresentation(singleEntry, "completed")?.icon
-            : undefined;
           // SCIENT-FORK:START — a group whose entries share a Scient trace icon shows it.
           const summaryTraceIcon = groupTraceIconOverride(visibleGroupedEntries);
           // SCIENT-FORK:END
@@ -2054,15 +2028,13 @@ export function deriveMessagesTimelineRows(input: {
             groupId,
             hiddenCount: visibleGroupedEntries.length,
             expanded,
-            summary: usesSingleToolCallLabel
-              ? singleToolCallLabel(singleEntry)
-              : singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
+            summary:
+              singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
                 ? singleEntry.label
                 : summarizeToolGroup(visibleGroupedEntries).summary,
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
-            ...(summaryToolIcon ? { summaryToolIcon } : {}),
             // SCIENT-FORK:START
             ...(summaryTraceIcon ? { summaryTraceIcon } : {}),
             // SCIENT-FORK:END
@@ -2176,9 +2148,6 @@ export function deriveMessagesTimelineRows(input: {
       timelineEntry.message.role === "assistant" &&
       runIdIsActiveResponse(timelineEntry.message.runId);
 
-    const durationStart =
-      durationStartByMessageId.get(timelineEntry.message.id) ?? timelineEntry.message.createdAt;
-
     const showAssistantMeta =
       timelineEntry.message.role === "assistant" &&
       terminalAssistantMessageIds.has(timelineEntry.message.id) &&
@@ -2198,7 +2167,6 @@ export function deriveMessagesTimelineRows(input: {
       ...(timelineEntry.projectedItem === undefined
         ? {}
         : { projectedItem: timelineEntry.projectedItem }),
-      durationStart,
       showAssistantMeta,
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
@@ -2308,7 +2276,7 @@ export function deriveMessagesTimelineRows(input: {
     !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     !compactionOnlyRunFinished &&
-    (!hasActivityRow || latestToolFailed)
+    (latestToolFailed || (!hasActivityRow && !input.pendingApprovalRequestIds?.size))
   ) {
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
@@ -2415,7 +2383,7 @@ const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 
 export type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
 
-export interface MessagesTimelineRowsProjection {
+interface MessagesTimelineRowsProjection {
   readonly input: MessagesTimelineRowsInput;
   readonly rows: MessagesTimelineRow[];
 }
@@ -2424,16 +2392,6 @@ export interface MessagesTimelineRowsProjection {
  * Runless (imported V1) turns and work after a steer fold under synthetic
  * keys, so the entry's own run id is not enough to open them.
  */
-export function timelineEntryTurnFoldRunId(
-  input: Pick<
-    MessagesTimelineRowsInput,
-    "timelineEntries" | "latestRun" | "isWorking" | "runlessWorkActive" | "runningRunId"
-  >,
-  entryId: string,
-): RunId | null {
-  return timelineTurnFoldRunIdsByEntryId(input).get(entryId) ?? null;
-}
-
 export function timelineTurnFoldRunIdsByEntryId(
   input: Pick<
     MessagesTimelineRowsInput,
@@ -2470,6 +2428,7 @@ function replaceStreamingMessageRows(
     expandedRunIds: previousExpandedRuns,
     expandedAttemptIds: previousExpandedAttempts,
     expandedWorkGroupIds: previousExpandedGroups,
+    pendingApprovalRequestIds: previousPendingApprovalRequestIds,
     availableRevertTurnCounts: previousAvailableRevertTurnCounts,
     ...previousContext
   } = previous.input;
@@ -2480,6 +2439,7 @@ function replaceStreamingMessageRows(
     expandedRunIds,
     expandedAttemptIds,
     expandedWorkGroupIds,
+    pendingApprovalRequestIds,
     availableRevertTurnCounts,
     ...context
   } = input;
@@ -2491,6 +2451,7 @@ function replaceStreamingMessageRows(
     !shallow(previousExpandedRuns, expandedRunIds) ||
     !shallow(previousExpandedAttempts, expandedAttemptIds) ||
     !shallow(previousExpandedGroups, expandedWorkGroupIds) ||
+    !shallow(previousPendingApprovalRequestIds, pendingApprovalRequestIds) ||
     !shallow(previousAvailableRevertTurnCounts, availableRevertTurnCounts) ||
     !sameCheckpointSummaries(previousCheckpoints, turnDiffSummaries)
   ) {
@@ -2680,7 +2641,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.summary === bw.summary &&
         a.summaryKind === bw.summaryKind &&
         // SCIENT-FORK:START — the summary icon can change while the summary text does not.
-        a.summaryToolIcon === bw.summaryToolIcon &&
         a.summaryTraceIcon === bw.summaryTraceIcon &&
         // SCIENT-FORK:END
         a.toolSurface === bw.toolSurface &&
@@ -2698,7 +2658,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.message === bm.message &&
         a.projectedItem === bm.projectedItem &&
-        a.durationStart === bm.durationStart &&
         a.showAssistantMeta === bm.showAssistantMeta &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&

@@ -30,13 +30,12 @@ export function resolveTimelineWorking(input: {
 }
 
 /**
- * ChatView is busy only because a send is being dispatched: no run, connection,
+ * ChatView is busy only because a send is being dispatched: no run,
  * compaction, bootstrap turn, fork, checkpoint revert or worktree preparation.
  */
 export function isOnlySendBusy(state: {
   isSendBusy: boolean;
   phase: SessionPhase;
-  isConnecting: boolean;
   isCompacting: boolean;
   awaitingBootstrapTurn: boolean;
   isForkingThread: boolean;
@@ -46,7 +45,6 @@ export function isOnlySendBusy(state: {
   return (
     state.isSendBusy &&
     state.phase !== "running" &&
-    !state.isConnecting &&
     !state.isCompacting &&
     !state.awaitingBootstrapTurn &&
     !state.isForkingThread &&

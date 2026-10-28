@@ -20,8 +20,9 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
+// SCIENT-FORK:START
 import * as Option from "effect/Option";
+// SCIENT-FORK:END
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
@@ -720,5 +721,3 @@ export const make = Effect.gen(function* () {
     drain: Effect.andThen(fullSweeps.drain, FiberSet.awaitEmpty(threadSweeps)),
   } satisfies ThreadSettlementServiceV2["Service"];
 });
-
-export const layer = Layer.effect(ThreadSettlementServiceV2, make);

@@ -243,9 +243,11 @@ export function ScientVoiceComposerControl({
     controller.phase === "recording" ||
     controller.phase === "transcribing" ||
     controller.phase === "correcting";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports recording busy state to the parent callback
   useEffect(() => {
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports busy=false to the parent callback on unmount
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const readyModelBecameUnavailable =

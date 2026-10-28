@@ -26,6 +26,7 @@ export function ScientPreviewExportActions(props: {
   const exportPendingRef = useRef(false);
   const mountedRef = useRef(true);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state in mountedRef for async export callbacks
   useEffect(() => {
     mountedRef.current = true;
     return () => {

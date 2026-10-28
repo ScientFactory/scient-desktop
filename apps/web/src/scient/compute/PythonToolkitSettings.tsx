@@ -44,6 +44,7 @@ export function PythonToolkitSettings({
   const installed = new Set(runtime.status?.toolkitIds ?? []);
   // The server promotes a verified generation atomically. Cancellation and errors
   // leave the installed set intact; only the server receipt changes these rows.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the queued toolkit change once the server runtime status stream shows the operation settled
   useEffect(() => {
     if (
       change &&

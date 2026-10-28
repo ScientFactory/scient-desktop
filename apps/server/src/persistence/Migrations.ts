@@ -89,6 +89,10 @@ import Migration0071 from "./Migrations/071_WebhookDedupe.ts";
 import Migration0072 from "./Migrations/072_ShellStopRequestIndex.ts";
 // T3's migration 69 lands at the next free ID; Scient already recorded 069-072.
 import Migration0073 from "./Migrations/073_ThreadMessageSearch.ts";
+// T3's migrations 70-72 land at the next free IDs; Scient already recorded 070-073.
+import Migration0074 from "./Migrations/074_PeerLinks.ts";
+import Migration0075 from "./Migrations/075_PeerLinkFence.ts";
+import Migration0076 from "./Migrations/076_WaitingLinkRequestIndex.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -182,6 +186,10 @@ export const migrationEntries = [
   [72, "ShellStopRequestIndex", Migration0072],
   // T3's migration 69 follows Scient's immutable migration sequence.
   [73, "ThreadMessageSearch", Migration0073],
+  // T3's migrations 70-72 follow Scient's immutable migration sequence.
+  [74, "PeerLinks", Migration0074],
+  [75, "PeerLinkFence", Migration0075],
+  [76, "WaitingLinkRequestIndex", Migration0076],
   // SCIENT-FORK:END
 ] as const;
 

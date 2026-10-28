@@ -47,6 +47,7 @@ export function AttachmentPdfPreview(props: {
 }) {
   const localFile = props.locator._tag === "draft" ? (props.file ?? null) : null;
   const [localUrl, setLocalUrl] = useState<{ file: Blob; url: string } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates and revokes a blob object URL for the local file while it is used
   useEffect(() => {
     if (!localFile) return;
     const url = URL.createObjectURL(localFile);

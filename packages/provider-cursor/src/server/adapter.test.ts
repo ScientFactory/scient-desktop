@@ -14,7 +14,6 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -46,7 +45,6 @@ import {
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
 
-const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 describe("CursorAdapterV2", () => {
@@ -125,7 +123,6 @@ describe("CursorAdapterV2", () => {
         });
         const adapter = yield* makeCursorAdapterV2({
           instanceId,
-          settings: yield* decodeCursorSettings({}),
           environment: { HOME: workspace },
         }).pipe(
           Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -388,7 +385,6 @@ describe("CursorAdapterV2", () => {
       });
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -509,7 +505,6 @@ describe("CursorAdapterV2", () => {
       });
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -851,7 +846,6 @@ describe("CursorAdapterV2", () => {
       ];
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -1074,7 +1068,6 @@ describe("CursorAdapterV2", () => {
             );
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
@@ -1361,7 +1354,6 @@ describe("CursorAdapterV2", () => {
       const nativeRunId = `native-cursor-mcp-run-${mode}`;
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
-        settings: yield* decodeCursorSettings({}),
         environment: { HOME: workspace, CURSOR_API_KEY: "synthetic-cursor-api-key" },
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {

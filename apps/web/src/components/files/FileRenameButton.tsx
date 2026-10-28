@@ -167,6 +167,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       if (metadataOwner.current === owner) metadataOwner.current = null;
     };
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- claims and releases the metadata owner token for this file across effect replays
   useLayoutEffect(
     () => claimMetadataOwner(props.environmentId, props.cwd, props.relativePath, props.disabled),
     [props.environmentId, props.cwd, props.relativePath, props.disabled],
@@ -207,6 +208,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       },
     );
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the rename intent from the metadata store; a new owner voids superseded answers
   useEffect(
     () =>
       readMetadataIntent(
@@ -366,6 +368,7 @@ export function FileRenameButton(props: FileRenameButtonProps) {
       input.setSelectionRange(slash + 1, dot > slash + 1 ? dot : props.relativePath.length);
     });
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- selects the file-name text range in the rename input DOM node when the dialog opens
   useEffect(
     () => selectFileName(open, props.relativePath, pendingRename?.mutationId),
     [open, props.relativePath, pendingRename?.mutationId],

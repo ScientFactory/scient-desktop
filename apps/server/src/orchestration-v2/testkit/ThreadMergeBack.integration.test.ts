@@ -1,7 +1,3 @@
-import { THREAD_MERGE_BACK_SOURCE_PROMPT } from "./fixtures/shared.ts";
-import { THREAD_MERGE_BACK_FORK_PROMPT } from "./fixtures/shared.ts";
-import { THREAD_MERGE_BACK_RECALL_PROMPT } from "./fixtures/shared.ts";
-import { THREAD_MERGE_BACK_HANDOFF_PROMPT } from "./fixtures/shared.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -253,6 +249,26 @@ function makeCreateCommand(input: {
     worktreePath: null,
   };
 }
+
+// Scient's single-fork scenario replays its own transcript markers; upstream consolidated
+// its fixtures onto the two-sibling scenario and dropped these constants.
+const THREAD_MERGE_BACK_SOURCE_MARKER = "merge-source-4H8Q";
+const THREAD_MERGE_BACK_FORK_MARKER = "merge-fork-7T2W";
+const THREAD_MERGE_BACK_SOURCE_PROMPT = `Remember the opaque marker ${THREAD_MERGE_BACK_SOURCE_MARKER} for later in this conversation. Respond with exactly: merge source stored`;
+const THREAD_MERGE_BACK_FORK_PROMPT = `Remember the fork-local marker ${THREAD_MERGE_BACK_FORK_MARKER}. Respond with exactly: merge fork stored`;
+const THREAD_MERGE_BACK_HANDOFF_PROMPT = [
+  "Context handoff (merge_back / fork_delta_summary):",
+  "Merge-back context from forked conversation.",
+  "",
+  "Fork delta:",
+  `- User introduced opaque marker ${THREAD_MERGE_BACK_FORK_MARKER}.`,
+  "- Assistant confirmed: merge fork stored",
+  "",
+  "User message:",
+  "Retain the transferred fork marker for later. Respond with exactly: merge delta stored",
+].join("\n");
+const THREAD_MERGE_BACK_RECALL_PROMPT =
+  "Return the source marker followed by the transferred fork marker, separated by a single | character. Respond with only the markers and separator.";
 
 const MERGE_BACK_USER_TEXT =
   "Retain the transferred fork marker for later. Respond with exactly: merge delta stored";

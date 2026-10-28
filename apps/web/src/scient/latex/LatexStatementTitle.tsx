@@ -23,6 +23,7 @@ export function LatexStatementTitle(props: {
   const editingText = props.editing
     ? (measuredTitle ?? restoredLatexFieldDraft(props.draftKey, props.value))
     : props.value;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the title textarea DOM node and restores its caret when editing begins
   useLayoutEffect(() => {
     if (!props.editing) return;
     const field = root.current?.querySelector("textarea");

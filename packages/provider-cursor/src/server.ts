@@ -1,26 +1,13 @@
+export { CursorDriver, type CursorDriverEnv } from "./server/driver.ts";
+export { type CursorAdapterV2DriverEnv } from "./server/adapter.ts";
+// SCIENT-FORK:START — Scient composes the Cursor driver and its connection and usage probes.
 export {
-  CursorDriver,
   makeCursorDriver,
-  type CursorDriverEnv,
   type CursorDriverFactory,
-  type CursorDriverOptions,
   type CursorRuntimeResolution,
   type CursorRuntimeResolverInput,
 } from "./server/driver.ts";
-/**
- * Default native Cursor adapter for hosts without application-owned prompt policy.
- *
- * @public
- */
-export { CursorAdapterV2Driver } from "./server/adapter.ts";
-export {
-  makeCursorAdapterV2Driver,
-  type CursorAdapterV2DriverEnv,
-  type CursorAdapterV2DriverOptions,
-  type CursorTurnStartErrorMapper,
-  type CursorTurnStartIdentity,
-} from "./server/adapter.ts";
-export { parseCursorAboutOutput, type CursorAboutResult } from "./server/about.ts";
-export { runCursorAboutCommand, type CursorCliArgumentResolver } from "./server/status.ts";
+export { parseCursorAboutOutput } from "./server/about.ts";
+export { runCursorAboutCommand } from "./server/status.ts";
 export { readCursorUsageLimits } from "./server/usageLimits.ts";
-export { CursorKeychainTimeoutError, CursorKeychainReadError } from "./server/CursorKeychain.ts";
+// SCIENT-FORK:END

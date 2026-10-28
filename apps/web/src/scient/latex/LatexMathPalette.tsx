@@ -116,6 +116,7 @@ function readPreferences(
 const SymbolGlyph = memo(function SymbolGlyph({ symbol }: { symbol: MathSymbol }) {
   const glyph = useRef<HTMLSpanElement>(null);
   const preview = mathSymbolPreview(symbol);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the glyph DOM node and scales its style to fit the tile, refit once fonts load
   useLayoutEffect(() => {
     const element = glyph.current;
     const tile = element?.closest("button");
@@ -250,6 +251,7 @@ export function LatexMathPalette({
   const root = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const grid = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- finds the footer portal host DOM node after mount
   useLayoutEffect(() => {
     setPortalHost(root.current?.closest(".scient-latex-reader-footer") ?? null);
   }, []);
@@ -399,6 +401,7 @@ export function LatexMathPalette({
       panel.style.removeProperty("translate");
     };
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions and drags the panel DOM node with pointer and resize listeners until closed
   useLayoutEffect(() => positionPanel(open, portalHost), [open, portalHost]);
   // An open request opens the panel; opening Source closes it.
   const requestInputs = [openRequest, onOpenRequestHandled] as const;
@@ -417,9 +420,11 @@ export function LatexMathPalette({
     setPreviousSourceOpen(sourceOpen);
     if (sourceOpen) setOpen(false);
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges an open request through its imperative callback once opened
   useEffect(() => {
     if (openRequest) onOpenRequestHandled?.(openRequest);
   }, [openRequest, onOpenRequestHandled]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for pointerdown outside the panel on the document while open
   useEffect(() => {
     if (!open) return;
     const outside = (event: PointerEvent) => {
@@ -434,6 +439,7 @@ export function LatexMathPalette({
     document.addEventListener("pointerdown", outside, true);
     return () => document.removeEventListener("pointerdown", outside, true);
   }, [open, onDismiss]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search input DOM node on the next animation frame after opening
   useEffect(() => {
     if (!open) return;
     const frame = requestAnimationFrame(() => search.current?.focus());

@@ -42,7 +42,7 @@ import * as ServerConfig from "../../config.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import {
   droidCustomModelId,
   makeDroidCustomModelsRuntimeFactory,
@@ -140,7 +140,12 @@ const harness = Effect.fnUntraced(function* (
   const binary = writeFakeCli({
     directory: config.stateDir,
     name: "droid",
-    source: execScriptSource({ scriptPath: mockAgentPath, argvLogPath }),
+    source: [
+      'import { appendFileSync } from "node:fs";',
+      'import { pathToFileURL } from "node:url";',
+      `appendFileSync(${JSON.stringify(argvLogPath)}, process.argv.slice(2).join("\\t") + "\\n");`,
+      `await import(pathToFileURL(${JSON.stringify(mockAgentPath)}).href);`,
+    ].join("\n"),
   });
   const scenarioId = yield* crypto.randomUUIDv4();
   const controlPath = NodePath.join(config.stateDir, `activity-control-${scenarioId}`);

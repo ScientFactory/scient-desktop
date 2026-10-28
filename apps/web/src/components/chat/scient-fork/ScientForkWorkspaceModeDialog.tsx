@@ -210,6 +210,7 @@ export function ScientForkWorkspaceModeDialog({
   // Whether the dialog has stayed open since its last submission. Closing it
   // dismisses that fork for good; opening the dialog again does not undo it.
   const openSinceSubmit = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the pending fork-close and image-confirmation callbacks when the dialog closes or unmounts
   useLayoutEffect(() => {
     if (!open) {
       finishImageConfirmation.current?.(false);
@@ -229,6 +230,7 @@ export function ScientForkWorkspaceModeDialog({
     };
   }, [open]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- completes the pending close-then-navigate handoff once the dialog subtree is removed
   useLayoutEffect(() => {
     if (!closingForNavigation) return;
     // The accepted fork can navigate once the dialog subtree is removed.
@@ -258,6 +260,7 @@ export function ScientForkWorkspaceModeDialog({
       ? retryWorkspaceMode === "new-worktree"
       : newWorktree;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the title input DOM node on the next animation frame after the dialog opens
   useEffect(() => {
     if (!open) return;
     const frame = window.requestAnimationFrame(() => {

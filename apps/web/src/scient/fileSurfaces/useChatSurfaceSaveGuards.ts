@@ -92,7 +92,7 @@ export function useChatSurfaceDepartureGuards(input: {
   });
   const router = useRouter();
   const location = useLocation({ structuralSharing: false });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Register the committed route owner with the app-lifetime preview service, and retire it on departure.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Register the committed route owner with the app-lifetime preview service, and retire it on departure.
   useLayoutEffect(() => {
     if (activeThreadRef === null) return;
     return registerActiveSurfaceDeparture({

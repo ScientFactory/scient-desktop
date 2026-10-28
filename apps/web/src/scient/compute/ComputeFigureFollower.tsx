@@ -65,10 +65,12 @@ function ComputeRuntimeFigureCandidate(props: {
   const onOutputs = props.onOutputs;
   const session = props.session;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads session outputs over the environment connection when the rehydration token changes
   useEffect(() => {
     if (props.rehydrationToken !== null) refreshOutputs();
   }, [props.rehydrationToken, refreshOutputs]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes refreshed outputs to the imperative figure targets when output data arrives
   useEffect(() => {
     if (outputData === null) return;
     for (const target of candidate.targets) {
@@ -120,6 +122,7 @@ function ComputeRuntimeFigureSession(props: {
     return [...byId.values()];
   })();
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads session executions over the environment connection when the rehydration token changes
   useEffect(() => {
     if (props.rehydrationToken !== null) refreshExecutions();
   }, [props.rehydrationToken, refreshExecutions]);
@@ -182,6 +185,7 @@ export function ComputeFigureFollower(props: {
   const followingProjectFiles = targets.some((target) => target.reference._tag === "project-file");
   const appliedRevisionsRef = useRef(new Map<string, ComputeFigureRevision>());
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes the applied-revision registry entries for figure surfaces that are no longer open
   useEffect(() => {
     const openSurfaceIds = new Set(targets.map((target) => target.artifact.surfaceId));
     for (const surfaceId of appliedRevisionsRef.current.keys()) {
@@ -256,6 +260,7 @@ export function ComputeFigureFollower(props: {
     ? `${events.data.observedGap.expected}:${events.data.observedGap.received}`
     : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the session, execution, and event queries when the events subscription reports staleness
   useEffect(() => {
     if (!events.data?.stale) return;
     refreshSessions();
@@ -283,6 +288,7 @@ export function ComputeFigureFollower(props: {
     usePreviewMiniPlayerStore.getState().updateArtifact(props.threadRef, decision.descriptor);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles latest session executions into the applied-revision registry for project-file targets
   useEffect(() => {
     if (events.data?.stale || latestSession === null) return;
     for (const target of targets) {

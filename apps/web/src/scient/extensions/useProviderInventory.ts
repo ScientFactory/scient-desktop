@@ -50,7 +50,7 @@ export function useProviderInventory({
     readonly view: ProviderInventoryView;
   } | null>(null);
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- The mounted page owns cancellable inventory requests and its revision subscription.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The mounted page owns cancellable inventory requests and its revision subscription.
   useEffect(() => {
     if (!enabled || !projectsKnown || !canRead || !permitted) return;
     let active = true;

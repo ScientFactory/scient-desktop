@@ -538,6 +538,7 @@ function MiniPlayerShell({
   const [pillOpen, setPillOpen] = useState(false);
   const handleTappedRef = useRef(false);
   const handleRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointerdown listener closes the open pill on an outside press
   useEffect(() => {
     if (!pillOpen) return;
     const dismiss = (event: PointerEvent) => {
@@ -619,7 +620,9 @@ function MiniPlayerShell({
           { x: gesture.frame.x + delta.x, y: gesture.frame.y + delta.y },
           container,
           gesture.frame,
+          // SCIENT-FORK:START — a self-laid-out player avoids the composer it measured
           obstacles,
+          // SCIENT-FORK:END
         ),
       );
       return;

@@ -43,6 +43,7 @@ export function SourceJournalIcon(props: {
     setPreviousVisibility({ eligible: eligible, sourceId: props.record.sourceId });
     setShouldResolve(typeof IntersectionObserver === "undefined");
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- defers icon resolution until the container DOM node nears the viewport via IntersectionObserver
   useEffect(() => {
     if (!previousVisibility.eligible || typeof IntersectionObserver === "undefined") return;
     const element = containerRef.current;
@@ -89,6 +90,7 @@ export function SourceJournalIcon(props: {
     setIcon(null);
     setImageFailed(false);
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves the journal icon from the environment when inputs change, ignoring stale completions
   useEffect(() => {
     let active = true;
     const { eligible, shouldResolve, resolveIcon, environmentId, root, sourceId } =

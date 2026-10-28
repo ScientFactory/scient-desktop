@@ -6,7 +6,7 @@ import { useEffect, useEffectEvent } from "react";
  */
 export function useWindowFocusRefresh(refresh: () => void): void {
   const onFocus = useEffectEvent(refresh);
-  // oxlint-disable-next-line t3code/react-effect-budget -- A window listener is external state; returning from the browser is the only signal that a sign-in or install finished.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A window listener is external state; returning from the browser is the only signal that a sign-in or install finished.
   useEffect(() => {
     const listener = () => onFocus();
     window.addEventListener("focus", listener);

@@ -212,14 +212,17 @@ export function useScientVoiceController({
     onTranscript,
     onRequestSubmit,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps completionCallbacksRef holding the latest completion callbacks
   useLayoutEffect(() => {
     completionCallbacksRef.current = { onTranscript, onRequestSubmit };
   });
   const draftOriginRef = useRef(draftOrigin);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps draftOriginRef holding the current draft origin
   useLayoutEffect(() => {
     draftOriginRef.current = draftOrigin;
   });
   const localFieldKeyRef = useRef(localFieldKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps localFieldKeyRef holding the current field key
   useLayoutEffect(() => {
     localFieldKeyRef.current = localFieldKey;
   });
@@ -227,6 +230,7 @@ export function useScientVoiceController({
   // destination it started with; if that changes first, it is cancelled.
   const destinationKey = draftOrigin ? `draft:${draftOrigin.key}` : `field:${localFieldKey ?? ""}`;
   const destinationKeyRef = useRef(destinationKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps destinationKeyRef holding the current destination key
   useLayoutEffect(() => {
     destinationKeyRef.current = destinationKey;
   });
@@ -468,10 +472,12 @@ export function useScientVoiceController({
     operationRef.current += 1;
     void commit(Promise.resolve(clip), false);
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps autoStopRef holding the latest auto-stop handler
   useLayoutEffect(() => {
     autoStopRef.current = handleAutoStop;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- dispatches recorder errors into the controller and records analytics
   useEffect(() => {
     if (recorderStatus !== "error" || !recorderErrorKind) return;
     phaseRef.current = "idle";
@@ -485,6 +491,7 @@ export function useScientVoiceController({
     });
   }, [recordAnalytics, recorderErrorKind, recorderStatus]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- advances the elapsed-time display on an interval while recording
   useEffect(() => {
     if (phase !== "recording") return;
     const startedAt = Date.now();
@@ -492,6 +499,7 @@ export function useScientVoiceController({
     return () => clearInterval(interval);
   }, [phase]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for Enter and Escape on document while recording
   useEffect(() => {
     if (phase !== "recording") return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -512,6 +520,7 @@ export function useScientVoiceController({
 
   // A question appearing, changing or closing, or the draft changing, ends a
   // recording or permission request that started for another destination.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels an in-flight recording whose destination no longer matches
   useEffect(() => {
     const phase = phaseRef.current;
     if (phase !== "recording" && phase !== "requesting-permission") return;
@@ -520,6 +529,7 @@ export function useScientVoiceController({
 
   // Local dictation belongs to the field it started in, such as one question's
   // answer; a different or closed field ends it rather than receiving its text.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels this owner's voice jobs when the target field closes
   useEffect(() => {
     if (localFieldKey === null) return undefined;
     return () => cancelVoiceJobsForOwner(localOwnerKey);
@@ -528,6 +538,7 @@ export function useScientVoiceController({
   // Unmounting ends what this control still owns: an unfinished recording or
   // permission request, and local (non-draft) dictation. A dictation committed
   // to a composer draft belongs to its job and keeps going.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels recording and this owner's voice jobs on unmount
   useEffect(
     () => () => {
       operationRef.current += 1;

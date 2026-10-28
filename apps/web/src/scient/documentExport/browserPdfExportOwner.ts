@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PreviewSessionSnapshot, ScopedThreadRef } from "@t3tools/contracts";
 
 import { rendersServerTabNatively } from "~/browser/previewRuntime";
-import { isCurrentPreviewRuntimeTab } from "~/browser/previewRuntimeTabId";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { readThreadPreviewState } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -51,7 +51,7 @@ export function readBrowserPdfExportLease(
   if (
     !snapshot ||
     snapshot.navStatus._tag !== "Success" ||
-    !isCurrentPreviewRuntimeTab(threadRef, preview.serverEpoch, tabId, runtimeTabId)
+    previewRuntimeTabId(threadRef, preview.serverEpoch, tabId) !== runtimeTabId
   )
     return null;
   const owner = resolveBrowserPdfExportOwner({

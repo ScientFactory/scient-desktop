@@ -78,6 +78,7 @@ export function PreviewImageSurface({
     setShowZoomHint(false);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending zoom rAF and zoom-hint timer held until unmount
   useEffect(
     () => () => {
       if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
@@ -86,6 +87,7 @@ export function PreviewImageSurface({
     [],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets zoom and scrolls the viewport DOM node to origin when the displayed image changes
   useEffect(() => {
     if (zoomFrameRef.current !== null) {
       window.cancelAnimationFrame(zoomFrameRef.current);
@@ -99,6 +101,7 @@ export function PreviewImageSurface({
     viewportRef.current?.scrollTo({ left: 0, top: 0 });
   }, [displayedIdentity]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the new image source prop into the image-state reducer
   useEffect(() => {
     dispatchImage({ _tag: "source", source });
   }, [source]);
@@ -106,6 +109,7 @@ export function PreviewImageSurface({
   const changeZoom = useStableCallback((next: number) => {
     dispatchZoom({ type: "zoom", value: next });
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the ctrl-wheel zoom listener to the viewport DOM node
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
@@ -145,6 +149,7 @@ export function PreviewImageSurface({
     return () => viewport.removeEventListener("wheel", handleWheel);
   }, [changeZoom, dismissZoomHint]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies the pending zoom anchor to the viewport DOM node's scroll position before paint
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
     const anchor = pendingZoomAnchorRef.current;

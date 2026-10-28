@@ -7,7 +7,6 @@ import { declineShownApprovalsBeforeSend } from "./approvalSendGuard";
 import { resolveComposerInteractionMode } from "../ChatView.logic";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import { prepareComposerContextMessage } from "../../lib/composerContextSend";
 import { stripInlineContextReferences } from "../../lib/composerContextReferences";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import {
@@ -61,6 +60,7 @@ import {
   sendTitleFallbackLabels,
   snapshotComposerSend,
   makeThreadErrorSetter,
+  withMessageContext,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
@@ -143,6 +143,7 @@ import {
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
@@ -225,7 +226,6 @@ export interface ComposerSendInput {
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly promptRef: { current: string };
   readonly feedbackUploadsInFlightRef: { readonly current: Set<string> };
-  readonly isConnecting: boolean;
   readonly isRevertingCheckpoint: boolean;
   readonly threadDetailLoading: boolean;
   readonly activeEnvironmentUnavailable: boolean;
@@ -311,7 +311,6 @@ export function useComposerSend(input: ComposerSendInput) {
     composerDraftTarget,
     promptRef,
     feedbackUploadsInFlightRef,
-    isConnecting,
     isRevertingCheckpoint,
     threadDetailLoading,
     activeEnvironmentUnavailable,
@@ -360,6 +359,7 @@ export function useComposerSend(input: ComposerSendInput) {
     captureSendReadingPosition,
     frameSubmittedMessage,
   } = input;
+  const linkedEnvironments = useLinkedEnvironments(environmentId);
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
   const clientSettingsHydrated = useClientSettingsHydrated();
@@ -400,6 +400,7 @@ export function useComposerSend(input: ComposerSendInput) {
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
   const pendingApprovalsRef = useRef(pendingApprovals);
   const respondingRequestIdsRef = useRef(respondingRequestIds);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors approvals into refs that an async send reads after awaiting uploads
   useLayoutEffect(() => {
     pendingApprovalsRef.current = pendingApprovals;
     respondingRequestIdsRef.current = respondingRequestIds;
@@ -471,7 +472,6 @@ export function useComposerSend(input: ComposerSendInput) {
     activeProposedPlan,
     isServerThread,
     isSendBusy,
-    isConnecting,
     beginLocalDispatch,
     resetLocalDispatch,
     localCheckoutBranchMismatch,
@@ -546,7 +546,6 @@ export function useComposerSend(input: ComposerSendInput) {
         !activeThread ||
         !queueEditsReady ||
         (isSendBusy && !sendQueuesBehindSetup) ||
-        isConnecting ||
         isRevertingCheckpoint ||
         !clientSettingsHydrated ||
         threadDetailLoading ||
@@ -719,6 +718,7 @@ export function useComposerSend(input: ComposerSendInput) {
             previewAnnotations: sendContextPreviewAnnotations,
             reviewComments: composerReviewComments,
             threadContexts: sendContextThreadContexts,
+            environmentContexts: sendContextEnvironmentContexts,
             selectedProvider: ctxSelectedProvider,
             selectedModel: ctxSelectedModel,
             selectedProviderModels: ctxSelectedProviderModels,
@@ -729,6 +729,8 @@ export function useComposerSend(input: ComposerSendInput) {
           } = sendCtx;
           // SCIENT-FORK:START — a direct prompt (e.g. a queue steer) sends only its own text.
           const composerThreadContexts = directPrompt === null ? sendContextThreadContexts : [];
+          const composerEnvironmentContexts =
+            directPrompt === null ? sendContextEnvironmentContexts : [];
           const effectiveSendContextImages = directPrompt === null ? sendContextImages : [];
           const effectiveComposerFiles = directPrompt === null ? composerFiles : [];
           const effectiveComposerTerminalContexts =
@@ -757,6 +759,7 @@ export function useComposerSend(input: ComposerSendInput) {
             text: promptForSend,
             records: composerThreadContexts,
             environmentId,
+            linkedEnvironments,
           })[0];
           if (strandedThread) {
             const owner =
@@ -915,6 +918,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 reviewComments: composerReviewComments,
                 previewAnnotations: composerPreviewAnnotations,
                 threadContexts: composerThreadContexts,
+                environmentContexts: composerEnvironmentContexts,
               }),
               interactionMode: followUp.interactionMode,
               selectedScientSkillNames: followUp.selectedScientSkillNames,
@@ -1025,6 +1029,7 @@ export function useComposerSend(input: ComposerSendInput) {
             previewAnnotations: composerPreviewAnnotations,
             reviewComments: effectiveReviewComments,
             threadContexts: composerThreadContexts,
+            environmentContexts: composerEnvironmentContexts,
           });
           const {
             files: composerFilesSnapshot,
@@ -1033,6 +1038,7 @@ export function useComposerSend(input: ComposerSendInput) {
             previewAnnotations: composerPreviewAnnotationsSnapshot,
             reviewComments: composerReviewCommentsSnapshot,
             threadContexts: composerThreadContextsSnapshot,
+            environmentContexts: composerEnvironmentContextsSnapshot,
             messageText: messageTextForSend,
           } = sendSnapshot;
           const submissionTargetKey = composerTargetKey(
@@ -1092,6 +1098,7 @@ export function useComposerSend(input: ComposerSendInput) {
               reviewComments: composerReviewCommentsSnapshot,
               previewAnnotations: composerPreviewAnnotationsSnapshot,
               threadContexts: composerThreadContextsSnapshot,
+              environmentContexts: composerEnvironmentContextsSnapshot,
               attachments: composerAttachmentsSnapshot.map((attachment, index) => ({
                 attachment,
                 attachmentId: attachmentIds[index] ?? attachment.id,
@@ -1114,8 +1121,7 @@ export function useComposerSend(input: ComposerSendInput) {
           const readLiveAttachmentCapabilities = () => {
             const config =
               appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
-            const liveSupportsAttachmentUploads =
-              config?.environment.capabilities.attachmentUploads === true;
+            const liveSupportsAttachmentUploads = config !== null;
             return {
               supportsAttachmentUploads: liveSupportsAttachmentUploads,
               fileBlockReason: fileAttachmentCapabilityBlockReason({
@@ -1656,8 +1662,7 @@ export function useComposerSend(input: ComposerSendInput) {
                     messageId: messageIdForSend,
                     role: "user",
                     attachments: turnAttachmentsResult.value,
-                    ...prepareComposerContextMessage({
-                      environmentId,
+                    ...withMessageContext({
                       text: outgoingMessageText,
                       context: buildOutgoingMessageContext(
                         boundAttachmentIds(

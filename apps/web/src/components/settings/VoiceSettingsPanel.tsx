@@ -403,10 +403,12 @@ export function VoiceSettingsPanel(): ReactNode {
     }
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the initial voice-models snapshot from the native voice client
   useEffect(() => {
     void refresh(true);
   }, [refresh]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the native voice client every 500ms while a download is active
   useEffect(() => {
     if (!busyModelId && !snapshot?.activeDownloadModelId) return;
     const interval = window.setInterval(() => void refresh(), 500);
@@ -462,6 +464,7 @@ export function VoiceSettingsPanel(): ReactNode {
     setQueuedDownload(null);
     startDownload(next.modelId, next.selectOnSuccess);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the queued download once no download or operation is active
   useEffect(() => {
     if (queuedDownload === null || observedActiveDownloadModelId !== null || busyModelId !== null) {
       return;

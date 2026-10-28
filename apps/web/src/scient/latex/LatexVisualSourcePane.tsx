@@ -112,6 +112,7 @@ export function LatexVisualSourcePane(
     if (!reveal.citation) setDismissedRequest(reveal.requestId);
   };
   const warned = useRef<number | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts an imperative warning toast when a citation reveal cannot be located in the current source
   useEffect(() => {
     if (source === undefined || !reveal.citation || range || warned.current === reveal.requestId)
       return;

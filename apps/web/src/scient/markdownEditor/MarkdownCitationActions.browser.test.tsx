@@ -17,9 +17,9 @@ import {
   expandComposerCitationsForProvider,
 } from "@t3tools/shared/composerCitations";
 import {
-  ComposerPromptEditor,
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
-} from "~/components/ComposerPromptEditor";
+} from "~/components/ComposerPromptEditorTiptap";
 import { collapseExpandedComposerCursor, formatCitationForComposer } from "~/composer-logic";
 import { MarkdownCitationActions } from "./MarkdownCitationActions";
 import { ScientMarkdownEditorView } from "./prosemirror/view";

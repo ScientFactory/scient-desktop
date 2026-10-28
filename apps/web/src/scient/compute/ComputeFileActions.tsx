@@ -274,6 +274,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const ownedSession = allSessions.find(
       (session) => session.sessionId === contextBinding?.sessionId,
     );
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the owned session in the compute-context store registry when the session binding changes
     useEffect(() => {
       if (props.contextId !== undefined && ownedSession !== undefined) {
         useComputeContextStore.getState().observeSession(props.contextId, ownedSession);
@@ -428,6 +429,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     };
 
     const previousManagedOperation = useRef(false);
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes runtime status over the environment connection when a managed runtime operation ends
     useEffect(() => {
       const operating = managedRuntime.status?.operation != null;
       if (previousManagedOperation.current && !operating) {

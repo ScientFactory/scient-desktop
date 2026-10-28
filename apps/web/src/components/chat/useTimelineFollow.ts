@@ -86,6 +86,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     );
   const isTimelineAtLogicalEnd = () => readerAtEndNow() ?? isAtEndRef.current;
   const isTimelineAtLogicalEndStable = useStableCallback(isTimelineAtLogicalEnd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the turn state into a ref read by scroll measurements outside render
   useLayoutEffect(() => {
     turnUnfinishedRef.current = turnUnfinished;
   });
@@ -190,6 +191,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     }
   };
   const cancelTimelinePositioningRef = useRef(cancelTimelinePositioning);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the latest cancel callback into a ref read by DOM scroll listeners
   useEffect(() => {
     cancelTimelinePositioningRef.current = cancelTimelinePositioning;
   }, [cancelTimelinePositioning]);
@@ -212,6 +214,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     if (key === "PageUp") cancelTimelinePositioning();
     // SCIENT-FORK:END
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the page scroll controller attached to the timeline's scroll container
   useEffect(() => {
     const controller = createPageScrollController({
       getContainer: () => legendListRef.current?.getScrollableNode() ?? null,
@@ -311,6 +314,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     follow: followDeliveredPrompt,
   });
   // SCIENT-FORK:END
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches reader scroll opt-out listeners to the timeline's scroll node for this thread
   useEffect(() => {
     const composer = composerRef;
     const attachedThreadKey = routeThreadKey;
@@ -648,6 +652,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     setTimelineThreadReset({ threadKey: routeThreadKey, followEnd });
     setTimelinePositioningPending(false);
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets scroll refs and the end control for a new thread, invalidating the previous thread's scroll generation on cleanup
   useEffect(() => {
     const { followEnd } = timelineThreadReset;
     resetEndControlForThread(followEnd);

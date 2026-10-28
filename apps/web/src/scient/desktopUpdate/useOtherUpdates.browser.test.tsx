@@ -21,6 +21,7 @@ const testState = vi.hoisted(() => ({
   environments: [] as unknown[],
   providers: new Map<string, ReadonlyArray<ServerProvider>>(),
   serverStates: new Map<string, Atom.Writable<unknown>>(),
+  serverSettings: new Map<string, Atom.Writable<unknown>>(),
   updateProvider: vi.fn<(request: unknown) => Promise<unknown>>(),
   updateServer: vi.fn<(target: unknown, options: unknown) => Promise<unknown>>(),
   updateManaged: vi.fn<(targets: ReadonlyArray<unknown>) => Promise<unknown[]>>(),
@@ -74,6 +75,14 @@ vi.mock("~/state/server", () => ({
       if (!atom) {
         atom = Atom.make<unknown>({ status: "idle" });
         testState.serverStates.set(id, atom);
+      }
+      return atom;
+    },
+    settingsValueAtom: (id: string) => {
+      let atom = testState.serverSettings.get(id);
+      if (!atom) {
+        atom = Atom.make<unknown>(null);
+        testState.serverSettings.set(id, atom);
       }
       return atom;
     },
@@ -234,6 +243,7 @@ async function _setupFixture0(_fixture: _Fixture) {
     }
   });
   testState.serverStates = new Map();
+  testState.serverSettings = new Map();
   testState.environments = [];
   testState.providers = new Map();
   testState.updateProvider.mockReset();
@@ -414,16 +424,10 @@ describe("useOtherUpdates", () => {
     await render(_fixture, [serverUpdate]);
     expect(_fixture.current!.stoppedThreads(_fixture.current!.rows[0]!.item)).toBe(2);
     // Threads that resume after the restart are not stopped.
-    await render(_fixture, [
-      {
-        ...serverUpdate,
-        target: {
-          ...serverTarget,
-          threadContinuation: true,
-          continueThreadsAfterServerUpdate: true,
-        },
-      },
-    ]);
+    testState.readRegistry()!.set(testState.serverSettings.get(lab)!, {
+      continueThreadsAfterServerUpdate: true,
+    });
+    await render(_fixture, [serverUpdate]);
     expect(_fixture.current!.stoppedThreads(_fixture.current!.rows[0]!.item)).toBe(0);
   });
 

@@ -139,5 +139,6 @@ export function useApplyPendingNewThreadSections(input: {
   readonly apply: ApplyPendingSection;
 }): void {
   const { apply, threads } = input;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies pending new-thread section placements to the sections store
   useEffect(() => applyPendingNewThreadSections(threads, apply), [apply, threads]);
 }

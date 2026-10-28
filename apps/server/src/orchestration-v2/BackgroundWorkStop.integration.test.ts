@@ -39,6 +39,7 @@ import { ProviderAdapterProtocolError } from "@t3tools/provider-core/server/Prov
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const stopEarlierBackgroundWork = ({
+  wakeAfterStop = false,
   failedStart = false,
   stopWithQueue,
   olderStart = false,
@@ -50,6 +51,7 @@ const stopEarlierBackgroundWork = ({
   nativeDriver = "claudeAgent",
   workflowMember = false,
 }: {
+  readonly wakeAfterStop?: boolean;
   readonly failedStart?: boolean;
   readonly backgroundWorkAfterStop?: "running" | "unknown";
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
@@ -267,10 +269,52 @@ const stopEarlierBackgroundWork = ({
         });
         yield* worker.drain();
         yield* Fiber.join(running);
+        if (wakeAfterStop) {
+          const send = (id: string, provider = false) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(id),
+              threadId,
+              messageId: MessageId.make(`message:${id}`),
+              text: id,
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: provider ? "agent" : "user",
+              creationSource: provider ? "provider" : "web",
+            });
+          yield* send("follow-up");
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop"),
+            threadId,
+          });
+          // Stop is committed, but its provider interrupt has not run yet.
+          yield* send("Background task completed.", true);
+          const [stopped, followUp, wake] = (yield* orchestrator.getThreadProjection(threadId))
+            .runs;
+          assert.equal(stopped?.status, "running");
+          assert.isTrue(followUp?.queueHeld);
+          assert.isTrue(wake?.queueHeld);
+
+          yield* worker.drain();
+          yield* orchestrator.resumeQueuedRuns;
+          yield* worker.drain();
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            after.runs.map((run) => run.status),
+            ["interrupted", "queued", "queued"],
+          );
+          assert.isTrue(after.runs.find((run) => run.id === followUp?.id)?.queueHeld);
+          assert.isTrue(after.runs.find((run) => run.id === wake?.id)?.queueHeld);
+          assert.lengthOf(started, 1);
+          return;
+        }
+        // SCIENT-FORK:START
         const first = started.at(-1)!;
         const codexTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
           (turn) => turn.runAttemptId === first.attemptId,
         )!;
+        // SCIENT-FORK:END
         const devServerId = TurnItemId.make("turn-item:dev-server");
         const now = yield* DateTime.now;
         if (nativeStop !== undefined) {
@@ -2076,4 +2120,8 @@ it.effect("Stop settles native descendants launched after their coordinator resu
 
 it.effect("Stop reaches active native descendants behind settled native parents", () =>
   stopEarlierBackgroundWork({ nativeStop: "released", nativeTerminalParent: true }),
+);
+
+it.effect("Stop holds a provider wake that queues before the stopped turn ends", () =>
+  stopEarlierBackgroundWork({ wakeAfterStop: true }),
 );

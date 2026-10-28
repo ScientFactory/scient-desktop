@@ -1,4 +1,3 @@
-import { prepareComposerContextMessage } from "../../lib/composerContextSend";
 import { collectSelectedScientSkillNames } from "@t3tools/shared/composerInlineTokens";
 import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
 import { stripInlineContextReferences } from "../../lib/composerContextReferences";
@@ -35,6 +34,7 @@ import {
   boundAttachmentIds,
   type ComposerSendSnapshot,
   type makeThreadErrorSetter,
+  withMessageContext,
 } from "../ChatView.logic";
 import {
   draftFanoutSelectionsAtom,
@@ -176,10 +176,9 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                     messageId: newMessageId(),
                     role: "user",
                     attachments,
-                    ...prepareComposerContextMessage({
+                    ...withMessageContext({
                       text: target.text,
                       context,
-                      environmentId,
                     }),
                   },
                   modelSelection: target.selection,

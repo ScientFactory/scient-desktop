@@ -295,10 +295,12 @@ function ComputeExecutionCard(props: {
     focused: props.focused,
     onFocusConsumed: props.onFocusConsumed,
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports a consumed focus request back to the parent through its imperative callback
   useEffect(() => {
     if (focusRequest.focused) focusRequest.onFocusConsumed?.(focusRequest.executionId);
   }, [focusRequest]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- confirms durable output truth over the environment connection once a run reaches a terminal state
   useEffect(() => {
     if (!terminal) {
       terminalRefreshRequestedRef.current = false;
@@ -315,6 +317,7 @@ function ComputeExecutionCard(props: {
     refreshOutputs();
     if (hasFigureFallback) refreshFallbackOutputs();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads outputs over the environment connection once per observed rehydration gap token
   useEffect(() => {
     // One durable reread per observed gap token; the stream is only notification authority.
     refreshRehydratedOutputs(props.rehydrationToken);
@@ -496,6 +499,7 @@ function ComputeSessionMessages(props: {
   const outputs = mergeComputeOutputs(persisted?.outputs ?? [], props.liveOutputs);
 
   const refreshSessionOutputs = useStableCallback(() => persistedOutputs.refresh());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads persisted session outputs over the environment connection once per rehydration token while expanded
   useEffect(() => {
     if (expanded && props.rehydrationToken !== null) refreshSessionOutputs();
     // One durable reread per observed gap token.
@@ -823,6 +827,7 @@ export function ComputePanel(props: {
   const ownedSession = allSessions.find(
     (session) => session.sessionId === contextBinding?.sessionId,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the owned session in the compute-context store registry when the session binding changes
   useEffect(() => {
     if (props.contextId !== undefined && ownedSession !== undefined) {
       useComputeContextStore.getState().observeSession(props.contextId, ownedSession);
@@ -1014,6 +1019,7 @@ export function ComputePanel(props: {
     setVariablesLoading(false);
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mints a request token in a ref keyed to the variables session generation
   useEffect(() => {
     variableRequestRef.current = Symbol(
       `${previousVariablesSession.sessionId}:${previousVariablesSession.generation}`,
@@ -1029,6 +1035,7 @@ export function ComputePanel(props: {
     cwd: props.cwd,
     environmentId: props.environmentId,
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes kernel variables over the environment connection when the refresh token changes
   useEffect(() => {
     if (variableRefresh.token !== null) void refreshVariables();
   }, [refreshVariables, variableRefresh]);
@@ -1044,6 +1051,7 @@ export function ComputePanel(props: {
     executions.refresh();
     events.refresh();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes session, execution, and event queries when the events subscription reports staleness
   useEffect(() => {
     if (!events.data?.stale) return;
     refreshStaleQueries();
@@ -1073,6 +1081,7 @@ export function ComputePanel(props: {
       // Refresh ordinary workspace state once after a newly terminal execution.
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes newly terminal executions from the events stream through the imperative observation callback
   useEffect(() => {
     observeTerminalExecutions({
       cwd: props.cwd,

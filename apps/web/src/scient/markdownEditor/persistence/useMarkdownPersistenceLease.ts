@@ -49,6 +49,7 @@ export function useMarkdownPersistenceLease(input: {
   } | null>(null);
   const handoff = useRef<typeof followed>(null);
   const boundLease = useRef<MarkdownPersistenceLease | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the persistence registry's move notifications for this document
   useEffect(
     () =>
       // A registry from older code (kept after a hot reload) has no moves.
@@ -67,6 +68,7 @@ export function useMarkdownPersistenceLease(input: {
           }),
     [],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens, retains, and releases the markdown persistence lease for this document key
   useEffect(() => {
     // Admission happens only after commit. Abandoned renders never own timers,
     // watchers, cache projections, or a pending draft.
@@ -117,6 +119,7 @@ export function useMarkdownPersistenceLease(input: {
     };
   }, [key, available, admissionAttempt]);
   // Unmounted before following a move: nothing else will release that lease.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases a followed-move lease if the hook unmounts before the move is followed
   useEffect(
     () => () => {
       const moved = handoff.current;
@@ -137,6 +140,7 @@ export function useMarkdownPersistenceLease(input: {
       ? binding
       : null;
   const lease = currentBinding?.lease ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forwards workspace-mutation freshness hints to the persistence lease
   useEffect(() => {
     if (input.workspaceMutationId !== null && input.workspaceMutationId !== undefined) {
       lease?.noteFreshnessHint("workspace-mutation");
@@ -152,6 +156,7 @@ export function useMarkdownPersistenceLease(input: {
     attention: NonNullable<typeof snapshot>["attention"];
   }>({ lease: null, attention: null });
   const onAttentionResolved = useEffectEvent(() => input.onAttentionResolved?.());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invokes the lease's onAttentionResolved callback when the coordinator's attention latch clears
   useEffect(() => {
     const previous = attentionOwner.current;
     const attention = snapshot?.attention ?? null;

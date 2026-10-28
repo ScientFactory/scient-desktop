@@ -102,6 +102,7 @@ export function useResponseFollow(input: {
   const [intent, setIntent] = useState<FollowIntent | null>(null);
   const runs = input.runs ?? NO_RUNS;
   const latest = useRef({ ...input, runs });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps latest.current in step with the newest inputs for the stable follow callbacks
   useLayoutEffect(() => {
     latest.current = { ...input, runs };
   });
@@ -157,6 +158,7 @@ export function useQueuedDeliveryFollow(input: {
 }) {
   const { threadKey } = input;
   const callbacks = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps callbacks.current in step with the newest input for the delivery-transition check
   useLayoutEffect(() => {
     callbacks.current = input;
   });
@@ -169,6 +171,7 @@ export function useQueuedDeliveryFollow(input: {
     id: string | null;
     delivered: boolean;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a follow when a queued prompt becomes delivered, reading the at-end position at arrival
   useLayoutEffect(() => {
     const previous = previousRef.current;
     previousRef.current = { threadKey, id: latestPromptId, delivered };

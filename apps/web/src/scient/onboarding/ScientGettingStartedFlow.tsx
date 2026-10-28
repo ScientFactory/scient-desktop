@@ -120,6 +120,7 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
     }
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the onboarding store's step in step with the active step in automatic mode
   useEffect(() => {
     if (props.mode !== "automatic") return;
     if (onboardingState.status === "unseen") {

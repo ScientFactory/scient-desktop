@@ -173,6 +173,7 @@ import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ThreadSearchV2 from "./orchestration-v2/ThreadSearch.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
+import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
 import { AcpRegistryCatalog } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
@@ -245,6 +246,7 @@ import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as TriageService from "./triage/TriageService.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
@@ -711,13 +713,13 @@ const buildAppUnderTest = (options?: {
     };
     const layerConfig = ServerConfig.layer(config);
     const defaultVcsDriver: VcsDriver.VcsDriver["Service"] = {
-      capabilities: {
-        kind: "git",
-        supportsWorktrees: true,
-        supportsBookmarks: false,
-        supportsAtomicSnapshot: false,
-        supportsPushDefaultRemote: true,
-        ignoreClassifier: "native",
+      checkpoints: {
+        captureCheckpoint: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        hasCheckpointRef: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        restoreCheckpoint: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        diffCheckpoints: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        listAuthoredPaths: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
+        deleteCheckpointRefs: () => Effect.die("VcsDriver.checkpoints not stubbed in this test"),
       },
       execute: () =>
         Effect.succeed({
@@ -1220,10 +1222,8 @@ const buildAppUnderTest = (options?: {
           Layer.mergeAll(
             Layer.mock(PreviewManager.PreviewManager)({
               open: () => Effect.die("PreviewManager not stubbed in this test"),
-              navigate: () => Effect.die("PreviewManager not stubbed in this test"),
               resize: () => Effect.die("PreviewManager not stubbed in this test"),
               reportStatus: () => Effect.void,
-              refresh: () => Effect.void,
               close: () => Effect.void,
               list: () => Effect.succeed({ sessions: [], serverEpoch: "test-server", revision: 0 }),
               events: Stream.empty,
@@ -1237,6 +1237,7 @@ const buildAppUnderTest = (options?: {
               retain: Effect.void,
               registerTerminalProcesses: () => Effect.void,
               unregisterTerminal: () => Effect.void,
+              trackAgent: () => () => undefined,
             }),
           ),
         ),
@@ -1247,6 +1248,8 @@ const buildAppUnderTest = (options?: {
               drain: Effect.void,
               requestSync: () => Effect.void,
             }),
+            Layer.mock(SourceControlSignIn.SourceControlSignIn)({}),
+            Layer.mock(TriageService.TriageService)({}),
           ),
         ),
         Layer.provide(
@@ -1322,7 +1325,6 @@ const buildAppUnderTest = (options?: {
           Layer.mock(BackgroundPolicy.BackgroundPolicy)({
             reportClientActivity: () => Effect.void,
             removeRpcClient: () => Effect.void,
-            reportHostPowerState: () => Effect.void,
             snapshot: Effect.succeed({
               hostPower: {
                 source: "unknown",
@@ -1342,30 +1344,6 @@ const buildAppUnderTest = (options?: {
               shouldRunOpportunisticWork: false,
               updatedAt: TEST_EPOCH,
             }),
-            streamChanges: Stream.empty,
-            subscribe: Effect.succeed({
-              latest: {
-                hostPower: {
-                  source: "unknown",
-                  idle: "unknown",
-                  idleSeconds: null,
-                  locked: "unknown",
-                  suspended: false,
-                  onBattery: "unknown",
-                  lowPowerMode: "unknown",
-                  thermalState: "unknown",
-                  stale: true,
-                  updatedAt: TEST_EPOCH,
-                },
-                leases: [],
-                activeForegroundLeaseCount: 0,
-                activeScopeKeys: [],
-                shouldRunOpportunisticWork: false,
-                updatedAt: TEST_EPOCH,
-              },
-              changes: Stream.empty,
-            }),
-            hasDemand: () => Effect.succeed(false),
             shouldRunScopeWork: () => Effect.succeed(false),
             shouldRunOpportunisticWork: Effect.succeed(false),
           }),
@@ -1990,6 +1968,34 @@ const getWsServerUrl = (
     );
   });
 
+// The access inventory is served only by the WebSocket subscription's first snapshot.
+const readAuthAccessSnapshot = (
+  session: { readonly cookie: string } | { readonly bearer: string },
+) =>
+  Effect.gen(function* () {
+    const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
+    let wsUrl: string;
+    if ("cookie" in session) {
+      wsUrl = appendSessionCookieToWsUrl(baseWsUrl, session.cookie);
+    } else {
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+        headers: { authorization: `Bearer ${session.bearer}` },
+      });
+      assert.equal(ticketResponse.status, 200);
+      const { ticket } = (yield* ticketResponse.json) as { readonly ticket: string };
+      wsUrl = `${baseWsUrl}&wsTicket=${encodeURIComponent(ticket)}`;
+    }
+    const event = yield* Effect.scoped(
+      withWsRpcClient(wsUrl, (client) =>
+        client.subscribeAuthAccess({}).pipe(Stream.runHead, Effect.map(Option.getOrThrow)),
+      ),
+    );
+    if (event.type !== "snapshot") {
+      return yield* Effect.die(`Expected an auth access snapshot, received ${event.type}`);
+    }
+    return event.payload;
+  });
+
 // Keep Scient-owned integration cases on the exact inherited server harness.
 export type ScientRpcServerTestHarness = {
   readonly buildAppUnderTest: typeof buildAppUnderTest;
@@ -2452,14 +2458,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(second.response.status, 200);
       assert.equal(third.response.status, 200);
 
-      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: { authorization: `Bearer ${third.body.access_token}` },
+      const { clientSessions: clients } = yield* readAuthAccessSnapshot({
+        bearer: third.body.access_token ?? "",
       });
-      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
-        readonly current: boolean;
-        readonly subject: string;
-      }>;
-      assert.equal(clientsResponse.status, 200);
       assert.equal(clients.length, 1);
       assert.equal(clients[0]?.current, true);
       assert.equal(clients[0]?.subject, "desktop-bootstrap");
@@ -2505,26 +2506,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       });
 
-      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: ownerCookie,
-        },
-      });
-      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
-        readonly current: boolean;
-        readonly client: {
-          readonly label?: string;
-          readonly deviceType: string;
-          readonly ipAddress?: string;
-          readonly os?: string;
-          readonly userAgent?: string;
-        };
-      }>;
+      const { clientSessions: clients } = yield* readAuthAccessSnapshot({ cookie: ownerCookie });
       const mobileClient = clients.find((client) => !client.current);
 
       assert.equal(pairingResponse.status, 200);
       assert.equal(response.status, 200);
-      assert.equal(clientsResponse.status, 200);
       assert.deepInclude(mobileClient?.client, {
         label: "Scient Mobile",
         deviceType: "mobile",
@@ -3588,7 +3574,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         issuedAt: DateTime.formatIso(now),
         expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
       });
-      const mintUrl = yield* getHttpServerUrl("/api/connect/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
       const postMint = () =>
         fetchEffect(mintUrl, {
           method: "POST",
@@ -4099,7 +4085,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.equal(relayConfigResponse.status, 200);
 
       const now = yield* DateTime.now;
-      const mintUrl = yield* getHttpServerUrl("/api/connect/mint-credential");
+      const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
       const postMint = (request: ReturnType<typeof makeCloudMintCredentialRequest>) =>
         fetchEffect(mintUrl, {
           method: "POST",
@@ -4850,67 +4836,59 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
-  it.effect("returns only pairing metadata to access-read HTTP sessions", () =>
-    Effect.gen(function* () {
-      yield* buildAppUnderTest();
-      const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
-        scope: "access:read",
-      });
-      assert.equal(reader.response.status, 200);
-      assert.equal(reader.body.scope, "access:read");
-      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
-        headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
-        body: yield* HttpBody.json({ label: "Synthetic phone" }),
-      });
-      const created = (yield* createdResponse.json) as { id: string; credential: string };
-      assert.equal(createdResponse.status, 200);
-      const response = yield* HttpClient.get("/api/auth/pairing-links", {
-        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
-      });
-      assert.equal(response.status, 200);
-      const responseText = yield* response.text;
-      assert.notInclude(responseText, '"credential"');
-      assert.notInclude(responseText, created.credential);
-      const links = yield* responseJsonEffect<
-        ReadonlyArray<{
-          readonly id: string;
-          readonly label?: string;
-          readonly scopes: ReadonlyArray<string>;
-          readonly permissions: ReadonlyArray<string>;
-        }>
-      >(response);
-      const listed = links.find((link) => link.id === created.id);
-      assert.isDefined(listed);
-      assert.deepInclude(listed, {
-        label: "Synthetic phone",
-        // Frozen legacy scope metadata and the full granular grant are distinct.
-        scopes: [
-          "orchestration:read",
-          "orchestration:operate",
-          "terminal:operate",
-          "relay:read",
-          "access:read",
-          "access:write",
-          "relay:write",
-        ],
-        permissions: [...AuthStandardClientScopes],
-      });
+  it.effect(
+    "shows access-read sessions pairing grants without letting them issue or reuse credentials",
+    () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "access:read",
+        });
+        assert.equal(reader.response.status, 200);
+        assert.equal(reader.body.scope, "access:read");
+        const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { cookie: yield* getAuthenticatedSessionCookieHeader() },
+          body: yield* HttpBody.json({ label: "Synthetic phone" }),
+        });
+        const created = (yield* createdResponse.json) as { id: string; credential: string };
+        assert.equal(createdResponse.status, 200);
+        const { pairingLinks: links } = yield* readAuthAccessSnapshot({
+          bearer: reader.body.access_token ?? "",
+        });
+        const listed = links.find((link) => link.id === created.id);
+        assert.isDefined(listed);
+        assert.deepInclude(listed, {
+          label: "Synthetic phone",
+          // Frozen legacy scope metadata and the full granular grant are distinct.
+          scopes: [
+            "orchestration:read",
+            "orchestration:operate",
+            "terminal:operate",
+            "relay:read",
+            "access:read",
+            "access:write",
+            "relay:write",
+          ],
+          permissions: [...AuthStandardClientScopes],
+        });
 
-      const unauthorizedCreate = yield* HttpClient.post("/api/auth/pairing-token", {
-        headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
-        body: yield* HttpBody.json({}),
-      });
-      assert.equal(unauthorizedCreate.status, 403);
-      const idExchange = yield* exchangeAccessToken(created.id, { scope: "terminal:operate" });
-      assert.equal(idExchange.response.status, 401);
-      const authorized = yield* exchangeAccessToken(created.credential, {
-        scope: AuthStandardClientScopes.join(" "),
-      });
-      assert.equal(authorized.response.status, 200);
-      assert.equal(authorized.body.scope, AuthStandardClientScopes.join(" "));
-      const reused = yield* exchangeAccessToken(created.credential, { scope: "terminal:operate" });
-      assert.equal(reused.response.status, 401);
-    }).pipe(Effect.provide(NodeHttpServerTest)),
+        const unauthorizedCreate = yield* HttpClient.post("/api/auth/pairing-token", {
+          headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+          body: yield* HttpBody.json({}),
+        });
+        assert.equal(unauthorizedCreate.status, 403);
+        const idExchange = yield* exchangeAccessToken(created.id, { scope: "terminal:operate" });
+        assert.equal(idExchange.response.status, 401);
+        const authorized = yield* exchangeAccessToken(created.credential, {
+          scope: AuthStandardClientScopes.join(" "),
+        });
+        assert.equal(authorized.response.status, 200);
+        assert.equal(authorized.body.scope, AuthStandardClientScopes.join(" "));
+        const reused = yield* exchangeAccessToken(created.credential, {
+          scope: "terminal:operate",
+        });
+        assert.equal(reused.response.status, 401);
+      }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
   it.effect("returns only pairing metadata in access-read WebSocket snapshots and updates", () =>
@@ -5003,14 +4981,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readonly credential: string;
       };
 
-      const listResponse = yield* HttpClient.get("/api/auth/pairing-links", {
-        headers: {
-          cookie: ownerCookie,
-        },
-      });
-      const listedLinks = (yield* listResponse.json) as ReadonlyArray<{
-        readonly id: string;
-      }>;
+      const { pairingLinks: listedLinks } = yield* readAuthAccessSnapshot({ cookie: ownerCookie });
 
       const revokeResponse = yield* HttpClient.post("/api/auth/pairing-links/revoke", {
         headers: {
@@ -5022,7 +4993,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const revokedBootstrap = yield* bootstrapBrowserSession(createdBody.credential);
 
       assert.equal(createdResponse.status, 200);
-      assert.equal(listResponse.status, 200);
       assert.isTrue(listedLinks.some((entry) => entry.id === createdBody.id));
       assert.equal(revokeResponse.status, 200);
       assert.equal(revokedBootstrap.response.status, 401);
@@ -5108,22 +5078,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isDefined(pairedSessionCookie);
 
       const pairedSessionCookieHeader = pairedSessionCookie ?? "";
-      const listBeforeResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: ownerCookie,
-        },
+      const { clientSessions: clientsBefore } = yield* readAuthAccessSnapshot({
+        cookie: ownerCookie,
       });
-      const clientsBefore = (yield* listBeforeResponse.json) as ReadonlyArray<{
-        readonly sessionId: string;
-        readonly current: boolean;
-        readonly client: {
-          readonly label?: string;
-          readonly deviceType: string;
-          readonly ipAddress?: string;
-          readonly os?: string;
-          readonly browser?: string;
-        };
-      }>;
       const pairedClientBefore = clientsBefore.find((entry) => !entry.current);
       const pairedSessionId = clientsBefore.find((entry) => !entry.current)?.sessionId;
 
@@ -5136,15 +5093,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readonly revokedCount: number;
       };
 
-      const listAfterResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: ownerCookie,
-        },
+      const { clientSessions: clientsAfter } = yield* readAuthAccessSnapshot({
+        cookie: ownerCookie,
       });
-      const clientsAfter = (yield* listAfterResponse.json) as ReadonlyArray<{
-        readonly sessionId: string;
-        readonly current: boolean;
-      }>;
 
       const pairedClientPairingResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: {
@@ -5159,7 +5110,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readonly traceId: string;
       };
 
-      assert.equal(listBeforeResponse.status, 200);
       assert.equal(ownerPairingBody.label, "Julius iPhone");
       assert.lengthOf(clientsBefore, 2);
       assert.isDefined(pairedSessionId);
@@ -5173,7 +5123,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       assert.equal(revokeOthersResponse.status, 200);
       assert.equal(revokeOthersBody.revokedCount, 1);
-      assert.equal(listAfterResponse.status, 200);
       assert.lengthOf(clientsAfter, 1);
       assert.equal(clientsAfter[0]?.current, true);
       assert.equal(pairedClientPairingResponse.status, 401);
@@ -5210,11 +5159,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const readCookie = yield* issueScopedSession("access:read");
-      const readListResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: readCookie,
-        },
-      });
+      const readInventory = yield* readAuthAccessSnapshot({ cookie: readCookie });
       const readWriteResponse = yield* HttpClient.post("/api/auth/pairing-token", {
         headers: {
           cookie: readCookie,
@@ -5226,20 +5171,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       };
 
       const writeCookie = yield* issueScopedSession("access:write");
-      const writeListResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: writeCookie,
-        },
-      });
-      const writeListBody = (yield* writeListResponse.json) as {
-        readonly requiredScope: string;
-      };
+      const writeListError = yield* Effect.flip(readAuthAccessSnapshot({ cookie: writeCookie }));
 
-      assert.equal(readListResponse.status, 200);
+      assert.isAbove(readInventory.clientSessions.length, 0);
       assert.equal(readWriteResponse.status, 403);
       assert.equal(readWriteBody.requiredScope, "access:write");
-      assert.equal(writeListResponse.status, 403);
-      assert.equal(writeListBody.requiredScope, "access:read");
+      assert.equal(writeListError._tag, "EnvironmentAuthorizationError");
+      if (writeListError._tag === "EnvironmentAuthorizationError") {
+        assert.equal(writeListError.requiredScope, "access:read");
+      }
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
 
@@ -5265,15 +5205,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         pairingBody.credential,
       );
 
-      const clientsResponse = yield* HttpClient.get("/api/auth/clients", {
-        headers: {
-          cookie: ownerCookie,
-        },
-      });
-      const clients = (yield* clientsResponse.json) as ReadonlyArray<{
-        readonly sessionId: string;
-        readonly current: boolean;
-      }>;
+      const { clientSessions: clients } = yield* readAuthAccessSnapshot({ cookie: ownerCookie });
       const pairedSessionId = clients.find((entry) => !entry.current)?.sessionId;
       assert.isDefined(pairedSessionId);
 
@@ -6206,8 +6138,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       yield* Effect.scoped(
         withWsRpcClient(readerUrl, (client) =>
           Effect.gen(function* () {
-            const readable = yield* client[WS_METHODS.serverGetSettings]({});
-            assert.equal(readable.customModels.revision, 1);
+            const readable = yield* client[WS_METHODS.serverGetConfig]({});
+            assert.equal(readable.settings.customModels.revision, 1);
             const before = { ...calls };
             const results = [
               yield* client[WS_METHODS.serverSaveCustomModel](save).pipe(Effect.result),
@@ -6229,7 +6161,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               assert.equal(result.failure.requiredScope, "orchestration:operate");
             }
             assert.equal(
-              (yield* client[WS_METHODS.serverGetSettings]({})).customModels.revision,
+              (yield* client[WS_METHODS.serverGetConfig]({})).settings.customModels.revision,
               1,
             );
           }),
@@ -6245,7 +6177,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               revision: 1,
             });
             assert.equal(
-              (yield* client[WS_METHODS.serverGetSettings]({})).customModels.revision,
+              (yield* client[WS_METHODS.serverGetConfig]({})).settings.customModels.revision,
               1,
             );
           }),
@@ -6501,8 +6433,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               "Droid: 403 Complete 18+ age confirmation in OpenRouter settings.",
             );
 
-            const settings = yield* client[WS_METHODS.serverGetSettings]({});
-            assert.equal(settings.customModels.revision, 1);
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            assert.equal(config.settings.customModels.revision, 1);
           }),
         ),
       );
@@ -7442,14 +7374,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               profile: null,
             }).pipe(Stream.runHead, Effect.flip);
             assert.equal(handoff._tag, "ProviderSetupError");
-            const callback = yield* client[WS_METHODS.codexAuthCallbackSubscribe]({
-              instanceId: providerSetupInstanceId,
-              environmentId: testEnvironmentDescriptor.environmentId,
-              flowId: "synthetic-callback",
-              authorizationUrl: "https://example.com/authorize",
-              returnUrl: "scient://auth-return",
-            }).pipe(Stream.runHead, Effect.flip);
-            assert.equal(callback._tag, "ProviderSetupError");
           }),
         ),
       );
@@ -7639,28 +7563,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
       const firstCookie = yield* getAuthenticatedSessionCookieHeader();
       const secondCookie = yield* getAuthenticatedSessionCookieHeader();
-      const firstClients = yield* HttpClient.get("/api/auth/clients", {
-        headers: { cookie: firstCookie },
-      }).pipe(
-        Effect.flatMap(
-          responseJsonEffect<
-            ReadonlyArray<{ readonly sessionId: string; readonly current: boolean }>
-          >,
-        ),
-      );
-      const secondClients = yield* HttpClient.get("/api/auth/clients", {
-        headers: { cookie: secondCookie },
-      }).pipe(
-        Effect.flatMap(
-          responseJsonEffect<
-            ReadonlyArray<{ readonly sessionId: string; readonly current: boolean }>
-          >,
-        ),
-      );
+      const { clientSessions: firstClients } = yield* readAuthAccessSnapshot({
+        cookie: firstCookie,
+      });
+      const { clientSessions: secondClients } = yield* readAuthAccessSnapshot({
+        cookie: secondCookie,
+      });
       const firstOwner = firstClients.find((session) => session.current)?.sessionId;
       const secondOwner = secondClients.find((session) => session.current)?.sessionId;
-      assert.isString(firstOwner);
-      assert.isString(secondOwner);
+      assertTrue(firstOwner !== undefined && secondOwner !== undefined);
       assert.notEqual(firstOwner, secondOwner);
       const baseWsUrl = yield* getWsServerUrl("/ws", { authenticated: false });
       const target = {
@@ -10399,7 +10310,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "/ws?clientSurface=watch&clientDeviceType=television&clientOs=Plan9&clientWebDeployment=cdn&clientBrowser=&clientOsMajorVersion=-1&connectionMethod=teleport",
       );
       yield* Effect.scoped(
-        withWsRpcClient(invalidUrl, (client) => client[WS_METHODS.serverGetSettings]({})),
+        withWsRpcClient(invalidUrl, (client) => client[WS_METHODS.serverGetConfig]({})),
       );
     }).pipe(Effect.provide(NodeHttpServerTest)),
   );
@@ -12293,7 +12204,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.equal(clientProjection.turnItems.length, 2);
         yield* Fiber.interrupt(reader);
         const replay = yield* collectV2ThreadCatchup(wsUrl, seededRun.at(-1)!.sequence);
-        assert.equal(replay.filter((item) => item.kind === "event").length, 102);
+        // Catch-up replay coalesces the same way, keeping the last update on each side of a boundary.
+        assert.deepEqual(
+          replay.flatMap((item) => (item.kind === "event" ? [item.event.id] : [])),
+          [
+            EventId.make("live-tool-49"),
+            EventId.make("interleaved-answer"),
+            EventId.make("live-tool-99"),
+            completed.id,
+          ],
+        );
         assert.deepEqual(replay.at(-1), { kind: "synchronized" });
       }).pipe(Effect.provide(NodeHttpServerTest)),
   );
@@ -14390,7 +14310,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             write: () => Effect.void,
             resize: () => Effect.void,
             clear: () => Effect.void,
-            restart: () => Effect.succeed(snapshot),
             close: () => Effect.void,
           },
         },
@@ -14438,19 +14357,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           }),
         ),
       );
-
-      const restarted = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalRestart]({
-            threadId: "thread-1",
-            terminalId: "default",
-            cwd: "/tmp/project",
-            cols: 120,
-            rows: 40,
-          }),
-        ),
-      );
-      assert.equal(restarted.terminalId, "default");
 
       yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>

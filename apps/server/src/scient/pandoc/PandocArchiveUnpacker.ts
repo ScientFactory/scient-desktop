@@ -2,6 +2,7 @@
  * Use absolute system bsdtar for macOS/Windows ZIPs; GNU tar earlier on PATH cannot read them.
  * Linux's archive is tar.gz. Digest verification must precede extraction.
  */
+import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -102,7 +103,7 @@ export const make = Effect.gen(function* () {
         detail: "Expanding the Pandoc download took too long and was stopped.",
       });
     }
-    if (yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr)) {
+    if (yield* isWindowsCommandNotFound(result.code, result.stderr)) {
       return yield* unavailable();
     }
     if (result.code !== 0) {

@@ -132,6 +132,7 @@ export function useBoundedAnswerFollow({
     motion: { velocity: 0, position: null },
     readerInputUntil: 0,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the follow animation: rAF loop, answer-row ResizeObserver and scroll writes on the list viewport
   useLayoutEffect(() => {
     if (intent.current.prompt !== promptMessageId)
       intent.current = {

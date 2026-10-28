@@ -1117,14 +1117,12 @@ function _createFixture(context: TestContext) {
   let clock = 0;
   const base = {
     listRef,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     latestRun: null,
     turnDiffSummaries: [],
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: () => Promise.resolve(),
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,

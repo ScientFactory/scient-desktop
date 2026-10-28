@@ -39,6 +39,7 @@ export function CodeBlockActions({
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mounted = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the copy-feedback timer and tracks mounted state on unmount
   useEffect(() => {
     mounted.current = true;
     return () => {

@@ -333,8 +333,10 @@ export function shouldRenderTraitsControls(input: {
   return getTraitsSectionVisibility(input).hasAnyControls;
 }
 
-export interface TraitsMenuContentProps {
+interface TraitsMenuContentProps {
+  // SCIENT-FORK:START — native-model selection from the traits menu.
   onNativeModelChange?: ((model: string) => void) | undefined;
+  // SCIENT-FORK:END
   provider: ProviderDriverKind;
   instanceId?: ProviderInstanceId;
   models: ReadonlyArray<ServerProviderModel>;

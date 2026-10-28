@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectRestartingMachines,
   collectServerUpdateTargets,
+  describeUpdateEverything,
   runUpdateEverything,
   shouldRunUpdateEverything,
   supportedBulkServerTargets,
@@ -170,14 +171,7 @@ describe("collectRestartingMachines", () => {
       return {
         ...base,
         serverConfig: {
-          environment: {
-            ...base.serverConfig!.environment,
-            capabilities: {
-              ...base.serverConfig!.environment.capabilities,
-              threadRestartContinuation: true,
-              serverUpdateThreadContinuation: true,
-            },
-          },
+          environment: base.serverConfig!.environment,
           settings: { continueThreadsAfterServerUpdate: enabled },
         },
       };
@@ -202,29 +196,6 @@ describe("collectRestartingMachines", () => {
     expect(
       collectRestartingMachines(machines, servers, false).map((entry) => entry.environmentId),
     ).toEqual(["alvin", "opted-out", "old"]);
-  });
-
-  it("does not claim remote recovery from preference persistence alone", () => {
-    const server = machine("remote", "0.6.1", "boot-service");
-    const optedIn = {
-      ...server,
-      serverConfig: {
-        environment: {
-          ...server.serverConfig!.environment,
-          capabilities: {
-            ...server.serverConfig!.environment.capabilities,
-            threadRestartContinuation: true,
-          },
-        },
-        settings: { continueThreadsAfterServerUpdate: true },
-      },
-    };
-    const { targets } = collectServerUpdateTargets([optedIn], "0.6.2");
-    expect(targets[0]?.threadContinuation).toBe(false);
-    expect(targets[0]?.continueThreadsAfterServerUpdate).toBe(true);
-    expect(collectRestartingMachines([optedIn], targets, false)).toEqual([
-      { environmentId: "remote", continuesThreads: false },
-    ]);
   });
 });
 
@@ -307,5 +278,45 @@ describe("runUpdateEverything", () => {
 
     expect(calls).toEqual(["providers", "servers"]);
     expect(result.localReady).toBe(false);
+  });
+});
+
+describe("describeUpdateEverything", () => {
+  it("gives each machine one row with its T3 Code and provider updates", () => {
+    const id = EnvironmentId.make;
+    const { rows } = describeUpdateEverything({
+      localVersion: "1.1.0",
+      localMachines: [
+        { environmentId: id("local"), label: "Mainbook" },
+        { environmentId: id("wsl"), label: "Mainbook WSL" },
+      ],
+      servers: [
+        {
+          environmentId: id("npm"),
+          serverLabel: "bb-1",
+          selfUpdate: "respawn",
+          targetVersion: "1.1.0",
+        },
+      ],
+      providerMachines: [
+        { environmentId: id("npm"), label: "bb-1", providers: ["Codex", "Claude"] },
+        { environmentId: id("local"), label: "Mainbook", providers: ["Codex"] },
+        { environmentId: id("manual"), label: "alvin", providers: ["Claude"] },
+      ],
+      skipped: [
+        { environmentId: id("manual"), label: "alvin", reason: "needs a manual update" },
+        { environmentId: id("offline"), label: "TheoRoom", reason: "not connected" },
+      ],
+    });
+
+    expect(
+      rows.map(({ label, app, skipped, providers }) => [label, app, skipped, providers]),
+    ).toEqual([
+      ["Mainbook", "this-app", null, ["Codex"]],
+      ["Mainbook WSL", "this-app", null, []],
+      ["bb-1", "server", null, ["Codex", "Claude"]],
+      ["alvin", null, "needs a manual update", ["Claude"]],
+      ["TheoRoom", null, "not connected", []],
+    ]);
   });
 });

@@ -867,7 +867,6 @@ function _createFixture(context: TestContext) {
   const base = {
     listRef,
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     latestRun: null,
     runningRunId: null,
@@ -875,7 +874,6 @@ function _createFixture(context: TestContext) {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: () => Promise.resolve(),
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,

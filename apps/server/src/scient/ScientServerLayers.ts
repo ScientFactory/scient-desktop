@@ -2,15 +2,9 @@
  * Pass shared upstream layers into composition so every Scient consumer receives the same instances
  * rather than independently constructing ownership services.
  */
-import { ServerSelfUpdateError } from "@t3tools/contracts";
-import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as ServerSelfUpdate from "../cloud/selfUpdate.ts";
-import * as ServerConfig from "../config.ts";
 import { ComputeMcpGatewayLive } from "../mcp/toolkits/compute/ComputeMcpGateway.ts";
-import * as ProviderRuntimeRecovery from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
-import * as ProcessRunner from "../processRunner.ts";
 import { scientAnalyticsHttpApiLayer } from "../telemetry/http.ts";
 import { scientProjectHttpApiLayer } from "../scientProject/http.ts";
 import * as WorkspaceAuthorityProjection from "./projectScope/WorkspaceAuthorityProjection.ts";
@@ -90,21 +84,12 @@ export function makeScientRouteServices<
   EndpointsOut,
   EndpointsError,
   EndpointsIn,
-  UpdateOut,
-  UpdateError,
-  UpdateIn,
 >(shared: {
   readonly PersistenceLayerLive: Layer.Layer<PersistenceOut, PersistenceError, PersistenceIn>;
   readonly ServerSettingsLayerLive: Layer.Layer<SettingsOut, SettingsError, SettingsIn>;
   readonly OwnedLocalEndpointRegistryLive: Layer.Layer<EndpointsOut, EndpointsError, EndpointsIn>;
-  readonly DesktopAppUpdateLayerLive: Layer.Layer<UpdateOut, UpdateError, UpdateIn>;
 }) {
-  const {
-    PersistenceLayerLive,
-    ServerSettingsLayerLive,
-    OwnedLocalEndpointRegistryLive,
-    DesktopAppUpdateLayerLive,
-  } = shared;
+  const { PersistenceLayerLive, ServerSettingsLayerLive, OwnedLocalEndpointRegistryLive } = shared;
 
   const AnalysisRunIndexLive = AnalysisRunIndex.layer.pipe(Layer.provide(PersistenceLayerLive));
   // Word export runs the managed Pandoc. One tool serves the converter, the
@@ -195,28 +180,5 @@ export function makeScientRouteServices<
       Layer.provide(EditorFlush.layer),
     );
 
-  /** Self-update that hands running threads to the next server. */
-  const ScientServerSelfUpdateLive = Layer.effect(
-    ServerSelfUpdate.ServerSelfUpdate,
-    Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
-      return yield* ServerSelfUpdate.withRunningThreadContinuation({
-        mode: config.mode,
-        selfUpdate: yield* ServerSelfUpdate.make(),
-        prepare: recovery.prepareForUpdate.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ServerSelfUpdateError({
-                reason: "Could not prepare running thread continuation.",
-                cause,
-              }),
-          ),
-        ),
-        clear: recovery.clearUpdateContinuation,
-      });
-    }),
-  ).pipe(Layer.provide(DesktopAppUpdateLayerLive), Layer.provide(ProcessRunner.layer));
-
-  return { provideScientHttpApiGroups, provideScientRouteServices, ScientServerSelfUpdateLive };
+  return { provideScientHttpApiGroups, provideScientRouteServices };
 }
