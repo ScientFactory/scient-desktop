@@ -20,7 +20,7 @@ import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
 import { DraftInput } from "~/components/ui/draft-input";
-import { ArrowRightIcon, CheckIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ChevronRightIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { Menu, MenuTrigger, MenuPopup, MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import { QuitStep } from "~/components/settings/BrowserImportWizard";
 import { usePermissionStatus } from "~/components/permissions/usePermissionStatus";
@@ -53,6 +53,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { randomUUID } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { toastManager } from "~/components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand } from "./useAccounts";
@@ -63,6 +64,7 @@ import {
   mergeProfiles,
   matchExistingProfile,
   mergeSourceProfiles,
+  changedSourceProfile,
 } from "./accountsView";
 
 const RUNNING_BROWSER_COPY = "open, quit to import";
@@ -70,6 +72,27 @@ const RUNNING_BROWSER_COPY = "open, quit to import";
 const decodeProfileUpdate = Schema.decodeOption(BrowserProfileRecordUpdateInput);
 
 type SourceMatch = NonNullable<ReturnType<typeof matchExistingProfile>>;
+
+/** Links a Scient profile to the browser profile it came from, with that profile's picture. */
+function sourceRecord(
+  profileId: string,
+  browser: SourceMatch["source"]["id"],
+  profile: SourceMatch["profile"],
+  importedAt = DateTime.formatIso(DateTime.nowUnsafe()),
+) {
+  return decodeProfileUpdate({
+    profileId,
+    ...(profile.picture ? { picture: profile.picture } : {}),
+    ...(profile.color ? { color: profile.color } : {}),
+    source: {
+      browser,
+      profileName: profile.name,
+      directory: profile.directory,
+      ...(profile.email ? { email: profile.email } : {}),
+      importedAt,
+    },
+  });
+}
 
 function BrowserLogo({ id, name }: { id: string; name: string }) {
   const icon = browserIconUrl(id);
@@ -90,6 +113,9 @@ function withOwnDefault(current: ClientSettings): ClientSettings {
     ? { ...current, browserDefaultProfileId: own[0].id }
     : current;
 }
+
+/** One browser import at a time, even after its dialog closed and was opened again. */
+let importRunning = false;
 
 function profileError() {
   toastManager.add({ type: "error", title: "Browser profile action failed" });
@@ -214,7 +240,13 @@ export function BrowserImportDialog({
   const [loaded, setLoaded] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [busy, setBusy] = useState(false);
-  const inFlight = useRef(false);
+  // Closing never stops an import: it finishes in the background and reports in a toast.
+  const closed = useRef(false);
+  const close = () => {
+    closed.current = true;
+    if (busy) toastManager.add({ type: "info", title: "The import continues in the background" });
+    onClose();
+  };
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const [quitting, setQuitting] = useState<ReturnType<typeof mergeSourceProfiles>[number] | null>(
     null,
@@ -228,8 +260,9 @@ export function BrowserImportDialog({
     snapshot.profiles.some(
       (item) =>
         item.source?.browser === source.id &&
-        item.source.profileName === profile.name &&
-        item.source.email === profile.email,
+        (item.source.directory
+          ? item.source.directory === profile.directory
+          : item.source.profileName === profile.name && item.source.email === profile.email),
     );
   const load = async () => {
     const [sources, details] = await Promise.all([
@@ -261,7 +294,11 @@ export function BrowserImportDialog({
     ? withPasswords.reduce((sum, profile) => sum + (profile.passwordCount ?? 0), 0)
     : undefined;
   const runImport = async (loaded = sources) => {
-    if (!canWrite || !previewBridge || inFlight.current) return;
+    if (!canWrite || !previewBridge) return;
+    if (importRunning) {
+      toastManager.add({ type: "info", title: "A browser import is already running" });
+      return;
+    }
     const running = loaded.find(
       (source) =>
         source.unavailable === "browserRunning" &&
@@ -274,9 +311,11 @@ export function BrowserImportDialog({
       return;
     }
     setQuitting(null);
-    inFlight.current = true;
+    importRunning = true;
     setBusy(true);
     const done = new Set<string>();
+    const passwordSources: Array<{ sourceId: (typeof loaded)[number]["id"]; directory: string }> =
+      [];
     const passwordTotals = { imported: 0, skipped: 0, failed: false };
     try {
       for (const source of loaded)
@@ -284,49 +323,45 @@ export function BrowserImportDialog({
           const key = JSON.stringify([source.id, profile.directory]);
           if (!selected.has(key) || source.unavailable) continue;
           // A profile imported before keeps its sign-ins; only its passwords can still come in.
-          const already = isImported(source, profile);
-          const profileId = `profile-${randomUUID()}`;
-          const outcome = already
-            ? null
-            : await importBrowserCookiesIntoTarget(previewBridge, source, environmentId, {
+          if (!isImported(source, profile)) {
+            const profileId = `profile-${randomUUID()}`;
+            const outcome = await importBrowserCookiesIntoTarget(
+              previewBridge,
+              source,
+              environmentId,
+              {
                 sourceProfileDirectory: profile.directory,
                 target: { kind: "new", profileId },
                 profileName: profile.name,
+              },
+            );
+            if (outcome.kind === "blocked") {
+              toastManager.add({
+                type: "error",
+                title: BROWSER_IMPORT_FAILURE_COPY[outcome.reason],
               });
-          if (outcome?.kind === "blocked") {
-            toastManager.add({ type: "error", title: BROWSER_IMPORT_FAILURE_COPY[outcome.reason] });
-            continue;
-          }
-          if (passwords && readPasswords && profile.passwordCount !== undefined) {
-            const csv = await readPasswords({
-              sourceId: source.id,
-              directory: profile.directory,
-            }).catch(() => null);
-            const result = csv
-              ? await importPasswords({ format: "chrome", content: csv.content })
-              : null;
-            if (csv && result?.ok) {
-              passwordTotals.imported += result.value.created + result.value.updated;
-              passwordTotals.skipped += csv.skipped + result.value.skipped;
-            } else passwordTotals.failed = true;
+              continue;
+            }
+            // Before the passwords: an interrupted import still leaves a complete profile.
+            const record = sourceRecord(profileId, source.id, profile);
+            if (Option.isSome(record)) await updateRecord(record.value);
+            else profileError();
           }
           done.add(key);
-          if (already) continue;
-          const record = decodeProfileUpdate({
-            profileId,
-            ...(profile.picture ? { picture: profile.picture } : {}),
-            ...(profile.color ? { color: profile.color } : {}),
-            source: {
-              browser: source.id,
-              profileName: profile.name,
-              ...(profile.email ? { email: profile.email } : {}),
-              importedAt: DateTime.formatIso(DateTime.nowUnsafe()),
-            },
-          });
-          if (Option.isSome(record)) await updateRecord(record.value);
-          else profileError();
+          if (passwords && readPasswords && profile.passwordCount !== undefined)
+            passwordSources.push({ sourceId: source.id, directory: profile.directory });
         }
       if (done.size > 0) void persistClientSettingsUpdate(withOwnDefault).catch(profileError);
+      for (const input of passwordSources) {
+        const csv = (await readPasswords?.(input).catch(() => null)) ?? null;
+        const result = csv
+          ? await importPasswords({ format: "chrome", content: csv.content })
+          : null;
+        if (csv && result?.ok) {
+          passwordTotals.imported += result.value.created + result.value.updated;
+          passwordTotals.skipped += csv.skipped + result.value.skipped;
+        } else passwordTotals.failed = true;
+      }
       if (passwordTotals.failed)
         toastManager.add({ type: "error", title: "Could not import saved passwords" });
       else if (passwordTotals.imported || passwordTotals.skipped)
@@ -338,18 +373,18 @@ export function BrowserImportDialog({
         });
       setImported((current) => new Set([...current, ...done]));
       setSelected((current) => new Set([...current].filter((key) => !done.has(key))));
-      if (done.size === selected.size) onClose();
+      if (!closed.current && done.size === selected.size) onClose();
     } catch {
       profileError();
     }
-    inFlight.current = false;
+    importRunning = false;
     setBusy(false);
   };
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+        if (!open) close();
       }}
     >
       <DialogPopup data-accounts-dialog>
@@ -529,8 +564,8 @@ export function BrowserImportDialog({
               ) : null}
             </DialogPanel>
             <DialogFooter>
-              <Button variant="outline" disabled={busy} onClick={onClose}>
-                Cancel
+              <Button variant="outline" onClick={close}>
+                {busy ? "Close" : "Cancel"}
               </Button>
               <Button
                 disabled={busy || !canWrite || selected.size === 0}
@@ -568,6 +603,13 @@ export function BrowserProfiles({
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
+  const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
+  // Only the local desktop can read another browser's saved passwords.
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const readPasswords =
+    environmentId === primaryEnvironmentId
+      ? window.desktopBridge?.accounts?.readBrowserPasswords
+      : undefined;
   const [renaming, setRenaming] = useState<string | null>(null);
   const [viewingSites, setViewingSites] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -578,6 +620,7 @@ export function BrowserProfiles({
       settings.browserDefaultProfileId === DEFAULT_BROWSER_PROFILE_ID,
   );
   const disabled = !canWrite || !hydrated || busy;
+  const linkedProfiles = profiles.filter((profile) => profile.record.source);
   const changeSettings = async (update: Parameters<typeof persistClientSettingsUpdate>[0]) => {
     try {
       await persistClientSettingsUpdate(update);
@@ -612,53 +655,6 @@ export function BrowserProfiles({
     }
     setBusy(false);
   };
-  const refresh = async (profileId: string, record: BrowserProfileRecord) => {
-    if (!previewBridge || !record.source) return;
-    const sources = mergeSourceProfiles(
-      await previewBridge.listBrowserImportSources(),
-      (await window.desktopBridge?.accounts?.sourceProfiles().catch(() => [])) ?? [],
-    );
-    const source = sources.find((source) => source.id === record.source?.browser);
-    const profile = source?.profiles.find((profile) => profile.name === record.source?.profileName);
-    if (!source || !profile) {
-      profileError();
-      return;
-    }
-    const result = await importBrowserCookiesIntoTarget(previewBridge, source, environmentId, {
-      sourceProfileDirectory: profile.directory,
-      target: { kind: "existing", profileId, name: record.source.profileName },
-    });
-    if (result.kind === "blocked")
-      toastManager.add({ type: "error", title: BROWSER_IMPORT_FAILURE_COPY[result.reason] });
-    else {
-      const metadata = decodeProfileUpdate({
-        profileId,
-        ...(profile.picture ? { picture: profile.picture } : {}),
-        ...(profile.color ? { color: profile.color } : {}),
-        source: {
-          browser: source.id,
-          profileName: profile.name,
-          ...(profile.email ? { email: profile.email } : {}),
-          importedAt: DateTime.formatIso(DateTime.nowUnsafe()),
-        },
-      });
-      if (Option.isSome(metadata)) await updateRecord(metadata.value);
-    }
-  };
-  const linkSource = async (profileId: string, match: SourceMatch) => {
-    const metadata = decodeProfileUpdate({
-      profileId,
-      ...(match.profile.picture ? { picture: match.profile.picture } : {}),
-      ...(match.profile.color ? { color: match.profile.color } : {}),
-      source: {
-        browser: match.source.id,
-        profileName: match.profile.name,
-        ...(match.profile.email ? { email: match.profile.email } : {}),
-        importedAt: DateTime.formatIso(DateTime.nowUnsafe()),
-      },
-    });
-    if (Option.isSome(metadata)) await updateRecord(metadata.value);
-  };
   const loadSources = async () =>
     previewBridge
       ? mergeSourceProfiles(
@@ -666,84 +662,205 @@ export function BrowserProfiles({
           (await window.desktopBridge?.accounts?.sourceProfiles().catch(() => [])) ?? [],
         )
       : [];
+  // A profile still named after its source follows a rename there; a name chosen in Scient stays.
+  const followSourceNames = (renames: ReadonlyArray<{ id: string; from: string; to: string }>) =>
+    renames.length
+      ? changeSettings((current) => ({
+          ...current,
+          browserProfiles: current.browserProfiles.map((profile) => {
+            const rename = renames.find(
+              (rename) => rename.id === profile.id && rename.from === profile.name,
+            );
+            return rename
+              ? {
+                  ...profile,
+                  name: importProfileName(
+                    rename.to,
+                    current.browserProfiles
+                      .filter((other) => other.id !== profile.id)
+                      .map((other) => other.name),
+                  ),
+                }
+              : profile;
+          }),
+        }))
+      : Promise.resolve();
+  /** Everything the source browser has for these profiles: sign-ins, saved passwords and details. */
+  const refresh = async (targets: ReadonlyArray<{ id: string; record: BrowserProfileRecord }>) => {
+    if (!previewBridge) return;
+    if (importRunning) {
+      toastManager.add({ type: "info", title: "A browser import is already running" });
+      return;
+    }
+    const sources = await loadSources();
+    const running = new Set<string>();
+    const renames: Array<{ id: string; from: string; to: string }> = [];
+    let failed = false;
+    for (const { id, record } of targets) {
+      const linked = record.source;
+      const source = sources.find((source) => source.id === linked?.browser);
+      const profile = source?.profiles.find((profile) =>
+        linked?.directory
+          ? profile.directory === linked.directory
+          : profile.name === linked?.profileName,
+      );
+      if (!linked || !source || !profile) {
+        failed = true;
+        continue;
+      }
+      // Sign-ins can only be read once the browser is closed; passwords and details can now.
+      if (source.unavailable === "browserRunning") running.add(source.name);
+      else if (source.unavailable) failed = true;
+      else {
+        const result = await importBrowserCookiesIntoTarget(previewBridge, source, environmentId, {
+          sourceProfileDirectory: profile.directory,
+          target: { kind: "existing", profileId: id, name: linked.profileName },
+        });
+        if (result.kind === "blocked") failed = true;
+      }
+      const metadata = sourceRecord(id, source.id, profile, linked.importedAt);
+      if (Option.isSome(metadata)) await updateRecord(metadata.value);
+      if (profile.name !== linked.profileName)
+        renames.push({ id, from: linked.profileName, to: profile.name });
+      if (readPasswords && profile.passwordCount !== undefined) {
+        const csv = await readPasswords({
+          sourceId: source.id,
+          directory: profile.directory,
+        }).catch(() => null);
+        const result = csv
+          ? await importPasswords({ format: "chrome", content: csv.content })
+          : null;
+        if (!result?.ok) failed = true;
+      }
+    }
+    await followSourceNames(renames);
+    if (failed) profileError();
+    else if (running.size)
+      toastManager.add({
+        type: "info",
+        title: `Quit ${[...running].join(" and ")} to refresh sign-ins too`,
+        description: "Passwords, pictures and names are up to date.",
+      });
+    else toastManager.add({ type: "success", title: "Browser profiles refreshed" });
+  };
+  const linkSource = async (profileId: string, match: SourceMatch) => {
+    const metadata = sourceRecord(profileId, match.source.id, match.profile);
+    if (Option.isSome(metadata)) await updateRecord(metadata.value);
+  };
   const [linking, setLinking] = useState<string | null>(null);
   const [sources, setSources] = useState<Awaited<ReturnType<typeof loadSources>>>([]);
-  const unlinked = profiles
-    .filter((profile) => !isBuiltInBrowserProfileId(profile.id) && !profile.record.source)
-    .map((profile) => `${profile.id}\u0000${profile.name}`)
-    .join("\u0001");
-  // Profiles imported before Scient kept their source get its picture, email and name once.
-  const linkExisting = useEffectEvent((loaded: Awaited<ReturnType<typeof loadSources>>) => {
+  const profileIds = profiles.map((profile) => profile.id).join("\u0001");
+  // Linked profiles follow their source's picture, colour and name; older imports get linked once.
+  const syncSources = useEffectEvent((loaded: Awaited<ReturnType<typeof loadSources>>) => {
     setSources(loaded);
+    const renames: Array<{ id: string; from: string; to: string }> = [];
     for (const profile of profiles) {
-      if (isBuiltInBrowserProfileId(profile.id) || profile.record.source) continue;
+      if (isBuiltInBrowserProfileId(profile.id)) continue;
+      const linked = profile.record.source;
+      if (linked) {
+        const changed = changedSourceProfile(profile.record, loaded);
+        const record =
+          changed && sourceRecord(profile.id, linked.browser, changed, linked.importedAt);
+        if (record && Option.isSome(record)) void updateRecord(record.value);
+        if (changed && changed.name !== linked.profileName)
+          renames.push({ id: profile.id, from: linked.profileName, to: changed.name });
+        continue;
+      }
       const match = matchExistingProfile(profile.name, loaded);
       if (match) void linkSource(profile.id, match);
     }
+    void followSourceNames(renames);
   });
   const fetchSources = useEffectEvent(loadSources);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Once saved profiles load, link profiles imported before Accounts to their source browser profile.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Each time Accounts opens, read what the source browsers show without quitting them: names, emails, pictures and colours.
   useEffect(() => {
-    if (!canWrite || !hydrated || unlinked === "") return;
+    if (!canWrite || !hydrated || profileIds === "") return;
     let live = true;
     void fetchSources()
       .then((loaded) => {
-        if (live) linkExisting(loaded);
+        if (live) syncSources(loaded);
       })
       .catch(() => undefined);
     return () => {
       live = false;
     };
-  }, [canWrite, hydrated, unlinked]);
+  }, [canWrite, hydrated, profileIds]);
   return (
     <SettingsSection
       id="accounts-browser-profiles"
       title="Browser profiles"
       titleAction={
-        <Menu>
-          <MenuTrigger
-            render={
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Add profile"
-                disabled={disabled || settings.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT}
-              />
-            }
-          >
-            <PlusIcon />
-          </MenuTrigger>
-          <MenuPopup>
-            <MenuItem
-              onClick={() =>
-                void act(async () => {
-                  await persistClientSettingsUpdate((current) => {
-                    if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT) return current;
-                    return withOwnDefault({
-                      ...current,
-                      browserProfiles: [
-                        ...current.browserProfiles,
-                        {
-                          id: `profile-${randomUUID()}`,
-                          name: importProfileName(
-                            "Profile",
-                            mergeProfiles(current.browserProfiles, []).map(
-                              (profile) => profile.name,
-                            ),
-                          ),
-                          kind: "persistent",
-                        },
-                      ],
-                    });
-                  });
-                })
+        <span className="flex items-center gap-1">
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  aria-label="Add profile"
+                  disabled={
+                    disabled || settings.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT
+                  }
+                />
               }
             >
-              New profile
-            </MenuItem>
-            {previewBridge ? <MenuItem onClick={onImport}>Import from a browser…</MenuItem> : null}
-          </MenuPopup>
-        </Menu>
+              <PlusIcon />
+            </MenuTrigger>
+            <MenuPopup>
+              <MenuItem
+                onClick={() =>
+                  void act(async () => {
+                    await persistClientSettingsUpdate((current) => {
+                      if (current.browserProfiles.length >= BROWSER_PROFILE_MAX_COUNT)
+                        return current;
+                      return withOwnDefault({
+                        ...current,
+                        browserProfiles: [
+                          ...current.browserProfiles,
+                          {
+                            id: `profile-${randomUUID()}`,
+                            name: importProfileName(
+                              "Profile",
+                              mergeProfiles(current.browserProfiles, []).map(
+                                (profile) => profile.name,
+                              ),
+                            ),
+                            kind: "persistent",
+                          },
+                        ],
+                      });
+                    });
+                  })
+                }
+              >
+                New profile
+              </MenuItem>
+              {previewBridge ? (
+                <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
+              ) : null}
+            </MenuPopup>
+          </Menu>
+          {previewBridge && linkedProfiles.length ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Refresh from browsers"
+                    disabled={disabled}
+                    onClick={() => void act(() => refresh(linkedProfiles))}
+                  />
+                }
+              >
+                <RefreshCwIcon className={busy ? "animate-spin" : undefined} />
+              </TooltipTrigger>
+              <TooltipPopup>
+                Refresh sign-ins, passwords and pictures from your browsers
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+        </span>
       }
     >
       {profiles.map((profile) => (
@@ -855,7 +972,7 @@ export function BrowserProfiles({
                   Use for new tabs
                 </MenuItem>
                 {previewBridge && profile.record.source ? (
-                  <MenuItem onClick={() => void act(() => refresh(profile.id, profile.record))}>
+                  <MenuItem onClick={() => void act(() => refresh([profile]))}>
                     Refresh from{" "}
                     {profile.record.source.browser[0]!.toUpperCase() +
                       profile.record.source.browser.slice(1)}

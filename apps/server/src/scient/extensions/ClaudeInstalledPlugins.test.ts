@@ -10,7 +10,7 @@ import {
   readScientClaudePlugins,
   uninstallClaudePlugin,
 } from "./ClaudeInstalledPlugins.ts";
-const decodeSettings = Schema.decodeSync(ScientAgentSettings);
+const decodeSettings = Schema.decodeUnknownSync(ScientAgentSettings);
 const encode = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 describe("Claude plugin source compatibility", () => {
@@ -49,8 +49,8 @@ describe("Claude plugin source compatibility", () => {
       }),
   );
 
-  it("defaults existing configurations on but requires a supported stable release", () => {
-    expect(decodeSettings({}).useClaudePlugins).toBe(true);
+  it("ignores the retired plugin switch but requires a supported stable release", () => {
+    expect(decodeSettings({ useClaudePlugins: false })).not.toHaveProperty("useClaudePlugins");
     expect([null, "0.1.2", "0.1.3-beta.1", "invalid"].map(supportsScientClaudePlugins)).toEqual([
       false,
       false,
@@ -144,13 +144,11 @@ it.effect(
                   upstream: { name: "oh-my-pi", version: "18.3.1" },
                   rpcProtocolVersions: [2],
                 })
-              : encode({
-                  value: args.includes("disabledProviders") ? disabled : ["claude-plugins"],
-                }),
+              : encode({ value: disabled }),
           );
-        expect(yield* readScientClaudePlugins(run, home, true, project)).toEqual([]);
+        expect(yield* readScientClaudePlugins(run, home, project)).toEqual([]);
         disabled = [];
-        expect(yield* readScientClaudePlugins(run, home, false, project)).toHaveLength(2);
+        expect(yield* readScientClaudePlugins(run, home, project)).toHaveLength(2);
         yield* fs.writeFileString(
           path.join(home, "plugins", "installed_plugins.json"),
           "broken JSON",

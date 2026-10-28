@@ -473,6 +473,39 @@ export function matchExistingProfile(
     : undefined;
 }
 
+/** A website password, as a browser or a password export saves them; listed under Saved passwords. */
+export function isSavedPassword(account: AccountSummary) {
+  return account.details.kind === "website" && account.secrets.password !== undefined;
+}
+
+/** The source profile a linked profile came from, when its picture, colour or name changed there. */
+export function changedSourceProfile(
+  record: BrowserProfileRecord,
+  sources: ReadonlyArray<MergedSource>,
+): MergedSourceProfile | undefined {
+  const linked = record.source;
+  if (!linked) return undefined;
+  const candidates = sources.find((source) => source.id === linked.browser)?.profiles ?? [];
+  // Older links have no folder; their name and email still identify the profile when unique.
+  const named = candidates.filter(
+    (profile) => profile.name === linked.profileName && profile.email === linked.email,
+  );
+  const profile = linked.directory
+    ? candidates.find((candidate) => candidate.directory === linked.directory)
+    : named.length === 1
+      ? named[0]
+      : undefined;
+  if (!profile) return undefined;
+  // A picture or colour that could not be read keeps the one already shown.
+  return (profile.picture && profile.picture !== record.picture) ||
+    (profile.color && profile.color !== record.color) ||
+    profile.name !== linked.profileName ||
+    profile.email !== linked.email ||
+    profile.directory !== linked.directory
+    ? profile
+    : undefined;
+}
+
 /** What each kind of account is called on screen. */
 export const KIND_LABELS: Readonly<Record<AccountDetails["kind"], string>> = {
   website: "Website sign-in",

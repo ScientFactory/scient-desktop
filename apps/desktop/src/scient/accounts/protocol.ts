@@ -13,3 +13,5 @@ export const LOGIN_FORM_REPORT = "scient:accounts:login-form-report";
 export const COOKIE_METADATA = "scient:accounts:cookie-metadata";
 
 export const READ_BROWSER_PASSWORDS = "scient:accounts:read-browser-passwords";
+
+export const SITE_ICON = "scient:accounts:site-icon";

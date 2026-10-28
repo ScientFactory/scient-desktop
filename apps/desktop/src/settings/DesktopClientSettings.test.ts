@@ -289,10 +289,28 @@ describe("DesktopClientSettings", () => {
         assert.deepEqual(persisted, Option.some(yield* decodeClientSettingsJson("{}")));
         assert.isTrue(Option.isSome(persisted));
         if (Option.isSome(persisted)) {
-          assert.equal(persisted.value.appearanceContrast, 120);
           assert.equal(persisted.value.fontSizeInterface, 17);
           assert.equal(persisted.value.showSkillsInSlashMenu, false);
         }
+      }),
+    ),
+  );
+
+  it.effect("returns contrast saved before the reset to 100 once, then keeps a later choice", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopClientSettings.DesktopClientSettings;
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.clientSettingsPath,
+          '{"appearanceContrast":120}\n',
+        );
+        assert.equal(Option.getOrThrow(yield* settings.get).appearanceContrast, 100);
+
+        yield* settings.set({ ...clientSettings, appearanceContrast: 130 });
+        assert.equal(Option.getOrThrow(yield* settings.get).appearanceContrast, 130);
       }),
     ),
   );
