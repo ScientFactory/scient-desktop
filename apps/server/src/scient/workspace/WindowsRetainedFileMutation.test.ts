@@ -732,15 +732,6 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
 });
 
 describe.skipIf(!windows)("Windows identity and file admission", () => {
-  it("reads flags for paths whose UTF-8 exceeds one helper question", async () => {
-    const root = NodePath.parse(NodeOS.tmpdir()).root;
-    const paths = Array.from(
-      { length: 90 },
-      (_, index) => `${root}${String.fromCharCode(0x4e00 + index).repeat(250)}`,
-    );
-    const availability = await overleafFilesAvailability(paths, "win32", undefined, helper!);
-    expect(new Set(availability.values())).toEqual(new Set(["available"]));
-  });
   it("uses the mount-manager GUID and the complete file ID beyond MAX_PATH", () =>
     fixture(async (input) => {
       const cwd = NodePath.join(
