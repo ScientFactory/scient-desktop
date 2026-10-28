@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Host-owned namespace adapter. Policy, records and recovery stay in the mutation service. */
+import { validatePublicationArtifact } from "@t3tools/shared/scientPublicationArtifact";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -46,7 +47,9 @@ const Result = Schema.Struct({
 const Capabilities = Schema.Struct({
   version: Schema.Literal(1),
   strictCurrentRoot: Schema.Boolean,
+  folderObjectAuthority: Schema.optionalKey(Schema.Boolean),
   containment: Containment,
+  windowsMoveInstall: Schema.optionalKey(Schema.Boolean),
   atomicExchange: Schema.Boolean,
   atomicPublicationMetadata: Schema.Boolean,
   atomicCreateMetadata: Schema.Boolean,
@@ -64,7 +67,14 @@ const decodeCapabilities = Schema.decodeSync(Schema.fromJsonString(Capabilities)
 export type NativeFileIdentity = typeof Identity.Type;
 export type NativeFilePublicationResult = typeof Result.Type;
 export type NativeFilePublicationCapabilities = typeof Capabilities.Type;
-export type NativeFileAuthority = "strict-current-root" | "bound-object";
+export type NativeFileAuthority = "strict-current-root" | "linux-held-root" | "bound-object";
+const nativeFileAuthority = (): NativeFileAuthority =>
+  HostProcess.Platform.defaultValue() === "linux" ? "linux-held-root" : "strict-current-root";
+export const hasNativeFileAuthority = (capabilities: NativeFilePublicationCapabilities) =>
+  capabilities.strictCurrentRoot ||
+  (HostProcess.Platform.defaultValue() === "linux" &&
+    capabilities.folderObjectAuthority === true &&
+    capabilities.containment === "linux-landlock-root-object");
 export interface NativeFileBinding {
   readonly rootPath: string;
   readonly parentRelativePath: string;
@@ -82,12 +92,27 @@ export interface NativeFilePublicationRequest {
     | "capture"
     | "exchange"
     | "create"
+    | "stage-create"
+    | "staged-create"
     | "move"
     | "link"
     | "restore"
     | "metadata"
     | "mkdir"
-    | "rmdir";
+    | "rmdir"
+    | "win-prepare"
+    | "win-prepare-create"
+    | "win-prepare-delete"
+    | "win-resume"
+    | "win-resume-stage"
+    | "win-resume-captured"
+    | "win-restrict"
+    | "win-capture"
+    | "win-remove-captured"
+    | "win-return-captured"
+    | "win-install"
+    | "win-restore-policy"
+    | "win-release";
   readonly sourceName: string;
   readonly destinationName: string;
   /** bound-object is for qualification only and does not satisfy normal-save authority. */
@@ -108,54 +133,31 @@ export async function resolveNativeFilePublicationHelperPath(
 ): Promise<string | undefined> {
   const platform = HostProcess.Platform.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
-  if (configuredPath !== undefined && !NodePath.isAbsolute(configuredPath))
-    throw new NativeFilePublicationError("Configured native helper path must be absolute.", null);
-  const candidates: string[] = [];
-  if (configuredPath !== undefined) candidates.push(configuredPath);
-  else {
-    const moduleDirectory = NodeSea.isSea()
-      ? NodePath.dirname(process.execPath)
-      : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-    candidates.push(
-      NodePath.join(moduleDirectory, "file-exchange", binary),
-      NodePath.resolve(moduleDirectory, "../file-exchange", binary),
-      NodePath.resolve(
-        moduleDirectory,
-        "../../../../../native/file-exchange",
-        `${platform}-${HostProcess.Architecture.defaultValue()}`,
-        binary,
-      ),
-    );
-    if (platform === "darwin")
-      candidates.push(
-        NodePath.resolve(
-          moduleDirectory,
-          "../../../../../native/file-exchange/darwin-universal",
-          binary,
-        ),
-      );
+  const moduleDirectory = NodeSea.isSea()
+    ? NodePath.dirname(process.execPath)
+    : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+  // Source development has a separate, explicit build location. Installed servers
+  // only inspect their own resources; cwd, PATH and project files grant no authority.
+  const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
+  const desktop = ["app.asar", "server.asar"].some((archive) =>
+    moduleDirectory.endsWith(NodePath.join("resources", archive, "apps/server/dist")),
+  );
+  const candidate =
+    configuredPath ??
+    (desktop
+      ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
+      : (HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER ??
+        (source
+          ? NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary)
+          : NodePath.join(moduleDirectory, "file-exchange", binary))));
+  try {
+    await validatePublicationArtifact(candidate);
+    await nativeFilePublicationCapabilities(candidate);
+    return candidate;
+  } catch {
+    // Explicit configuration never falls through to another helper.
+    return undefined;
   }
-  for (const candidate of candidates) {
-    try {
-      const stat = await NodeFSP.lstat(candidate);
-      if (!stat.isFile() || stat.isSymbolicLink()) continue;
-      await NodeFSP.access(
-        candidate,
-        platform === "win32" ? NodeFSP.constants.F_OK : NodeFSP.constants.X_OK,
-      );
-      return candidate;
-    } catch (error) {
-      if (
-        !(
-          error instanceof Error &&
-          "code" in error &&
-          (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "EACCES")
-        )
-      )
-        throw error;
-    }
-  }
-  return undefined;
 }
 /** An invalid/lost reply has an unknown namespace outcome; it is never fallback permission. */
 async function invoke(helperPath: string, args: ReadonlyArray<string>): Promise<string> {
@@ -166,6 +168,8 @@ async function invoke(helperPath: string, args: ReadonlyArray<string>): Promise<
     );
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const child = NodeChildProcess.spawn(helperPath, args, {
+    // Capability inquiries cannot mutate files, so a wrong protocol may be terminated.
+    ...(args[1] === "capabilities" ? { timeout: 10_000 } : {}),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -209,20 +213,51 @@ function parseResult(value: string): NativeFilePublicationResult {
     );
   }
 }
+/** Helper replies already given, keyed by helper identity and the root's canonical
+ * path/volume; `atomicCreateMetadata` alone describes the root's volume. A
+ * replaced helper, linked root, or new volume asks the helper again. */
+const knownCapabilities = new Map<string, typeof Capabilities.Type>();
+const capabilitiesKey = async (helperPath: string, rootPath: string | undefined) => {
+  try {
+    const helper = await NodeFSP.stat(helperPath, { bigint: true });
+    let volume = "";
+    if (rootPath !== undefined) {
+      if ((await NodeFSP.realpath(rootPath)) !== rootPath) return null;
+      const root = await NodeFSP.lstat(rootPath, { bigint: true });
+      if (!root.isDirectory()) return null;
+      volume = String(root.dev);
+    }
+    return [
+      helperPath,
+      `${helper.dev}:${helper.ino}:${helper.size}:${helper.ctimeNs}:${helper.mtimeNs}`,
+      rootPath ?? "",
+      volume,
+    ].join("\0");
+  } catch {
+    return null;
+  }
+};
+
 /** A generic inquiry deliberately cannot authorize creation on an unspecified volume. */
 export async function nativeFilePublicationCapabilities(helperPath: string, rootPath?: string) {
   if (rootPath !== undefined && (!NodePath.isAbsolute(rootPath) || rootPath.includes("\0")))
     throw new NativeFilePublicationError("Native capability root must be an absolute path.", null);
+  const key = await capabilitiesKey(helperPath, rootPath);
+  const known = key === null ? undefined : knownCapabilities.get(key);
+  if (known !== undefined) return known;
   const reply = await invoke(helperPath, [
     "--protocol=1",
     "capabilities",
     ...(rootPath === undefined ? [] : [rootPath]),
   ]);
+  let capabilities;
   try {
-    return decodeCapabilities(reply);
+    capabilities = decodeCapabilities(reply);
   } catch {
     throw new NativeFilePublicationError("Invalid native publication capability reply.", null);
   }
+  if (key !== null) knownCapabilities.set(key, capabilities);
+  return capabilities;
 }
 function validatePaths(
   paths: Pick<NativeFileBinding, "rootPath" | "parentRelativePath" | "recordPath">,
@@ -245,7 +280,7 @@ function validatePaths(
 export async function bindNativeFilePublication(
   helperPath: string,
   paths: Pick<NativeFileBinding, "rootPath" | "parentRelativePath" | "recordPath">,
-  authority: NativeFileAuthority = "strict-current-root",
+  authority: NativeFileAuthority = nativeFileAuthority(),
 ): Promise<NativeFileBinding> {
   validatePaths(paths);
   const result = parseResult(
@@ -295,11 +330,31 @@ export async function bindNativeFilePublicationParent(
   parentRelativePath: string,
 ): Promise<Omit<NativeFileLeaseBinding, "mode">> {
   validatePaths({ rootPath, parentRelativePath, recordPath: rootPath });
+  if (HostProcess.Platform.defaultValue() !== "win32") {
+    const parentPath = NodePath.join(rootPath, parentRelativePath);
+    const observed = await Promise.all(
+      [rootPath, parentPath].map(async (directory) => {
+        if ((await NodeFSP.realpath(directory)) !== directory) return null;
+        const stat = await NodeFSP.lstat(directory, { bigint: true });
+        return stat.isDirectory() && !stat.isSymbolicLink()
+          ? { dev: String(stat.dev), ino: String(stat.ino) }
+          : null;
+      }),
+    ).catch(() => null);
+    // The native lease and every namespace command rebind these observations without following links.
+    if (observed?.[0] && observed[1])
+      return {
+        rootPath,
+        parentRelativePath,
+        rootIdentity: observed[0],
+        parentIdentity: observed[1],
+      };
+  }
   const result = parseResult(
     await invoke(helperPath, [
       "--directory=1",
       "bind",
-      "strict-current-root",
+      nativeFileAuthority(),
       rootPath,
       parentRelativePath || ".",
       "-",
@@ -324,7 +379,7 @@ export async function bindNativeFilePublicationParent(
 
 export interface NativeFileDirectoryRequest {
   readonly binding: NativeFileLeaseBinding;
-  readonly operation: "private-create" | "mkdir";
+  readonly operation: "private-create" | "private-check" | "mkdir";
   readonly name: string;
 }
 
@@ -336,7 +391,7 @@ function directoryArguments({ binding, operation, name }: NativeFileDirectoryReq
   return [
     "--directory=1",
     operation,
-    "strict-current-root",
+    nativeFileAuthority(),
     binding.rootPath,
     binding.parentRelativePath || ".",
     binding.rootIdentity.dev,
@@ -347,10 +402,76 @@ function directoryArguments({ binding, operation, name }: NativeFileDirectoryReq
   ];
 }
 
+/** A directory's lease binding observed in-process (POSIX only): canonical path,
+ * device and inode of a real directory. Taking the lease re-binds natively and
+ * refuses any differing identity, so no check is saved; anything unusual or
+ * Windows asks the helper. */
+export async function observedDirectoryBinding(
+  helperPath: string,
+  directory: string,
+): Promise<Omit<NativeFileLeaseBinding, "mode">> {
+  if (HostProcess.Platform.defaultValue() !== "win32" && NodePath.isAbsolute(directory)) {
+    const observed = await NodeFSP.realpath(directory).then(
+      async (canonical) => {
+        if (canonical !== directory) return null;
+        const stat = await NodeFSP.lstat(directory, { bigint: true });
+        return stat.isDirectory() && !stat.isSymbolicLink()
+          ? { dev: String(stat.dev), ino: String(stat.ino) }
+          : null;
+      },
+      () => null,
+    );
+    if (observed !== null)
+      return {
+        rootPath: directory,
+        parentRelativePath: "",
+        rootIdentity: observed,
+        parentIdentity: observed,
+      };
+  }
+  return bindNativeFilePublicationParent(helperPath, directory, "");
+}
+
+/** Private retention folders the helper found private, keyed by ctime/device/inode
+ * before it looked. Only the helper can read ACLs, so mode bits alone never
+ * suffice; any owner/mode/ACL change moves ctime and forces a re-check. */
+const validatedPrivate = new Map<string, string>();
+const privateKey = async (directory: string) => {
+  try {
+    if ((await NodeFSP.realpath(directory)) !== directory) return null;
+    const stat = await NodeFSP.lstat(directory, { bigint: true });
+    return stat.isDirectory() && !stat.isSymbolicLink()
+      ? `${stat.dev}:${stat.ino}:${stat.ctimeNs}`
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * A POSIX directory the helper already found private in this process, still
+ * unchanged at its canonical path: there is nothing to provision. Anything else
+ * (first seen, changed since, missing, another spelling, Windows) goes through
+ * the helper as always.
+ */
+async function alreadyPrivate(directory: string) {
+  if (HostProcess.Platform.defaultValue() === "win32") return false;
+  const known = validatedPrivate.get(directory);
+  return known !== undefined && known === (await privateKey(directory));
+}
+
 /** Existing directory permissions are never repaired. Only newly missing host directories are made private. */
-export async function ensureNativePrivateRetentionDirectory(
+export function ensureNativePrivateRetentionDirectory(helperPath: string, absolutePath: string) {
+  return nativePrivateRetentionDirectory(helperPath, absolutePath, true);
+}
+/** Validate a recorded folder without ever authorizing its creation. */
+export function checkNativePrivateRetentionDirectory(helperPath: string, absolutePath: string) {
+  return nativePrivateRetentionDirectory(helperPath, absolutePath, false);
+}
+async function nativePrivateRetentionDirectory(
   helperPath: string,
   absolutePath: string,
+  create: boolean,
 ): Promise<string> {
   if (!NodePath.isAbsolute(absolutePath) || absolutePath.includes("\0"))
     throw new NativeFilePublicationError(
@@ -364,20 +485,24 @@ export async function ensureNativePrivateRetentionDirectory(
       "A volume root cannot be a private retention directory.",
       null,
     );
+  if (await alreadyPrivate(destination)) return destination;
+  // Taken before the helper looks: a change after it moves the change time past this.
+  const before = await privateKey(destination);
   let canonicalParent: string;
   try {
     canonicalParent = await NodeFSP.realpath(parent);
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    if (!create) throw error;
     canonicalParent = await ensureNativePrivateRetentionDirectory(helperPath, parent);
   }
-  const binding = await bindNativeFilePublicationParent(helperPath, canonicalParent, ".");
+  const binding = await observedDirectoryBinding(helperPath, canonicalParent);
   const bindings: NativeFileLeaseBinding[] = [{ ...binding, mode: "exclusive" }];
   let ancestor = canonicalParent;
   for (;;) {
     const next = NodePath.dirname(ancestor);
     if (next === ancestor) break;
-    const ancestorBinding = await bindNativeFilePublicationParent(helperPath, next, ".");
+    const ancestorBinding = await observedDirectoryBinding(helperPath, next);
     if (ancestorBinding.parentIdentity.dev !== binding.parentIdentity.dev) break;
     bindings.push({ ...ancestorBinding, mode: "shared" });
     ancestor = next;
@@ -388,7 +513,7 @@ export async function ensureNativePrivateRetentionDirectory(
     (lease) =>
       lease.runDirectory({
         binding,
-        operation: "private-create",
+        operation: create ? "private-create" : "private-check",
         name: NodePath.basename(destination),
       }),
     { mode: "exclusive" },
@@ -398,12 +523,21 @@ export async function ensureNativePrivateRetentionDirectory(
     !result.destinationAfter ||
     result.destinationAfter.type !== "directory" ||
     (result.outcome === "applied" &&
-      (result.flush.sourceDirectory !== 0 || result.flush.destinationDirectory !== 0))
+      (result.codeDomain === "win32"
+        ? result.flush.sourceDirectory > 0 || result.flush.destinationDirectory > 0
+        : result.flush.sourceDirectory !== 0 || result.flush.destinationDirectory !== 0))
   )
     throw new NativeFilePublicationError(
       `Native private retention provisioning refused (${result.codeDomain}:${result.code}).`,
       result,
     );
+  // Kept only for the very folder the helper looked at, found already standing.
+  if (
+    before !== null &&
+    canonicalParent === parent &&
+    before.startsWith(`${result.destinationAfter.dev}:${result.destinationAfter.ino}:`)
+  )
+    validatedPrivate.set(destination, before);
   return NodePath.join(canonicalParent, NodePath.basename(destination));
 }
 function nativeFilePublicationArguments(
@@ -419,7 +553,7 @@ function nativeFilePublicationArguments(
   return [
     "--protocol=1",
     operation,
-    request.authority ?? "strict-current-root",
+    request.authority ?? nativeFileAuthority(),
     binding.rootPath,
     binding.parentRelativePath || ".",
     binding.recordPath,
@@ -442,10 +576,16 @@ export async function runNativeFilePublication(
 
 export type NativeFilePublicationParentBinding = Omit<NativeFileLeaseBinding, "mode">;
 export interface NativeFilePublicationLease {
+  readonly processId?: number;
   /** Namespace work runs inside the bounded lock holder's owned retirement protocol. */
   readonly run: (request: NativeFilePublicationRequest) => Promise<NativeFilePublicationResult>;
   readonly runDirectory: (
     request: NativeFileDirectoryRequest,
+  ) => Promise<NativeFilePublicationResult>;
+  readonly remove: (
+    directory: string,
+    name: string,
+    operation: "unlink" | "rmdir",
   ) => Promise<NativeFilePublicationResult>;
   readonly assertHeld: () => void;
 }
@@ -466,6 +606,9 @@ const LeaseMessage = Schema.Union([LeaseReply, CommandExit, Result]);
 
 const decodeLeaseMessage = Schema.decodeSync(Schema.fromJsonString(LeaseMessage));
 
+/** The most folders one lease can bind: the helper refuses more (`lease_main`). */
+export const NATIVE_LEASE_FOLDER_LIMIT = 256;
+
 /** Cancellation can retire queued acquisition, never an acquired callback's native work. */
 export async function withNativeFilePublicationLease<T>(
   helperPath: string,
@@ -473,7 +616,11 @@ export async function withNativeFilePublicationLease<T>(
   body: (lease: NativeFilePublicationLease) => Promise<T>,
   options: { readonly mode: "shared" | "exclusive"; readonly signal?: AbortSignal },
 ): Promise<T> {
-  if (!NodePath.isAbsolute(helperPath) || bindings.length === 0 || bindings.length > 256)
+  if (
+    !NodePath.isAbsolute(helperPath) ||
+    bindings.length === 0 ||
+    bindings.length > NATIVE_LEASE_FOLDER_LIMIT
+  )
     throw new NativeFilePublicationError(
       "A publication lease needs an absolute host helper and 1–256 bound parents.",
       null,
@@ -538,7 +685,9 @@ export async function withNativeFilePublicationLease<T>(
         const message = decodeLeaseMessage(line);
         if ("lease" in message) {
           if (message.lease !== "acquired" || acquired || message.code !== 0) {
-            failProtocol(`Native lease refused (${message.codeDomain}:${message.code}).`);
+            failProtocol(
+              `Native lease refused (${message.codeDomain}:${message.code}, ${diagnostic}).`,
+            );
           } else if (acquisitionCancelled) {
             ready.reject(
               new NativeFilePublicationError("Publication lease acquisition cancelled.", null),
@@ -669,6 +818,7 @@ export async function withNativeFilePublicationLease<T>(
     return command.result.promise;
   };
   const lease: NativeFilePublicationLease = {
+    ...(child.pid === undefined ? {} : { processId: child.pid }),
     assertHeld: () => {
       if (!alive || !acquired || releasing || protocolError)
         throw (
@@ -683,6 +833,22 @@ export async function withNativeFilePublicationLease<T>(
         request.operation !== "metadata" && request.operation !== "rmdir",
         request.operation === "mkdir" ? undefined : request.binding.recordIdentity,
       ),
+    remove: async (directory, name, operation) => {
+      const binding = bindings.find(
+        (held) =>
+          (held.mode ?? options.mode) === "exclusive" &&
+          NodePath.join(held.rootPath, held.parentRelativePath) === directory,
+      );
+      if (!binding || !name || name === "." || name === ".." || /[/\\:\0]/u.test(name))
+        throw new NativeFilePublicationError(
+          "Removal needs a held directory and a single name.",
+          null,
+        );
+      return runArguments(
+        ["--remove=1", operation, binding.parentIdentity.dev, binding.parentIdentity.ino, name],
+        binding,
+      );
+    },
     runDirectory: async (request) => runArguments(directoryArguments(request), request.binding),
   };
   try {
@@ -707,4 +873,83 @@ export async function withNativeFilePublicationLease<T>(
         new NativeFilePublicationError("Native publication lease failed to retire.", null)
       );
   }
+}
+
+/** Single-name removal and durability both use the lease holder's original folder handle. */
+export async function removeNativeRetainedEntry(
+  lease: NativeFilePublicationLease,
+  directory: string,
+  name: string,
+  helper?: string,
+) {
+  let result = await lease.remove(directory, name, "unlink");
+  if (
+    (result.codeDomain === "errno" && [1, 21].includes(result.code)) ||
+    (result.codeDomain === "win32" && result.code === 267)
+  )
+    result = await lease.remove(directory, name, "rmdir");
+  if (
+    result.code !== 0 ||
+    (result.codeDomain === "win32"
+      ? result.flush.sourceDirectory > 0
+      : result.flush.sourceDirectory !== 0)
+  )
+    throw new NativeFilePublicationError(
+      `Retained removal refused (${result.codeDomain}:${result.code}, flush=${result.flush.sourceDirectory}).`,
+      result,
+    );
+  const current =
+    HostProcess.Platform.defaultValue() === "win32"
+      ? await import("./WindowsNativeFile.ts").then(({ windowsFileIdentity }) =>
+          windowsFileIdentity(directory, helper),
+        )
+      : await NodeFSP.stat(directory, { bigint: true });
+  if (
+    String(current?.dev) !== result.binding.parent?.dev ||
+    String(current?.ino) !== result.binding.parent?.ino
+  )
+    throw new NativeFilePublicationError(
+      "Retained folder moved during removal; journal settlement is pending.",
+      result,
+    );
+}
+
+const LinuxFolderInquiry = Schema.Struct({
+  version: Schema.Literal(1),
+  reason: Schema.NullOr(
+    Schema.Literals([
+      "unsupported-filesystem",
+      "network-filesystem",
+      "volatile-filesystem",
+      "volume-unavailable",
+      "no-volume-identity",
+    ]),
+  ),
+  identity: Schema.NullOr(
+    Schema.Struct({
+      version: Schema.Literal(1),
+      platform: Schema.Literal("linux"),
+      volume: Schema.String.check(
+        Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u),
+      ),
+      fileId: Schema.String.check(Schema.isPattern(/^\d{1,40}$/u)),
+      subvolumeId: Schema.NullOr(Schema.String.check(Schema.isPattern(/^\d{1,40}$/u))),
+    }),
+  ),
+});
+const decodeLinuxFolderInquiry = Schema.decodeUnknownSync(
+  Schema.fromJsonString(LinuxFolderInquiry),
+);
+/** UUID, inode and admission are observed together through a natively held folder/file. */
+export async function nativeLinuxFileIdentity(
+  path: string,
+  directoryOnly: boolean,
+  helperPath?: string,
+) {
+  const helper = helperPath ?? (await resolveNativeFilePublicationHelperPath());
+  if (helper === undefined) return null;
+  const { identity, reason } = decodeLinuxFolderInquiry(
+    await invoke(helper, ["--linux-folder=1", path, directoryOnly ? "directory" : "entry"]),
+  );
+  return { identity, reason };
 }

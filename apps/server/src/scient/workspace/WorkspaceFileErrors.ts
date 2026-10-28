@@ -2,6 +2,10 @@
  * Errors for Scient's workspace file mutations: a save whose file changed
  * since it was opened, and a create or rename whose destination exists.
  */
+import {
+  overleafFilesystemRefusalText,
+  ScientOverleafFilesystemRefusalReason,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 export function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
@@ -74,9 +78,19 @@ export class WorkspaceFileMutationUnavailableError extends Schema.TaggedError<Wo
     relativePath: Schema.String,
     resolvedPath: Schema.String,
     publicationOutcome: Schema.optionalKey(Schema.Literals(["unchanged", "retained-attention"])),
+    /** A refusal with a reason of its own; absent for the general one. */
+    reason: Schema.optionalKey(
+      Schema.Union([
+        Schema.Literal("kept-folder-not-empty"),
+        ScientOverleafFilesystemRefusalReason,
+      ]),
+    ),
   },
 ) {
   override get message(): string {
+    if (this.reason === "kept-folder-not-empty")
+      return `This kept version of '${this.relativePath}' is a folder with files in it. Only an empty kept folder can be discarded; the version is still kept as it was.`;
+    if (this.reason) return overleafFilesystemRefusalText(this.reason)!;
     return `Safe native publication is unavailable for workspace file '${this.relativePath}'. Your input has not been discarded.`;
   }
 }

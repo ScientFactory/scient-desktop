@@ -16,8 +16,11 @@ caches, and private Scient runtime state stays out of the ordinary view.
 The bar above the tree searches file names and offers **New**, which creates a
 Markdown or LaTeX document in the selected folder (or the folder of the selected
 file). Right-click a folder for the same choice under **New document here**.
-**Connect** lists the services a folder will keep in sync with, such as Overleaf
-and Google Drive; they are coming soon.
+**Connect** lists the services a folder can keep in sync with. **Overleaf…** links
+the selected folder to an Overleaf project, or brings one in as a new folder (see
+[Overleaf](overleaf.md)); Google Drive, OneDrive and Dropbox are coming soon.
+Right-click a folder for **Connect to ▸ Overleaf…**. Linked folders carry
+Overleaf's leaf.
 The **⋯** Files menu refreshes the tree, expands or collapses every loaded
 folder, and sets file visibility. The tree does not watch the disk, so use
 **Refresh files** after changing files outside Scient.

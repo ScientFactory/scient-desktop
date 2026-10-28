@@ -40,6 +40,9 @@ export type SettingsPath =
   | "/settings/scheduled-tasks"
   | "/settings/scientific-computing"
   | "/settings/documents"
+  // SCIENT-FORK:START — Synced folders: Overleaf, and the services on the way
+  | "/settings/synced-folders"
+  // SCIENT-FORK:END
   | "/settings/source-control"
   | "/settings/worktrees"
   | "/settings/connections"
@@ -119,6 +122,9 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/scientific-computing": "Scientific Computing",
   "/settings/documents": "Documents",
   "/settings/source-control": "Source Control",
+  // SCIENT-FORK:START — Synced folders
+  "/settings/synced-folders": "Synced folders",
+  // SCIENT-FORK:END
   "/settings/worktrees": "Worktrees",
   "/settings/connections": "Environments",
   "/settings/access": "Sharing & access",
@@ -167,7 +173,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   // SCIENT-FORK:START
   {
     heading: "Research",
-    paths: ["/settings/scientific-computing", "/settings/documents"],
+    paths: ["/settings/scientific-computing", "/settings/documents", "/settings/synced-folders"],
   },
   // SCIENT-FORK:END
   {
@@ -990,6 +996,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["CSV", "keychain", "1Password"],
   },
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Synced folders
+  {
+    id: "synced-folders",
+    title: "Synced folders",
+    to: "/settings/synced-folders",
+    searchTerms: ["sync folder cloud google drive onedrive dropbox external connect"],
+  },
+  {
+    id: "synced-folders-overleaf",
+    title: "Overleaf",
+    to: "/settings/synced-folders",
+    searchTerms: ["overleaf latex paper git token linked folders unlink sync"],
+  },
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Extensions
   {
     id: "extensions",
@@ -1378,6 +1398,9 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   // SCIENT-FORK:END
   "/settings/scientific-computing": null,
   "/settings/documents": null,
+  // SCIENT-FORK:START — Synced folders
+  "/settings/synced-folders": null,
+  // SCIENT-FORK:END
   "/settings/threads": null,
   "/settings/browser": null,
   "/settings/devices": null,

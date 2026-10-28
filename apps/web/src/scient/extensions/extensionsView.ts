@@ -21,6 +21,7 @@ import {
 import {
   BookOpenIcon,
   CpuIcon,
+  LeafIcon,
   FileTextIcon,
   type LucideIcon,
   MonitorSmartphoneIcon,
@@ -144,6 +145,7 @@ const BUILT_IN_PLUGIN_GLYPHS: Readonly<Record<string, LucideIcon>> = {
   "scient.sources": BookOpenIcon,
   "scient.documents": FileTextIcon,
   "scient.compute": CpuIcon,
+  "scient.overleaf": LeafIcon,
   "scient.browser-devices": MonitorSmartphoneIcon,
   "scient.pull-requests": PullRequestGlyph.pullRequest,
 };

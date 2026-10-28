@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
+#include <wchar.h>
 #elif defined(SCIENT_PUBLICATION_PROBE)
 #include <unistd.h>
 #endif
@@ -53,6 +54,12 @@ static int sort_parents(const void *left, const void *right) {
   int identity = compare_parents(left, right);
   return identity ? identity : ((const LeaseParent *)right)->exclusive - ((const LeaseParent *)left)->exclusive;
 }
+#ifdef _WIN32
+int platform_windows_main(int argc, char **argv);
+int platform_windows_flags(int argc, char **argv);
+int platform_windows_available(const char *root);
+void platform_windows_retire(void);
+#endif
 static int publication_main(int argc, char **argv);
 static int lease_main(int argc, char **argv) {
   if (argc < 10 || (argc - 3) % 7 || (argc - 3) / 7 > 256 ||
@@ -108,6 +115,34 @@ static int lease_main(int argc, char **argv) {
       command[arguments++] = frame + offset;
       offset = (size_t)(end - frame) + 1;
     }
+    if (arguments == 6 && offset == length && !strcmp(command[1], "--remove=1")) {
+      LeaseParent *held = NULL;
+      for (size_t i = 0; i < count; ++i)
+        if (parents[i].exclusive && matches(&parents[i].parent, command[3], command[4])) {
+          held = &parents[i]; break;
+        }
+      if (!held || !name_valid(command[5]) ||
+          (strcmp(command[2], "unlink") && strcmp(command[2], "rmdir"))) {
+        free(frame); error = platform_invalid(); break;
+      }
+      Entry before = {0};
+      Flush flush = {-1, -1, -1, -1};
+      int applied = 0;
+      int removal_error = platform_remove(held->context, command[5],
+        !strcmp(command[2], "rmdir"), &before, &flush, &applied);
+      printf("{\"version\":1,\"outcome\":\"%s\",\"code\":%d,\"codeDomain\":\"%s\","
+             "\"containment\":\"bound-object\",\"binding\":{\"root\":null,\"parent\":",
+             applied ? "applied" : "unchanged", removal_error, platform_domain());
+      entry_json(&held->parent);
+      printf(",\"record\":null},\"sourceBefore\":"); entry_json(&before);
+      printf(",\"sourceAfter\":null,\"destinationAfter\":null,\"flush\":{\"sourceFile\":-1,"
+             "\"destinationFile\":-1,\"sourceDirectory\":%d,\"destinationDirectory\":-1}}\n",
+             flush.source_directory);
+      printf("{\"version\":1,\"commandExit\":0,\"commandSignal\":0,\"code\":0,\"codeDomain\":\"%s\"}\n", platform_domain());
+      free(frame);
+      if (fflush(stdout)) { error = platform_invalid(); break; }
+      continue;
+    }
     int covered = 0;
     if (arguments == 15 && offset == length && !strcmp(command[1], "--protocol=1")) {
       int parent_covered = 0, record_covered = 0;
@@ -122,7 +157,7 @@ static int lease_main(int argc, char **argv) {
         parent_covered && record_covered;
     }
     if (arguments == 11 && offset == length && !strcmp(command[1], "--directory=1") &&
-        (!strcmp(command[2], "private-create") || !strcmp(command[2], "mkdir"))) {
+        (!strcmp(command[2], "private-create") || !strcmp(command[2], "private-check") || !strcmp(command[2], "mkdir"))) {
       for (size_t i = 0; i < count; ++i) {
         if (parents[i].exclusive && matches(&parents[i].root, command[6], command[7]) &&
             matches(&parents[i].parent, command[8], command[9])) covered = 1;
@@ -131,7 +166,7 @@ static int lease_main(int argc, char **argv) {
     if (!covered) { free(frame); error = platform_invalid(); break; }
     int exit_code = -1, signal = 0;
 #ifdef _WIN32
-    /* Mutex ownership is thread-bound: no independently alive Windows writer. */
+    /* File transactions retain handles across serial commands in this lock holder. */
     exit_code = publication_main(arguments, command);
     int spawn_error = fflush(stdout) ? platform_invalid() : 0;
 #else
@@ -146,6 +181,9 @@ static int lease_main(int argc, char **argv) {
 done:
   if (error)
     printf("{\"version\":1,\"lease\":\"refused\",\"code\":%d,\"codeDomain\":\"%s\"}\n", error, platform_domain());
+#ifdef _WIN32
+  platform_windows_retire();
+#endif
   for (size_t i = count; i > 0; --i) {
     if (!parents[i - 1].context) continue;
     if (parents[i - 1].locked) platform_unlock_parent(parents[i - 1].context);
@@ -154,18 +192,34 @@ done:
   free(parents);
   return ferror(stdout) ? 74 : 0;
 }
+static int admitted_authority(const char *mode) {
+  if (!strcmp(mode, "strict-current-root")) return platform_strict_available();
+#ifndef _WIN32
+  if (!strcmp(mode, "linux-held-root")) return platform_folder_object_available();
+#endif
+  return 0;
+}
 static int directory_main(int argc, char **argv) {
-  if (argc != 11 || (strcmp(argv[2], "bind") && strcmp(argv[2], "private-create") &&
-      strcmp(argv[2], "mkdir")) || strcmp(argv[3], "strict-current-root")) return 64;
+  if (argc != 11 || (strcmp(argv[2], "bind") && strcmp(argv[2], "private-create") && strcmp(argv[2], "private-check") &&
+      strcmp(argv[2], "mkdir")) || (strcmp(argv[3], "strict-current-root") && strcmp(argv[3], "linux-held-root"))) return 64;
   int error = 0, applied = 0;
   Entry root = {0}, parent = {0}, created = {0};
   Flush flush = {-1, -1, -1, -1};
-  int create = strcmp(argv[2], "bind") != 0;
-  int private_directory = !strcmp(argv[2], "private-create");
+  int create = strcmp(argv[2], "bind") != 0 && strcmp(argv[2], "private-check") != 0;
+  int private_directory = !strcmp(argv[2], "private-create") || !strcmp(argv[2], "private-check");
   Context *context = platform_bind_parent(argv[4], argv[5], &error);
   if (!context) goto result;
   error = platform_parent_binding(context, &root, &parent);
   if (error) goto result;
+  if (!create && private_directory) {
+    if (!name_valid(argv[10])) { error = platform_invalid(); goto result; }
+    if (!matches(&root, argv[6], argv[7]) || !matches(&parent, argv[8], argv[9])) {
+      error = platform_changed(); goto result;
+    }
+    error = platform_private_directory(context, argv[10], &created);
+    if (error) goto result;
+    goto recheck;
+  }
   if (create) {
     if (!name_valid(argv[10])) { error = platform_invalid(); goto result; }
     if (!matches(&root, argv[6], argv[7]) || !matches(&parent, argv[8], argv[9])) {
@@ -182,7 +236,7 @@ static int directory_main(int argc, char **argv) {
       if (error != ENOENT) goto result;
 #endif
     }
-    if (!platform_strict_available()) { error = platform_unsupported(); goto result; }
+    if (!admitted_authority(argv[3])) { error = platform_unsupported(); goto result; }
     error = platform_policy(context, argv[3], argv[4], argv[4]);
     if (error) goto result;
 #ifdef SCIENT_PUBLICATION_PROBE
@@ -223,6 +277,14 @@ result:
   return ferror(stdout) ? 74 : 0;
 }
 static int publication_main(int argc, char **argv) {
+#ifdef __linux__
+  if (argc == 4 && !strcmp(argv[1], "--linux-folder=1"))
+    return platform_linux_folder(argv[2], !strcmp(argv[3], "directory"));
+#endif
+#ifdef _WIN32
+  if (argc > 1 && !strcmp(argv[1], "--windows=1")) return platform_windows_main(argc, argv);
+  if (argc > 1 && !strcmp(argv[1], "--windows-flags=1")) return platform_windows_flags(argc, argv);
+#endif
   if (argc > 1 && !strcmp(argv[1], "--lease=1")) return lease_main(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "--directory=1")) return directory_main(argc, argv);
   int error = 0, applied = 0;
@@ -231,16 +293,34 @@ static int publication_main(int argc, char **argv) {
   Flush flush = {-1, -1, -1, -1};
   if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--protocol=1") && !strcmp(argv[2], "capabilities")) {
     printf("{\"version\":1,\"strictCurrentRoot\":%s,\"containment\":\"%s\","
-           "\"atomicExchange\":%s,\"atomicPublicationMetadata\":%s,\"atomicCreateMetadata\":%s,\"exclusiveMove\":true,"
+"\"folderObjectAuthority\":%s,\"windowsMoveInstall\":%s,\"atomicExchange\":%s,\"atomicPublicationMetadata\":%s,\"atomicCreateMetadata\":%s,\"exclusiveMove\":true,"
            "\"exclusiveLink\":true,\"publicationLease\":true,\"sharedPublicationLease\":%s,"
            "\"privateRetentionDirectory\":%s,\"sourceParentMkdir\":%s,\"codeDomain\":\"%s\"}\n",
            platform_strict_available() ? "true" : "false", platform_containment(),
+#ifdef _WIN32
+"false",
+#else
+           platform_folder_object_available() ? "true" : "false",
+#endif
+#ifdef _WIN32
+           platform_windows_available(argc == 4 ? argv[3] : NULL) ? "true" : "false",
+#else
+           "false",
+#endif
            platform_exchange_available() ? "true" : "false",
            platform_atomic_metadata_available() ? "true" : "false",
            platform_atomic_create_available(argc == 4 ? argv[3] : NULL) ? "true" : "false",
            platform_shared_lease_available() ? "true" : "false",
-           platform_strict_available() ? "true" : "false",
-           platform_strict_available() ? "true" : "false",
+           (platform_strict_available()
+#ifndef _WIN32
+            || platform_folder_object_available()
+#endif
+           ) ? "true" : "false",
+           (platform_strict_available()
+#ifndef _WIN32
+            || platform_folder_object_available()
+#endif
+           ) ? "true" : "false",
            platform_domain());
     return 0;
   }
@@ -248,14 +328,23 @@ static int publication_main(int argc, char **argv) {
   const char *op = argv[2], *mode = argv[3];
   int binding = !strcmp(op, "bind");
   if (!binding && strcmp(op, "capture") && strcmp(op, "exchange") &&
-      strcmp(op, "create") && strcmp(op, "move") && strcmp(op, "restore") && strcmp(op, "link") &&
-      strcmp(op, "metadata") && strcmp(op, "mkdir") && strcmp(op, "rmdir")) {
+strcmp(op, "create") && strcmp(op, "stage-create") && strcmp(op, "staged-create") && strcmp(op, "move") && strcmp(op, "restore") && strcmp(op, "link") &&
+      strcmp(op, "metadata") && strcmp(op, "mkdir") && strcmp(op, "rmdir")
+#ifdef _WIN32
+      && strncmp(op, "win-", 4)
+#endif
+      ) {
     error = platform_invalid(); goto result;
   }
   if (!strcmp(mode, "strict-current-root") && !platform_strict_available()) {
     error = platform_unsupported(); goto result;
   }
-  if (strcmp(mode, "bound-object") && strcmp(mode, "strict-current-root")) {
+#ifndef _WIN32
+  if (!strcmp(mode, "linux-held-root") && !platform_folder_object_available()) {
+    error = platform_unsupported(); goto result;
+  }
+#endif
+  if (strcmp(mode, "bound-object") && !admitted_authority(mode)) {
 #ifdef SCIENT_PUBLICATION_PROBE
     if (strcmp(mode, "probe-macos-sandbox") && strcmp(mode, "probe-linux-landlock"))
 #endif
@@ -268,7 +357,7 @@ static int publication_main(int argc, char **argv) {
       !platform_exchange_available()) {
     error = platform_unsupported(); goto result;
   }
-  if (!binding && !strcmp(op, "create") && !platform_atomic_create_available(argv[4])) {
+  if (!binding && (!strcmp(op, "create") || !strcmp(op, "stage-create") || !strcmp(op, "staged-create")) && !platform_atomic_create_available(argv[4])) {
     error = platform_unsupported(); goto result;
   }
   context = platform_bind(argv[4], argv[5], argv[6], &error);
@@ -281,7 +370,7 @@ static int publication_main(int argc, char **argv) {
     error = platform_changed(); goto result;
   }
 #ifdef SCIENT_PUBLICATION_PROBE
-  if (!strcmp(mode, "strict-current-root"))
+  if (admitted_authority(mode))
     error = platform_policy(context, mode, argv[4], argv[6]);
   else if (strcmp(mode, "bound-object"))
     error = platform_probe_policy(context, mode, argv[4], argv[6]);
@@ -329,7 +418,7 @@ result:
 }
 #ifdef _WIN32
 int wmain(int argc, wchar_t **wide) {
-  if (_setmode(_fileno(stdin), _O_BINARY) == -1) return 71;
+  if (argc > 1 && !wcscmp(wide[1], L"--lease=1") && _setmode(_fileno(stdin), _O_BINARY) == -1) return 71;
   char **argv = calloc((size_t)argc, sizeof(*argv));
   if (!argv) return 71;
   int allocated = 0, result = 71;

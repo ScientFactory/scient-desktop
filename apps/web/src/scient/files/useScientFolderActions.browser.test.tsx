@@ -9,6 +9,10 @@ const createNewDocument = vi.hoisted(() => vi.fn());
 vi.mock("~/scient/documents/useCreateNewDocument", () => ({
   useCreateNewDocument: () => createNewDocument,
 }));
+const openConnect = vi.hoisted(() => vi.fn());
+vi.mock("~/scient/overleaf/useOverleafFolderConnect", () => ({
+  useOverleafConnectDialog: () => ({ openConnect, dialog: null }),
+}));
 
 import { useScientFolderActions } from "./useScientFolderActions";
 
@@ -62,10 +66,12 @@ describe("useScientFolderActions", () => {
         .menuItems(path)
         .map((item) => item.id);
     expect(menuIds("notes.md")).toEqual([]);
-    expect(menuIds("paper")).toEqual(["new-document"]);
-    expect(menuIds("drafts/")).toEqual(["new-document"]);
+    expect(menuIds("paper")).toEqual(["new-document", "connect"]);
+    expect(menuIds("drafts/")).toEqual(["new-document", "connect"]);
 
     expect(probe.actions().handleMenuChoice("copy-mention", "paper")).toBe(false);
+    expect(probe.actions().handleMenuChoice("connect:overleaf", "paper")).toBe(true);
+    expect(openConnect).toHaveBeenCalledWith("paper");
     expect(probe.actions().handleMenuChoice("new-document:latex", "paper")).toBe(true);
     expect(based()).toEqual([["latex", "paper/"]]);
     // The new document opens in its editor, LaTeX in Visual.

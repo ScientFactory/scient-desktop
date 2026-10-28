@@ -149,3 +149,19 @@ test("CI refuses missing native analyzers instead of accepting SwiftLint's optio
     assert.equal(result.status, missing === null ? 0 : 1, result.stderr);
   }
 });
+
+test("Windows Overleaf cannot be skipped or omitted, including exact queue reuse", () => {
+  for (const event of ["pull_request", "merge_group"]) {
+    const f = normal(event);
+    if (event === "merge_group") {
+      f.needs.queue_ci.outputs = { reused: "true", web_reports: "true", server_reports: "true" };
+      for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
+    }
+    for (const result of ["skipped", "failure", "cancelled"]) {
+      f.needs.overleaf_windows.result = result;
+      assert.ok(failures(f).some((error) => error.startsWith("overleaf_windows:")));
+    }
+    delete f.needs.overleaf_windows;
+    assert.ok(failures(f).includes("overleaf_windows: missing"));
+  }
+});

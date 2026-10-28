@@ -4,6 +4,7 @@
  * real applier and a scripted Overleaf. A throwing hook stands in for a crash
  * between the coordinator's durable steps: nothing at this level compensates.
  */
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -32,6 +33,7 @@ import {
   write,
 } from "./OverleafCoordinator.testkit.ts";
 import * as OverleafStateStore from "./OverleafStateStore.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 import { WorkspaceApplier } from "./WorkspaceApplier.ts";
 
 describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
@@ -143,6 +145,31 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           attempts: { accepted: [], unresolved: [] },
         });
         expect((yield* w.connection).base.generation).toBe(after.base.generation);
+      }),
+    );
+  });
+
+  it.live("settles an interrupted apply as its own prepare step, then reviews its result", () => {
+    let crash = true;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "B" },
+          at: (point) =>
+            crash && point === "applied" ? Effect.die(new Error("process died")) : Effect.void,
+        });
+        expect(Exit.isFailure(yield* Effect.exit(w.sync()))).toBe(true);
+        crash = false;
+        // A complete recovery is reported, never folded into a review of the same call.
+        expect(yield* w.coordinator.prepare({ connectionId: CONNECTION })).toMatchObject({
+          _tag: "recovered",
+          recovery: { outcome: "complete" },
+        });
+        expect((yield* w.connection).activeApply).toBeNull();
+        expect(yield* read(w.folder, "main.tex")).toBe("B");
+        const next = yield* w.coordinator.prepare({ connectionId: CONNECTION });
+        expect(next).toMatchObject({ _tag: "review", review: { upToDate: true } });
       }),
     );
   });
@@ -321,7 +348,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             crash && point === "applied"
               ? Effect.promise(async () => {
                   const intent = (await NodeFSP.readdir(stateRoot, { recursive: true })).find(
-                    (path) => path.endsWith("/apply.json"),
+                    (path) => path.replaceAll(NodePath.sep, "/").endsWith("/apply.json"),
                   );
                   staging = `.scient-overleaf-apply-${NodePath.basename(NodePath.dirname(intent!))}-held-source`;
                   await NodeFSP.writeFile(NodePath.join(folder, staging), "the only copy");
@@ -360,7 +387,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           remote: { "new.tex": "chapter text that moves", "main.tex": "M" },
           // The rename's second step removes old.tex; it changes just before.
           native: async (point, folder) => {
-            if (point === "prepared" && ++prepared === 2)
+            if (
+              point === (HostProcess.Platform.defaultValue() === "win32" ? "intent" : "prepared") &&
+              ++prepared === 2
+            )
               await NodeFSP.writeFile(NodePath.join(folder, "old.tex"), "edited meanwhile");
           },
         });
@@ -392,7 +422,10 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           remote: { "theirs.tex": "chapter text that moves" },
           // The group's second step removes new.tex; it changes just before.
           native: async (point, folder) => {
-            if (point === "prepared" && ++prepared === 2)
+            if (
+              point === (HostProcess.Platform.defaultValue() === "win32" ? "intent" : "prepared") &&
+              ++prepared === 2
+            )
               await NodeFSP.writeFile(NodePath.join(folder, "new.tex"), "edited meanwhile");
           },
         });
@@ -404,6 +437,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           selectedAdditions: ["new.tex"],
           collisionPaths: [],
           choices,
+          releaseMarked: [],
         });
         const first = yield* w.coordinator.prepare({
           connectionId: CONNECTION,
@@ -582,6 +616,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           remote: { "main.tex": "B" },
           applier: (real) =>
             WorkspaceApplier.of({
+              ...real,
               apply: (input) =>
                 real.apply(input).pipe(
                   Effect.flatMap((result) => {
@@ -617,7 +652,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const listed = yield* w.coordinator.keptCopies({ connectionId: CONNECTION });
         expect(listed.map((copy) => copy.kept.split("/").pop()).sort()).toEqual([
           "provisional",
-          "slot",
+          HostProcess.Platform.defaultValue() === "win32" ? "retained" : "slot",
         ]);
         // The extra version restores like the main one.
         const extra = listed.find((copy) => copy.kept.endsWith("/provisional"))!;
@@ -749,6 +784,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             selectedAdditions: [],
             collisionPaths: first.review.binding.collisionPaths,
             choices,
+            releaseMarked: [],
           },
         });
         if (chosen._tag !== "review") return yield* Effect.die(chosen);
@@ -776,7 +812,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const vault = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION }))[0]!;
         yield* Effect.promise(async () => {
           const found = (await NodeFSP.readdir(w.stateRoot, { recursive: true })).find((path) =>
-            path.endsWith(vault.kept),
+            path.replaceAll(NodePath.sep, "/").endsWith(vault.kept),
           );
           await NodeFSP.writeFile(NodePath.join(w.stateRoot, found!), "late write");
         });
@@ -994,7 +1030,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         // A later sync finds the material gone and stops tracking it.
         w.setRemote({ "main.tex": "resolved", "other.tex": "O2" });
         expect(yield* w.sync("request-2")).toMatchObject({ _tag: "applied" });
-        expect((yield* w.connection).markerPaths).toEqual([]);
+        expect((yield* w.connection).markers).toEqual([]);
         const copy = (yield* w.coordinator.keptCopies({ connectionId: CONNECTION })).find(
           (entry) => entry.relativePath === "main.tex",
         )!;
@@ -1008,7 +1044,9 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
             currentRevision: copy.currentRevision,
           }),
         ).toMatchObject({ _tag: "restored" });
-        expect((yield* w.connection).markerPaths).toEqual(["main.tex"]);
+        expect((yield* w.connection).markers).toEqual([
+          { path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] },
+        ]);
       }),
     ),
   );
@@ -1119,7 +1157,11 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
           next: {
             ...current,
             revision: current.revision + 1,
-            markerPaths: Array.from({ length: 2_000 }, (_, n) => `marked-${n}.tex`),
+            markers: Array.from({ length: 2_000 }, (_, n) => ({
+              path: `marked-${n}.tex`,
+              folderPaths: [],
+              overleafPaths: [`marked-${n}.tex`],
+            })),
             updatedAt: "2026-10-22T12:00:00.000Z",
           },
         });
@@ -1140,7 +1182,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         expect(yield* read(w.folder, "main.tex")).toBe("resolved");
         const after = yield* w.connection;
         expect(after.activeApply).toBeNull();
-        expect(after.markerPaths).toHaveLength(2_000);
+        expect(after.markers).toHaveLength(2_000);
       }),
     ),
   );
@@ -1223,6 +1265,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
     (changed: boolean) =>
     (real: WorkspaceApplier["Service"]): WorkspaceApplier["Service"] =>
       WorkspaceApplier.of({
+        ...real,
         apply: (input) =>
           real.apply(input).pipe(
             Effect.flatMap((result) => {
@@ -1278,7 +1321,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         expect(yield* w.sync()).toMatchObject({ _tag: "applied" });
         yield* Effect.promise(async () => {
           const record = (await NodeFSP.readdir(w.stateRoot, { recursive: true })).find((path) =>
-            path.endsWith("/step-0/record.json"),
+            path.replaceAll(NodePath.sep, "/").endsWith("/step-0/record.json"),
           );
           await NodeFSP.writeFile(NodePath.join(w.stateRoot, record!), "{ damaged");
         });
@@ -1309,6 +1352,7 @@ describe.skipIf(!canApply)("OverleafCoordinator, local half", () => {
         const w = yield* world({ synced: { "main.tex": "A" }, remote: { "main.tex": "B" } });
         // Another store on the same state folder cannot take the lease this one holds.
         const other = yield* OverleafStateStore.make({
+          publicationHelper: yield* Effect.promise(filePublicationTestHelper),
           root: w.stateRoot,
           volumeUuid: w.volumeUuid,
         });

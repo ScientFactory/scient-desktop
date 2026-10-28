@@ -3,6 +3,7 @@
  * separately rebuild from fresh capture/fetch. Keep reviews in memory with expiry and byte/count
  * bounds because they retain write bytes and cannot be replayed after restart.
  */
+import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import {
   overleafReviewDigest,
   type OverleafReview,
@@ -153,20 +154,18 @@ export function overleafReviewStaleness(
     binding.authority.scopeRevision !== fresh.authority.scopeRevision
   )
     return "authority";
-  if (
-    binding.folderIdentity.volume !== fresh.folderIdentity.volume ||
-    binding.folderIdentity.fileId !== fresh.folderIdentity.fileId
-  )
-    return "folder";
+  if (!platformFileIdentity.equal(binding.folderIdentity, fresh.folderIdentity)) return "folder";
   if (binding.localTree !== fresh.localTree) return "capture";
   if (binding.remoteCommit !== fresh.remoteCommit || binding.remoteTree !== fresh.remoteTree)
     return "remote";
   if (
     !same(binding.selectedAdditions, fresh.selectedAdditions) ||
     !same(binding.newLocalOnly, fresh.newLocalOnly) ||
+    !same(binding.sentLocalOnly, fresh.sentLocalOnly) ||
     !same(binding.collisionPaths, fresh.collisionPaths) ||
-    !same(binding.recordedMarkerPaths, fresh.recordedMarkerPaths) ||
-    !same(binding.unresolvedMarkers, fresh.unresolvedMarkers)
+    !same(binding.recordedMarkers, fresh.recordedMarkers) ||
+    !same(binding.unresolvedMarkers, fresh.unresolvedMarkers) ||
+    !same(binding.released, fresh.released)
   )
     return "inventory";
   return "review";

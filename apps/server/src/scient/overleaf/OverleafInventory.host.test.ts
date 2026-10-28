@@ -109,8 +109,10 @@ it.layer(layer)("Overleaf paths and the host's file layer", (it) => {
             managedPaths: ["main.tex"],
             localOnlyPaths: [],
             selectedAdditions: [],
+            sendLocalOnly: [],
             requestedPaths: [],
             stagingPaths: [],
+            atCheckoutTop: false,
           }),
         );
         if (inventory._tag !== "captured") return expect.fail(inventory.refusal.reason);

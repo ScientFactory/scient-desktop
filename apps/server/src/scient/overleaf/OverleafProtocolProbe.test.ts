@@ -28,11 +28,17 @@ describe("Cloud probe boundaries", () => {
       ],
       ["The requested URL returned error: 403", "authentication-or-access-denied"],
       ["repository not found", "project-not-found"],
+      [
+        "fatal: remote error: no git access\nThis Overleaf project currently has no git access, either because\nthe project does not exist, or because git access is not enabled\nfor the project.",
+        "project-not-found",
+      ],
+      ["fatal: remote error: something new", "server-refused"],
       ["SSL certificate problem", "tls"],
       ["Could not resolve host", "dns"],
       ["redirect denied", "redirect"],
       ["Failed to connect", "connection"],
       ["cannot run askpass", "credential-prompt"],
+      ["remote: Something Overleaf has not said before\nfatal: exited", "server-refused"],
       [`Unexpected remote output ${secret}`, "unclassified"],
     ] as const) {
       const diagnostic = classifyProbeGitFailure(

@@ -1,4 +1,5 @@
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import { nativePublicationHost } from "../workspace/fileExchange.testkit.ts";
+const canPublish = await nativePublicationHost();
 // @effect-diagnostics nodeBuiltinImport:off
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 import * as NodeFSP from "node:fs/promises";
@@ -28,7 +29,7 @@ async function put(cwd: string, files: Record<string, string>) {
   }
 }
 
-describe.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
+describe.skipIf(!canPublish)(
   "WorkspaceApplier immutable intent and original receipt regressions",
   () => {
     it.live(

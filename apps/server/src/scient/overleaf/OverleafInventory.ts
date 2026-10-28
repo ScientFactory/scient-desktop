@@ -1,14 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Bounded capture reads the real manuscript folder.
-/**
- * Read only managed/selected/review-required files fully; list unchecked hidden/build additions
- * without adopting them. Enforce limits before reading and fail changing-file/ancestor captures for
- * retry. Never include repositories, links, reserved/app files, OS droppings, or LFS pointers.
- */
+/** What a manual sync sees in the manuscript folder (plan 4.9, contract 8): base files plus new
+ * files sent by default; a per-capture rule skips build leftovers, hidden and oversize files and
+ * Scient's top-level project files; no `.gitignore`. Repos, links, reserved/app files, OS droppings
+ * and LFS pointers excluded. Limits precede reads; a file changing mid-read fails the capture. */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as Schema from "effect/Schema";
+
+import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
+
+import { SCIENT_AGENTS_FILE, SCIENT_PROJECT_FILE } from "@scientfactory/project-init";
 
 import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
+import { assertOverleafHostPath, OverleafFilesystemError } from "./overleafHostPaths.ts";
+import {
+  overleafFilesAvailability,
+  type OverleafFileAvailability,
+} from "./overleafFileAvailability.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
 
@@ -88,6 +98,14 @@ const BUILD_OUTPUT = [
   ".toc",
   ".bbl",
 ];
+/**
+ * Files Scient writes at a project's top for itself; never part of a paper there.
+ * Compared by collision key: on a disk that ignores letter case, `agents.md` is
+ * the file Scient reads and writes as `AGENTS.md`.
+ */
+const SCIENT_PROJECT_FILES = new Set(
+  [SCIENT_AGENTS_FILE, SCIENT_PROJECT_FILE].map(manuscriptCollisionKey),
+);
 
 export type OverleafExclusionReason =
   | "reserved"
@@ -116,17 +134,40 @@ export function overleafPathExclusion(
   return manuscriptPathProblem(path) === null ? null : "invalid-path";
 }
 
+/** An inode plus its creation time, scoped to the device that supplied the opened file. */
+const overleafDiskFileId = (stat: {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly birthtimeNs: bigint;
+}) =>
+  NodeCrypto.createHash("sha256")
+    .update(`${stat.dev}:${stat.ino}:${stat.birthtimeNs}`)
+    .digest("hex");
+
 export interface OverleafCapturedFile {
+  readonly fileId?: string;
   readonly bytes: Uint8Array;
   /** `bytesRevision` of the bytes, the identity the applier checks against. */
   readonly revision: string;
 }
 
+/**
+ * Why a new file is left out unless someone selects it (pr-c-design section 5).
+ * A rule evaluated at every capture, never a remembered choice. `too-large`
+ * is over Overleaf's file limit: never read, and selecting it is refused.
+ */
+export type OverleafUncheckedReason =
+  | "too-large"
+  | "build-output"
+  | "hidden"
+  | "scient-project-file";
+
 export interface OverleafAddition {
   readonly path: string;
   readonly size: number;
+  /** Sent unless deselected: no rule skips it. */
   readonly checkedByDefault: boolean;
-  readonly uncheckedReason: "build-output" | "hidden" | null;
+  readonly uncheckedReason: OverleafUncheckedReason | null;
 }
 
 export interface OverleafInventory {
@@ -134,9 +175,20 @@ export interface OverleafInventory {
   readonly captured: ReadonlyMap<string, OverleafCapturedFile>;
   /** Managed paths with no file on disk (deleted, renamed, or replaced by a folder). */
   readonly missingManaged: ReadonlyArray<string>;
-  /** Files that are neither managed nor local-only, for the review's addition list. */
+  /** Files that are neither managed nor local-only, and not selected, for the review's addition list. */
   readonly additions: ReadonlyArray<OverleafAddition>;
-  /** Local-only paths present on disk. Never read. */
+  /** Additions selected, explicitly or by default, and read in full. */
+  readonly selectedAdditions: ReadonlyArray<OverleafAddition>;
+  /**
+   * Additions left out on purpose, to keep only on this computer: sent by
+   * default yet not selected, or named in the default selection's `except` or
+   * in `keepOnlyHere`, whatever the rule says of them now (a deselected file
+   * that has grown too large stays deliberately kept).
+   */
+  readonly deselected: ReadonlyArray<string>;
+  /** Local-only files read in full to be sent. */
+  readonly sentLocalOnly: ReadonlyArray<string>;
+  /** Local-only paths present on disk and not being sent. Never read. */
   readonly localOnly: ReadonlyArray<string>;
   /** Folders on disk, so Overleaf content can be checked against them. */
   readonly folders: ReadonlyArray<string>;
@@ -148,7 +200,48 @@ export interface OverleafInventory {
   readonly capturedBytes: number;
 }
 
+/**
+ * One digest of everything a capture found, every field in its order, a read
+ * file by its revision (the SHA-256 of its bytes): two captures with the same
+ * digest found the same folder. Generic over the fields, so one added to the
+ * inventory later counts too.
+ */
+export function overleafInventoryDigest(inventory: OverleafInventory): string {
+  const hash = NodeCrypto.createHash("sha256");
+  const write = (value: unknown): void => {
+    if (value instanceof Uint8Array) {
+      // A captured file's bytes are named by its revision beside them.
+      hash.update(`b${value.byteLength};`);
+    } else if (value instanceof Map) {
+      hash.update(`m${value.size}{`);
+      for (const [key, entry] of value) {
+        write(key);
+        write(entry);
+      }
+      hash.update("}");
+    } else if (Array.isArray(value)) {
+      hash.update(`a${value.length}[`);
+      for (const entry of value) write(entry);
+      hash.update("]");
+    } else if (value !== null && typeof value === "object") {
+      const keys = Object.keys(value).sort();
+      hash.update(`o${keys.length}{`);
+      for (const key of keys) {
+        write(key);
+        write((value as Record<string, unknown>)[key]);
+      }
+      hash.update("}");
+    } else {
+      const text = String(value);
+      hash.update(`${typeof value}${text.length}:${text};`);
+    }
+  };
+  write(inventory);
+  return hash.digest("hex");
+}
+
 export type OverleafInventoryRefusal =
+  | { readonly reason: ScientOverleafFilesystemRefusalReason; readonly path: string }
   /** The manuscript folder is missing or is not a folder. */
   | { readonly reason: "folder-unavailable" }
   /** The manuscript folder is inside Git's own folders, where Scient never writes. */
@@ -172,8 +265,10 @@ export type OverleafInventoryRefusal =
    * or Unicode form. Treating it as deleted would remove it from Overleaf.
    */
   | { readonly reason: "alias"; readonly path: string; readonly onDisk: string }
-  /** A selected or requested path is not an addition this walk can include. */
-  | { readonly reason: "not-selectable"; readonly path: string };
+  /** A selected, requested or sent path is not a file this walk can include. */
+  | { readonly reason: "not-selectable"; readonly path: string }
+  /** A path to send from the local-only list is not on it. */
+  | { readonly reason: "not-local-only"; readonly path: string };
 
 export interface OverleafInventoryInput {
   /** Real absolute path of the manuscript folder. */
@@ -183,6 +278,29 @@ export interface OverleafInventoryInput {
   readonly localOnlyPaths: ReadonlyArray<string>;
   /** Additions the user checked in the review. */
   readonly selectedAdditions: ReadonlyArray<string>;
+  /** The review's default selection: every addition no rule skips, except `except`
+   * (kept only here). With `lenient`, selections no longer selectable are left
+   * out instead of refused, so the rebuilt review replaces the earlier one. */
+  readonly defaultSelection?: {
+    readonly except: ReadonlyArray<string>;
+    readonly lenient: boolean;
+  };
+  /** Local-only files to send: read in full like selected additions. */
+  readonly sendLocalOnly: ReadonlyArray<string>;
+  /**
+   * Paths to send whatever the rule says, judged on this capture: a new file is
+   * selected (one too large is refused), a local-only file is sent, and a file
+   * already managed needs nothing more. Lenient like the other selections.
+   */
+  readonly send?: ReadonlyArray<string>;
+  /**
+   * New files to keep only on this computer on purpose, judged on this capture
+   * and whatever the rule says of them. Wins over every selection. A path that
+   * is not a new file here is ignored; a local-only one stays local-only.
+   */
+  readonly keepOnlyHere?: ReadonlyArray<string>;
+  /** The folder is the checkout's top, where Scient keeps its own project files. */
+  readonly atCheckoutTop: boolean;
   /**
    * Further paths to read in full: local-only files or unchecked additions that
    * collide with Overleaf content and must be preserved, not treated as absent.
@@ -193,9 +311,15 @@ export interface OverleafInventoryInput {
   /** Tests only: smaller limits, and a pause between reading a file and checking it again. */
   readonly limits?: Partial<OverleafLimits>;
   readonly afterRead?: (path: string) => Promise<void>;
+  /** Metadata-only platform reader, asked once for every file a capture may open. */
+  readonly filesAvailability?: (
+    paths: ReadonlyArray<string>,
+  ) => Promise<ReadonlyMap<string, OverleafFileAvailability>>;
   /** Tests only: a pause just before a folder is listed. */
   readonly beforeList?: (folder: string) => Promise<void>;
 }
+
+const isFilesystemError = Schema.is(OverleafFilesystemError);
 
 class Refused extends Error {
   readonly refusal: OverleafInventoryRefusal;
@@ -219,6 +343,25 @@ interface Identity {
   readonly ino: bigint;
 }
 
+/** The rule that leaves a new file out by default, judged again at every capture. */
+function uncheckedReason(
+  file: { readonly path: string; readonly size: number; readonly hidden: boolean },
+  fileBytes: number,
+  atCheckoutTop: boolean,
+): OverleafUncheckedReason | null {
+  if (file.size > fileBytes) return "too-large";
+  if (BUILD_OUTPUT.some((suffix) => file.path.toLowerCase().endsWith(suffix)))
+    return "build-output";
+  if (file.hidden) return "hidden";
+  if (
+    atCheckoutTop &&
+    !file.path.includes("/") &&
+    SCIENT_PROJECT_FILES.has(manuscriptCollisionKey(file.path))
+  )
+    return "scient-project-file";
+  return null;
+}
+
 /** Walks the folder within the limits and captures the files the review needs. */
 export async function captureOverleafInventory(
   input: OverleafInventoryInput,
@@ -228,7 +371,7 @@ export async function captureOverleafInventory(
 > {
   const limits: OverleafLimits = { ...OVERLEAF_LIMITS, ...input.limits };
   const absolute = (path: string) =>
-    path === "" ? input.folder : NodePath.join(input.folder, path);
+    assertOverleafHostPath(path === "" ? input.folder : NodePath.join(input.folder, path));
   /** Identities of the folders walked; a read is trusted only while its folders keep them. */
   const folders = new Map<string, Identity>();
   const folderIdentity = async (path: string): Promise<Identity | null> => {
@@ -239,13 +382,15 @@ export async function captureOverleafInventory(
   const gitNames = async (folder: string) => {
     const present: string[] = [];
     for (const name of [".git", "HEAD", "commondir", "objects", "refs"]) {
-      const stat = await NodeFSP.lstat(NodePath.join(folder, name)).catch((error: unknown) => {
-        if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return null;
-        throw new Refused({
-          reason: "unreadable",
-          path: NodePath.relative(input.folder, folder) || ".",
-        });
-      });
+      const stat = await NodeFSP.lstat(assertOverleafHostPath(NodePath.join(folder, name))).catch(
+        (error: unknown) => {
+          if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return null;
+          throw new Refused({
+            reason: "unreadable",
+            path: NodePath.relative(input.folder, folder) || ".",
+          });
+        },
+      );
       if (stat !== null) present.push(name === ".git" && stat.isFile() ? ".git-file" : name);
     }
     return present;
@@ -286,12 +431,20 @@ export async function captureOverleafInventory(
     for (const folder of folders.keys()) await verifyFolder(folder, folder);
   };
 
+  /** Filled once after the walk, before any file is opened. */
+  let availability: ReadonlyMap<string, OverleafFileAvailability> = new Map();
+  const checkAvailability = (path: string) => {
+    const found = availability.get(absolute(path)) ?? "helper-unavailable";
+    if (found !== "available") throw new Refused({ reason: found, path });
+  };
+
   /** Reads one regular file without following links, failing if it or its folders change. */
   const readStable = async (path: string, onSize: (size: number) => void) => {
     await verifyFolder(parentOf(path), path);
+    checkAvailability(path);
     let handle: NodeFSP.FileHandle;
     try {
-      handle = await NodeFSP.open(
+      handle = await NodeFS.promises.open(
         absolute(path),
         NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
       );
@@ -330,7 +483,7 @@ export async function captureOverleafInventory(
       const named = await NodeFSP.lstat(absolute(path), { bigint: true }).catch(() => null);
       if (named === null || named.dev !== after.dev || named.ino !== after.ino)
         throw new Refused({ reason: "unstable", path });
-      return buffer.subarray(0, size);
+      return { bytes: buffer.subarray(0, size), fileId: overleafDiskFileId(after) };
     } catch (error) {
       if (error instanceof Refused) throw error;
       throw new Refused({ reason: "unreadable", path });
@@ -339,16 +492,28 @@ export async function captureOverleafInventory(
     }
   };
 
-  const readPrefix = async (path: string): Promise<Uint8Array | null> => {
+  /**
+   * The opened file's size and its first bytes, or null bytes when it is now too
+   * large to send: the listing's size may be stale, so the file is judged by the
+   * handle before anything is read. Null when it cannot be read as a file.
+   */
+  const readPrefix = async (
+    path: string,
+  ): Promise<{ readonly size: number; readonly prefix: Uint8Array | null } | null> => {
+    checkAvailability(path);
     let handle: NodeFSP.FileHandle | undefined;
     try {
-      handle = await NodeFSP.open(
+      handle = await NodeFS.promises.open(
         absolute(path),
-        NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+        // Non-blocking, so a pipe swapped in after the listing cannot stall the walk.
+        NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
       );
+      const stat = await handle.stat();
+      if (!stat.isFile()) return null;
+      if (stat.size > limits.fileBytes) return { size: stat.size, prefix: null };
       const buffer = new Uint8Array(OVERLEAF_PREFIX_BYTES);
       const { bytesRead } = await handle.read(buffer, 0, OVERLEAF_PREFIX_BYTES, 0);
-      return buffer.subarray(0, bytesRead);
+      return { size: stat.size, prefix: buffer.subarray(0, bytesRead) };
     } catch {
       // An unreadable unchecked addition is still listed; reading it in full would refuse it.
       return null;
@@ -358,6 +523,17 @@ export async function captureOverleafInventory(
   };
 
   try {
+    for (const path of [
+      ...input.managedPaths,
+      ...input.localOnlyPaths,
+      ...input.requestedPaths,
+      ...input.selectedAdditions,
+      ...input.sendLocalOnly,
+      ...input.stagingPaths,
+      ...(input.send ?? []),
+      ...(input.keepOnlyHere ?? []),
+    ])
+      absolute(path);
     const root = await folderIdentity("");
     if (root === null) throw new Refused({ reason: "folder-unavailable" });
     if (await insideGitFolder()) throw new Refused({ reason: "git-folder" });
@@ -365,8 +541,11 @@ export async function captureOverleafInventory(
 
     const managed = new Set(input.managedPaths);
     const localOnly = new Set(input.localOnlyPaths);
-    const selected = new Set(input.selectedAdditions);
     const requested = new Set(input.requestedPaths);
+    const lenient = input.defaultSelection?.lenient ?? false;
+    const keep = new Set(input.keepOnlyHere ?? []);
+    /** Additions left out on purpose: never selected by default, and remembered. */
+    const deliberate = new Set([...(input.defaultSelection?.except ?? []), ...keep]);
     const staging = new Set(input.stagingPaths);
 
     const files: Array<{ path: string; size: number; hidden: boolean }> = [];
@@ -386,7 +565,7 @@ export async function captureOverleafInventory(
         excluded.push({ path: next.relative, reason: "repository" });
         continue;
       }
-      const entries: NodeFS.Dirent[] = [];
+      const entries: Array<{ name: string; entry: NodeFS.Dirent }> = [];
       // A folder swapped for a link would be listed through it, and its managed files
       // would look deleted; the listing counts only if the folder kept its identity.
       await input.beforeList?.(next.relative);
@@ -397,44 +576,60 @@ export async function captureOverleafInventory(
       await listing();
       try {
         // Iterated, not read whole, so a huge folder costs no more than the walk allows.
-        for await (const entry of await NodeFSP.opendir(absolute(next.relative))) {
+        // Node accepts raw buffer names; its opendir types omit that encoding.
+        for await (const entry of await NodeFS.promises.opendir(absolute(next.relative), {
+          encoding: "buffer" as BufferEncoding,
+        })) {
           walked += 1;
           if (walked > limits.walkEntries) throw new Refused({ reason: "walk-limit" });
-          entries.push(entry);
+          const raw: unknown = entry.name;
+          if (!Buffer.isBuffer(raw))
+            throw new Refused({ reason: "invalid-encoding", path: next.relative || "." });
+          const name = raw.toString("utf8");
+          if (!Buffer.from(name, "utf8").equals(raw))
+            throw new Refused({ reason: "invalid-encoding", path: next.relative || "." });
+          entries.push({ name, entry });
         }
       } catch (error) {
         if (error instanceof Refused) throw error;
         throw new Refused({ reason: "unreadable", path: next.relative || "." });
       }
       await listing();
-      for (const entry of entries.toSorted((left, right) => byPath(left.name, right.name))) {
-        const path = next.relative === "" ? entry.name : `${next.relative}/${entry.name}`;
-        if (staging.has(path) || isStaging(entry.name)) {
+      for (const { name, entry } of entries.toSorted((left, right) =>
+        byPath(left.name, right.name),
+      )) {
+        const path = next.relative === "" ? name : `${next.relative}/${name}`;
+        absolute(path);
+        if (staging.has(path) || isStaging(name)) {
           excluded.push({ path, reason: "staging" });
-        } else if (isReservedName(entry.name)) {
+        } else if (isReservedName(name)) {
           // A worktree's `.git` is a file; either way it is never manuscript content.
           excluded.push({ path, reason: "reserved" });
         } else if (entry.isSymbolicLink()) {
           excluded.push({ path, reason: "link" });
         } else if (entry.isDirectory()) {
-          if (DROPPED_FOLDERS.has(entry.name)) excluded.push({ path, reason: "dropping" });
+          if (DROPPED_FOLDERS.has(name)) excluded.push({ path, reason: "dropping" });
           else if (manuscriptPathProblem(path) !== null)
             excluded.push({ path, reason: "invalid-path" });
           else {
             const identity = await folderIdentity(path);
             if (identity === null) throw new Refused({ reason: "unstable", path });
             folders.set(path, identity);
-            queue.push({ relative: path, hidden: next.hidden || entry.name.startsWith(".") });
+            queue.push({ relative: path, hidden: next.hidden || name.startsWith(".") });
           }
         } else if (!entry.isFile()) {
           excluded.push({ path, reason: "special" });
-        } else if (isDroppedFile(entry.name)) {
+        } else if (isDroppedFile(name)) {
           excluded.push({ path, reason: "dropping" });
         } else if (manuscriptPathProblem(path) !== null) {
           excluded.push({ path, reason: "invalid-path" });
         } else {
           const stat = await NodeFSP.lstat(absolute(path)).catch(() => null);
-          files.push({ path, size: stat?.size ?? 0, hidden: next.hidden });
+          files.push({
+            path,
+            size: stat?.size ?? 0,
+            hidden: next.hidden || name.startsWith("."),
+          });
         }
       }
     }
@@ -459,42 +654,100 @@ export async function captureOverleafInventory(
       if (alias !== undefined && alias !== path && !folders.has(path))
         throw new Refused({ reason: "alias", path, onDisk: alias });
     }
-    for (const path of [...selected, ...requested]) {
+    for (const path of requested) {
       if (!present.has(path) || managed.has(path))
         throw new Refused({ reason: "not-selectable", path });
     }
+    const sizes = new Map(files.map((file) => [file.path, file.size]));
+    /** Whether `path` can be selected; refuses why not unless lenient. */
+    const selectable = (path: string, fromLocalOnly: boolean) => {
+      const refusal: OverleafInventoryRefusal | null =
+        fromLocalOnly && !localOnly.has(path)
+          ? { reason: "not-local-only", path }
+          : !present.has(path) || managed.has(path) || (!fromLocalOnly && localOnly.has(path))
+            ? { reason: "not-selectable", path }
+            : (sizes.get(path) ?? 0) > limits.fileBytes
+              ? { reason: "file-too-large", path }
+              : null;
+      if (refusal !== null && !lenient) throw new Refused(refusal);
+      return refusal === null;
+    };
+    // Keeping a file only here wins over every request to send it.
+    const selected = new Set(
+      input.selectedAdditions.filter((path) => !keep.has(path) && selectable(path, false)),
+    );
+    const sent = new Set(
+      // One read as a collision is decided in the review, not sent as it is.
+      input.sendLocalOnly.filter(
+        (path) => !keep.has(path) && !requested.has(path) && selectable(path, true),
+      ),
+    );
+    for (const path of input.send ?? []) {
+      // Already managed, or read in full as a collision: sent with the sync as it is.
+      if (keep.has(path) || managed.has(path) || requested.has(path)) continue;
+      if (localOnly.has(path)) {
+        if (selectable(path, true)) sent.add(path);
+      } else if (selectable(path, false)) selected.add(path);
+    }
 
+    availability = await (input.filesAvailability ?? overleafFilesAvailability)(
+      files.map((file) => absolute(file.path)),
+    );
     const captured = new Map<string, OverleafCapturedFile>();
     const additions: OverleafAddition[] = [];
+    const selectedAdditions: OverleafAddition[] = [];
     const localOnlyPresent: string[] = [];
     let capturedBytes = 0;
     const account = (size: number) => {
       capturedBytes += size;
       if (capturedBytes > limits.totalBytes) throw new Refused({ reason: "total-too-large" });
     };
+    const capture = async (path: string) => {
+      if (captured.size >= limits.managedFiles) throw new Refused({ reason: "managed-limit" });
+      const { bytes, fileId } = await readStable(path, account);
+      if (isOverleafLfsPointer(bytes)) throw new Refused({ reason: "lfs-pointer", path });
+      captured.set(path, { bytes, revision: bytesRevision(bytes), fileId });
+    };
     for (const file of files) {
-      const capture = managed.has(file.path) || selected.has(file.path) || requested.has(file.path);
-      if (capture) {
-        if (captured.size >= limits.managedFiles) throw new Refused({ reason: "managed-limit" });
-        const bytes = await readStable(file.path, account);
-        if (isOverleafLfsPointer(bytes))
-          throw new Refused({ reason: "lfs-pointer", path: file.path });
-        captured.set(file.path, { bytes, revision: bytesRevision(bytes) });
-      } else if (localOnly.has(file.path)) {
+      if (managed.has(file.path) || requested.has(file.path) || sent.has(file.path)) {
+        await capture(file.path);
+        continue;
+      }
+      if (localOnly.has(file.path)) {
         localOnlyPresent.push(file.path);
-      } else {
-        const prefix = await readPrefix(file.path);
-        if (prefix !== null && isOverleafLfsPointer(prefix)) {
-          excluded.push({ path: file.path, reason: "lfs-pointer" });
-          continue;
-        }
-        const build = BUILD_OUTPUT.some((suffix) => file.path.toLowerCase().endsWith(suffix));
-        additions.push({
+        continue;
+      }
+      const addition = (size: number): OverleafAddition => {
+        const reason = uncheckedReason({ ...file, size }, limits.fileBytes, input.atCheckoutTop);
+        return {
           path: file.path,
-          size: file.size,
-          checkedByDefault: !build && !file.hidden,
-          uncheckedReason: build ? "build-output" : file.hidden ? "hidden" : null,
-        });
+          size,
+          checkedByDefault: reason === null,
+          uncheckedReason: reason,
+        };
+      };
+      if (selected.has(file.path)) {
+        await capture(file.path);
+        selectedAdditions.push(addition(file.size));
+        continue;
+      }
+      // A file too large for Overleaf is never read, judged again on the opened
+      // file; an LFS pointer is small.
+      const opened = file.size > limits.fileBytes ? null : await readPrefix(file.path);
+      if (opened !== null && opened.prefix !== null && isOverleafLfsPointer(opened.prefix)) {
+        excluded.push({ path: file.path, reason: "lfs-pointer" });
+        continue;
+      }
+      const listed = addition(opened?.size ?? file.size);
+      if (
+        input.defaultSelection !== undefined &&
+        listed.checkedByDefault &&
+        !deliberate.has(file.path)
+      ) {
+        await capture(file.path);
+        selectedAdditions.push(listed);
+      } else {
+        additions.push(listed);
       }
     }
 
@@ -506,6 +759,14 @@ export async function captureOverleafInventory(
         captured,
         missingManaged: [...managed].filter((path) => !present.has(path)).sort(byPath),
         additions: additions.toSorted((left, right) => byPath(left.path, right.path)),
+        selectedAdditions: selectedAdditions.toSorted((left, right) =>
+          byPath(left.path, right.path),
+        ),
+        deselected: additions
+          .filter((entry) => entry.checkedByDefault || deliberate.has(entry.path))
+          .map((entry) => entry.path)
+          .sort(byPath),
+        sentLocalOnly: [...sent].sort(byPath),
         localOnly: localOnlyPresent.toSorted(byPath),
         folders: [...folders.keys()].filter((path) => path !== "").sort(byPath),
         excluded: excluded.toSorted((left, right) => byPath(left.path, right.path)),
@@ -513,6 +774,13 @@ export async function captureOverleafInventory(
       },
     };
   } catch (error) {
+    if (isFilesystemError(error)) {
+      const relative = NodePath.relative(input.folder, error.path);
+      return {
+        _tag: "refused",
+        refusal: { reason: error.reason, path: relative.length <= 4_096 ? relative || "." : "." },
+      };
+    }
     if (error instanceof Refused) return { _tag: "refused", refusal: error.refusal };
     throw error;
   }

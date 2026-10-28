@@ -19,6 +19,7 @@ import { refreshProjectEntriesQuery } from "~/components/files/projectFilesQuery
 import { normalizeMarkdownReadSnapshot } from "~/scient/markdownEditor/persistence/markdownReadSnapshot";
 import { documentCurrentMissingReview } from "~/scient/markdownEditor/persistence/documentFailureReason";
 import { randomUUID } from "~/lib/utils";
+import { OverleafKeptCopies } from "~/scient/overleaf/OverleafKeptCopies";
 
 type Version = ProjectListFileVersionsResult["versions"][number];
 type CurrentReview =
@@ -637,6 +638,11 @@ export function ScientFileVersionHistory(props: {
               return true;
             })
           }
+        />
+        <OverleafKeptCopies
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          relativePath={props.relativePath}
         />
       </PopoverPopup>
     </Popover>

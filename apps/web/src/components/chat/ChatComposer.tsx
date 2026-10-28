@@ -310,6 +310,8 @@ import {
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
+// SCIENT-FORK: prepared requests use the composer's normal Send path.
+import { sendPreparedComposerMessage } from "~/scient/chat/sendPreparedComposerMessage";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -320,6 +322,8 @@ function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
 const runtimeModeOptions = runtimeModes.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
 
 export interface ChatComposerHandle {
+  // SCIENT-FORK: optional for handles that cannot safely send a prepared request.
+  sendMessageIfIdle?: (threadRef: ScopedThreadRef, message: string) => boolean;
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
   restoreAfterTimelineReachedEnd: () => void;
@@ -2894,6 +2898,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
+  // SCIENT-FORK:START — Ask the agent may send only into its own idle, empty composer.
+  const sendMessageIfIdle = (threadRef: ScopedThreadRef, message: string) =>
+    sendPreparedComposerMessage({
+      threadRef,
+      composerTarget: composerDraftTarget,
+      ready:
+        composerMountedRef.current &&
+        routeKind === "server" &&
+        activeThreadId === threadRef.threadId &&
+        activeThread !== null &&
+        canOperateThread &&
+        !noProviderAvailable &&
+        !isSendDisabled &&
+        !isSendBusy &&
+        !isConnecting &&
+        !isCompacting &&
+        !isRevertingCheckpoint &&
+        environmentUnavailable === null &&
+        !projectSelectionRequired &&
+        phase !== "running" &&
+        phase !== "connecting" &&
+        pendingApprovals.length === 0 &&
+        pendingUserInputs.length === 0 &&
+        !voiceBusyRef.current &&
+        countPreparingComposerImages(attachmentTargetKey) === 0 &&
+        !pendingDraftWork.has(attachmentTargetKey) &&
+        readEnvironmentScope(environmentId, AuthOrchestrationOperateScope),
+      prompt: promptRef.current,
+      message,
+      insert: insertComposerTextAtEndStable,
+      submit: submitComposerStable,
+    });
+  const sendMessageIfIdleStable = useStableCallback(sendMessageIfIdle);
+  // SCIENT-FORK:END
+
   const addComposerFolders = (folders: File[]) => {
     const target = folderDropTarget({
       localEnvironmentDisabled: isLocalEnvironmentDisabled(),
@@ -3247,6 +3286,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         countPreparingComposerImages(attachmentTargetKey) > 0 ||
         pendingDraftWork.has(attachmentTargetKey),
       insertTextAtEnd: insertComposerTextAtEndStable,
+      // SCIENT-FORK: this handle checks the live target, draft and send availability.
+      sendMessageIfIdle: sendMessageIfIdleStable,
       pasteTextAtEnd: (text: string, options) => {
         const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
         const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
@@ -3454,6 +3495,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       insertComposerDraftTerminalContext,
       insertComposerTextStable,
       insertComposerTextAtEndStable,
+      sendMessageIfIdleStable,
       promptRef,
       composerImagesRef,
       composerFilesRef,

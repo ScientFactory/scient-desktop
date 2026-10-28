@@ -185,21 +185,53 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
     );
   });
 
-  it.live("keeps unresolved conflict material from being sent", () =>
+  it.live("keeps unresolved conflict material from being sent, and sends the rest", () =>
     run(
       Effect.gen(function* () {
         const w = yield* world({
           overleaf: "git",
-          synced: { "main.tex": marked, "other.tex": "O" },
-          remote: { "main.tex": marked, "other.tex": "O" },
+          synced: { "main.tex": "M", "other.tex": "O" },
+          remote: { "main.tex": "M", "other.tex": "O" },
           markerPaths: ["main.tex"],
+        });
+        yield* write(w.folder, { "main.tex": marked, "other.tex": "O, edited here" });
+        expect(yield* w.sync()).toMatchObject({ publication: { _tag: "accepted" } });
+        expect(w.pushes).toHaveLength(1);
+        // Only the file with conflict material waits; Overleaf keeps its version of it.
+        expect((yield* w.overleafNow).contents).toEqual({
+          "main.tex": "M",
+          "other.tex": "O, edited here",
+        });
+        expect((yield* w.connection).markers).toEqual([
+          { path: "main.tex", folderPaths: [], overleafPaths: ["main.tex"] },
+        ]);
+      }),
+    ),
+  );
+
+  it.live("blocks the send when conflict material sits where nothing is held", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "M", "other.tex": "O" },
+          remote: { "main.tex": "M", "other.tex": "O" },
+          // The applier reports marks at a path the review does not hold.
+          applier: (real) => ({
+            ...real,
+            apply: (input) =>
+              Effect.map(real.apply(input), (result) => ({
+                ...result,
+                outcome: "attention" as const,
+                markerPaths: ["other.tex"],
+              })),
+          }),
         });
         yield* write(w.folder, { "other.tex": "O, edited here" });
         expect(yield* w.sync()).toMatchObject({
-          publication: { _tag: "blocked", reason: "markers" },
+          publication: { _tag: "blocked", reason: "attention" },
         });
         expect(w.pushes).toHaveLength(0);
-        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": marked, "other.tex": "O" });
       }),
     ),
   );

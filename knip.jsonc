@@ -31,6 +31,7 @@
         "mobile-native-client.ts",
         "setup-worktree.ts",
         "sign-macos.ts",
+        "publication-after-sign.ts",
         "smoke-desktop-app.ts",
         "verify-windows-desktop-artifact.ts",
         // release-smoke.ts runs it by path to check the branded nightly release name.
@@ -51,6 +52,7 @@
       // Vite+ pack entries and the launcher used by installed background services.
       "entry": [
         "src/bin.ts!",
+        "src/overleaf-packaging-probe.ts!",
         "src/service-launcher.ts!",
         "src/analytics-worker.ts!",
         "src/pdf-validation-worker.ts!",

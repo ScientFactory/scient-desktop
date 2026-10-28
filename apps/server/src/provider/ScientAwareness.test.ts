@@ -7,6 +7,7 @@ import {
   SCIENT_CORE_AWARENESS,
   SCIENT_COMPUTE_AWARENESS,
   SCIENT_DOCUMENT_BUILD_AWARENESS,
+  SCIENT_OVERLEAF_AWARENESS,
   SCIENT_PREVIEW_AWARENESS,
   SCIENT_SKILLS_AWARENESS,
 } from "./ScientAwareness.ts";
@@ -129,8 +130,16 @@ describe("Scient awareness", () => {
       expect(SCIENT_DOCUMENT_BUILD_AWARENESS).not.toContain(skillWorkflowDetail);
     }
     expect(buildScientAwareness(new Set(["documents:build"]))).toBe(
-      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_DOCUMENT_BUILD_AWARENESS}`,
+      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_DOCUMENT_BUILD_AWARENESS}\n\n${SCIENT_OVERLEAF_AWARENESS}`,
     );
+  });
+
+  it("points agents at the Overleaf tools and skill with document authority, adding no gate", () => {
+    expect(wordCount(SCIENT_OVERLEAF_AWARENESS)).toBeLessThanOrEqual(60);
+    expect(buildScientAwareness(new Set(["sources:read"]))).not.toContain("Overleaf");
+    expect(
+      buildScientAwareness(new Set(["documents:build"]), CLAUDE_SCIENT_TOOL_PROJECTION),
+    ).toContain("`mcp__scient__scient_overleaf_status`");
   });
 
   it("projects exact provider tool names without changing capability gating", () => {

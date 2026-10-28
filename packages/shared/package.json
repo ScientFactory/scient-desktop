@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scientPublicationArtifact": {
+      "types": "./src/scientPublicationArtifact.ts",
+      "import": "./src/scientPublicationArtifact.ts"
+    },
     "./scientTextGenerationSelection": {
       "types": "./src/scientTextGenerationSelection.ts",
       "import": "./src/scientTextGenerationSelection.ts"

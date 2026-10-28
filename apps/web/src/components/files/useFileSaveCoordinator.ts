@@ -27,6 +27,9 @@ import {
   documentPublicationOutcome,
 } from "~/scient/markdownEditor/persistence/documentFailureReason";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+// SCIENT-FORK:START
+import { notifyWorkspaceFileSaved } from "~/scient/files/workspaceFileSaves";
+// SCIENT-FORK:END
 
 import type { FileSaveCoordinator, FileSaveResolutionAction } from "./fileSaveCoordinator";
 import {
@@ -326,6 +329,9 @@ function createFileSaveSession({
           }),
         revisionFromResult: (result) => result.revision,
         onPersisted: (confirmedContents, result) => {
+          // SCIENT-FORK:START — a confirmed save is news for features that follow a folder
+          notifyWorkspaceFileSaved({ environmentId, cwd, relativePath });
+          // SCIENT-FORK:END
           return confirmProjectFileQueryData(
             environmentId,
             cwd,

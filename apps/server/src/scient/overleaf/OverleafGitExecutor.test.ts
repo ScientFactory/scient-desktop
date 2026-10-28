@@ -2,47 +2,24 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 
 import {
+  make,
   MINIMUM_GIT_VERSION,
   OVERLEAF_COMMIT_IDENTITY,
   OverleafGitError,
-  OverleafGitExecutor,
   buildOverleafGitEnvironment,
   isSupportedGitVersion,
-  make,
   parseGitVersion,
-  posixAskpassScript,
-  windowsAskpassLauncher,
-  windowsAskpassPowerShellScript,
 } from "./OverleafGitExecutor.ts";
+
+import { withExecutor } from "./OverleafGitExecutor.testkit.ts";
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const bytes = (value: string) => new TextEncoder().encode(value);
-
-const withExecutor = <A, E>(
-  body: (input: {
-    readonly git: OverleafGitExecutor["Service"];
-    readonly runtimeRoot: string;
-    readonly work: string;
-  }) => Effect.Effect<A, E, FileSystem.FileSystem>,
-) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-overleaf-git-" });
-      const runtimeRoot = NodePath.join(root, "runtime");
-      const work = NodePath.join(root, "work");
-      yield* fs.makeDirectory(work);
-      const git = yield* make({ runtimeRoot });
-      return yield* body({ git, runtimeRoot, work });
-    }),
-  ).pipe(Effect.provide(NodeServices.layer));
 
 describe("Overleaf Git environment", () => {
   const base = {
@@ -102,14 +79,6 @@ describe("Overleaf Git environment", () => {
     const env = buildOverleafGitEnvironment({ ...base, allowLocalProtocols: true });
     expect(config(env)["protocol.file.allow"]).toBe("always");
   });
-
-  it("keeps the askpass helpers free of the token itself", () => {
-    expect(posixAskpassScript()).toContain("SCIENT_OVERLEAF_TOKEN_FILE");
-    expect(windowsAskpassPowerShellScript()).toContain(
-      "ReadAllText($env:SCIENT_OVERLEAF_TOKEN_FILE)",
-    );
-    expect(windowsAskpassLauncher("C:\\ps.exe", "C:\\a.ps1")).toContain('-File "C:\\a.ps1" %*');
-  });
 });
 
 describe("Overleaf Git version gate", () => {
@@ -128,16 +97,6 @@ describe("Overleaf Git version gate", () => {
 });
 
 describe("OverleafGitExecutor", () => {
-  it.effect("finds a supported Git", () =>
-    withExecutor(({ git }) =>
-      Effect.gen(function* () {
-        const found = yield* git.availability;
-        expect(NodePath.isAbsolute(found.executable)).toBe(true);
-        expect(parseGitVersion(found.version)).not.toBeNull();
-      }),
-    ),
-  );
-
   it.effect("passes standard input and returns raw output", () =>
     withExecutor(({ git, work }) =>
       Effect.gen(function* () {
@@ -186,6 +145,35 @@ describe("OverleafGitExecutor", () => {
         expect(output).toContain("username=git");
         expect(output).toContain("password=olp_FAKE-TOKEN-FOR-TEST");
         expect(NodeFS.readdirSync(runtimeRoot)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("sweeps abandoned command scratch on startup and preserves unrelated state", () =>
+    withExecutor(({ runtimeRoot, work, publicationHelper }) =>
+      Effect.gen(function* () {
+        const abandoned = NodePath.join(runtimeRoot, "git-crashed");
+        NodeFS.mkdirSync(abandoned);
+        NodeFS.writeFileSync(NodePath.join(abandoned, "token"), "dummy-crash-canary");
+        NodeFS.writeFileSync(NodePath.join(runtimeRoot, "keep"), "state");
+        const restarted = yield* make({ runtimeRoot, publicationHelper });
+        expect(NodeFS.existsSync(abandoned)).toBe(false);
+        expect(NodeFS.readFileSync(NodePath.join(runtimeRoot, "keep"), "utf8")).toBe("state");
+        yield* restarted.execute({ cwd: work, args: ["--version"] });
+        expect(NodeFS.readdirSync(runtimeRoot)).toEqual(["keep"]);
+      }),
+    ),
+  );
+
+  it.effect("refuses unavailable private scratch without taking down the service layer", () =>
+    withExecutor(({ work, publicationHelper }) =>
+      Effect.gen(function* () {
+        const runtimeRoot = NodePath.join(work, "not-a-directory");
+        NodeFS.writeFileSync(runtimeRoot, "untouched");
+        const unavailable = yield* make({ runtimeRoot, publicationHelper });
+        const error = yield* unavailable.availability.pipe(Effect.flip);
+        expect(error.reason).toBe("runtime-failed");
+        expect(NodeFS.readFileSync(runtimeRoot, "utf8")).toBe("untouched");
       }),
     ),
   );

@@ -23,6 +23,9 @@ import {
   CalendarClockIcon,
   FileDiffIcon,
   FileTextIcon,
+  // SCIENT-FORK:START — Synced folders
+  FolderSyncIcon,
+  // SCIENT-FORK:END
   FolderTreeIcon,
   GitBranchIcon,
   GlobeIcon,
@@ -133,6 +136,9 @@ const SETTINGS_SECTION_ICONS: Readonly<
   // SCIENT-FORK:END
   "/settings/scientific-computing": ScientificComputingSidebarIcon,
   "/settings/documents": FileTextIcon,
+  // SCIENT-FORK:START — Synced folders
+  "/settings/synced-folders": FolderSyncIcon,
+  // SCIENT-FORK:END
   "/settings/threads": MessagesSquareIcon,
   "/settings/browser": GlobeIcon,
   "/settings/devices": SmartphoneIcon,
