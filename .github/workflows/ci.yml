@@ -732,7 +732,7 @@ jobs:
     name: Overleaf Windows
     needs: [release_notes]
     runs-on: windows-2025
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -770,6 +770,10 @@ jobs:
           git config --global credential.helper '!exit 91'
       - name: Require every Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
+      # Each case must finish its sync; 300 files is left to the Linux performance lane.
+      - name: Time real Overleaf syncs on Windows
+        working-directory: apps/server
+        run: vp test bench --run --fileParallelism=false --maxWorkers=1 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) (1|10|50)$"
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — native qualification stays under the same required gate.
