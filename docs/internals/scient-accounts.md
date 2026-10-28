@@ -175,6 +175,13 @@ desktop. The count comes from Login Data without decrypting anything.
   300 passwords now take about 3 s.
 - Website passwords are listed under one **Saved passwords** row that opens a searchable list, so
   hundreds of imports don't push Browser profiles off the page. Each row shows the username.
+- Rows without a bundled logo show the site's icon. Electron main (`siteIcons.ts`) reads the
+  site's page, takes a declared PNG/SVG icon (else any icon, else `/favicon.ico`, then the parent
+  domain's) and returns it as a data URI. Lookups use no cookies, go to public HTTPS hosts only
+  (every redirect is checked), run four at a time with an 8 s limit per site, and are cached in
+  `scient/site-icons.json`: found icons for 30 days, misses for a day. No third-party icon service
+  is used, so the list of sites stays private. Without the desktop, the row tries the site's
+  `favicon.ico` directly.
 - Blacklisted, empty, Android and undecryptable rows are skipped and counted; unknown encryption
   versions fail closed. The snapshot is deleted on success or failure and key buffers are zeroed.
 - Linux uses the cookie keys (v10, Secret Service v11); Windows only legacy v10. App-bound (v20)
