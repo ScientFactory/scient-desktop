@@ -92,7 +92,6 @@ const versionCacheKey = (
   ]);
 
 export interface OmpRpcProcessOptions {
-  readonly useClaudePlugins?: boolean | undefined;
   /** The product `command` is expected to be. */
   readonly target: OmpTarget;
   readonly command: string;
@@ -502,8 +501,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
     );
   if (target.driverKind === "scient") {
     delete env.SCIENT_AGENT_ENABLE_SOURCES;
-    if (options.useClaudePlugins && supportsScientClaudePlugins(version))
-      env.SCIENT_AGENT_ENABLE_SOURCES = "claude-plugins";
+    if (supportsScientClaudePlugins(version)) env.SCIENT_AGENT_ENABLE_SOURCES = "claude-plugins";
   }
   const command = yield* resolveSpawnCommand(
     resolvedBinary,
