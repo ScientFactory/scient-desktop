@@ -126,9 +126,18 @@ with the same origin and username in different profiles.
 
 Profiles are upstream T3 (`browserProfile.ts`, client settings `browserProfiles`). Scient keeps a
 server-side `BrowserProfileRecord` per profile id: access, scope, `scriptSignIn`, and the picture,
-colour, source browser, source profile name and email from import. A profile without a record is
+colour, source browser, source profile name, folder and email from import. A profile without a record is
 Allowed for all projects with script sign-ins on, which matches upstream behaviour where agents
 reach every profile.
+
+Each time Accounts opens, linked profiles take the source browser's current picture, colour, name
+and email, found by folder (older links: by unique name and email). That needs neither quitting the
+browser nor the Keychain. A Scient profile still named after its source follows a rename there; a
+name chosen in Scient stays. A picture that can't be read keeps the one shown. The manual refresh
+(the button beside Browser profiles, or Refresh in a profile's menu) also re-copies sign-ins, once
+the browser is closed, and imports saved passwords; it reports a running browser instead of
+skipping silently. An import writes the profile's record and the new-tab default before its
+passwords, so an interrupted import still leaves a complete profile.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
 session may use, and `preview_open` refuses an Off profile (or asks for an Ask one), including the
@@ -161,6 +170,11 @@ desktop. The count comes from Login Data without decrypting anything.
   key (the macOS Keychain prompt appears here, not before) and returns CSV to the renderer, which
   sends it to `accountsImportPasswords` like a picked CSV file. Dedupe, controls and store writes
   are the CSV importer's; new website accounts work in every profile.
+- An import commits once: per-entry commits each rebuilt and published the whole snapshot (about
+  3 s per password), and the uninterruptible write lock kept the server from quitting meanwhile.
+  300 passwords now take about 3 s.
+- Website passwords are listed under one **Saved passwords** row that opens a searchable list, so
+  hundreds of imports don't push Browser profiles off the page. Each row shows the username.
 - Blacklisted, empty, Android and undecryptable rows are skipped and counted; unknown encryption
   versions fail closed. The snapshot is deleted on success or failure and key buffers are zeroed.
 - Linux uses the cookie keys (v10, Secret Service v11); Windows only legacy v10. App-bound (v20)
@@ -342,7 +356,8 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 - **Profile cards** show the picture and name from the source browser (Chrome's Google picture or
   avatar colour, else a coloured initial), the source and email, the signed-in sites and the access
   chip. "Add profile" lists every profile found on the machine with picture, name and email; picking
-  several imports each into a Scient profile of the same name. Refresh re-copies sign-ins.
+  several imports each into a Scient profile of the same name. Profile pictures are round; logos
+  of apps and sites are rounded squares.
 - **Save on sign-in**: when the user submits a login form in a desktop tab, the guest preload
   reports the origin, username and password once. Server comparison chooses "Save sign-in?",
   "Update password?", or no prompt for an unchanged password, including Scient’s own fills. The

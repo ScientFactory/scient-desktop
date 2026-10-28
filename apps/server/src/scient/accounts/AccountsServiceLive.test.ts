@@ -587,7 +587,7 @@ it.effect(
   "imports sibling subdomains separately and updates only the exact site and username",
   () =>
     Effect.gen(function* () {
-      const { service } = yield* makeHarness();
+      const { service, operations } = yield* makeHarness();
       const parentValue = syntheticValue();
       const parent = yield* service.save({
         ...website(parentValue),
@@ -600,11 +600,16 @@ it.effect(
       const mailValue = syntheticValue();
       const wikiValue = syntheticValue();
       const content = `name,url,username,password,note\nMail,https://mail.example.com/login,user,${mailValue},\nWiki,https://wiki.example.com/login,user,${wikiValue},`;
+      const stateWrites = () =>
+        operations.filter((operation) => operation.includes("accounts-state")).length;
+      const before = stateWrites();
       expect(yield* service.importPasswords({ format: "auto", content })).toEqual({
         created: 2,
         updated: 0,
         skipped: 0,
       });
+      // The whole import is one write: per-entry writes and publishes froze large imports.
+      expect(stateWrites() - before).toBe(1);
       const accounts = (yield* service.snapshot).accounts;
       const mail = accounts.find(
         (account) =>

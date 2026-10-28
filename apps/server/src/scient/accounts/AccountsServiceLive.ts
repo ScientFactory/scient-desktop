@@ -207,12 +207,19 @@ export const layer = Layer.effect(
     });
     const locked = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       writes.withPermits(1)(Effect.uninterruptible(initialize.pipe(Effect.andThen(effect))));
+    /** Set while a bulk change runs: commits only update `state`, written and published once at the end. */
+    let batch: { dirty: boolean } | undefined;
     const commit = Effect.fn("AccountsService.commit")(function* (
       next: AccountsState,
       usageOnly = false,
     ) {
       // Invalidate before the first write: cache hits must not bypass an in-flight revocation.
       if (!usageOnly) bindingRevision++;
+      if (batch) {
+        state = next;
+        batch.dirty = true;
+        return;
+      }
       yield* persistence
         .write("accounts-state", yield* encodePrivateJson(AccountsState, next))
         .pipe(
@@ -224,6 +231,17 @@ export const layer = Layer.effect(
         );
       state = next;
       yield* publish(!usageOnly);
+    });
+    // One write for hundreds of imported passwords; each commit rebuilt and sent the whole snapshot.
+    const batched = Effect.fn("AccountsService.batched")(function* <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) {
+      const current = { dirty: false };
+      batch = current;
+      const exit = yield* Effect.exit(effect);
+      batch = undefined;
+      if (current.dirty) yield* commit(state);
+      return yield* exit;
     });
     const appendActivity = Effect.fn("AccountsService.appendActivity")(function* (
       entry: Omit<AccountActivityEntry, "at">,
@@ -912,73 +930,75 @@ export const layer = Layer.effect(
       ),
       importPasswords: Effect.fn("AccountsService.importPasswords")((input) =>
         locked(
-          Effect.gen(function* () {
-            const parsed = yield* Effect.try({
-              try: () => parsePasswordImport(input.content, input.format),
-              catch: () =>
-                failure("invalid-input", "The password export is not a supported CSV file."),
-            });
-            const result = { created: 0, updated: 0, skipped: parsed.skipped };
-            for (const entry of parsed.entries) {
-              const existing = state.accounts.find(
-                (account) =>
-                  account.summary.details.kind === "website" &&
-                  account.summary.details.sites.includes(entry.site) &&
-                  (account.summary.details.username ?? "") === entry.username,
-              );
-              if (existing) {
-                const current = yield* resolve(existing.summary.accountId, ["password", "totp"]);
-                const details = existing.summary.details;
-                if (
-                  details.kind === "website" &&
-                  (input.profileId === undefined || details.profileId === input.profileId) &&
-                  current.password &&
-                  Redacted.value(current.password) === entry.password &&
-                  (current.totp ? Redacted.value(current.totp) : undefined) === entry.totp
-                ) {
-                  result.skipped++;
-                  continue;
-                }
-              }
-              // A new subdomain sign-in is never more open than the user's own account covering it.
-              const covering = existing
-                ? undefined
-                : state.accounts.find(
-                    (account) =>
-                      account.summary.details.kind === "website" &&
-                      (account.summary.details.username ?? "") === entry.username &&
-                      siteMatches(account.summary.details.sites, `https://${entry.site}`),
-                  );
-              yield* save({
-                ...(existing ? { accountId: existing.summary.accountId } : {}),
-                ...(covering ? { controls: covering.summary.controls } : {}),
-                // An import refreshes values; the user's own name and sign-in address stay.
-                name: existing?.summary.name ?? entry.name,
-                details: {
-                  kind: "website",
-                  sites: [entry.site],
-                  username: entry.username,
-                  loginUrl:
-                    (existing?.summary.details.kind === "website"
-                      ? existing.summary.details.loginUrl
-                      : undefined) ?? entry.loginUrl,
-                  ...(input.profileId
-                    ? { profileId: input.profileId }
-                    : existing?.summary.details.kind === "website" &&
-                        existing.summary.details.profileId
-                      ? { profileId: existing.summary.details.profileId }
-                      : {}),
-                },
-                secrets: {
-                  password: { type: "scient", value: entry.password },
-                  totp: entry.totp ? { type: "scient", value: entry.totp } : { type: "clear" },
-                },
+          batched(
+            Effect.gen(function* () {
+              const parsed = yield* Effect.try({
+                try: () => parsePasswordImport(input.content, input.format),
+                catch: () =>
+                  failure("invalid-input", "The password export is not a supported CSV file."),
               });
-              if (existing) result.updated++;
-              else result.created++;
-            }
-            return result;
-          }),
+              const result = { created: 0, updated: 0, skipped: parsed.skipped };
+              for (const entry of parsed.entries) {
+                const existing = state.accounts.find(
+                  (account) =>
+                    account.summary.details.kind === "website" &&
+                    account.summary.details.sites.includes(entry.site) &&
+                    (account.summary.details.username ?? "") === entry.username,
+                );
+                if (existing) {
+                  const current = yield* resolve(existing.summary.accountId, ["password", "totp"]);
+                  const details = existing.summary.details;
+                  if (
+                    details.kind === "website" &&
+                    (input.profileId === undefined || details.profileId === input.profileId) &&
+                    current.password &&
+                    Redacted.value(current.password) === entry.password &&
+                    (current.totp ? Redacted.value(current.totp) : undefined) === entry.totp
+                  ) {
+                    result.skipped++;
+                    continue;
+                  }
+                }
+                // A new subdomain sign-in is never more open than the user's own account covering it.
+                const covering = existing
+                  ? undefined
+                  : state.accounts.find(
+                      (account) =>
+                        account.summary.details.kind === "website" &&
+                        (account.summary.details.username ?? "") === entry.username &&
+                        siteMatches(account.summary.details.sites, `https://${entry.site}`),
+                    );
+                yield* save({
+                  ...(existing ? { accountId: existing.summary.accountId } : {}),
+                  ...(covering ? { controls: covering.summary.controls } : {}),
+                  // An import refreshes values; the user's own name and sign-in address stay.
+                  name: existing?.summary.name ?? entry.name,
+                  details: {
+                    kind: "website",
+                    sites: [entry.site],
+                    username: entry.username,
+                    loginUrl:
+                      (existing?.summary.details.kind === "website"
+                        ? existing.summary.details.loginUrl
+                        : undefined) ?? entry.loginUrl,
+                    ...(input.profileId
+                      ? { profileId: input.profileId }
+                      : existing?.summary.details.kind === "website" &&
+                          existing.summary.details.profileId
+                        ? { profileId: existing.summary.details.profileId }
+                        : {}),
+                  },
+                  secrets: {
+                    password: { type: "scient", value: entry.password },
+                    totp: entry.totp ? { type: "scient", value: entry.totp } : { type: "clear" },
+                  },
+                });
+                if (existing) result.updated++;
+                else result.created++;
+              }
+              return result;
+            }),
+          ),
         ),
       ),
       matchSignIn: Effect.fn("AccountsService.matchSignIn")((raw) =>
