@@ -4,11 +4,13 @@ import type {
   ProviderStoreApp,
   ServerProviderPlugin,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import { storeCategories } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -47,6 +49,12 @@ const pluginVersionKey = (item: CachedPlugin) =>
     item.plugin.source,
   ]);
 const fail = (message: string) => Effect.fail({ message });
+const answeredWithError = (cause: Cause.Cause<unknown>) =>
+  !Cause.hasDies(cause) &&
+  !Cause.hasInterrupts(cause) &&
+  Option.exists(Cause.findErrorOption(cause), (error) =>
+    Predicate.isTagged(error, "CodexAppServerRequestError"),
+  );
 
 export function codexStoreDisabledReason(plugin: Plugin, plan: string): string | undefined {
   if (plugin.availability === "DISABLED_BY_ADMIN" || plugin.disabledReason === "disabled_by_admin")
@@ -233,8 +241,11 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       const client = yield* lock.withPermits(1)(getClient());
       yield* Ref.update(activeOperations, (count) => count + 1);
       return yield* run(client).pipe(
-        Effect.onError(() =>
+        Effect.onError((cause) =>
           Effect.gen(function* () {
+            // An error the app-server answered with (an unknown plugin, say)
+            // leaves the connection healthy, so it keeps the client and cache.
+            if (answeredWithError(cause)) return;
             // One failed or slow operation must not tear down the shared
             // client while other operations are still using it; the last
             // failing operation resets it.
@@ -717,7 +728,11 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
           Effect.fn("CodexProviderStore.installedApps")(function* (plugin) {
             const item = current.store.entries.find((item) => item.plugin.id === plugin.id);
             if (!item) return [];
-            return (yield* readDetail(client, item, current.store.details)).apps;
+            // One plugin the catalog no longer has must not hide every other plugin's apps.
+            return yield* readDetail(client, item, current.store.details).pipe(
+              Effect.map((detail) => detail.apps),
+              Effect.orElseSucceed(() => []),
+            );
           }),
         );
         const apps = yield* readApps(client, references.flat(), refresh);
