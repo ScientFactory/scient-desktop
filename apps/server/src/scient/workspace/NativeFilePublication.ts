@@ -302,10 +302,14 @@ export async function invokeNativeHelper(
       "Native helper path must be host-owned and absolute.",
       null,
     );
-  if (HostProcess.Platform.defaultValue() === "win32" && servedQuery(args)) {
-    const body = Buffer.from(args.map((argument) => `${argument}\0`).join(""), "utf8");
-    if (args.some((argument) => argument.includes("\0")) || body.length > 65536)
-      throw new NativeFilePublicationError("Native query is not framable.", null);
+  const body =
+    HostProcess.Platform.defaultValue() === "win32" &&
+    servedQuery(args) &&
+    !args.some((argument) => argument.includes("\0"))
+      ? Buffer.from(args.map((argument) => `${argument}\0`).join(""), "utf8")
+      : undefined;
+  // A question too large for one frame launches on its own, as every question once did.
+  if (body && body.length <= 65536) {
     const header = Buffer.alloc(4);
     header.writeUInt32BE(body.length);
     let server = servers.get(helperPath);

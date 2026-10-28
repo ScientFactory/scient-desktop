@@ -358,6 +358,9 @@ describe.skipIf(!posix)("the long-lived Windows helper", () => {
       await expect(stuck).rejects.toThrow(/server exit=0, stderr=left while stuck/u);
       await closing;
       expect(await info("after")).toBe("served after\n");
+      // A path whose UTF-8 exceeds one frame still fits a Windows command line.
+      const wide = "界".repeat(22_000);
+      expect(await info(wide)).toBe(`launched ${wide}\n`);
       await closeNativeHelperServers();
     }));
 });
