@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "@effect/vitest";
 import { filePublicationTestHelper, filePublicationProbeHelper } from "./fileExchange.testkit.ts";
 import {
   ensureNativePrivateRetentionDirectory,
+  checkNativePrivateRetentionDirectory,
   closeNativeHelperServers,
   bindNativeFilePublicationParent,
   withNativeFilePublicationLease,
@@ -638,9 +639,12 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
       const directory = NodePath.join(input.retentionDirectory, "checked");
       await windowsPrivateDirectory(directory, true, helper!);
       await windowsPrivateDirectory(directory, false, helper!);
+      await checkNativePrivateRetentionDirectory(helper!, directory);
+      await checkNativePrivateRetentionDirectory(helper!, directory);
       NodeChildProcess.execFileSync("icacls.exe", [directory, "/grant", "*S-1-1-0:(R)"]);
       const changed = await security(directory);
       await expect(windowsPrivateDirectory(directory, true, helper!)).rejects.toThrow();
+      await expect(checkNativePrivateRetentionDirectory(helper!, directory)).rejects.toThrow();
       expect(await security(directory)).toBe(changed);
     }));
   it("answers only read-only queries from its long-lived process", () =>

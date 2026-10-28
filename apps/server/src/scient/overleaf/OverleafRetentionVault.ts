@@ -126,12 +126,32 @@ async function ensurePrivate(
   if ((stat.mode & 0o077) !== 0) throw new Refused("unsafe-directory");
 }
 
+/** Folders whose disk was proven in this process, by identity; a replaced folder is proven again. */
+const proven = new Set<string>();
+async function probeCapability(directory: string, publicationHelper: string | null) {
+  const key = `${publicationHelper}\0${await platformFileIdentity.key(directory)}`;
+  if (!proven.has(key)) {
+    await proveCapability(directory, publicationHelper);
+    proven.add(key);
+    return;
+  }
+  // The disk's capability stands, but the folder can stop taking new files.
+  const probe = NodePath.join(directory, `.probe-${NodeCrypto.randomUUID()}`);
+  try {
+    await NodeFSP.writeFile(probe, "", { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (isReadOnly(error)) throw new Refused("read-only-parent");
+    throw error;
+  }
+  await NodeFSP.rm(probe, { force: true });
+}
+
 /**
  * Proves the folder's disk supports the replacement Scient will use: atomic
  * exchange through the publication helper, or hard links for the declared
  * development fallback when no helper is configured.
  */
-async function probeCapability(directory: string, publicationHelper: string | null) {
+async function proveCapability(directory: string, publicationHelper: string | null) {
   if (HostProcess.Platform.defaultValue() === "win32") {
     await probeWindowsRetention(directory, publicationHelper);
     return;

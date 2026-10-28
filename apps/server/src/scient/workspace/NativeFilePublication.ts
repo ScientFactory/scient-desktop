@@ -583,13 +583,12 @@ const privateKey = async (directory: string) => {
 };
 
 /**
- * A POSIX directory the helper already found private in this process, still
- * unchanged at its canonical path: there is nothing to provision. Anything else
- * (first seen, changed since, missing, another spelling, Windows) goes through
- * the helper as always.
+ * A directory the helper already found private in this process, still unchanged
+ * at its canonical path: there is nothing to provision. Anything else (first seen,
+ * changed since, missing, another spelling) goes through the helper as always.
+ * NTFS moves a folder's change time on owner, ACL and inheritance changes too.
  */
 async function alreadyPrivate(directory: string) {
-  if (HostProcess.Platform.defaultValue() === "win32") return false;
   const known = validatedPrivate.get(directory);
   return known !== undefined && known === (await privateKey(directory));
 }
@@ -665,11 +664,14 @@ async function nativePrivateRetentionDirectory(
       `Native private retention provisioning refused (${result.codeDomain}:${result.code}).`,
       result,
     );
-  // Kept only for the very folder the helper looked at, found already standing.
+  // Kept only for the very folder the helper looked at, found already standing. Windows
+  // identities are not Node's, so there the folder must stand unchanged across the check.
   if (
     before !== null &&
     canonicalParent === parent &&
-    before.startsWith(`${result.destinationAfter.dev}:${result.destinationAfter.ino}:`)
+    (result.codeDomain === "win32"
+      ? (await privateKey(destination)) === before
+      : before.startsWith(`${result.destinationAfter.dev}:${result.destinationAfter.ino}:`))
   )
     validatedPrivate.set(destination, before);
   return NodePath.join(canonicalParent, NodePath.basename(destination));
