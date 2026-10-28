@@ -753,7 +753,7 @@ function BrowserSearchEngineSetting() {
           status={
             isValidSearchUrlTemplate(customUrl)
               ? undefined
-              : "Enter an http or https URL containing %s. Searches use DuckDuckGo until then."
+              : "Enter an http or https URL containing %s. Searches use Google until then."
           }
           control={
             <DraftInput
