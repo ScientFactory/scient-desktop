@@ -64,6 +64,7 @@ export class WorkspaceFileRecoveryRequiredError extends Schema.TaggedError<Works
     recoveryId: Schema.String,
     retainedPaths: Schema.Array(Schema.String),
     publicationOutcome: Schema.optionalKey(Schema.Literals(["unchanged", "retained-attention"])),
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
