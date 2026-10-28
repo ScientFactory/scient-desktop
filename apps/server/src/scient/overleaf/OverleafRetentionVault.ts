@@ -128,22 +128,30 @@ async function ensurePrivate(
 
 /** Folders whose disk was proven in this process, by identity; a replaced folder is proven again. */
 const proven = new Set<string>();
-async function probeCapability(directory: string, publicationHelper: string | null) {
-  const key = `${publicationHelper}\0${await platformFileIdentity.key(directory)}`;
+async function probeCapability(
+  directory: string,
+  identity: StoredFileIdentity,
+  publicationHelper: string | null,
+) {
+  const key = JSON.stringify([publicationHelper, identity]);
   if (!proven.has(key)) {
     await proveCapability(directory, publicationHelper);
     proven.add(key);
     return;
   }
-  // The disk's capability stands, but the folder can stop taking new files.
+  // The disk's capability stands, but the folder can stop taking new files or folders
+  // (Windows grants the two separately).
   const probe = NodePath.join(directory, `.probe-${NodeCrypto.randomUUID()}`);
   try {
     await NodeFSP.writeFile(probe, "", { flag: "wx", mode: 0o600 });
+    await NodeFSP.mkdir(`${probe}-folder`, { mode: 0o700 });
   } catch (error) {
     if (isReadOnly(error)) throw new Refused("read-only-parent");
     throw error;
+  } finally {
+    await NodeFSP.rm(probe, { force: true });
+    await NodeFSP.rm(`${probe}-folder`, { recursive: true, force: true });
   }
-  await NodeFSP.rm(probe, { force: true });
 }
 
 /**
@@ -532,7 +540,7 @@ export async function locateOverleafRetention(input: {
       }
       found = match;
     }
-    await probeCapability(found.directory, input.publicationHelper);
+    await probeCapability(found.directory, found.identity, input.publicationHelper);
     // Another process may have swapped the folder while it was probed. This closes
     // the window up to here; the coordinator (step 3) must re-verify the identity
     // before each later use, because nothing below this module does.

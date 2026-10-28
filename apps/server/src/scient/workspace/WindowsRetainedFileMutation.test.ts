@@ -25,6 +25,10 @@ import { overleafFilesAvailability } from "../overleaf/overleafFileAvailability.
 import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 import type { WindowsCrashJob } from "./WindowsRetainedFileMutation.crash-child.ts";
 import { probeWindowsRetention } from "../overleaf/WindowsOverleafRetention.ts";
+import {
+  locateOverleafRetention,
+  type OverleafVolumeFileIdentity,
+} from "../overleaf/OverleafRetentionVault.ts";
 import { windowsNativeFile, windowsPrivateDirectory } from "./WindowsNativeFile.ts";
 
 const windows = HostProcess.Platform.defaultValue() === "win32";
@@ -537,6 +541,33 @@ describe.skipIf(!windows)("Windows retention placement", () => {
       } finally {
         expect(register("unregister-sync-root")).toBe(0);
       }
+    }));
+  it("refuses a proven vault that can no longer take new folders", () =>
+    fixture(async (input) => {
+      const locate = (expected: OverleafVolumeFileIdentity | null) =>
+        locateOverleafRetention({
+          stateRetained: NodePath.join(input.retentionDirectory, "retained"),
+          environmentId: "environment-1",
+          connectionId: "connection-1",
+          checkoutRoot: input.cwd,
+          userId: undefined,
+          publicationHelper: helper!,
+          expected,
+          volumeUuid: async () => "volume",
+        });
+      const first = await locate(null);
+      if (first._tag !== "ready") throw new Error(`Vault refused: ${first.reason}`);
+      // Every right but adding subfolders; the folder stays private to the user and SYSTEM.
+      const sid = /^O:(S-[\d-]+)/u.exec(await security(first.directory))![1];
+      NodeChildProcess.execFileSync("icacls.exe", [
+        first.directory,
+        "/grant:r",
+        `*${sid}:(OI)(CI)(RX,WD,WEA,WA,D,DC,RC,WDAC,WO)`,
+      ]);
+      expect(await locate(first.identity)).toEqual({
+        _tag: "refused",
+        reason: "read-only-parent",
+      });
     }));
 });
 
