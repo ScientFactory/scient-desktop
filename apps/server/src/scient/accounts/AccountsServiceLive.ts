@@ -207,8 +207,11 @@ export const layer = Layer.effect(
     });
     const locked = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       writes.withPermits(1)(Effect.uninterruptible(initialize.pipe(Effect.andThen(effect))));
-    /** Set while a bulk change runs: commits only update `state`, written and published once at the end. */
-    let batch: { dirty: boolean } | undefined;
+    /**
+     * Set while a bulk change runs: commits only update `state`, written and published once at the
+     * end, and replaced values are removed only after that write.
+     */
+    let batch: { dirty: boolean; removals: Array<string> } | undefined;
     const commit = Effect.fn("AccountsService.commit")(function* (
       next: AccountsState,
       usageOnly = false,
@@ -236,11 +239,12 @@ export const layer = Layer.effect(
     const batched = Effect.fn("AccountsService.batched")(function* <A, E, R>(
       effect: Effect.Effect<A, E, R>,
     ) {
-      const current = { dirty: false };
+      const current = { dirty: false, removals: new Array<string>() };
       batch = current;
       const exit = yield* Effect.exit(effect);
       batch = undefined;
       if (current.dirty) yield* commit(state);
+      yield* removeValues(current.removals);
       return yield* exit;
     });
     const appendActivity = Effect.fn("AccountsService.appendActivity")(function* (
@@ -307,6 +311,10 @@ export const layer = Layer.effect(
       names: ReadonlyArray<string>,
     ) {
       // Committed metadata is authoritative; inaccessible orphan blobs can be cleaned up later.
+      if (batch) {
+        batch.removals.push(...names);
+        return;
+      }
       for (const name of names) yield* persistence.remove(name).pipe(Effect.ignore);
     });
     const readValue = Effect.fn("AccountsService.readValue")(function* (name: string | undefined) {

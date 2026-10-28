@@ -44,7 +44,7 @@ import "./accounts.css";
 import { AccountApprovals } from "./AccountApprovals";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import { AccountDialog } from "./AccountDialog";
-import { AccountLogo } from "./AccountLogo";
+import { AccountLogo, SiteFavicon } from "./AccountLogo";
 import { accountsState } from "./accountsState";
 import {
   KIND_LABELS,
@@ -118,6 +118,8 @@ export function AccountRow({
         <span className="flex min-w-0 items-center gap-3">
           {iconUrl ? (
             <AccountLogo src={iconUrl} className="size-10 self-center rounded-[25%]" />
+          ) : site ? (
+            <SiteFavicon site={site} />
           ) : (
             <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
               <KeyRoundIcon className="size-4 text-muted-foreground" />
@@ -552,7 +554,8 @@ function AccountsContent({
           canWrite={canWrite}
           onClose={() => {
             setEditing(null);
-            setDialog(null);
+            // Editing from Saved passwords returns to that list.
+            if (dialog !== "passwords") setDialog(null);
           }}
         />
       ) : null}

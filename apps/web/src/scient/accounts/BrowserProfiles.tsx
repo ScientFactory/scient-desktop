@@ -688,6 +688,10 @@ export function BrowserProfiles({
   /** Everything the source browser has for these profiles: sign-ins, saved passwords and details. */
   const refresh = async (targets: ReadonlyArray<{ id: string; record: BrowserProfileRecord }>) => {
     if (!previewBridge) return;
+    if (importRunning) {
+      toastManager.add({ type: "info", title: "A browser import is already running" });
+      return;
+    }
     const sources = await loadSources();
     const running = new Set<string>();
     const renames: Array<{ id: string; from: string; to: string }> = [];

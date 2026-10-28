@@ -583,6 +583,26 @@ describe("AccountsService grants and approvals", () => {
   );
 });
 
+it.effect("keeps the old password when an import's single write fails", () =>
+  Effect.gen(function* () {
+    const storage = memoryStore();
+    const { service } = yield* makeHarness({ storage });
+    const value = syntheticValue();
+    const { accountId } = yield* service.save(website(value));
+    storage.failWritesTo("accounts-state");
+    const content = `name,url,username,password,note\nSite,https://example.com/login,synthetic-user,${syntheticValue()},`;
+    yield* service.importPasswords({ format: "auto", content }).pipe(Effect.flip);
+    storage.failWritesTo(undefined);
+    const restarted = yield* makeHarness({ storage });
+    expect(
+      secretEquals(
+        (yield* restarted.service.resolveSecrets(accountId, ["password"])).password,
+        value,
+      ),
+    ).toBe(true);
+  }),
+);
+
 it.effect(
   "imports sibling subdomains separately and updates only the exact site and username",
   () =>
