@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -539,6 +540,23 @@ export async function syncDirectory(directory: string) {
     await handle.close();
   }
 }
+/** Windows refuses to replace a file another program briefly holds open (indexers, antivirus). */
+export async function replaceByRename(from: string, to: string, rename = NodeFSP.rename) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await rename(from, to);
+    } catch (cause) {
+      const code = (cause as NodeJS.ErrnoException).code ?? "";
+      if (
+        HostProcess.Platform.defaultValue() !== "win32" ||
+        attempt >= 4 ||
+        !["EPERM", "EACCES", "EBUSY"].includes(code)
+      )
+        throw cause;
+      await NodeTimersPromises.setTimeout(50 * 2 ** attempt);
+    }
+  }
+}
 export async function durableJson(file: string, value: unknown) {
   const temporary = `${file}.tmp`;
   const handle = await NodeFSP.open(
@@ -555,7 +573,7 @@ export async function durableJson(file: string, value: unknown) {
   } finally {
     await handle.close();
   }
-  await NodeFSP.rename(temporary, file);
+  await replaceByRename(temporary, file);
   await syncDirectory(NodePath.dirname(file));
 }
 export async function assertPrivateRetention(directory: string, helper?: string) {

@@ -5,10 +5,12 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { filePublicationTestHelper, filePublicationProbeHelper } from "./fileExchange.testkit.ts";
 import {
   ensureNativePrivateRetentionDirectory,
+  checkNativePrivateRetentionDirectory,
+  closeNativeHelperServers,
   bindNativeFilePublicationParent,
   withNativeFilePublicationLease,
   removeNativeRetainedEntry,
@@ -23,6 +25,10 @@ import { overleafFilesAvailability } from "../overleaf/overleafFileAvailability.
 import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 import type { WindowsCrashJob } from "./WindowsRetainedFileMutation.crash-child.ts";
 import { probeWindowsRetention } from "../overleaf/WindowsOverleafRetention.ts";
+import {
+  locateOverleafRetention,
+  type OverleafVolumeFileIdentity,
+} from "../overleaf/OverleafRetentionVault.ts";
 import { windowsNativeFile, windowsPrivateDirectory } from "./WindowsNativeFile.ts";
 
 const windows = HostProcess.Platform.defaultValue() === "win32";
@@ -536,6 +542,37 @@ describe.skipIf(!windows)("Windows retention placement", () => {
         expect(register("unregister-sync-root")).toBe(0);
       }
     }));
+  it("refuses a proven vault that can no longer take new folders", () =>
+    fixture(async (input) => {
+      const locate = (expected: OverleafVolumeFileIdentity | null) =>
+        locateOverleafRetention({
+          stateRetained: NodePath.join(input.retentionDirectory, "retained"),
+          environmentId: "environment-1",
+          connectionId: "connection-1",
+          checkoutRoot: input.cwd,
+          userId: undefined,
+          publicationHelper: helper!,
+          expected,
+          volumeUuid: async () => "volume",
+        });
+      const first = await locate(null);
+      if (first._tag !== "ready") throw new Error(`Vault refused: ${first.reason}`);
+      // Every right but adding subfolders; the folder stays private to the user and SYSTEM.
+      const sid = NodeChildProcess.execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-Command", "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value"],
+        { encoding: "utf8" },
+      ).trim();
+      NodeChildProcess.execFileSync("icacls.exe", [
+        first.directory,
+        "/grant:r",
+        `*${sid}:(OI)(CI)(RX,WD,WEA,WA,D,DC,RC,WDAC,WO)`,
+      ]);
+      expect(await locate(first.identity)).toEqual({
+        _tag: "refused",
+        reason: "read-only-parent",
+      });
+    }));
 });
 
 describe.skipIf(!windows)("Windows folder leases and removals", () => {
@@ -637,10 +674,56 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
       const directory = NodePath.join(input.retentionDirectory, "checked");
       await windowsPrivateDirectory(directory, true, helper!);
       await windowsPrivateDirectory(directory, false, helper!);
+      await checkNativePrivateRetentionDirectory(helper!, directory);
+      await checkNativePrivateRetentionDirectory(helper!, directory);
       NodeChildProcess.execFileSync("icacls.exe", [directory, "/grant", "*S-1-1-0:(R)"]);
       const changed = await security(directory);
       await expect(windowsPrivateDirectory(directory, true, helper!)).rejects.toThrow();
+      await expect(checkNativePrivateRetentionDirectory(helper!, directory)).rejects.toThrow();
       expect(await security(directory)).toBe(changed);
+    }));
+  it("answers only read-only queries from its long-lived process", () =>
+    fixture(async (input) => {
+      const frame = (args: string[]) => {
+        const body = Buffer.from(args.map((argument) => `${argument}\0`).join(""));
+        const header = Buffer.alloc(4);
+        header.writeUInt32BE(body.length);
+        return Buffer.concat([header, body]);
+      };
+      const binding = await bindNativeFilePublicationParent(helper!, input.cwd, "");
+      const { rootIdentity: root, parentIdentity: parent } = binding;
+      const mkdir = ["--directory=1", "mkdir", "strict-current-root", input.cwd, "."];
+      const lines = NodeChildProcess.execFileSync(helper!, ["--serve=1"], {
+        input: Buffer.concat([
+          frame([...mkdir, root.dev, root.ino, parent.dev, parent.ino, "made"]),
+          frame(["--windows=1", "info", input.cwd]),
+        ]),
+        encoding: "utf8",
+      })
+        .trim()
+        .split(/\r?\n/u);
+      expect(lines[0]).toBe('{"version":1,"served":64}');
+      expect(JSON.parse(lines[1]!)).toMatchObject({ code: 0, identity: parent });
+      expect(lines[2]).toBe('{"version":1,"served":0}');
+      await expect(NodeFSP.lstat(NodePath.join(input.cwd, "made"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      // A running helper locks its binary; closing one whose idle exit began releases it.
+      const copy = NodePath.join(NodePath.dirname(input.cwd), "scient-file-publication.exe");
+      await NodeFSP.copyFile(helper!, copy);
+      try {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        try {
+          const info = await windowsNativeFile(input.cwd, "info", copy);
+          expect(info.identity).toMatchObject(parent);
+          vi.advanceTimersByTime(1000);
+        } finally {
+          vi.useRealTimers();
+        }
+      } finally {
+        await closeNativeHelperServers();
+        await NodeFSP.rm(copy);
+      }
     }));
   it("refuses an existing broad directory without changing its policy", () =>
     fixture(async (input) => {
