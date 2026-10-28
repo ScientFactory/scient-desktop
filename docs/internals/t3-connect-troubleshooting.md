@@ -119,7 +119,7 @@ T3 Connect does not have an active link between your account and the host.
   device.** Sign out of T3 Connect and sign in again.
 - **Your account reached its tunnel limit.** Remove an environment you do not
   use from your T3 account's T3 Connect page, or
-  [link a paid T3 Chat account](./remote-access.md#more-machines-with-t3-chat)
+  link a paid T3 Chat account
   for a higher limit. Then restart T3 Code on the host.
 
 ## The clock is off
