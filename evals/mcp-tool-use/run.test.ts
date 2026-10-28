@@ -273,14 +273,16 @@ it("lists link tools only while a case turns the beta on, and sends chips as T3 
     keepUserInstructions: false,
     links: true,
   });
+  // SCIENT-FORK:START — Scient registers upstream's link tools under `scient_*` names.
   assert.notInclude(
     off.t3.map((tool) => tool.name),
-    "mcp__t3-code__t3_environment_link",
+    "mcp__t3-code__scient_environment_link",
   );
   assert.include(
     on.t3.map((tool) => tool.name),
-    "mcp__t3-code__t3_environment_link",
+    "mcp__t3-code__scient_environment_link",
   );
+  // SCIENT-FORK:END
 
   const testCase: McpToolUseCase = {
     ...childCase,
