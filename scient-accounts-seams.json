@@ -25,6 +25,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": "packages/contracts/src/browserProfile.ts",
+      "anchor": "SCIENT-FORK:START \u2014 distinguish original browser storage from the new-tab preference.",
+      "purpose": "Name the built-in original browser profile Main while preserving its default id."
+    },
+    {
       "path": "apps/desktop/src/preload.ts",
       "anchor": "accounts: makeDesktopAccountsBridge",
       "purpose": "Expose the desktop Accounts bridge to the application renderer."
@@ -62,7 +67,7 @@
     {
       "path": "apps/web/src/components/settings/SettingsSidebarNav.tsx",
       "anchor": "Scient Accounts: discover supported Accounts environments.",
-      "purpose": "Show Accounts next to Extensions only on a server that supports its snapshot."
+      "purpose": "Show Accounts in the first settings group only on a server that supports its snapshot."
     },
     {
       "path": "apps/web/src/components/settings/SettingsBreadcrumb.tsx",
@@ -71,8 +76,8 @@
     },
     {
       "path": "apps/web/src/components/settings/settingsSearch.ts",
-      "anchor": "Scient Accounts: index accounts and password stores.",
-      "purpose": "Index the Accounts page and move profile search to its new owner."
+      "anchor": "Scient Accounts: place Accounts after Voice.",
+      "purpose": "Index Accounts and password stores, place Accounts after Voice in the first headingless group, and move Diffs & pull requests after Source Control in Code."
     },
     {
       "path": "apps/web/src/components/settings/IntegrationsSettings.tsx",
@@ -208,6 +213,11 @@
       "path": "apps/desktop/src/electron/ElectronShell.ts",
       "anchor": "const store = openAccountStore(rawUrl, platform);",
       "purpose": "Open only fixed password-store app targets through the existing shell bridge."
+    },
+    {
+      "path": "apps/web/src/components/settings/BrowserImportWizard.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts shares the browser import quit step.",
+      "purpose": "Reuse the browser quit step in the Accounts browser picker."
     }
   ],
   "scientMounts": [

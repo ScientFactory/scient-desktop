@@ -1,11 +1,13 @@
 import {
   BrowserProfileId,
+  BrowserImportSourceId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   EnvironmentId,
   DesktopPreviewTabInputSchema,
 } from "@t3tools/contracts";
 import * as Electron from "electron";
 import * as Effect from "effect/Effect";
+import { readBrowserPasswords } from "./browserPasswords.ts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { DesktopIpc, type DesktopIpcInvokeEvent } from "../../ipc/DesktopIpc.ts";
@@ -190,8 +192,29 @@ const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
   return yield* discoverSourceProfiles();
 });
 
+const decodePasswordSource = Schema.decodeUnknownOption(
+  Schema.Struct({
+    sourceId: BrowserImportSourceId,
+    directory: Schema.String.check(Schema.isMaxLength(256)),
+  }),
+);
+/** A Chromium profile's saved passwords as CSV for the Accounts importer, read from a snapshot. */
+const readBrowserPasswordsCsv = Effect.fn("DesktopAccounts.readBrowserPasswordsCsv")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* mainSender(event))) return null;
+  const decoded = decodePasswordSource(raw);
+  if (Option.isNone(decoded)) return yield* unavailable();
+  return yield* readBrowserPasswords(decoded.value.sourceId, decoded.value.directory);
+});
+
 export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(function* () {
   const ipc = yield* DesktopIpc;
+  yield* ipc.handle({
+    channel: Channels.READ_BROWSER_PASSWORDS,
+    handler: readBrowserPasswordsCsv,
+  });
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
   yield* ipc.handle({ channel: Channels.COOKIE_METADATA, handler: cookieMetadata });

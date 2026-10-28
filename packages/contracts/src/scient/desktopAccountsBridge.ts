@@ -11,6 +11,7 @@ export interface DesktopSourceProfileDetails {
   readonly picture?: string;
   /** `#rrggbb` the source browser shows for this profile. */
   readonly color?: string;
+  readonly passwordCount?: number;
 }
 
 /** Sites with cookies in a Scient browser profile on this desktop. */
@@ -53,6 +54,11 @@ export interface DesktopSignInFill {
 export interface DesktopAccountsBridge {
   /** Set only when fill enforces expectedOrigin in the native guest before applying values. */
   readonly originBoundFill?: true;
+  /** A Chromium profile's saved passwords as CSV for `accountsImportPasswords`; local desktop only. */
+  readonly readBrowserPasswords?: (input: {
+    readonly sourceId: BrowserImportSourceId;
+    readonly directory: string;
+  }) => Promise<{ readonly content: string; readonly skipped: number } | null>;
   readonly sourceProfiles: () => Promise<ReadonlyArray<DesktopSourceProfileDetails>>;
   /** Omit environmentId for the primary local environment. */
   readonly signedInSites: (
@@ -63,7 +69,11 @@ export interface DesktopAccountsBridge {
   readonly cookieMetadata?: (
     profileId: string,
     environmentId?: string,
-  ) => Promise<ReadonlyArray<{ readonly domain: string; readonly expires?: number }> | null>;
+  ) => Promise<ReadonlyArray<{
+    readonly domain: string;
+    readonly httpOnly?: boolean;
+    readonly expires?: number;
+  }> | null>;
   /** Removes every cookie of one site (a registrable domain) from the profile. Optional for older desktops. */
   readonly signOutSite?: (
     profileId: string,

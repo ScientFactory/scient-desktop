@@ -41,6 +41,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsPasswordStore,
     ...lane,
   }),
+  /** The current snapshot on demand, for actions that outlive the Accounts page. */
+  readSnapshot: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:read-snapshot",
+    tag: WS_METHODS.accountsSnapshot,
+  }),
   websiteSnapshot: createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
     label: "accounts:website-snapshot",
     tag: WS_METHODS.accountsSnapshot,

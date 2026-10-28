@@ -76,6 +76,8 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: { kind: string }) =>
     command.kind === "bind" ? state.bind : state.unbind,
 }));
+// The Add-account dialog opens sites in Scient's browser; these tests never do.
+vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => async () => false }));
 vi.mock("../accounts/useAccounts", () => ({
   useAccounts: () => ({ data: snapshot, canWrite: state.canWrite }),
   useAccountCommand: () => state.save,

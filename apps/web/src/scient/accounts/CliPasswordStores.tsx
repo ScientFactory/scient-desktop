@@ -1,3 +1,7 @@
+import { StoreTitle } from "./StoreTitle";
+import { ControlsMenu } from "./AccountControls";
+import { MenuItem } from "~/components/ui/menu";
+import { readLocalApi } from "~/localApi";
 import { useState } from "react";
 import type {
   CliPasswordStore,
@@ -57,29 +61,46 @@ export function CliPasswordStoreRow({
   return (
     <>
       <SettingsRow
-        title={cliStoreNames[store]}
-        description={
-          connected
-            ? ["Connected", current?.email].filter(Boolean).join(" · ")
-            : state === "locked"
-              ? ["Locked", current?.email].filter(Boolean).join(" · ")
-              : undefined
+        title={
+          <StoreTitle
+            name={cliStoreNames[store]}
+            domain={store === "bitwarden" ? "bitwarden.com" : "proton.me"}
+            status={
+              connected
+                ? ["Connected", current?.email].filter(Boolean).join(" · ")
+                : state === "locked"
+                  ? ["Locked", current?.email].filter(Boolean).join(" · ")
+                  : STATUS_WORDS[state]
+            }
+          />
         }
-        status={STATUS_WORDS[state]}
         control={
-          connected ? (
+          state === "not-installed" ? (
             <Button
               size="xs"
-              variant="outline"
-              disabled={!canWrite || !permitted || busy}
-              onClick={() => {
-                setExpanded(false);
-                setPassword("");
-                void act("disconnect");
-              }}
+              variant="ghost"
+              onClick={() =>
+                void readLocalApi()?.shell.openExternal(
+                  store === "bitwarden"
+                    ? "https://bitwarden.com/help/cli/"
+                    : "https://protonpass.github.io/pass-cli/",
+                )
+              }
             >
-              Disconnect
+              Install
             </Button>
+          ) : connected ? (
+            <ControlsMenu disabled={!canWrite || !permitted || busy}>
+              <MenuItem
+                onClick={() => {
+                  setExpanded(false);
+                  setPassword("");
+                  void act("disconnect");
+                }}
+              >
+                Disconnect
+              </MenuItem>
+            </ControlsMenu>
           ) : expanded ? null : (
             <Button
               size="xs"

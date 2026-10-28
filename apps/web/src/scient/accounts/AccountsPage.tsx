@@ -1,65 +1,72 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { BrowserProfileId } from "@t3tools/contracts";
-import { openUrlInPreview } from "~/browser/openFileInPreview";
-import { useScratchProject } from "~/hooks/useScratchProject";
-import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useRightPanelStore } from "~/rightPanelStore";
-import { previewEnvironment } from "~/state/preview";
-import { useAtomCommand } from "~/state/use-atom-command";
-import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { providersIgnoringCheckedAtAtom } from "~/state/server";
-import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
-import { Link } from "@tanstack/react-router";
-import { KeyRoundIcon } from "lucide-react";
-import type {
-  ConnectorSummary,
-  AccountActivityEntry,
-  AccountSummary,
-  AccountsSnapshot,
-  EnvironmentId,
-  ProviderInstanceId,
+import {
+  DEFAULT_BROWSER_PROFILE_ID,
+  resolveBrowserProfiles,
+  type AccountActivityEntry,
+  type AccountSummary,
+  type AccountsSnapshot,
+  type ConnectorSummary,
+  type EnvironmentId,
+  type ProviderInstanceId,
 } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
+import { KeyRoundIcon, PlusIcon } from "lucide-react";
+import { useRef, useState } from "react";
+
 import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
 } from "~/components/settings/settingsLayout";
 import { useOptionalSettingsScope } from "~/components/settings/SettingsScopeContext";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { Button } from "~/components/ui/button";
-import { Switch } from "~/components/ui/switch";
-import { MenuItem, MenuCheckboxItem } from "~/components/ui/menu";
 import {
   Dialog,
-  DialogPopup,
   DialogHeader,
-  DialogTitle,
   DialogPanel,
+  DialogPopup,
+  DialogTitle,
 } from "~/components/ui/dialog";
+import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Switch } from "~/components/ui/switch";
+import { toastManager } from "~/components/ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useClientSettings } from "~/hooks/useSettings";
+import { readLocalApi } from "~/localApi";
+import { ExtensionIcon } from "~/scient/extensions/ExtensionRow";
+import { extensionsInventory } from "~/scient/extensions/extensionsState";
+import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
-import { previewBridge } from "~/components/preview/previewBridge";
-import { toastManager } from "~/components/ui/toast";
-import { extensionsInventory } from "~/scient/extensions/extensionsState";
-import { useAccountCommand, useAccounts } from "./useAccounts";
-import { accountsState } from "./accountsState";
+import { providersIgnoringCheckedAtAtom } from "~/state/server";
+import "./accounts.css";
+import { AccountApprovals } from "./AccountApprovals";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import { AccountDialog } from "./AccountDialog";
-import { BrowserProfiles, BrowserImportDialog } from "./BrowserProfiles";
-import { PasswordStores, OnePasswordDialog } from "./PasswordStores";
-import { AccountApprovals } from "./AccountApprovals";
 import { AccountLogo } from "./AccountLogo";
+import { accountsState } from "./accountsState";
 import {
   KIND_LABELS,
   accountIconUrl,
   accountManagePage,
   providerManagedAccounts,
 } from "./accountsView";
-import { useWebsiteSessions } from "./useWebsiteSessions";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
-import { readLocalApi } from "~/localApi";
+import { BrowserImportDialog, BrowserProfiles } from "./BrowserProfiles";
+import { clickableAccountRow } from "./clickableAccountRow";
+import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
+import { useAccountBrowser } from "./useAccountBrowser";
+import { useAccountCommand, useAccounts } from "./useAccounts";
+import { useWebsiteSessions } from "./useWebsiteSessions";
+
+/** Where each kind of sign-in is managed, for the "Other sign-ins" links. */
+const MANAGED_IN = {
+  github: "Source Control",
+  "custom-model": "Custom models",
+  claude: "Claude",
+  codex: "Codex",
+  extension: "Extensions",
+} as const;
 
 export function AccountRow({
   account,
@@ -74,9 +81,11 @@ export function AccountRow({
   onEdit: () => void;
   onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
 }) {
-  const { openScratchProject } = useScratchProject();
-  const openThread = useNewThreadHandler();
-  const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
+  const openBrowser = useAccountBrowser(environmentId);
+  const profiles = resolveBrowserProfiles(
+    useClientSettings((settings) => settings.browserProfiles),
+  );
+  const newTabProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const controls = useAccountCommand(accountsState.setControls, environmentId);
   const test = useAccountCommand(accountsState.test, environmentId);
   const remove = useAccountCommand(accountsState.remove, environmentId);
@@ -95,52 +104,39 @@ export function AccountRow({
           : null;
   const openSite = async (url = site) => {
     if (!url) return;
-    const project = await openScratchProject(environmentId, "Could not open the site");
-    if (!project) return;
-    const opened = await openThread(scopeProjectRef(project.environmentId, project.id));
-    if (!opened) return;
-    const threadRef = scopeThreadRef(project.environmentId, opened.threadId);
-    useRightPanelStore.getState().requestMaximize(threadRef);
-    const result = await openUrlInPreview({
-      threadRef,
-      url: /^https?:\/\//.test(url) ? url : `https://${url}`,
-      openPreview,
-      ...(details.kind === "website" && details.profileId
-        ? { profileId: BrowserProfileId.make(details.profileId) }
-        : {}),
-    });
-    if (result._tag === "Failure")
-      toastManager.add({ type: "error", title: "Could not open the site" });
+    await openBrowser(url, details.kind === "website" ? details.profileId : undefined);
   };
   const iconUrl = accountIconUrl("sites" in details ? details.sites : [], account.name);
   const managePage = accountManagePage("sites" in details ? details.sites : []);
   return (
     <SettingsRow
+      {...clickableAccountRow(onEdit)}
+      aria-label={`Edit ${account.name}`}
       title={
-        <span className="flex min-w-0 items-baseline gap-2">
+        <span className="flex min-w-0 items-center gap-3">
           {iconUrl ? (
-            <AccountLogo src={iconUrl} className="size-6 self-center rounded-md" />
+            <AccountLogo src={iconUrl} className="size-10 self-center rounded-[25%]" />
           ) : (
-            <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
+              <KeyRoundIcon className="size-4 text-muted-foreground" />
+            </span>
           )}
-          <button
-            type="button"
-            className="truncate text-left outline-none focus-visible:underline"
-            onClick={onEdit}
-          >
-            {account.name}
-          </button>
-          <span className="truncate text-xs text-muted-foreground">
-            {[
-              KIND_LABELS[details.kind],
-              "sites" in details
-                ? details.sites.join(", ")
-                : details.kind === "database"
-                  ? details.host
-                  : details.tool,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
+          <span className="grid min-w-0 gap-1">
+            <span className="truncate text-left">{account.name}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {details.kind === "website" && !account.secrets.password
+                ? `Browser sign-in · ${profiles.find((profile) => profile.id === (details.profileId ?? newTabProfileId ?? DEFAULT_BROWSER_PROFILE_ID))?.name ?? "Browser profile"}`
+                : [
+                    KIND_LABELS[details.kind],
+                    "sites" in details
+                      ? details.sites.join(", ")
+                      : details.kind === "database"
+                        ? details.host
+                        : details.tool,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+            </span>
           </span>
           {rejection ? <span className="text-xs text-muted-foreground">{rejection}</span> : null}
           {account.status === "needs-attention" ? (
@@ -249,6 +245,7 @@ export function AccountRow({
 
 function ManagedAccountRow({
   row,
+  environmentId,
 }: {
   row: {
     kind: "github" | "custom-model" | "extension" | "claude" | "codex";
@@ -257,46 +254,60 @@ function ManagedAccountRow({
     detail?: string | undefined;
     href: "/settings/source-control" | "/settings/custom-models" | "/settings/extensions/installed";
   };
+  environmentId: EnvironmentId;
 }) {
-  const iconUrl = accountIconUrl(
-    row.kind === "github" ? ["github.com"] : row.detail ? [row.detail] : [],
+  const domain =
+    managedHost(row.detail) ??
+    (row.kind === "github" ? "github.com" : row.kind === "claude" ? "claude.ai" : undefined);
+  // Our own logos first: the extension catalogue has no GitHub or Claude sign-in entries.
+  const logo = accountIconUrl(
+    row.kind === "claude"
+      ? ["anthropic.com"]
+      : row.kind === "codex"
+        ? ["openai.com"]
+        : domain
+          ? [domain]
+          : [],
     row.name,
   );
-  return (
-    <SettingsRow
-      title={
-        <span className="flex min-w-0 items-baseline gap-2">
-          {iconUrl ? (
-            <AccountLogo src={iconUrl} className="size-6 self-center rounded-md" />
-          ) : (
-            <KeyRoundIcon className="size-4 shrink-0 self-center text-muted-foreground" />
-          )}
-          <span className="truncate">{row.name}</span>
-          {row.detail ? (
-            <span className="truncate text-xs text-muted-foreground">{row.detail}</span>
-          ) : null}
-          {row.instanceId ? (
-            <Link
-              to="/settings/extensions/store/$instanceId"
-              params={{ instanceId: row.instanceId }}
-              className="shrink-0 text-xs text-muted-foreground hover:underline"
-            >
-              Managed in {row.kind === "claude" ? "Claude" : "Codex"}
-            </Link>
-          ) : (
-            <Link to={row.href} className="shrink-0 text-xs text-muted-foreground hover:underline">
-              Managed in{" "}
-              {row.kind === "github"
-                ? "Source Control"
-                : row.kind === "custom-model"
-                  ? "Custom models"
-                  : "Extensions"}
-            </Link>
-          )}
-        </span>
-      }
-    />
+  const content = (
+    <>
+      {logo ? (
+        <AccountLogo src={logo} className="size-10 shrink-0 rounded-[25%]" />
+      ) : (
+        <ExtensionIcon name={row.name} environmentId={environmentId} />
+      )}
+      <span className="grid min-w-0 flex-1 gap-1">
+        <span className="truncate text-sm font-medium">{row.name}</span>
+        {domain ? <span className="truncate text-xs text-muted-foreground">{domain}</span> : null}
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground">{MANAGED_IN[row.kind]} ›</span>
+    </>
   );
+  const className =
+    "cursor-pointer flex min-h-15 items-center gap-3 rounded-lg px-4 py-2 text-foreground hover:bg-accent/40";
+  return row.instanceId ? (
+    <Link
+      to="/settings/extensions/store/$instanceId"
+      params={{ instanceId: row.instanceId }}
+      className={className}
+    >
+      {content}
+    </Link>
+  ) : (
+    <Link to={row.href} className={className}>
+      {content}
+    </Link>
+  );
+}
+
+function managedHost(value: string | undefined) {
+  if (!value) return undefined;
+  try {
+    return new URL(value.includes("://") ? value : `https://${value}`).hostname;
+  } catch {
+    return undefined;
+  }
 }
 
 function AccountsContent({
@@ -311,7 +322,7 @@ function AccountsContent({
   const [dialog, setDialog] = useState<"add" | "import" | "1password" | null>(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [activity, setActivity] = useState<ReadonlyArray<AccountActivityEntry> | null>(null);
-  const userProfiles = useClientSettings((settings) => settings.browserProfiles);
+  const passwordFileRef = useRef<HTMLInputElement>(null);
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
   const providers = useAtomValue(providersIgnoringCheckedAtAtom(environmentId));
   const providerInventory = useProviderInventory({
@@ -322,7 +333,6 @@ function AccountsContent({
     enabled: true,
   });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
-  const firstRun = snapshot.accounts.length === 0 && userProfiles.length === 0;
   const managedRows = [
     ...providerManagedAccounts(providerInventory.providers),
     ...(snapshot.managedElsewhere ??
@@ -343,21 +353,7 @@ function AccountsContent({
     })) ?? []),
   ];
   return (
-    <div className="grid gap-8">
-      <SettingsSection title="Accounts" hideTitle>
-        <SettingsRow
-          id="accounts-agent-access"
-          title="Agent access"
-          control={
-            <Switch
-              aria-label="Agent access"
-              checked={snapshot.agentAccess}
-              disabled={!canWrite}
-              onCheckedChange={(enabled) => void setAccess({ enabled })}
-            />
-          }
-        />
-      </SettingsSection>
+    <div className="scient-accounts-settings grid gap-8" data-agent-access={snapshot.agentAccess}>
       {snapshot.approvals.length ? (
         <AccountApprovals
           environmentId={environmentId}
@@ -365,54 +361,79 @@ function AccountsContent({
           canWrite={canWrite}
         />
       ) : null}
-      {firstRun ? (
-        <div className="flex flex-wrap gap-3">
-          {previewBridge ? (
-            <Button variant="outline" disabled={!canWrite} onClick={() => setDialog("import")}>
-              Import from your browser
-            </Button>
-          ) : null}
-          <Button variant="outline" disabled={!canWrite} onClick={() => setDialog("1password")}>
-            Connect 1Password
-          </Button>
-          <Button disabled={!canWrite} onClick={() => setDialog("add")}>
-            Add an account
-          </Button>
-        </div>
-      ) : null}
+      <SettingsSection
+        id="accounts-list"
+        title="Accounts"
+        titleAction={
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button size="icon-xs" variant="ghost" aria-label="Add" disabled={!canWrite} />
+              }
+            >
+              <PlusIcon />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              <MenuItem onClick={() => setDialog("add")}>Add an account…</MenuItem>
+              <MenuItem onClick={() => passwordFileRef.current?.click()}>
+                Import passwords…
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        }
+      >
+        <SettingsRow
+          id="accounts-agent-access"
+          title="Let agents use your accounts"
+          control={
+            <Switch
+              aria-label="Let agents use your accounts"
+              checked={snapshot.agentAccess}
+              disabled={!canWrite}
+              onCheckedChange={(enabled) => void setAccess({ enabled })}
+            />
+          }
+        />
+        {!snapshot.accounts.length ? (
+          <SettingsRow
+            title="No accounts"
+            control={
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={!canWrite}
+                onClick={() => setDialog("add")}
+              >
+                Add an account
+              </Button>
+            }
+          />
+        ) : null}
+        {snapshot.accounts.map((account) => (
+          <AccountRow
+            key={account.accountId}
+            account={account}
+            environmentId={environmentId}
+            canWrite={canWrite}
+            onEdit={() => setEditing(account)}
+            onActivity={setActivity}
+          />
+        ))}
+      </SettingsSection>
       <BrowserProfiles
         environmentId={environmentId}
         snapshot={snapshot}
         canWrite={canWrite}
         onImport={() => setDialog("import")}
       />
-      {!firstRun || snapshot.accounts.length > 0 || managedRows.length ? (
-        <SettingsSection
-          id="accounts-list"
-          title="Accounts"
-          headerAction={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!canWrite}
-              onClick={() => setDialog("add")}
-            >
-              Add
-            </Button>
-          }
-        >
-          {snapshot.accounts.map((account) => (
-            <AccountRow
-              key={account.accountId}
-              account={account}
-              environmentId={environmentId}
-              canWrite={canWrite}
-              onEdit={() => setEditing(account)}
-              onActivity={setActivity}
-            />
-          ))}
+      {managedRows.length ? (
+        <SettingsSection title="Other sign-ins">
           {managedRows.map((row) => (
-            <ManagedAccountRow key={`${row.kind}:${row.id}`} row={row} />
+            <ManagedAccountRow
+              key={`${row.kind}:${row.id}`}
+              row={row}
+              environmentId={environmentId}
+            />
           ))}
         </SettingsSection>
       ) : null}
@@ -421,6 +442,11 @@ function AccountsContent({
         snapshot={snapshot}
         canWrite={canWrite}
         onConnect={() => setDialog("1password")}
+      />
+      <PasswordFileInput
+        environmentId={environmentId}
+        canWrite={canWrite}
+        inputRef={passwordFileRef}
       />
       {dialog === "add" || editing ? (
         <AccountDialog
@@ -438,6 +464,7 @@ function AccountsContent({
         <BrowserImportDialog
           environmentId={environmentId}
           canWrite={canWrite}
+          snapshot={snapshot}
           onClose={() => setDialog(null)}
         />
       ) : null}

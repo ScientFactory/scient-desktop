@@ -54,7 +54,8 @@ it("clears the private unlock input after connecting and reflects disconnect", a
   await screen.getByRole("button", { name: "Unlock", exact: true }).click();
   await expect.element(privateInput).toHaveValue("");
   await expect.element(screen.getByText("Connected · synthetic@example.invalid")).toBeVisible();
-  await screen.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await screen.getByRole("button", { name: "Account menu", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Disconnect", exact: true }).click();
   await expect
     .element(screen.getByText("Connected · synthetic@example.invalid"))
     .not.toBeInTheDocument();

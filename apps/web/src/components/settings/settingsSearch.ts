@@ -141,7 +141,10 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/chat",
       // SCIENT-FORK: Voice (desktop only; the sidebar hides it elsewhere).
       "/settings/voice",
-      "/settings/diffs",
+      // SCIENT-FORK:START — Scient Accounts: place Accounts after Voice.
+      "/settings/accounts",
+      // SCIENT-FORK:END
+      // SCIENT-FORK: Diffs & pull requests sits in the Code group.
       "/settings/keybindings",
       "/settings/snap-shot",
     ],
@@ -154,9 +157,6 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/custom-models",
       "/settings/skills",
       "/settings/extensions",
-      // SCIENT-FORK:END
-      // SCIENT-FORK:START — Scient Accounts: place Accounts next to Extensions.
-      "/settings/accounts",
       // SCIENT-FORK:END
       "/settings/threads",
       "/settings/browser",
@@ -172,7 +172,14 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   // SCIENT-FORK:END
   {
     heading: "Code",
-    paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
+    // SCIENT-FORK:START — Diffs & pull requests sits with Source Control.
+    paths: [
+      "/settings/projects",
+      "/settings/source-control",
+      "/settings/diffs",
+      "/settings/worktrees",
+    ],
+    // SCIENT-FORK:END
   },
   { heading: "Connections", paths: ["/settings/connections", "/settings/access"] },
   {
