@@ -541,10 +541,10 @@ export async function syncDirectory(directory: string) {
   }
 }
 /** Windows refuses to replace a file another program briefly holds open (indexers, antivirus). */
-export async function replaceByRename(from: string, to: string) {
+export async function replaceByRename(from: string, to: string, rename = NodeFSP.rename) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await NodeFSP.rename(from, to);
+      return await rename(from, to);
     } catch (cause) {
       const code = (cause as NodeJS.ErrnoException).code ?? "";
       if (

@@ -5,12 +5,13 @@ import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   bytesRevision,
   fileIdentity,
   mutateRetainedFile,
   recheckRetainedFile,
+  replaceByRename,
   type MutationPoint,
   type RetainedMutationInput,
 } from "./RetainedFileMutation.ts";
@@ -398,4 +399,29 @@ describe("retained publication admission", () => {
         expect(await NodeFSP.readFile(recovered.retainedPath!, "utf8")).toBe("C");
       }));
   }
+});
+
+describe("journal renames on Windows", () => {
+  const held = () => Object.assign(new Error("held open"), { code: "EPERM" });
+  it("retries a rename another program briefly holds, then gives up", async () => {
+    using _host = vi.spyOn(HostProcess.Platform, "defaultValue").mockReturnValue("win32");
+    const briefly = vi.fn().mockRejectedValueOnce(held()).mockRejectedValueOnce(held());
+    await replaceByRename("from", "to", briefly.mockResolvedValue(undefined));
+    expect(briefly).toHaveBeenCalledTimes(3);
+
+    const always = vi.fn().mockRejectedValue(held());
+    await expect(replaceByRename("from", "to", always)).rejects.toMatchObject({ code: "EPERM" });
+    expect(always).toHaveBeenCalledTimes(5);
+  });
+  it("never retries a missing file, nor anywhere but Windows", async () => {
+    using _host = vi.spyOn(HostProcess.Platform, "defaultValue").mockReturnValue("win32");
+    const missing = vi.fn().mockRejectedValue(Object.assign(new Error("gone"), { code: "ENOENT" }));
+    await expect(replaceByRename("from", "to", missing)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(missing).toHaveBeenCalledTimes(1);
+
+    _host.mockReturnValue("darwin");
+    const posix = vi.fn().mockRejectedValue(held());
+    await expect(replaceByRename("from", "to", posix)).rejects.toMatchObject({ code: "EPERM" });
+    expect(posix).toHaveBeenCalledTimes(1);
+  });
 });
