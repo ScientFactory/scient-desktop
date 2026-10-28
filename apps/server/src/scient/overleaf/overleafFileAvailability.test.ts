@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Metadata probe against this source file.
 import { describe, expect, it } from "@effect/vitest";
-import { overleafFilesAvailability } from "./overleafFileAvailability.ts";
+import { overleafFilesAvailability, windowsFlagBatches } from "./overleafFileAvailability.ts";
 
 const one = async (platform: string, flags?: number) =>
   (
@@ -21,5 +21,24 @@ describe("Overleaf online-only files", () => {
     expect(await one("linux")).toBe("available");
     expect(await one("darwin", 0x40000000)).toBe("online-only-file");
     expect(await one("darwin", 0x20)).toBe("available");
+  });
+
+  it("batches Windows paths to fit one helper question and one command line", () => {
+    const long = Array.from({ length: 200 }, (_, index) => `C:\\${"a".repeat(200)}${index}`);
+    const wide = Array.from(
+      { length: 90 },
+      (_, index) => `C:\\${String.fromCharCode(0x4e00 + index).repeat(250)}`,
+    );
+    const helper = `C:\\${"h".repeat(250)}\\scient-file-publication.exe`;
+    for (const paths of [long, wide]) {
+      const batches = windowsFlagBatches(paths);
+      expect(batches.flat()).toEqual(paths);
+      for (const batch of batches) {
+        const frame = ["--windows-flags=1", ...batch].map((argument) => `${argument}\0`);
+        expect(Buffer.byteLength(frame.join(""))).toBeLessThanOrEqual(65_536);
+        const command = [helper, "--windows-flags=1", ...batch].map((argument) => `"${argument}"`);
+        expect(command.join(" ").length).toBeLessThan(32_767);
+      }
+    }
   });
 });
