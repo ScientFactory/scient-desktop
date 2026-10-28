@@ -33,6 +33,7 @@ import {
   canonicalConnectorUrl,
   CATALOG_CATEGORY_ORDER,
   CATALOG_SECTIONS,
+  FEATURED_SERVER_IDS,
   CURATED_NAME_PREFIX,
   CURATED_SERVERS,
   curatedDiscoverEntry,
@@ -254,7 +255,13 @@ const matchesQuery = (server: CuratedServer, terms: ReadonlyArray<string>): bool
 /** Entries whose primary category is `category` first, then the rest, each in catalog order. */
 const serversIn = (servers: ReadonlyArray<CuratedServer>, category: ExtensionCategory) => {
   const members = servers.filter((server) => server.categories.includes(category));
-  if (category === "featured") return members;
+  if (category === "featured") {
+    const rank = (id: string) => {
+      const index = FEATURED_SERVER_IDS.findIndex((candidate) => candidate === id);
+      return index < 0 ? FEATURED_SERVER_IDS.length : index;
+    };
+    return members.toSorted((a, b) => rank(a.id) - rank(b.id));
+  }
   const primary = (server: CuratedServer) =>
     server.categories.find((candidate) => candidate !== "featured") === category;
   return [...members.filter(primary), ...members.filter((server) => !primary(server))];
@@ -359,7 +366,13 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
   /** A curated entry with its bundled icon and live installation state. */
   const curatedEntry = (server: CuratedServer, installed: Installed): DiscoverEntry => {
     const entry = curatedDiscoverEntry(server);
-    const installedConnectorId = installedFor(installed, entry.name, [server.url]);
+    const installedConnectorId =
+      installedFor(installed, entry.name, [server.url]) ??
+      (server.address
+        ? [...installed.byUrl].find(
+            ([url]) => curatedServerForUrl(url, [server]) !== undefined,
+          )?.[1]
+        : undefined);
     return installedConnectorId === undefined ? entry : { ...entry, installedConnectorId };
   };
 

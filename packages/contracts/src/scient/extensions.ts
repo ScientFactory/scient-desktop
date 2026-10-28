@@ -357,6 +357,26 @@ export type DiscoverRemote = typeof DiscoverRemote.Type;
 export const DiscoverEntry = Schema.Struct({
   agentStores: Schema.optional(ExtensionAgentStores),
   accountRequired: Schema.optional(Schema.Boolean),
+  oauthClientRequired: Schema.optional(Schema.Boolean),
+  hosting: Schema.optional(TrimmedNonEmptyString),
+  paidPlan: Schema.optional(Schema.Boolean),
+  beta: Schema.optional(Schema.Boolean),
+  accessNote: Schema.optional(TrimmedNonEmptyString),
+  apiKey: Schema.optional(
+    Schema.Struct({
+      strategy: CredentialStrategy,
+      headerName: Schema.optional(TrimmedNonEmptyString),
+      fieldLabel: TrimmedNonEmptyString,
+      helpUrl: TrimmedNonEmptyString,
+    }),
+  ),
+  address: Schema.optional(
+    Schema.Struct({
+      urlTemplate: TrimmedNonEmptyString,
+      fieldLabel: TrimmedNonEmptyString,
+      placeholder: TrimmedNonEmptyString,
+    }),
+  ),
   name: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
@@ -519,3 +539,28 @@ export class ExtensionsError extends Schema.TaggedError<ExtensionsError>()("Exte
   ]),
   message: TrimmedNonEmptyString,
 }) {}
+
+/** Match a single tenant label without credentials or extra URL components. */
+export function matchesExtensionAddressTemplate(value: string, template: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    const expected = new URL(template.replace("<tenant>", "tenant"));
+    const suffix = expected.hostname.slice("tenant".length);
+    const tenant = url.hostname.slice(0, -suffix.length);
+    if (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      !url.search &&
+      !url.hash &&
+      url.pathname === expected.pathname &&
+      url.hostname.endsWith(suffix) &&
+      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(tenant)
+    )
+      return true;
+  } catch {
+    // Invalid URLs cannot match a template.
+  }
+  return false;
+}

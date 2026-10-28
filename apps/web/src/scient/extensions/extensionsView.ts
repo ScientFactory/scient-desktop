@@ -1,3 +1,4 @@
+import { matchesExtensionAddressTemplate } from "@t3tools/contracts";
 import {
   type ConnectorAddInput,
   type ConnectorProviderSupport,
@@ -162,7 +163,8 @@ export function isExtensionCategory(value: string): value is ExtensionCategory {
 /** Remotes Scient can reach as a connector without extra user input. */
 export function installableRemotes(entry: DiscoverEntry) {
   return entry.remotes.filter(
-    (remote) => remote.type === "streamable-http" && !remote.requiresInput,
+    (remote) =>
+      remote.type === "streamable-http" && (!remote.requiresInput || entry.address !== undefined),
   );
 }
 
@@ -501,4 +503,39 @@ export function extensionKindSearch(raw: Record<string, unknown>): { kind?: "ski
 /** Whether a section of `kind` shows on the list `selected` names. */
 export function showsKind(selected: ExtensionKind | undefined, kind: ExtensionKind): boolean {
   return (selected ?? "plugins") === kind;
+}
+
+export function entryNeedsSetup(entry: DiscoverEntry): boolean {
+  return (
+    entry.oauthClientRequired === true ||
+    entryNeedsToken(entry) ||
+    entry.apiKey !== undefined ||
+    entry.address !== undefined
+  );
+}
+
+export function entryFacts(
+  entry: DiscoverEntry | undefined,
+): ReadonlyArray<readonly [string, string]> {
+  if (!entry) return [];
+  return [
+    ...(entry.hosting ? [["Hosting", entry.hosting] as const] : []),
+    ...(entry.paidPlan ? [["Plan", "Paid plan"] as const] : []),
+    ...(entry.beta ? [["Status", "Beta"] as const] : []),
+    ...(entry.apiKey
+      ? [["Access", "API key needed"] as const]
+      : entry.accountRequired === true
+        ? [["Access", "Account needed"] as const]
+        : entry.accountRequired === false
+          ? [["Access", "No account needed"] as const]
+          : []),
+    ...(entry.address ? [["Setup", "Your address needed"] as const] : []),
+    ...(entry.accessNote ? [["Requirements", entry.accessNote] as const] : []),
+  ];
+}
+
+export function validateCuratedAddress(value: string, template: string): string | null {
+  return matchesExtensionAddressTemplate(value, template)
+    ? null
+    : "Enter an https address matching " + template + ".";
 }

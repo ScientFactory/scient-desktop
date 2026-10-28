@@ -210,27 +210,47 @@ function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
       ) : catalog === null ? (
         <MutedLine>Loading…</MutedLine>
       ) : (
-        catalog.sections.map((section) => (
-          <ExtensionsSection
-            key={section.category}
-            title={
-              <Link
-                to="/settings/extensions/category/$category"
-                params={{ category: section.category }}
-                className={SECTION_TITLE_LINK_CLASS}
+        <>
+          {catalog.sections
+            .filter((section) => section.category === "featured" || section.total >= 4)
+            .map((section) => (
+              <ExtensionsSection
+                key={section.category}
+                title={
+                  <Link
+                    to="/settings/extensions/category/$category"
+                    params={{ category: section.category }}
+                    className={SECTION_TITLE_LINK_CLASS}
+                  >
+                    {section.title}
+                    <SectionTitleChevron />
+                  </Link>
+                }
               >
-                {section.title}
-                <SectionTitleChevron />
-              </Link>
-            }
-          >
-            <ExtensionGrid label={section.title}>
-              {section.entries.map((entry) => (
-                <EntryItem key={entry.name} entry={entry} />
+                <ExtensionGrid label={section.title}>
+                  {section.entries.map((entry) => (
+                    <EntryItem key={entry.name} entry={entry} />
+                  ))}
+                </ExtensionGrid>
+              </ExtensionsSection>
+            ))}
+          <nav aria-label="More categories" className="flex flex-wrap gap-x-6 gap-y-3">
+            {catalog.sections
+              .filter((section) => section.category !== "featured" && section.total < 4)
+              .map((section) => (
+                <Link
+                  key={section.category}
+                  to="/settings/extensions/category/$category"
+                  params={{ category: section.category }}
+                  className={SECTION_TITLE_LINK_CLASS}
+                >
+                  {section.title}{" "}
+                  <span className="text-xs text-muted-foreground">{section.total}</span>
+                  <SectionTitleChevron />
+                </Link>
               ))}
-            </ExtensionGrid>
-          </ExtensionsSection>
-        ))
+          </nav>
+        </>
       )}
       {showsKind(kind, "plugins") && builtIns.length > 0 ? (
         <ExtensionsSection title="Built into Scient">

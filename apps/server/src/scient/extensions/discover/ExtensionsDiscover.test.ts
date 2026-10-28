@@ -25,6 +25,8 @@ import {
   CATALOG_CATEGORY_ORDER,
   CURATED_SERVERS,
   curatedServerForUrl,
+  curatedDiscoverEntry,
+  FEATURED_SERVER_IDS,
   type CuratedServer,
 } from "./curatedCatalog.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
@@ -416,6 +418,7 @@ describe("curated Discover catalog", () => {
       ]);
       const semantic = catalog.sections[0]!.entries[0]!;
       expect(semantic).toEqual({
+        hosting: "Official",
         name: "scient.curated/semantic",
         version: "2026-10-21",
         title: "semantic",
@@ -539,7 +542,9 @@ describe("curated Discover catalog", () => {
     );
     for (const server of CURATED_SERVERS) {
       expect(server.tagline.length, server.id).toBeLessThanOrEqual(60);
-      expect(new URL(server.url).protocol, server.id).toBe("https:");
+      expect(new URL(server.url.replace("<tenant>", "example-lab")).protocol, server.id).toBe(
+        "https:",
+      );
       expect(new URL(server.websiteUrl).protocol, server.id).toBe("https:");
       expect(
         server.categories.filter((category) => category !== "featured").length,
@@ -548,10 +553,75 @@ describe("curated Discover catalog", () => {
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
       expect(size, category).toBeLessThanOrEqual(category === "featured" ? 6 : 40);
-      // Earth and social science fill with the catalog expansion that follows this commit.
-      if (category === "earth" || category === "social-science") continue;
       expect(size, category).toBeGreaterThan(0);
     }
+  });
+
+  it("preserves curated setup metadata and hosting provenance in the contract", () => {
+    for (const server of CURATED_SERVERS) {
+      const entry = curatedDiscoverEntry(server);
+      expect(isDiscoverEntry(entry), server.id).toBe(true);
+      if (server.apiKey) {
+        expect(entry.apiKey).toEqual(server.apiKey);
+        expect(new URL(server.apiKey.helpUrl).protocol).toBe("https:");
+        if (server.apiKey.strategy === "header") expect(server.apiKey.headerName).toBeTruthy();
+      }
+      if (server.address) {
+        expect(entry.address).toEqual(server.address);
+        expect(entry.remotes[0]?.requiresInput).toBe(true);
+      }
+      if (server.url.includes(".caseyjhand.com/")) expect(entry.hosting).toBe("Community");
+      if (server.url.includes(".mcp.claude.com/"))
+        expect(entry.hosting).toBe("Hosted by Anthropic");
+    }
+  });
+
+  it.effect("ranks Featured independently of catalog order", () =>
+    Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const catalog = yield* discover.catalog();
+      expect(catalog.sections[0]?.entries.map((entry) => entry.title)).toEqual(
+        FEATURED_SERVER_IDS.map(
+          (id) => CURATED_SERVERS.find((server) => server.id === id)?.displayName,
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        harness(
+          () => {
+            throw new Error("No registry expected");
+          },
+          [...CURATED_SERVERS].reverse(),
+        ).layer(),
+      ),
+    ),
+  );
+
+  it.effect("recognises an installed tenant without treating foreign hosts as that service", () => {
+    const http = harness(() => {
+      throw new Error("No registry expected");
+    });
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const found = yield* discover.search({ scope: "curated", query: "Benchling lab" });
+      expect(found.entries[0]?.installedConnectorId).toBe("con_benchling0001");
+      const icons = yield* discover.connectorIcons([
+        "https://lab.mcp.benchling.com/mcp",
+        "https://lab.mcp.benchling.com.evil/mcp",
+      ]);
+      expect(icons.has("https://lab.mcp.benchling.com/mcp")).toBe(true);
+      expect(icons.has("https://lab.mcp.benchling.com.evil/mcp")).toBe(false);
+    }).pipe(
+      Effect.provide(
+        http.layer(() => [
+          connector({
+            connectorId: ConnectorId.make("con_benchling0001"),
+            url: "https://lab.mcp.benchling.com/mcp",
+            source: { type: "url" },
+          }),
+        ]),
+      ),
+    );
   });
 
   it("bundles a valid logo for every curated server", () => {
@@ -636,6 +706,8 @@ describe("curated names for connectors", () => {
     expect(curatedServerForUrl("https://mcp.deepwiki.com/other")).toBeUndefined();
     expect(curatedServerForUrl("https://pubmed.mcp.claude.com/mcp")?.id).toBe("pubmed");
     expect(curatedServerForUrl("https://unknown.example/mcp")).toBeUndefined();
+    expect(curatedServerForUrl("https://my-lab.mcp.benchling.com/mcp")?.id).toBe("benchling-lab");
+    expect(curatedServerForUrl("https://my-lab.mcp.benchling.com.evil/mcp")).toBeUndefined();
   });
 });
 
