@@ -10,7 +10,7 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { KeyRoundIcon, PlusIcon } from "lucide-react";
+import { ChevronRightIcon, KeyRoundIcon, PlusIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import {
@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Input } from "~/components/ui/input";
 import { Switch } from "~/components/ui/switch";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -43,12 +44,13 @@ import "./accounts.css";
 import { AccountApprovals } from "./AccountApprovals";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import { AccountDialog } from "./AccountDialog";
-import { AccountLogo } from "./AccountLogo";
+import { AccountLogo, SiteFavicon } from "./AccountLogo";
 import { accountsState } from "./accountsState";
 import {
   KIND_LABELS,
   accountIconUrl,
   accountManagePage,
+  isSavedPassword,
   providerManagedAccounts,
 } from "./accountsView";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
@@ -116,6 +118,8 @@ export function AccountRow({
         <span className="flex min-w-0 items-center gap-3">
           {iconUrl ? (
             <AccountLogo src={iconUrl} className="size-10 self-center rounded-[25%]" />
+          ) : site ? (
+            <SiteFavicon site={site} />
           ) : (
             <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
               <KeyRoundIcon className="size-4 text-muted-foreground" />
@@ -126,16 +130,21 @@ export function AccountRow({
             <span className="truncate text-xs text-muted-foreground">
               {details.kind === "website" && !account.secrets.password
                 ? `Browser sign-in · ${profiles.find((profile) => profile.id === (details.profileId ?? newTabProfileId ?? DEFAULT_BROWSER_PROFILE_ID))?.name ?? "Browser profile"}`
-                : [
-                    KIND_LABELS[details.kind],
-                    "sites" in details
-                      ? details.sites.join(", ")
-                      : details.kind === "database"
-                        ? details.host
-                        : details.tool,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
+                : isSavedPassword(account) && details.kind === "website"
+                  ? // The username tells two sign-ins to the same site apart.
+                    [details.username, account.name === site ? undefined : details.sites.join(", ")]
+                      .filter(Boolean)
+                      .join(" · ") || KIND_LABELS.website
+                  : [
+                      KIND_LABELS[details.kind],
+                      "sites" in details
+                        ? details.sites.join(", ")
+                        : details.kind === "database"
+                          ? details.host
+                          : details.tool,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
             </span>
           </span>
           {rejection ? <span className="text-xs text-muted-foreground">{rejection}</span> : null}
@@ -310,6 +319,71 @@ function managedHost(value: string | undefined) {
   }
 }
 
+function SavedPasswordsDialog({
+  accounts,
+  environmentId,
+  canWrite,
+  onEdit,
+  onActivity,
+  onClose,
+}: {
+  accounts: ReadonlyArray<AccountSummary>;
+  environmentId: EnvironmentId;
+  canWrite: boolean;
+  onEdit: (account: AccountSummary) => void;
+  onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const text = query.trim().toLowerCase();
+  const shown = accounts
+    .filter((account) =>
+      [
+        account.name,
+        ...("sites" in account.details ? account.details.sites : []),
+        account.details.kind === "website" ? (account.details.username ?? "") : "",
+      ].some((value) => value.toLowerCase().includes(text)),
+    )
+    .toSorted((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup data-accounts-dialog className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Saved passwords</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="grid gap-3">
+            <Input
+              type="search"
+              aria-label="Find a saved password"
+              placeholder={`Search ${accounts.length} sites`}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <div className="max-h-[60vh] overflow-y-auto rounded-lg border">
+              {shown.map((account) => (
+                <AccountRow
+                  key={account.accountId}
+                  account={account}
+                  environmentId={environmentId}
+                  canWrite={canWrite}
+                  onEdit={() => onEdit(account)}
+                  onActivity={onActivity}
+                />
+              ))}
+              {shown.length === 0 ? (
+                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  No saved passwords match
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 function AccountsContent({
   environmentId,
   snapshot,
@@ -319,7 +393,7 @@ function AccountsContent({
   snapshot: AccountsSnapshot;
   canWrite: boolean;
 }) {
-  const [dialog, setDialog] = useState<"add" | "import" | "1password" | null>(null);
+  const [dialog, setDialog] = useState<"add" | "import" | "1password" | "passwords" | null>(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [activity, setActivity] = useState<ReadonlyArray<AccountActivityEntry> | null>(null);
   const passwordFileRef = useRef<HTMLInputElement>(null);
@@ -333,6 +407,8 @@ function AccountsContent({
     enabled: true,
   });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
+  // Saved passwords, often hundreds from a browser, get one row so the page stays short.
+  const savedPasswords = snapshot.accounts.filter(isSavedPassword);
   const managedRows = [
     ...providerManagedAccounts(providerInventory.providers),
     ...(snapshot.managedElsewhere ??
@@ -409,16 +485,38 @@ function AccountsContent({
             }
           />
         ) : null}
-        {snapshot.accounts.map((account) => (
-          <AccountRow
-            key={account.accountId}
-            account={account}
-            environmentId={environmentId}
-            canWrite={canWrite}
-            onEdit={() => setEditing(account)}
-            onActivity={setActivity}
+        {snapshot.accounts
+          .filter((account) => !isSavedPassword(account))
+          .map((account) => (
+            <AccountRow
+              key={account.accountId}
+              account={account}
+              environmentId={environmentId}
+              canWrite={canWrite}
+              onEdit={() => setEditing(account)}
+              onActivity={setActivity}
+            />
+          ))}
+        {savedPasswords.length ? (
+          <SettingsRow
+            {...clickableAccountRow(() => setDialog("passwords"))}
+            aria-label="Show saved passwords"
+            title={
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
+                  <KeyRoundIcon className="size-4 text-muted-foreground" />
+                </span>
+                <span className="grid min-w-0 gap-1">
+                  <span className="truncate text-left">Saved passwords</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}
+                  </span>
+                </span>
+              </span>
+            }
+            control={<ChevronRightIcon className="size-4 text-muted-foreground" />}
           />
-        ))}
+        ) : null}
       </SettingsSection>
       <BrowserProfiles
         environmentId={environmentId}
@@ -456,7 +554,8 @@ function AccountsContent({
           canWrite={canWrite}
           onClose={() => {
             setEditing(null);
-            setDialog(null);
+            // Editing from Saved passwords returns to that list.
+            if (dialog !== "passwords") setDialog(null);
           }}
         />
       ) : null}
@@ -465,6 +564,16 @@ function AccountsContent({
           environmentId={environmentId}
           canWrite={canWrite}
           snapshot={snapshot}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === "passwords" ? (
+        <SavedPasswordsDialog
+          accounts={savedPasswords}
+          environmentId={environmentId}
+          canWrite={canWrite}
+          onEdit={setEditing}
+          onActivity={setActivity}
           onClose={() => setDialog(null)}
         />
       ) : null}

@@ -13,6 +13,7 @@ export function makeDesktopAccountsBridge(
     originBoundFill: true,
     readBrowserPasswords: (input) => ipc.invoke(Channels.READ_BROWSER_PASSWORDS, input),
     sourceProfiles: () => ipc.invoke(Channels.SOURCE_PROFILES),
+    siteIcon: (site) => ipc.invoke(Channels.SITE_ICON, site),
     signedInSites: (profileId, environmentId) =>
       ipc.invoke(Channels.SIGNED_IN_SITES, { profileId, environmentId }),
     cookieMetadata: (profileId, environmentId) =>

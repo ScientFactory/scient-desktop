@@ -16,6 +16,8 @@ import { PreviewManager } from "../../preview/Manager.ts";
 import { safeHttpOrigin } from "../../preview/FaviconCapture.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
 import { discoverSourceProfiles } from "./sourceProfiles.ts";
+import { makeSiteIcons } from "./siteIcons.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import { groupSignedInSites, siteCookieRemovals } from "./signedInSites.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
@@ -209,8 +211,27 @@ const readBrowserPasswordsCsv = Effect.fn("DesktopAccounts.readBrowserPasswordsC
   return yield* readBrowserPasswords(decoded.value.sourceId, decoded.value.directory);
 });
 
+const decodeSite = Schema.decodeUnknownOption(
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253)),
+);
+
 export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(function* () {
   const ipc = yield* DesktopIpc;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const siteIcons = yield* makeSiteIcons(
+    environment.path.join(environment.stateDir, "scient", "site-icons.json"),
+  );
+  yield* ipc.handle({
+    channel: Channels.SITE_ICON,
+    handler: Effect.fn("DesktopAccounts.siteIcon")(function* (
+      raw: unknown,
+      event?: AccountsInvokeEvent,
+    ) {
+      const site = decodeSite(raw);
+      if (!(yield* mainSender(event)) || Option.isNone(site)) return null;
+      return yield* siteIcons(site.value);
+    }),
+  });
   yield* ipc.handle({
     channel: Channels.READ_BROWSER_PASSWORDS,
     handler: readBrowserPasswordsCsv,
