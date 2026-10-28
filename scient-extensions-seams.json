@@ -25,6 +25,8 @@
     "apps/server/src/provider/ScientProviderNativeInventory.ts",
     "packages/contracts/src/scient/extensionAudience.ts",
     "packages/contracts/src/scient/providerStore.ts",
+    "packages/contracts/src/scient/storeCategories.ts",
+    "packages/contracts/src/scient/storeCategories.test.ts",
     "apps/web/src/routes/_chat.settings.extensions_.store.$instanceId.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx",
     "packages/contracts/src/scient/extensionIcon.ts",

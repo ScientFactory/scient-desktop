@@ -41,6 +41,30 @@ import {
   type CuratedServer,
 } from "./curatedCatalog.ts";
 
+const CATEGORY_KEYWORDS: Readonly<Record<ExtensionCategory, readonly string[]>> = {
+  featured: [],
+  papers: ["scholarly", "literature", "citation", "crossref"],
+  biology: ["genomics", "protein", "clinical", "bioinformatics"],
+  chemistry: ["chemistry", "compound", "pubchem", "materials"],
+  earth: ["climate", "earthdata", "geospatial", "biodiversity", "weather"],
+  "physics-math": ["astronomy", "physics", "arxiv", "symbolic", "mathematics"],
+  "social-science": ["economics", "census", "survey", "worldbank", "fred"],
+  data: ["statistics", "dataset", "notebook", "SQL"],
+  writing: ["citation", "zotero", "bibliography"],
+  figures: ["diagram", "figure", "presentation"],
+  code: ["repository", "documentation"],
+  teamwork: ["meeting", "project"],
+};
+const CategoryCursor = Schema.fromJsonString(
+  Schema.Struct({
+    category: Schema.String,
+    cursors: Schema.Record(Schema.String, Schema.String),
+    seen: Schema.Array(Schema.String),
+  }),
+);
+const encodeCategoryCursor = Schema.encodeSync(CategoryCursor);
+const decodeCategoryCursor = Schema.decodeUnknownExit(CategoryCursor);
+
 export const MCP_REGISTRY_SERVERS_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 const OFFICIAL_META_KEY = "io.modelcontextprotocol.registry/official";
 const DISCOVER_CACHE_TTL = Duration.minutes(10);
@@ -511,10 +535,74 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
       }
 
       if (input.category !== undefined) {
-        return yield* new ExtensionsError({
-          reason: "invalid-input",
-          message: "Categories are Scient's curated catalog; search them with scope 'curated'.",
-        });
+        const category = input.category;
+        const decoded = input.cursor ? decodeCategoryCursor(input.cursor) : undefined;
+        if (decoded && (Exit.isFailure(decoded) || decoded.value.category !== category)) {
+          return yield* new ExtensionsError({
+            reason: "invalid-input",
+            message: "Invalid category cursor.",
+          });
+        }
+        const previous = decoded && Exit.isSuccess(decoded) ? decoded.value : undefined;
+        const keywords = CATEGORY_KEYWORDS[category].filter(
+          (keyword) => !previous || previous.cursors[keyword] !== undefined,
+        );
+        const pages = yield* Effect.forEach(
+          keywords,
+          Effect.fn("ExtensionsDiscover.categoryKeyword")(function* (keyword) {
+            const url = new URL(MCP_REGISTRY_SERVERS_URL);
+            url.searchParams.set("search", keyword);
+            url.searchParams.set("limit", "10");
+            url.searchParams.set("version", "latest");
+            const cursor = previous?.cursors[keyword];
+            if (cursor) url.searchParams.set("cursor", cursor);
+            const result = yield* readRegistry(url.href, parseRegistryPage, false).pipe(
+              Effect.timeout("4 seconds"),
+              Effect.result,
+            );
+            return { keyword, result };
+          }),
+          { concurrency: 3 },
+        );
+        const installed = yield* installedConnectors;
+        const seen = new Set(previous?.seen ?? []);
+        const entries: DiscoverEntry[] = [];
+        const cursors: Record<string, string> = {};
+        let failed = false;
+        for (const { keyword, result } of pages) {
+          if (result._tag === "Failure") {
+            failed = true;
+            continue;
+          }
+          if (result.success.nextCursor) cursors[keyword] = result.success.nextCursor;
+          for (const raw of result.success.entries) {
+            const entry = registryEntry(raw, installed);
+            const keys = [
+              entry.name,
+              ...entry.remotes.map((remote) => canonicalConnectorUrl(remote.url)),
+            ];
+            if (keys.some((key) => seen.has(key))) continue;
+            for (const key of keys) seen.add(key);
+            if (curatedFor(raw)) continue;
+            if (
+              !terms.every((term) =>
+                `${entry.title ?? ""} ${entry.description ?? ""} ${entry.name}`
+                  .toLowerCase()
+                  .includes(term),
+              )
+            )
+              continue;
+            entries.push(entry);
+          }
+        }
+        return {
+          entries,
+          ...(Object.keys(cursors).length
+            ? { nextCursor: encodeCategoryCursor({ category, cursors, seen: [...seen] }) }
+            : {}),
+          ...(failed ? { message: "Some MCP Registry searches could not finish." } : {}),
+          fetchedAt: yield* nowIso,
+        } satisfies DiscoverPage;
       }
       const cursor = input.cursor?.trim();
       const requestedLimit =
