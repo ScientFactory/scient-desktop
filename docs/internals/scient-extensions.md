@@ -480,17 +480,15 @@ ServerProviderMcpServer { name; status: "connected" | "failed" | "needs-auth" | 
   from this section. No configuration, environment, or credentials from an MCP
   definition are projected into the UI.
 
-### Shared plugins and source preference
+### Shared plugins source
 
-“Use my Claude Code plugins in Scient Agent” defaults on. It appears only after
-runtime identity proves Scient Agent 0.1.3 or newer. The ordinary Scient Agent
-process factory and plugin commands inject
-`SCIENT_AGENT_ENABLE_SOURCES=claude-plugins` only on a supported version and when
-requested. Identity checks precede injection. The agent unions this source with
-its own enabled sources for discovery; its `disabledProviders` remains
-controlling. An explicit source enabled in the agent's configuration can still
-work when the desktop preference is off. No settings overlay replaces arrays.
-The desktop inventory checks those switches through `config get … --json` and
+Scient Agent always uses Claude Code's plugins; there is no desktop switch. The
+ordinary Scient Agent process factory and plugin commands inject
+`SCIENT_AGENT_ENABLE_SOURCES=claude-plugins` once runtime identity proves
+Scient Agent 0.1.3 or newer. Identity checks precede injection. The agent
+unions this source with its own enabled sources for discovery; its
+`disabledProviders` remains controlling. No settings overlay replaces arrays.
+The desktop inventory checks that switch through `config get … --json` and
 honors Claude's user/project/local plugin enablement layers.
 
 The source home is `CLAUDE_CONFIG_DIR`, resolved on the server host, or the

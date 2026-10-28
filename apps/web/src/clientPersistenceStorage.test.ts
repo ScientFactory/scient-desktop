@@ -106,7 +106,6 @@ describe("clientPersistenceStorage", () => {
     testWindow.localStorage.setItem(
       "scient-next:client-settings:v1",
       JSON.stringify({
-        appearanceContrast: 100,
         fontSizeInterface: 18,
         showSkillsInSlashMenu: true,
         sidebarAutoSettleAfterDays: 3,
@@ -117,7 +116,6 @@ describe("clientPersistenceStorage", () => {
 
     expect(readBrowserClientSettings()).toEqual(
       expect.objectContaining({
-        appearanceContrast: 100,
         fontSizeInterface: 18,
         showSkillsInSlashMenu: true,
       }),
@@ -128,7 +126,6 @@ describe("clientPersistenceStorage", () => {
     testWindow.localStorage.setItem("scient-next:client-settings:v1", "{}");
     expect(readBrowserClientSettings()).toEqual(
       expect.objectContaining({
-        appearanceContrast: 120,
         fontSizeInterface: 17,
         showSkillsInSlashMenu: false,
       }),
