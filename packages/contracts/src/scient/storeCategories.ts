@@ -17,7 +17,6 @@ const STORE_CATEGORIES: Readonly<Record<string, readonly ExtensionCategory[]>> =
   design: ["figures"],
   math: ["physics-math"],
   location: ["earth"],
-  finance: ["social-science"],
   "business & operations": ["teamwork"],
 };
 const OVERRIDES: Readonly<Record<string, readonly ExtensionCategory[]>> = {
