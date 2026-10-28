@@ -5280,6 +5280,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         runId: limited.id,
       });
+      // SCIENT-FORK:START terminal-queue-promotion-fence holds work queued behind a failed run.
+      yield* orchestrator.resumeQueuedRuns;
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.id === available.id,
+        )?.status,
+        "queued",
+      );
+      // SCIENT-FORK:END
       yield* eventSink.write({
         events: [
           {
@@ -5298,17 +5307,6 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
       });
       yield* orchestrator.resumeQueuedRuns;
-      assert.equal(
-        (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-          (run) => run.id === available.id,
-        )?.status,
-        "queued",
-      );
-      yield* orchestrator.dispatch({
-        type: "queue.resume",
-        commandId: CommandId.make(`${threadId}:resume-available`),
-        threadId,
-      });
       const after = yield* orchestrator.getThreadProjection(threadId);
       const started = after.runs.find((run) => run.id === available.id);
       assert.equal(started?.status, "starting");

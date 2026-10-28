@@ -1,10 +1,11 @@
+import { isTrimmedUnadvertised } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../ScientOperationTool.ts";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 
-const NonEmptyString = Schema.Trimmed.check(Schema.isMinLength(1));
+const NonEmptyString = Schema.String.check(isTrimmedUnadvertised(), Schema.isMinLength(1));
 // Optional fields retain the existing {} call while keeping MCP inputs objects.
 export const ScientSkillListInput = Schema.Struct({
   query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
@@ -12,7 +13,7 @@ export const ScientSkillListInput = Schema.Struct({
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
 });
 export type ScientSkillListInput = typeof ScientSkillListInput.Type;
-const SkillName = Schema.Trimmed.check(
+const SkillName = Schema.String.check(
   Schema.isMinLength(1),
   Schema.isMaxLength(64),
   Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
@@ -63,7 +64,7 @@ export const ScientSkillResource = Schema.Struct({
 
 export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   description:
-    "Discover Scient-managed guidance in this turn's authorized scope; provider-native skills are separate. Omit query to browse, or search short keywords in names/descriptions. A keyword miss returns a labeled browse page; search never restricts loading. Results are summaries only: load applicable instructions with scient_skill_load before following them. Check the current-turn marker first; if absent, list before inferring availability. A complete empty scope needs no list call. The scope digest changes with visible releases, selections, or invocation policy; it is freshness metadata, not authority. Reuse visible full-catalog summaries only when complete, the digest matches, and they suffice; otherwise list for the task. Query and paged results are partial unless scope.includesAllSkills is true. Rediscover after context loss or uncertainty. Pending or incomplete scope is not evidence that no skills are available. Default page size 20, maximum 50; use nextOffset for more results.",
+    "List the Scient skills available this turn, or search their names and descriptions by keyword; a miss returns a browse page. Your provider's own skills are not included. Results are summaries: load a skill with scient_skill_load before you follow it. Unless scope.includesAllSkills is true, results are partial, and a pending or incomplete scope does not mean there are none. A full list you already saw stays current while scope.digest is unchanged. Page size 20 by default, up to 50; continue with nextOffset.",
   parameters: ScientSkillListInput,
   success: Schema.Struct({
     skills: Schema.Array(
@@ -95,7 +96,7 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
 
 export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
   description:
-    "Read the instructions for an available Scient skill by its exact name, from the user's Scient selection or scient_skills_list. An explicit selection can be loaded directly without searching. Returns the complete instructions and a resource index; read supporting files with scient_skill_read_resource as needed. Resolves only within this turn's exact release scope; does not execute anything or grant tools or permissions.",
+    "Load a Scient skill's instructions by its exact name, from the user's selection or scient_skills_list. Returns the instructions and a list of the skill's files; read one with scient_skill_read_resource. Loading runs nothing and grants no tools or permissions.",
   parameters: Schema.Struct({ name: SkillName }),
   success: Schema.Struct({
     skill: ScientSkillSummary,
@@ -114,7 +115,7 @@ export const ScientSkillLoadTool = Tool.make("scient_skill_load", {
 
 export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource", {
   description:
-    "Read one verified resource from a selected Scient skill by its exact Agent Skills name. Relative traversal and files outside the turn-scoped immutable release are unavailable.",
+    "Read one file of a Scient skill, by the skill's exact name and a path from scient_skill_load's file list.",
   parameters: Schema.Struct({ name: SkillName, path: NonEmptyString }),
   success: Schema.Struct({
     path: NonEmptyString,

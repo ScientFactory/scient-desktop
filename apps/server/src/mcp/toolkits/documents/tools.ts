@@ -162,7 +162,7 @@ const documentOperation = (id: string): OperationMetadata => ({
 
 export const ScientPdfBuildTool = Tool.make("scient_pdf_build", {
   description:
-    "Build an existing project-relative HTML document into a real PDF at an explicit project-relative output path using Scient's isolated Chromium renderer. The result is structurally validated, published as an immutable generated document, written to the project, and opened in Scient. This does not visually review the pages.",
+    "Build a project HTML file into a PDF at the project path you give, and open it in Scient. Needs a connected Scient desktop. It does not check how the pages look.",
   parameters: ScientPdfBuildInput,
   success: ScientPdfBuildResult,
   failure: ScientPdfBuildToolError,
@@ -177,7 +177,7 @@ export const ScientPdfBuildTool = Tool.make("scient_pdf_build", {
 
 export const ScientLatexBuildTool = Tool.make("scient_latex_build", {
   description:
-    "Build an existing project-relative LaTeX source into a real PDF at an explicit project-relative output path using Scient's LaTeX build service and an available qualified toolchain. The build resolves the document root, returns compiler diagnostics, publishes a structurally validated immutable revision, writes the PDF to the project, and opens the compiled root in Scient's LaTeX Source/Split/PDF surface in Split mode. A Scient-managed toolchain may download missing TeX packages. Long builds return a paced in-progress result. This does not visually review the pages.",
+    "Build a project LaTeX file into a PDF at the project path you give, and open it in Scient's Split view. Scient finds the main document; if the file belongs to several, pass rootSourcePath. Returns compiler diagnostics. Scient may download missing TeX packages. If the result is in-progress, wait retryAfterMs, then call again with the same paths. It does not check how the pages look.",
   parameters: ScientLatexPdfBuildInput,
   success: ScientLatexPdfBuildResult,
   failure: ScientLatexBuildToolError,
@@ -192,7 +192,7 @@ export const ScientLatexBuildTool = Tool.make("scient_latex_build", {
 
 const ScientDocumentExportTool = Tool.make("scient_document_export", {
   description:
-    "Export an existing project-relative Markdown document to an explicit project-relative output path. The output extension selects the format; PDF is available. Scient captures the saved file and its workspace images, renders it as one complete document page in its isolated Chromium renderer, refuses a wrong or unfinished page, structurally validates and publishes the PDF as an immutable generated document, writes it to the project, and opens it in Scient. Missing images become labelled placeholders listed in warnings. Requires a connected Scient desktop. This does not visually review the pages.",
+    "Export a project Markdown file to the project path you give, and open it in Scient. The output extension picks the format; PDF is available. Missing images become placeholders listed in warnings. Needs a connected Scient desktop. It does not check how the pages look.",
   parameters: ScientDocumentExportInput,
   success: ScientDocumentExportResult,
   failure: ScientDocumentExportToolError,

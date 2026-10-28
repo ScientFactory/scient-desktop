@@ -103,6 +103,9 @@ export * from "./browserPdfExport.ts";
 export * from "./htmlPdfBuild.ts";
 export * from "./scientDocumentExport.ts";
 export * from "./scientMarkdown.ts";
+// SCIENT-FORK:START — Scient tool input schema checks (new file, no upstream edits).
+export * from "./scientToolSchemas.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
 // SCIENT-FORK:END

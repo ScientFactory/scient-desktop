@@ -11855,7 +11855,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("rejects earlier-process membership while the owning query has not exited", () =>
+  it.effect("refuses a cross-session replacement while the owning query runs a subagent", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const stopped: string[] = [];
@@ -11900,34 +11900,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             strength: "strong" as const,
           },
         };
-        // The first query's close is deliberately a no-op. Replacing it is not EOF proof.
-        yield* harness.runtime.startTurn(input(otherNativeThread, 2));
-        yield* Queue.offer(
-          harness.processQueues[1]!,
-          claudeSdkFrame({
-            ...makeResultFrame({
-              uuid: "00000000-0000-4000-8000-000000002013",
-              result: "Other native turn completed.",
-            }),
-            session_id: otherNativeThread.nativeThreadRef.nativeId,
-          }),
-        );
-        yield* Queue.take(harness.terminalReceipts);
-        yield* harness.runtime.startTurn(input(harness.providerThread, 3));
-        assert.lengthOf(harness.processQueues, 3);
         const before = harness.events.filter((event) => event.type === "subagent.updated");
-        const rejected = yield* harness.runtime.stopSubagent!({
-          providerThread: harness.providerThread,
-          nativeTaskId: "agent-unexited-owner",
-        }).pipe(Effect.flip);
-        assert.equal(rejected._tag, "ProviderAdapterProtocolError");
+        // Replacing the live query would orphan its subagent, so no earlier-process membership forms.
+        const replacement = yield* harness.runtime
+          .startTurn(input(otherNativeThread, 2))
+          .pipe(Effect.flip);
+        assert.instanceOf(
+          replacement.cause,
+          ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+        );
+        assert.lengthOf(harness.processQueues, 1);
         assert.deepEqual(stopped, []);
         assert.deepEqual(
           harness.events.filter((event) => event.type === "subagent.updated"),
           before,
         );
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
-        assert.lengthOf(harness.terminalEvents(), 2);
+        assert.lengthOf(harness.terminalEvents(), 1);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

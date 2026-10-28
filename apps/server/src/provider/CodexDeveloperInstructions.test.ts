@@ -79,10 +79,6 @@ describe("Scient browser awareness", () => {
     NodeAssert.match(instructions, /Scient browser/);
     NodeAssert.match(instructions, /preview_status/);
     NodeAssert.match(instructions, /preview_open/);
-    NodeAssert.match(
-      instructions,
-      /Use another browser system only when these tools are unavailable/,
-    );
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {

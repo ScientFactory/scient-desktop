@@ -52,7 +52,7 @@ Review the output against the requirements that matter for that document, includ
 
 Successful generation or editing does not establish visual quality. When visual review is available, inspect rendered pages of the resulting PDF. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Inspect enough of the document to support the claims you make, fix material defects you observe, and verify the updated output. If visual inspection is unavailable, say so.
 
-When reporting completion in Scient chat, provide clickable project-relative Markdown links to the final PDF and any editable source created or updated. Use the actual output path; when a tool returns \`outputPath\`, use it for that tool’s output. Wrap destinations containing spaces in angle brackets. If no PDF was produced, link any useful work created and state what remains. Briefly report what was verified and any material limitation.
+When reporting completion in Scient chat, provide clickable Markdown links to the final PDF and any editable source created or updated. Use the actual output path; when a tool returns \`outputPath\`, use it for that tool’s output. Wrap destinations containing spaces in angle brackets. If no PDF was produced, link any useful work created and state what remains. Briefly report what was verified and any material limitation.
 `;
 
 const htmlPdfAuthoring = `---
@@ -72,7 +72,7 @@ This skill grants no tools or authority. When \`scient_pdf_build\` is available,
 
 A successful build proves that a structurally valid PDF was produced; it does not prove visual quality. When visual review is available, inspect rendered page images or an equivalent preview of the resulting PDF, not only extracted text, page count, or metadata. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Inspect enough of the document to support the claims you make, fix material defects you observe, rebuild when appropriate, and verify the updated PDF. If visual inspection is unavailable, say so.
 
-When reporting completion in Scient chat, provide clickable project-relative Markdown links to the exact editable HTML source and the final PDF at the exact \`outputPath\` returned by the build. Wrap link destinations containing spaces in angle brackets. Report what was verified and any material property that remains unverified.
+When reporting completion in Scient chat, provide clickable Markdown links to the exact editable HTML source and the final PDF at the exact \`outputPath\` returned by the build. Wrap link destinations containing spaces in angle brackets. Report what was verified and any material property that remains unverified.
 `;
 
 const latexAuthoring = `---
@@ -94,7 +94,7 @@ Before reporting the source ready, make sure the document's commands, environmen
 
 Preserve an existing project's hyperlink configuration. When the document uses a table of contents, citations, cross-references, or URLs, verify the intended navigation after compilation.
 
-Keep \`.tex\` source files and required assets in the project. A clickable project-relative \`.tex\` link opens Scient's LaTeX Source, Split, and PDF surface and starts local compilation; a successful build displays the PDF.
+Keep \`.tex\` source files and required assets in the project. A clickable \`.tex\` link opens Scient's LaTeX Source, Split, and PDF surface and starts local compilation; a successful build displays the PDF.
 
 ## Build and Verify the PDF
 
@@ -102,11 +102,11 @@ This skill grants no tools or authority.
 
 When the user asks for a PDF and \`scient_latex_build\` is available, call it with the project-relative \`.tex\` source path and intended project-relative \`.pdf\` output path. If it returns \`in-progress\`, wait at least \`retryAfterMs\` and call it again with the same paths; do not start a parallel build. Use the completed result's paths, page count, diagnostics, and warnings as the build evidence.
 
-If direct build access is unavailable, provide a clickable project-relative Markdown link to the \`.tex\` source and state that PDF compilation was not verified. The user can open the source in Scient to use its built-in compiler. Creating or opening the source is not evidence that compilation succeeded.
+If direct build access is unavailable, provide a clickable Markdown link to the \`.tex\` source and state that PDF compilation was not verified. The user can open the source in Scient to use its built-in compiler. Creating or opening the source is not evidence that compilation succeeded.
 
 A completed build proves that a structurally valid PDF was produced and published; it does not prove visual quality. When visual review is available, inspect rendered pages of the resulting PDF. Prefer direct page rendering or a PDF preview tool over computer use when it provides the needed view. Review the parts that matter for the document, such as equations, citations and references, pagination, figures, tables, and required characters. Fix material defects, rebuild when appropriate, and verify the updated PDF. If visual inspection is unavailable, say so.
 
-When reporting completion in Scient chat, provide clickable project-relative Markdown links to the exact \`sourcePath\` and \`outputPath\` returned by the completed build. If \`rootSourcePath\` differs, also link it and identify it as the compiled root. Wrap destinations containing spaces in angle brackets. Report the actual \`pageCount\`, material diagnostics or warnings, and anything that remains unverified. Automatic opening in Scient does not replace these links.
+When reporting completion in Scient chat, provide clickable Markdown links to the exact \`sourcePath\` and \`outputPath\` returned by the completed build. If \`rootSourcePath\` differs, also link it and identify it as the compiled root. Wrap destinations containing spaces in angle brackets. Report the actual \`pageCount\`, material diagnostics or warnings, and anything that remains unverified. Automatic opening in Scient does not replace these links.
 `;
 
 const scientSkillAuthoring = `---
@@ -319,7 +319,7 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.pdf-authoring",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 40,
@@ -340,7 +340,7 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.html-pdf-authoring",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 50,
@@ -361,7 +361,7 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
       "scient.skill.json": `{
   "apiVersion": "scient.skills/v1alpha1",
   "id": "scient.latex-authoring",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 60,

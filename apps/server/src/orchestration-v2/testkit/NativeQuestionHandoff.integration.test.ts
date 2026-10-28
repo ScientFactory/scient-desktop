@@ -311,7 +311,7 @@ it.live(
           assert.equal(historicalMessage({ ...answerItem, responseMode: "message" }), null);
           const tiny = selectHistory({
             messages: [history],
-            coverage: "Recover from scient_thread_read",
+            coverage: "Recover from scient_thread_inspect",
             budget: 1_024,
           });
           assert.deepEqual(tiny.omittedItemIds, [answerItem.id]);

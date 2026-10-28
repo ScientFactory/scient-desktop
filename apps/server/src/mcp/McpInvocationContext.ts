@@ -30,7 +30,7 @@ const ALL_MCP_CAPABILITIES = [
   "skills:read",
   "sources:read",
   "sources:write",
-  // The Scient reader retains its own read-only grant alongside native orchestration tools.
+  // The handoff-summary reader retains its own read-only grant alongside native orchestration tools.
   "threads:read",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];

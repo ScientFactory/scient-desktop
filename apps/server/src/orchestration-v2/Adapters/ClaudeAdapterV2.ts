@@ -1798,7 +1798,9 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__scient__orchestrator_capabilities",
   "mcp__scient__list_scheduled_tasks",
   "mcp__scient__scient_thread_list",
-  "mcp__scient__scient_thread_read",
+  // SCIENT-FORK:START — Scient's read-only handoff summary reader.
+  "mcp__scient__scient_handoff_summary_read",
+  // SCIENT-FORK:END
   "mcp__scient__scient_thread_wait",
   "mcp__scient__scient_worktree_status",
   "mcp__scient__scient_worktree_list",

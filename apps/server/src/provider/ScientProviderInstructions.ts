@@ -8,21 +8,9 @@ import {
 
 import { scientAgentCopy } from "./ScientAgentCopy.ts";
 
-/**
- * Scient chat renders chart and diagram fences inline, so upstream's chart rule
- * yields to them. Each section stays under Codex's 4,000-byte context entry cap.
- */
-const SCIENT_ORCHESTRATION_ADDITIONS: ReadonlyArray<string> = [
-  `### Scient visuals
-
-A chart or diagram that fits a fenced \`mermaid\`, \`vega-lite\`, or \`plotly\` block goes in your reply as that block instead of \`html_render\`. Show other visuals that say more than prose, such as rich tables, image collages, or mockups, without being asked.`,
-];
-
-/** Upstream's orchestration rules in Scient's names, then Scient's additions; one Codex entry each. */
-export const SCIENT_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
-  ...T3_CODE_ORCHESTRATION_SECTIONS.map(scientAgentCopy),
-  ...SCIENT_ORCHESTRATION_ADDITIONS,
-];
+/** Upstream's orchestration rules in Scient's copy; one Codex entry each. */
+export const SCIENT_ORCHESTRATION_SECTIONS: ReadonlyArray<string> =
+  T3_CODE_ORCHESTRATION_SECTIONS.map(scientAgentCopy);
 
 export const SCIENT_ORCHESTRATION_INSTRUCTIONS = `
 

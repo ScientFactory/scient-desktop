@@ -136,11 +136,11 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
   }
   expect(names.has("scient_thread_launch")).toBe(true);
   expect(names.has("scient_thread_start")).toBe(false);
-  expect(names.has("scient_thread_read")).toBe(true);
+  expect(names.has("scient_thread_read")).toBe(false);
   expect(names.has("scient_thread_inspect")).toBe(true);
   expect(names.has("t3_thread_read")).toBe(false);
   expect(
-    Context.get(ScientThreadsToolkit.tools.scient_thread_read.annotations, Tool.Readonly),
+    Context.get(ScientThreadsToolkit.tools.scient_handoff_summary_read.annotations, Tool.Readonly),
   ).toBe(true);
   expect(
     Context.get(OrchestratorToolkit.tools.scient_thread_inspect.annotations, Tool.Readonly),

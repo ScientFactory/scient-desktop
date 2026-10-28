@@ -79,7 +79,6 @@ it("gives every provider's agent Scient's names, built from upstream's current c
     assert.include(text, "Scient", channel);
   }
   assert.include(agentText["MCP tools/list"], "scient_thread_launch");
-  assert.include(agentText["MCP tools/list"], "Inspect a Scient thread and its runs");
 
   // A deliberate difference must still match upstream's text, or it silently stops applying.
   const upstream = [JSON.stringify(listedTools), T3_CODE_ORCHESTRATION_INSTRUCTIONS].join("\n");

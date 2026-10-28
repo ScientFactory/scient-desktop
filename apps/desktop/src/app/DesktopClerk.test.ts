@@ -259,8 +259,8 @@ describe("DesktopClerk", () => {
     const first = "scient://new?prompt=first";
     const second = "scient://threads/env-1/thread-1";
     const later = "scient://new?prompt=later";
+    const launchPair = "scient://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
     // SCIENT-FORK:END scient-url-scheme
-    const launchPair = "t3code://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
     const delivered = Promise.withResolvers<void>();
     const electronApp = {
       on: (name: string, listener: (...args: unknown[]) => void) =>
@@ -491,7 +491,7 @@ it.effect("hands Scient app links to the renderer while browser activation stays
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const received: Array<string> = [];
-    const pairLink = "t3code://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
+    const pairLink = "scient://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
     yield* Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
       yield* clerk.configure;
@@ -507,7 +507,8 @@ it.effect("hands Scient app links to the renderer while browser activation stays
       assert.strictEqual(open("scient-next-dev://threads/env-1/thread-1"), 1);
       assert.strictEqual(open("t3code://new?prompt=hi"), 0);
       assert.strictEqual(open(pairLink), 1);
-      assert.strictEqual(open("t3code://pair"), 0);
+      assert.strictEqual(open("scient://pair"), 0);
+      assert.strictEqual(open(pairLink.replace("scient:", "t3code:")), 0);
       // Unregistered app identities and other protocols retain their handling.
       assert.strictEqual(open("mailto:hello@example.com"), 0);
       assert.strictEqual(open("t3code://somewhere-else"), 0);

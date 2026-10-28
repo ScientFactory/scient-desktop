@@ -1066,7 +1066,9 @@ opts in; an externally managed OpenCode server does not.
 See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
 
 Scient's injected MCP connection is named `scient`, and the omitted-history
-reader is `scient_thread_read`. Tool descriptions, provider-qualified names,
+reader is `scient_thread_inspect` (upstream `t3_thread_read`). Scient's own
+`scient_handoff_summary_read` pages saved handoff summaries that upstream's
+reader omits. Tool descriptions, provider-qualified names,
 generated handoff instructions and activity presentation use Scient identity.
 Preserve this public boundary when adopting upstream toolkits. Historical
 `t3-code`/`t3_` activity identities are normalized only for display; they are not
@@ -1161,6 +1163,12 @@ index for untracked files. A freshly timestamped copy can bypass Git's racy-clea
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,
 retain split-index handling, and preserve the deterministic regression in
 `GitVcsDriverCore.test.ts`; do not replace it with a timing delay or size-changing fixture.
+
+`effect-codex-app-server`'s client runs the caller's `onTermination` hook and
+then fails its own termination signal. Upstream's handler replaces the caller's
+hook, so Scient's session cleanup never ran. The order matters: the signal can
+retire the session and interrupt the hook. Retire the marked block when upstream
+composes the two.
 
 Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
 Preserve the optional durable completion marker in shell/detail snapshots, its

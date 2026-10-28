@@ -228,12 +228,13 @@ it.effect.each(
       const toolNames = tools.map((tool) => tool.name);
       const deviceNames = new Set(Object.keys(DeviceToolkit.tools));
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
-      expect(toolNames.filter((name) => name === "scient_thread_read")).toHaveLength(
+      expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(
         includeThreadRead ? 1 : 0,
       );
       if (includeThreadRead)
         expect(
-          tools.find((tool) => tool.name === "scient_thread_read")?.annotations?.readOnlyHint,
+          tools.find((tool) => tool.name === "scient_handoff_summary_read")?.annotations
+            ?.readOnlyHint,
         ).toBe(true);
       expect(toolNames.filter((name) => name === "scient_thread_inspect")).toHaveLength(1);
       expect(

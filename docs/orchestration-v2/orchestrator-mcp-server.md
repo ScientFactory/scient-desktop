@@ -385,22 +385,16 @@ given, else the calling thread's project. Callers can filter by title, run
 status, and whether app-owned sub-agent threads are included. Results are
 bounded and offset-paginated. Deleted threads are never listed.
 
-### `scient_thread_read`
+### `scient_handoff_summary_read`
 
-Reads a thread's durable summary and visible timeline within the calling
-thread's project. A missing or deleted target returns `thread_not_found`;
-a target in another project returns `thread_outside_project`.
-
-The default `messages` view returns user and assistant messages and proposed
-plans. The `activity` view includes tool, reasoning, checkpoint, handoff and
-runtime-request items. The result contains `thread`, `items`, `nextPosition`
-and `hasMore`. `afterPosition` pages through history; `itemId`, `textOffset`
-and `maxCharsPerItem` allow reading an individual item's remaining text.
-Truncated text reports `textTruncated` and `nextTextOffset`.
-
-This preserved Scient history reader is distinct from upstream's native
-thread-management read operation. Do not assume native `recentRuns`, thread
-links, provenance or snooze fields are part of this history-reader response.
+Reads a saved context-handoff summary that was too large to include in
+delivered history. Input is `threadId`, `contextHandoffId` and an optional
+`textOffset`; the result is a 20,000-character `text` page and
+`nextTextOffset`, null at the end. It requires `threads:read` and reads the
+calling thread or a non-deleted thread in its project. A missing thread or a
+handoff the thread does not retain returns `thread_not_found`; a thread in
+another project returns `thread_outside_project`. Timeline history is read with
+`scient_thread_inspect`.
 
 ### `scient_thread_inspect`
 
@@ -409,7 +403,6 @@ orchestration service. Provider-thread callers may inspect their project or a
 thread explicitly attached by the user as context. External clients use their
 approved environment authority. Reading a complete terminal result from a
 direct app-owned child also acknowledges that child's completion delivery.
-This is separate from the narrow `scient_thread_read` history reader.
 
 Agents mention another thread by the `link` its result carries,
 `<t3-thread://v2/<environmentId>/<threadId>>`, so they never format an id or

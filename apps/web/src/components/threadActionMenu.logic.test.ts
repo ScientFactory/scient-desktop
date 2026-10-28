@@ -142,6 +142,7 @@ describe("buildThreadActionMenuItems", () => {
     const copyItem = items.find((item) => item.id === "copy");
     expect(copyItem?.children?.map((child) => child.id)).toEqual([
       "copy-path",
+      "copy-thread",
       "copy-thread-id",
       "copy-conversation-markdown",
     ]);

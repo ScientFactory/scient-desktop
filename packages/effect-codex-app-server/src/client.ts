@@ -205,10 +205,15 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
     ...(options.logIncoming !== undefined ? { logIncoming: options.logIncoming } : {}),
     ...(options.logOutgoing !== undefined ? { logOutgoing: options.logOutgoing } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
-    ...(options.onTermination ? { onTermination: options.onTermination } : {}),
     onNotification: dispatchNotification,
     onRequest: dispatchRequest,
-    onTermination: (error) => Deferred.fail(termination, error).pipe(Effect.asVoid),
+    // SCIENT-FORK:START caller hook runs first: the termination signal can retire the session and interrupt this fiber.
+    onTermination: (error) =>
+      (options.onTermination ? options.onTermination(error) : Effect.void).pipe(
+        Effect.andThen(Deferred.fail(termination, error)),
+        Effect.asVoid,
+      ),
+    // SCIENT-FORK:END
   });
 
   const request = <M extends CodexRpc.ClientRequestMethod>(

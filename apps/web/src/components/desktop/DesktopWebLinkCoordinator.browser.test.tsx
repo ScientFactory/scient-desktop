@@ -1,4 +1,7 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+// SCIENT-FORK:START — pairing app links use the schemes Scient desktop registers.
+import { buildPairingAppLink } from "@t3tools/shared/remote";
+// SCIENT-FORK:END
 import type { Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -116,7 +119,9 @@ const pullRequestView = {
 };
 
 const pairingUrl = "https://vps.example.com/pair#token=ABC123";
-const pairLink = `t3code://pair?pairingUrl=${encodeURIComponent(pairingUrl)}`;
+// SCIENT-FORK:START
+const pairLink = buildPairingAppLink(pairingUrl);
+// SCIENT-FORK:END
 
 function setup() {
   vi.clearAllMocks();
@@ -190,7 +195,9 @@ it("does not spend the pairing token when the user declines", async () => {
   state.confirm.mockResolvedValueOnce(false);
   await using _coordinator = await mount(
     pairLink,
-    `t3code://pair?pairingUrl=${encodeURIComponent(otherPairingUrl)}`,
+    // SCIENT-FORK:START
+    buildPairingAppLink(otherPairingUrl),
+    // SCIENT-FORK:END
   );
   await vi.waitFor(() => expect(state.connectPairing).toHaveBeenCalled());
   expect(state.confirm).toHaveBeenCalledTimes(2);
@@ -203,7 +210,9 @@ it("skips a repeat of a pairing link that already paired", async () => {
   await using _coordinator = await mount(
     pairLink,
     pairLink,
-    `t3code://pair?pairingUrl=${encodeURIComponent(otherPairingUrl)}`,
+    // SCIENT-FORK:START
+    buildPairingAppLink(otherPairingUrl),
+    // SCIENT-FORK:END
   );
   await vi.waitFor(() =>
     expect(state.connectPairing).toHaveBeenLastCalledWith({ pairingUrl: otherPairingUrl }),

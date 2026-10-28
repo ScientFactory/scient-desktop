@@ -6,6 +6,7 @@ import {
   BROWSER_PDF_EXPORT_MAX_BASE64_LENGTH,
   BrowserPdfExportSourceSignals,
 } from "./browserPdfExport.ts";
+import { isTrimmedUnadvertised } from "./scientToolSchemas.ts";
 import {
   DocumentAsset,
   DocumentAssetId,
@@ -292,7 +293,7 @@ export class ScientDocumentPdfExportError extends Schema.TaggedError<ScientDocum
 }
 
 const ProjectDocumentPath = Schema.String.check(
-  Schema.isTrimmed(),
+  isTrimmedUnadvertised(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(1_024),
   Schema.isPattern(/^[^\x00]+$/u),
@@ -301,11 +302,10 @@ const ProjectDocumentPath = Schema.String.check(
 /** Agent export of a project document to an explicit project output. */
 export const ScientDocumentExportInput = Schema.Struct({
   sourcePath: ProjectDocumentPath.annotate({
-    description: "Project-relative path to an existing Markdown (.md or .markdown) document.",
+    description: "Project-relative .md or .markdown file.",
   }),
   outputPath: ProjectDocumentPath.annotate({
-    description:
-      "Project-relative output path. Its extension selects the format; .pdf is the available format.",
+    description: "Project-relative output path. Its extension picks the format; .pdf is available.",
   }),
 });
 export type ScientDocumentExportInput = typeof ScientDocumentExportInput.Type;
