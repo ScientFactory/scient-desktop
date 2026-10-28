@@ -5,10 +5,11 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { filePublicationTestHelper, filePublicationProbeHelper } from "./fileExchange.testkit.ts";
 import {
   ensureNativePrivateRetentionDirectory,
+  closeNativeHelperServers,
   bindNativeFilePublicationParent,
   withNativeFilePublicationLease,
   removeNativeRetainedEntry,
@@ -642,6 +643,49 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
       await expect(windowsPrivateDirectory(directory, true, helper!)).rejects.toThrow();
       expect(await security(directory)).toBe(changed);
     }));
+  it("answers only read-only queries from its long-lived process", () =>
+    fixture(async (input) => {
+      const frame = (args: string[]) => {
+        const body = Buffer.from(args.map((argument) => `${argument}\0`).join(""));
+        const header = Buffer.alloc(4);
+        header.writeUInt32BE(body.length);
+        return Buffer.concat([header, body]);
+      };
+      const binding = await bindNativeFilePublicationParent(helper!, input.cwd, "");
+      const { rootIdentity: root, parentIdentity: parent } = binding;
+      const mkdir = ["--directory=1", "mkdir", "strict-current-root", input.cwd, "."];
+      const lines = NodeChildProcess.execFileSync(helper!, ["--serve=1"], {
+        input: Buffer.concat([
+          frame([...mkdir, root.dev, root.ino, parent.dev, parent.ino, "made"]),
+          frame(["--windows=1", "info", input.cwd]),
+        ]),
+        encoding: "utf8",
+      })
+        .trim()
+        .split(/\r?\n/u);
+      expect(lines[0]).toBe('{"version":1,"served":64}');
+      expect(JSON.parse(lines[1]!)).toMatchObject({ code: 0, identity: parent });
+      expect(lines[2]).toBe('{"version":1,"served":0}');
+      await expect(NodeFSP.lstat(NodePath.join(input.cwd, "made"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      // A running helper locks its binary; closing one whose idle exit began releases it.
+      const copy = NodePath.join(NodePath.dirname(input.cwd), "scient-file-publication.exe");
+      await NodeFSP.copyFile(helper!, copy);
+      try {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        try {
+          const info = await windowsNativeFile(input.cwd, "info", copy);
+          expect(info.identity).toMatchObject(parent);
+          vi.advanceTimersByTime(1000);
+        } finally {
+          vi.useRealTimers();
+        }
+      } finally {
+        await closeNativeHelperServers();
+        await NodeFSP.rm(copy);
+      }
+    }));
   it("refuses an existing broad directory without changing its policy", () =>
     fixture(async (input) => {
       const broad = NodePath.join(input.cwd, "broad");
@@ -653,6 +697,15 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
 });
 
 describe.skipIf(!windows)("Windows identity and file admission", () => {
+  it("reads flags for paths whose UTF-8 exceeds one helper question", async () => {
+    const root = NodePath.parse(NodeOS.tmpdir()).root;
+    const paths = Array.from(
+      { length: 90 },
+      (_, index) => `${root}${String.fromCharCode(0x4e00 + index).repeat(250)}`,
+    );
+    const availability = await overleafFilesAvailability(paths, "win32", undefined, helper!);
+    expect(new Set(availability.values())).toEqual(new Set(["available"]));
+  });
   it("uses the mount-manager GUID and the complete file ID beyond MAX_PATH", () =>
     fixture(async (input) => {
       const cwd = NodePath.join(

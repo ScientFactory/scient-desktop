@@ -53,13 +53,15 @@ const windowsFlags = async (paths: ReadonlyArray<string>, helper?: string) => {
   let batch: string[] = [],
     length = 0;
   for (const path of paths) {
-    if (batch.length && (batch.length >= STAT_BATCH || length + path.length > 24_000)) {
+    // The helper reads one question of at most 64 KiB of UTF-8.
+    const bytes = Buffer.byteLength(path) + 1;
+    if (batch.length && (batch.length >= STAT_BATCH || length + bytes > 60_000)) {
       flags.push(...(await windowsNativeFlags(batch, helper)));
       batch = [];
       length = 0;
     }
     batch.push(path);
-    length += path.length + 3;
+    length += bytes;
   }
   if (batch.length) flags.push(...(await windowsNativeFlags(batch, helper)));
   return flags;

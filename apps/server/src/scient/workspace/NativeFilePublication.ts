@@ -159,13 +159,147 @@ export async function resolveNativeFilePublicationHelperPath(
     return undefined;
   }
 }
+/** Helper commands the Windows helper's `--serve=1` process answers; they only read. */
+const servedQuery = (args: ReadonlyArray<string>) =>
+  (args[0] === "--windows=1" && ["info", "flags", "private"].includes(args[1] ?? "")) ||
+  args[0] === "--windows-flags=1" ||
+  (args[0] === "--directory=1" && args[1] === "bind");
+
+/**
+ * A Windows launch costs tens of milliseconds, so one long-lived helper per binary
+ * answers read-only questions in order. It holds the event loop only while one waits
+ * and exits after a second idle, since a running helper locks its binary; if it fails,
+ * its waiting questions fail and the next question starts a new process.
+ */
+interface HelperServer {
+  readonly ask: (frame: Buffer) => Promise<string>;
+  /** Ends the helper after its waiting questions; `hold` keeps Node alive until it exits. */
+  readonly close: (hold: boolean) => Promise<void>;
+}
+/** Helpers taking questions, by binary. */
+const servers = new Map<string, HelperServer>();
+/** Every helper process until it exits, including those no longer taking questions. */
+const running = new Set<HelperServer>();
+function helperServer(helperPath: string): HelperServer {
+  const child = NodeChildProcess.spawn(helperPath, ["--serve=1"], {
+    stdio: ["pipe", "pipe", "ignore"],
+    windowsHide: true,
+  });
+  const handles = [child, child.stdin, child.stdout] as unknown as NodeJS.RefCounted[];
+  const hold = (held: boolean) => {
+    for (const handle of handles) {
+      if (held) handle.ref();
+      else handle.unref();
+    }
+  };
+  const closed = new Promise<void>((resolve) => {
+    const exited = () => {
+      running.delete(server);
+      resolve();
+    };
+    child.once("close", exited);
+    // A helper that never started emits no `close`.
+    child.once("error", () => {
+      if (child.pid === undefined) exited();
+    });
+  });
+  const waiting: Array<PromiseWithResolvers<string>> = [];
+  let buffer = "",
+    reply = "",
+    closing = false,
+    idle: ReturnType<typeof setTimeout> | undefined;
+  const stopRouting = () => {
+    clearTimeout(idle);
+    if (servers.get(helperPath) === server) servers.delete(helperPath);
+  };
+  const retire = (reason: string) => {
+    stopRouting();
+    for (const waiter of waiting.splice(0))
+      waiter.reject(
+        new NativeFilePublicationError(`Native publication reply unknown: ${reason}`, null),
+      );
+    child.kill();
+  };
+  // Questions already sent are answered before the helper reads the end of its input.
+  const close = (held: boolean) => {
+    stopRouting();
+    if (held) hold(true);
+    if (!closing) child.stdin.end();
+    closing = true;
+    return closed;
+  };
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    buffer += chunk;
+    for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+      const line = buffer.slice(0, end + 1);
+      buffer = buffer.slice(end + 1);
+      const served = /^\{"version":1,"served":(-?\d+)\}\r?\n$/u.exec(line);
+      if (!served) {
+        reply += line;
+        if (reply.length > 65536) retire("reply overflow");
+        continue;
+      }
+      const waiter = waiting.shift();
+      if (served[1] === "0") waiter?.resolve(reply);
+      else
+        waiter?.reject(
+          new NativeFilePublicationError(
+            `Native publication reply unknown: exit=${served[1]}`,
+            null,
+          ),
+        );
+      reply = "";
+      if (waiting.length === 0 && !closing) {
+        hold(false);
+        // @effect-diagnostics-next-line globalTimers:off -- The helper process owns this plain-Promise lifecycle.
+        idle = setTimeout(() => void close(false), 1000);
+        idle.unref();
+      }
+    }
+  });
+  child.on("error", (error) => retire(error.message));
+  child.on("close", (code) => retire(`server exit=${code}`));
+  child.stdin.on("error", (error) => retire(error.message));
+  const ask = (frame: Buffer) => {
+    clearTimeout(idle);
+    const waiter = Promise.withResolvers<string>();
+    waiting.push(waiter);
+    hold(true);
+    child.stdin.write(frame);
+    return waiter.promise;
+  };
+  const server = { ask, close };
+  running.add(server);
+  return server;
+}
+/** Ends every helper process, as before deleting or replacing a helper binary. */
+export async function closeNativeHelperServers() {
+  await Promise.all([...running].map((server) => server.close(true)));
+}
 /** An invalid/lost reply has an unknown namespace outcome; it is never fallback permission. */
-async function invoke(helperPath: string, args: ReadonlyArray<string>): Promise<string> {
+export async function invokeNativeHelper(
+  helperPath: string,
+  args: ReadonlyArray<string>,
+): Promise<string> {
   if (!NodePath.isAbsolute(helperPath))
     throw new NativeFilePublicationError(
       "Native helper path must be host-owned and absolute.",
       null,
     );
+  if (HostProcess.Platform.defaultValue() === "win32" && servedQuery(args)) {
+    const body = Buffer.from(args.map((argument) => `${argument}\0`).join(""), "utf8");
+    if (args.some((argument) => argument.includes("\0")) || body.length > 65536)
+      throw new NativeFilePublicationError("Native query is not framable.", null);
+    const header = Buffer.alloc(4);
+    header.writeUInt32BE(body.length);
+    let server = servers.get(helperPath);
+    if (!server) {
+      server = helperServer(helperPath);
+      servers.set(helperPath, server);
+    }
+    return server.ask(Buffer.concat([header, body]));
+  }
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   const child = NodeChildProcess.spawn(helperPath, args, {
     // Capability inquiries cannot mutate files, so a wrong protocol may be terminated.
@@ -245,7 +379,7 @@ export async function nativeFilePublicationCapabilities(helperPath: string, root
   const key = await capabilitiesKey(helperPath, rootPath);
   const known = key === null ? undefined : knownCapabilities.get(key);
   if (known !== undefined) return known;
-  const reply = await invoke(helperPath, [
+  const reply = await invokeNativeHelper(helperPath, [
     "--protocol=1",
     "capabilities",
     ...(rootPath === undefined ? [] : [rootPath]),
@@ -284,7 +418,7 @@ export async function bindNativeFilePublication(
 ): Promise<NativeFileBinding> {
   validatePaths(paths);
   const result = parseResult(
-    await invoke(helperPath, [
+    await invokeNativeHelper(helperPath, [
       "--protocol=1",
       "bind",
       authority,
@@ -351,7 +485,7 @@ export async function bindNativeFilePublicationParent(
       };
   }
   const result = parseResult(
-    await invoke(helperPath, [
+    await invokeNativeHelper(helperPath, [
       "--directory=1",
       "bind",
       nativeFileAuthority(),
@@ -571,7 +705,7 @@ export async function runNativeFilePublication(
   helperPath: string,
   request: NativeFilePublicationRequest,
 ) {
-  return parseResult(await invoke(helperPath, nativeFilePublicationArguments(request)));
+  return parseResult(await invokeNativeHelper(helperPath, nativeFilePublicationArguments(request)));
 }
 
 export type NativeFilePublicationParentBinding = Omit<NativeFileLeaseBinding, "mode">;
@@ -949,7 +1083,11 @@ export async function nativeLinuxFileIdentity(
   const helper = helperPath ?? (await resolveNativeFilePublicationHelperPath());
   if (helper === undefined) return null;
   const { identity, reason } = decodeLinuxFolderInquiry(
-    await invoke(helper, ["--linux-folder=1", path, directoryOnly ? "directory" : "entry"]),
+    await invokeNativeHelper(helper, [
+      "--linux-folder=1",
+      path,
+      directoryOnly ? "directory" : "entry",
+    ]),
   );
   return { identity, reason };
 }
