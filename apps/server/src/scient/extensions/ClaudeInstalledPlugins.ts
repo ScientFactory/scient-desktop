@@ -110,7 +110,6 @@ export const readScientClaudePlugins = Effect.fn("readScientClaudePlugins")(
   function* (
     run: (args: ReadonlyArray<string>) => Effect.Effect<string, { readonly message: string }>,
     home: string,
-    useClaudePlugins: boolean,
     cwd?: string,
   ) {
     const info = yield* run(["--runtime-info"]);
@@ -119,12 +118,6 @@ export const readScientClaudePlugins = Effect.fn("readScientClaudePlugins")(
       Effect.flatMap(decodeSourceSetting),
     );
     if (disabled.value.includes("claude-plugins")) return [];
-    if (!useClaudePlugins) {
-      const enabled = yield* run(["config", "get", "enabledProviders", "--json"]).pipe(
-        Effect.flatMap(decodeSourceSetting),
-      );
-      if (!enabled.value.includes("claude-plugins") && !enabled.value.includes("claude")) return [];
-    }
     return yield* readClaudeInstalledPlugins(home, cwd);
   },
   Effect.mapError(() => ({ message: "Could not read Claude Code's plugins for Scient Agent." })),
