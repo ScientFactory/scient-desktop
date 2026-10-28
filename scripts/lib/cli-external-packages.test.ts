@@ -13,7 +13,7 @@ import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
 import {
   readWorkspaceLockfile,
   withLockedRequiredPeers,
-} from "../scient/stageLockedDependencies.ts";
+} from "./scient-stage-locked-dependencies.ts";
 
 import {
   isRuntimeExternalCliDependency,

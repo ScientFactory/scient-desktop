@@ -13,7 +13,7 @@ import {
   verifyStageFollowsLockfile,
   withLockedRequiredPeers,
   type WorkspaceLockfile,
-} from "./scient/stageLockedDependencies.ts";
+} from "./lib/scient-stage-locked-dependencies.ts";
 // SCIENT-FORK:END
 
 import * as NodeFSP from "node:fs/promises";

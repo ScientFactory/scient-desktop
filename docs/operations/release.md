@@ -261,7 +261,7 @@ on the remote host. The Electron-only FFF ASAR loader patch is unnecessary in
 this plain filesystem package.
 
 Desktop packages stage those same roots from `pnpm-lock.yaml`
-(`scripts/scient/stageLockedDependencies.ts`). Every required peer of the staged
+(`scripts/lib/scient-stage-locked-dependencies.ts`). Every required peer of the staged
 closure becomes a root at its locked version, because Electron Builder collects
 only dependencies and optional dependencies. A stage that resolves any package
 the lockfile does not pin fails the build. macOS arm64 and Linux x64 builds then
