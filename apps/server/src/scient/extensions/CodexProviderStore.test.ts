@@ -145,6 +145,27 @@ function clientFixture(plugins: ReadonlyArray<Plugin>) {
   return { client, calls, state, notify };
 }
 describe("Codex provider store", () => {
+  it.effect("carries store categories and filters before pagination with subject overrides", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const research = plugin("zotero", {
+          interface: { ...plugin("zotero").interface!, category: "Education & Research" },
+        });
+        const data = plugin("warehouse", {
+          interface: { ...plugin("warehouse").interface!, category: "Data & Analytics" },
+        });
+        const fixture = clientFixture([research, data]);
+        const store = yield* makeCodexProviderStore(() => Effect.succeed(fixture.client));
+        const page = yield* store.search({ category: "data", limit: 1 });
+        expect(page.total).toBe(1);
+        expect(page.entries[0]).toMatchObject({ name: "warehouse", category: "Data & Analytics" });
+        expect(
+          (yield* store.search({ category: "writing" })).entries.map((entry) => entry.name),
+        ).toEqual(["zotero"]);
+      }),
+    ),
+  );
+
   it.effect("resolves curated cross-store names to a unique canonical plugin id", () =>
     Effect.scoped(
       Effect.gen(function* () {

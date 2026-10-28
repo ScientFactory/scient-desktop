@@ -1,11 +1,12 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { ExternalSkillsSettings } from "../scient/skills/ExternalSkillsSettings";
-
-function SettingsExternalSkillsRoute() {
-  return <ExternalSkillsSettings />;
-}
-
+/** Skills moved into Extensions; old links land on the installed skills. */
 export const Route = createFileRoute("/_chat/settings/skills_/external")({
-  component: SettingsExternalSkillsRoute,
+  beforeLoad: () => {
+    throw redirect({
+      to: "/settings/extensions/installed",
+      search: (current) => ({ ...current, kind: "skills" as const }),
+      replace: true,
+    });
+  },
 });

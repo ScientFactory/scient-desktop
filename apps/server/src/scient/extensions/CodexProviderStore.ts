@@ -5,6 +5,7 @@ import type {
   ServerProviderPlugin,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import { storeCategories } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -417,6 +418,7 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
       displayName: info?.displayName?.trim() || sharedPluginDisplayName(plugin.name),
       description: info?.shortDescription?.trim() || info?.longDescription?.trim() || "",
       kind: "codex",
+      ...(info?.category ? { category: info.category } : {}),
       installed,
       includes: [],
       apps: entryApps.map((app): ProviderStoreApp => ({
@@ -448,6 +450,13 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         const query = (input.query ?? "").trim().toLowerCase();
         const terms = query.split(/\s+/).filter(Boolean);
         const matching = current.store.entries.filter(({ plugin }) => {
+          if (
+            input.category &&
+            !storeCategories(plugin.name, plugin.interface?.category ?? undefined).some(
+              (category) => category === input.category,
+            )
+          )
+            return false;
           if (input.preview && current.installedIds.has(plugin.id)) return false;
           if (input.preview && !query && !current.store.featured.has(plugin.id)) return false;
           return terms.every((term) =>

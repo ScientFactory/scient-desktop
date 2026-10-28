@@ -1,17 +1,9 @@
-import { useAtomValue } from "@effect/atom-react";
-import { ArrowLeftIcon, LibraryBigIcon } from "lucide-react";
-import { Link } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 
 import { ProviderInstanceIcon } from "../../components/chat/ProviderInstanceIcon";
-import {
-  SettingsPageContainer,
-  SettingsRow,
-  SettingsSection,
-} from "../../components/settings/settingsLayout";
+import { SettingsRow } from "../../components/settings/settingsLayout";
 import { Switch } from "../../components/ui/switch";
-import { primaryServerProvidersAtom, serverEnvironment } from "../../state/server";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../../components/ui/toast";
 import { AVAILABLE_PROVIDER_OPTIONS } from "../../components/chat/providerIconUtils";
@@ -21,9 +13,12 @@ import {
   externalSkillStatus,
 } from "./externalSkills";
 import { SkillCard } from "./SkillCard";
+import { OPENABLE_ROW_CLASS, openFromRow } from "./skillRowOpen";
+import { matchesQuery } from "../extensions/extensionsView";
 import { useEnvironmentQuery } from "../../state/query";
 import {
   type EnvironmentId,
+  type ServerProvider,
   type ServerProviderSkill,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -43,10 +38,33 @@ function providerLabel(driver: string, displayName: string | undefined): string 
 const skillKey = (environmentId: string | null, instanceId: string, path: string) =>
   JSON.stringify([environmentId, instanceId, path]);
 
-export function ExternalSkillsSettings() {
-  const environmentId = usePrimaryEnvironmentId();
-  const providers = useAtomValue(primaryServerProvidersAtom);
-  const groups = collectExternalSkillProviders(providers);
+/** Each agent's own skills, one agent open at a time, with their switches. */
+export function AgentSkills({
+  environmentId,
+  providers,
+  instanceId = null,
+  query = "",
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  /** Only this agent's skills; null lists every agent. */
+  readonly instanceId?: ProviderInstanceId | null;
+  /** Words every listed skill matches; agents with no match are left out. */
+  readonly query?: string;
+}) {
+  const groups = collectExternalSkillProviders(providers)
+    .filter(({ provider }) => instanceId === null || provider.instanceId === instanceId)
+    .map((group) =>
+      query === ""
+        ? group
+        : {
+            ...group,
+            skills: group.skills.filter(({ skill, displayName, description }) =>
+              matchesQuery(query, [displayName, skill.name, description]),
+            ),
+          },
+    )
+    .filter((group) => query === "" || group.skills.length > 0);
   const [selected, setSelected] = useState<{
     readonly iconUrl?: string | undefined;
     instanceId: ProviderInstanceId;
@@ -102,7 +120,6 @@ export function ExternalSkillsSettings() {
     readonly path: string;
     readonly enabled: boolean;
   }) => {
-    if (environmentId === null) return;
     const key = skillKey(environmentId, input.instanceId, input.path);
     const existing = inFlight.current.get(key);
     const lane = existing ?? { desired: input.enabled };
@@ -203,8 +220,8 @@ export function ExternalSkillsSettings() {
   };
 
   return (
-    <SettingsPageContainer>
-      {selected && environmentId ? (
+    <>
+      {selected ? (
         <ExternalSkillCard
           key={JSON.stringify([environmentId, selected.instanceId, selected.skill.path])}
           environmentId={environmentId}
@@ -212,131 +229,118 @@ export function ExternalSkillsSettings() {
           onClose={() => setSelected(null)}
         />
       ) : null}
-      <SettingsSection
-        title="External skills"
-        icon={<LibraryBigIcon className="size-4" />}
-        variant="plain"
-      >
-        <Link
-          className="group mb-2 ms-1 inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-foreground/[0.035] hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:ms-2"
-          to="/settings/skills"
-        >
-          <ArrowLeftIcon className="size-3.5 transition-transform group-hover:-translate-x-0.5" />
-          Skills
-        </Link>
-        {groups.length === 0 ? (
-          <SettingsRow
-            title="No provider inventories"
-            description="Connect an agent provider to view its external skills."
-          />
-        ) : (
-          <div className="px-3 sm:px-4">
-            <SettingsSourceGroup
-              activePanelId={
-                expandedGroup ? `external-skills-${expandedGroup.provider.instanceId}` : null
-              }
-            >
-              <SettingsSourceStrip label="Agent providers">
-                {groups.map(({ provider, skills }, index) => {
-                  const label = providerLabel(provider.driver, provider.displayName);
-                  const isOpen = expandedInstanceId === provider.instanceId;
-                  const panelId = `external-skills-${provider.instanceId}`;
+      {groups.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {query ? "No agent skills match." : "No agent reports its own skills yet."}
+        </p>
+      ) : (
+        <div>
+          <SettingsSourceGroup
+            activePanelId={
+              expandedGroup ? `external-skills-${expandedGroup.provider.instanceId}` : null
+            }
+          >
+            <SettingsSourceStrip label="Agent providers">
+              {groups.map(({ provider, skills }, index) => {
+                const label = providerLabel(provider.driver, provider.displayName);
+                const isOpen = expandedInstanceId === provider.instanceId;
+                const panelId = `external-skills-${provider.instanceId}`;
+                return (
+                  <SettingsSourceStripItem
+                    key={provider.instanceId}
+                    controls={panelId}
+                    detail={`${skills.length} ${skills.length === 1 ? "skill" : "skills"}`}
+                    expanded={isOpen}
+                    separated={index > 0}
+                    label={label}
+                    onToggle={() =>
+                      setExpandedInstanceId((current) =>
+                        current === provider.instanceId ? null : provider.instanceId,
+                      )
+                    }
+                    icon={
+                      <ProviderInstanceIcon
+                        driverKind={provider.driver}
+                        displayName={label}
+                        accentColor={provider.accentColor}
+                        className="size-6"
+                        iconClassName="size-5"
+                      />
+                    }
+                  />
+                );
+              })}
+            </SettingsSourceStrip>
+            {expandedGroup ? (
+              <SettingsSourcePanel id={`external-skills-${expandedGroup.provider.instanceId}`}>
+                {expandedGroup.skills.length === 0 ? (
+                  <SettingsRow
+                    title="No global skills reported"
+                    description="Project skills stay with their workspace."
+                  />
+                ) : null}
+                {expandedGroup.skills.map(({ skill, displayName, description, source }) => {
+                  const key = skillKey(
+                    environmentId,
+                    expandedGroup.provider.instanceId,
+                    skill.path,
+                  );
+                  const pending = pendingEnabled[key];
+                  const shownEnabled = pending?.enabled ?? skill.enabled;
+                  const open = () =>
+                    setSelected({
+                      instanceId: expandedGroup.provider.instanceId,
+                      iconUrl: expandedGroup.provider.iconUrl,
+                      skill,
+                      displayName,
+                      description: skill.description ?? description ?? "",
+                    });
                   return (
-                    <SettingsSourceStripItem
-                      key={provider.instanceId}
-                      controls={panelId}
-                      detail={`${skills.length} ${skills.length === 1 ? "skill" : "skills"}`}
-                      expanded={isOpen}
-                      separated={index > 0}
-                      label={label}
-                      onToggle={() =>
-                        setExpandedInstanceId((current) =>
-                          current === provider.instanceId ? null : provider.instanceId,
-                        )
+                    <SettingsRow
+                      key={skill.path}
+                      className={`sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none ${OPENABLE_ROW_CLASS}`}
+                      onClick={openFromRow(open)}
+                      title={
+                        <button
+                          type="button"
+                          className="cursor-pointer rounded-sm text-left outline-none focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-ring"
+                          onClick={open}
+                        >
+                          {displayName}
+                        </button>
                       }
-                      icon={
-                        <ProviderInstanceIcon
-                          driverKind={provider.driver}
-                          displayName={label}
-                          accentColor={provider.accentColor}
-                          className="size-6"
-                          iconClassName="size-5"
-                        />
+                      description={description}
+                      status={
+                        pending && !pending.confirmed
+                          ? `${externalSkillSourceLabel(source)} · Updating`
+                          : externalSkillStatus({ ...skill, enabled: shownEnabled }, source)
+                      }
+                      control={
+                        skill.canSetEnabled === true ? (
+                          <Switch
+                            checked={shownEnabled}
+                            motion="none"
+                            aria-label={`${shownEnabled ? "Deactivate" : "Activate"} ${displayName}`}
+                            onCheckedChange={(checked) =>
+                              void updateSkill({
+                                instanceId: expandedGroup.provider.instanceId,
+                                name: skill.name,
+                                path: skill.path,
+                                enabled: Boolean(checked),
+                              })
+                            }
+                          />
+                        ) : undefined
                       }
                     />
                   );
                 })}
-              </SettingsSourceStrip>
-              {expandedGroup ? (
-                <SettingsSourcePanel id={`external-skills-${expandedGroup.provider.instanceId}`}>
-                  {expandedGroup.skills.length === 0 ? (
-                    <SettingsRow
-                      title="No global skills reported"
-                      description="Project skills stay with their workspace."
-                    />
-                  ) : null}
-                  {expandedGroup.skills.map(({ skill, displayName, description, source }) => {
-                    const key = skillKey(
-                      environmentId,
-                      expandedGroup.provider.instanceId,
-                      skill.path,
-                    );
-                    const pending = pendingEnabled[key];
-                    const shownEnabled = pending?.enabled ?? skill.enabled;
-                    return (
-                      <SettingsRow
-                        key={skill.path}
-                        className="sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none"
-                        title={
-                          <button
-                            type="button"
-                            className="cursor-pointer rounded-sm text-left outline-none focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-ring"
-                            onClick={() =>
-                              setSelected({
-                                instanceId: expandedGroup.provider.instanceId,
-                                iconUrl: expandedGroup.provider.iconUrl,
-                                skill,
-                                displayName,
-                                description: skill.description ?? description ?? "",
-                              })
-                            }
-                          >
-                            {displayName}
-                          </button>
-                        }
-                        description={description}
-                        status={
-                          pending && !pending.confirmed
-                            ? `${externalSkillSourceLabel(source)} · Updating`
-                            : externalSkillStatus({ ...skill, enabled: shownEnabled }, source)
-                        }
-                        control={
-                          skill.canSetEnabled === true ? (
-                            <Switch
-                              checked={shownEnabled}
-                              motion="none"
-                              aria-label={`${shownEnabled ? "Deactivate" : "Activate"} ${displayName}`}
-                              onCheckedChange={(checked) =>
-                                void updateSkill({
-                                  instanceId: expandedGroup.provider.instanceId,
-                                  name: skill.name,
-                                  path: skill.path,
-                                  enabled: Boolean(checked),
-                                })
-                              }
-                            />
-                          ) : undefined
-                        }
-                      />
-                    );
-                  })}
-                </SettingsSourcePanel>
-              ) : null}
-            </SettingsSourceGroup>
-          </div>
-        )}
-      </SettingsSection>
-    </SettingsPageContainer>
+              </SettingsSourcePanel>
+            ) : null}
+          </SettingsSourceGroup>
+        </div>
+      )}
+    </>
   );
 }
 

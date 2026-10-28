@@ -10,6 +10,8 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
+import { cn } from "../../lib/utils";
+import { OPENABLE_ROW_CLASS, openFromRow } from "./skillRowOpen";
 
 const invocationPolicyLabel = (policy: ScientSkillInvocationPolicy): string =>
   policy === "automatic" ? "Agent access" : "$name only";
@@ -34,13 +36,17 @@ export function SkillSettingsRow(props: {
   const { disabled, onUpdate, pending, skill } = props;
   return (
     <SettingsRow
-      className="sm:[&>div]:grid-cols-[minmax(0,1fr)_5rem] [&>div>div>p]:max-w-none"
+      className={cn(
+        "sm:[&>div]:grid-cols-[minmax(0,1fr)_auto] [&>div>div>p]:max-w-none",
+        props.onOpen && OPENABLE_ROW_CLASS,
+      )}
+      onClick={props.onOpen ? openFromRow(props.onOpen) : undefined}
       title={
         <span className="inline-flex items-center gap-2">
           {props.onOpen ? (
             <button
               type="button"
-              className="cursor-pointer rounded-sm text-left outline-none hover:underline focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-ring"
+              className="cursor-pointer rounded-sm text-left outline-none focus-visible:outline-1 focus-visible:outline-solid focus-visible:outline-ring"
               onClick={props.onOpen}
             >
               {displaySkillName(skill.name)}
@@ -78,6 +84,7 @@ export function SkillSettingsRow(props: {
       control={
         <Switch
           checked={skill.active}
+          motion="none"
           disabled={pending || disabled}
           aria-label={`Make ${skill.name} available`}
           onCheckedChange={(checked) => onUpdate({ active: Boolean(checked) })}

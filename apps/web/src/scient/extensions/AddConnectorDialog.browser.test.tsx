@@ -444,3 +444,94 @@ it("binds a matching account without retaining the entered key and blocks a chan
   await userEvent.selectOptions(field<HTMLSelectElement>("connector-auth"), "api-key");
   expect(document.getElementById("connector-account")).toBeNull();
 });
+
+const curatedEntry = (extra: Partial<DiscoverEntry>): DiscoverEntry => ({
+  name: "scient.curated/test",
+  version: "1",
+  title: "Test service",
+  categories: ["data"],
+  remotes: [{ type: "streamable-http", url: "https://api.example.com/mcp", requiresInput: false }],
+  installable: true,
+  ...extra,
+});
+
+describe("curated connector setup", () => {
+  it("requires a registered OAuth client and clears its secret after submission", async () => {
+    await using fixture = setup();
+    state.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector, nextStep: "sign-in-required" },
+    });
+    await fixture.render(curatedEntry({ oauthClientRequired: true }));
+    await submit();
+    expect(state.add).not.toHaveBeenCalled();
+    await userEvent.fill(field<HTMLInputElement>("connector-client-id"), "synthetic-client");
+    await userEvent.fill(field<HTMLInputElement>("connector-client-secret"), "synthetic-secret");
+    await submit();
+    expect(state.add.mock.calls[0]?.[0].input.oauthClient).toEqual({
+      clientId: "synthetic-client",
+      clientSecret: "synthetic-secret",
+    });
+    expect(document.body.textContent).toContain("Sign in to Linear");
+  });
+
+  it("sends a preconfigured key through credentials and clears it after failure", async () => {
+    await using fixture = setup();
+    state.add.mockResolvedValue({
+      _tag: "Failure",
+      cause: Cause.fail(new ExtensionsError({ reason: "unreachable", message: "Try again" })),
+    });
+    await fixture.render(
+      curatedEntry({
+        apiKey: {
+          strategy: "header",
+          headerName: "X-API-Key",
+          fieldLabel: "Data Commons API key",
+          helpUrl: "https://apikeys.datacommons.org",
+        },
+      }),
+    );
+    await submit();
+    expect(state.add).not.toHaveBeenCalled();
+    await page.getByLabelText("Data Commons API key", { exact: true }).fill("synthetic-key");
+    await submit();
+    expect(state.add.mock.calls[0]?.[0].input).toMatchObject({
+      target: { type: "url", url: "https://api.example.com/mcp" },
+      credential: {
+        type: "entered",
+        value: "synthetic-key",
+        strategy: "header",
+        headerName: "X-API-Key",
+      },
+    });
+    expect(field<HTMLInputElement>("connector-key").value).toBe("");
+  });
+
+  it("rejects a foreign tenant address and submits an exact https tenant endpoint", async () => {
+    await using fixture = setup();
+    state.add.mockResolvedValue({
+      _tag: "Success",
+      value: { connector, nextStep: "sign-in-required" },
+    });
+    await fixture.render(
+      curatedEntry({
+        address: {
+          urlTemplate: "https://<tenant>.mcp.benchling.com/mcp",
+          fieldLabel: "Your Benchling address",
+          placeholder: "https://your-lab.mcp.benchling.com/mcp",
+        },
+      }),
+    );
+    const address = page.getByLabelText("Your Benchling address", { exact: true });
+    await address.fill("https://lab.mcp.benchling.com.evil.example/mcp");
+    await submit();
+    expect(state.add).not.toHaveBeenCalled();
+    await address.fill("https://lab.mcp.benchling.com/mcp");
+    await submit();
+    expect(state.add.mock.calls[0]?.[0].input.target).toEqual({
+      type: "url",
+      url: "https://lab.mcp.benchling.com/mcp",
+    });
+    expect(document.body.textContent).toContain("Sign in to Linear");
+  });
+});

@@ -34,6 +34,7 @@ import { ActionError, commandFailureMessage, SignInBlockedNotice } from "./Exten
 import {
   entryAddTarget,
   entryNeedsToken,
+  validateCuratedAddress,
   installableRemotes,
   validateConnectorUrl,
   validateHeaderName,
@@ -74,14 +75,14 @@ interface Draft {
 function emptyDraft(entry: DiscoverEntry | null): Draft {
   return {
     url: "",
-    remoteUrl: entry ? (installableRemotes(entry)[0]?.url ?? "") : "",
+    remoteUrl: entry?.address ? "" : entry ? (installableRemotes(entry)[0]?.url ?? "") : "",
     displayName: entry?.title ?? "",
-    authMode: entryNeedsToken(entry) ? "api-key" : "automatic",
-    showAdvanced: false,
+    authMode: entryNeedsToken(entry) || entry?.apiKey ? "api-key" : "automatic",
+    showAdvanced: entry?.oauthClientRequired === true,
     clientId: "",
     clientSecret: "",
-    strategy: "bearer",
-    headerName: "",
+    strategy: entry?.apiKey?.strategy ?? "bearer",
+    headerName: entry?.apiKey?.headerName ?? "",
     value: "",
     accountId: "",
   };
@@ -96,12 +97,20 @@ function validateAddConnectorDraft(
   if (entry === null) {
     const url = validateConnectorUrl(draft.url);
     if (url !== null) errors.url = url;
+  } else if (entry.address) {
+    const error = validateCuratedAddress(draft.remoteUrl, entry.address.urlTemplate);
+    if (error) errors.remote = error;
   } else if (!installableRemotes(entry).some((remote) => remote.url === draft.remoteUrl)) {
     errors.remote = "Choose an endpoint.";
   }
   if (draft.authMode === "automatic") {
-    if (draft.clientSecret.trim().length > 0 && draft.clientId.trim().length === 0) {
-      errors.clientId = "Enter the client ID to use a client secret.";
+    if (
+      (entry?.oauthClientRequired || draft.clientSecret.trim().length > 0) &&
+      draft.clientId.trim().length === 0
+    ) {
+      errors.clientId = entry?.oauthClientRequired
+        ? "Enter the registered client ID."
+        : "Enter the client ID to use a client secret.";
     }
   } else {
     if (draft.strategy === "header") {
@@ -126,7 +135,9 @@ function toAddInput(draft: Draft, entry: DiscoverEntry | null): ConnectorAddInpu
   const clientSecret = draft.clientSecret.trim();
   const description = entry?.description?.trim().slice(0, 1000);
   return {
-    target: entry ? entryAddTarget(entry, draft.remoteUrl) : { type: "url", url: draft.url.trim() },
+    target: entry
+      ? entryAddTarget(entry, draft.remoteUrl.trim())
+      : { type: "url", url: draft.url.trim() },
     ...(displayName ? { displayName } : {}),
     ...(description ? { description } : {}),
     ...(draft.authMode === "automatic" && clientId
@@ -337,7 +348,19 @@ export function AddConnectorDialog({
                   void submit();
                 }}
               >
-                {github ? null : entry ? (
+                {entry?.address ? (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="connector-remote">{entry.address.fieldLabel}</Label>
+                    <Input
+                      id="connector-remote"
+                      value={draft.remoteUrl}
+                      placeholder={entry.address.placeholder}
+                      {...invalidProps("connector-remote", shownErrors.remote)}
+                      onChange={(event) => patch({ remoteUrl: event.target.value })}
+                    />
+                    <FieldError id="connector-remote-error" message={shownErrors.remote} />
+                  </div>
+                ) : github ? null : entry ? (
                   <div className="grid gap-1.5">
                     <Label htmlFor="connector-remote">Endpoint</Label>
                     <NativeSelect
@@ -403,7 +426,7 @@ export function AddConnectorDialog({
                     with access to the repositories you need.
                   </p>
                 ) : null}
-                {!github ? (
+                {!github && !entry?.apiKey ? (
                   <div className="grid gap-1.5">
                     <Label htmlFor="connector-auth">Authentication</Label>
                     <NativeSelect
@@ -424,29 +447,36 @@ export function AddConnectorDialog({
                     </NativeSelect>
                   </div>
                 ) : null}
-                {draft.authMode === "automatic" && entry === null ? (
+                {draft.authMode === "automatic" ? (
                   <div className="grid gap-3">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="ghost-muted"
-                      className="-ms-2 justify-self-start"
-                      aria-expanded={draft.showAdvanced}
-                      onClick={() =>
-                        patch(
-                          draft.showAdvanced
-                            ? { showAdvanced: false, clientId: "", clientSecret: "" }
-                            : { showAdvanced: true },
-                        )
-                      }
-                    >
-                      Advanced
-                    </Button>
+                    {!entry?.oauthClientRequired ? (
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost-muted"
+                        className="-ms-2 justify-self-start"
+                        aria-expanded={draft.showAdvanced}
+                        onClick={() =>
+                          patch(
+                            draft.showAdvanced
+                              ? {
+                                  showAdvanced: false,
+                                  clientId: "",
+                                  clientSecret: "",
+                                }
+                              : { showAdvanced: true },
+                          )
+                        }
+                      >
+                        Advanced
+                      </Button>
+                    ) : null}
                     {draft.showAdvanced ? (
                       <>
                         <p className="text-xs text-muted-foreground">
-                          Use an OAuth client you registered with the service. Leave empty to
-                          register automatically.
+                          {entry?.oauthClientRequired
+                            ? "Use an OAuth client you registered with the service."
+                            : "Use an OAuth client you registered with the service. Leave empty to register automatically."}
                         </p>
                         <div className="grid gap-1.5">
                           <Label htmlFor="connector-client-id">Client ID</Label>
@@ -474,7 +504,7 @@ export function AddConnectorDialog({
                   </div>
                 ) : draft.authMode === "api-key" ? (
                   <div className="grid gap-3">
-                    {!github ? (
+                    {!github && !entry?.apiKey ? (
                       <div className="grid gap-1.5">
                         <Label htmlFor="connector-strategy">Send as</Label>
                         <NativeSelect
@@ -495,7 +525,7 @@ export function AddConnectorDialog({
                         </NativeSelect>
                       </div>
                     ) : null}
-                    {draft.strategy === "header" ? (
+                    {draft.strategy === "header" && !entry?.apiKey ? (
                       <div className="grid gap-1.5">
                         <Label htmlFor="connector-header-name">Header name</Label>
                         <Input
@@ -531,12 +561,23 @@ export function AddConnectorDialog({
                     {!draft.accountId ? (
                       <div className="grid gap-1.5">
                         <Label htmlFor="connector-key">
-                          {github
-                            ? "Use a token"
-                            : draft.strategy === "basic"
-                              ? "User and password"
-                              : "Key"}
+                          {entry?.apiKey?.fieldLabel ??
+                            (github
+                              ? "Use a token"
+                              : draft.strategy === "basic"
+                                ? "User and password"
+                                : "Key")}
                         </Label>
+                        {entry?.apiKey ? (
+                          <a
+                            className="text-xs text-muted-foreground underline"
+                            href={entry.apiKey.helpUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Get a key
+                          </a>
+                        ) : null}
                         <SecretInput
                           id="connector-key"
                           placeholder={
