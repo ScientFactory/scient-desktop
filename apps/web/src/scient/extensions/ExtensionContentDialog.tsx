@@ -78,7 +78,7 @@ export function ExtensionContentDialog({
           </DialogDescription>
         </DialogHeader>
         {framed ? (
-          <div className="mx-4 mb-4 flex min-h-0 flex-col overflow-hidden rounded-xl border bg-background">
+          <div className="mx-4 mb-4 flex min-h-0 flex-col overflow-hidden rounded-xl border bg-foreground/[0.013]">
             <DialogPanel padding="none" scrollFade={false}>
               {children}
             </DialogPanel>

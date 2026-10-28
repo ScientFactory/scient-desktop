@@ -21,6 +21,7 @@ export const ProviderStoreEntry = Schema.Struct({
   displayName: TrimmedNonEmptyString,
   description: Schema.String,
   tagline: Schema.optional(Schema.String),
+  category: Schema.optional(Schema.String),
   kind: Schema.Literals(["shared", "codex"]),
   installed: Schema.Boolean,
   version: Schema.optional(Schema.String),
@@ -37,6 +38,7 @@ export type ProviderStoreEntry = typeof ProviderStoreEntry.Type;
 
 export const ProviderStoreSearchInput = Schema.Struct({
   instanceId: ProviderInstanceId,
+  category: Schema.optional(Schema.String),
   query: Schema.optional(Schema.String.check(Schema.isMaxLength(500))),
   cursor: Schema.optional(Schema.String.check(Schema.isMaxLength(1000))),
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),

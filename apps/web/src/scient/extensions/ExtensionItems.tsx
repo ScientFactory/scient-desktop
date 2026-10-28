@@ -38,7 +38,8 @@ import {
   connectorActions,
   connectorStatusText,
   entryName,
-  entryNeedsToken,
+  entryNeedsSetup,
+  entryFacts,
   entryTagline,
   pluginGlyph,
   MCP_SERVER_STATUS_TEXT,
@@ -205,6 +206,9 @@ export function ConnectorItem({
       name={entry ? entryName(entry) : connector.displayName}
       iconUrl={entry?.iconUrl ?? connector.iconUrl}
       tagline={(entry ? entryTagline(entry) : undefined) ?? connector.description ?? connector.url}
+      facts={entryFacts(entry)
+        .map(([, value]) => value)
+        .join(" · ")}
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>
@@ -252,6 +256,9 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
         name={name}
         iconUrl={entry.iconUrl}
         tagline={entryTagline(entry)}
+        facts={entryFacts(entry)
+          .map(([, value]) => value)
+          .join(" · ")}
         status={actions.busy === "add" ? "Adding…" : null}
         trailing={
           entry.installedConnectorId === undefined ? (
@@ -261,7 +268,7 @@ function NewEntryItem({ entry }: { readonly entry: DiscoverEntry }) {
               aria-label={actions.canAdd ? `Add ${name}` : `Why ${name} can't be added`}
               disabled={actions.canAdd && actions.locked}
               onClick={() =>
-                entryNeedsToken(entry)
+                entryNeedsSetup(entry)
                   ? setShowToken(true)
                   : actions.canAdd
                     ? void actions.add()

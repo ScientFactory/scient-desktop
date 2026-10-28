@@ -25,6 +25,8 @@ import {
   CATALOG_CATEGORY_ORDER,
   CURATED_SERVERS,
   curatedServerForUrl,
+  curatedDiscoverEntry,
+  FEATURED_SERVER_IDS,
   type CuratedServer,
 } from "./curatedCatalog.ts";
 import * as Discover from "./ExtensionsDiscover.ts";
@@ -364,13 +366,13 @@ const curated = (
 
 const CURATED_FIXTURE: ReadonlyArray<CuratedServer> = [
   // Declared in an order that differs from the section order.
-  curated("figure", ["design"]),
-  curated("semantic", ["featured", "research"], {
+  curated("figure", ["figures"]),
+  curated("semantic", ["featured", "papers"], {
     tagline: "Search papers and citations",
     icon: ICON_URIS.semantic,
   }),
-  curated("kaggle", ["data", "research"]),
-  ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["research"])),
+  curated("kaggle", ["data", "papers"]),
+  ...Array.from({ length: 7 }, (_, index) => curated(`paper-${index}`, ["papers"])),
   curated("hub", ["featured", "data"], {
     url: "https://hub.example/mcp/",
     registry: { name: "ac.inference.sh/mcp", version: "2.0.1" },
@@ -394,12 +396,12 @@ describe("curated Discover catalog", () => {
         ]),
       ).toEqual([
         ["featured", 2, 2],
-        ["research", 9, 6],
+        ["papers", 9, 6],
         ["data", 3, 3],
-        ["design", 1, 1],
+        ["figures", 1, 1],
       ]);
       const research = catalog.sections[1]!;
-      expect(research.title).toBe("Research");
+      expect(research.title).toBe("Papers & evidence");
       // Primary members first, in catalog order; secondary members after them.
       expect(research.entries.map((entry) => entry.title)).toEqual([
         "semantic",
@@ -416,12 +418,13 @@ describe("curated Discover catalog", () => {
       ]);
       const semantic = catalog.sections[0]!.entries[0]!;
       expect(semantic).toEqual({
+        hosting: "Official",
         name: "scient.curated/semantic",
         version: "2026-10-21",
         title: "semantic",
         description: "semantic description.",
         tagline: "Search papers and citations",
-        categories: ["featured", "research"],
+        categories: ["featured", "papers"],
         websiteUrl: "https://semantic.example",
         remotes: [
           { type: "streamable-http", url: "https://semantic.example/mcp", requiresInput: false },
@@ -471,7 +474,7 @@ describe("curated Discover catalog", () => {
       ]);
       const search = yield* discover.search({
         scope: "curated",
-        category: "research",
+        category: "papers",
         query: "SEMANTIC",
       });
       expect(search.entries.map((entry) => entry.installedConnectorId)).toEqual([
@@ -486,7 +489,7 @@ describe("curated Discover catalog", () => {
       const discover = yield* ExtensionsDiscover;
       const all = yield* discover.search({
         scope: "curated",
-        category: "research",
+        category: "papers",
         limit: 2,
         cursor: "ignored",
       });
@@ -495,13 +498,13 @@ describe("curated Discover catalog", () => {
       // Every term must match name, tagline or description.
       const papers = yield* discover.search({
         scope: "curated",
-        category: "research",
+        category: "papers",
         query: "paper-3 description",
       });
       expect(papers.entries.map((entry) => entry.title)).toEqual(["paper-3"]);
       const byTagline = yield* discover.search({
         scope: "curated",
-        category: "research",
+        category: "papers",
         query: "citations",
       });
       expect(byTagline.entries.map((entry) => entry.title)).toEqual(["semantic"]);
@@ -539,7 +542,9 @@ describe("curated Discover catalog", () => {
     );
     for (const server of CURATED_SERVERS) {
       expect(server.tagline.length, server.id).toBeLessThanOrEqual(60);
-      expect(new URL(server.url).protocol, server.id).toBe("https:");
+      expect(new URL(server.url.replace("<tenant>", "example-lab")).protocol, server.id).toBe(
+        "https:",
+      );
       expect(new URL(server.websiteUrl).protocol, server.id).toBe("https:");
       expect(
         server.categories.filter((category) => category !== "featured").length,
@@ -547,9 +552,76 @@ describe("curated Discover catalog", () => {
     }
     for (const category of CATALOG_CATEGORY_ORDER) {
       const size = CURATED_SERVERS.filter((server) => server.categories.includes(category)).length;
-      expect(size, category).toBeLessThanOrEqual(10);
+      expect(size, category).toBeLessThanOrEqual(category === "featured" ? 6 : 40);
       expect(size, category).toBeGreaterThan(0);
     }
+  });
+
+  it("preserves curated setup metadata and hosting provenance in the contract", () => {
+    for (const server of CURATED_SERVERS) {
+      const entry = curatedDiscoverEntry(server);
+      expect(isDiscoverEntry(entry), server.id).toBe(true);
+      if (server.apiKey) {
+        expect(entry.apiKey).toEqual(server.apiKey);
+        expect(new URL(server.apiKey.helpUrl).protocol).toBe("https:");
+        if (server.apiKey.strategy === "header") expect(server.apiKey.headerName).toBeTruthy();
+      }
+      if (server.address) {
+        expect(entry.address).toEqual(server.address);
+        expect(entry.remotes[0]?.requiresInput).toBe(true);
+      }
+      if (server.url.includes(".caseyjhand.com/")) expect(entry.hosting).toBe("Community");
+      if (server.url.includes(".mcp.claude.com/"))
+        expect(entry.hosting).toBe("Hosted by Anthropic");
+    }
+  });
+
+  it.effect("ranks Featured independently of catalog order", () =>
+    Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const catalog = yield* discover.catalog();
+      expect(catalog.sections[0]?.entries.map((entry) => entry.title)).toEqual(
+        FEATURED_SERVER_IDS.map(
+          (id) => CURATED_SERVERS.find((server) => server.id === id)?.displayName,
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        harness(
+          () => {
+            throw new Error("No registry expected");
+          },
+          [...CURATED_SERVERS].reverse(),
+        ).layer(),
+      ),
+    ),
+  );
+
+  it.effect("recognises an installed tenant without treating foreign hosts as that service", () => {
+    const http = harness(() => {
+      throw new Error("No registry expected");
+    });
+    return Effect.gen(function* () {
+      const discover = yield* ExtensionsDiscover;
+      const found = yield* discover.search({ scope: "curated", query: "Benchling lab" });
+      expect(found.entries[0]?.installedConnectorId).toBe("con_benchling0001");
+      const icons = yield* discover.connectorIcons([
+        "https://lab.mcp.benchling.com/mcp",
+        "https://lab.mcp.benchling.com.evil/mcp",
+      ]);
+      expect(icons.has("https://lab.mcp.benchling.com/mcp")).toBe(true);
+      expect(icons.has("https://lab.mcp.benchling.com.evil/mcp")).toBe(false);
+    }).pipe(
+      Effect.provide(
+        http.layer(() => [
+          connector({
+            connectorId: ConnectorId.make("con_benchling0001"),
+            url: "https://lab.mcp.benchling.com/mcp",
+            source: { type: "url" },
+          }),
+        ]),
+      ),
+    );
   });
 
   it("bundles a valid logo for every curated server", () => {
@@ -634,6 +706,8 @@ describe("curated names for connectors", () => {
     expect(curatedServerForUrl("https://mcp.deepwiki.com/other")).toBeUndefined();
     expect(curatedServerForUrl("https://pubmed.mcp.claude.com/mcp")?.id).toBe("pubmed");
     expect(curatedServerForUrl("https://unknown.example/mcp")).toBeUndefined();
+    expect(curatedServerForUrl("https://my-lab.mcp.benchling.com/mcp")?.id).toBe("benchling-lab");
+    expect(curatedServerForUrl("https://my-lab.mcp.benchling.com.evil/mcp")).toBeUndefined();
   });
 });
 
@@ -663,7 +737,7 @@ describe("Discover entry lookup and global search", () => {
         name: "scient.curated/paper-6",
         title: "paper-6",
         tagline: "paper-6 tagline",
-        categories: ["research"],
+        categories: ["papers"],
         installable: true,
       });
       // Curated names never reach the registry.
@@ -741,6 +815,27 @@ describe("split Discover search", () => {
     return { requests, layer };
   };
 
+  it.effect(
+    "bounds hanging category searches and reports their failure without hiding picks",
+    () => {
+      const registry = hangingRegistry();
+      return Effect.gen(function* () {
+        const discover = yield* ExtensionsDiscover;
+        const fiber = yield* discover
+          .search({ scope: "registry", category: "biology" })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust(Duration.seconds(8));
+        const page = yield* Fiber.join(fiber);
+        expect(page.entries).toEqual([]);
+        expect(page.message).toContain("could not finish");
+        expect(registry.requests).toHaveLength(4);
+        expect(
+          (yield* discover.search({ scope: "curated", category: "papers" })).entries.length,
+        ).toBeGreaterThan(0);
+      }).pipe(Effect.provide(registry.layer));
+    },
+  );
+
   it.effect("answers curated searches locally, even while the registry hangs", () => {
     const registry = hangingRegistry();
     return Effect.gen(function* () {
@@ -770,7 +865,7 @@ describe("split Discover search", () => {
     const http = harness(registryRoutes, [
       ...CURATED_FIXTURE,
       // Not in the registry by name, but publishing a registry server's remote URL.
-      curated("voice", ["communication"], { url: "https://easyvoice.ae/api/mcp" }),
+      curated("voice", ["teamwork"], { url: "https://easyvoice.ae/api/mcp" }),
     ]);
     return Effect.gen(function* () {
       const discover = yield* ExtensionsDiscover;
@@ -782,7 +877,7 @@ describe("split Discover search", () => {
       expect(fromRegistry).toEqual(fromCurated);
       // A URL alias takes the curated name, so clients can dedup by `name`.
       const voice = registryHub.entries.find((entry) => entry.title === "voice");
-      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["communication"] });
+      expect(voice).toMatchObject({ name: "scient.curated/voice", categories: ["teamwork"] });
       expect(registryHub.entries.some((entry) => entry.name === "ae.easyvoice/tts")).toBe(false);
       const names = registryHub.entries.map((entry) => entry.name);
       expect(new Set(names).size).toBe(names.length);
@@ -814,14 +909,66 @@ describe("split Discover search", () => {
     }).pipe(Effect.provide(http.layer()));
   });
 
-  it.effect("rejects a registry search restricted to a category", () => {
-    const http = harness(registryRoutes, CURATED_FIXTURE);
-    return Effect.gen(function* () {
-      const discover = yield* ExtensionsDiscover;
-      expect(
-        (yield* Effect.flip(discover.search({ scope: "registry", category: "research" }))).reason,
-      ).toBe("invalid-input");
-      expect(http.requests).toHaveLength(0);
-    }).pipe(Effect.provide(http.layer()));
-  });
+  it.effect(
+    "merges category keyword pages, deduplicates names and endpoints, and caches reads",
+    () => {
+      const alias = {
+        server: {
+          name: "org.example/alias",
+          version: "1.0.0",
+          remotes: [{ type: "streamable-http", url: "https://unique.example/mcp/" }],
+        },
+        _meta: { "io.modelcontextprotocol.registry/official": { status: "active" } },
+      };
+      const http = harness(
+        () =>
+          Response.json({
+            ...recordedPage,
+            servers: [
+              ...recordedPage.servers,
+              alias,
+              {
+                ...alias,
+                server: {
+                  ...alias.server,
+                  name: "org.example/alias-other",
+                  remotes: [
+                    { type: "streamable-http", url: "https://unique.example/mcp#fragment" },
+                  ],
+                },
+              },
+            ],
+          }),
+        CURATED_FIXTURE,
+      );
+      return Effect.gen(function* () {
+        const discover = yield* ExtensionsDiscover;
+        const first = yield* discover.search({ scope: "registry", category: "biology" });
+        expect(http.requests.map((url) => url.searchParams.get("search"))).toEqual([
+          "genomics",
+          "protein",
+          "clinical",
+          "bioinformatics",
+        ]);
+        expect(first.entries.length).toBeGreaterThan(0);
+        expect(new Set(first.entries.map((entry) => entry.name)).size).toBe(first.entries.length);
+        const urls = first.entries.flatMap((entry) =>
+          entry.remotes.map((remote) => canonicalConnectorUrl(remote.url)),
+        );
+        expect(new Set(urls).size).toBe(urls.length);
+        yield* discover.search({ scope: "registry", category: "biology" });
+        expect(http.requests).toHaveLength(4);
+        if (first.nextCursor) {
+          const next = yield* discover.search({
+            scope: "registry",
+            category: "biology",
+            cursor: first.nextCursor,
+          });
+          expect(next.entries).toEqual([]);
+        }
+        const featured = yield* discover.search({ scope: "registry", category: "featured" });
+        expect(featured.entries).toEqual([]);
+      }).pipe(Effect.provide(http.layer()));
+    },
+  );
 });

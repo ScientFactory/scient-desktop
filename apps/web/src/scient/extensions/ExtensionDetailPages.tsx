@@ -62,7 +62,8 @@ import {
   connectorAuthLabel,
   connectorSourceLabel,
   entryName,
-  entryNeedsToken,
+  entryNeedsSetup,
+  entryFacts,
   providerServerDisplayName,
   entrySourceLabel,
   entryTagline,
@@ -679,6 +680,7 @@ function ConnectorDetail({
       <AboutCard
         rows={[
           fact("Added on", formatDate(connector.createdAt)),
+          ...entryFacts(entry),
           fact("Category", categoryLabel(entry, catalog)),
           fact("Website", entry?.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
           fact(
@@ -772,7 +774,7 @@ function ServerDetail({
               <PrimaryAction
                 icon={PlusIcon}
                 disabled={!actions.canAdd || actions.locked}
-                onClick={() => (entryNeedsToken(entry) ? onAddWithOptions() : void actions.add())}
+                onClick={() => (entryNeedsSetup(entry) ? onAddWithOptions() : void actions.add())}
               >
                 {actions.busy === "add" ? "Adding…" : "Add"}
               </PrimaryAction>
@@ -808,6 +810,7 @@ function ServerDetail({
       </DetailSection>
       <AboutCard
         rows={[
+          ...entryFacts(entry),
           fact("Category", categoryLabel(entry, catalog)),
           fact("Website", entry.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
           fact(
@@ -936,7 +939,11 @@ function componentGroups(
         key: `${component.type}:${component.name}`,
         name:
           component.type === "skill" ? (
-            <Link to="/settings/skills" className={cn(GHOST_LINK_CLASS, "text-foreground")}>
+            <Link
+              to="/settings/extensions"
+              search={{ kind: "skills" }}
+              className={cn(GHOST_LINK_CLASS, "text-foreground")}
+            >
               {component.name}
             </Link>
           ) : component.type === "mcp-tools" ? (

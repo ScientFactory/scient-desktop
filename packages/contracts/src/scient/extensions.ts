@@ -13,6 +13,7 @@ export {
 } from "./extensionAudience.ts";
 
 export * from "./providerStore.ts";
+export { storeCategories } from "./storeCategories.ts";
 export * from "./pluginContents.ts";
 export * from "./pluginKeys.ts";
 
@@ -313,14 +314,17 @@ export type ConnectorTestResult = typeof ConnectorTestResult.Type;
 /** Scient-curated catalog sections. Registry servers without curation appear only under "all". */
 export const ExtensionCategory = Schema.Literals([
   "featured",
-  "research",
+  "papers",
   "biology",
-  "math-cs",
+  "chemistry",
+  "earth",
+  "physics-math",
+  "social-science",
   "data",
-  "code",
   "writing",
-  "communication",
-  "design",
+  "figures",
+  "code",
+  "teamwork",
 ]);
 export type ExtensionCategory = typeof ExtensionCategory.Type;
 
@@ -334,7 +338,7 @@ export type DiscoverSearchScope = typeof DiscoverSearchScope.Type;
 export const DiscoverSearchInput = Schema.Struct({
   scope: DiscoverSearchScope,
   query: Schema.optional(Schema.String),
-  /** Restrict a `curated` search to one category; invalid with `registry`. */
+  /** Curated membership or server-owned Registry keyword searches. */
   category: Schema.optional(ExtensionCategory),
   /** `registry` only: the registry's paging cursor. */
   cursor: Schema.optional(TrimmedNonEmptyString),
@@ -354,6 +358,26 @@ export type DiscoverRemote = typeof DiscoverRemote.Type;
 export const DiscoverEntry = Schema.Struct({
   agentStores: Schema.optional(ExtensionAgentStores),
   accountRequired: Schema.optional(Schema.Boolean),
+  oauthClientRequired: Schema.optional(Schema.Boolean),
+  hosting: Schema.optional(TrimmedNonEmptyString),
+  paidPlan: Schema.optional(Schema.Boolean),
+  beta: Schema.optional(Schema.Boolean),
+  accessNote: Schema.optional(TrimmedNonEmptyString),
+  apiKey: Schema.optional(
+    Schema.Struct({
+      strategy: CredentialStrategy,
+      headerName: Schema.optional(TrimmedNonEmptyString),
+      fieldLabel: TrimmedNonEmptyString,
+      helpUrl: TrimmedNonEmptyString,
+    }),
+  ),
+  address: Schema.optional(
+    Schema.Struct({
+      urlTemplate: TrimmedNonEmptyString,
+      fieldLabel: TrimmedNonEmptyString,
+      placeholder: TrimmedNonEmptyString,
+    }),
+  ),
   name: TrimmedNonEmptyString,
   version: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
@@ -397,6 +421,7 @@ export const DiscoverEntryInput = Schema.Struct({ name: TrimmedNonEmptyString })
 export type DiscoverEntryInput = typeof DiscoverEntryInput.Type;
 
 export const DiscoverPage = Schema.Struct({
+  message: Schema.optional(Schema.String),
   entries: Schema.Array(DiscoverEntry),
   nextCursor: Schema.optional(TrimmedNonEmptyString),
   fetchedAt: IsoDateTime,
@@ -516,3 +541,28 @@ export class ExtensionsError extends Schema.TaggedError<ExtensionsError>()("Exte
   ]),
   message: TrimmedNonEmptyString,
 }) {}
+
+/** Match a single tenant label without credentials or extra URL components. */
+export function matchesExtensionAddressTemplate(value: string, template: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    const expected = new URL(template.replace("<tenant>", "tenant"));
+    const suffix = expected.hostname.slice("tenant".length);
+    const tenant = url.hostname.slice(0, -suffix.length);
+    if (
+      url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
+      !url.port &&
+      !url.search &&
+      !url.hash &&
+      url.pathname === expected.pathname &&
+      url.hostname.endsWith(suffix) &&
+      /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(tenant)
+    )
+      return true;
+  } catch {
+    // Invalid URLs cannot match a template.
+  }
+  return false;
+}

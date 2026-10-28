@@ -75,14 +75,19 @@ vi.mock("../../components/settings/settingsLayout", () => ({
   SettingsSection: "section",
   SettingsRow: ({
     title,
+    description,
     status,
     control,
+    onClick,
   }: {
     title: React.ReactNode;
+    description?: React.ReactNode;
     status: string;
     control?: React.ReactNode;
+    onClick?: React.MouseEventHandler<HTMLDivElement>;
   }) => (
     <div
+      onClick={onClick}
       data-title={
         typeof title === "string"
           ? title
@@ -91,6 +96,7 @@ vi.mock("../../components/settings/settingsLayout", () => ({
       data-status={status}
     >
       {title}
+      <p data-description="">{description}</p>
       {control}
     </div>
   ),
@@ -130,7 +136,7 @@ vi.mock("../../components/ui/switch", () => ({
   ),
 }));
 
-import { ExternalSkillsSettings } from "./ExternalSkillsSettings";
+import { AgentSkills } from "./AgentSkills";
 
 const instanceId = ProviderInstanceId.make("codex-personal");
 
@@ -177,7 +183,7 @@ const switches = (_fixture: _Fixture) => [
   ..._fixture.container.querySelectorAll<HTMLButtonElement>("[data-switch]"),
 ];
 
-describe("ExternalSkillsSettings activation", () => {
+describe("AgentSkills activation", () => {
   async function _setupFixture0(_fixture: _Fixture) {
     state.environmentId = "local";
     state.providers = [provider()];
@@ -193,7 +199,12 @@ describe("ExternalSkillsSettings activation", () => {
       _fixture.root0 = _fixture.stack.use(
         await _fixtureRender(null, { container: _fixture.container, router: false }),
       );
-      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(
+        <AgentSkills
+          environmentId={state.environmentId as EnvironmentId}
+          providers={state.providers}
+        />,
+      );
     });
     await act(() => {
       _fixture.container.querySelector("button")?.click();
@@ -227,7 +238,12 @@ describe("ExternalSkillsSettings activation", () => {
       state.document = { instructions: "# External instructions", unavailableReason: undefined };
     });
     await act(async () => {
-      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(
+        <AgentSkills
+          environmentId={state.environmentId as EnvironmentId}
+          providers={state.providers}
+        />,
+      );
     });
     await act(() => {
       _fixture.container
@@ -249,6 +265,17 @@ describe("ExternalSkillsSettings activation", () => {
     await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
     expect(document.body.textContent).toContain("External instructions");
     expect(state.setEnabled).not.toHaveBeenCalled();
+  });
+
+  it("opens a skill's card from anywhere on its row except its switch", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    const row = () => _fixture.container.querySelector<HTMLElement>('[data-title="First"]');
+    await act(() => switches(_fixture)[0]?.click());
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(() => row()?.querySelector<HTMLElement>("[data-description]")?.click());
+    await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
   });
 
   it("keeps both switches responsive and coalesces repeated clicks on one skill", async () => {
@@ -320,7 +347,12 @@ describe("ExternalSkillsSettings activation", () => {
 
     await act(async () => {
       state.providers = [provider(true)];
-      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(
+        <AgentSkills
+          environmentId={state.environmentId as EnvironmentId}
+          providers={state.providers}
+        />,
+      );
     });
     expect([
       ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
@@ -352,7 +384,12 @@ describe("ExternalSkillsSettings activation", () => {
 
     await act(async () => {
       state.providers = [provider(false)];
-      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(
+        <AgentSkills
+          environmentId={state.environmentId as EnvironmentId}
+          providers={state.providers}
+        />,
+      );
     });
     expect([
       ..._fixture.container.querySelectorAll('[data-status="Personal · Updating"]'),
@@ -361,7 +398,12 @@ describe("ExternalSkillsSettings activation", () => {
 
     await act(async () => {
       state.providers = [provider(true)];
-      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(
+        <AgentSkills
+          environmentId={state.environmentId as EnvironmentId}
+          providers={state.providers}
+        />,
+      );
     });
     expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
     expect([
@@ -460,7 +502,12 @@ describe("ExternalSkillsSettings activation", () => {
     await act(async () => {
       state.environmentId = "other";
       state.providers = [provider()];
-      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(
+        <AgentSkills
+          environmentId={state.environmentId as EnvironmentId}
+          providers={state.providers}
+        />,
+      );
     });
     expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
     expect([
@@ -506,12 +553,22 @@ describe("ExternalSkillsSettings activation", () => {
 
     await act(async () => {
       state.providers = [provider(false)];
-      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(
+        <AgentSkills
+          environmentId={state.environmentId as EnvironmentId}
+          providers={state.providers}
+        />,
+      );
     });
     expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(false);
     await act(async () => {
       state.providers = [provider(true)];
-      await _fixture.root0.rerender(<ExternalSkillsSettings />);
+      await _fixture.root0.rerender(
+        <AgentSkills
+          environmentId={state.environmentId as EnvironmentId}
+          providers={state.providers}
+        />,
+      );
     });
     expect(switches(_fixture)[0]!.dataset.checked === "true").toBe(true);
   });

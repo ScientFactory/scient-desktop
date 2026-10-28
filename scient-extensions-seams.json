@@ -25,6 +25,8 @@
     "apps/server/src/provider/ScientProviderNativeInventory.ts",
     "packages/contracts/src/scient/extensionAudience.ts",
     "packages/contracts/src/scient/providerStore.ts",
+    "packages/contracts/src/scient/storeCategories.ts",
+    "packages/contracts/src/scient/storeCategories.test.ts",
     "apps/web/src/routes/_chat.settings.extensions_.store.$instanceId.tsx",
     "apps/web/src/routes/_chat.settings.extensions_.item.store.$instanceId.$entryId.tsx",
     "packages/contracts/src/scient/extensionIcon.ts",
@@ -349,7 +351,7 @@
       "purpose": "Read managed skill documents for the shared skill card."
     },
     {
-      "path": "apps/web/src/scient/skills/ScientSkillsSettings.tsx",
+      "path": "apps/web/src/scient/skills/ScientSkillsLibrary.tsx",
       "anchor": "ManagedSkillCard",
       "purpose": "Open managed skills in the same card as plugin skills."
     },

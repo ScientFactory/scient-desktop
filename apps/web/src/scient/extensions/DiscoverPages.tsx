@@ -1,7 +1,13 @@
-import type { DiscoverEntry, DiscoverSearchInput } from "@t3tools/contracts";
+import type {
+  DiscoverEntry,
+  DiscoverSearchInput,
+  ExtensionCategory,
+  ProviderStoreEntry,
+  ServerProvider,
+} from "@t3tools/contracts";
 import { Link, Navigate } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
-import { useState } from "react";
+import { useContext, useState } from "react";
 
 import {
   SettingsSearchTarget,
@@ -12,7 +18,10 @@ import { Button } from "../../components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../components/ui/input-group";
 import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
-import { ProviderStoreShelves } from "./ProviderStorePages";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { AsyncResult, Atom } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { ProviderStoreShelves, StoreInstall, storeAvailable } from "./ProviderStorePages";
 import { ConnectorItem, EntryItem, PluginItem } from "./ExtensionItems";
 import {
   BackLink,
@@ -20,14 +29,21 @@ import {
   ExtensionsSection,
   ExtensionsTopBar,
   MutedLine,
-  SECTION_HEADING_CLASS,
   SECTION_TITLE_LINK_CLASS,
   SectionTitleChevron,
   useExtensionsEnvironment,
 } from "./ExtensionsPage";
-import { ExtensionGrid } from "./ExtensionRow";
-import { extensionsDiscoverPage } from "./extensionsState";
-import { catalogEntries, isExtensionCategory, matchesQuery } from "./extensionsView";
+import { ExtensionGrid, ExtensionRow } from "./ExtensionRow";
+import { extensionsDiscoverPage, extensionsProviderStorePage } from "./extensionsState";
+import {
+  catalogEntries,
+  type ExtensionKind,
+  isExtensionCategory,
+  matchesQuery,
+  showsKind,
+} from "./extensionsView";
+import { AgentSkills } from "../skills/AgentSkills";
+import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLibrary";
 
 /** Search results that live on Installed; Discover forwards them there. */
 const INSTALLED_SEARCH_TARGETS: Readonly<Record<string, true>> = {
@@ -116,6 +132,16 @@ function DiscoverResultsPage({
   const [nextPage, ...afterNext] = later;
   return (
     <>
+      {page.data.message ? (
+        <li className="col-span-full px-2">
+          <MutedLine>{page.data.message}</MutedLine>
+        </li>
+      ) : null}
+      {!shown.length && !nextCursor ? (
+        <li className="col-span-full px-2">
+          <MutedLine>No more matches.</MutedLine>
+        </li>
+      ) : null}
       {shown.map((entry) => (
         <EntryItem key={entry.name} entry={entry} />
       ))}
@@ -137,7 +163,7 @@ function DiscoverResultsPage({
             className="-ms-2"
             onClick={() => onMore(nextCursor)}
           >
-            Load more
+            {input.category ? "Show more" : "Load more"}
           </Button>
         </li>
       ) : null}
@@ -190,42 +216,62 @@ function DiscoverPager({
   );
 }
 
-function DiscoverHome() {
-  const { catalog, catalogError, inventory } = useExtensionsEnvironment();
+function DiscoverHome({ kind }: { readonly kind: ExtensionKind | undefined }) {
+  const { environmentId, catalog, catalogError, inventory, providers } = useExtensionsEnvironment();
   const builtIns = inventory?.plugins.filter((plugin) => plugin.origin === "built-in") ?? [];
   return (
     <SettingsSearchTarget
       id={searchableSetting("extensions-discover").id}
       className="grid gap-10 outline-none"
     >
-      {catalogError ? (
+      {!showsKind(kind, "plugins") ? null : catalogError ? (
         <MutedLine>{catalogError}</MutedLine>
       ) : catalog === null ? (
         <MutedLine>Loading…</MutedLine>
       ) : (
-        catalog.sections.map((section) => (
-          <ExtensionsSection
-            key={section.category}
-            title={
-              <Link
-                to="/settings/extensions/category/$category"
-                params={{ category: section.category }}
-                className={SECTION_TITLE_LINK_CLASS}
+        <>
+          {catalog.sections
+            .filter((section) => section.category === "featured" || section.total >= 4)
+            .map((section) => (
+              <ExtensionsSection
+                key={section.category}
+                title={
+                  <Link
+                    to="/settings/extensions/category/$category"
+                    params={{ category: section.category }}
+                    className={SECTION_TITLE_LINK_CLASS}
+                  >
+                    {section.title}
+                    <SectionTitleChevron />
+                  </Link>
+                }
               >
-                {section.title}
-                <SectionTitleChevron />
-              </Link>
-            }
-          >
-            <ExtensionGrid label={section.title}>
-              {section.entries.map((entry) => (
-                <EntryItem key={entry.name} entry={entry} />
+                <ExtensionGrid label={section.title}>
+                  {section.entries.map((entry) => (
+                    <EntryItem key={entry.name} entry={entry} />
+                  ))}
+                </ExtensionGrid>
+              </ExtensionsSection>
+            ))}
+          <nav aria-label="More categories" className="flex flex-wrap gap-x-6 gap-y-3">
+            {catalog.sections
+              .filter((section) => section.category !== "featured" && section.total < 4)
+              .map((section) => (
+                <Link
+                  key={section.category}
+                  to="/settings/extensions/category/$category"
+                  params={{ category: section.category }}
+                  className={SECTION_TITLE_LINK_CLASS}
+                >
+                  {section.title}{" "}
+                  <span className="text-xs text-muted-foreground">{section.total}</span>
+                  <SectionTitleChevron />
+                </Link>
               ))}
-            </ExtensionGrid>
-          </ExtensionsSection>
-        ))
+          </nav>
+        </>
       )}
-      {builtIns.length > 0 ? (
+      {showsKind(kind, "plugins") && builtIns.length > 0 ? (
         <ExtensionsSection title="Built into Scient">
           <ExtensionGrid label="Built into Scient">
             {builtIns.map((plugin) => (
@@ -234,13 +280,17 @@ function DiscoverHome() {
           </ExtensionGrid>
         </ExtensionsSection>
       ) : null}
-      <ProviderStoreShelves />
-      <h2 className={SECTION_HEADING_CLASS}>
-        <Link to="/settings/extensions/all" className={SECTION_TITLE_LINK_CLASS}>
-          Browse all MCP servers
-          <SectionTitleChevron />
-        </Link>
-      </h2>
+      {showsKind(kind, "plugins") ? <ProviderStoreShelves /> : null}
+      {showsKind(kind, "skills") ? (
+        <>
+          <ExtensionsSection title={<ScientSkillsTitle />}>
+            <ScientSkillsLibrary environmentId={environmentId} providers={providers} />
+          </ExtensionsSection>
+          <ExtensionsSection title="Agent skills">
+            <AgentSkills environmentId={environmentId} providers={providers} />
+          </ExtensionsSection>
+        </>
+      ) : null}
     </SettingsSearchTarget>
   );
 }
@@ -251,20 +301,27 @@ function DiscoverHome() {
  * The registry also lists catalog servers (in catalog shape, same name); the
  * catalog's rows win.
  */
-function DiscoverSearchResults({ query }: { readonly query: string }) {
+function DiscoverSearchResults({
+  query,
+  kind,
+}: {
+  readonly query: string;
+  readonly kind: ExtensionKind | undefined;
+}) {
   const { environmentId, catalog, inventory } = useExtensionsEnvironment();
   const curated = useEnvironmentQuery(
     extensionsDiscoverPage({ environmentId, input: { scope: "curated", query } }),
   );
-  const connectors = (inventory?.connectors ?? []).filter((connector) =>
-    matchesQuery(query, [
-      connector.displayName,
-      connector.serverName,
-      connector.description,
-      connector.url,
-    ]),
+  const connectors = (showsKind(kind, "plugins") ? (inventory?.connectors ?? []) : []).filter(
+    (connector) =>
+      matchesQuery(query, [
+        connector.displayName,
+        connector.serverName,
+        connector.description,
+        connector.url,
+      ]),
   );
-  const plugins = (inventory?.plugins ?? []).filter((plugin) =>
+  const plugins = (showsKind(kind, "plugins") ? (inventory?.plugins ?? []) : []).filter((plugin) =>
     matchesQuery(query, [plugin.displayName, plugin.description, plugin.publisher]),
   );
   const shownConnectorIds = new Set(connectors.map((connector) => connector.connectorId));
@@ -287,18 +344,36 @@ function DiscoverSearchResults({ query }: { readonly query: string }) {
       {plugins.map((plugin) => (
         <PluginItem key={plugin.pluginId} plugin={plugin} />
       ))}
-      <DiscoverPager input={{ scope: "curated", query }} hide={installedHere} />
-      <DiscoverPager
-        input={{ scope: "registry", query }}
-        seen={curatedNames}
-        hide={curatedPending ? () => true : installedHere}
-        pendingLabel="Searching the MCP Registry…"
-      />
+      {showsKind(kind, "plugins") ? (
+        <>
+          <DiscoverPager input={{ scope: "curated", query }} hide={installedHere} />
+          <DiscoverPager
+            input={{ scope: "registry", query }}
+            seen={curatedNames}
+            hide={curatedPending ? () => true : installedHere}
+            pendingLabel="Searching the MCP Registry…"
+          />
+        </>
+      ) : null}
     </ExtensionGrid>
   );
 }
 
-function Discover() {
+function SkillSearchResults({ query }: { readonly query: string }) {
+  const { environmentId, providers } = useExtensionsEnvironment();
+  return (
+    <>
+      <ExtensionsSection title={<ScientSkillsTitle />}>
+        <ScientSkillsLibrary environmentId={environmentId} providers={providers} query={query} />
+      </ExtensionsSection>
+      <ExtensionsSection title="Agent skills">
+        <AgentSkills environmentId={environmentId} providers={providers} query={query} />
+      </ExtensionsSection>
+    </>
+  );
+}
+
+function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const searchTargetId = useSettingsSearchTargetId();
   const [search, setSearch] = useState("");
   const query = useDebouncedValue(search.trim(), 300);
@@ -308,52 +383,289 @@ function Discover() {
   return (
     <>
       <SettingsSearchTarget id={searchableSetting("extensions").id} className="outline-none">
-        <ExtensionsTopBar tab="discover">
-          <SearchField label="Search extensions" value={search} onChange={setSearch} />
+        <ExtensionsTopBar tab="discover" kind={kind}>
+          <SearchField
+            label={kind === "skills" ? "Search skills" : "Search plugins"}
+            value={search}
+            onChange={setSearch}
+          />
         </ExtensionsTopBar>
       </SettingsSearchTarget>
       {query ? (
         <>
-          <DiscoverSearchResults query={query} />
-          <ProviderStoreShelves query={query} />
+          {kind === "skills" ? null : <DiscoverSearchResults query={query} kind={kind} />}
+          {showsKind(kind, "plugins") ? <ProviderStoreShelves query={query} /> : null}
+          {showsKind(kind, "skills") ? <SkillSearchResults query={query} /> : null}
         </>
       ) : (
-        <DiscoverHome />
+        <DiscoverHome kind={kind} />
       )}
     </>
   );
 }
 
 /** Settings ▸ Extensions: curated sections, built-ins, and search across everything. */
-export function DiscoverPage() {
+export function DiscoverPage({ kind }: { readonly kind?: ExtensionKind | undefined }) {
   return (
     <ExtensionsPage>
-      <Discover />
+      <Discover kind={kind} />
     </ExtensionsPage>
+  );
+}
+
+function canonicalUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.href.replace(/\/$/u, "");
+  } catch {
+    return value;
+  }
+}
+function storeMatches(entry: ProviderStoreEntry, curated: DiscoverEntry) {
+  return (
+    curated.agentStores?.codex === entry.name ||
+    curated.name === entry.id ||
+    curated.name === entry.name ||
+    curated.title?.toLowerCase() === entry.displayName.toLowerCase() ||
+    (entry.website !== undefined &&
+      [curated.websiteUrl, ...curated.remotes.map((remote) => remote.url)].some(
+        (url) => url !== undefined && canonicalUrl(url) === canonicalUrl(entry.website!),
+      ))
+  );
+}
+
+function CategoryContents({
+  category,
+  query,
+}: {
+  readonly category: ExtensionCategory;
+  readonly query: string;
+}) {
+  const { environmentId, providers } = useExtensionsEnvironment();
+  const registry = useContext(RegistryContext);
+  const picks = useEnvironmentQuery(
+    extensionsDiscoverPage({ environmentId, input: { scope: "curated", category } }),
+  );
+  const targets = providers.filter(
+    (provider) =>
+      category !== "featured" &&
+      storeAvailable(provider) &&
+      ["codex", "claudeAgent", "scient"].includes(provider.driver),
+  );
+  const [more, setMore] = useState<Readonly<Record<string, readonly string[]>>>({});
+  const storeAtom = Atom.make((get) =>
+    targets.flatMap((provider) =>
+      [undefined, ...(more[provider.instanceId] ?? [])].map((cursor) => {
+        const atom = extensionsProviderStorePage({
+          environmentId,
+          input: {
+            instanceId: provider.instanceId,
+            category,
+            ...(query ? { query } : {}),
+            limit: 50,
+            ...(cursor ? { cursor } : {}),
+          },
+        });
+        return { provider, atom, cursor, result: get(atom) };
+      }),
+    ),
+  );
+  const pages = useAtomValue(storeAtom);
+  const stores: Array<{
+    provider: ServerProvider;
+    entry: ProviderStoreEntry;
+    refresh: () => void;
+  }> = [];
+  const seen = new Set<string>();
+  for (const { provider, atom, result } of pages) {
+    const data = Option.getOrNull(AsyncResult.value(result));
+    for (const entry of data?.entries ?? []) {
+      const key = `${entry.kind}:${entry.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      stores.push({ provider, entry, refresh: () => registry.refresh(atom) });
+    }
+  }
+  const curated = picks.data?.entries ?? [];
+  const visiblePicks = curated.filter((entry) =>
+    matchesQuery(query, [entry.title, entry.description, entry.name]),
+  );
+  const ready = picks.data !== null || picks.error !== null;
+  const storeReady = pages.every(({ result }) => !AsyncResult.isInitial(result));
+  return (
+    <>
+      <ExtensionsSection
+        title="Scient’s picks"
+        action={
+          ready ? (
+            <span className="text-xs text-muted-foreground">
+              {visiblePicks.length} of {curated.length}
+            </span>
+          ) : undefined
+        }
+      >
+        {picks.error ? (
+          <MutedLine>{picks.error}</MutedLine>
+        ) : !ready ? (
+          <MutedLine>Loading picks…</MutedLine>
+        ) : null}
+        <ExtensionGrid label="Scient’s picks">
+          {visiblePicks.map((entry) => {
+            const equivalents = stores.filter((store) => storeMatches(store.entry, entry));
+            return equivalents.length ? (
+              <li key={entry.name}>
+                <ul>
+                  <EntryItem entry={entry} />
+                </ul>
+                <div className="flex flex-wrap gap-2 px-2 ps-15">
+                  {equivalents.map((store) => (
+                    <Link
+                      key={store.entry.id}
+                      to="/settings/extensions/item/store/$instanceId/$entryId"
+                      params={{ instanceId: store.provider.instanceId, entryId: store.entry.id }}
+                      className="text-xs text-muted-foreground underline"
+                    >
+                      Also add from{" "}
+                      {store.entry.kind === "codex" ? "Codex" : "Claude / Scient Agent"}’s store
+                    </Link>
+                  ))}
+                </div>
+              </li>
+            ) : (
+              <EntryItem key={entry.name} entry={entry} />
+            );
+          })}
+        </ExtensionGrid>
+        {ready && !visiblePicks.length ? <MutedLine>No picks match this search.</MutedLine> : null}
+      </ExtensionsSection>
+      {category !== "featured" ? (
+        <>
+          <ExtensionsSection title="From your agents’ stores">
+            <ExtensionGrid label="From your agents’ stores">
+              {ready
+                ? stores
+                    .filter(
+                      ({ entry }) =>
+                        !curated.some((pick) => storeMatches(entry, pick)) &&
+                        matchesQuery(query, [entry.name, entry.displayName, entry.description]),
+                    )
+                    .map(({ provider, entry, refresh }) => (
+                      <ExtensionRow
+                        key={`${entry.kind}:${entry.id}`}
+                        target={{
+                          kind: "provider-store",
+                          instanceId: provider.instanceId,
+                          entryId: entry.id,
+                        }}
+                        name={entry.displayName}
+                        iconUrl={entry.iconUrl}
+                        tagline={entry.description}
+                        audience={
+                          entry.kind === "shared"
+                            ? { layer: "shared", ownerInstanceId: provider.instanceId }
+                            : {
+                                layer: "agent",
+                                driver: provider.driver,
+                                instanceId: provider.instanceId,
+                                label: "Codex",
+                                reason: "Uses Codex’s own ChatGPT account",
+                              }
+                        }
+                        trailing={
+                          <StoreInstall provider={provider} entry={entry} refresh={refresh} />
+                        }
+                      />
+                    ))
+                : null}
+            </ExtensionGrid>
+            {!targets.length ? <MutedLine>No agent stores are available.</MutedLine> : null}
+            {pages.map(({ provider, cursor, result }) => {
+              const data = Option.getOrNull(AsyncResult.value(result));
+              return (
+                <div key={`${provider.instanceId}:${cursor ?? "first"}`}>
+                  {AsyncResult.isInitial(result) ? (
+                    <MutedLine>
+                      Checking {provider.displayName ?? provider.driver}’s store…
+                    </MutedLine>
+                  ) : result._tag === "Failure" ? (
+                    <MutedLine>
+                      Could not read {provider.displayName ?? provider.driver}’s store.
+                    </MutedLine>
+                  ) : null}
+                  {data?.message ? <MutedLine>{data.message}</MutedLine> : null}
+                  {data?.sourceFailures?.length ? (
+                    <MutedLine>Some plugin stores could not be read.</MutedLine>
+                  ) : null}
+                  {data && !data.total ? (
+                    <MutedLine>
+                      No matching plugins in {provider.displayName ?? provider.driver}’s store.
+                    </MutedLine>
+                  ) : null}
+                  {data?.nextCursor &&
+                  !(more[provider.instanceId] ?? []).includes(data.nextCursor) ? (
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      onClick={() =>
+                        setMore((current) => ({
+                          ...current,
+                          [provider.instanceId]: [
+                            ...(current[provider.instanceId] ?? []),
+                            data.nextCursor!,
+                          ],
+                        }))
+                      }
+                    >
+                      Show more plugins
+                    </Button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </ExtensionsSection>
+          <ExtensionsSection title="More from the MCP Registry">
+            <MutedLine>Not checked by Scient</MutedLine>
+            <ExtensionGrid label="More from the MCP Registry">
+              {ready && storeReady ? (
+                <DiscoverPager
+                  input={{ scope: "registry", category, ...(query ? { query } : {}) }}
+                  seen={new Set(curated.map((entry) => entry.name))}
+                  hide={(entry) => stores.some((store) => storeMatches(store.entry, entry))}
+                  pendingLabel="Searching the MCP Registry…"
+                />
+              ) : null}
+            </ExtensionGrid>
+          </ExtensionsSection>
+        </>
+      ) : null}
+    </>
   );
 }
 
 function Category({ category }: { readonly category: string }) {
   const { catalog } = useExtensionsEnvironment();
-  if (!isExtensionCategory(category)) {
+  const [search, setSearch] = useState("");
+  const query = useDebouncedValue(search.trim(), 300);
+  if (!isExtensionCategory(category))
     return (
       <>
         <BackLink to="/settings/extensions">Discover</BackLink>
         <MutedLine>This category does not exist.</MutedLine>
       </>
     );
-  }
   const section = catalog?.sections.find((candidate) => candidate.category === category);
   const title = section?.title ?? category.charAt(0).toUpperCase() + category.slice(1);
   return (
     <>
       <BackLink to="/settings/extensions">Discover</BackLink>
-      <ExtensionsSection title={title}>
+      <ExtensionsSection
+        title={title}
+        action={<SearchField label="Search this category" value={search} onChange={setSearch} />}
+      >
         {section?.description ? <MutedLine>{section.description}</MutedLine> : null}
-        <ExtensionGrid label={title}>
-          <DiscoverPager input={{ scope: "curated", category }} />
-        </ExtensionGrid>
       </ExtensionsSection>
+      <CategoryContents key={`${category}:${query}`} category={category} query={query} />
     </>
   );
 }

@@ -30,17 +30,28 @@ import {
   catalogEntries,
   collectProviderExtensionGroups,
   connectorsReach,
+  type ExtensionKind,
   type ProviderExtensionGroup,
+  showsKind,
   worksWithOptions,
 } from "./extensionsView";
 import { InstallBundleDialog } from "./InstallBundleDialog";
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
+import { AgentSkills } from "../skills/AgentSkills";
+import { ProjectSkills } from "../skills/ProjectSkills";
+import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLibrary";
 
 /** Rows a provider section shows before "Show all". */
 const PROVIDER_PREVIEW_ROWS = 6;
 
-function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) {
+function ProviderSection({
+  group,
+  kind,
+}: {
+  readonly group: ProviderExtensionGroup;
+  readonly kind: ExtensionKind | undefined;
+}) {
   const [expanded, setExpanded] = useState(false);
   const { environmentId, canWrite } = useExtensionsEnvironment();
   const act = useAtomCommand(actOnProviderPlugin, { reportFailure: true });
@@ -54,7 +65,7 @@ function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) 
     });
   });
   const rows = [
-    ...group.plugins.map(({ plugin, cwd }) => (
+    ...(showsKind(kind, "plugins") ? group.plugins : []).map(({ plugin, cwd }) => (
       <ProviderPluginItem
         key={`plugin:${cwd ?? ""}:${plugin.id}`}
         provider={group.provider}
@@ -63,7 +74,7 @@ function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) 
         workspace={cwd}
       />
     )),
-    ...group.mcpServers.map((server) => (
+    ...(showsKind(kind, "plugins") ? group.mcpServers : []).map((server) => (
       <ProviderServerItem
         key={`server:${server.name}`}
         provider={group.provider}
@@ -128,7 +139,7 @@ function ProviderSection({ group }: { readonly group: ProviderExtensionGroup }) 
   );
 }
 
-function Installed() {
+function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
   const {
     environmentId,
     callbackOrigin,
@@ -155,7 +166,7 @@ function Installed() {
 
   return (
     <>
-      <ExtensionsTopBar tab="installed">
+      <ExtensionsTopBar tab="installed" kind={kind}>
         <span className="w-56">
           <NativeSelect
             size="sm"
@@ -191,84 +202,108 @@ function Installed() {
         <MutedLine>This connection can view extensions but not change them.</MutedLine>
       ) : null}
 
-      <ExtensionsSection
-        id={searchableSetting("extensions-connected-services").id}
-        title="Connected services"
-        action={
-          <SectionAction icon={PlusIcon} disabled={!canWrite} onClick={() => setDialog("add")}>
-            Add by URL
-          </SectionAction>
-        }
-      >
-        {inventory === null ? (
-          <MutedLine>{inventoryError ? "Unavailable." : "Loading…"}</MutedLine>
-        ) : !connectorsReach(selected) ? (
-          <MutedLine>
-            {selected?.support?.reason ??
-              `${selected?.label ?? "This agent"} does not support remote MCP servers.`}
-          </MutedLine>
-        ) : inventory.connectors.length === 0 ? (
-          <MutedLine>None yet. Add one from Discover or by URL.</MutedLine>
-        ) : (
-          <>
-            {selected?.support?.status === "conditional" && selected.support.reason ? (
-              <MutedLine>{selected.support.reason}</MutedLine>
-            ) : null}
-            <ExtensionGrid label="Connected services">
-              {inventory.connectors.map((connector) => (
-                <ConnectorItem
-                  key={connector.connectorId}
-                  connector={connector}
-                  entry={curated.find(
-                    (entry) => entry.installedConnectorId === connector.connectorId,
-                  )}
-                />
+      {showsKind(kind, "plugins") ? (
+        <ExtensionsSection
+          id={searchableSetting("extensions-connected-services").id}
+          title="Connected services"
+          action={
+            <SectionAction icon={PlusIcon} disabled={!canWrite} onClick={() => setDialog("add")}>
+              Add by URL
+            </SectionAction>
+          }
+        >
+          {inventory === null ? (
+            <MutedLine>{inventoryError ? "Unavailable." : "Loading…"}</MutedLine>
+          ) : !connectorsReach(selected) ? (
+            <MutedLine>
+              {selected?.support?.reason ??
+                `${selected?.label ?? "This agent"} does not support remote MCP servers.`}
+            </MutedLine>
+          ) : inventory.connectors.length === 0 ? (
+            <MutedLine>None yet. Add one from Discover or by URL.</MutedLine>
+          ) : (
+            <>
+              {selected?.support?.status === "conditional" && selected.support.reason ? (
+                <MutedLine>{selected.support.reason}</MutedLine>
+              ) : null}
+              <ExtensionGrid label="Connected services">
+                {inventory.connectors.map((connector) => (
+                  <ConnectorItem
+                    key={connector.connectorId}
+                    connector={connector}
+                    entry={curated.find(
+                      (entry) => entry.installedConnectorId === connector.connectorId,
+                    )}
+                  />
+                ))}
+              </ExtensionGrid>
+            </>
+          )}
+        </ExtensionsSection>
+      ) : null}
+
+      {showsKind(kind, "plugins") ? (
+        <ExtensionsSection
+          id={searchableSetting("extensions-scient-plugins").id}
+          title="Scient plugins"
+          action={
+            <SectionAction
+              icon={FolderOpenIcon}
+              disabled={!canWrite}
+              onClick={() => setDialog("install")}
+            >
+              Install from folder
+            </SectionAction>
+          }
+        >
+          {plugins.length === 0 ? (
+            <MutedLine>{inventory === null ? "Loading…" : "None."}</MutedLine>
+          ) : (
+            <ExtensionGrid label="Scient plugins">
+              {plugins.map((plugin) => (
+                <PluginItem key={plugin.pluginId} plugin={plugin} />
               ))}
             </ExtensionGrid>
-          </>
-        )}
-      </ExtensionsSection>
+          )}
+        </ExtensionsSection>
+      ) : null}
 
-      <ExtensionsSection
-        id={searchableSetting("extensions-scient-plugins").id}
-        title="Scient plugins"
-        action={
-          <SectionAction
-            icon={FolderOpenIcon}
-            disabled={!canWrite}
-            onClick={() => setDialog("install")}
-          >
-            Install from folder
-          </SectionAction>
-        }
-      >
-        {plugins.length === 0 ? (
-          <MutedLine>{inventory === null ? "Loading…" : "None."}</MutedLine>
-        ) : (
-          <ExtensionGrid label="Scient plugins">
-            {plugins.map((plugin) => (
-              <PluginItem key={plugin.pluginId} plugin={plugin} />
-            ))}
-          </ExtensionGrid>
-        )}
-      </ExtensionsSection>
+      {kind === "skills" ? null : (
+        <SettingsSearchTarget
+          id={searchableSetting("extensions-provider-plugins").id}
+          className="grid gap-10 outline-none"
+        >
+          {providerInventory.phase !== "ready" || groups.length === 0 ? (
+            <ExtensionsSection title="From your agents">
+              <MutedLine>{providerInventoryMessage(providerInventory)}</MutedLine>
+              {providerInventory.errors.map((error) => (
+                <MutedLine key={error}>{error}</MutedLine>
+              ))}
+            </ExtensionsSection>
+          ) : null}
+          {groups.map((group) => (
+            <ProviderSection key={group.provider.instanceId} group={group} kind={kind} />
+          ))}
+        </SettingsSearchTarget>
+      )}
 
-      <SettingsSearchTarget
-        id={searchableSetting("extensions-provider-plugins").id}
-        className="grid gap-10 outline-none"
-      >
-        {providerInventory.phase !== "ready" || groups.length === 0 ? (
-          <ExtensionsSection title="From your agents">
-            <MutedLine>{providerInventoryMessage(providerInventory)}</MutedLine>
-            {providerInventory.errors.map((error) => (
-              <MutedLine key={error}>{error}</MutedLine>
-            ))}
+      {showsKind(kind, "skills") ? (
+        <>
+          <ExtensionsSection title={<ScientSkillsTitle />}>
+            <ScientSkillsLibrary environmentId={environmentId} providers={providers} onlyActive />
           </ExtensionsSection>
-        ) : null}
-        {groups.map((group) => (
-          <ProviderSection key={group.provider.instanceId} group={group} />
-        ))}
-      </SettingsSearchTarget>
+          <ExtensionsSection title="Agent skills">
+            <AgentSkills
+              environmentId={environmentId}
+              providers={providers}
+              instanceId={selected?.instanceId ?? null}
+            />
+          </ExtensionsSection>
+          <ExtensionsSection title="Project skills">
+            <ProjectSkills environmentId={environmentId} />
+          </ExtensionsSection>
+        </>
+      ) : null}
 
       {dialog === "add" ? (
         <AddConnectorDialog
@@ -294,10 +329,10 @@ function Installed() {
 }
 
 /** Settings ▸ Extensions ▸ Installed: everything this environment already has. */
-export function InstalledPage() {
+export function InstalledPage({ kind }: { readonly kind?: ExtensionKind | undefined }) {
   return (
-    <ExtensionsPage loadProviderInventory>
-      <Installed />
+    <ExtensionsPage loadProviderInventory={kind !== "skills"}>
+      <Installed kind={kind} />
     </ExtensionsPage>
   );
 }

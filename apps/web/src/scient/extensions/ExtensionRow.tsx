@@ -4,7 +4,7 @@ import {
   type ExtensionAudience,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { PuzzleIcon, type LucideIcon } from "lucide-react";
+import { PlugIcon, type LucideIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { extensionMarkLayout } from "./extensionIconLayout";
@@ -179,7 +179,7 @@ function ExtensionIconTile({
   const [sample, setSample] = useState<{ url: string; rendered: string }>();
   const rendered =
     image && (renderedIcons.get(image) ?? (sample?.url === image ? sample.rendered : image));
-  const Icon = Glyph ?? (image === undefined ? PuzzleIcon : undefined);
+  const Icon = Glyph ?? (image === undefined ? PlugIcon : undefined);
   return (
     <span
       aria-hidden
@@ -268,6 +268,7 @@ export function ExtensionRow({
   iconUrl,
   glyph,
   tagline,
+  facts,
   status,
   trailing,
   feedback,
@@ -279,6 +280,7 @@ export function ExtensionRow({
   readonly iconUrl?: string | undefined;
   readonly glyph?: LucideIcon | undefined;
   readonly tagline?: string | undefined;
+  readonly facts?: string | undefined;
   /** "Needs sign-in", "Off": plain muted text after the name. */
   readonly status?: string | null | undefined;
   readonly trailing?: ReactNode;
@@ -309,6 +311,7 @@ export function ExtensionRow({
             ) : null}
           </div>
           {tagline ? <p className="truncate text-xs text-muted-foreground">{tagline}</p> : null}
+          {facts ? <p className="text-xs text-muted-foreground">{facts}</p> : null}
         </div>
         {trailing ? <div className="relative z-10 shrink-0">{trailing}</div> : null}
       </div>

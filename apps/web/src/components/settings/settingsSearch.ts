@@ -155,7 +155,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/providers",
       // SCIENT-FORK:START
       "/settings/custom-models",
-      "/settings/skills",
+      // Skills live inside Extensions; /settings/skills redirects there.
       "/settings/extensions",
       // SCIENT-FORK:END
       "/settings/threads",

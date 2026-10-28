@@ -368,6 +368,16 @@
       "path": "apps/server/src/scient/extensions/plugins/ScientPluginManifest.ts",
       "anchor": "isStrictSemver",
       "purpose": "Apply the skill release loader's exact SemVer rule to plugin versions (ScientPluginManifest.test.ts)."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/DiscoverPages.tsx",
+      "anchor": "<ScientSkillsLibrary",
+      "purpose": "List Scient's skill library under Extensions ▸ Discover ▸ Skills."
+    },
+    {
+      "path": "apps/web/src/scient/extensions/InstalledPage.tsx",
+      "anchor": "<ScientSkillsLibrary",
+      "purpose": "List turned-on Scient skills, every agent's skills and project skills under Extensions ▸ Installed ▸ Skills."
     }
   ]
 }
