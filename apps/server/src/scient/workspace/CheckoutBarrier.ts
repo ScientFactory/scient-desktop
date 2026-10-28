@@ -5,6 +5,7 @@
  * another fiber's same-checkout mutation deadlocks. External writers/profiles are outside this
  * barrier.
  */
+import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as Context from "effect/Context";
@@ -154,8 +155,7 @@ async function locate(path: string, skipMissing: boolean): Promise<Located | nul
   if (roots.length === 0) roots.push(current);
   const keys: string[] = [];
   for (const root of roots) {
-    const stat = await NodeFSP.stat(root, { bigint: true });
-    keys.push(`${stat.dev}:${stat.ino}`);
+    keys.push(await platformFileIdentity.key(root));
   }
   return { root: roots[0]!, keys };
 }

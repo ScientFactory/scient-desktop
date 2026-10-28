@@ -24,6 +24,9 @@ import { ConversationImportDialogHost } from "../scient/conversationImport/Conve
 // SCIENT-FORK:START — sign-in pages open for the starting client from one app-level watcher.
 import { ProviderSignInPageCoordinator } from "../scient/providerConnection/ProviderSignInPageCoordinator";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Add project ▸ Overleaf project's dialog outlives the palette.
+import { OverleafNewProjectDialogHost } from "../scient/overleaf/OverleafNewProject";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — browser availability notices reuse the shared update owners.
 import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
 // SCIENT-FORK:END
@@ -234,6 +237,9 @@ function RootRouteBranch() {
         <ProjectCloneToastCoordinator />
         <AddProjectToMachineDialogHost />
         {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
+        {/* SCIENT-FORK:START — Add project ▸ Overleaf project. */}
+        <OverleafNewProjectDialogHost />
+        {/* SCIENT-FORK:END */}
         {primaryEnvironmentAuthenticated ? (
           <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
         ) : null}

@@ -209,6 +209,12 @@ Results also list folders in the worktree folder that no thread uses, with their
 Browser captures and rotated logs have separate retention periods in **Settings → Maintenance**. Expired capture links stop
 working. Current logs, message attachments, and browser profiles are kept.
 
+## Overleaf links
+
+**Project Settings → Overleaf** lists this project's folders linked to Overleaf, each with
+**Sync now**, **Open in Overleaf** and **Unlink**. New links are made from the Files bar; see
+[Overleaf](overleaf.md).
+
 ## Manage project skills
 
 Open **Settings → Skills → Project skills**, then select the project. Valid skills from the selected

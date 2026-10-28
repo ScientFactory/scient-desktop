@@ -1,3 +1,4 @@
+import { qualifyPackagedOverleaf } from "./qualify-overleaf-packaged.mjs";
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -174,6 +175,14 @@ async function qualify() {
     "Pass AppImage, extracted root, report, baseline AppImage and extracted baseline root",
   );
   const { resources, archive } = inspectLinuxPayload(root);
+  // The probe cannot run through the AppImage file itself: its AppRun prepends
+  // --no-sandbox, which Electron-as-Node rejects before the probe's --eval.
+  qualifyPackagedOverleaf({
+    executable: NodePath.join(root, "scient"),
+    electron: true,
+    entry: NodePath.join(archive, "apps/server/dist/overleaf-packaging-probe.mjs"),
+    helper: NodePath.join(resources, "file-exchange/scient-file-publication"),
+  });
   const profile = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-linux-qualification-"));
   const env = {
     ...process.env,

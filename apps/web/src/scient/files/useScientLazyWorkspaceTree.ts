@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
+import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS } from "~/pierre-tree-theme";
 import { projectEnvironment } from "~/state/projects";
 import type { useProjectPathSearch } from "~/state/queries";
@@ -17,6 +18,18 @@ import {
   LazyWorkspaceTreeController,
   type LazyWorkspaceTreeSnapshot,
 } from "./LazyWorkspaceTreeController";
+
+/** The sprite symbol of Overleaf's mark on a linked folder's row. */
+const OVERLEAF_TREE_ICON = "scient-tree-icon-overleaf";
+
+/**
+ * The tree's icons plus Overleaf's leaf (Simple Icons, CC0), in the green of
+ * Overleaf's own logo, for the mark on linked folders.
+ */
+export const SCIENT_FILE_BROWSER_TREE_ICONS = {
+  ...T3_PIERRE_ICONS,
+  spriteSheet: `${T3_PIERRE_ICONS.spriteSheet}<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true"><symbol id="${OVERLEAF_TREE_ICON}" viewBox="0 0 24 24"><path fill="#138A07" d="M22.3515.7484C19.1109-.5101 7.365-.982 7.3452 6.0266c-3.4272 2.194-5.6967 5.768-5.6967 9.598a8.373 8.373 0 0 0 13.1225 6.898 8.373 8.373 0 0 0-1.7668-14.7194c-.6062-.2339-1.9234-.6481-2.9753-.559-1.5007.9544-3.3308 2.9155-4.1949 4.8693 2.5894-3.082 7.5046-2.425 9.1937 1.2287 1.6892 3.6538-.9944 7.8237-5.0198 7.7998a5.4995 5.4995 0 0 1-4.1949-1.9328c-1.485-1.7483-1.8678-3.6444-1.5615-5.4975 1.057-6.4947 8.759-10.1894 14.486-11.6094-1.8677.989-5.2373 2.6134-7.5948 4.3837C18.015 9.1382 19.1308 3.345 22.3515.7484z"/></symbol></svg>`,
+};
 
 export const SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS = `${PIERRE_TREE_UNSAFE_CSS}
   :host {
@@ -36,6 +49,8 @@ const INITIAL_TREE_SNAPSHOT: LazyWorkspaceTreeSnapshot = {
 export function scientReadOnlyRowDecoration(
   treeEntriesRef: RefObject<ReadonlyMap<string, ProjectDirectoryEntry>>,
   loadingDirectoriesRef: RefObject<ReadonlySet<string>>,
+  /** Folders linked to Overleaf: they carry its mark. */
+  overleafFoldersRef?: RefObject<ReadonlySet<string>>,
 ): FileTreeRowDecorationRenderer {
   return ({ item, row }) => {
     const relativePath = item.path.replace(/\/$/, "");
@@ -45,6 +60,9 @@ export function scientReadOnlyRowDecoration(
       loadingDirectoriesRef.current.has(relativePath)
     ) {
       return { icon: "t3-tree-icon-loading", title: "Loading…" };
+    }
+    if (row.kind === "directory" && overleafFoldersRef?.current.has(relativePath)) {
+      return { icon: OVERLEAF_TREE_ICON, title: "Linked to Overleaf" };
     }
     return treeEntriesRef.current.get(relativePath)?.readOnly
       ? { icon: "file-tree-icon-lock", title: "Read-only in Files" }

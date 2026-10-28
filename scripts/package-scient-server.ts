@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off - Standalone release packaging tool invokes npm and stages immutable artifacts.
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { validatePublicationArtifact } from "@t3tools/shared/scientPublicationArtifact";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -127,7 +129,7 @@ function resolveInstalledServerDependencyVersions(root: string): Record<string, 
   );
 }
 
-export function packageScientServer(args: ReadonlyArray<string>): string {
+export async function packageScientServer(args: ReadonlyArray<string>): Promise<string> {
   const root = NodePath.resolve(readFlag(args, "--root", process.cwd()));
   const version = readFlag(args, "--version").replace(/^v/u, "");
   const outputDir = NodePath.resolve(root, readFlag(args, "--output-dir", "release-server"));
@@ -138,6 +140,24 @@ export function packageScientServer(args: ReadonlyArray<string>): string {
       throw new Error(`Server release asset is missing apps/server/dist/${relativePath}.`);
     }
   }
+
+  const helper = NodePath.join(
+    distDir,
+    "file-exchange",
+    HostProcess.Platform.defaultValue() === "win32"
+      ? "scient-file-publication.exe"
+      : "scient-file-publication",
+  );
+  await validatePublicationArtifact(helper);
+  const capabilities = JSON.parse(
+    NodeChildProcess.execFileSync(helper, ["--protocol=1", "capabilities"], {
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: 65536,
+    }),
+  );
+  if (capabilities.version !== 1 || capabilities.publicationLease !== true)
+    throw new Error("Server release asset has an incompatible publication helper.");
 
   // Check the emitted artifact as well as the bundler configuration. A change
   // that externalizes ordinary JS would otherwise produce an incomplete npm
@@ -207,7 +227,7 @@ const isMain = process.argv[1]
   : false;
 if (isMain) {
   try {
-    process.stdout.write(`${packageScientServer(process.argv.slice(2))}\n`);
+    process.stdout.write(`${await packageScientServer(process.argv.slice(2))}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

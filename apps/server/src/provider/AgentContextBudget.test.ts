@@ -56,6 +56,7 @@ import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindin
 import { WorkspaceFileSystem } from "../workspace/WorkspaceFileSystem.ts";
 import { WorkspacePaths } from "../workspace/WorkspacePaths.ts";
 import { AccountsService } from "../scient/accounts/AccountsService.ts";
+import { OverleafSync } from "../scient/overleaf/OverleafSync.ts";
 // SCIENT-FORK:END
 
 // Registration only stores tool definitions, so the handlers' services are never called.
@@ -108,6 +109,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(WorkspaceFileSystem)({}),
   Layer.mock(WorkspacePaths)({}),
   Layer.mock(AccountsService)({}),
+  Layer.mock(OverleafSync)({}),
   // SCIENT-FORK:END
 ).pipe(Layer.provideMerge(NodeServices.layer));
 

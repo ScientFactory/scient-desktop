@@ -9,7 +9,7 @@ const WORKFLOW = ".github/workflows/ci.yml";
 const { jobFailures } = require("./ci-check.cjs");
 // The main ruleset lands at most this many queue entries in one push (max_entries_to_merge).
 const MAX_QUEUE_SEGMENTS = 4;
-const SCHEMA = 3;
+const SCHEMA = 4;
 const RECEIPT_KEYS = [
   "schemaVersion",
   "event",
@@ -23,6 +23,7 @@ const RECEIPT_KEYS = [
   "treeSha",
   "reusedFrom",
   "reports",
+  "overleafWindows",
 ];
 const SHA = /^[a-f0-9]{40}$/;
 const MAX_REPORT = 64 * 1024 * 1024;
@@ -125,6 +126,7 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
   }
   const receipt = {
     schemaVersion: SCHEMA,
+    overleafWindows: needs.overleaf_windows.result === "success",
     event: context.eventName,
     ...who,
     baseSha,
@@ -208,6 +210,7 @@ function checkReceipt(receipt, expected) {
         SHA.test(sha),
       ) &&
       (receipt.reusedFrom === null || positive(receipt.reusedFrom)) &&
+      receipt.overleafWindows === true &&
       receipt.reports &&
       Object.keys(receipt.reports).length === 2 &&
       ["web", "server"].every((suite) => typeof receipt.reports[suite] === "boolean"),

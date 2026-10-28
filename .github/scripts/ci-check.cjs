@@ -10,7 +10,14 @@ const GATED = {
 };
 const REPORTERS = ["test_web_reused", "test_server_reused"];
 const ALWAYS = ["changes", "lint", "build", "test", "test_web", "test_server"];
-const JOBS = ["release_notes", "queue_ci", ...ALWAYS, ...Object.keys(GATED), ...REPORTERS];
+const JOBS = [
+  "release_notes",
+  "queue_ci",
+  ...ALWAYS,
+  "overleaf_windows",
+  ...Object.keys(GATED),
+  ...REPORTERS,
+];
 
 function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }) {
   const expected = receipt ? JOBS : [...JOBS, "qualification"];
@@ -40,7 +47,7 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
     if (job === "queue_ci") skip = eventName !== "merge_group";
     else if (job === "qualification") skip = !qualify;
     else if (reporting) skip = !reused;
-    else if (job !== "release_notes") {
+    else if (job !== "release_notes" && job !== "overleaf_windows") {
       skip = reused || (GATED[job]?.every((key) => gates[key] === "false") ?? false);
     }
     // Active reporters and receipts must finish; every actual failure/cancellation blocks.

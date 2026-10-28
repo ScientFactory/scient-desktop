@@ -32,6 +32,10 @@
 #endif
 #endif
 
+#ifdef __linux__
+#include "publication-linux.h"
+#endif
+
 static int private_fd(int fd, Entry *entry);
 struct Context { int root, parent, record; };
 const char *platform_domain(void) { return "errno"; }
@@ -51,12 +55,17 @@ int platform_atomic_metadata_available(void) {
   return 0;
 }
 int platform_shared_lease_available(void) { return 1; }
+int platform_folder_object_available(void) {
+#if defined(__linux__) && defined(SYS_landlock_create_ruleset) && defined(LANDLOCK_ACCESS_FS_REFER)
+  return syscall(SYS_landlock_create_ruleset, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION) >= 3;
+#else
+  return 0;
+#endif
+}
 int platform_strict_available(void) {
 #ifdef __APPLE__
   return 1;
 #else
-  /* Linux Landlock grants root-object authority even after root relocation.
-   * That is not the advertised current-root-path publication contract. */
   return 0;
 #endif
 }
@@ -153,6 +162,14 @@ int platform_atomic_create_available(const char *root) {
   int available = clone_volume_available(fd);
   close(fd);
   return available;
+#elif defined(__linux__)
+  if (!root || !platform_folder_object_available()) return 0;
+  int fd = absolute_directory(root);
+  if (fd < 0) return 0;
+  LinuxMount mount;
+  int available = linux_admission(fd, &mount) == NULL;
+  close(fd);
+  return available;
 #else
   (void)root; return 0;
 #endif
@@ -239,6 +256,11 @@ Context *platform_bind(const char *root, const char *parent, const char *record,
   if (root_stat.st_dev != parent_stat.st_dev || parent_stat.st_dev != record_stat.st_dev) {
     errno = EXDEV; goto fail;
   }
+#ifdef __linux__
+  int admission = linux_same_filesystem(context->root, context->parent);
+  if (!admission) admission = linux_same_filesystem(context->parent, context->record);
+  if (admission) { errno = admission; goto fail; }
+#endif
   return context;
 fail:
   *error = errno; platform_close(context); return NULL;
@@ -297,7 +319,10 @@ static int private_fd(int fd, Entry *entry) {
   }
 #elif defined(__linux__)
   if (!error) {
-    ssize_t acl = fgetxattr(fd, "system.posix_acl_access", NULL, 0);
+    ssize_t acl = fgetxattr(fd, "system.posix_acl_default", NULL, 0);
+    if (acl >= 0) error = EACCES;
+    else if (errno != ENODATA && errno != ENOTSUP) error = errno;
+    acl = fgetxattr(fd, "system.posix_acl_access", NULL, 0);
     if (acl >= 0) error = EACCES;
     else if (errno != ENODATA && errno != ENOTSUP) error = errno;
   }
@@ -314,6 +339,10 @@ int platform_private_directory(Context *context, const char *name, Entry *entry)
 }
 int platform_mkdir(Context *context, const char *name, int private_directory, Entry *created,
                    Flush *flush, int *applied) {
+#ifdef __linux__
+  LinuxMount mount;
+  if (linux_admission(context->parent, &mount)) return ENOTSUP;
+#endif
 #ifdef __APPLE__
   if (private_directory) {
     /* This executable is an isolated publication child; CWD never changes in
@@ -348,6 +377,19 @@ int platform_mkdir(Context *context, const char *name, int private_directory, En
   flush->source_directory = flush_directory(context->parent);
   int directory = openat(context->parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (directory < 0) { flush->destination_directory = errno; return error ? error : errno; }
+#ifdef __linux__
+  if (private_directory) {
+    Entry held = {0};
+    if (!error) error = identify(directory, &held);
+    if (!error && (strcmp(held.dev, created->dev) || strcmp(held.ino, created->ino))) error = ESTALE;
+    if (!error && fremovexattr(directory, "system.posix_acl_default") && errno != ENODATA && errno != ENOTSUP)
+      error = errno;
+    if (!error && fremovexattr(directory, "system.posix_acl_access") && errno != ENODATA && errno != ENOTSUP)
+      error = errno;
+    if (!error && fchmod(directory, 0700)) error = errno;
+    if (!error) error = private_fd(directory, created);
+  }
+#endif
   flush->destination_directory = flush_directory(directory);
   close(directory);
   return error;
@@ -428,9 +470,73 @@ static int flush_entry(int directory, const char *name) {
   close(fd);
   return result;
 }
+int platform_remove(Context *context, const char *name, int directory,
+                    Entry *before, Flush *flush, int *applied) {
+  int error = inspect(context->parent, name, before);
+  if (error) return error;
+  if (!before->present) { flush->source_directory = flush_directory(context->parent); return 0; }
+  if (unlinkat(context->parent, name, directory ? AT_REMOVEDIR : 0)) {
+    if (errno != ENOENT) return errno;
+  } else *applied = 1;
+  flush->source_directory = flush_directory(context->parent);
+  return 0;
+}
 int platform_operation(Context *context, const char *operation, const char *source,
                        const char *destination, Entry *before, Entry *after_source,
                        Entry *after_destination, Flush *flush, int *applied) {
+#ifdef __linux__
+  if (!strcmp(operation, "stage-create")) {
+    if (strncmp(destination, ".scient-overleaf-apply-", sizeof(".scient-overleaf-apply-") - 1)) return EINVAL;
+    int input = regular_fd(context->record, source, 0);
+    if (input < 0) return errno;
+    struct stat staged;
+    int error = fstat(input, &staged) ? errno : identify(input, before);
+    int output = -1;
+    if (!error) {
+      output = openat(context->parent, destination, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                      staged.st_mode & 0111 ? 0777 : 0666);
+      if (output < 0) error = errno;
+      else *applied = 1;
+    }
+    char bytes[65536];
+    ssize_t count;
+    while (!error && (count = read(input, bytes, sizeof(bytes))) != 0) {
+      if (count < 0) { if (errno == EINTR) continue; error = errno; break; }
+      ssize_t offset = 0;
+      while (offset < count) {
+        ssize_t written = write(output, bytes + offset, (size_t)(count - offset));
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) { error = written < 0 ? errno : EIO; break; }
+        offset += written;
+      }
+    }
+    if (output >= 0) {
+      flush->destination_file = fsync(output) ? errno : 0;
+      if (!error) error = identify(output, after_destination);
+      close(output);
+    }
+    close(input);
+    flush->destination_directory = flush_directory(context->parent);
+    return error;
+  }
+  if (!strcmp(operation, "staged-create")) {
+    if (strncmp(source, ".scient-overleaf-apply-", sizeof(".scient-overleaf-apply-") - 1)) return EINVAL;
+    int stage = regular_fd(context->parent, source, 0);
+    if (stage < 0) return errno;
+    int error = identify(stage, before);
+    flush->source_file = fsync(stage) ? errno : 0;
+    close(stage);
+    if (error || flush->source_file > 0) return error ? error : flush->source_file;
+    if (syscall(SYS_renameat2, context->parent, source, context->parent, destination, RENAME_NOREPLACE)) return errno;
+    *applied = 1;
+    error = inspect(context->parent, source, after_source);
+    if (!error) error = inspect(context->parent, destination, after_destination);
+    flush->destination_file = flush_entry(context->parent, destination);
+    flush->source_directory = flush_directory(context->parent);
+    flush->destination_directory = flush->source_directory;
+    return error;
+  }
+#endif
   if (!strcmp(operation, "exchange")) {
 #ifdef __APPLE__
     int refuses = volume_refuses_swap(context->parent);
@@ -605,13 +711,14 @@ static int macos_write_policy(const char *root, const char *record) {
 #endif
 #if defined(__linux__) && defined(LANDLOCK_ACCESS_FS_REFER) && defined(SYS_landlock_create_ruleset)
 static int linux_write_policy(Context *context) {
-  /* ABI >= 2 is required for cross-directory namespace REFER enforcement. */
+  /* ABI 3 covers both cross-directory REFER and truncation. */
   int abi = (int)syscall(SYS_landlock_create_ruleset, NULL, 0, LANDLOCK_CREATE_RULESET_VERSION);
-  if (abi < 2) return abi < 0 ? errno : ENOTSUP;
+  if (abi < 3) return abi < 0 ? errno : ENOTSUP;
   uint64_t access = LANDLOCK_ACCESS_FS_WRITE_FILE | LANDLOCK_ACCESS_FS_REMOVE_DIR |
     LANDLOCK_ACCESS_FS_REMOVE_FILE | LANDLOCK_ACCESS_FS_MAKE_CHAR | LANDLOCK_ACCESS_FS_MAKE_DIR |
     LANDLOCK_ACCESS_FS_MAKE_REG | LANDLOCK_ACCESS_FS_MAKE_SOCK | LANDLOCK_ACCESS_FS_MAKE_FIFO |
-    LANDLOCK_ACCESS_FS_MAKE_BLOCK | LANDLOCK_ACCESS_FS_MAKE_SYM | LANDLOCK_ACCESS_FS_REFER;
+    LANDLOCK_ACCESS_FS_MAKE_BLOCK | LANDLOCK_ACCESS_FS_MAKE_SYM | LANDLOCK_ACCESS_FS_REFER |
+    LANDLOCK_ACCESS_FS_TRUNCATE;
   struct landlock_ruleset_attr attributes = { .handled_access_fs = access };
   int ruleset = (int)syscall(SYS_landlock_create_ruleset, &attributes, sizeof(attributes), 0);
   if (ruleset < 0) return errno;
@@ -633,7 +740,7 @@ int platform_policy(Context *context, const char *mode, const char *root, const 
 #ifdef __APPLE__
   return macos_write_policy(root, record);
 #elif defined(__linux__) && defined(LANDLOCK_ACCESS_FS_REFER) && defined(SYS_landlock_create_ruleset)
-  return !strcmp(mode, "strict-current-root") ? linux_write_policy(context) : 0;
+  return strcmp(mode, "bound-object") ? linux_write_policy(context) : 0;
 #else
   return !strcmp(mode, "strict-current-root") ? ENOTSUP : 0;
 #endif
@@ -648,5 +755,36 @@ int platform_probe_policy(Context *context, const char *mode, const char *root, 
 #else
   return ENOTSUP;
 #endif
+}
+#endif
+
+#ifdef __linux__
+int platform_linux_folder(const char *path, int directory_only) {
+  int fd = absolute_directory(path);
+  if (fd < 0 && !directory_only) {
+    char parent[PATH_MAX];
+    if (strlen(path) >= sizeof(parent)) return 64;
+    strcpy(parent, path);
+    char *name = strrchr(parent, '/');
+    if (!name || !name[1]) return 64;
+    *name++ = 0;
+    int held = absolute_directory(parent[0] ? parent : "/");
+    if (held >= 0) { fd = openat(held, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC); close(held); }
+  }
+  LinuxMount mount;
+  struct stat stat;
+  char uuid[37] = {0};
+  uint64_t subvolume = 0;
+  const char *reason = fd < 0 ? "volume-unavailable" : linux_admission(fd, &mount);
+  if (!reason && (fstat(fd, &stat) || (!S_ISDIR(stat.st_mode) && !S_ISREG(stat.st_mode)))) reason = "no-volume-identity";
+  if (!reason && (linux_uuid(fd, &mount, uuid) || linux_subvolume(fd, &subvolume))) reason = "no-volume-identity";
+  if (reason) printf("{\"version\":1,\"reason\":\"%s\",\"identity\":null}\n", reason);
+  else {
+    printf("{\"version\":1,\"reason\":null,\"identity\":{\"version\":1,\"platform\":\"linux\",\"volume\":\"%s\",\"fileId\":\"%" PRIuMAX "\",\"subvolumeId\":", uuid, (uintmax_t)stat.st_ino);
+    if (subvolume) printf("\"%" PRIu64 "\"", subvolume); else printf("null");
+    printf("}}\n");
+  }
+  if (fd >= 0) close(fd);
+  return ferror(stdout) ? 74 : 0;
 }
 #endif

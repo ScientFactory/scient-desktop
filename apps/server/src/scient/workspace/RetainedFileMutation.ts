@@ -1,18 +1,21 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Durable intent, exact-object retention and bounded compensation under native ownership. */
-import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import type { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   bindNativeFilePublication,
+  removeNativeRetainedEntry,
   bindNativeFilePublicationParent,
+  observedDirectoryBinding,
   nativeFilePublicationCapabilities,
+  hasNativeFileAuthority,
   ensureNativePrivateRetentionDirectory,
   withNativeFilePublicationLease,
   type NativeFileBinding,
@@ -21,6 +24,9 @@ import {
   type NativeFileLeaseBinding,
   type NativeFilePublicationResult,
 } from "./NativeFilePublication.ts";
+
+import { windowsFileIdentity, windowsNativeFile } from "./WindowsNativeFile.ts";
+import { runWindowsRetainedMutation } from "./WindowsRetainedFileMutation.ts";
 
 const Identity = Schema.Struct({ dev: Schema.String, ino: Schema.String });
 const Binding = Schema.Struct({
@@ -116,13 +122,49 @@ const Journal = Schema.Struct({
   retainedAt: Schema.Number,
   generation: Schema.Number,
   discarded: Schema.Array(Schema.String),
+  /**
+   * Copies a discard is removing: written (with `discarded`) before the first
+   * removal and dropped once the copy and its view are gone and synced, so a
+   * discard a crash interrupts is found and finished (`settle`).
+   */
+  discarding: Schema.optionalKey(
+    Schema.Array(Schema.Literals(["slot", "retained", "provisional"])),
+  ),
   reviewedBinding: Schema.NullOr(Binding),
   reviewedRevision: Schema.NullOr(Schema.String),
   outcome: Schema.NullOr(Schema.Literals(["done", "skipped", "attention"])),
 });
-export type RetainedRecord = typeof Journal.Type;
+const StagedCreateJournal = Schema.Struct({
+  ...Journal.fields,
+  publication: Schema.Literal("staged-create"),
+  createStageName: Schema.String.check(Schema.isPattern(/^\.scient-overleaf-apply-[a-f0-9]{64}$/u)),
+  createStageIdentity: Schema.NullOr(Identity),
+});
+export const WindowsJournal = Schema.Struct({
+  ...Journal.fields,
+  publication: Schema.Literals(["windows-move-install", "windows-stage-create", "windows-capture"]),
+  originalIdentity: Schema.NullOr(Identity),
+  stageName: Schema.String,
+  originalSecurity: Schema.Literal("original-security"),
+  originalDescriptor: Schema.NullOr(Schema.String),
+  /** Recorded before the restriction runs; recovery restores policy only then. */
+  restrictedOriginal: Schema.optionalKey(Schema.Boolean),
+  nativeFailure: Schema.optionalKey(
+    Schema.Struct({ operation: Schema.String, code: Schema.Number, outcome: Schema.String }),
+  ),
+});
+export type WindowsRetainedRecord = typeof WindowsJournal.Type;
+export type AnyRetainedRecord =
+  | typeof Journal.Type
+  | typeof StagedCreateJournal.Type
+  | WindowsRetainedRecord;
+export type RetainedRecord = AnyRetainedRecord;
+type PosixRetainedRecord = typeof Journal.Type | typeof StagedCreateJournal.Type;
+const validateRecord = Schema.decodeUnknownSync(Schema.Union([Journal, StagedCreateJournal]));
 export const decodeRetainedRecord = Schema.decodeUnknownSync(
-  Schema.fromJsonString(Schema.Union([Journal, LegacyJournal])),
+  Schema.fromJsonString(
+    Schema.Union([Journal, StagedCreateJournal, WindowsJournal, LegacyJournal]),
+  ),
 );
 
 export type Identity = NativeFileIdentity;
@@ -182,7 +224,10 @@ export interface RetainedMutationResult {
 }
 export type MutationPoint =
   | "intent"
+  | "restricted"
+  | "captured"
   | "staged"
+  | "create-staged"
   | "prepared"
   | "checked"
   | "called"
@@ -197,24 +242,30 @@ export type MutationPoint =
   | "round-admitted"
   | "done";
 export interface RetainedMutationHooks {
+  readonly nativeProcess?: (processId: number | null) => void;
+  readonly removal?: (when: "before" | "after", path: string) => Promise<void>;
   readonly at?: (point: MutationPoint) => Promise<void>;
 }
+/** Why a request was refused before anything changed, where a caller can say more. */
+export type RetainedRefusal = "kept-folder-not-empty" | ScientOverleafFilesystemRefusalReason;
 export class RetainedMutationError extends Error {
   readonly reason: "intent" | "unavailable" | "target" | "recovery";
   readonly recoveryId: string;
   readonly retainedPaths: ReadonlyArray<string>;
+  readonly refusal: RetainedRefusal | undefined;
   constructor(
     reason: "intent" | "unavailable" | "target" | "recovery",
     message: string,
     recoveryId: string,
     retainedPaths: ReadonlyArray<string> = [],
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly refusal?: RetainedRefusal },
   ) {
     super(message, options);
     this.name = "RetainedMutationError";
     this.reason = reason;
     this.recoveryId = recoveryId;
     this.retainedPaths = retainedPaths;
+    this.refusal = options?.refusal;
   }
 }
 export const bytesRevision = (bytes: Uint8Array) =>
@@ -242,7 +293,7 @@ export async function publicationLeaseBindings(
   const identityFor = async (path: string) => {
     let identity = identities.get(path);
     if (!identity) {
-      identity = await directoryIdentity(path);
+      identity = await directoryIdentity(path, helper);
       identities.set(path, identity);
     }
     return identity;
@@ -251,7 +302,7 @@ export async function publicationLeaseBindings(
     let binding = nativeParents.get(path);
     if (!binding) {
       const identity = await identityFor(path);
-      binding = await bindNativeFilePublicationParent(helper, path, "");
+      binding = await observedDirectoryBinding(helper, path);
       if (
         !sameIdentity(binding.rootIdentity, identity) ||
         !sameIdentity(binding.parentIdentity, identity)
@@ -290,17 +341,27 @@ export async function publicationLeaseBindings(
 const absent = (e: unknown) =>
   ["ENOENT", "ENOTDIR"].includes((e as NodeJS.ErrnoException).code ?? "");
 export const retainedFileNames = ["slot", "retained", "provisional"] as const;
-export async function directoryIdentity(directory: string): Promise<Identity> {
+export async function directoryIdentity(directory: string, helper?: string): Promise<Identity> {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const identity = await windowsFileIdentity(directory, helper);
+    if (!identity || identity.type !== "directory")
+      throw new Error("Workspace directory binding changed.");
+    return { dev: identity.dev, ino: identity.ino };
+  }
   const stat = await NodeFSP.lstat(directory, { bigint: true });
   if (!stat.isDirectory() || stat.isSymbolicLink())
     throw new Error("Workspace directory binding changed.");
   return { dev: String(stat.dev), ino: String(stat.ino) };
 }
-export async function assertRootBinding(root: string, expected?: Identity) {
-  if (expected && !sameIdentity(await directoryIdentity(root), expected))
+export async function assertRootBinding(root: string, expected?: Identity, helper?: string) {
+  if (expected && !sameIdentity(await directoryIdentity(root, helper), expected))
     throw new RetainedMutationError("target", "Workspace root identity changed.", "root-binding");
 }
-export async function fileIdentity(file: string): Promise<Identity | null> {
+export async function fileIdentity(file: string, helper?: string): Promise<Identity | null> {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const identity = await windowsFileIdentity(file, helper);
+    return identity?.type === "file" ? { dev: identity.dev, ino: identity.ino } : null;
+  }
   try {
     const stat = await NodeFSP.lstat(file, { bigint: true });
     if (!stat.isFile() || stat.isSymbolicLink()) return null;
@@ -317,7 +378,7 @@ export async function fileIdentity(file: string): Promise<Identity | null> {
  * the way should be means nothing can stand at `path`, but only if that file is
  * one of `planned`; any other file there is `other`.
  */
-async function peerEntry(
+export async function peerEntry(
   root: string,
   path: string,
   planned: ReadonlySet<string>,
@@ -352,7 +413,7 @@ async function peerEntry(
  * folders, empty ones included, may lead anywhere; any other file, link or
  * special entry fails. Links are never followed.
  */
-async function holdsOnly(root: string, path: string, only: ReadonlyArray<string>) {
+export async function holdsOnly(root: string, path: string, only: ReadonlyArray<string>) {
   const allowed = new Set(only);
   const pending = [path];
   // Bounded: a folder the group empties holds its files and some folders, not a tree.
@@ -397,7 +458,7 @@ export async function fileRevision(file: string): Promise<string | null> {
   }
 }
 
-export async function inspectGuardedFile(file: string, maxBytes?: number) {
+export async function inspectGuardedFile(file: string, maxBytes?: number, helper?: string) {
   let handle;
   try {
     handle = await NodeFSP.open(
@@ -441,7 +502,10 @@ export async function inspectGuardedFile(file: string, maxBytes?: number) {
         "revision-inspection",
       );
     return {
-      identity: { dev: String(stat.dev), ino: String(stat.ino) },
+      identity:
+        HostProcess.Platform.defaultValue() === "win32"
+          ? (await fileIdentity(file, helper))!
+          : { dev: String(stat.dev), ino: String(stat.ino) },
       byteLength,
       binary,
       revision: `sha256:${hash.digest("hex")}`,
@@ -460,6 +524,8 @@ async function leadingFileRevision(file: string, maxBytes = 1024 * 1024): Promis
   return snapshot.leadingRevision;
 }
 export async function syncDirectory(directory: string) {
+  // Win32 has no supported directory FlushFileBuffers; files are flushed before rename.
+  if (HostProcess.Platform.defaultValue() === "win32") return;
   const handle = await NodeFSP.open(directory, "r");
   try {
     await handle.sync();
@@ -492,7 +558,18 @@ export async function durableJson(file: string, value: unknown) {
   await NodeFSP.rename(temporary, file);
   await syncDirectory(NodePath.dirname(file));
 }
-export async function assertPrivateRetention(directory: string) {
+export async function assertPrivateRetention(directory: string, helper?: string) {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    const info = await windowsNativeFile(directory, "private", helper);
+    if (info.code === 2 || info.code === 3)
+      throw Object.assign(new Error("Missing private directory."), { code: "ENOENT" });
+    if (info.code !== 0 || info.syncManaged)
+      throw new RetainedMutationError(
+        "unavailable",
+        "Retention must be private and outside sync management.",
+        "storage",
+      );
+  }
   if (!NodePath.isAbsolute(directory) || (await NodeFSP.realpath(directory)) !== directory)
     throw new RetainedMutationError(
       "unavailable",
@@ -515,10 +592,10 @@ export async function assertPrivateRetention(directory: string) {
 export async function prepareRetainedDirectory(retention: string, id: string, helper: string) {
   if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(id))
     throw new RetainedMutationError("intent", "Invalid retained mutation identity.", id);
-  await assertPrivateRetention(retention);
+  await assertPrivateRetention(retention, helper);
   const directory = NodePath.join(retention, id);
   try {
-    await assertPrivateRetention(directory);
+    await assertPrivateRetention(directory, helper);
   } catch (cause) {
     if (!isRetainedMissing(cause)) throw cause;
     const prepared = await ensureNativePrivateRetentionDirectory(helper, directory);
@@ -528,7 +605,7 @@ export async function prepareRetainedDirectory(retention: string, id: string, he
         "Retained directory authority changed during creation.",
         id,
       );
-    await assertPrivateRetention(directory);
+    await assertPrivateRetention(directory, helper);
   }
   return directory;
 }
@@ -545,45 +622,28 @@ export async function retainedPaths(directory: string): Promise<string[]> {
   }
   return paths;
 }
-async function retainedStorageBytes(retention: string): Promise<number> {
+export async function retainedStorageBytes(retention: string, helper?: string): Promise<number> {
   let total = 0;
   for (const entry of await NodeFSP.readdir(retention, { withFileTypes: true })) {
     if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]{1,100}$/u.test(entry.name)) continue;
     const directory = NodePath.join(retention, entry.name);
-    await assertPrivateRetention(directory);
+    await assertPrivateRetention(directory, helper);
     for (const file of await retainedPaths(directory)) total += (await NodeFSP.lstat(file)).size;
   }
   return total;
 }
-export async function readRetainedRecord(directory: string) {
-  await assertPrivateRetention(directory);
+export async function readRetainedRecord(directory: string, helper?: string) {
+  await assertPrivateRetention(directory, helper);
   return decodeRetainedRecord(
     await NodeFSP.readFile(NodePath.join(directory, "record.json"), "utf8"),
   );
 }
 
-/** Atomically swaps two paths with the native helper (renamex_np / renameat2). */
-export async function exchange(helper: string, left: string, right: string): Promise<void> {
-  if (!NodePath.isAbsolute(helper))
-    throw new Error("Exchange helper must be an absolute host path.");
-  const run = (args: string[]) =>
-    new Promise<string>((resolve, reject) =>
-      NodeChildProcess.execFile(
-        helper,
-        args,
-        { timeout: 10_000, maxBuffer: 4096, env: { PATH: "/usr/bin:/bin" } },
-        (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
-      ),
-    );
-  if ((await run(["--version"])) !== "scient-file-exchange/1")
-    throw new Error("File exchange helper has an incompatible protocol.");
-  await run([left, right]);
-}
-
 export async function retainedMutationReceipt(
   directory: string,
+  helper?: string,
 ): Promise<RetainedMutationResult | null> {
-  const record = await readRetainedRecord(directory);
+  const record = await readRetainedRecord(directory, helper);
   if (record.version !== 2 || record.phase !== "done") return null;
   const paths = await retainedPaths(directory);
   const kept = paths.find((path) => NodePath.basename(path) === "retained") ?? paths[0] ?? null;
@@ -592,7 +652,7 @@ export async function retainedMutationReceipt(
     recordDirectory: directory,
     retainedPath: kept,
     retainedRevision: kept ? await fileRevision(kept) : null,
-    retainedIdentity: kept ? await fileIdentity(kept) : null,
+    retainedIdentity: kept ? await fileIdentity(kept, helper) : null,
     mutationId: record.mutationId,
     revision: record.publishedRevision,
     currentRevision: record.currentRevision,
@@ -618,7 +678,7 @@ export async function mutateRetainedFile(
     condition = input.condition ?? (input.expectedRevision === null ? "absent" : "revision");
   const capabilities = await nativeFilePublicationCapabilities(helper, input.cwd);
   if (
-    !capabilities.strictCurrentRoot ||
+    !hasNativeFileAuthority(capabilities) ||
     !capabilities.publicationLease ||
     !capabilities.exclusiveMove ||
     !capabilities.exclusiveLink
@@ -640,16 +700,22 @@ export async function mutateRetainedFile(
   const creation =
     kind === "create" ||
     condition === "absent" ||
-    (kind === "write" && condition === "unguarded" && (await fileIdentity(target)) === null);
+    (kind === "write" &&
+      condition === "unguarded" &&
+      (await fileIdentity(target, helper)) === null);
   if (
     (kind === "write" || kind === "create") &&
     !(creation
-      ? capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata
-      : capabilities.atomicExchange)
+      ? (capabilities.atomicCreateMetadata && parentCapabilities.atomicCreateMetadata) ||
+        (capabilities.windowsMoveInstall === true && parentCapabilities.windowsMoveInstall === true)
+      : capabilities.atomicExchange || capabilities.windowsMoveInstall)
   ) {
     let previous;
     try {
-      previous = await readRetainedRecord(NodePath.join(input.retentionDirectory, input.id));
+      previous = await readRetainedRecord(
+        NodePath.join(input.retentionDirectory, input.id),
+        helper,
+      );
     } catch (cause) {
       if (!absent(cause)) throw cause;
     }
@@ -662,7 +728,7 @@ export async function mutateRetainedFile(
         );
       const publicationParent = parent;
       const qualifyNoop = async () => {
-        const snapshot = await inspectGuardedFile(target, input.guardMaxBytes);
+        const snapshot = await inspectGuardedFile(target, input.guardMaxBytes, helper);
         const current = await bindNativeFilePublicationParent(
           helper,
           publicationParent.rootPath,
@@ -674,7 +740,7 @@ export async function mutateRetainedFile(
           (condition !== "revision" || snapshot.revision === input.expectedRevision) &&
           (input.guardMaxBytes === undefined ||
             (snapshot.byteLength <= input.guardMaxBytes && !snapshot.binary)) &&
-          sameIdentity(snapshot.identity, await fileIdentity(target)) &&
+          sameIdentity(snapshot.identity, await fileIdentity(target, helper)) &&
           sameIdentity(current.rootIdentity, publicationParent.rootIdentity) &&
           sameIdentity(current.parentIdentity, publicationParent.parentIdentity)
         );
@@ -705,7 +771,7 @@ export async function mutateRetainedFile(
     }));
   if (binding.recordPath !== directory)
     throw new RetainedMutationError("target", "Retained record binding mismatch.", input.id);
-  await assertRootBinding(binding.rootPath, input.expectedRootIdentity);
+  await assertRootBinding(binding.rootPath, input.expectedRootIdentity, helper);
   const destinationBinding =
     input.destinationBinding ??
     (input.destination
@@ -737,6 +803,8 @@ async function run(
   lease: NativeFilePublicationLease,
   hooks: RetainedMutationHooks,
 ): Promise<RetainedMutationResult> {
+  if (HostProcess.Platform.defaultValue() === "win32")
+    return runWindowsRetainedMutation(input, target, directory, lease, hooks);
   const journalPath = NodePath.join(directory, "record.json"),
     slot = NodePath.join(directory, "slot"),
     retained = NodePath.join(directory, "retained"),
@@ -748,7 +816,7 @@ async function run(
   };
   const kind = input.kind ?? (input.bytes === null ? "delete" : "write");
   const condition = input.condition ?? (input.expectedRevision === null ? "absent" : "revision");
-  let record: RetainedRecord;
+  let record: PosixRetainedRecord;
   let previous;
   try {
     previous = await readRetainedRecord(directory);
@@ -764,6 +832,12 @@ async function run(
       await retainedPaths(directory),
     );
   }
+  if (previous && "originalSecurity" in previous)
+    throw new RetainedMutationError(
+      "recovery",
+      "Windows record requires its native host.",
+      input.id,
+    );
   if (previous) {
     record = previous;
     if (
@@ -797,11 +871,13 @@ async function run(
       kind === "create" ||
       condition === "absent" ||
       (kind === "write" && condition === "unguarded" && entry === null)
-        ? "create"
+        ? HostProcess.Platform.defaultValue() === "linux"
+          ? "staged-create"
+          : "create"
         : kind === "write"
           ? "exchange"
           : "capture";
-    record = {
+    record = validateRecord({
       version: 2,
       mutationId: input.mutationId ?? input.id,
       target,
@@ -810,6 +886,12 @@ async function run(
       kind,
       condition,
       publication,
+      ...(publication === "staged-create"
+        ? {
+            createStageName: `.scient-overleaf-apply-${NodeCrypto.createHash("sha256").update(directory).digest("hex")}`,
+            createStageIdentity: null,
+          }
+        : {}),
       expected: input.expectedRevision,
       desired: input.bytes == null ? null : bytesRevision(input.bytes),
       executable: input.executable ?? false,
@@ -833,7 +915,7 @@ async function run(
       reviewedBinding: null,
       reviewedRevision: null,
       outcome: null,
-    };
+    });
     if (input.requestedDestination)
       record = { ...record, requestedDestination: input.requestedDestination };
     record = {
@@ -844,9 +926,9 @@ async function run(
         : { expectedMutationEpoch: input.expectedMutationEpoch }),
     };
   }
-  const save = async (patch: Partial<RetainedRecord>) => {
+  const save = async (patch: Partial<PosixRetainedRecord>) => {
     lease.assertHeld();
-    record = { ...record, ...patch, generation: record.generation + 1 };
+    record = validateRecord({ ...record, ...patch, generation: record.generation + 1 });
     await durableJson(journalPath, record);
   };
   const result = async (): Promise<RetainedMutationResult> => {
@@ -873,6 +955,32 @@ async function run(
     outcome: RetainedMutationResult["outcome"],
     failure: RetainedRecord["failure"] = null,
   ) => {
+    if (record.publication === "staged-create") {
+      const stage = NodePath.join(NodePath.dirname(target), record.createStageName);
+      const identity = await fileIdentity(stage);
+      if (identity !== null) {
+        if (!sameIdentity(identity, record.createStageIdentity)) {
+          outcome = "attention";
+          failure = "recovery";
+        } else {
+          const captured = await lease.run({
+            binding: input.binding,
+            operation: "capture",
+            sourceName: record.createStageName,
+            destinationName: "provisional",
+          });
+          if (
+            captured.code !== 0 ||
+            captured.outcome !== "applied" ||
+            Object.values(captured.flush).some((value) => value > 0) ||
+            !sameIdentity(captured.destinationAfter, record.createStageIdentity)
+          ) {
+            outcome = "attention";
+            failure = "recovery";
+          } else await save({ provisionalIdentity: captured.destinationAfter });
+        }
+      }
+    }
     await save({ phase: "done", outcome, failure });
     await point("done");
     return result();
@@ -898,7 +1006,7 @@ async function run(
     input.binding.rootPath,
   );
   if (
-    !capabilities.strictCurrentRoot ||
+    !hasNativeFileAuthority(capabilities) ||
     !capabilities.publicationLease ||
     !capabilities.exclusiveMove ||
     !capabilities.exclusiveLink
@@ -909,7 +1017,16 @@ async function run(
       input.id,
     );
   const command = async (
-    operation: "capture" | "create" | "exchange" | "link" | "restore" | "move" | "rmdir",
+    operation:
+      | "capture"
+      | "create"
+      | "stage-create"
+      | "staged-create"
+      | "exchange"
+      | "link"
+      | "restore"
+      | "move"
+      | "rmdir",
     sourceName: string,
     destinationName: string,
     binding = input.binding,
@@ -954,7 +1071,20 @@ async function run(
     return stat && { dev: String(stat.dev), ino: String(stat.ino) };
   };
   /** Whether a `publishing` record's call ran: false if not, the phase it reached if so, null if unknown. */
-  const publicationRan = async (): Promise<false | Partial<RetainedRecord> | null> => {
+  const publicationRan = async (): Promise<false | Partial<PosixRetainedRecord> | null> => {
+    if (record.publication === "staged-create") {
+      const stage = NodePath.join(NodePath.dirname(target), record.createStageName);
+      if (record.createStageIdentity === null) return null;
+      if (sameIdentity(await fileIdentity(stage), record.createStageIdentity)) return false;
+      return sameIdentity(await fileIdentity(target), record.createStageIdentity) &&
+        (await fileRevision(target)) === record.desired
+        ? {
+            phase: "installed",
+            publishedIdentity: record.createStageIdentity,
+            publishedRevision: record.desired,
+          }
+        : null;
+    }
     if (record.publication === "exchange") {
       // An exchange swaps the staged copy with the live file.
       const held = await fileIdentity(slot);
@@ -1131,7 +1261,8 @@ async function run(
     }
   }
   if (
-    (record.publication === "create" && !capabilities.atomicCreateMetadata) ||
+    ((record.publication === "create" || record.publication === "staged-create") &&
+      !capabilities.atomicCreateMetadata) ||
     (record.publication === "exchange" && !capabilities.atomicExchange)
   )
     return finish(record.sourceMutation === false ? "skipped" : "attention", "unavailable");
@@ -1245,12 +1376,18 @@ async function run(
         (await fileIdentity(slot)) !== null &&
         (await fileRevision(slot)) !== record.desired
       ) {
-        await NodeFSP.unlink(slot);
-        await syncDirectory(directory);
+        await hooks.removal?.("before", slot);
+        await removeNativeRetainedEntry(lease, directory, "slot");
+        await hooks.removal?.("after", slot);
       }
       if ((await fileIdentity(slot)) === null) {
         if (input.bytes == null) return finish("skipped", "unavailable");
-        const mode = record.publication === "create" ? (record.executable ? 0o777 : 0o666) : 0o600;
+        const mode =
+          record.publication === "create" || record.publication === "staged-create"
+            ? record.executable
+              ? 0o777
+              : 0o666
+            : 0o600;
         const handle = await NodeFSP.open(slot, "wx", mode);
         try {
           await handle.writeFile(input.bytes);
@@ -1275,6 +1412,52 @@ async function run(
     return finish("attention", "recovery");
   // Staging takes time; the group is checked again just before anything becomes visible.
   if (!(await peersIntact())) return finish("skipped", "revision");
+  if (record.publication === "staged-create") {
+    const name = record.createStageName;
+    const stage = NodePath.join(NodePath.dirname(target), name);
+    if (record.createStageIdentity === null) {
+      const reply = await command("stage-create", "slot", name);
+      if (!good(reply) || !reply.destinationAfter) return finish("attention", "recovery");
+      await save({ createStageIdentity: reply.destinationAfter });
+      await point("create-staged");
+    }
+    if (
+      !sameIdentity(await fileIdentity(stage), record.createStageIdentity) ||
+      (await fileRevision(stage)) !== record.desired
+    )
+      return finish("attention", "recovery");
+    await save({ phase: "publishing", sourceMutation: true });
+    await point("checked");
+    await point("install-intent");
+    const reply = await command("staged-create", name, NodePath.basename(target));
+    await point("called");
+    if (reply.outcome === "unchanged") {
+      await save({ sourceMutation: false });
+      const captured = await command("capture", name, "provisional");
+      if (!good(captured) || !sameIdentity(captured.destinationAfter, record.createStageIdentity))
+        return finish("attention", "recovery");
+      return finish("skipped", reply.code === 17 ? "exists" : "unavailable");
+    }
+    if (
+      !good(reply) ||
+      !sameIdentity(reply.sourceBefore, record.createStageIdentity) ||
+      reply.sourceAfter !== null ||
+      !sameIdentity(reply.destinationAfter, record.createStageIdentity)
+    )
+      return finish("attention", "recovery");
+    await save({
+      phase: "installed",
+      publishedIdentity: record.createStageIdentity,
+      publishedRevision: record.desired,
+    });
+    await point("installed");
+    if (
+      !sameIdentity(await fileIdentity(target), record.createStageIdentity) ||
+      (await fileRevision(target)) !== record.desired
+    )
+      return finish("attention", "recovery");
+    return finish("done");
+  }
   if (record.publication === "create") {
     await save({
       phase: "publishing",
@@ -1413,10 +1596,11 @@ export async function retainedViewPath(
   directory: string,
   leaf: (typeof retainedFileNames)[number],
   target: string,
+  helper?: string,
 ) {
-  await assertPrivateRetention(directory);
+  await assertPrivateRetention(directory, helper);
   const source = NodePath.join(directory, leaf),
-    identity = await fileIdentity(source);
+    identity = await fileIdentity(source, helper);
   if (!identity) return source;
   const extension = NodePath.extname(target);
   const safeExtension = /^\.[a-zA-Z0-9]{1,16}$/u.test(extension) ? extension : ".txt";
@@ -1425,7 +1609,7 @@ export async function retainedViewPath(
     await NodeFSP.link(source, view);
     await syncDirectory(directory);
   } catch (e) {
-    if (!isRetainedExists(e) || !sameIdentity(await fileIdentity(view), identity)) throw e;
+    if (!isRetainedExists(e) || !sameIdentity(await fileIdentity(view, helper), identity)) throw e;
   }
   return view;
 }

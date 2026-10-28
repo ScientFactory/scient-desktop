@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Real binary, filesystem and restart/update fixtures.
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { publicationDigest } from "@t3tools/shared/scientPublicationArtifact";
 import * as NodeCrypto from "node:crypto";
-import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -12,20 +13,16 @@ import * as ServerConfig from "../../config.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
+import { bindNativeFilePublication, runNativeFilePublication } from "./NativeFilePublication.ts";
 import {
   bytesRevision,
   decodeRetainedRecord,
   mutateRetainedFile,
   type MutationPoint,
 } from "./RetainedFileMutation.ts";
-import {
-  fileExchangeTestHelper,
-  filePublicationTestHelper,
-  nativePublicationHost,
-} from "./fileExchange.testkit.ts";
+import { filePublicationTestHelper, nativePublicationHost } from "./fileExchange.testkit.ts";
 import { layerKnownWorkspacesAllowAll } from "./knownWorkspaces.testkit.ts";
 
-const compiled = await fileExchangeTestHelper();
 const publication = await filePublicationTestHelper();
 const qualified = await nativePublicationHost();
 const bytes = (s: string) => Buffer.from(s);
@@ -74,6 +71,17 @@ describe.skipIf(!qualified)("host-configured file publication", () => {
           yield* fs.makeDirectory(NodePath.dirname(helper), { recursive: true });
           yield* fs.copyFile(publication!, helper);
           yield* fs.chmod(helper, 0o755);
+          yield* fs.writeFileString(
+            NodePath.join(NodePath.dirname(helper), "publication-artifact.json"),
+            JSON.stringify({
+              protocol: 1,
+              platform: HostProcess.Platform.defaultValue(),
+              arch: HostProcess.Architecture.defaultValue(),
+              probe: false,
+              executable: "scient-file-publication",
+              sha256: publicationDigest(yield* Effect.promise(() => NodeFSP.readFile(helper))),
+            }),
+          );
         }
         yield* fs.writeFileString(target, "captured");
         const input = {
@@ -189,12 +197,23 @@ describe.skipIf(!qualified)("host-configured file publication", () => {
           }
         })();
         try {
-          for (let i = 0; i < 25; i++)
-            await new Promise<void>((resolve, reject) =>
-              NodeChildProcess.execFile(compiled!, [target, slot], (error) =>
-                error ? reject(error) : resolve(),
-              ),
-            );
+          const rootPath = await NodeFSP.realpath(root);
+          const binding = await bindNativeFilePublication(
+            publication!,
+            { rootPath, parentRelativePath: "", recordPath: rootPath },
+            "bound-object",
+          );
+          for (let i = 0; i < 25; i++) {
+            const result = await runNativeFilePublication(publication!, {
+              binding,
+              operation: "exchange",
+              authority: "bound-object",
+              sourceName: "slot",
+              destinationName: "target",
+            });
+            expect(result.outcome).toBe("applied");
+            expect(result.code).toBe(0);
+          }
         } finally {
           stop = true;
           await reader;

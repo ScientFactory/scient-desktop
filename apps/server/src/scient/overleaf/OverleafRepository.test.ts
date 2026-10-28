@@ -200,6 +200,37 @@ describe("OverleafRepository trees", () => {
     ),
   );
 
+  it.effect("reads several blobs in one run, in order, byte for byte", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("a");
+        const contents = ["one\n", "", "\u0000\n\nbinary\n", "one\n"];
+        const oids: string[] = [];
+        for (const content of contents)
+          oids.push(yield* h.repos.writeBlob({ repo, bytes: bytes(content) }));
+        const read = yield* h.repos.readBlobs({ repo, oids, maxBytes: 16, maxTotalBytes: 64 });
+        expect(read.map(text)).toEqual(contents);
+        expect(yield* h.repos.readBlobs({ repo, oids: [], maxBytes: 0, maxTotalBytes: 0 })).toEqual(
+          [],
+        );
+        // A blob, or all of them, larger than allowed is refused as readBlob refuses it.
+        const tooLarge = yield* h.repos
+          .readBlobs({ repo, oids, maxBytes: 4, maxTotalBytes: 64 })
+          .pipe(Effect.flip);
+        expect(tooLarge).toMatchObject({ _tag: "OverleafGitError", reason: "output-limit" });
+        const tooMuch = yield* h.repos
+          .readBlobs({ repo, oids, maxBytes: 16, maxTotalBytes: 12 })
+          .pipe(Effect.flip);
+        expect(tooMuch).toMatchObject({ reason: "output-limit" });
+        // An object the repository does not hold is never read as empty.
+        const missing = yield* h.repos
+          .readBlobs({ repo, oids: [oids[0]!, "0".repeat(40)], maxBytes: 16, maxTotalBytes: 64 })
+          .pipe(Effect.flip);
+        expect(missing).toMatchObject({ _tag: "OverleafRepositoryError" });
+      }),
+    ),
+  );
+
   it.effect("refuses a path that is both a file and a folder", () =>
     withHarness((h) =>
       Effect.gen(function* () {
@@ -404,6 +435,21 @@ describe("OverleafRepository transport", () => {
     ),
   );
 
+  it.effect("reads Overleaf's head without fetching it, and none for a missing branch", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const server = yield* overleaf(h, { "main.tex": "v1\n" });
+        const repo = yield* h.repo("connection", server.remote);
+        expect(yield* h.repos.remoteHead({ repo, branch: "main", token: TOKEN })).toBe(
+          server.commit,
+        );
+        // Nothing was downloaded: the commit is not in the connection's repository.
+        expect(yield* h.repos.hasObject({ repo, oid: server.commit })).toBe(false);
+        expect(yield* h.repos.remoteHead({ repo, branch: "master", token: TOKEN })).toBeNull();
+      }),
+    ),
+  );
+
   it.effect("reports an unreachable remote as an unknown publish outcome, not a failure", () =>
     withHarness((h) =>
       Effect.gen(function* () {
@@ -428,8 +474,30 @@ describe("OverleafRepository transport", () => {
         expect(yield* h.repos.readRef({ repo, name: "base" })).toBeNull();
         yield* h.repos.setRef({ repo, name: "base", oid: tree });
         expect(yield* h.repos.readRef({ repo, name: "base" })).toBe(tree);
+        yield* h.repos.setRef({ repo, name: "attempt/1/parent", oid: tree });
+        expect(yield* h.repos.listRefs({ repo })).toEqual(
+          new Map([
+            ["attempt/1/parent", tree],
+            ["base", tree],
+          ]),
+        );
         yield* h.repos.deleteRef({ repo, name: "base" });
         expect(yield* h.repos.readRef({ repo, name: "base" })).toBeNull();
+        expect([...(yield* h.repos.listRefs({ repo })).keys()]).toEqual(["attempt/1/parent"]);
+      }),
+    ),
+  );
+
+  it.effect("finds a commit's tree only while the repository holds the commit", () =>
+    withHarness((h) =>
+      Effect.gen(function* () {
+        const repo = yield* h.repo("a");
+        const tree = yield* h.tree(repo, { "main.tex": "x\n" });
+        const commit = yield* h.repos.commit({ repo, tree, parents: [], message: "x" });
+        expect(yield* h.repos.findTree({ repo, commit })).toBe(tree);
+        expect(yield* h.repos.findTree({ repo, commit: "1".repeat(40) })).toBeNull();
+        expect(yield* h.repos.hasObject({ repo, oid: commit })).toBe(true);
+        expect(yield* h.repos.hasObject({ repo, oid: "1".repeat(40) })).toBe(false);
       }),
     ),
   );

@@ -4,22 +4,37 @@
  * folder ID, not device number, across remounts. Once recorded, missing/replaced vaults must be
  * reported, never silently recreated.
  */
-import * as NodeChildProcess from "node:child_process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { windowsPrivateRetention, probeWindowsRetention } from "./WindowsOverleafRetention.ts";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import { overleafCloudRoot } from "./overleafCloudRoots.ts";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  platformFileIdentity,
+  type StoredFileIdentity,
+  type VolumeIdentityResolver,
+} from "../workspace/PlatformFileIdentity.ts";
 
-import { exchange, syncDirectory } from "../workspace/RetainedFileMutation.ts";
+import { syncDirectory } from "../workspace/RetainedFileMutation.ts";
+
+import {
+  bindNativeFilePublication,
+  observedDirectoryBinding,
+  withNativeFilePublicationLease,
+  removeNativeRetainedEntry,
+  ensureNativePrivateRetentionDirectory,
+  checkNativePrivateRetentionDirectory,
+  nativeLinuxFileIdentity,
+  nativeFilePublicationCapabilities,
+  hasNativeFileAuthority,
+} from "../workspace/NativeFilePublication.ts";
 
 /** The hidden folder created beside a checkout on another disk. */
 const OVERLEAF_VAULT_DIRECTORY = ".scient-overleaf";
 
-export interface OverleafVolumeFileIdentity {
-  readonly volume: string;
-  readonly fileId: string;
-}
+export type OverleafVolumeFileIdentity = StoredFileIdentity;
 
 export type OverleafRetentionRefusal =
   /** The checkout's disk is not mounted (unplugged, or its path is gone). */
@@ -28,6 +43,9 @@ export type OverleafRetentionRefusal =
   | "no-volume-identity"
   /** The disk cannot exchange files atomically (exFAT, FAT), or link them in development fallback. */
   | "unsupported-filesystem"
+  | "network-filesystem"
+  | "volatile-filesystem"
+  | "sync-managed-folder"
   | "read-only-parent"
   /** The folder beside the checkout belongs to another user. */
   | "shared-parent"
@@ -40,38 +58,17 @@ export type OverleafRetentionRefusal =
   /** A folder exists at the location but is not the recorded one. */
   | "vault-replaced";
 
-export type OverleafVolumeIdentityResolver = (path: string) => Promise<string | null>;
-
-const run = (file: string, args: ReadonlyArray<string>) =>
-  new Promise<string | null>((resolve) =>
-    NodeChildProcess.execFile(
-      file,
-      [...args],
-      { timeout: 10_000, maxBuffer: 1024 * 1024, env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } },
-      (error, stdout) => resolve(error ? null : stdout),
-    ),
-  );
-
-/**
- * The volume UUID of the disk holding `path`, from `diskutil`, or null when
- * the disk reports none. macOS only; other platforms are not supported yet.
- */
-export const macVolumeUuid: OverleafVolumeIdentityResolver = async (path) => {
-  if (HostProcess.Platform.defaultValue() !== "darwin") return null;
-  // `diskutil` needs a device or mount point, so ask `df` which device holds the path.
-  const df = await run("/bin/df", ["-P", path]);
-  const device = df?.split("\n")[1]?.split(/\s+/u)[0];
-  if (device === undefined || !device.startsWith("/dev/")) return null;
-  const info = await run("/usr/sbin/diskutil", ["info", "-plist", device]);
-  const uuid = info?.match(
-    /<key>VolumeUUID<\/key>\s*<string>([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12})<\/string>/u,
-  )?.[1];
-  return uuid === undefined ? null : uuid.toUpperCase();
-};
+export type OverleafVolumeIdentityResolver = VolumeIdentityResolver;
 
 const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code;
-const isReadOnly = (error: unknown) =>
-  ["EACCES", "EPERM", "EROFS"].includes(errorCode(error) ?? "");
+/** Native helper failures carry their errno numerically on the result, not as `code`. */
+const isReadOnly = (error: unknown) => {
+  if (["EACCES", "EPERM", "EROFS"].includes(errorCode(error) ?? "")) return true;
+  const result = (
+    error as { readonly result?: { readonly codeDomain: string; readonly code: number } | null }
+  )?.result;
+  return result?.codeDomain === "errno" && [1, 13, 30].includes(result.code);
+};
 
 class Refused extends Error {
   readonly reason: OverleafRetentionRefusal;
@@ -82,7 +79,31 @@ class Refused extends Error {
 }
 
 /** Creates (or, with `create: false`, only checks) one owner-only, non-symlink directory. */
-async function ensurePrivate(directory: string, userId: number | undefined, create: boolean) {
+async function ensurePrivate(
+  directory: string,
+  userId: number | undefined,
+  create: boolean,
+  helper: string | null,
+) {
+  if (await overleafCloudRoot(directory)) throw new Refused("sync-managed-folder");
+  if (HostProcess.Platform.defaultValue() === "linux") {
+    if (!helper) throw new Refused("unsupported-filesystem");
+    if (!create) await statOrRefuse(directory, "vault-missing");
+    try {
+      await (create ? ensureNativePrivateRetentionDirectory : checkNativePrivateRetentionDirectory)(
+        helper,
+        directory,
+      );
+    } catch (cause) {
+      if (isReadOnly(cause)) throw new Refused("read-only-parent");
+      throw new Refused("unsafe-directory");
+    }
+    return;
+  }
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    await windowsPrivateRetention(directory, create, helper);
+    return;
+  }
   if (create)
     try {
       await NodeFSP.mkdir(directory, { mode: 0o700 });
@@ -102,53 +123,138 @@ async function ensurePrivate(directory: string, userId: number | undefined, crea
   }
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Refused("unsafe-directory");
   if (userId !== undefined && stat.uid !== userId) throw new Refused("unsafe-directory");
-  if ((stat.mode & 0o077) !== 0) await NodeFSP.chmod(directory, 0o700);
+  if ((stat.mode & 0o077) !== 0) throw new Refused("unsafe-directory");
 }
 
 /**
  * Proves the folder's disk supports the replacement Scient will use: atomic
- * exchange through the host helper, or hard links for the declared
+ * exchange through the publication helper, or hard links for the declared
  * development fallback when no helper is configured.
  */
-async function probeCapability(directory: string, exchangeHelper: string | null) {
-  const stem = NodePath.join(directory, `.probe-${NodeCrypto.randomUUID()}`);
+async function probeCapability(directory: string, publicationHelper: string | null) {
+  if (HostProcess.Platform.defaultValue() === "win32") {
+    await probeWindowsRetention(directory, publicationHelper);
+    return;
+  }
+  // Seatbelt subpath rules use the data volume's ordinary spelling, not its firmlink alias.
+  const prefix = "/System/Volumes/Data";
+  if (directory.startsWith(`${prefix}/`)) {
+    const ordinary = directory.slice(prefix.length);
+    if (
+      (await platformFileIdentity.key(ordinary).catch(() => null)) ===
+      (await platformFileIdentity.key(directory))
+    )
+      directory = ordinary;
+  }
+  const stem = `.probe-${NodeCrypto.randomUUID()}`;
+  const stage = `.scient-overleaf-apply-${NodeCrypto.randomUUID()}`;
   const [left, right, link] = [`${stem}-a`, `${stem}-b`, `${stem}-link`];
-  try {
+  const path = (name: string) => NodePath.join(directory, name);
+  const create = async () => {
     try {
-      await NodeFSP.writeFile(left, "a", { flag: "wx", mode: 0o600 });
-      await NodeFSP.writeFile(right, "b", { flag: "wx", mode: 0o600 });
+      await NodeFSP.writeFile(path(left), "a", { flag: "wx", mode: 0o600 });
+      await NodeFSP.writeFile(path(right), "b", { flag: "wx", mode: 0o600 });
     } catch (error) {
       if (isReadOnly(error)) throw new Refused("read-only-parent");
       throw error;
     }
-    if (exchangeHelper === null) {
+  };
+  if (publicationHelper === null) {
+    try {
+      await create();
       try {
-        await NodeFSP.link(left, link);
+        await NodeFSP.link(path(left), path(link));
       } catch {
         throw new Refused("unsupported-filesystem");
       }
-      return;
+    } finally {
+      await Promise.all([left, right, link].map((name) => NodeFSP.rm(path(name), { force: true })));
     }
-    // A missing helper is a configuration fault, not a property of the disk.
-    await NodeFSP.access(exchangeHelper, NodeFSP.constants.X_OK);
-    try {
-      await exchange(exchangeHelper, left, right);
-    } catch {
-      throw new Refused("unsupported-filesystem");
-    }
-    // Some drivers accept the swap and do a plain rename instead (FAT32 on macOS 26
-    // destroys the second file and reports success), so check both sides.
-    const swapped = await Promise.all([
-      NodeFSP.readFile(left, "utf8"),
-      NodeFSP.readFile(right, "utf8"),
-    ]).then(
-      ([l, r]) => l === "b" && r === "a",
-      () => false,
-    );
-    if (!swapped) throw new Refused("unsupported-filesystem");
-  } finally {
-    await Promise.all([left, right, link].map((file) => NodeFSP.rm(file, { force: true })));
+    return;
   }
+  // A missing helper is a configuration fault, not a property of the disk.
+  await NodeFSP.access(publicationHelper, NodeFSP.constants.X_OK);
+  const held = await observedDirectoryBinding(publicationHelper, directory);
+  await withNativeFilePublicationLease(
+    publicationHelper,
+    [held],
+    async (lease) => {
+      try {
+        await create();
+        try {
+          const binding = await bindNativeFilePublication(
+            publicationHelper,
+            {
+              rootPath: directory,
+              parentRelativePath: "",
+              recordPath: directory,
+            },
+            "bound-object",
+          );
+          const result = await lease.run({
+            binding,
+            operation: "exchange",
+            authority: "bound-object",
+            sourceName: left,
+            destinationName: right,
+          });
+          if (
+            result.code !== 0 ||
+            result.outcome !== "applied" ||
+            Object.values(result.flush).some((value) => value > 0)
+          )
+            throw new Refused("unsupported-filesystem");
+          if (HostProcess.Platform.defaultValue() === "linux") {
+            const trial = async (
+              operation: "stage-create" | "staged-create",
+              sourceName: string,
+              destinationName: string,
+            ) =>
+              lease.run({
+                binding,
+                operation,
+                authority: "bound-object",
+                sourceName,
+                destinationName,
+              });
+            const staged = await trial("stage-create", left, stage);
+            const installed = await trial("staged-create", stage, link);
+            const restaged = await trial("stage-create", left, stage);
+            const refused = await trial("staged-create", stage, link);
+            if (
+              [staged, installed, restaged].some(
+                (reply) =>
+                  reply.code !== 0 ||
+                  reply.outcome !== "applied" ||
+                  Object.values(reply.flush).some((value) => value > 0),
+              ) ||
+              installed.destinationAfter?.ino !== staged.destinationAfter?.ino ||
+              installed.sourceAfter !== null ||
+              refused.outcome !== "unchanged" ||
+              refused.code !== 17 ||
+              (await NodeFSP.readFile(path(link), "utf8")) !== "b"
+            )
+              throw new Refused("unsupported-filesystem");
+          }
+        } catch {
+          throw new Refused("unsupported-filesystem");
+        }
+        // A driver can report success after a destructive rename instead of a swap.
+        const swapped = await Promise.all([
+          NodeFSP.readFile(path(left), "utf8"),
+          NodeFSP.readFile(path(right), "utf8"),
+        ]).then(
+          ([l, r]) => l === "b" && r === "a",
+          () => false,
+        );
+        if (!swapped) throw new Refused("unsupported-filesystem");
+      } finally {
+        for (const name of [left, right, link, stage])
+          await removeNativeRetainedEntry(lease, directory, name);
+      }
+    },
+    { mode: "exclusive" },
+  );
 }
 
 type Stat = Awaited<ReturnType<typeof statOrRefuse>>;
@@ -185,11 +291,34 @@ async function siblingLevels(
   userId: number | undefined,
   environmentId: string,
   connectionId: string,
+  helper: string | null,
 ) {
-  const parent = NodePath.dirname(checkout);
+  const cloud = await overleafCloudRoot(checkout);
+  const parent = NodePath.dirname(cloud ?? checkout);
   if (parent === checkout) throw new Refused("disk-root-checkout");
   const parentStat = await statOrRefuse(parent, "volume-unavailable");
-  if (parentStat.dev !== checkoutStat.dev) throw new Refused("disk-root-checkout");
+  if (parentStat.dev !== checkoutStat.dev)
+    throw new Refused(cloud ? "sync-managed-folder" : "disk-root-checkout");
+  if (await overleafCloudRoot(parent)) throw new Refused("sync-managed-folder");
+  if (cloud && HostProcess.Platform.defaultValue() === "linux") {
+    const checkoutIdentity = await platformFileIdentity.directory(
+      checkout,
+      undefined,
+      helper ?? undefined,
+    );
+    const parentIdentity = await platformFileIdentity.directory(
+      parent,
+      undefined,
+      helper ?? undefined,
+    );
+    if (
+      checkoutIdentity?.platform !== "linux" ||
+      parentIdentity?.platform !== "linux" ||
+      checkoutIdentity.volume !== parentIdentity.volume ||
+      checkoutIdentity.subvolumeId !== parentIdentity.subvolumeId
+    )
+      throw new Refused("sync-managed-folder");
+  }
   // Checked on every use, not only the first: whoever owns the parent can replace its entries.
   if (userId !== undefined && Number(parentStat.uid) !== userId) throw new Refused("shared-parent");
   // A parent others can write to, without the sticky bit, lets them rename our folder away.
@@ -211,10 +340,12 @@ async function verifiedFolder(
   userId: number | undefined,
   volume: string,
   create: boolean,
+  helper: string | null,
+  checkoutIdentity: StoredFileIdentity | null,
 ) {
   let directory: string;
   try {
-    for (const level of levels) await ensurePrivate(level, userId, create);
+    for (const level of levels) await ensurePrivate(level, userId, create, helper);
     directory = await NodeFSP.realpath(levels.at(-1)!);
   } catch (error) {
     // Denial or disappearance of one candidate must not stop the search for another.
@@ -226,7 +357,20 @@ async function verifiedFolder(
   const stat = await statOrRefuse(directory, "vault-missing");
   if (stat.dev !== checkoutStat.dev || (await physicallyInside(directory, checkoutStat)))
     throw new Refused("unsafe-directory");
-  return { directory, identity: { volume, fileId: String(stat.ino) } };
+  const identity = await platformFileIdentity.directory(
+    directory,
+    async () => volume,
+    helper ?? undefined,
+  );
+  if (identity === null) throw new Refused("vault-replaced");
+  if (
+    checkoutIdentity?.platform === "linux" &&
+    identity.platform === "linux" &&
+    (identity.volume !== checkoutIdentity.volume ||
+      identity.subvolumeId !== checkoutIdentity.subvolumeId)
+  )
+    throw new Refused("unsupported-filesystem");
+  return { directory, identity };
 }
 
 /**
@@ -240,10 +384,10 @@ export async function locateOverleafRetention(input: {
   readonly connectionId: string;
   readonly checkoutRoot: string;
   readonly userId: number | undefined;
-  readonly exchangeHelper: string | null;
+  readonly publicationHelper: string | null;
   /** The identity recorded for this connection, or null for a new one. */
   readonly expected: OverleafVolumeFileIdentity | null;
-  readonly volumeUuid: OverleafVolumeIdentityResolver;
+  readonly volumeUuid?: OverleafVolumeIdentityResolver;
 }): Promise<
   | {
       readonly _tag: "ready";
@@ -263,7 +407,23 @@ export async function locateOverleafRetention(input: {
       throw error;
     }
     const checkoutStat = await statOrRefuse(checkout, "volume-unavailable");
-    const volume = await input.volumeUuid(checkout);
+    const linux =
+      HostProcess.Platform.defaultValue() === "linux"
+        ? await nativeLinuxFileIdentity(checkout, true, input.publicationHelper ?? undefined)
+        : null;
+    if (linux?.reason) throw new Refused(linux.reason);
+    if (
+      HostProcess.Platform.defaultValue() === "linux" &&
+      (!input.publicationHelper ||
+        !hasNativeFileAuthority(
+          await nativeFilePublicationCapabilities(input.publicationHelper, checkout),
+        ))
+    )
+      throw new Refused("unsupported-filesystem");
+    const checkoutIdentity = linux?.identity ?? null;
+    const volume =
+      checkoutIdentity?.volume ??
+      (await (input.volumeUuid ?? platformFileIdentity.volume)(checkout));
     if (volume === null) throw new Refused("no-volume-identity");
 
     const stateLevels = [
@@ -293,8 +453,17 @@ export async function locateOverleafRetention(input: {
             input.userId,
             input.environmentId,
             input.connectionId,
+            input.publicationHelper,
           );
-      found = await verifiedFolder(levels, checkoutStat, input.userId, volume, true);
+      found = await verifiedFolder(
+        levels,
+        checkoutStat,
+        input.userId,
+        volume,
+        true,
+        input.publicationHelper,
+        checkoutIdentity,
+      );
     } else {
       // Find the recorded folder wherever it was placed; never create one.
       // Where it is placed can change (state moved, checkout remounted), its identity cannot.
@@ -308,6 +477,7 @@ export async function locateOverleafRetention(input: {
             input.userId,
             input.environmentId,
             input.connectionId,
+            input.publicationHelper,
           ),
       ];
       let replaced = false;
@@ -321,11 +491,10 @@ export async function locateOverleafRetention(input: {
             input.userId,
             volume,
             false,
+            input.publicationHelper,
+            checkoutIdentity,
           );
-          if (
-            folder.identity.volume === expected.volume &&
-            folder.identity.fileId === expected.fileId
-          ) {
+          if (platformFileIdentity.equal(folder.identity, expected)) {
             match = folder;
             break;
           }
@@ -343,7 +512,7 @@ export async function locateOverleafRetention(input: {
       }
       found = match;
     }
-    await probeCapability(found.directory, input.exchangeHelper);
+    await probeCapability(found.directory, input.publicationHelper);
     // Another process may have swapped the folder while it was probed. This closes
     // the window up to here; the coordinator (step 3) must re-verify the identity
     // before each later use, because nothing below this module does.
@@ -353,6 +522,8 @@ export async function locateOverleafRetention(input: {
       input.userId,
       volume,
       false,
+      input.publicationHelper,
+      checkoutIdentity,
     );
     if (after.identity.fileId !== found.identity.fileId) throw new Refused("vault-replaced");
     return { _tag: "ready", ...found };

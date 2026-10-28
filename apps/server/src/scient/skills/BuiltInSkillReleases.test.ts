@@ -11,7 +11,7 @@ import {
 import { BUILT_IN_SKILL_SOURCES } from "./BuiltInSkillSources.ts";
 
 describe("Scient built-in skill releases", () => {
-  it("embeds the six reviewed releases with explicit product-owned defaults", () => {
+  it("embeds the seven reviewed releases with explicit product-owned defaults", () => {
     expect(BUILT_IN_SKILL_RELEASES).toMatchObject([
       {
         id: "scient.workspace-readiness-review",
@@ -81,6 +81,17 @@ describe("Scient built-in skill releases", () => {
         origin: "scient",
         resources: [],
       },
+      {
+        id: "scient.overleaf-sync",
+        version: "0.1.0",
+        category: "Document creation",
+        categoryDescription: "Create polished documents and reliable final outputs.",
+        displayOrder: 70,
+        supportedScopes: ["user"],
+        defaultInvocationPolicy: "automatic",
+        origin: "scient",
+        resources: [],
+      },
     ]);
     expect(BUILT_IN_SKILL_RELEASES.every((release) => release.instructions.length > 0)).toBe(true);
     expect(Object.fromEntries(BUILT_IN_SKILL_DEFAULT_ACTIVE_BY_ID)).toEqual({
@@ -90,6 +101,7 @@ describe("Scient built-in skill releases", () => {
       "scient.pdf-authoring": true,
       "scient.html-pdf-authoring": true,
       "scient.latex-authoring": true,
+      "scient.overleaf-sync": true,
     });
   });
 

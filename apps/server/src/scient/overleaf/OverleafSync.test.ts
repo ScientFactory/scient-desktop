@@ -1,0 +1,2145 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Real folders, Git and native publication.
+/**
+ * The step-5 service against a real local bare repository standing in for
+ * Overleaf: connecting, the "only a conflict stops" sync, authority across
+ * worktrees, the other-agents line, offline status, disconnect and relink.
+ */
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
+import { describe, expect, it } from "@effect/vitest";
+import { ScientOverleafReview } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+import { previewLines, syncLines } from "../../mcp/toolkits/overleaf/resultLines.ts";
+import { syncView } from "./http.ts";
+import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+
+import { OverleafReservationOwner } from "./OverleafCoordinator.ts";
+import { canApply } from "./OverleafCoordinator.testkit.ts";
+import {
+  OTHER_PROJECT,
+  overleafSyncWorld as world,
+  PROJECT,
+  read,
+  runOverleafSync as run,
+  TOKEN,
+  write,
+} from "./OverleafSync.testkit.ts";
+
+const decodeReview = Schema.decodeUnknownEffect(ScientOverleafReview);
+
+describe.skipIf(!canApply)("OverleafSync", () => {
+  it.live(
+    "brings a project in as a new folder, then the first sync fills it and sends nothing",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: `https://www.overleaf.com/project/${PROJECT}`,
+            requestId: "connect-1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          expect(connected.connection).toMatchObject({
+            folder: "paper",
+            projectId: PROJECT,
+            branch: "master",
+          });
+          const id = connected.connection.connectionId;
+          // Connecting writes no manuscript file.
+          expect(
+            yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(w.main, "paper"))),
+          ).toEqual([]);
+
+          const synced = yield* w.service.sync({
+            caller: w.at(w.main),
+            connectionId: id,
+            requestId: "s1",
+          });
+          expect(synced).toMatchObject({
+            _tag: "synced",
+            publication: { _tag: "none" },
+            retried: false,
+          });
+          expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("from Overleaf");
+          const status = yield* w.service.status({ caller: w.at(w.main), connectionId: id });
+          expect(status).toMatchObject({
+            availability: "ready",
+            local: { _tag: "read", changed: 0, deleted: 0, added: 0 },
+            linkedElsewhere: false,
+          });
+          // A repeated connect request names the same connection.
+          const again = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "connect-1",
+          });
+          expect(again).toMatchObject({ _tag: "connected", connection: { connectionId: id } });
+        }),
+      ),
+  );
+
+  it.live("syncs both ways without a question, and reports local changes offline", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "connect-1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+
+        yield* write(folder, { "main.tex": "A, edited here" });
+        yield* Effect.promise(() => NodeFSP.rm(NodePath.join(folder, "other.tex")));
+        expect(yield* w.service.status({ caller: w.at(w.main), connectionId: id })).toMatchObject({
+          local: { _tag: "read", changed: 1, deleted: 1 },
+        });
+
+        yield* w.collaborate(PROJECT, { "main.tex": "A", "other.tex": "O", "new.tex": "N" });
+        const synced = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+        });
+        expect(synced).toMatchObject({ _tag: "synced", publication: { _tag: "accepted" } });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({
+          "main.tex": "A, edited here",
+          "new.tex": "N",
+        });
+        expect(yield* read(folder, "new.tex")).toBe("N");
+      }),
+    ),
+  );
+
+  it.live("stops only for a conflict, and nothing is applied until it is decided", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "line\n" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "connect-1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* write(folder, { "main.tex": "mine\n" });
+        yield* w.collaborate(PROJECT, { "main.tex": "theirs\n" });
+
+        const stopped = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+        });
+        if (stopped._tag !== "needs-decision") return yield* Effect.die(stopped);
+        expect(stopped.review.needsDecision).toBe(true);
+        expect(yield* read(folder, "main.tex")).toBe("mine\n");
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "theirs\n" });
+
+        const key = stopped.review.conflicts[0]!.key;
+        const decided = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s3",
+          choices: new Map([[key, "mine"]]),
+        });
+        expect(decided).toMatchObject({ _tag: "synced", publication: { _tag: "accepted" } });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "mine\n" });
+      }),
+    ),
+  );
+
+  it.live("starts one new sync when Overleaf moves during the send", () =>
+    run(
+      Effect.gen(function* () {
+        let collaborated = false;
+        let moveOverleaf: Effect.Effect<void> = Effect.void;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } },
+          at: (point) =>
+            point === "admitting" && !collaborated
+              ? Effect.suspend(() => {
+                  collaborated = true;
+                  return moveOverleaf;
+                })
+              : Effect.void,
+        });
+        moveOverleaf = Effect.orDie(w.collaborate(PROJECT, { "main.tex": "A", "other.tex": "O2" }));
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "connect-1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        // The first sync has something to send (a new file), and Overleaf moves just
+        // before it is sent: one sync covers the whole case.
+        yield* write(folder, { "notes.tex": "N" });
+        const synced = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s1",
+        });
+        expect(synced).toMatchObject({
+          _tag: "synced",
+          publication: { _tag: "accepted" },
+          retried: true,
+        });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({
+          "main.tex": "A",
+          "notes.tex": "N",
+          "other.tex": "O2",
+        });
+        expect(yield* read(folder, "other.tex")).toBe("O2");
+      }),
+    ),
+  );
+
+  it.live("refuses overlapping folders, a second link of one project, and a busy new folder", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A" }, [OTHER_PROJECT]: { "b.tex": "B" } },
+        });
+        const connect = (folder: string, project: string, create: boolean, requestId: string) =>
+          w.service.connect({ caller: w.at(w.main), folder, create, project, requestId });
+        expect(yield* connect("papers/one", PROJECT, true, "c1")).toMatchObject({
+          _tag: "refused",
+          reason: "folder-missing",
+        });
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(w.main, "papers")));
+        expect(yield* connect("papers/one", PROJECT, true, "c2")).toMatchObject({
+          _tag: "connected",
+        });
+        expect(yield* connect("papers", OTHER_PROJECT, false, "c3")).toMatchObject({
+          _tag: "refused",
+          reason: "folder-overlaps",
+        });
+        expect(yield* connect("papers/one/inner", OTHER_PROJECT, true, "c4")).toMatchObject({
+          _tag: "refused",
+          reason: "folder-overlaps",
+        });
+        expect(yield* connect("papers/two", PROJECT, true, "c5")).toMatchObject({
+          _tag: "refused",
+          reason: "project-already-linked",
+        });
+        yield* write(NodePath.join(w.main, "notes"), { "a.txt": "x" });
+        expect(yield* connect("notes", OTHER_PROJECT, true, "c6")).toMatchObject({
+          _tag: "refused",
+          reason: "folder-not-empty",
+        });
+        // A refused new folder is not left behind.
+        expect(
+          yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(w.main, "papers"))),
+        ).toEqual(["one"]);
+        expect(yield* connect("papers/two", OTHER_PROJECT, true, "c7")).toMatchObject({
+          _tag: "connected",
+        });
+        // Another checkout of the same project may link the same Overleaf project.
+        const elsewhere = yield* w.service.connect({
+          caller: w.at(w.worktree),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c8",
+        });
+        expect(elsewhere).toMatchObject({ _tag: "connected" });
+        // Not an Overleaf project: a recorded refusal, never a connection.
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "x",
+            create: true,
+            project: "https://evil.example/project/1",
+            requestId: "c9",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "project-invalid" });
+      }),
+    ),
+  );
+
+  it.live("needs a saved token to connect or sync", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ withToken: false });
+        const refused = yield* Effect.flip(
+          w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          }),
+        );
+        expect(refused).toMatchObject({
+          _tag: "OverleafSyncRefusedError",
+          reason: "token-missing",
+        });
+        expect(yield* w.service.tokenStatus).toEqual({ saved: false });
+        yield* w.service.saveToken(` ${TOKEN} `);
+        expect(yield* w.service.tokenStatus).toEqual({ saved: true });
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          }),
+        ).toMatchObject({ _tag: "connected" });
+      }),
+    ),
+  );
+
+  it.live("acts on the linked copy from another worktree, and refuses another project", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const fromWorktree = yield* w.service.sync({
+          caller: w.at(w.worktree),
+          connectionId: id,
+          requestId: "s1",
+        });
+        expect(fromWorktree).toMatchObject({ _tag: "synced", linkedElsewhere: true });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("from Overleaf");
+        expect(yield* w.service.list(w.at(w.worktree))).toMatchObject([
+          { connectionId: id, linkedHere: false },
+        ]);
+        expect(yield* w.service.list(w.at(w.elsewhere))).toEqual([]);
+        expect(
+          yield* Effect.flip(
+            w.service.sync({ caller: w.at(w.elsewhere), connectionId: id, requestId: "s2" }),
+          ),
+        ).toMatchObject({ reason: "workspace-not-authorized" });
+        // A checkout re-registered under a new binding needs relinking first.
+        w.bindings.set(w.main, {
+          bindingId: "binding-main-2",
+          hostProjectId: "project-1",
+          generation: 1,
+        });
+        expect(
+          yield* Effect.flip(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+          ),
+        ).toMatchObject({ reason: "relink-needed" });
+        expect(
+          yield* w.service.relink({
+            caller: w.at(w.main),
+            connectionId: id,
+            folder: "paper",
+            requestId: "m1",
+          }),
+        ).toMatchObject({
+          _tag: "done",
+        });
+        const after = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s4",
+        });
+        expect(after).toMatchObject({ _tag: "synced" });
+      }),
+    ),
+  );
+
+  it.live("reports other agents in the copy, not the caller or its subagents", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        w.threadRoots.set("me", w.main);
+        w.setThreads([
+          {
+            threadId: "me",
+            title: "Me",
+            checkoutPath: w.main,
+            parentThreadId: null,
+            subagent: false,
+          },
+          {
+            threadId: "helper",
+            title: "Helper",
+            checkoutPath: w.main,
+            parentThreadId: "me",
+            subagent: true,
+          },
+          {
+            threadId: "other",
+            title: "Other",
+            checkoutPath: w.main,
+            parentThreadId: null,
+            subagent: false,
+          },
+          {
+            threadId: "far",
+            title: "Far",
+            checkoutPath: w.worktree,
+            parentThreadId: null,
+            subagent: false,
+          },
+        ]);
+        const synced = yield* w.service.sync({
+          caller: { _tag: "thread", threadId: "me" },
+          connectionId: id,
+          requestId: "s1",
+        });
+        expect(synced).toMatchObject({
+          _tag: "synced",
+          activity: [{ threadId: "other", title: "Other" }],
+        });
+        w.setThreads(null);
+        const unknown = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+        });
+        expect(unknown).toMatchObject({ _tag: "synced", activity: null });
+      }),
+    ),
+  );
+
+  it.live("disconnects into an archive, and reconnecting the folder keeps its history", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        const before = yield* w.store.readConnection(id);
+        if (before._tag !== "ready") return yield* Effect.die(before);
+        expect(
+          yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "m4" }),
+        ).toMatchObject({
+          _tag: "done",
+          connection: { state: "archived" },
+        });
+        expect(yield* w.service.status({ caller: w.at(w.main), connectionId: id })).toMatchObject({
+          availability: "disconnected",
+        });
+        expect(
+          yield* Effect.flip(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+          ),
+        ).toMatchObject({
+          _tag: "OverleafConnectionNotReadyError",
+          reason: "archived",
+        });
+        const again = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: false,
+          project: PROJECT,
+          requestId: "c2",
+        });
+        expect(again).toMatchObject({
+          _tag: "connected",
+          reconnected: true,
+          connection: { connectionId: id },
+        });
+        const after = yield* w.store.readConnection(id);
+        if (after._tag !== "ready") return yield* Effect.die(after);
+        expect(after.document.base).toEqual(before.document.base);
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+        ).toMatchObject({
+          _tag: "synced",
+          review: { upToDate: true },
+        });
+      }),
+    ),
+  );
+  it.live("relink belongs to the owning project only, even when its old checkout is gone", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        // The old checkout no longer resolves; another project tries to take the link.
+        w.bindings.delete(w.main);
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(w.elsewhere, "paper")));
+        expect(
+          yield* Effect.flip(
+            w.service.relink({
+              caller: w.at(w.elsewhere),
+              connectionId: id,
+              folder: "paper",
+              requestId: "m2",
+            }),
+          ),
+        ).toMatchObject({ reason: "workspace-not-authorized" });
+        // The owning project's other checkout may take it.
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(w.worktree, "paper")));
+        expect(
+          yield* w.service.relink({
+            caller: w.at(w.worktree),
+            connectionId: id,
+            folder: "paper",
+            requestId: "m3",
+          }),
+        ).toMatchObject({
+          _tag: "done",
+          connection: { checkoutRoot: w.worktree },
+        });
+      }),
+    ),
+  );
+
+  it.live("sends nothing when the workspace's authority changes just before the send", () =>
+    run(
+      Effect.gen(function* () {
+        let change: () => void = () => undefined;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A" } },
+          at: (point) => (point === "admitting" ? Effect.sync(() => change()) : Effect.void),
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* write(NodePath.join(w.main, "paper"), { "main.tex": "A, edited here" });
+        change = () =>
+          w.bindings.set(w.main, {
+            bindingId: "binding-main",
+            hostProjectId: "project-1",
+            generation: 2,
+          });
+        const synced = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+        });
+        expect(synced).toMatchObject({ _tag: "synced", publication: { _tag: "not-sent" } });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "A" });
+      }),
+    ),
+  );
+
+  it.live("refuses a nested folder spelled with other letter case", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "a.tex": "A" }, [OTHER_PROJECT]: { "b.tex": "B" } },
+        });
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "Papers",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          }),
+        ).toMatchObject({ _tag: "connected" });
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(w.main, "Papers", "child")));
+        const differentlyCasedExists = yield* Effect.promise(() =>
+          NodeFSP.access(NodePath.join(w.main, "papers", "child")).then(
+            () => true,
+            () => false,
+          ),
+        );
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "papers/child",
+            create: false,
+            project: OTHER_PROJECT,
+            requestId: "c2",
+          }),
+        ).toMatchObject({
+          _tag: "refused",
+          // Case-sensitive volumes reject the absent spelling before checking overlap.
+          reason: differentlyCasedExists ? "folder-overlaps" : "folder-missing",
+        });
+      }),
+    ),
+  );
+
+  it.live(
+    "answers a repeated request with its receipt, and refuses its reuse by another caller",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({
+            overleaf: { [PROJECT]: { "a.tex": "A" }, [OTHER_PROJECT]: { "b.tex": "B" } },
+          });
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const reused = yield* Effect.flip(
+            w.service.connect({
+              caller: w.at(w.elsewhere),
+              folder: "other",
+              create: true,
+              project: OTHER_PROJECT,
+              requestId: "c1",
+            }),
+          );
+          expect(reused).toMatchObject({ _tag: "OverleafRequestReusedError" });
+          expect(yield* Effect.promise(() => NodeFSP.readdir(w.elsewhere))).toEqual([".git"]);
+          const first = yield* w.service.sync({
+            caller: w.at(w.main),
+            connectionId: id,
+            requestId: "s1",
+          });
+          expect(first).toMatchObject({ _tag: "synced" });
+          expect(
+            yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" }),
+          ).toMatchObject({
+            _tag: "duplicate",
+            receipt: { status: "completed", resultCategory: "synced-none" },
+          });
+        }),
+      ),
+  );
+
+  it.live("reports Git failures as fixed reasons, never as internal errors", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        yield* Effect.promise(() =>
+          NodeFSP.rm(w.overleafFor(PROJECT), { recursive: true, force: true }),
+        );
+        const failed = yield* Effect.flip(
+          w.service.sync({
+            caller: w.at(w.main),
+            connectionId: connected.connection.connectionId,
+            requestId: "s1",
+          }),
+        );
+        expect(failed).toMatchObject({ _tag: "OverleafSyncRefusedError" });
+        expect(["project-not-found", "unreachable", "git-failed", "access-denied"]).toContain(
+          (failed as { reason: string }).reason,
+        );
+      }),
+    ),
+  );
+  it.live("a new folder at an archived folder's path starts a new link, not the archive's", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" });
+        // The archived folder is moved aside and a new, empty one is brought in at its path.
+        yield* Effect.promise(() =>
+          NodeFSP.rename(NodePath.join(w.main, "paper"), NodePath.join(w.main, "paper-old")),
+        );
+        const again = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c2",
+        });
+        if (again._tag !== "connected") return yield* Effect.die(again);
+        expect(again.reconnected).toBe(false);
+        expect(again.connection.connectionId).not.toBe(id);
+        // Its first sync brings Overleaf's files in; nothing is deleted on Overleaf.
+        expect(
+          yield* w.service.sync({
+            caller: w.at(w.main),
+            connectionId: again.connection.connectionId,
+            requestId: "s2",
+          }),
+        ).toMatchObject({ _tag: "synced" });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "A", "other.tex": "O" });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("A");
+        // The archive is kept as it was.
+        const archived = yield* w.store.readConnection(id);
+        if (archived._tag !== "ready") return yield* Effect.die(archived);
+        expect(archived.document.state).toBe("archived");
+      }),
+    ),
+  );
+
+  it.live("never reactivates another project's archive of the same folder", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        yield* w.service.disconnect({
+          caller: w.at(w.main),
+          connectionId: connected.connection.connectionId,
+          requestId: "d1",
+        });
+        // The same checkout is registered again, under another host project.
+        w.bindings.set(w.main, {
+          bindingId: "binding-main-2",
+          hostProjectId: "project-2",
+          generation: 1,
+        });
+        const again = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: false,
+          project: PROJECT,
+          requestId: "c2",
+        });
+        if (again._tag !== "connected") return yield* Effect.die(again);
+        expect(again.reconnected).toBe(false);
+        expect(again.connection.connectionId).not.toBe(connected.connection.connectionId);
+      }),
+    ),
+  );
+
+  it.live("rechecks authority before connect creates a folder or disconnect archives", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        w.revoke();
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "other",
+            create: true,
+            project: OTHER_PROJECT,
+            requestId: "c2",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "authority-changed" });
+        expect(yield* Effect.promise(() => NodeFSP.readdir(w.main))).not.toContain("other");
+        expect(
+          yield* w.service.disconnect({
+            caller: w.at(w.main),
+            connectionId: connected.connection.connectionId,
+            requestId: "d1",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "authority-changed" });
+        const still = yield* w.store.readConnection(connected.connection.connectionId);
+        expect(still).toMatchObject({ _tag: "ready", document: { state: "active" } });
+      }),
+    ),
+  );
+
+  it.live("answers repeated requests with their recorded results", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const first = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "papers/one",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        expect(first).toMatchObject({ _tag: "refused", reason: "folder-missing" });
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(w.main, "papers")));
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "papers/one",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "folder-missing" });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "papers/one",
+          create: true,
+          project: PROJECT,
+          requestId: "c2",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        // A client request ID can never be one the service made for itself.
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" }),
+        ).toMatchObject({ _tag: "synced" });
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1-0-0" }),
+        ).toMatchObject({ _tag: "synced" });
+        // A repeated disconnect after a reconnect does not archive again.
+        yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" });
+        yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "papers/one",
+          create: false,
+          project: PROJECT,
+          requestId: "c3",
+        });
+        expect(
+          yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" }),
+        ).toMatchObject({
+          _tag: "done",
+          connection: { state: "active" },
+        });
+      }),
+    ),
+  );
+
+  it.live("relink keeps one link per Overleaf project in a checkout", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const inMain = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        const inWorktree = yield* w.service.connect({
+          caller: w.at(w.worktree),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c2",
+        });
+        if (inMain._tag !== "connected" || inWorktree._tag !== "connected")
+          return yield* Effect.die("not connected");
+        yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(w.main, "copy")));
+        expect(
+          yield* w.service.relink({
+            caller: w.at(w.main),
+            connectionId: inWorktree.connection.connectionId,
+            folder: "copy",
+            requestId: "r1",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "project-already-linked" });
+      }),
+    ),
+  );
+
+  it.live("cancels a sync at its next stage boundary", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        expect(yield* w.service.cancel({ caller: w.at(w.main), connectionId: id })).toEqual({
+          _tag: "nothing-running",
+        });
+        w.onActivity(() =>
+          Effect.asVoid(Effect.orDie(w.service.cancel({ caller: w.at(w.main), connectionId: id }))),
+        );
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" }),
+        ).toMatchObject({
+          _tag: "cancelled",
+          stage: "before-prepare",
+        });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe(null);
+      }),
+    ),
+  );
+  it.live("never runs a management request again whose result was not recorded", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        // A disconnect that began and stopped before recording its result.
+        yield* w.store.admitWritable;
+        yield* w.store.beginReceipt({
+          schemaVersion: 1,
+          connectionId: id,
+          requestId: "d1",
+          kind: "disconnect",
+          payloadDigest: NodeCrypto.createHash("sha256")
+            .update(["disconnect", "binding-main"].join("\0"))
+            .digest("hex"),
+          operationId: "op-1",
+          status: "running",
+          resultCategory: null,
+          createdAt: "2026-10-24T00:00:00.000Z",
+          updatedAt: "2026-10-24T00:00:00.000Z",
+        });
+        expect(
+          yield* w.service.disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" }),
+        ).toMatchObject({
+          _tag: "refused",
+          reason: "request-incomplete",
+        });
+        expect(yield* w.store.readConnection(id)).toMatchObject({ document: { state: "active" } });
+        // Refused input is recorded too: the same request ID cannot be reused for other input.
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "../bad",
+            create: true,
+            project: PROJECT,
+            requestId: "c9",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "folder-invalid" });
+        expect(
+          yield* Effect.flip(
+            w.service.connect({
+              caller: w.at(w.main),
+              folder: "good",
+              create: true,
+              project: OTHER_PROJECT,
+              requestId: "c9",
+            }),
+          ),
+        ).toMatchObject({ _tag: "OverleafRequestReusedError" });
+      }),
+    ),
+  );
+
+  it.live("keeps a running sync cancellable when a competing sync is refused", () =>
+    run(
+      Effect.gen(function* () {
+        const reached = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let pause = false;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A" } },
+          at: (point) =>
+            point === "admitting" && pause
+              ? Deferred.succeed(reached, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.void,
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* write(NodePath.join(w.main, "paper"), { "main.tex": "A, edited" });
+        pause = true;
+        const first = yield* Effect.forkChild(
+          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        );
+        yield* Deferred.await(reached);
+        expect(
+          yield* Effect.flip(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+          ),
+        ).toMatchObject({ _tag: "OverleafOperationActiveError" });
+        expect(yield* w.service.cancel({ caller: w.at(w.main), connectionId: id })).toMatchObject({
+          _tag: "requested",
+        });
+        yield* Deferred.succeed(release, undefined);
+        // Past its last boundary, the send finishes and stands.
+        expect(yield* Fiber.join(first)).toMatchObject({
+          _tag: "synced",
+          publication: { _tag: "accepted" },
+        });
+      }),
+    ),
+  );
+
+  it.live("refuses to link while a connection record cannot be read", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "a.tex": "A" }, [OTHER_PROJECT]: { "b.tex": "B" } },
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(
+            NodePath.join(w.stateRoot, "connections", `${connected.connection.connectionId}.json`),
+            "{ not json",
+          ),
+        );
+        expect(
+          yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: false,
+            project: PROJECT,
+            requestId: "c2",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "records-unreadable" });
+      }),
+    ),
+  );
+
+  it.live("lists a connection only for the project that owns its recorded binding", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        expect(yield* w.service.list(w.at(w.main))).toMatchObject([
+          { connectionId: connected.connection.connectionId, linkedHere: true },
+        ]);
+        // The same path registered again under another project does not inherit the link.
+        w.bindings.set(w.main, {
+          bindingId: "binding-main-b",
+          hostProjectId: "project-2",
+          generation: 1,
+        });
+        expect(yield* w.service.list(w.at(w.main))).toEqual([]);
+      }),
+    ),
+  );
+  it.live("says when it first finished an interrupted sync, and only then", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "before\n" } },
+          // The process stops once the apply wrote the folder, before the record took it in.
+          at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        const first = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s1",
+        });
+        expect(first).toMatchObject({ _tag: "synced", retried: false, settled: null });
+        yield* w.collaborate(PROJECT, { "main.tex": "after\n" });
+        crash = true;
+        const stopped = yield* Effect.exit(
+          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        );
+        expect(stopped._tag).toBe("Failure");
+        crash = false;
+
+        // The preview finishes the interrupted sync first, and says so.
+        const previewed = yield* w.service.preview({ caller: w.at(w.main), connectionId: id });
+        expect(previewed).toMatchObject({
+          _tag: "review",
+          settled: { outcome: "complete", markerPaths: [] },
+        });
+        expect(yield* read(folder, "main.tex")).toBe("after\n");
+        // Nothing is left to settle: the next sync says nothing settled.
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+        ).toMatchObject({ _tag: "synced", retried: false, settled: null });
+      }),
+    ),
+  );
+
+  it.live("reports the interrupted sync it finished even when the next review is refused", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "before\n" } },
+          at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* w.collaborate(PROJECT, { "main.tex": "after\n" });
+        crash = true;
+        expect(
+          (yield* Effect.exit(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+          ))._tag,
+        ).toBe("Failure");
+        crash = false;
+        // Overleaf now holds a file Scient refuses to bring in.
+        yield* w.collaborate(PROJECT, { "main.tex": "after\n", ".DS_Store": "finder" });
+        const refused = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s3",
+        });
+        expect(refused).toMatchObject({
+          _tag: "refused",
+          retried: false,
+          settled: { outcome: "complete" },
+        });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");
+      }),
+    ),
+  );
+
+  it.live.each(["sync", "preview"] as const)(
+    "a %s refused after it settled an interrupted sync still says so",
+    (operation) =>
+      run(
+        Effect.gen(function* () {
+          let crash = false;
+          const w = yield* world({
+            overleaf: { [PROJECT]: { "main.tex": "after\n" } },
+            at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+          });
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          crash = true;
+          expect(
+            (yield* Effect.exit(
+              w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+            ))._tag,
+          ).toBe("Failure");
+          crash = false;
+          // Overleaf cannot be reached: settling needs no fetch, the review that follows does.
+          yield* Effect.promise(() =>
+            NodeFSP.rename(w.overleafFor(PROJECT), `${w.overleafFor(PROJECT)}.offline`),
+          );
+          // Once the folder was written, the refusal is a result that says so, not an error.
+          const refused =
+            operation === "sync"
+              ? yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" })
+              : yield* w.service.preview({ caller: w.at(w.main), connectionId: id });
+          expect(refused).toMatchObject({
+            _tag: "refused",
+            settled: { outcome: "complete" },
+          });
+          // The settled sync wrote the folder, and the record took it in.
+          expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");
+          expect(yield* w.store.readConnection(id)).toMatchObject({
+            _tag: "ready",
+            document: { activeApply: null, completedSyncCount: 1 },
+          });
+        }),
+      ),
+  );
+
+  it.live("a sync whose authority changes after it settled still says it settled", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        let revokeAfterSettling = false;
+        let revoke: () => void = () => {};
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "after\n" } },
+          at: (point) =>
+            point === "applied" && crash
+              ? Effect.die("stopped")
+              : point === "adopted" && revokeAfterSettling
+                ? Effect.sync(() => {
+                    revokeAfterSettling = false;
+                    revoke();
+                  })
+                : Effect.void,
+        });
+        revoke = () => w.revoke();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        crash = true;
+        expect(
+          (yield* Effect.exit(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+          ))._tag,
+        ).toBe("Failure");
+        crash = false;
+        revokeAfterSettling = true;
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
+        ).toMatchObject({
+          _tag: "refused",
+          refusal: { reason: "authority-changed" },
+          settled: { outcome: "complete" },
+        });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");
+      }),
+    ),
+  );
+
+  it.live("a sync refused while running again after Overleaf moved says it retried", () =>
+    run(
+      Effect.gen(function* () {
+        let armed = false;
+        let moveOverleaf: Effect.Effect<void> = Effect.void;
+        let goOffline: Effect.Effect<void> = Effect.void;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } },
+          at: (point) =>
+            !armed
+              ? Effect.void
+              : point === "admitting"
+                ? moveOverleaf
+                : point === "sent"
+                  ? goOffline
+                  : Effect.void,
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        yield* write(folder, { "notes.tex": "N" });
+        // Overleaf moves while the first attempt sends, then cannot be reached for the next.
+        moveOverleaf = Effect.orDie(w.collaborate(PROJECT, { "main.tex": "A", "other.tex": "O2" }));
+        goOffline = Effect.promise(() =>
+          NodeFSP.rename(w.overleafFor(PROJECT), `${w.overleafFor(PROJECT)}.offline`),
+        );
+        armed = true;
+        const refused = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+        });
+        expect(refused).toMatchObject({
+          _tag: "refused",
+          retried: true,
+          settled: null,
+        });
+        expect(yield* w.store.readConnection(id)).toMatchObject({
+          _tag: "ready",
+          document: { activeApply: null, attempts: [{ outcome: "out-of-date" }] },
+        });
+      }),
+    ),
+  );
+
+  it.live("stops on a cancel asked while settling, before preparing again", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        let cancelWhileSettling: Effect.Effect<void> = Effect.void;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "B" } },
+          at: (point) =>
+            point === "linked" && crash
+              ? Effect.die("stopped")
+              : point === "adopted"
+                ? cancelWhileSettling
+                : Effect.void,
+        });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        crash = true;
+        expect(
+          (yield* Effect.exit(
+            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+          ))._tag,
+        ).toBe("Failure");
+        crash = false;
+        // Cancel while the interrupted sync is settled. Overleaf now holds a file Scient
+        // refuses, so a prepare after the cancel would end in a refusal instead.
+        cancelWhileSettling = Effect.gen(function* () {
+          cancelWhileSettling = Effect.void;
+          expect(yield* w.service.cancel({ caller: w.at(w.main), connectionId: id })).toMatchObject(
+            { _tag: "requested" },
+          );
+          yield* w.collaborate(PROJECT, { "main.tex": "B", ".DS_Store": "finder" });
+        }).pipe(Effect.orDie);
+        const cancelled = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s3",
+        });
+        expect(cancelled).toMatchObject({
+          _tag: "cancelled",
+          stage: "before-prepare",
+          retried: false,
+          settled: { outcome: "replan" },
+        });
+        expect(yield* w.store.readConnection(id)).toMatchObject({
+          _tag: "ready",
+          document: { activeApply: null },
+        });
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBeNull();
+      }),
+    ),
+  );
+
+  it.live("asks again when Overleaf moved after the conflict was decided", () =>
+    run(
+      Effect.gen(function* () {
+        let moveOverleaf: Effect.Effect<void> = Effect.void;
+        let armed = false;
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "line\n" } },
+          at: (point) =>
+            point === "admitting" && armed
+              ? Effect.suspend(() => {
+                  armed = false;
+                  return moveOverleaf;
+                })
+              : Effect.void,
+        });
+        moveOverleaf = Effect.orDie(
+          w.collaborate(PROJECT, { "main.tex": "theirs-v2-unreviewed\n" }),
+        );
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const folder = NodePath.join(w.main, "paper");
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+        yield* write(folder, { "main.tex": "mine\n", "other.tex": "new" });
+        yield* w.collaborate(PROJECT, { "main.tex": "theirs-v1\n" });
+        const stopped = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+        });
+        if (stopped._tag !== "needs-decision") return yield* Effect.die(stopped);
+        // Overleaf moves again while the decided sync is sending.
+        armed = true;
+        const decided = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s3",
+          choices: new Map([[stopped.review.conflicts[0]!.key, "mine"]]),
+          reviewedRemote: stopped.review.remoteTree,
+        });
+        // The first attempt applied the choice, then Overleaf moved while sending: the
+        // result says the sync ran again, so a reader knows that attempt wrote the folder.
+        expect(decided).toMatchObject({
+          _tag: "needs-decision",
+          review: { needsDecision: true },
+          retried: true,
+          settled: null,
+        });
+        expect((yield* w.overleafNow(PROJECT))["main.tex"]).toBe("theirs-v2-unreviewed\n");
+      }),
+    ),
+  );
+
+  it.live("holds the connection for the whole sync, so a disconnect cannot slip in", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        let refused: unknown = null;
+        w.onActivity(() =>
+          // Another request, in its own context: it does not hold the sync's reservation.
+          Effect.flip(
+            w.service
+              .disconnect({ caller: w.at(w.main), connectionId: id, requestId: "d1" })
+              .pipe(Effect.provideService(OverleafReservationOwner, null)),
+          ).pipe(
+            Effect.tap((error) => Effect.sync(() => (refused = error))),
+            Effect.ignore,
+          ),
+        );
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" }),
+        ).toMatchObject({ _tag: "synced" });
+        expect(refused).toMatchObject({ _tag: "OverleafOperationActiveError" });
+        expect(yield* w.store.readConnection(id)).toMatchObject({ document: { state: "active" } });
+        // A refused relink folder is recorded too.
+        w.onActivity(() => Effect.void);
+        expect(
+          yield* w.service.relink({
+            caller: w.at(w.main),
+            connectionId: id,
+            folder: "../bad",
+            requestId: "r1",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "folder-invalid" });
+        expect(
+          yield* Effect.flip(
+            w.service.relink({
+              caller: w.at(w.main),
+              connectionId: id,
+              folder: "paper",
+              requestId: "r1",
+            }),
+          ),
+        ).toMatchObject({ _tag: "OverleafRequestReusedError" });
+      }),
+    ),
+  );
+  it.live("keeps a new file only here when asked, and lists what the rule skips", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* write(NodePath.join(w.main, "paper"), {
+          "notes.txt": "mine",
+          "fig.tex": "F",
+          ".latexmkrc": "x",
+        });
+        const kept = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s1",
+          files: { keepOnlyHere: ["notes.txt"] },
+        });
+        if (kept._tag !== "synced") return yield* Effect.die(kept);
+        expect(kept.publication).toMatchObject({ _tag: "accepted" });
+        expect(Object.keys(yield* w.overleafNow(PROJECT)).sort()).toEqual(["fig.tex", "main.tex"]);
+        expect(kept.review.additions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: ".latexmkrc",
+              selected: false,
+              skippedBecause: "hidden",
+            }),
+          ]),
+        );
+      }),
+    ),
+  );
+
+  it.live("sends a file kept only here and a file the rule skips when asked", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* write(NodePath.join(w.main, "paper"), { "notes.txt": "mine", ".latexmkrc": "x" });
+        yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s1",
+          files: { keepOnlyHere: ["notes.txt"] },
+        });
+        const sent = yield* w.service.sync({
+          caller: w.at(w.main),
+          connectionId: id,
+          requestId: "s2",
+          files: { send: ["notes.txt", ".latexmkrc"] },
+        });
+        expect(sent).toMatchObject({ _tag: "synced", publication: { _tag: "accepted" } });
+        expect(Object.keys(yield* w.overleafNow(PROJECT)).sort()).toEqual([
+          ".latexmkrc",
+          "main.tex",
+          "notes.txt",
+        ]);
+      }),
+    ),
+  );
+  it.live(
+    "saves the folder's open editors before every operation that may write it, and stops over one that can't",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const paper = NodePath.join(w.main, "paper");
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+          yield* w.collaborate(PROJECT, { "main.tex": "from Overleaf, edited" });
+          yield* write(paper, { "main.tex": "edited here" });
+          w.editorSaves.length = 0;
+          w.setEditorSave({
+            _tag: "failed",
+            failures: [{ path: "paper/main.tex", reason: "composing" }],
+            unanswered: [{ window: "window-2", reason: "timeout" }],
+          });
+          const caller = w.at(w.main);
+          const refusals = [
+            yield* Effect.flip(w.service.sync({ caller, connectionId: id, requestId: "s2" })),
+            yield* Effect.flip(w.service.preview({ caller, connectionId: id })),
+            yield* Effect.flip(w.service.recover({ caller, connectionId: id })),
+            yield* Effect.flip(
+              w.service.restoreKept({
+                caller,
+                connectionId: id,
+                requestId: "r1",
+                applyId: "unknown",
+                kept: "unknown",
+                keptRevision: "unknown",
+                currentRevision: null,
+              }),
+            ),
+            yield* Effect.flip(
+              w.service.undo({ caller, connectionId: id, requestId: "u1", attemptNumber: 1 }),
+            ),
+          ];
+          for (const refused of refusals) {
+            expect(refused).toMatchObject({
+              _tag: "OverleafEditorUnsavedError",
+              failures: [{ path: "paper/main.tex", reason: "composing" }],
+              unanswered: [{ window: "window-2", reason: "timeout" }],
+            });
+            expect(refused.message).toContain("paper/main.tex (composing)");
+          }
+          // Each asked every window to save the linked folder, and changed nothing.
+          expect(w.editorSaves).toEqual(
+            Array.from({ length: 5 }, () => ({ checkoutRoot: w.main, folder: "paper" })),
+          );
+          expect(yield* read(paper, "main.tex")).toBe("edited here");
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf, edited" });
+          expect(yield* w.service.status({ caller, connectionId: id })).toMatchObject({
+            busy: false,
+          });
+
+          // The save runs inside the operation's hold on the link: a relink can't move
+          // the folder between the save and the operation's own reads.
+          let relink: unknown = null;
+          w.setEditorSave(
+            { _tag: "saved" },
+            Effect.flip(
+              w.service
+                .relink({ caller, connectionId: id, folder: "paper", requestId: "l1" })
+                .pipe(Effect.provideService(OverleafReservationOwner, null)),
+            ).pipe(
+              Effect.tap((error) => Effect.sync(() => (relink = error))),
+              Effect.ignore,
+            ),
+          );
+          // Nothing ran for the refused request, so the same request now syncs.
+          const synced = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          expect(synced).toMatchObject({ _tag: "needs-decision" });
+          expect(relink).toMatchObject({ _tag: "OverleafOperationActiveError" });
+        }),
+      ),
+  );
+
+  it.live(
+    "reports a moved linked folder as a folder refusal and recovers after it is restored",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const caller = w.at(w.main);
+          const connected = yield* w.service.connect({
+            caller,
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const connectionId = connected.connection.connectionId;
+          const paper = NodePath.join(w.main, "paper");
+          const moved = NodePath.join(w.main, "moved");
+          yield* w.service.sync({ caller, connectionId, requestId: "s1" });
+          yield* Effect.promise(() => NodeFSP.rename(paper, moved));
+          w.setEditorSave({
+            _tag: "failed",
+            failures: [{ path: "paper", reason: "folder-unavailable" }],
+            unanswered: [],
+          });
+          expect(yield* w.service.status({ caller, connectionId })).toMatchObject({
+            reasons: ["folder-changed"],
+          });
+          for (const error of [
+            yield* Effect.flip(w.service.sync({ caller, connectionId, requestId: "s2" })),
+            yield* Effect.flip(w.service.preview({ caller, connectionId })),
+          ]) {
+            expect(error).toMatchObject({
+              _tag: "OverleafConnectionNotReadyError",
+              reason: "folder-changed",
+            });
+            expect(error.message).toBe(
+              "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.",
+            );
+            expect(error.message).not.toContain("folder-unavailable");
+          }
+          expect(yield* read(moved, "main.tex")).toBe("from Overleaf");
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf" });
+          yield* Effect.promise(() => NodeFSP.rename(moved, paper));
+          w.setEditorSave({ _tag: "saved" });
+          expect(yield* w.service.sync({ caller, connectionId, requestId: "s2" })).toMatchObject({
+            _tag: "synced",
+          });
+        }),
+      ),
+  );
+
+  it.live(
+    "undo saves editors, puts back what a send changed, syncs it, and leaves a file edited since",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const caller = w.at(w.main);
+          const paper = NodePath.join(w.main, "paper");
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+          yield* write(paper, { "main.tex": "older branch", "notes.tex": "N" });
+          const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+            return yield* Effect.die(sent);
+          const attemptNumber = sent.publication.attemptNumber;
+          expect(yield* w.service.undoableSends({ caller, connectionId: id })).toEqual([
+            {
+              attemptNumber,
+              recordedAt: expect.any(String),
+              changes: [
+                { kind: "modified", path: "main.tex" },
+                { kind: "added", path: "notes.tex" },
+              ],
+            },
+          ]);
+          // Edited since that send: left as it is, and sent as an ordinary change.
+          yield* write(paper, { "notes.tex": "N, edited since" });
+          w.editorSaves.length = 0;
+
+          const undone = yield* w.service.undo({
+            caller,
+            connectionId: id,
+            requestId: "u1",
+            attemptNumber,
+          });
+          expect(undone).toMatchObject({
+            _tag: "undone",
+            restored: ["main.tex"],
+            removed: [],
+            recreated: [],
+            skipped: [{ path: "notes.tex", reason: "changed" }],
+            adopted: { outcome: "complete" },
+            sync: { _tag: "synced", publication: { _tag: "accepted" } },
+          });
+          expect(w.editorSaves).toEqual([{ checkoutRoot: w.main, folder: "paper" }]);
+          expect(yield* read(paper, "main.tex")).toBe("A");
+          expect(yield* w.overleafNow(PROJECT)).toEqual({
+            "main.tex": "A",
+            "notes.tex": "N, edited since",
+          });
+          // A repeated request applies and syncs nothing again.
+          expect(
+            yield* w.service.undo({ caller, connectionId: id, requestId: "u1", attemptNumber }),
+          ).toMatchObject({ _tag: "duplicate" });
+          // Only an accepted send that is still recorded can be undone.
+          expect(
+            yield* w.service.undo({ caller, connectionId: id, requestId: "u2", attemptNumber: 99 }),
+          ).toEqual({ _tag: "not-eligible", reason: "not-recorded" });
+        }),
+      ),
+  );
+
+  it.live("names a clean file conservatively held by a legacy marker record", () =>
+    run(
+      Effect.gen(function* () {
+        const original = { "a.tex": "A\n", "b.tex": "B\n" };
+        const w = yield* world({ overleaf: { [PROJECT]: original } });
+        const caller = w.at(w.main);
+        const connected = yield* w.service.connect({
+          caller,
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+        const stored = yield* w.store.readConnection(id);
+        if (stored._tag !== "ready") return yield* Effect.die(stored);
+        yield* w.store.replaceConnection({
+          expectedRevision: stored.document.revision,
+          next: {
+            ...stored.document,
+            revision: stored.document.revision + 1,
+            markers: [{ path: "a.tex", folderPaths: [], overleafPaths: ["a.tex"] }],
+            markerFileIds: [],
+          },
+        });
+        const folder = NodePath.join(w.main, "paper");
+        yield* write(folder, {
+          "a.tex": "clean replacement\n",
+          "b.tex": "<<<<<<< Scient\nmine\n=======\ntheirs\n>>>>>>> Overleaf\n",
+        });
+        const preview = yield* w.service.preview({ caller, connectionId: id });
+        if (preview._tag !== "review") return yield* Effect.die(preview);
+        const review = yield* decodeReview(preview.review);
+        expect(review.heldWithMarked).toEqual([{ path: "a.tex", markedPaths: ["b.tex"] }]);
+        expect(review.unresolvedMarkers).toEqual(["b.tex"]);
+        expect(review.outgoing).toEqual([]);
+        expect(review.upToDate).toBe(false);
+        const lines = previewLines({ _tag: "review", review, settled: null });
+        expect(lines.some((line) => line.startsWith("a.tex waits with b.tex,"))).toBe(true);
+        expect(lines.some((line) => /up to date|nothing needed sending/iu.test(line))).toBe(false);
+        const result = syncView(
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s2" }),
+        );
+        expect(result).toMatchObject({
+          _tag: "synced",
+          review: { heldWithMarked: review.heldWithMarked },
+          publication: { _tag: "none" },
+        });
+        expect(syncLines(result).some((line) => line.startsWith("a.tex waits with b.tex,"))).toBe(
+          true,
+        );
+        expect(
+          syncLines(result).some((line) => /up to date|nothing needed sending/iu.test(line)),
+        ).toBe(false);
+        expect(yield* w.overleafNow(PROJECT)).toEqual(original);
+        yield* write(folder, { "b.tex": "settled\n" });
+        const sent = syncView(yield* w.service.sync({ caller, connectionId: id, requestId: "s3" }));
+        expect(sent).toMatchObject({
+          _tag: "synced",
+          review: { heldWithMarked: [], unresolvedMarkers: [] },
+          publication: { _tag: "accepted" },
+        });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({
+          "a.tex": "clean replacement\n",
+          "b.tex": "settled\n",
+        });
+      }),
+    ),
+  );
+
+  it.live("holds a file with conflict marks, and sends it as it is once released", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const caller = w.at(w.main);
+        yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+        // A guide whose conflict marks are its content.
+        const guide = "# Conflict guide\n<<<<<<< Scient\nmine\n=======\ntheirs\n>>>>>>> Overleaf\n";
+        yield* write(NodePath.join(w.main, "paper"), { "guide.md": guide });
+        const held = yield* w.service.sync({
+          caller,
+          connectionId: id,
+          requestId: "s2",
+          files: { send: ["guide.md"] },
+        });
+        expect(held).toMatchObject({
+          _tag: "synced",
+          review: { unresolvedMarkers: ["guide.md"], released: [] },
+        });
+        expect((yield* w.overleafNow(PROJECT))["guide.md"]).toBeUndefined();
+        // A preview with the release shows it sent as it is.
+        expect(
+          yield* w.service.preview({ caller, connectionId: id, files: { release: ["guide.md"] } }),
+        ).toMatchObject({
+          _tag: "review",
+          review: { unresolvedMarkers: [], released: ["guide.md"] },
+        });
+        const released = yield* w.service.sync({
+          caller,
+          connectionId: id,
+          requestId: "s3",
+          files: { release: ["guide.md"] },
+        });
+        expect(released).toMatchObject({
+          _tag: "synced",
+          publication: { _tag: "accepted" },
+          review: { released: ["guide.md"] },
+        });
+        expect((yield* w.overleafNow(PROJECT))["guide.md"]).toBe(guide);
+      }),
+    ),
+  );
+
+  it.live(
+    "undo carries the pending file decisions to its sync, and stops on a cancel asked while saving",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "B" } } });
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const caller = w.at(w.main);
+          const paper = NodePath.join(w.main, "paper");
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+          yield* write(paper, { "main.tex": "A" });
+          const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+            return yield* Effect.die(sent);
+          const attemptNumber = sent.publication.attemptNumber;
+
+          // A cancel asked while the editors save: nothing is put back on either side.
+          let cancelled: unknown = null;
+          w.setEditorSave(
+            { _tag: "saved" },
+            w.service.cancel({ caller, connectionId: id }).pipe(
+              Effect.tap((answer) => Effect.sync(() => (cancelled = answer))),
+              Effect.ignore,
+            ),
+          );
+          expect(
+            yield* w.service.undo({ caller, connectionId: id, requestId: "u1", attemptNumber }),
+          ).toEqual({ _tag: "cancelled" });
+          expect(cancelled).toMatchObject({ _tag: "requested" });
+          expect(yield* read(paper, "main.tex")).toBe("A");
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "A" });
+
+          // A new file kept only on this computer stays here through Undo's sync.
+          w.setEditorSave({ _tag: "saved" });
+          yield* write(paper, { "private.tex": "notes to self" });
+          const undone = yield* w.service.undo({
+            caller,
+            connectionId: id,
+            requestId: "u2",
+            attemptNumber,
+            files: { keepOnlyHere: ["private.tex"] },
+          });
+          expect(undone).toMatchObject({
+            _tag: "undone",
+            restored: ["main.tex"],
+            sync: { _tag: "synced", publication: { _tag: "accepted" } },
+          });
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "B" });
+          // Remembered: the next sync keeps it here too.
+          const next = yield* w.service.sync({ caller, connectionId: id, requestId: "s3" });
+          expect(next).toMatchObject({ _tag: "synced", review: { localOnly: ["private.tex"] } });
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "B" });
+        }),
+      ),
+  );
+
+  it.live(
+    "undo never writes a file kept only on this computer, restored or recreated, so it never reaches Overleaf",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({
+            overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O", "gone.tex": "G" } },
+          });
+          const caller = w.at(w.main);
+          const connected = yield* w.service.connect({
+            caller,
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const paper = NodePath.join(w.main, "paper");
+          const remove = (path: string) =>
+            Effect.promise(() => NodeFSP.rm(NodePath.join(paper, path)));
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+          // Send #1 changes main.tex and other.tex, and deletes gone.tex.
+          yield* write(paper, { "main.tex": "B", "other.tex": "O2" });
+          yield* remove("gone.tex");
+          const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+            return yield* Effect.die(sent);
+          // A later send deletes main.tex; then it is recreated here and kept only here.
+          yield* remove("main.tex");
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s3" });
+          yield* write(paper, { "main.tex": "B", "gone.tex": "private new file" });
+          // gone.tex is kept too, then removed while the editors save: Undo must not
+          // recreate it either.
+          w.setEditorSave({ _tag: "saved" }, remove("gone.tex"));
+          const undone = yield* w.service.undo({
+            caller,
+            connectionId: id,
+            requestId: "u1",
+            attemptNumber: sent.publication.attemptNumber,
+            files: { keepOnlyHere: ["main.tex", "gone.tex"] },
+          });
+          // other.tex goes back and is sent; the sync after the undo keeps main.tex here.
+          expect(undone).toMatchObject({
+            _tag: "undone",
+            restored: ["other.tex"],
+            recreated: [],
+            skipped: [
+              { path: "gone.tex", reason: "kept-only-here" },
+              { path: "main.tex", reason: "kept-only-here" },
+            ],
+            sync: { _tag: "synced", publication: { _tag: "accepted" } },
+          });
+          // Untouched here, never on Overleaf, and remembered as kept only here.
+          expect(yield* read(paper, "main.tex")).toBe("B");
+          expect(yield* read(paper, "gone.tex")).toBeNull();
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "other.tex": "O" });
+          // A later ordinary sync, with no decision, keeps it here too.
+          w.setEditorSave({ _tag: "saved" });
+          expect(
+            yield* w.service.sync({ caller, connectionId: id, requestId: "s4" }),
+          ).toMatchObject({ _tag: "synced", review: { localOnly: ["main.tex"] } });
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "other.tex": "O" });
+          expect(yield* w.store.readConnection(id)).toMatchObject({
+            document: { localOnlyPaths: ["main.tex"] },
+          });
+        }),
+      ),
+  );
+
+  it.live(
+    "an undo that puts nothing back still records the kept file, so a later sync keeps it here",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+          const caller = w.at(w.main);
+          const connected = yield* w.service.connect({
+            caller,
+            folder: "paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          const paper = NodePath.join(w.main, "paper");
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+          yield* write(paper, { "main.tex": "B" });
+          const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+          if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+            return yield* Effect.die(sent);
+          yield* Effect.promise(() => NodeFSP.rm(NodePath.join(paper, "main.tex")));
+          yield* w.service.sync({ caller, connectionId: id, requestId: "s3" });
+          yield* write(paper, { "main.tex": "B" });
+          const undone = yield* w.service.undo({
+            caller,
+            connectionId: id,
+            requestId: "u1",
+            attemptNumber: sent.publication.attemptNumber,
+            files: { keepOnlyHere: ["main.tex"] },
+          });
+          // Nothing to put back, and the sync after it still ran with the decision.
+          expect(undone).toMatchObject({
+            _tag: "undone",
+            skipped: [{ path: "main.tex", reason: "kept-only-here" }],
+            adopted: null,
+            sync: { _tag: "synced" },
+          });
+          expect(yield* read(paper, "main.tex")).toBe("B");
+          expect(yield* w.store.readConnection(id)).toMatchObject({
+            document: { localOnlyPaths: ["main.tex"] },
+          });
+          // A later ordinary sync, with no decision, keeps it off Overleaf.
+          expect(
+            yield* w.service.sync({ caller, connectionId: id, requestId: "s4" }),
+          ).toMatchObject({ _tag: "synced", review: { localOnly: ["main.tex"] } });
+          expect(yield* w.overleafNow(PROJECT)).toEqual({});
+        }),
+      ),
+  );
+
+  it.live("an undo that stops partway sends nothing until a sync is asked for", () => {
+    let race = false;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } },
+          // Another writer changes main.tex just before the undo's step writes it.
+          beforeStep: async (path, folder) => {
+            if (!race || path !== "main.tex") return;
+            race = false;
+            await NodeFSP.writeFile(NodePath.join(folder, path), "C");
+          },
+        });
+        const caller = w.at(w.main);
+        const connected = yield* w.service.connect({
+          caller,
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        const id = connected.connection.connectionId;
+        const paper = NodePath.join(w.main, "paper");
+        yield* w.service.sync({ caller, connectionId: id, requestId: "s1" });
+        yield* write(paper, { "main.tex": "B" });
+        yield* w.service.sync({ caller, connectionId: id, requestId: "s2" });
+        yield* write(paper, { "main.tex": "B2", "other.tex": "O2" });
+        const sent = yield* w.service.sync({ caller, connectionId: id, requestId: "s3" });
+        if (sent._tag !== "synced" || sent.publication._tag !== "accepted")
+          return yield* Effect.die(sent);
+        race = true;
+        const undone = yield* w.service.undo({
+          caller,
+          connectionId: id,
+          requestId: "u1",
+          attemptNumber: sent.publication.attemptNumber,
+        });
+        expect(undone).toMatchObject({
+          _tag: "undone",
+          adopted: { outcome: "attention" },
+          sync: { _tag: "not-synced", reason: "undo-incomplete" },
+        });
+        expect(yield* read(paper, "main.tex")).toBe("C");
+        expect(yield* read(paper, "other.tex")).toBe("O");
+        // Nothing of the partial undo, or of the other writer's edit, was sent.
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "B2", "other.tex": "O2" });
+      }),
+    );
+  });
+});

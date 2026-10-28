@@ -1,3 +1,4 @@
+import { hasNativeFileAuthority } from "../workspace/NativeFilePublication.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 // @effect-diagnostics nodeBuiltinImport:off
 import { fixture } from "./WorkspaceApplier.testkit.ts";
@@ -11,7 +12,7 @@ import { nativeFilePublicationCapabilities } from "../workspace/NativeFilePublic
 const helper = await filePublicationTestHelper();
 const capabilities = helper === undefined ? null : await nativeFilePublicationCapabilities(helper);
 const qualifiedReplacement =
-  capabilities?.strictCurrentRoot === true && capabilities.atomicExchange;
+  capabilities != null && hasNativeFileAuthority(capabilities) && capabilities.atomicExchange;
 const bytes = (text: string) => Buffer.from(text);
 const tree = (files: Record<string, string>) =>
   new Map(Object.entries(files).map(([name, text]) => [name, bytesRevision(bytes(text))]));
@@ -35,6 +36,16 @@ async function put(cwd: string, files: Record<string, string>) {
   }
 }
 describe("Overleaf publication admission", () => {
+  it.live("refuses an oversized apply path before recording an intent", () =>
+    fixture(async (h) => {
+      const name = `${"a/".repeat(2100)}main.tex`;
+      await expect(h.apply("oversize", plan({}, { [name]: "new" }))).rejects.toMatchObject({
+        _tag: "WorkspaceApplyError",
+      });
+      expect(await NodeFSP.readdir(h.cwd)).toEqual([]);
+      await expect(NodeFSP.lstat(h.owner)).rejects.toMatchObject({ code: "ENOENT" });
+    }),
+  );
   it.live(
     "admits replacement only with qualified capture, preserving the original inode and permissions",
     () =>

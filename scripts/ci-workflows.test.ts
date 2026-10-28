@@ -351,14 +351,14 @@ describe("CI workflow decisions", () => {
   });
 
   it.each([
-    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 18],
-    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 24],
-    ["docs PR", "docs/operations/development.md", "pull_request", false, 18],
-    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 36],
-    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 27],
-    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 19],
-    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 6],
-    ["main push", "docs/operations/development.md", "push", false, 35],
+    ["web test PR", "apps/web/src/authBootstrap.test.ts", "pull_request", false, 19],
+    ["server PR", "apps/server/src/git/GitManager.ts", "pull_request", false, 25],
+    ["docs PR", "docs/operations/development.md", "pull_request", false, 19],
+    ["workflow PR", ".github/workflows/ci.yml", "pull_request", false, 37],
+    ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 28],
+    ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 20],
+    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 7],
+    ["main push", "docs/operations/development.md", "push", false, 36],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {

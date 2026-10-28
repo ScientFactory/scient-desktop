@@ -72,6 +72,8 @@ when a page is missing from the contract. Revision 6 adds `feature.viewed` with
 Oh My Pi (`omp`), Muse (`muse`) and ACP Registry (`acpRegistry`) instead of
 collapsing them into `other`. Only these fixed driver kinds are added; custom
 provider labels, configured instance IDs and runtime paths remain private.
+Revision 8 names the Synced folders settings page with the fixed `synced-folders`
+category; no folder names, paths, tokens, or project identifiers enter it.
 Installation state is aggregated per provider driver: it is
 true when at least one settled configured instance is installed. The envelope
 remains schema version 1.
@@ -84,8 +86,8 @@ registered event. Regenerate and compare both repositories from the desktop root
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v7.json \
-  /absolute/website/workers/events/fixtures/contract-v7.json
+  packages/scient-analytics/fixtures/contract-v8.json \
+  /absolute/website/workers/events/fixtures/contract-v8.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
@@ -229,7 +231,7 @@ that submitted prompts are separate measures, not unique people or all-time
 installation totals. The gateway's `analytics:insights` report exposes these
 per-provider measures and daily submission counts for non-development builds.
 Old `other` labels and missing submission events cannot be recovered from
-collected data. Deploy the revision-7 gateway before releasing this producer;
+collected data. Deploy the revision-8 gateway before releasing this producer;
 accurate coverage requires updating clients with sharing enabled.
 Existing voice/import/compute/export outcomes
 remain their authoritative measurements. This pass does not add generic error

@@ -7,6 +7,7 @@ import type { Tool } from "effect/ai";
 import { operationDefinitionForTool } from "./ScientOperationTool.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
+import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
@@ -39,6 +40,7 @@ export const scientTools = [
   ...Object.values(ScientSourcesToolkit.tools),
   ...Object.values(ScientSkillsToolkit.tools),
   ...Object.values(ScientDocumentsToolkit.tools),
+  ...Object.values(ScientOverleafToolkit.tools),
   ...Object.values(ScientComputeToolkit.tools),
   ...Object.values(ScientThreadsToolkit.tools),
 ];

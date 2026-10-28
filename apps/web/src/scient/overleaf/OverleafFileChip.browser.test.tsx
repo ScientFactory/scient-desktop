@@ -1,0 +1,436 @@
+import { render } from "../../../test/render";
+import "../../index.css";
+
+import {
+  EnvironmentId,
+  ThreadId,
+  type ScientOverleafStatus,
+  type ScientOverleafSyncResult,
+} from "@t3tools/contracts";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vitest/browser";
+
+const client = vi.hoisted(() => ({
+  readOverleafToken: vi.fn(),
+  saveOverleafToken: vi.fn(),
+  removeOverleafToken: vi.fn(),
+  connectOverleaf: vi.fn(),
+  syncOverleaf: vi.fn(),
+  previewOverleaf: vi.fn(),
+  listOverleafConnections: vi.fn(),
+  readOverleafStatus: vi.fn(),
+  listOverleafKeptCopies: vi.fn(),
+  restoreOverleafKeptCopy: vi.fn(),
+  disconnectOverleaf: vi.fn(),
+  cancelOverleafSync: vi.fn(),
+  listOverleafUndoableSends: vi.fn(),
+  undoOverleafSend: vi.fn(),
+}));
+vi.mock("./client", () => ({ ...client, overleafRequestId: () => "request-1" }));
+
+// This window's document editors: their saves refresh the chip. The server, not
+// the chip, asks every window to save the folder's editors before a sync.
+const editors = vi.hoisted(() => ({
+  entries: [] as Array<{
+    environmentId: string;
+    cwd: string;
+    relativePath: string;
+    pending: boolean;
+    attention: boolean;
+  }>,
+  flushTarget: vi.fn(),
+  listeners: new Set<() => void>(),
+}));
+vi.mock("~/scient/markdownEditor/persistence/markdownPersistenceRegistry", () => ({
+  markdownPersistenceRegistry: {
+    getSnapshot: () => editors.entries,
+    subscribe: (listener: () => void) => {
+      editors.listeners.add(listener);
+      return () => editors.listeners.delete(listener);
+    },
+    flushTarget: editors.flushTarget,
+  },
+}));
+const toasts = vi.hoisted(() => ({ add: vi.fn(() => "toast"), close: vi.fn() }));
+vi.mock("~/components/ui/toast", () => ({ toastManager: toasts }));
+
+const { OverleafFileChip } = await import("./OverleafFileChip");
+const {
+  beginOverleafPreview,
+  finishOverleafPreview,
+  readOverleafWorkspace,
+  resetOverleafStoreForTests,
+  setOverleafFileDecision,
+} = await import("./overleafStore");
+
+const environmentId = EnvironmentId.make("local");
+const threadRef = { environmentId, threadId: ThreadId.make("thread-1") };
+const ID = "0123456789abcdef01234567";
+
+const connection = (linkedHere: boolean) => ({
+  connectionId: "c1",
+  checkoutRoot: "/work/project",
+  folder: "paper",
+  projectId: ID,
+  branch: "master" as const,
+  state: "active" as const,
+  completedSyncCount: 2,
+  createdAt: "2026-10-24T10:00:00.000Z",
+  updatedAt: "2026-10-24T10:00:00.000Z",
+  linkedHere,
+});
+
+function status(overrides: Partial<ScientOverleafStatus> = {}): ScientOverleafStatus {
+  const { linkedHere: _linkedHere, ...summary } = connection(true);
+  return {
+    connection: summary,
+    availability: "ready",
+    reasons: [],
+    local: { _tag: "read", changed: 1, deleted: 0, added: 0 },
+    markerPaths: [],
+    revision: 1,
+    unresolvedSends: 0,
+    keptCopies: 0,
+    busy: false,
+    linkedElsewhere: false,
+    ...overrides,
+  };
+}
+
+const sent: ScientOverleafSyncResult = {
+  _tag: "synced",
+  settled: null,
+  review: {
+    reviewId: "r1",
+    digest: "d1",
+    remoteTree: "a".repeat(40),
+    upToDate: false,
+    needsDecision: false,
+    incoming: [{ kind: "modified", path: "refs.bib" }],
+    outgoing: [{ kind: "modified", path: "main.tex" }],
+    conflicts: [],
+    warnings: [],
+    unresolvedMarkers: [],
+    heldWithMarked: [],
+    released: [],
+    collisions: [],
+    selectedAdditions: [],
+    additions: [],
+    localOnly: [],
+  },
+  outcome: "complete",
+  interrupted: 0,
+  markerPaths: [],
+  publication: { _tag: "accepted", attemptNumber: 1 },
+  retried: false,
+  activity: [],
+  linkedElsewhere: false,
+};
+
+function reset(input: { linkedHere?: boolean; status?: ScientOverleafStatus } = {}) {
+  resetOverleafStoreForTests();
+  for (const mock of Object.values(client)) mock.mockReset();
+  toasts.add.mockClear();
+  editors.entries = [];
+  editors.flushTarget.mockReset().mockResolvedValue(true);
+  client.listOverleafConnections.mockResolvedValue({
+    connections: [connection(input.linkedHere ?? true)],
+  });
+  client.readOverleafStatus.mockResolvedValue(input.status ?? status());
+  client.syncOverleaf.mockResolvedValue(sent);
+}
+
+const chip = (relativePath = "paper/main.tex") => (
+  <OverleafFileChip
+    environmentId={environmentId}
+    cwd="/work/project"
+    relativePath={relativePath}
+    threadRef={threadRef}
+  />
+);
+
+describe("OverleafFileChip", () => {
+  it("is absent for a file outside every linked folder", async () => {
+    reset();
+    await using screen = await render(chip("analysis/run.py"));
+    await expect.poll(() => client.listOverleafConnections.mock.calls.length).toBe(1);
+    expect(screen.container.querySelector("[data-overleaf-chip]")).toBeNull();
+  });
+
+  it("syncs with one click in the header; the server saves every window's open editors", async () => {
+    reset();
+    editors.entries = [
+      {
+        environmentId,
+        cwd: "/work/project",
+        relativePath: "paper/main.tex",
+        pending: true,
+        attention: false,
+      },
+      {
+        environmentId,
+        cwd: "/work/project",
+        relativePath: "notes/todo.md",
+        pending: true,
+        attention: false,
+      },
+    ];
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Sync with Overleaf", exact: true }).click();
+
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    // One shared path: the server asks every window, this one included, to save.
+    expect(editors.flushTarget).not.toHaveBeenCalled();
+    expect(client.syncOverleaf).toHaveBeenCalledWith(environmentId, {
+      workspaceRoot: "/work/project",
+      connectionId: "c1",
+      requestId: "request-1",
+    });
+    await expect.poll(() => toasts.add.mock.calls.length).toBe(1);
+    expect(toasts.add.mock.calls[0]).toEqual([
+      expect.objectContaining({
+        type: "success",
+        title: "1 file came in, 1 was sent",
+        actionProps: expect.objectContaining({ children: "See changes" }),
+      }),
+    ]);
+  });
+
+  it("names the editor the server couldn't save, and syncs nothing", async () => {
+    reset();
+    client.syncOverleaf.mockRejectedValue({
+      _tag: "ScientOverleafOperationError",
+      reason: "editor-unsaved",
+      message:
+        "paper/main.tex was deleted while its editor held unsaved edits. Keep or discard those edits in the editor, then try again.",
+      paths: ["paper/main.tex"],
+    });
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await expect.poll(() => toasts.add.mock.calls.length).toBe(1);
+    expect(toasts.add.mock.calls[0]).toEqual([
+      expect.objectContaining({
+        type: "error",
+        description:
+          "paper/main.tex was deleted while its editor held unsaved edits. Keep or discard those edits in the editor, then try again.",
+      }),
+    ]);
+  });
+
+  it("undoes the last send: shows what it puts back, then what it did and the sync", async () => {
+    reset();
+    client.listOverleafUndoableSends.mockResolvedValue({
+      sends: [
+        {
+          attemptNumber: 4,
+          recordedAt: "2026-10-24T12:00:00.000Z",
+          changes: [
+            { kind: "modified", path: "main.tex" },
+            { kind: "added", path: "notes.tex" },
+          ],
+        },
+      ],
+    });
+    client.undoOverleafSend.mockResolvedValue({
+      _tag: "undone",
+      restored: ["main.tex"],
+      removed: [],
+      recreated: [],
+      skipped: [{ path: "notes.tex", reason: "changed" }],
+      outcome: "complete",
+      sync: { ...sent, review: { ...sent.review, incoming: [] } },
+    });
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Undo last send…" }).click();
+    await expect.element(page.getByText("Undo send #4")).toBeVisible();
+    await expect.element(page.getByText("Restore", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Remove", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect.element(page.getByText("Undo complete")).toBeVisible();
+    await expect.element(page.getByText("Left as it is: notes.tex (edited since).")).toBeVisible();
+    await expect.element(page.getByText("1 file was sent.")).toBeVisible();
+    expect(client.undoOverleafSend).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      workspaceRoot: "/work/project",
+      connectionId: "c1",
+      requestId: "request-1",
+      attemptNumber: 4,
+    });
+    // The undo's sync is recorded like any other.
+    expect(
+      readOverleafWorkspace(environmentId, "/work/project").lastSync.get("c1")?.result,
+    ).toEqual(expect.objectContaining({ _tag: "synced" }));
+  });
+
+  it("undo carries the pending file decisions, so a file kept here stays here", async () => {
+    reset();
+    client.listOverleafUndoableSends.mockResolvedValue({
+      sends: [
+        {
+          attemptNumber: 4,
+          recordedAt: "2026-10-24T12:00:00.000Z",
+          changes: [{ kind: "modified", path: "main.tex" }],
+        },
+      ],
+    });
+    client.undoOverleafSend.mockResolvedValue({
+      _tag: "undone",
+      restored: ["main.tex"],
+      removed: [],
+      recreated: [],
+      skipped: [],
+      outcome: "complete",
+      sync: sent,
+    });
+    // The review shown offers private.tex, and it is kept only on this computer.
+    finishOverleafPreview(environmentId, "c1", beginOverleafPreview(environmentId, "c1"), {
+      _tag: "review",
+      review: {
+        ...sent.review,
+        additions: [{ path: "private.tex", size: 1, selected: true, skippedBecause: null }],
+      },
+    });
+    setOverleafFileDecision(environmentId, "c1", "private.tex", "keep");
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Undo last send…" }).click();
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(toasts.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "success",
+        title: "Undo complete",
+        description: expect.stringContaining("Put back an earlier version locally: main.tex."),
+      }),
+    );
+    expect(client.undoOverleafSend).toHaveBeenCalledExactlyOnceWith(
+      environmentId,
+      expect.objectContaining({ attemptNumber: 4, files: { keepOnlyHere: ["private.tex"] } }),
+    );
+  });
+
+  it("in another worktree, says the link belongs to the main copy and offers to sync it", async () => {
+    reset({ linkedHere: false });
+    await using _screen = await render(chip());
+    await expect
+      .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Sync with Overleaf", exact: true }))
+      .not.toBeInTheDocument();
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await expect.element(page.getByText("This link belongs to the main copy.")).toBeVisible();
+    await page.getByRole("menuitem", { name: "Sync the main copy" }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    // The worktree asks; the server syncs the linked copy.
+    expect(client.syncOverleaf).toHaveBeenCalledWith(
+      environmentId,
+      expect.objectContaining({ workspaceRoot: "/work/project", connectionId: "c1" }),
+    );
+  });
+
+  it("offers Cancel sync while a sync runs, and reports where it stopped", async () => {
+    reset();
+    let finish!: (result: ScientOverleafSyncResult) => void;
+    client.syncOverleaf.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    client.cancelOverleafSync.mockResolvedValue({ _tag: "requested", operationId: "op-1" });
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await expect
+      .element(page.getByRole("button", { name: "Syncing with Overleaf…" }))
+      .toBeDisabled();
+    await page.getByRole("button", { name: "Overleaf: Syncing…" }).click();
+    await expect.element(page.getByRole("menuitem", { name: "Sync now" })).not.toBeInTheDocument();
+    await page.getByRole("menuitem", { name: "Cancel sync" }).click();
+    expect(client.cancelOverleafSync).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      workspaceRoot: "/work/project",
+      connectionId: "c1",
+    });
+
+    finish({ _tag: "cancelled", stage: "before-prepare", retried: false, settled: null });
+    await expect.poll(() => toasts.add.mock.calls.length).toBe(1);
+    expect(toasts.add.mock.calls[0]).toEqual([
+      expect.objectContaining({ type: "info", title: "Sync cancelled" }),
+    ]);
+  });
+
+  it("a chip that appears reads a stale status again, but not a fresh one", async () => {
+    reset();
+    const { notifyWorkspaceFileSaved } = await import("~/scient/files/workspaceFileSaves");
+    {
+      await using _screen = await render(chip());
+      await expect
+        .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+        .toBeVisible();
+    }
+    const before = client.readOverleafStatus.mock.calls.length;
+    {
+      // Just read: a new chip uses it as it is.
+      await using _screen = await render(chip("paper/intro.tex"));
+      await expect
+        .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+        .toBeVisible();
+      expect(client.readOverleafStatus.mock.calls.length).toBe(before);
+    }
+    // A save makes it stale: the next chip reads at once, without waiting for the settle delay.
+    notifyWorkspaceFileSaved({
+      environmentId,
+      cwd: "/work/project",
+      relativePath: "paper/refs.bib",
+    });
+    await using _third = await render(chip("paper/refs.bib"));
+    expect(client.readOverleafStatus.mock.calls.length).toBe(before + 1);
+  });
+
+  it("See changes after an earlier sync reads what the next sync would do", async () => {
+    reset();
+    client.previewOverleaf.mockResolvedValue({
+      _tag: "review",
+      review: sent.review,
+      settled: null,
+    });
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    await page.getByRole("button", { name: /^Overleaf: / }).click();
+    await page.getByRole("menuitem", { name: "See changes" }).click();
+    await expect.poll(() => client.previewOverleaf.mock.calls.length).toBe(1);
+  });
+
+  it("Sync now carries the link's pending file decisions, and clears them once it applies", async () => {
+    reset();
+    await using _screen = await render(chip());
+    await expect
+      .element(page.getByRole("button", { name: "Overleaf: Edits to send" }))
+      .toBeVisible();
+    // Decisions made in the Overleaf tab on the review it read.
+    finishOverleafPreview(environmentId, "c1", beginOverleafPreview(environmentId, "c1"), {
+      _tag: "review",
+      review: {
+        ...sent.review,
+        additions: [
+          { path: "draft.tex", size: 1, selected: true, skippedBecause: null },
+          { path: "main.aux", size: 1, selected: false, skippedBecause: "build-output" },
+        ],
+      },
+    });
+    setOverleafFileDecision(environmentId, "c1", "draft.tex", "keep");
+    setOverleafFileDecision(environmentId, "c1", "main.aux", "send");
+    await page.getByRole("button", { name: "Overleaf: Edits to send" }).click();
+    await page.getByRole("menuitem", { name: "Sync now" }).click();
+    await expect.poll(() => client.syncOverleaf.mock.calls.length).toBe(1);
+    expect(client.syncOverleaf.mock.calls[0]![1]).toMatchObject({
+      files: { keepOnlyHere: ["draft.tex"], send: ["main.aux"] },
+    });
+    await expect
+      .poll(() => readOverleafWorkspace(environmentId, "/work/project").fileDecisions.has("c1"))
+      .toBe(false);
+  });
+});

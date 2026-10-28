@@ -126,7 +126,8 @@ function fixture(t, event = "push") {
     return run;
   }
   const receiptFor = (run, fields) => ({
-    schemaVersion: 3,
+    schemaVersion: 4,
+    overleafWindows: true,
     event: run.event,
     repository: REPO,
     workflow: WORKFLOW,
@@ -455,7 +456,8 @@ test("queue receipt requires every lane, including non-required layout and mobil
   }
   assert.equal(await writeReceipt(f), true);
   assert.deepEqual(written(f), {
-    schemaVersion: 3,
+    schemaVersion: 4,
+    overleafWindows: true,
     event: "merge_group",
     repository: REPO,
     workflow: WORKFLOW,
@@ -476,6 +478,7 @@ test("a queue run that reused PR qualification records its source", async (t) =>
   const f = receiptFixture(t, "merge_group");
   for (const job of JOBS) f.needs[job].result = "skipped";
   f.needs.release_notes.result = "success";
+  f.needs.overleaf_windows.result = "success";
   f.needs.queue_ci.result = "success";
   for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
   f.needs.queue_ci.outputs = {
@@ -497,7 +500,8 @@ test("a same-repository PR receipt records the tested merge, its content and its
   const f = receiptFixture(t, "pull_request");
   assert.equal(await writeReceipt(f), true);
   assert.deepEqual(written(f), {
-    schemaVersion: 3,
+    schemaVersion: 4,
+    overleafWindows: true,
     event: "pull_request",
     repository: REPO,
     workflow: WORKFLOW,
@@ -808,3 +812,23 @@ for (const [name, mutate] of [
     mutate(f);
     await refused(f);
   });
+
+test("pre-Windows receipts and receipts without successful Windows evidence cannot be reused", async (t) => {
+  for (const change of [
+    (r) => {
+      r.schemaVersion = 3;
+    },
+    (r) => {
+      delete r.overleafWindows;
+    },
+    (r) => {
+      r.overleafWindows = false;
+    },
+  ]) {
+    const f = fixture(t, "merge_group");
+    change(f.receipt);
+    await restore(f);
+    assert.notEqual(f.outputs.reused, "true");
+    assert.ok(f.messages.some((message) => message.includes("Qualification receipt differs")));
+  }
+});

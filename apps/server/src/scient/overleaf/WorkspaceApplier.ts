@@ -20,6 +20,8 @@ import {
   recheckRetainedFile,
   type RetainedMutationResult,
 } from "../workspace/RetainedFileMutation.ts";
+import { NATIVE_LEASE_FOLDER_LIMIT } from "../workspace/NativeFilePublication.ts";
+import { assertOverleafApplyPaths, assertOverleafHostPath } from "./overleafHostPaths.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
 import { manuscriptTreeProblem, manuscriptPathProblem } from "./manuscriptPaths.ts";
 import {
@@ -111,6 +113,8 @@ export interface WorkspaceApplyResult {
   readonly base: ReadonlyMap<string, string>;
   readonly interrupted: ReadonlyArray<ReadonlyArray<string>>;
   readonly markerPaths: ReadonlyArray<string>;
+  /** Every unit was applied; none was skipped or interrupted. */
+  readonly unitsDone: boolean;
   /** Kept copies; `relativePath` is the plan path whose step kept it. */
   readonly retained: ReadonlyArray<
     RetainedMutationResult & { readonly changed: boolean; readonly relativePath: string }
@@ -130,6 +134,15 @@ export class WorkspaceApplier extends Context.Service<
     readonly apply: (
       input: WorkspaceApplyInput,
     ) => Effect.Effect<WorkspaceApplyResult, WorkspaceApplyError>;
+    /**
+     * Whether every write `plan` needs fits one native lease (at most
+     * `NATIVE_LEASE_FOLDER_LIMIT` folders), as the folder stands now. Asked
+     * before an apply is recorded, so one that could not finish is refused with
+     * nothing written rather than stopped part way.
+     */
+    readonly fits: (
+      input: Omit<WorkspaceApplyInput, "id" | "plan"> & { readonly plan: WorkspaceApplyPlan },
+    ) => Effect.Effect<boolean, WorkspaceApplyError>;
   }
 >()("t3/scient/overleaf/WorkspaceApplier") {}
 export interface ApplierHooks {
@@ -272,7 +285,7 @@ function validatePlan(plan: StoredPlan) {
 }
 async function revision(cwd: string, name: string) {
   try {
-    const stat = await NodeFSP.lstat(NodePath.join(cwd, name));
+    const stat = await NodeFSP.lstat(assertOverleafHostPath(NodePath.join(cwd, name)));
     if (stat.isDirectory()) return null;
     return await fileRevision(NodePath.join(cwd, name));
   } catch (e) {
@@ -348,8 +361,42 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
     record.desired !== (ownValue(state.plan.target, name)?.revision ?? null)
   )
     throw new Error("Retained mutation does not match apply intent.");
+  if (record.version === 2 && record.publication === "staged-create") {
+    if (record.phase === "done") return record.sourceMutation !== false;
+    if (record.phase === "preparing" || record.phase === "prepared") return false;
+    const published = await fileIdentity(record.target);
+    if (
+      published &&
+      record.createStageIdentity &&
+      published.dev === record.createStageIdentity.dev &&
+      published.ino === record.createStageIdentity.ino
+    )
+      return true;
+    const stage = await fileIdentity(
+      NodePath.join(NodePath.dirname(record.target), record.createStageName),
+    );
+    return !(
+      stage &&
+      record.createStageIdentity &&
+      stage.dev === record.createStageIdentity.dev &&
+      stage.ino === record.createStageIdentity.ino
+    );
+  }
   if (record.phase === "done") return record.outcome !== "skipped";
   if (record.phase === "preparing") return false;
+  if ("originalSecurity" in record) {
+    if (await fileIdentity(NodePath.join(directory, "retained"))) return true;
+    const target = await fileIdentity(record.destination ?? record.target);
+    if (
+      target &&
+      record.stagedIdentity &&
+      target.dev === record.stagedIdentity.dev &&
+      target.ino === record.stagedIdentity.ino
+    )
+      return true;
+    // A permission transition also needs recovery, even when A never left the public name.
+    return record.sourceMutation === true;
+  }
   if (record.phase !== "prepared") return true;
   // Older additive records have no durable pre-publication boundary. Their
   // absence of evidence cannot establish that publication never happened.
@@ -404,6 +451,20 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
       Effect.gen(function* () {
         if (!/^[a-zA-Z0-9_-]{1,100}$/u.test(input.id))
           return yield* new WorkspaceApplyError({ cause: new Error("Invalid apply id.") });
+        // Refused before any folder is made; checked again below on the resolved folder.
+        yield* Effect.try({
+          try: () =>
+            assertOverleafApplyPaths(
+              input.cwd,
+              input.applicationDirectory,
+              new Set([
+                ...(input.plan?.captured.keys() ?? []),
+                ...(input.plan?.target.keys() ?? []),
+              ]),
+              input.id,
+            ),
+          catch: (cause) => new WorkspaceApplyError({ cause }),
+        });
         const prepareDirectory = (retentionDirectory: string) =>
           files
             .prepareRetainedDirectory({ cwd: input.cwd, retentionDirectory })
@@ -427,6 +488,15 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
         const begin = yield* Effect.tryPromise({
           try: async () => {
             const cwd = await NodeFSP.realpath(input.cwd);
+            assertOverleafApplyPaths(
+              cwd,
+              input.applicationDirectory,
+              new Set([
+                ...(input.plan?.captured.keys() ?? []),
+                ...(input.plan?.target.keys() ?? []),
+              ]),
+              input.id,
+            );
             const rootIdentity = await directoryIdentity(cwd);
             if ((await NodeFSP.stat(retentionDirectory)).dev !== (await NodeFSP.stat(cwd)).dev)
               throw new Error("Apply retention must be on manuscript filesystem.");
@@ -520,7 +590,9 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                   ...Object.keys(state.plan.captured),
                   ...Object.keys(state.plan.target),
                 ])) {
-                  const stat = await NodeFSP.lstat(NodePath.join(cwd, name)).catch((e) => {
+                  const stat = await NodeFSP.lstat(
+                    assertOverleafHostPath(NodePath.join(cwd, name)),
+                  ).catch((e) => {
                     if (["ENOENT", "ENOTDIR"].includes(e.code)) return null;
                     throw e;
                   });
@@ -547,6 +619,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
             base: new Map(),
             interrupted: [],
             markerPaths: [],
+            unitsDone: false,
             retained: [],
             matchesTarget: false,
             stagingPaths: [],
@@ -851,6 +924,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                   base: new Map(Object.entries(state.nextBase)),
                   interrupted,
                   markerPaths,
+                  unitsDone: state.phase !== "replan" && state.outcomes.every((o) => o === "done"),
                   retained,
                   matchesTarget,
                   stagingPaths: (await NodeFSP.readdir(state.cwd)).filter((name) =>
@@ -864,7 +938,28 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
           .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
       }).pipe(Effect.uninterruptible),
     );
-  return WorkspaceApplier.of({ apply });
+  const fits: WorkspaceApplier["Service"]["fits"] = (input) =>
+    files
+      .retainedWriteFolders({
+        cwd: input.cwd,
+        // Where an apply keeps its step records: `<id>/files` (any id is as deep).
+        retentionDirectory: NodePath.join(input.applicationDirectory, "apply", "files"),
+        // The paths it changes; a step leaves an unchanged one alone.
+        relativePaths: [
+          ...new Set([...input.plan.captured.keys(), ...input.plan.target.keys()]),
+        ].filter((path) => {
+          const target = input.plan.target.get(path);
+          return (
+            (target === undefined ? undefined : bytesRevision(target.bytes)) !==
+            input.plan.captured.get(path)
+          );
+        }),
+      })
+      .pipe(
+        Effect.map((folders) => folders <= NATIVE_LEASE_FOLDER_LIMIT),
+        Effect.mapError((cause) => new WorkspaceApplyError({ cause })),
+      );
+  return WorkspaceApplier.of({ apply, fits });
 });
 export const make = (hooks: ApplierHooks = {}) => makeEffect(hooks);
 /** @public */

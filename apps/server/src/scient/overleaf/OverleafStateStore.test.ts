@@ -25,11 +25,11 @@ import {
   locateOverleafRetention,
   type OverleafVolumeIdentityResolver,
 } from "./OverleafRetentionVault.ts";
-import { fileExchangeTestHelper } from "../workspace/fileExchange.testkit.ts";
+import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
 
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
 const fakeVolume: OverleafVolumeIdentityResolver = async () => VOLUME;
-const helper = await fileExchangeTestHelper();
+const helper = await filePublicationTestHelper();
 const diskImagesAvailable =
   HostProcess.Platform.defaultValue() === "darwin" &&
   NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
@@ -104,6 +104,7 @@ const openStore = (
     );
     const store = yield* OverleafStateStore.make({
       root,
+      publicationHelper: helper,
       ...(hooks === undefined ? {} : { hooks }),
       ...(volumeUuid === undefined ? {} : { volumeUuid }),
     }).pipe(Scope.provide(scope));
@@ -286,6 +287,7 @@ describe("OverleafStateStore", () => {
                 retainedAtSyncCount: 0,
                 kept: "apply-1/files/step-0/retained",
                 markers: false,
+                markerLinks: [],
                 versions: [],
                 stamp: "1:1",
               },
@@ -388,7 +390,7 @@ describe("OverleafStateStore", () => {
           );
 
           yield* Effect.promise(() =>
-            NodeFSP.writeFile(file, JSON.stringify({ ...document, schemaVersion: 2 })),
+            NodeFSP.writeFile(file, JSON.stringify({ ...document, schemaVersion: 3 })),
           );
           expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "unsupported" });
           const unsupportedBytes = yield* Effect.promise(() => NodeFSP.readFile(file, "utf8"));
@@ -410,6 +412,82 @@ describe("OverleafStateStore", () => {
           expect(yield* store.readConnection("connection-2")).toEqual({ _tag: "corrupt" });
         }),
       ),
+  );
+
+  it.live("reads a version 1 document as file records and writes it back as the current one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* temporaryRoot();
+        const { store } = yield* openStore(root);
+        const document = overleafConnectionFixture();
+        yield* store.createConnection(document);
+        const file = NodePath.join(connectionsDirectory(root), "connection-1.json");
+        // Version 1 recorded conflict material by folder path, a pending apply's too.
+        const { markers: _markers, ...current } = document;
+        const link = {
+          applyId: "apply-1",
+          kind: "sync-apply",
+          operationId: "operation-1",
+          planDigest: "a".repeat(64),
+          baseGeneration: 0,
+          intentTree: "5".repeat(40),
+          remoteCommit: "7".repeat(40),
+          localOnly: [],
+          priorMarkers: ["b.tex"],
+        };
+        // A kept copy of conflict material knew nothing of its file's other paths.
+        const copy = {
+          applyId: "apply-0",
+          relativePath: "c.tex",
+          revision: "sha256:0",
+          state: "kept",
+          retainedAt: "2026-10-13T10:00:00.000Z",
+          retainedAtSyncCount: 0,
+          kept: "apply-0/files/step-0/retained",
+          markers: true,
+          versions: [],
+          stamp: "1:1",
+        };
+        const old = {
+          ...current,
+          schemaVersion: 1,
+          markerPaths: ["a.tex", "b.tex"],
+          retention: { ...current.retention, copies: [copy] },
+          activeApply: link,
+        };
+        yield* Effect.promise(() => NodeFSP.writeFile(file, JSON.stringify(old)));
+        const read = yield* store.readConnection("connection-1");
+        expect(read).toEqual({
+          _tag: "ready",
+          document: {
+            ...document,
+            markers: [
+              { path: "a.tex", folderPaths: [], overleafPaths: ["a.tex"] },
+              { path: "b.tex", folderPaths: [], overleafPaths: ["b.tex"] },
+            ],
+            // Version 1 never recorded a kept copy's other paths: unknown, not none.
+            retention: { ...document.retention, copies: [{ ...copy, markerLinks: null }] },
+            // Where the apply put them is found at adoption, from its renames.
+            activeApply: {
+              ...link,
+              priorMarkers: [{ path: "b.tex", links: null }],
+              markers: [{ path: "b.tex", folderPaths: [], overleafPaths: ["b.tex"] }],
+            },
+          },
+        });
+        if (read._tag !== "ready") return;
+        yield* store.replaceConnection({ expectedRevision: 1, next: revised(read.document) });
+        const written = yield* Effect.promise(() => NodeFSP.readFile(file, "utf8"));
+        expect(written).toContain('"schemaVersion":2');
+        expect(written).not.toContain("markerPaths");
+
+        // A damaged older document is reported damaged, not as another release's.
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(file, JSON.stringify({ ...old, markerPaths: ["/absolute.tex"] })),
+        );
+        expect(yield* store.readConnection("connection-1")).toEqual({ _tag: "corrupt" });
+      }),
+    ),
   );
 
   it.live("returns the original receipt for a repeated request and refuses a reused ID", () =>
@@ -687,6 +765,36 @@ describe("OverleafStateStore", () => {
   );
 
   describe("prepareRetention", () => {
+    it.live("does not fall back when the configured publication helper is missing", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const root = yield* temporaryRoot();
+          const checkout = NodePath.join(root, "paper");
+          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+          const { store } = yield* openStore(NodePath.join(root, "state"), undefined, fakeVolume);
+          const result = yield* Effect.exit(
+            store.prepareRetention({
+              environmentId: "environment-1",
+              connectionId: "connection-1",
+              checkoutRoot: checkout,
+              publicationHelper: NodePath.join(root, "missing-helper"),
+              expected: null,
+            }),
+          );
+          expect(Exit.isFailure(result)).toBe(true);
+          expect(
+            yield* Effect.promise(() =>
+              NodeFSP.readdir(NodePath.join(root, "state", "retained", "connection-1")).catch(
+                (cause: unknown) => {
+                  if ((cause as NodeJS.ErrnoException).code === "ENOENT") return [];
+                  throw cause;
+                },
+              ),
+            ),
+          ).toEqual([]);
+        }),
+      ),
+    );
     const prepare = (
       store: OverleafStateStore.OverleafStateStore["Service"],
       checkoutRoot: string,
@@ -696,7 +804,7 @@ describe("OverleafStateStore", () => {
         environmentId: "environment-1",
         connectionId: "connection-1",
         checkoutRoot,
-        exchangeHelper: helper ?? null,
+        publicationHelper: helper ?? null,
         expected,
       });
     const refusal = <A, E extends { readonly _tag: string }>(effect: Effect.Effect<A, E>) =>
@@ -717,7 +825,10 @@ describe("OverleafStateStore", () => {
               NodeFSP.realpath(NodePath.join(root, "state", "retained", "connection-1")),
             ),
           );
-          expect(prepared.identity.volume).toBe(VOLUME);
+          // Linux identity comes from the held native object, never the macOS seam.
+          if (HostProcess.Platform.defaultValue() === "linux")
+            expect(prepared.identity).toMatchObject({ platform: "linux" });
+          else expect(prepared.identity.volume).toBe(VOLUME);
           const stat = yield* Effect.promise(() => NodeFSP.stat(prepared.directory));
           expect(stat.mode & 0o077).toBe(0);
           expect(yield* prepare(store, checkout, prepared.identity)).toEqual(prepared);
@@ -849,7 +960,7 @@ describe("OverleafStateStore", () => {
           const denied = NodePath.join(root, "state", "retained");
           yield* Effect.acquireRelease(
             Effect.promise(async () => {
-              await NodeFSP.mkdir(denied, { recursive: true });
+              await NodeFSP.mkdir(denied, { recursive: true, mode: 0o700 });
               await NodeFSP.chmod(denied, 0o000);
             }),
             () => Effect.promise(() => NodeFSP.chmod(denied, 0o700)),
@@ -888,7 +999,7 @@ describe("OverleafStateStore", () => {
               connectionId: "connection-1",
               checkoutRoot: checkout,
               userId: process.getuid?.(),
-              exchangeHelper: helper ?? null,
+              publicationHelper: helper ?? null,
               expected: prepared.identity,
               volumeUuid: fakeVolume,
             }),
@@ -927,20 +1038,24 @@ describe("OverleafStateStore", () => {
       ),
     );
 
-    it.live("refuses a disk without a volume identity, never using the device number", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const root = yield* temporaryRoot();
-          const checkout = NodePath.join(root, "checkout");
-          yield* Effect.promise(() => NodeFSP.mkdir(checkout));
-          const { store } = yield* openStore(
-            NodePath.join(root, "state"),
-            undefined,
-            async () => null,
-          );
-          expect(yield* refusal(prepare(store, checkout))).toBe("no-volume-identity");
-        }),
-      ),
+    // The null-resolver premise only exists where the seam discovers volumes;
+    // Linux reads identity natively (its no-volume case is covered in LinuxFilePublication).
+    it.live.skipIf(HostProcess.Platform.defaultValue() === "linux")(
+      "refuses a disk without a volume identity, never using the device number",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const root = yield* temporaryRoot();
+            const checkout = NodePath.join(root, "checkout");
+            yield* Effect.promise(() => NodeFSP.mkdir(checkout));
+            const { store } = yield* openStore(
+              NodePath.join(root, "state"),
+              undefined,
+              async () => null,
+            );
+            expect(yield* refusal(prepare(store, checkout))).toBe("no-volume-identity");
+          }),
+        ),
     );
 
     it.live("refuses a read-only location beside the checkout", () =>
@@ -974,7 +1089,7 @@ describe("OverleafStateStore", () => {
           const elsewhere = NodePath.join(root, "elsewhere");
           yield* Effect.promise(async () => {
             await NodeFSP.mkdir(checkout);
-            await NodeFSP.mkdir(NodePath.join(root, "state"), { recursive: true });
+            await NodeFSP.mkdir(NodePath.join(root, "state"), { recursive: true, mode: 0o700 });
             await NodeFSP.mkdir(elsewhere);
             await NodeFSP.symlink(elsewhere, NodePath.join(root, "state", "retained"));
           });
@@ -1036,7 +1151,7 @@ describe("OverleafStateStore", () => {
               environmentId: "environment-1",
               connectionId: "connection-1",
               checkoutRoot: checkout,
-              exchangeHelper: null,
+              publicationHelper: null,
               expected: null,
             });
             expect(fallback.directory).toBe(
@@ -1077,7 +1192,7 @@ describe("OverleafStateStore", () => {
                   environmentId: "environment-1",
                   connectionId: "connection-1",
                   checkoutRoot: checkout,
-                  exchangeHelper: null,
+                  publicationHelper: null,
                   expected: null,
                 }),
               ),

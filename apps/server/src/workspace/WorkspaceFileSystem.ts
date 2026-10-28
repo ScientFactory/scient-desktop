@@ -872,6 +872,7 @@ export const make = Effect.gen(function* () {
     );
   const {
     registerRetainedFileHistory,
+    retainedWriteFolders,
     prepareRetainedDirectory,
     listFileVersions,
     discardFileVersion,
@@ -896,6 +897,9 @@ export const make = Effect.gen(function* () {
     replaceFileRetained,
     removeFileRetained,
     registerRetainedFileHistory,
+    // SCIENT-FORK:START — Overleaf preflights the folders each retained write needs.
+    retainedWriteFolders,
+    // SCIENT-FORK:END
     prepareRetainedDirectory,
     listFileVersions,
     discardFileVersion,

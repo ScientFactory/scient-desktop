@@ -1,4 +1,5 @@
-import * as HostProcess from "@t3tools/shared/HostProcess";
+import { nativePublicationHost } from "../workspace/fileExchange.testkit.ts";
+const canPublish = await nativePublicationHost();
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -11,7 +12,7 @@ const revisions = (files: Readonly<Record<string, string>>) =>
 const sorted = (tree: ReadonlyMap<string, string>) =>
   [...tree].sort(([a], [b]) => a.localeCompare(b));
 for (const model of modelCases) {
-  it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
+  it.live.skipIf(!canPublish)(
     `matches independent checker base: ${model.action} crash=${model.crash}`,
     () => {
       let stop = model.crash,

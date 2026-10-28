@@ -1,10 +1,9 @@
 import type { SettingsScopeSearch } from "~/components/settings/settingsScope";
 
-/**
- * Tool settings choose one server environment, never an aggregate. Document preferences remain
- * device-local and visible offline; hide only offline server tools. Documents has no project scope,
- * while connector grants list their server's own projects.
- */
+/** Tool settings choose one server environment, never an aggregate. Document preferences remain
+ * device-local and visible offline; hide only offline server tools. Documents has no project scope.
+ * Connector grants and Synced folders list their server's own projects; Synced folders keeps its
+ * token and links on each server. */
 const SINGLE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   "/settings/providers": true,
   "/settings/documents": true,
@@ -12,6 +11,7 @@ const SINGLE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   "/settings/accounts": true,
   // SCIENT-FORK:END
   "/settings/extensions": true,
+  "/settings/synced-folders": true,
 };
 
 const SERVER_ONLY_SETTINGS_PATHS: Readonly<Record<string, true>> = {
@@ -20,6 +20,7 @@ const SERVER_ONLY_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   "/settings/accounts": true,
   // SCIENT-FORK:END
   "/settings/extensions": true,
+  "/settings/synced-folders": true,
 };
 
 const OFFLINE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
