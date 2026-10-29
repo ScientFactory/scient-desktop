@@ -25,6 +25,8 @@ const CONTRACT_SECTION_BY_PAGE: Readonly<Record<string, string>> = {
   devices: "integrations",
   labs: "beta",
   maintenance: "storage",
+  // Upstream's secret providers (off behind its flag) report with Scient's credentials.
+  secrets: "accounts",
   worktrees: "storage",
 };
 
