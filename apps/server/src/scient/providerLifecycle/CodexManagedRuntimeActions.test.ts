@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as CodexErrors from "effect-codex-app-server/errors";
 
 import {
   ManagedCodexRuntime,
@@ -26,6 +27,7 @@ import {
   resolveCodexCatalogCandidate,
   resolveCodexCodeModeHostPath,
   describeCodexCapabilityFailure,
+  isCodexAccountReadIncomplete,
   isStandInForManagedCodex,
   resolveCodexManagedRuntimePolicy,
   resolveCodexRuntimeHomePath,
@@ -350,6 +352,29 @@ describe("Codex managed runtime policy", () => {
         ),
       ),
     ).toBe("it failed to start: Failed to spawn Codex App Server process");
+  });
+
+  it("passes a Codex that cannot reach OpenAI, but not one without the account API", () => {
+    const answered = (code: number, message: string) =>
+      CodexErrors.CodexAppServerRequestError.fromProtocolError(
+        { code, message },
+        "account/read",
+        "1",
+      );
+
+    expect(
+      isCodexAccountReadIncomplete(answered(-32603, "workspace routing discovery failed")),
+    ).toBe(true);
+    expect(isCodexAccountReadIncomplete(answered(-32601, "Method not found"))).toBe(false);
+    expect(
+      isCodexAccountReadIncomplete(
+        CodexErrors.CodexAppServerRequestError.unexpectedPayload(
+          "account/read",
+          "decode-payload",
+          "an answer in another shape",
+        ),
+      ),
+    ).toBe(false);
   });
 
   it("offers PATH Codex updates only when no private copy is installed", () => {
