@@ -1039,6 +1039,15 @@ describe("ChatMarkdown math", () => {
     );
   });
 
+  it("fits inline formulas that end in a subscript or root without scrolling", async () => {
+    setup();
+    await using rendered = await renderMath("Each $r_i$ is $\\Gamma_i z_0$, near $\\sqrt{2}$.");
+    await document.fonts.ready;
+    const formulas = [...rendered.container.querySelectorAll<HTMLElement>(".scient-math-inline")];
+    expect(formulas).toHaveLength(3);
+    for (const formula of formulas) expect(formula.scrollWidth).toBe(formula.clientWidth);
+  });
+
   it("renders table formulas and exports their TeX instead of duplicate glyph text", async () => {
     setup();
     await using rendered = await renderMath(
