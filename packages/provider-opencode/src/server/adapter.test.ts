@@ -299,10 +299,17 @@ describe("OpenCodeAdapterV2", () => {
   it.effect("classifies APIError 429 as a usage limit", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
+      // SCIENT-FORK: Scient writes and confirms the turn's permission rules before prompting.
+      let permission: unknown;
       const harness = yield* makeOpenCodeRuntimeHarness("usage-limit", "root", {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          update: async (input: { permission: unknown }) => {
+            permission = input.permission;
+            return { data: { id: "root", time: { created: 1, updated: 2 } } };
+          },
+          get: async () => ({ data: { id: "root", permission, time: { created: 1, updated: 2 } } }),
           promptAsync: async () => ({ data: true }),
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),

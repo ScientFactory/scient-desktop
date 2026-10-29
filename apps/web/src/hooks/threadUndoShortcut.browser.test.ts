@@ -5,6 +5,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { fakeTimers } from "../../test/render";
 import { randomUUID } from "../lib/utils";
+import { registerModelPickerContent } from "../modelPickerVisibility";
 import { registerShortcutClaim } from "../scient/keyboard/ownership";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
@@ -40,6 +41,9 @@ function setup(noticeVisible = true, enabled?: () => boolean) {
       const undo = vi.fn(async () => AsyncResult.success(undefined));
       showThreadUndoNotice({ action, claim, undo, failureTitle: "Undo failed" });
       return undo;
+    },
+    openModelPicker() {
+      stack.defer(registerModelPickerContent());
     },
     remount() {
       uninstall();
@@ -122,7 +126,7 @@ it.each(["palette", "model picker", "keybinding capture"] as const)(
     using app = setup();
     const undo = app.notice();
     if (owner === "palette") app.root.dataset.commandPalette = "";
-    else if (owner === "model picker") app.root.dataset.modelPickerContent = "";
+    else if (owner === "model picker") app.openModelPicker();
     else app.root.dataset.keybindingCapture = "";
     const editorUndo = vi.fn();
     app.input.addEventListener("keydown", editorUndo);
