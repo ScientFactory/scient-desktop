@@ -246,6 +246,12 @@ export function createProjectEnvironmentAtoms<R, E>(
       scheduler: projectScheduler,
       concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
+    createFromThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:create-from-thread",
+      tag: WS_METHODS.projectsCreateFromThread,
+      scheduler: projectScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
     listFileVersions: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:list-file-versions",
       tag: WS_METHODS.projectsListFileVersions,

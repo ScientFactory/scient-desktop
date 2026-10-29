@@ -205,7 +205,13 @@ Scient creates one internal scratch project per machine and a separate plain fol
 each conversation under its data directory. Files, Sources, Documents, and Compute use
 that conversation's folder. Scratch conversations do not have Git branches, checkpoints,
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
-conversation and its files into another project is not yet supported.
+conversation and its files into another existing project is not yet supported.
+
+When the work grows into something real, pick **Turn into project** from the
+thread's menu. The thread's folder becomes a project where it is, so nothing
+moves and the agent keeps working in the same place. Other threads in that folder
+move with it. Rename the project in its settings, and use **Initialize Git** to
+get branch and diff controls.
 
 The option is available on a connected machine whose configured scratch location is outside
 Git. Git does not need to be installed: the server verifies its own scratch folders through
@@ -504,6 +510,11 @@ agent started stays listed after the agent's turn ends.
 Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and Scient running. Stop needs terminal
 access to the environment and is not available on Windows.
+
+To choose what the thread details card shows, right-click the card or open
+**Settings → Appearance → Thread details**. Hidden rows keep their keyboard
+shortcuts, such as Open in editor and project scripts. **Reset to default** brings
+back the standard rows.
 
 ## Snooze until later
 

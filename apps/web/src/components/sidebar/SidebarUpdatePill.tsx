@@ -74,6 +74,7 @@ function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
   state: DesktopUpdateState | null,
 ): boolean {
+  // SCIENT-FORK: the release-notes popover stays on prerelease tracks.
   return (
     showUpdateDetails &&
     (state?.channel === "beta" || state?.channel === "nightly") &&
@@ -165,7 +166,7 @@ const toastUpdateError: ReportLocalUpdateError = (title, description) => {
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 };
 
-async function downloadLocalUpdate(
+export async function downloadLocalUpdate(
   bridge: DesktopBridge,
   {
     // SCIENT-FORK:START — a finished download offers Restart in place (see handleAction).

@@ -55,6 +55,17 @@ import type { ServerUpdateTarget } from "../ServerUpdateAction";
 
 const UPDATE_RESTART_DELAY_MS = 5_000;
 
+/** Servers this desktop app runs; they update with it. */
+export function isHostedByThisApp(
+  environment: ReturnType<typeof useEnvironments>["environments"][number],
+) {
+  return (
+    isElectron &&
+    (environment.entry.target._tag === "PrimaryConnectionTarget" ||
+      isDesktopLocalConnectionTarget(environment.entry.target))
+  );
+}
+
 export type ReportLocalUpdateError = (title: string, description: string) => void;
 
 /**
@@ -72,16 +83,15 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     label: environment.label,
     serverConfig: environment.serverConfig,
     connected: environment.connection.phase === "connected",
-    hostedByThisApp:
-      isElectron &&
-      (environment.entry.target._tag === "PrimaryConnectionTarget" ||
-        isDesktopLocalConnectionTarget(environment.entry.target)),
+    hostedByThisApp: isHostedByThisApp(environment),
     canMaintain: canUpdateServer(sessionStates[index]!),
     updateState: updateStates[index]!,
   }));
+  // SCIENT-FORK: npm waits do not apply; exact artifact availability below gates servers.
   const { targets: behindServers, skipped: unreachable } = collectServerUpdateTargets(
     machines,
     targetVersion,
+    localUpdateVersion !== null,
   );
   // SCIENT-FORK:START — do not advertise or dispatch an unqualified exact artifact target.
   const needsExactArtifact = behindServers.some(

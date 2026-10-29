@@ -7,6 +7,7 @@ import {
 // SCIENT-FORK:END
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
 import { Button } from "./ui/button";
@@ -93,7 +94,6 @@ import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import { resolveDraftHeroState } from "./ChatView.logic";
-
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
@@ -288,6 +288,7 @@ import { newMessageId } from "~/lib/utils";
 import {
   NO_PROVIDER_MODEL_SELECTION,
   providerInstanceEntriesFor,
+  resolveProjectDefaultProviderModelSelection,
   shouldShowInstanceBadge,
 } from "../providerInstances";
 import {
@@ -402,6 +403,7 @@ import { useProactivePanels } from "../hooks/useProactivePanels";
 
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
 import {
@@ -497,6 +499,8 @@ type ChatViewProps =
       routeKind: "draft";
       draftId: DraftId;
     };
+
+const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
 
 function ChatViewContent(props: ChatViewProps) {
   const {
@@ -721,6 +725,9 @@ function ChatViewContent(props: ChatViewProps) {
       ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
       : null;
   });
+  const composerModelSelectionExplicit = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
+  );
   const composerHasAttachments = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
@@ -893,15 +900,37 @@ function ChatViewContent(props: ChatViewProps) {
       });
     }
   }
+  const nowMinute = useNowMinute();
+  const draftDefaultModelSelection = draftThread
+    ? resolveProjectSettings(
+        settings,
+        fallbackDraftProject?.id ?? null,
+        fallbackDraftProject ?? undefined,
+      ).settings.defaultModelSelection
+    : null;
+  const draftModelResolution = draftThread
+    ? resolveNewThreadModelSelection({
+        defaultSelection:
+          draftDefaultModelSelection ??
+          resolveProjectDefaultProviderModelSelection(
+            providersByEnvironment.get(draftThread.environmentId) ?? [],
+            settings,
+            draftThread.projectId,
+          ),
+        fallbackSelection: settings.fallbackModelSelection,
+        providers: providersByEnvironment.get(draftThread.environmentId) ?? [],
+        settings,
+        projectId: draftThread.projectId,
+        now: Date.parse(`${nowMinute}:00Z`),
+      })
+    : null;
+  const draftFallback = draftModelResolution?.fallback ? draftModelResolution : null;
   const localDraftThread = draftThread
     ? buildLocalDraftThread(
         threadId,
         draftThread,
-        resolveProjectSettings(
-          settings,
-          fallbackDraftProject?.id ?? null,
-          fallbackDraftProject ?? undefined,
-        ).settings.defaultModelSelection ?? NO_PROVIDER_MODEL_SELECTION,
+        (draftFallback ? draftFallback.selection : draftDefaultModelSelection) ??
+          NO_PROVIDER_MODEL_SELECTION,
       )
     : undefined;
   // Promotion is data-driven: the draft route keeps rendering while the
@@ -1292,7 +1321,10 @@ function ChatViewContent(props: ChatViewProps) {
   const activeProjectScripts = activeProject ? resolveProjectScripts(settings, activeProject) : [];
   const { projectCloneBannerItem, projectCloneSendBlockReason } =
     useProjectCloneBanner(activeProjectRef);
-  const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  const activeProjectDefaultModelSelection =
+    !isServerThread && draftFallback
+      ? draftFallback.selection
+      : activeProjectSettings.settings.defaultModelSelection;
   // An unpicked draft follows a default changed in Settings. ChatView
   // remounts on return, so this compares state rather than watching changes.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes a changed project default model into the composer draft store for an unpicked draft
@@ -2074,6 +2106,11 @@ function ChatViewContent(props: ChatViewProps) {
     gitCwd,
   });
   // SCIENT-FORK:END
+  const [dismissedFallbackWindow, setDismissedFallbackWindow] = useLocalStorage(
+    `t3code:fallback-notice-dismissed:${environmentId}`,
+    null,
+    DismissedFallbackWindowSchema,
+  );
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -2982,7 +3019,6 @@ function ChatViewContent(props: ChatViewProps) {
     closeRightPanelSurface,
   });
   const pullRequestSurfaceAvailable = supportsPullRequests && pullRequestPanelTarget !== null;
-  const nowMinute = useNowMinute();
   const {
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
@@ -3167,12 +3203,58 @@ function ChatViewContent(props: ChatViewProps) {
       onDismissed: () => setThreadErrorBannerDismissTick((tick) => tick + 1),
     });
     // SCIENT-FORK:END
+    const fallbackSelection = draftFallback?.selection;
+    const defaultSelection =
+      draftDefaultModelSelection ??
+      resolveProjectDefaultProviderModelSelection(
+        providerStatuses,
+        settings,
+        draftThread?.projectId ?? null,
+      );
+    const fallback =
+      !isServerThread &&
+      multipleModelSelections === null &&
+      !composerModelSelectionExplicit &&
+      draftFallback?.fallback &&
+      (!composerSelectedModelSelection ||
+        (composerSelectedModelSelection.instanceId === fallbackSelection?.instanceId &&
+          composerSelectedModelSelection.model === fallbackSelection?.model))
+        ? draftFallback.fallback
+        : null;
+    const fallbackWindow = fallback
+      ? `${fallback.provider.instanceId}:${fallback.resetsAt ?? ""}`
+      : null;
+    const fallbackItems: ComposerBannerStackItem[] =
+      fallback &&
+      fallbackSelection &&
+      defaultSelection &&
+      fallbackWindow !== dismissedFallbackWindow
+        ? [
+            modelFallbackBannerItem({
+              fallbackModelName:
+                providerStatuses
+                  .find((provider) => provider.instanceId === fallbackSelection.instanceId)
+                  ?.models.find((model) => model.slug === fallbackSelection.model)?.name ??
+                fallbackSelection.model,
+              defaultProviderName: fallback.provider.displayName ?? fallback.provider.driver,
+              defaultModelName:
+                fallback.provider.models.find((model) => model.slug === defaultSelection.model)
+                  ?.name ?? defaultSelection.model,
+              resetsAt: fallback.resetsAt,
+              timestampFormat,
+              onUseDefault: () =>
+                onProviderModelSelectStable(defaultSelection.instanceId, defaultSelection.model),
+              onDismiss: () => setDismissedFallbackWindow(fallbackWindow),
+            }),
+          ]
+        : [];
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
+        ...fallbackItems,
         ...limitRecoveryItems,
         ...usageLimitsItems,
         ...projectCloneItems,
@@ -3184,6 +3266,7 @@ function ChatViewContent(props: ChatViewProps) {
     return [
       ...conversationImportItems,
       ...feedbackBannerItems,
+      ...fallbackItems,
       ...limitRecoveryItems,
       ...usageLimitsItems,
       ...projectCloneItems,
@@ -4585,6 +4668,12 @@ function ChatViewContent(props: ChatViewProps) {
               onAddProjectScript={saveProjectScriptStable}
               onUpdateProjectScript={updateProjectScriptStable}
               onDeleteProjectScript={deleteProjectScriptStable}
+              usage={{
+                providerInstanceId: activeProviderInstanceId,
+                providers: providerStatuses,
+                sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
+                contextWindow: activeContextWindow,
+              }}
             />
 
             <PullRequestThreadDialogHost

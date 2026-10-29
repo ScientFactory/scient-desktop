@@ -427,7 +427,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           ownDetachedProcessGroup: true,
           processGroupPlatform: platform,
           childProcessSpawner: spawner,
-          clientInfo: { name: "t3-code", version: "0.0.0" },
         });
         const terminate = runtime.terminateProcessGroup;
         if (!terminate)

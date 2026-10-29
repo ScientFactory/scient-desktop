@@ -161,7 +161,7 @@ export function DockCommandCheckboxItem({
   const queue = useContext(DockCommandContext);
   return (
     <MenuCheckboxItem
-      variant="icon"
+      variant="icon-slot"
       {...props}
       closeOnClick
       onClick={() => {

@@ -161,6 +161,11 @@
         // scient/desktopUpdate/updateReadyNotice instead; the module stays as upstream
         // ships it (its release-notes helper is still used) so upstream changes merge.
         "src/components/desktopUpdate.toast.tsx": ["exports"],
+        // Upstream's fleet track switch (Stable/Nightly for every machine at once) is not
+        // adopted; Scient keeps its Stable/Beta picker. Its helpers stay as upstream ships
+        // them so upstream changes merge.
+        "src/components/sidebar/updateEverything.logic.ts": ["exports"],
+        "src/components/sidebar/SidebarUpdatePill.tsx": ["exports"],
         // Retained donor UI for the explicitly disabled subscription-sharing mode.
         // Keep file auditing active everywhere else; remove these exact exceptions
         // when that mode has approved native-client activation.

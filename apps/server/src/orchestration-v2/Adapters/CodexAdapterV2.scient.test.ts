@@ -77,6 +77,7 @@ import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
+import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import { layerGitVcsDriverWithoutBranches } from "../testkit/ProviderRuntimeTestServices.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
 
@@ -1397,6 +1398,10 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+            getInstance: () => Effect.succeed(undefined),
+          }),
           imageStoresLayer,
           imageSinkLayer,
           IdAllocator.layer,

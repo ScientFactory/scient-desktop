@@ -85,6 +85,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import React, {
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
+  type MouseEvent as ReactMouseEvent,
   use,
   memo,
   useLayoutEffect,
@@ -1132,6 +1133,11 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   };
 }
 
+// Native word selection stops at hyphens and dots, so a double-click takes the whole span.
+function selectInlineCode(event: ReactMouseEvent<HTMLElement>) {
+  window.getSelection()?.selectAllChildren(event.currentTarget);
+}
+
 const CHAT_MARKDOWN_COMPONENTS = {
   h1: markdownHeadingRenderer(1),
   h2: markdownHeadingRenderer(2),
@@ -1555,7 +1561,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       if (inlineCssColor) {
         return (
           <ScientInlineColorCode
-            codeProps={{ ...props, className, dir: "ltr" }}
+            codeProps={{ ...props, className, dir: "ltr", onDoubleClick: selectInlineCode }}
             color={inlineCssColor}
           >
             {children}
@@ -1563,6 +1569,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
         );
       }
       // SCIENT-FORK:END
+      return (
+        // SCIENT-FORK: code stays left-to-right inside right-to-left prose.
+        <code {...props} className={className} dir="ltr" onDoubleClick={selectInlineCode}>
+          {children}
+        </code>
+      );
     }
     return (
       // SCIENT-FORK:START — code stays left-to-right inside right-to-left prose.

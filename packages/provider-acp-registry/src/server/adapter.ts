@@ -213,7 +213,13 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
-    capabilities: AcpProviderCapabilitiesV2,
+    // Cancelling a Copilot prompt also kills the background agents it started.
+    capabilities: isCopilot
+      ? {
+          ...AcpProviderCapabilitiesV2,
+          turns: { ...AcpProviderCapabilitiesV2.turns, supportsSteeringByInterruptRestart: false },
+        }
+      : AcpProviderCapabilitiesV2,
     ...(options.application === undefined ? {} : { application: options.application }),
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),

@@ -101,6 +101,8 @@ vi.mock("~/state/server", async () => {
     updateOutdatedServer: Symbol("update-outdated-server"),
   };
 });
+// Server update actions read each server's version to refuse a cross-track update.
+vi.mock("~/state/entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => testState.updateServer,
 }));

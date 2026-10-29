@@ -290,21 +290,17 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             </SidebarMenuItem>
           </>
         )}
+        <SidebarThreadUndoNotice />
         <SidebarUpdatePill />
       </SidebarMenu>
     </div>
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter({
-  showUndoNotice = false,
-}: {
-  showUndoNotice?: boolean;
-}) {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter>
       <div className="contents group-data-[collapsible=icon]:hidden">
-        {showUndoNotice ? <SidebarThreadUndoNotice /> : null}
         <ScientReleaseNotes />
         <SidebarProviderUpdatePill />
         <SidebarUpdateArchitectureWarning />

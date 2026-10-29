@@ -78,13 +78,14 @@ vi.mock("../state/server", async () => {
   const { Atom } = await import("effect/reactivity");
   const settings = Atom.make(null);
   return {
-    environmentServerConfigsAtom: {},
+    environmentServerConfigsAtom: Atom.make(new Map()),
     primaryServerKeybindingsAtom: {},
     serverEnvironment: { settingsValueAtom: () => settings },
   };
 });
 vi.mock("../state/vcs", () => ({ vcsEnvironment: {} }));
 vi.mock("../state/orchestration", () => ({ orchestrationEnvironment: {} }));
+vi.mock("../state/projects", () => ({ projectEnvironment: { createFromThread: {} } }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));

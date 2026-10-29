@@ -203,10 +203,11 @@ function MenuCheckboxItem({
   variant = "default",
   ...props
 }: MenuPrimitive.CheckboxItem.Props & {
-  variant?: "default" | "switch" | "button" | "icon";
+  // SCIENT-FORK: "button" and "icon-slot" serve Scient's chip menus and writing docks.
+  variant?: "default" | "icon" | "switch" | "button" | "icon-slot";
 }) {
   // Icon rows reuse the leading icon slot for the check, without an extra gutter.
-  if (variant === "icon") {
+  if (variant === "icon-slot") {
     return (
       <MenuPrimitive.CheckboxItem
         checked={checked}
@@ -256,6 +257,7 @@ function MenuCheckboxItem({
         variant === "switch"
           ? "grid-cols-[1fr_auto] gap-4 pe-1.5"
           : "grid-cols-[1rem_minmax(0,1fr)] pe-4",
+        variant === "icon" && "grid-cols-[0.625rem_minmax(0,1fr)]",
         className,
       )}
       data-slot="menu-checkbox-item"
@@ -273,8 +275,11 @@ function MenuCheckboxItem({
         </>
       ) : (
         <>
-          <MenuPrimitive.CheckboxItemIndicator className="col-start-1">
+          <MenuPrimitive.CheckboxItemIndicator
+            className={cn("col-start-1", variant === "icon" && "-mx-0.5")}
+          >
             <svg
+              className={variant === "icon" ? "size-3.5" : undefined}
               fill="none"
               height="24"
               stroke="currentColor"

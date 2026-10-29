@@ -24,6 +24,24 @@ export function cliReleaseChannelOf(version: string): CliReleaseChannel {
   return channel === "nightly" || channel === "preview" ? channel : "stable";
 }
 
+/** Whether updating between these versions crosses Stable and Nightly. Preview builds cross nothing.
+ * Hosts refuse a crossing outside a track switch, which checks the database first. */
+export function crossesReleaseTrack(fromVersion: string, toVersion: string): boolean {
+  const from = cliReleaseChannelOf(fromVersion);
+  const to = cliReleaseChannelOf(toVersion);
+  // SCIENT-FORK: Beta crosses nothing either. Stable promotes a Beta commit, and a staged server
+  // runtime's preflight refuses a database with migrations it does not know.
+  if (from === "beta" || to === "beta") return false;
+  return from !== to && from !== "preview" && to !== "preview";
+}
+
+/** The desktop update track a build belongs to. Preview builds have no feed and read as Stable. */
+// SCIENT-FORK: Beta builds belong to the Beta track.
+export function desktopUpdateChannelOf(version: string): "latest" | "beta" | "nightly" {
+  const channel = cliReleaseChannelOf(version);
+  return channel === "nightly" || channel === "beta" ? channel : "latest";
+}
+
 /** Page until the channel matches; nightlies can push preview/stable releases past the first page. */
 export function cliReleaseIndexPageUrl(
   page: number,

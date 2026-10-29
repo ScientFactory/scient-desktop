@@ -107,7 +107,9 @@ remove a runtime while it is in use.
 
 ## Models, files, and permissions
 
-The official agent reports the models available to the selected account.
+The official agent reports the models available to the selected account,
+including Claude and GPT models when your plan has them. Pick a thinking level in
+the composer's effort menu; it shows only the levels the selected model supports.
 Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.
@@ -129,6 +131,10 @@ and reasoning level, so their labels still include the level.
 Skills for every project go in `~/.gemini/config/skills` or
 `~/.gemini/antigravity-cli/skills`. Antigravity does not read `~/.agents/skills`,
 so a skill there only appears when the project itself is your home directory.
+
+Antigravity creates empty `.gemini/skills` and `.agents/skills` folders in the
+workspace when a session starts. Git does not track empty folders, so they never
+appear in commits.
 
 Antigravity receives images directly. Every other attachment, including PDFs,
 text, audio, archives, and videos, is passed as a saved file path for the agent

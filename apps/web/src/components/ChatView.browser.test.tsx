@@ -132,6 +132,7 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
       status: "live",
       error: Option.none(),
       history: EMPTY_THREAD_HISTORY_META,
+      sequence: 0,
     }),
   );
   const shell = presentThreadShell(
@@ -222,6 +223,7 @@ it("keeps streamed answers live through the real ChatView, composer and voice fo
         status: "live",
         error: Option.none(),
         history: EMPTY_THREAD_HISTORY_META,
+        sequence: 0,
       }),
     ),
   );
@@ -340,6 +342,7 @@ it("does not replay a pending question the shell already showed once the thread 
         status: Option.isSome(data) ? "live" : "synchronizing",
         error: Option.none(),
         history: EMPTY_THREAD_HISTORY_META,
+        sequence: 0,
       }),
     );
   deliver(Option.none());

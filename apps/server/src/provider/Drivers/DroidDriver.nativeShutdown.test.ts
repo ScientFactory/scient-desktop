@@ -399,6 +399,7 @@ const managerLayer = Effect.fn("DroidShutdown.managerLayer")(function* (h: Harne
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(ProviderInstanceRegistry, h.registry),
           Layer.succeed(EventSink.EventSinkV2, sink),
           Layer.succeed(ProjectionStore.ProjectionStoreV2, store),
           Layer.succeed(IdAllocator.IdAllocatorV2, allocator),

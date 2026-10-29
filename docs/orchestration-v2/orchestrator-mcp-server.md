@@ -412,7 +412,10 @@ delegated to a linked environment name that environment. Clients open only that
 environment's thread and show its current title; a link to a thread they do not
 know renders as a label that opens nothing. Older `t3-thread://v1/<threadId>`
 links name no environment: clients resolve them in the message's environment,
-then by a unique match in another enabled environment.
+then by a unique match in another enabled environment. An outside OAuth client,
+one that is not a linked environment, cannot render `t3-thread://` links, so it
+gets a web URL on the origin it reached, `<origin>/<environmentId>/<threadId>`,
+for threads in this environment.
 
 An explicitly environment-qualified historical link stays bound to that
 environment; it must not silently resolve to the same thread ID elsewhere.

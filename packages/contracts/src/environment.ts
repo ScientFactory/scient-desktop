@@ -130,6 +130,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadSections: Schema.optionalKey(Schema.Boolean),
   // SCIENT-FORK:END
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
+  threadProjectFromScratch: Schema.optionalKey(Schema.Boolean),
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
   /** Server understands titleOverride on thread.fork. Absent on older
@@ -163,6 +164,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   ignoredFileListing: Schema.optionalKey(Schema.Boolean),
   environmentIcon: Schema.optionalKey(Schema.Boolean),
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** The desktop app switches update tracks when a server update request names one. */
+  desktopAppChannelSwitch: Schema.optionalKey(Schema.Boolean),
   /** Subscribe to command output only when advertised; older servers never send it. */
   commandOutputStreaming: Schema.optionalKey(Schema.Boolean),
   /** Hosts headless Chromium tabs streamed over /api/preview-stream for clients without a local runtime. */
@@ -193,6 +196,8 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   serverVersion: TrimmedNonEmptyString,
   /** Missing metadata denotes protocol 1. Bump this for breaking wire changes. */
   orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
+  /** Highest migration this server's database holds; absent on older servers. */
+  databaseMigration: Schema.optionalKey(Schema.Int),
   capabilities: ExecutionEnvironmentCapabilities,
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;
