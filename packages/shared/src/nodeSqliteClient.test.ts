@@ -526,7 +526,8 @@ it.effect.skipIf(windowsHost)(
         );
 
         assert.deepEqual(counts, [0, 0]);
-        assert.equal(startedWorkers.length, startedBefore + 1);
+        // Concurrent first reads may each start a pooled reader; the pool then turns off once.
+        assert.isAtMost(startedWorkers.length - startedBefore, counts.length);
         assert.lengthOf(warnings, 1);
       }),
     ).pipe(Effect.provide(logs));
