@@ -196,10 +196,14 @@ still needed on top of T3's own delimiter handling.
 ## Scientific recognition and clipboard export
 
 Single-dollar recognition admits uppercase symbols with a numeric subscript
-(such as `$PCO_2$`) and complete unbraced superscript charges (`$HCO_3^-$`,
-`$Na^+$`). These narrow exceptions do not remove the surrounding delimiter,
-length, code, link, price, or shell-shape guards. Other uppercase identifiers
-remain ambiguous and keep their existing literal behavior. The shared
+(such as `$PCO_2$`), up to three capitals (`$Q$`, `$AB$`, `$NPV$`), complete
+unbraced superscript charges and stars (`$HCO_3^-$`, `$Na^+$`, `$x^*$`), comma
+lists of symbols and numbers that space only after their commas (`$x, y$`,
+`$[0, 1]$`; `$USER, localhost$` stays literal), and an opener
+glued to a Hebrew one-letter prefix (`ש$x$`). These narrow exceptions do not
+remove the surrounding delimiter, length, code, link, price, or shell-shape
+guards. Longer or underscored uppercase identifiers (`$PATH$`, `$USER_ID$`) and
+capitals joined to the next word (`$A$B`) stay literal. The shared
 plausibility predicate is used by the preview and Markdown editor.
 
 Selection copying treats rendered math as an atomic source object: a selection

@@ -459,6 +459,18 @@ describe("Scient ProseMirror projection", () => {
     );
   });
 
+  it("opens a capital symbol as math but keeps joined shell variables as text", () => {
+    const source = "Heat $Q$ flows; echo $A$B stays.\n";
+    const state = new ScientProseMirrorSession({ source, revision: "sha256:before" });
+    const tex: string[] = [];
+    state.state.doc.descendants((node) => {
+      if (node.type.name === "inline_math") tex.push(String(node.attrs.tex));
+    });
+
+    expect(tex).toEqual(["Q"]);
+    expect(state.session.draftSource).toBe(source);
+  });
+
   it("shares backslash-delimited math with the preview while preserving authored source", () => {
     const source = [
       "Inline \\(x + 1\\), display \\[E = mc^2\\], and `\\(literal\\)`.",

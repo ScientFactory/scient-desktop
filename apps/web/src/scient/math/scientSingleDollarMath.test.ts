@@ -32,7 +32,20 @@ const INLINE_MATH_SHAPE = 'class="language-math';
 
 describe("isPlausibleScientSingleDollarTex", () => {
   it("accepts compact expressions, numbers, and control sequences", () => {
-    for (const content of ["x^2", "42", "1/2", "a*b*c", "E=mc^2", "f(x)", "\\alpha", "dx/dt"]) {
+    for (const content of [
+      "x^2",
+      "42",
+      "1/2",
+      "a*b*c",
+      "E=mc^2",
+      "f(x)",
+      "\\alpha",
+      "dx/dt",
+      "Q",
+      "AB",
+      "NPV",
+      "x^*",
+    ]) {
       expect(isPlausibleScientSingleDollarTex(content)).toBe(true);
     }
   });
@@ -40,12 +53,15 @@ describe("isPlausibleScientSingleDollarTex", () => {
   it("accepts spaced content only with a TeX signal", () => {
     expect(isPlausibleScientSingleDollarTex("a + b")).toBe(true);
     expect(isPlausibleScientSingleDollarTex("f: X \\to Y")).toBe(true);
+    for (const content of ["x, y", "[0, 1]", "(0, 1)", "K(x, y)"]) {
+      expect(isPlausibleScientSingleDollarTex(content)).toBe(true);
+    }
     expect(isPlausibleScientSingleDollarTex("5 and ")).toBe(false);
     expect(isPlausibleScientSingleDollarTex("plain words here")).toBe(false);
   });
 
   it("rejects shell identifiers and identifier paths", () => {
-    for (const content of ["PATH", "USD", "USER_ID", "HOME/bin:", "HOME/", "PATH:", "USD.x"]) {
+    for (const content of ["PATH", "HOME", "USER_ID", "HOME/bin:", "HOME/", "PATH:", "USD.x"]) {
       expect(isPlausibleScientSingleDollarTex(content)).toBe(false);
     }
   });
@@ -169,6 +185,11 @@ describe("guarded single-dollar tokenizer", () => {
     const html = render("file$x$ and US$5$ stay literal");
 
     expect(html).not.toContain("language-math");
+  });
+
+  it("opens after a Hebrew prefix letter, but not after other non-ASCII text", () => {
+    expect(render("נניח ש$x$ ו$y = 2x$")).toContain(INLINE_MATH_SHAPE);
+    expect(render("价格是$5，或者$10。")).not.toContain("language-math");
   });
 
   it("never closes before a digit or another dollar", () => {
@@ -333,6 +354,11 @@ describe("scientific subscripts and charges", () => {
     "$Na+$",
     "$x-$",
     "$5-$10",
+    "echo $A$B",
+    "$PWD$HOME",
+    "Between $5, and 10$",
+    "$(echo A, B)$",
+    "PS1='$USER, localhost$ '",
     "$PCO_2$10",
     "`$PCO_2$`",
     String.raw`\$PCO_2$`,

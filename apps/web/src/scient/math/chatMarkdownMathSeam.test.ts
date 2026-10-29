@@ -198,7 +198,7 @@ describe("single-dollar text that must stay text", () => {
 
 describe("dollar text that must stay text", () => {
   it("keeps shell and environment identifiers literal", () => {
-    for (const markdown of ["$PATH$", "$USD$", "$HOME and $PATH."]) {
+    for (const markdown of ["$PATH$", "$HOME$", "$HOME and $PATH."]) {
       const html = renderChatShapedPipeline(`echo ${markdown} done`);
       expect(html).not.toContain("language-math");
     }

@@ -4261,17 +4261,17 @@ function ChatViewContent(props: ChatViewProps) {
                         {scrollToEndSummary}
                       </span>
                     )}
+                    {/* SCIENT-FORK:START — the unread count badge, on the button's corner. */}
+                    {unreadBelowCount > 0 && (
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-info/20 bg-background/90 bg-linear-to-b from-info/5 to-info/5 px-1 text-3xs leading-none font-semibold text-info-foreground tabular-nums backdrop-blur-sm"
+                      >
+                        {unreadBelowCount > 99 ? "99+" : unreadBelowCount}
+                      </span>
+                    )}
+                    {/* SCIENT-FORK:END */}
                   </Button>
-                  {/* SCIENT-FORK:START — the unread count badge. */}
-                  {unreadBelowCount > 0 && (
-                    <span
-                      aria-hidden="true"
-                      className="pointer-events-none absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-info/20 bg-background/90 bg-linear-to-b from-info/5 to-info/5 px-1 text-3xs leading-none font-semibold text-info-foreground tabular-nums backdrop-blur-sm"
-                    >
-                      {unreadBelowCount > 99 ? "99+" : unreadBelowCount}
-                    </span>
-                  )}
-                  {/* SCIENT-FORK:END */}
                 </div>
               )}
             </div>
