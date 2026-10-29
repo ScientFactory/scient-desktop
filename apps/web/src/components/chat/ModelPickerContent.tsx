@@ -931,7 +931,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
       <div
         ref={pickerContentRef}
-        className="relative flex max-h-[min(21.625rem,var(--available-height,85vh))] w-screen max-w-90 flex-row overflow-hidden"
+        // SCIENT-FORK: 320 px fits the model names with their badges; the setup panel matches it.
+        className="relative flex max-h-[min(21.625rem,var(--available-height,85vh))] w-screen max-w-80 flex-row overflow-hidden"
         style={
           isSearchingModels
             ? { height: searchHeight }

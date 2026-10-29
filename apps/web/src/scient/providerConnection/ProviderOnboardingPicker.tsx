@@ -295,7 +295,7 @@ export function ProviderOnboardingPicker(props: {
             suspended={overlay.instanceId !== null}
           >
             <div
-              className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-90 overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
+              className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-80 overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
               data-model-picker-content="true"
               data-provider-onboarding-picker="true"
             >
