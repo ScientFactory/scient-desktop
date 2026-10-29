@@ -619,7 +619,19 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const threadDetailLoading = threadSyncPhase === "loading";
   // Held back briefly, so a quick sync does not flash a status line at the end of the timeline.
-  const delayedThreadSyncPhase = useDelayedStatus(routeThreadKey, threadSyncPhase);
+  // SCIENT-FORK:START — while cached messages show, catching up is announced only after 2s;
+  // an empty thread's "Loading messages..." keeps the short delay.
+  const delayedThreadLoading = useDelayedStatus(
+    routeThreadKey,
+    threadSyncPhase === "loading" ? threadSyncPhase : null,
+  );
+  const delayedThreadSyncing = useDelayedStatus(
+    routeThreadKey,
+    threadSyncPhase === "syncing" ? threadSyncPhase : null,
+    { showDelayMs: 2_000 },
+  );
+  const delayedThreadSyncPhase = delayedThreadLoading ?? delayedThreadSyncing;
+  // SCIENT-FORK:END
   const activeProviderThread = serverProjection?.providerThreads.find(
     (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
   );

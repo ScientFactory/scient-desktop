@@ -85,6 +85,9 @@ technology) also ends a fresh-open end restore. Footer status never moves the re
 footer-growth follow (`onFooterGrow`) is not composed (marked in `useTimelineFollow.ts`); the
 reader's queued messages are kept reachable by the follow and `chat/queuedRunsInView.ts`, which
 also shows Scroll to end while they are hidden below.
+The end-of-timeline "Syncing messages..." status waits 2s instead of upstream's 400ms while the
+cached messages already show; "Loading messages..." for an empty thread keeps upstream's delay
+(marked in `ChatView.tsx`).
 Keys count only when they scroll the timeline: focus in it or nowhere, no modifier, not in a
 field (a menu's arrow keys or a shortcut leave the follow be).
 While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
