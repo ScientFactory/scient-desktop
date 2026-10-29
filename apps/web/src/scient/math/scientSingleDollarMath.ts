@@ -33,6 +33,8 @@ const CODE_SPACE = 32;
 const CODE_DOLLAR = 36;
 const CODE_BACKSLASH = 92;
 const CODE_LEFT_BRACE = 123;
+// ו ה ב כ ל מ ש
+const HEBREW_PREFIX_CODES = new Set([0x5d5, 0x5d4, 0x5d1, 0x5db, 0x5dc, 0x5de, 0x5e9]);
 
 /**
  * Longer candidates are overwhelmingly two unrelated dollars pairing up, not
@@ -44,13 +46,20 @@ export const MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH = 300;
 const IDENTIFIER_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 // Numeric subscripts are mathematical structure, even on uppercase symbols.
 const NUMERIC_SUBSCRIPT_PATTERN = /^[A-Z]+_\d+$/;
-// Admit a complete unbraced charge, not an arbitrary trailing operator.
-const CHARGE_END_PATTERN = /[\p{L}\p{N})\]}]\^[+-]$/u;
+// Up to three capitals are symbols (`$Q$`, `$AB$`, `$NPV$`); variable names
+// such as `PATH` or `USER_ID` are longer or carry an underscore.
+const SHORT_CAPITALS_PATTERN = /^[A-Z][A-Z0-9]{0,2}$/;
+// Admit a complete unbraced charge or star (`HCO_3^-`, `x^*`), not an
+// arbitrary trailing operator.
+const CHARGE_END_PATTERN = /[\p{L}\p{N})\]}]\^[+\-*]$/u;
 const IDENTIFIER_PATH_PATTERN = /^[A-Z][A-Z0-9_]*[/:.]/;
 // `*` is deliberately absent: in spaced prose an asterisk is almost always
 // the author's emphasis delimiter, and letting it qualify a span would let
 // `*a $b* c$` destroy the emphasis and render "b* c" as a formula.
 const SPACED_CONTENT_SIGNAL_PATTERN = /[\\^_{}=+\-<>|]/;
+// A list of terms (`x, y`, `[0, 1]`, `K(x, y)`) spaces only after its commas;
+// words after a comma (`5, and 10`, `echo A, B`) are prose.
+const COMMA_LIST_PATTERN = /^\S+(?:, \S+)+$/;
 const COLON_SIGNAL_PATTERN = /[\\^_{}=<>]/;
 // Every plausible formula ends in an alphanumeric (any script), a closing
 // bracket, factorial, prime, or percent. Content ending in a bare binder —
@@ -149,11 +158,21 @@ function isWhitespaceCode(code: Code): boolean {
  * variables/paths, Markdown link/reference/HTML boundaries, and domains must stay text; compact
  * formulas and numeric intervals remain eligible.
  */
+/** `$A$B` and `$PWD$HOME` join shell variables; a symbol is never glued to the next word. */
+export function isScientShellConcatenation(content: string, next: string | undefined): boolean {
+  return SHORT_CAPITALS_PATTERN.test(content) && next !== undefined && /^[A-Za-z_]/.test(next);
+}
+
 export function isPlausibleScientSingleDollarTex(content: string): boolean {
   content = content.replaceAll(SCIENT_MATH_TABLE_PIPE, "|");
   if (content.length === 0 || content.length > MAX_SCIENT_SINGLE_DOLLAR_TEX_LENGTH) return false;
   if (STRING_ESCAPE_PATTERN.test(content)) return false;
-  if (IDENTIFIER_PATTERN.test(content) && !NUMERIC_SUBSCRIPT_PATTERN.test(content)) return false;
+  if (
+    IDENTIFIER_PATTERN.test(content) &&
+    !NUMERIC_SUBSCRIPT_PATTERN.test(content) &&
+    !SHORT_CAPITALS_PATTERN.test(content)
+  )
+    return false;
   if (IDENTIFIER_PATH_PATTERN.test(content)) return false;
   if (
     !CONTENT_END_PATTERN.test(content) &&
@@ -165,7 +184,12 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   if (content.endsWith("'") && !PRIME_END_PATTERN.test(content)) return false;
   // An unescaped trailing % is a TeX comment and always renders wrong.
   if (content.endsWith("%") && !content.endsWith("\\%")) return false;
-  if (/\s/.test(content) && !SPACED_CONTENT_SIGNAL_PATTERN.test(content)) return false;
+  if (
+    /\s/.test(content) &&
+    !SPACED_CONTENT_SIGNAL_PATTERN.test(content) &&
+    !COMMA_LIST_PATTERN.test(content)
+  )
+    return false;
   if (content.includes(":") && !COLON_SIGNAL_PATTERN.test(content)) return false;
   if (content.includes("](") || content.includes("][") || content.includes("[^")) return false;
   if (BARE_BRACKET_GROUP_PATTERN.test(content) && !/[\d\\^_+\-*/=,]/.test(content)) return false;
@@ -191,11 +215,11 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   // A brace group in TeX always carries a control word (`{a \over b}`); a
   // bare `{` start is interpolation (`${PREFIX:-app}`, `${dir//\//_}`).
   if (content.startsWith("{") && !TEX_CONTROL_WORD_PATTERN.test(content)) return false;
-  // A parenthesized span needs a TeX operator, and once it contains spaces a
-  // shell flag's `-`/`+` is not enough (`$(date -u)$`, `$(date +%F)$`).
+  // A parenthesized span needs a TeX operator or a list of terms, and once it
+  // contains spaces a shell flag's `-`/`+` is not enough (`$(date -u)$`).
   if (content.startsWith("(")) {
-    const signal = /\s/.test(content) ? /[\\^_=]/ : /[\\^_+\-*/=]/;
-    if (!signal.test(content)) return false;
+    const signal = /\s/.test(content) ? /[\\^_=]/ : /[\\^_+\-*/=,]/;
+    if (!signal.test(content) && !COMMA_LIST_PATTERN.test(content)) return false;
   }
   if (DOMAIN_LIKE_PATTERN.test(content) && !INTERPOLATION_SIGNAL_PATTERN.test(content)) {
     return false;
@@ -234,10 +258,13 @@ function scientSingleDollarMathText(): Construct {
     function start(code: Code): State | undefined {
       // The opener must not follow a word character (`file$x$`, `US$5$`) or
       // an unescaped dollar. Characters beyond ASCII stay conservative: a
-      // dollar glued to non-ASCII text reads as prose, not an opener.
+      // dollar glued to non-ASCII text reads as prose, not an opener. Hebrew's
+      // one-letter prefixes are the exception: they attach to the next word (`ש$x$`).
       if (
         isAsciiAlphanumericCode(openerPrevious) ||
-        (openerPrevious !== null && openerPrevious > 127) ||
+        (openerPrevious !== null &&
+          openerPrevious > 127 &&
+          !HEBREW_PREFIX_CODES.has(openerPrevious)) ||
         (openerPrevious === CODE_DOLLAR && openerPreviousEventType !== "characterEscape")
       ) {
         return nok(code);
@@ -285,6 +312,13 @@ function scientSingleDollarMathText(): Construct {
     }
 
     function afterCloser(code: Code): State | undefined {
+      if (
+        code !== null &&
+        code > 0 &&
+        isScientShellConcatenation(content, String.fromCodePoint(code))
+      ) {
+        return nok(code);
+      }
       // A digit after the closer is a price range (`$5-$10`); another dollar
       // means this closer was really part of a `$$` sequence; a brace is the
       // next interpolation (`"$dir${file}"`) — real math never abuts `{`.
