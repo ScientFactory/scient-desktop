@@ -121,6 +121,20 @@ describe("CodexInlineSetup", () => {
     expect(markup).not.toContain("The secure flow opens in your browser");
   });
 
+  it("offers to check again, not to sign in, when Codex could not read the account", () => {
+    const markup = render(
+      provider({
+        status: "error",
+        auth: { status: "unknown" },
+        message: "Codex app-server provider probe failed: workspace routing discovery failed.",
+      }),
+    );
+
+    expect(markup).toContain("Codex can’t check your account");
+    expect(markup).toContain("Try again");
+    expect(markup).not.toContain("Sign in required");
+  });
+
   it("shows and labels the active Codex device code", () => {
     const markup = render(
       provider({

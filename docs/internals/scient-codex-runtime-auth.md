@@ -41,6 +41,12 @@ the provider instance, including an auth-overlay shadow home. It does not infer 
 Codex accounts move together, while accounts with explicit custom executable paths remain
 unchanged.
 
+The probe proves the account API, not the account. Signed in, Codex asks OpenAI before it answers
+the read, so an error Codex returns for a request it took (no network, for example) still passes.
+Only a parse, unknown-method or bad-params rejection, or a failure before Codex answers, fails the
+probe. Connectivity is the provider status check's to report: when that check cannot read the
+account, the setup card offers to check again, with signing in as the secondary action.
+
 ## Diagnostics boundary
 
 Runtime diagnostics are optional so older servers and cached snapshots remain compatible. They
