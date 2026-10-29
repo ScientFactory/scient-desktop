@@ -198,7 +198,8 @@ still needed on top of T3's own delimiter handling.
 Single-dollar recognition admits uppercase symbols with a numeric subscript
 (such as `$PCO_2$`), up to three capitals (`$Q$`, `$AB$`, `$NPV$`), complete
 unbraced superscript charges and stars (`$HCO_3^-$`, `$Na^+$`, `$x^*$`), comma
-lists that space only after their commas (`$x, y$`, `$[0, 1]$`), and an opener
+lists of symbols and numbers that space only after their commas (`$x, y$`,
+`$[0, 1]$`; `$USER, localhost$` stays literal), and an opener
 glued to a Hebrew one-letter prefix (`ש$x$`). These narrow exceptions do not
 remove the surrounding delimiter, length, code, link, price, or shell-shape
 guards. Longer or underscored uppercase identifiers (`$PATH$`, `$USER_ID$`) and
