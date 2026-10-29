@@ -206,7 +206,7 @@ export function acpMcpToolApprovalElicitationDisposition(
   // SCIENT-FORK:START — Scient Extensions connectors (remote MCP servers proxied by Scient).
   sessionHasConnectors = false,
   // SCIENT-FORK:END
-): AcpPermissionDisposition | undefined {
+): "ask" | "allow" | undefined {
   if (
     request.mode !== "form" ||
     (unknownRecord(request._meta)?.codex_approval_kind !== "mcp_tool_call" &&

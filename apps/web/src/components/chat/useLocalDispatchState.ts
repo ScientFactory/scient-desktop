@@ -31,6 +31,7 @@ export function useLocalDispatchState(input: {
     snapshot: LocalDispatchSnapshot;
   } | null>(null);
   const currentThreadKeyRef = useRef(input.routeThreadKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps currentThreadKeyRef in step with the route thread key for async dispatch guards
   useLayoutEffect(() => {
     currentThreadKeyRef.current = input.routeThreadKey;
   }, [input.routeThreadKey]);

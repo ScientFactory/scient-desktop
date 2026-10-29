@@ -5,7 +5,7 @@ import {
   projectedSubagentsToRuntime,
   type AgentPanelModel,
 } from "@t3tools/client-runtime/state/subagentRuntime";
-import { agentSpawnRowLabel, deriveAgentSpawnSummary } from "~/components/chat/agentSpawnSummary";
+import { agentSpawnRowLabel, deriveAgentSpawnSummary } from "./agentSpawnSummary";
 import { WorkLogBlock } from "~/components/chat/WorkLog";
 import { AgentSpawnMemberRow, compactScientAgentLabel } from "./AgentSpawnMemberRow";
 import { cn } from "~/lib/utils";

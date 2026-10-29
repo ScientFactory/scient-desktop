@@ -130,7 +130,7 @@ export function OverleafKeptCopies(props: {
       setMessage(operationErrorText(error));
     }
   };
-  // oxlint-disable-next-line t3code/react-effect-budget -- The menu showing reads the link's kept copies from the server; a read for a link no longer shown is dropped.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The menu showing reads the link's kept copies from the server; a read for a link no longer shown is dropped.
   useEffect(() => {
     if (connectionId === null) return;
     let cancelled = false;

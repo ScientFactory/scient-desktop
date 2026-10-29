@@ -26,7 +26,7 @@ export function useWebsiteSessions(
     sessions: AccountBrowserSessions;
     defaultProfileId: string;
   } | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Read native cookie metadata on page open, account changes, focus and explicit sign-out; no polling.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read native cookie metadata on page open, account changes, focus and explicit sign-out; no polling.
   useEffect(() => {
     const bridge = window.desktopBridge?.accounts;
     if (!environmentId || !snapshot || !bridge?.cookieMetadata) return;

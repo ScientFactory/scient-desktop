@@ -190,6 +190,7 @@ function EditableCustomModelsContent({ environmentId, instanceId, addRequest }: 
   const remove = useAtomCommand(serverEnvironment.removeCustomModel, { reportFailure: false });
   const test = useAtomCommand(serverEnvironment.testCustomModel, { reportFailure: false });
   const refresh = useAtomCommand(serverEnvironment.refreshProviders, { reportFailure: false });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that dismisses the success notice after 4s
   useEffect(() => {
     if (!notice || notice.error) return;
     const timeout = window.setTimeout(() => {

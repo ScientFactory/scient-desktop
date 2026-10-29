@@ -11,6 +11,7 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import { deriveProviderInstanceConfigMap } from "../../provider/ProviderInstanceRegistryHydration.ts";
 import { SourceControlProviderRegistry } from "../../sourceControl/SourceControlProviderRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../TextGeneration.ts";
 
 /** Run caller-level metadata tests through the real instance/model resolver. */
@@ -84,7 +85,9 @@ export const makeNativeTextGeneration = (
       Layer.mergeAll(
         Layer.mock(ProviderInstanceRegistry)({
           getInstance: (id) => Effect.succeed(id === instanceId ? instance : undefined),
+          listInstances: Effect.succeed([instance]),
         }),
+        ServerSettings.layerTest(),
         Layer.mock(SourceControlProviderRegistry)({
           resolveLink: () => Effect.die("No source-control link expected"),
         }),

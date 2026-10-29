@@ -1,3 +1,4 @@
+import { ClaudeSettings } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import * as Effect from "effect/Effect";
@@ -25,6 +26,8 @@ import {
   metadataFromTranscript,
 } from "./ClaudeAdapterV2.replay-protocol.testkit.ts";
 import { makeReplayQueryRunner } from "./ClaudeAdapterV2.replay-query.testkit.ts";
+
+const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 
 function replayQueryRunnerService(
   transcript: ClaudeAgentSdkReplayTranscript,
@@ -127,15 +130,18 @@ function layerClaudeProviderAdapterRegistryReplay(
     writeReplayTaskOutputFiles(transcript).pipe(
       Effect.orDie,
       Effect.map((tmpRoot) =>
-        ProviderAdapterRegistry.layerFromDrivers({
-          drivers: [ClaudeAdapterV2.ClaudeAdapterV2Driver],
-          configMap: {
-            [ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID]: {
-              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        ProviderAdapterRegistry.layerFromAdaptersEffect(
+          ClaudeAdapterV2.createClaudeAdapterV2(
+            {
+              instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+              displayName: undefined,
               environment: [{ name: "CLAUDE_CODE_TMPDIR", value: tmpRoot, sensitive: false }],
+              enabled: true,
+              config: DEFAULT_CLAUDE_SETTINGS,
             },
-          },
-        }),
+            {},
+          ).pipe(Effect.map((adapter) => [adapter])),
+        ),
       ),
       Effect.provide(NodeServices.layer),
     ),

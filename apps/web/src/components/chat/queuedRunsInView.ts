@@ -28,7 +28,7 @@ export function useQueuedRunsInView(input: {
   const inViewRef = useRef({ threadKey, inView: false });
   const revealPendingRef = useRef(false);
   const ownRef = useRef({ threadKey, ids: new Set(input.ownQueuedIds) });
-  // oxlint-disable-next-line t3code/react-effect-budget -- reads the reader's end position when this window's queued send renders
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the reader's end position when this window's queued send renders
   useLayoutEffect(() => {
     const own = ownRef.current;
     const added = input.ownQueuedIds.some((id) => !own.ids.has(id));
@@ -36,7 +36,7 @@ export function useQueuedRunsInView(input: {
       revealPendingRef.current = true;
     ownRef.current = { threadKey: input.threadKey, ids: new Set(input.ownQueuedIds) };
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- measures the queue against the scrolling timeline and scrolls it into view
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the queue against the scrolling timeline and scrolls it into view
   useLayoutEffect(() => {
     const viewport = listRef.current?.getScrollableNode();
     if (inViewRef.current.threadKey !== threadKey) inViewRef.current = { threadKey, inView: false };

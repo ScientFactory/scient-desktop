@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ThreadShell,
   OrchestrationV2PendingRuntimeRequestSummary,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   ScientCompletedAnswer,
   ThreadPullRequestLink,
@@ -72,13 +73,7 @@ export function threadShellFromProjection(
     pendingRuntimeRequest === null || pendingRuntimeRequest.responseCapability.type === "message"
       ? secretRequestAsPendingInput(
           projection.turnItems
-            .filter(
-              (item) =>
-                item.type === "secret_request" &&
-                item.status === "waiting" &&
-                item.runId !== null &&
-                liveRunIds.has(item.runId),
-            )
+            .filter((item) => item.status === "waiting" && waitsOnUser(item, liveRunIds))
             .sort(
               (left, right) =>
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
@@ -128,6 +123,12 @@ export function threadShellFromProjection(
     ...(projection.thread.historyOrigin === undefined
       ? {}
       : { historyOrigin: projection.thread.historyOrigin }),
+    ...(projection.thread.linkOrigin === undefined
+      ? {}
+      : { linkOrigin: projection.thread.linkOrigin }),
+    ...(projection.thread.delegatedFrom === undefined
+      ? {}
+      : { delegatedFrom: projection.thread.delegatedFrom }),
     latestRunId: latestRun?.id ?? null,
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
@@ -351,7 +352,7 @@ function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"]
 
 type ShellActivityRunStatus = "preparing" | "running" | "starting" | "waiting";
 
-export function isActivityRunForShell(
+function isActivityRunForShell(
   run: OrchestrationV2ThreadProjection["runs"][number],
 ): run is OrchestrationV2ThreadProjection["runs"][number] & {
   readonly status: ShellActivityRunStatus;
@@ -359,11 +360,12 @@ export function isActivityRunForShell(
   return isInterruptibleRunForShell(run) || run.status === "waiting";
 }
 
-/** A waiting secret card uses the shell's pending-input summary without runtime authority. */
+/** A waiting secret or link card uses the shell's pending-input summary without runtime authority. */
 export function secretRequestAsPendingInput(
   item: OrchestrationV2ThreadProjection["turnItems"][number] | null,
 ): OrchestrationV2PendingRuntimeRequestSummary | null {
-  if (item?.type !== "secret_request" || item.nodeId === null) return null;
+  if ((item?.type !== "secret_request" && item?.type !== "link_request") || item.nodeId === null)
+    return null;
   return {
     id: RuntimeRequestId.make(item.id),
     kind: "user_input",
@@ -371,6 +373,17 @@ export function secretRequestAsPendingInput(
     blocking: true,
   };
 }
+
+/**
+ * A secret card is answered while its agent waits in the run. A link card's
+ * agent asked without waiting, so the card waits on the user after its run.
+ */
+const waitsOnUser = (
+  item: OrchestrationV2ThreadProjection["turnItems"][number],
+  liveRunIds: ReadonlySet<RunId>,
+) =>
+  item.type === "link_request" ||
+  (item.type === "secret_request" && item.runId !== null && liveRunIds.has(item.runId));
 
 /** The goal belongs to the provider thread that currently owns the conversation. */
 export function activeProviderGoalForShell(

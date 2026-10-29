@@ -40,6 +40,7 @@ export function useScientAnalyticsView(
   const connection = Option.getOrNull(prepared);
   const eventKey = JSON.stringify(event);
   const read = useEffectEvent(() => (document.visibilityState === "hidden" ? null : event));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers a view observation with the analytics gate plus a document visibilitychange listener, disposed on unmount
   useEffect(() => {
     if (connection === null || eventKey === "null") return;
     const observation = gate.observeView(connection, () => read());
@@ -76,6 +77,7 @@ export function recordScientAnalytics(
 export function useRecordScientAnalytics() {
   const environmentId = usePrimaryEnvironmentId();
   const prepared = usePreparedConnection(environmentId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- primes the imperative analytics gate whenever the prepared connection changes
   useEffect(() => {
     if (Option.isSome(prepared)) gate.prime(prepared.value);
   }, [prepared]);

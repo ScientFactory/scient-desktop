@@ -54,6 +54,7 @@ export function usePendingSurfaceDeparture(
   const optionsRef = useRef(options);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const noticeIdRef = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps refs mirroring pending surface ids and options for the stable departure callbacks to read
   useLayoutEffect(() => {
     pendingSurfaceIdsRef.current = pendingSurfaceIds;
     optionsRef.current = options;
@@ -140,10 +141,12 @@ export function usePendingSurfaceDeparture(
     },
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settles a pending departure with the imperative toast and navigation when the pending set changes
   useEffect(() => {
     settleDeparture(pendingSurfaceIds, options.attentionSurfaceIds);
   }, [pendingSurfaceIds, options.attentionSurfaceIds, settleDeparture]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the departure notice toast and timer on unmount
   useEffect(
     () => () => {
       departureRef.current = null;
@@ -168,6 +171,7 @@ export function useActivePendingSurfaceDeparture(
 ) {
   const runAfterPendingSave = usePendingSurfaceDeparture(input.pendingSurfaceIds, input);
   const inputRef = useRef(input);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the input for the stable callback to read
   useLayoutEffect(() => {
     inputRef.current = input;
   }, [input]);
@@ -201,6 +205,7 @@ export function usePendingSurfaceNavigationBlocker(
   const notifiedRef = useRef(false);
   const optionsRef = useRef(options);
   const pendingRef = useRef(pendingSurfaceIds);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps refs mirroring options and pending ids for the router blocker callbacks to read
   useLayoutEffect(() => {
     optionsRef.current = options;
     pendingRef.current = pendingSurfaceIds;
@@ -215,6 +220,7 @@ export function usePendingSurfaceNavigationBlocker(
     withResolver: true,
   });
   const navigationRef = useRef(navigation);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the router blocker state for departure callbacks to read
   useLayoutEffect(() => {
     navigationRef.current = navigation;
   }, [navigation]);
@@ -227,6 +233,7 @@ export function usePendingSurfaceNavigationBlocker(
     },
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the pending-save departure lane in step with the router navigation blocker
   useEffect(() => {
     if (navigation.status !== "blocked") {
       if (notifiedRef.current) depart([], () => undefined);

@@ -6,7 +6,11 @@ import { environmentCatalog } from "../../connection/catalog";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
-import { useAllEnvironmentShellsBootstrapped, useThreadShells } from "../../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useDelegatedUnderParent,
+  useThreadShells,
+} from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { useUiStateStore } from "../../uiStateStore";
 import { countUnreadConversations, environmentCatalogComplete } from "./unreadConversations";
@@ -26,6 +30,7 @@ function UnreadAnswerBadge() {
   const threads = useThreadShells();
   const localVisits = useUiStateStore((state) => state.threadLastVisitedAtById);
   const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const delegatedUnderParent = useDelegatedUnderParent();
   // Snoozes end on their own; a minute late is fine for a badge. The clock omits its UTC zone.
   const now = `${useNowMinute()}:00.000Z`;
   // Until every environment is known and has its threads, the badge keeps its last value.
@@ -34,9 +39,10 @@ function UnreadAnswerBadge() {
   const count = !enabled
     ? 0
     : ready
-      ? countUnreadConversations({ threads, localVisits, serverConfigs, now })
+      ? countUnreadConversations({ threads, localVisits, serverConfigs, now, delegatedUnderParent })
       : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the count to the OS app badge through the desktop bridge
   useEffect(() => {
     const bridge = window.desktopBridge;
     const setBadge = bridge?.setUnreadAnswerBadge;

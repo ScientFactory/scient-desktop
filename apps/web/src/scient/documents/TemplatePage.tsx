@@ -107,6 +107,7 @@ export function TemplatePage(props: {
   } | null>(null);
   const sourceWidth = picture.kind === "page" ? picture.width : 1;
   const sourceHeight = picture.kind === "page" ? picture.height : Math.SQRT2;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the captured page DOM node to derive content bounds after layout
   useLayoutEffect(() => {
     if (!cropped || html === null || !capturedPage.current) return;
     const bounds = measureContent(capturedPage.current, sourceWidth, sourceHeight);

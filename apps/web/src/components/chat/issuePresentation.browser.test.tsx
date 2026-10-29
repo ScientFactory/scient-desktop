@@ -25,8 +25,8 @@ import { createRef } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 import { MessagesTimeline } from "./MessagesTimeline";
-import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
+import type { ScientPendingApproval } from "../../scient/chat/ApprovalResponseError";
 
 const env = EnvironmentId.make("issue-presentation-fixture");
 
@@ -97,54 +97,50 @@ it("keeps a successful answer clean and puts retry feedback on its approval", as
       streaming: false,
     },
   ];
+  const approval: ScientPendingApproval = {
+    requestId: RuntimeRequestId.make("approval"),
+    responseCapability: "live",
+    requestKind: "command",
+    createdAt: DateTime.formatIso(date),
+    detail: "git status",
+    responseError: "Approval could not be sent. Try again.",
+  };
   try {
     await _fixtureAct(
       async () =>
         await root.rerender(
-          <>
-            <div style={{ height: "500px" }}>
-              <MessagesTimeline
-                emptyPlaceholderInset={0}
-                {..._fixture.base}
-                routeThreadKey="fixture"
-                timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
-                  optimisticMessages: [],
-                  visibleTurnItems: items.map((item, position) => ({
-                    position,
-                    visibility: "local",
-                    sourceThreadId: threadId,
-                    sourceItemId: item.id,
-                    item,
-                  })),
-                })}
-              />
-            </div>
-            <div style={{ padding: "24px", borderTop: "1px solid #ddd" }}>
-              <ComposerPendingApprovalPanel
-                approval={{
-                  requestId: RuntimeRequestId.make("approval"),
-                  responseCapability: "live" as const,
-                  requestKind: "command",
-                  createdAt: DateTime.formatIso(date),
-                  detail: "git status",
-                  responseError: "Approval could not be sent. Try again.",
-                }}
-                pendingCount={1}
-              />
-            </div>
-          </>,
+          <div style={{ height: "500px" }}>
+            <MessagesTimeline
+              emptyPlaceholderInset={0}
+              {..._fixture.base}
+              routeThreadKey="fixture"
+              pendingApprovals={[approval]}
+              canOperateThread
+              onRespondToApproval={() => Promise.resolve()}
+              timelineEntries={deriveTimelineEntriesFromVisibleTurnItems({
+                optimisticMessages: [],
+                visibleTurnItems: items.map((item, position) => ({
+                  position,
+                  visibility: "local",
+                  sourceThreadId: threadId,
+                  sourceItemId: item.id,
+                  item,
+                })),
+              })}
+            />
+          </div>,
         ),
     );
     await vi.waitFor(() => {
       expect(host.textContent).toContain("Here. What do you need?");
+      expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+        "Approval could not be sent. Try again.",
+      );
     });
     if (import.meta.env.VITE_SCIENT_ISSUE_SCREENSHOT) {
       await page.screenshot({ path: import.meta.env.VITE_SCIENT_ISSUE_SCREENSHOT, element: host });
     }
     expect(host.textContent).not.toContain("VCS process failed");
-    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
-      "Approval could not be sent. Try again.",
-    );
   } finally {
     await root.unmount();
     host.remove();
@@ -341,7 +337,6 @@ function _createFixture() {
   const base = {
     listRef,
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     latestRun: null,
     runningRunId: null,
@@ -349,7 +344,6 @@ function _createFixture() {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: () => Promise.resolve(),
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,

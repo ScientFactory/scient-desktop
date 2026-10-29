@@ -44,6 +44,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { makeReplayServerConfig } from "./testkit/ProviderReplayHarness.ts";
 import { layerGitVcsDriverWithoutBranches } from "./testkit/ProviderRuntimeTestServices.ts";
 
@@ -140,6 +141,10 @@ const fixture = Effect.gen(function* () {
       ProviderEventIngestor.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+              getInstance: () => Effect.succeed(undefined),
+            }),
             stores,
             sink,
             reconciliation,

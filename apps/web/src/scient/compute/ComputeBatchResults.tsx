@@ -352,6 +352,7 @@ function PersistedRunOutput(props: {
     (refresh: () => void, _storageStatus: AnalysisRunSummary["localStorage"]["status"]) =>
       refresh(),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads run storage state over the environment connection when the storage-status subscription changes
   useEffect(
     () => refreshStorageRun(refreshRun, props.storageStatus),
     [props.storageStatus, refreshRun, refreshStorageRun],
@@ -459,6 +460,7 @@ export function useComputeBatchRun(
   const pendingCancel = useRef<Promise<boolean> | null>(null);
   const submittedRunRef = useRef<AnalysisRunSnapshot | null>(null);
   const streamedRunsRef = useRef(streamedRuns);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the bounded run-stream subscription, keeping a terminal fallback once the stream evicts the run
   useEffect(() => {
     streamedRunsRef.current = streamedRuns;
     const observed = streamedRuns.find(
@@ -798,6 +800,7 @@ export function ComputeBatchResults({
       });
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- auto-expands output for runs newly observed on the run-stream subscription
   useEffect(() => {
     if (streamedRunValue === null) return;
     // Other tabs may run the same file. Their events do not change this owner's view.
@@ -812,6 +815,7 @@ export function ComputeBatchResults({
     setExpanded(true);
   }, [streamedRunValue, streamedRuns, model.runId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets and reloads run history from the environment when a new terminal run appears in the stream
   useEffect(() => {
     if (!latestTerminalRunId || refreshedTerminalRunIdRef.current === latestTerminalRunId) return;
     refreshedTerminalRunIdRef.current = latestTerminalRunId;
@@ -966,6 +970,7 @@ export function ComputeBatchResults({
       setHistoryCursor(null);
     }
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the run list over the environment connection when a submitted run id arrives
   useEffect(() => {
     if (submittedRunId) refreshRuns();
   }, [submittedRunId, refreshRuns]);

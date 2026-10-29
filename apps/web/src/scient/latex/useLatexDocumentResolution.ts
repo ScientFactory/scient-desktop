@@ -59,6 +59,7 @@ export function useLatexDocumentResolution(input: {
     },
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests document resolution over the environment connection, ignoring stale request replies
   useEffect(() => {
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;

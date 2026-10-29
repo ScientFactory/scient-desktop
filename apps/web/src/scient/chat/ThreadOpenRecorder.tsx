@@ -21,6 +21,7 @@ export function ThreadOpenRecorder(props: { readonly threadRef: ScopedThreadRef 
   const threadId = serverThread?.id;
   const lastVisitedAt = serverThread?.lastVisitedAt;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a one-shot thread-open visit RPC when the opened thread changes, deduped by a ref against re-renders
   useEffect(() => {
     if (environmentId === undefined || threadId === undefined) return;
     if (recordedRef.current === threadKey) return;

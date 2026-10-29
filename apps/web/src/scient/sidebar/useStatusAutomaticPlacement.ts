@@ -4,6 +4,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useDelegatedUnderParent } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
 import { frozenPlacementEnvironmentsKeyAtom } from "../sections/loadedEnvironments";
 import { sortByPlacement } from "../sections/automaticPlacement";
@@ -27,7 +28,13 @@ export function useStatusAutomaticPlacement(input: {
 }) {
   const frozenKey = useAtomValue(frozenPlacementEnvironmentsKeyAtom);
   const visits = useUiStateStore((state) => state.threadLastVisitedAtById);
-  const completeThreads = automaticPlacementThreads(input.threads, input.serverConfigs, input.now);
+  const delegatedUnderParent = useDelegatedUnderParent();
+  const completeThreads = automaticPlacementThreads(
+    input.threads,
+    input.serverConfigs,
+    input.now,
+    delegatedUnderParent,
+  );
   const rowFor = (thread: EnvironmentThreadShell) => {
     const key = statusPlacementKey(thread);
     return {

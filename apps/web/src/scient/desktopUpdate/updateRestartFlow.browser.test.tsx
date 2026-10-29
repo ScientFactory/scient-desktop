@@ -283,7 +283,7 @@ describe("update restart flow", () => {
       return result(done);
     });
     await mount(_fixture);
-    const popover = () => document.querySelector('[aria-label="Nightly update release notes"]');
+    const popover = () => document.querySelector('[aria-label="Update release notes"]');
 
     await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Update"));
     await userEvent.hover(footerButton(_fixture));
@@ -322,7 +322,7 @@ describe("update restart flow", () => {
     elsewhere.textContent = "Elsewhere";
     document.body.prepend(elsewhere);
     await mount(_fixture);
-    const popover = () => document.querySelector('[aria-label="Nightly update release notes"]');
+    const popover = () => document.querySelector('[aria-label="Update release notes"]');
 
     await vi.waitFor(() => expect(footerButton(_fixture).textContent).toContain("Update"));
     elsewhere.focus();

@@ -39,6 +39,7 @@ export const ReaderBarHostContext = createContext<ReaderBarHost | null>(null);
  */
 export function useHostedReaderShortcuts(execute: RefObject<(command: string) => boolean>): void {
   const slot = useContext(ReaderBarHostContext)?.slot ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the reader bar slot as a PDF shortcut host until unmount
   useEffect(
     () =>
       slot

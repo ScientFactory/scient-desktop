@@ -34,8 +34,10 @@ const shells = vi.hoisted(() => {
 vi.mock(import("../../state/entities"), async () => {
   const { useSyncExternalStore } = await import("react");
   const use = () => useSyncExternalStore(shells.subscribe, shells.get);
+  const delegatedUnderParent: ReadonlySet<string> = new Set();
   return {
     useAllEnvironmentShellsBootstrapped: () => use().bootstrapped,
+    useDelegatedUnderParent: () => delegatedUnderParent,
     useThreadShells: () => use().threads,
   } as never;
 });

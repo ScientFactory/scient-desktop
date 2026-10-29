@@ -72,35 +72,31 @@ const serverUpdateStatesAtom = Atom.family((environmentIds: string) =>
   ).pipe(Atom.withLabel(`scient-other-updates-server-states:${environmentIds}`)),
 );
 
-const runningThreadCountAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make(
-    (get) =>
-      get(environmentThreadShells.environmentThreadsAtom(environmentId)).filter(isThreadRunning)
-        .length,
-  ).pipe(Atom.withLabel(`scient-other-updates-running-threads:${environmentId}`)),
+/** Running threads a server update would stop: none when the server continues them. */
+const stoppedThreadCountAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) =>
+    get(serverEnvironment.settingsValueAtom(environmentId))?.continueThreadsAfterServerUpdate ===
+    true
+      ? 0
+      : get(environmentThreadShells.environmentThreadsAtom(environmentId)).filter(isThreadRunning)
+          .length,
+  ).pipe(Atom.withLabel(`scient-other-updates-stopped-threads:${environmentId}`)),
 );
 
 /** Per-machine counts that only notify readers when a count changes. */
-const runningThreadCountsAtom = Atom.family((environmentIds: string) =>
+const stoppedThreadCountsAtom = Atom.family((environmentIds: string) =>
   Atom.make((get) =>
     environmentIdsOf(environmentIds).map(
-      (environmentId) => [environmentId, get(runningThreadCountAtom(environmentId))] as const,
+      (environmentId) => [environmentId, get(stoppedThreadCountAtom(environmentId))] as const,
     ),
   ).pipe(
     Atom.withEquality(Equal.equals),
-    Atom.withLabel(`scient-other-updates-running-threads:${environmentIds}`),
+    Atom.withLabel(`scient-other-updates-stopped-threads:${environmentIds}`),
   ),
 );
 
-function stopsThreads(target: ServerUpdateTarget): boolean {
-  return !(target.threadContinuation && target.continueThreadsAfterServerUpdate);
-}
-
-/** Running threads a server update would stop now: those that cannot resume after it. */
 function stoppedThreadsNow(target: ServerUpdateTarget): number {
-  return stopsThreads(target)
-    ? appAtomRegistry.get(runningThreadCountAtom(target.environmentId))
-    : 0;
+  return appAtomRegistry.get(stoppedThreadCountAtom(target.environmentId));
 }
 
 /**
@@ -229,7 +225,7 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
     .toSorted()
     .join("\n");
   const serverStates = useAtomValue(serverUpdateStatesAtom(serverIdsKey));
-  const runningThreads = new Map(useAtomValue(runningThreadCountsAtom(serverIdsKey)));
+  const stoppedThreadCounts = new Map(useAtomValue(stoppedThreadCountsAtom(serverIdsKey)));
   const providersByMachine = new Map(machines.map((machine) => [machine.environmentId, machine]));
   const providerOf = (environmentId: EnvironmentId, instanceId: ServerProvider["instanceId"]) =>
     providersByMachine
@@ -262,6 +258,7 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
   });
   const listedKey = items.map((item) => item.key).join("\n");
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records rows seen updating in the tracking atom, which outlives this card
   useEffect(() => {
     // Rows were derived from this render's tracking; a newer write gets its own render.
     if (appAtomRegistry.get(trackedOtherUpdatesAtom) !== tracked) return;
@@ -333,9 +330,7 @@ export function useOtherUpdates(servers: ReadonlyArray<OtherServerUpdate>) {
 
   /** Running threads a server update would stop: those that cannot resume after it. */
   const stoppedThreads = (item: OtherUpdateItem): number =>
-    item.kind === "server" && stopsThreads(item.target)
-      ? (runningThreads.get(item.environmentId) ?? 0)
-      : 0;
+    item.kind === "server" ? (stoppedThreadCounts.get(item.environmentId) ?? 0) : 0;
 
   /** A server that must wait: its machine is still updating a provider or runtime. */
   const busy = (item: OtherUpdateItem): boolean =>

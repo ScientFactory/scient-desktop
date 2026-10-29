@@ -3,7 +3,6 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ThreadProjection,
   ProviderSessionId,
-  ProviderThreadId,
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -26,8 +25,6 @@ import {
 
 export interface ProviderSwitchPlanV2 {
   readonly instanceChanged: boolean;
-  readonly modelChanged: boolean;
-  readonly targetProviderThreadId: ProviderThreadId | null;
   readonly releaseProviderSessionIds: ReadonlyArray<ProviderSessionId>;
   readonly transition: ProviderSessionTransition;
 }
@@ -82,7 +79,6 @@ export const layer: Layer.Layer<
           });
           const current = projection.thread.modelSelection;
           const instanceChanged = current.instanceId !== targetModelSelection.instanceId;
-          const modelChanged = current.model !== targetModelSelection.model;
           const getMetadata = (instanceId: typeof current.instanceId) =>
             adapters.getMetadata !== undefined
               ? adapters.getMetadata(instanceId)
@@ -182,9 +178,9 @@ export const layer: Layer.Layer<
                           modelSelection: current,
                           runtimeMode: projection.thread.runtimeMode,
                           interactionMode: projection.thread.interactionMode,
+                          // SCIENT-FORK:START
                           workspace: currentWorkspace,
-                          capabilities:
-                            negotiatedCapabilities ?? currentInstance.value.capabilities,
+                          // SCIENT-FORK:END
                         },
                   target: {
                     driver: targetInstance.value.driver,
@@ -193,10 +189,11 @@ export const layer: Layer.Layer<
                       continuationKey: targetInstance.value.continuationKey,
                     },
                     modelSelection: targetModelSelection,
+                    // SCIENT-FORK:START — plan against the target thread and canonical workspace.
                     runtimeMode: targetThread.runtimeMode,
                     interactionMode: targetThread.interactionMode,
                     workspace: targetWorkspace,
-                    capabilities: targetInstance.value.capabilities,
+                    // SCIENT-FORK:END
                     available: targetInstance.value.enabled,
                   },
                   ...(selectionTransition === undefined ? {} : { selectionTransition }),
@@ -208,17 +205,6 @@ export const layer: Layer.Layer<
               cause: transition.reason,
             });
           }
-          const targetProviderThread = projection.providerThreads
-            .filter(
-              (thread) =>
-                thread.appThreadId === projection.thread.id &&
-                thread.ownerNodeId === null &&
-                thread.providerInstanceId === targetModelSelection.instanceId,
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-            )[0];
           const releaseProviderSessionIds = projection.providerSessions
             .filter((session) => {
               if (!isLiveProviderSession(session)) return false;
@@ -234,8 +220,6 @@ export const layer: Layer.Layer<
             .map((session) => session.id);
           return {
             instanceChanged,
-            modelChanged,
-            targetProviderThreadId: targetProviderThread?.id ?? null,
             releaseProviderSessionIds,
             transition,
           };

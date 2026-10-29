@@ -66,6 +66,7 @@ import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRunt
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import {
@@ -135,7 +136,6 @@ const layerTestHttpClient = Layer.succeed(
 const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
   removeRpcClient: () => Effect.void,
-  reportHostPowerState: () => Effect.void,
   snapshot: Effect.succeed({
     hostPower: {
       source: "unknown",
@@ -155,8 +155,6 @@ const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPol
     shouldRunOpportunisticWork: true,
     updatedAt: TEST_EPOCH,
   }),
-  streamChanges: Stream.empty,
-  hasDemand: () => Effect.succeed(true),
   shouldRunScopeWork: () => Effect.succeed(true),
   shouldRunOpportunisticWork: Effect.succeed(true),
 });
@@ -3082,7 +3080,9 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
-          Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+          Layer.provideMerge(
+            ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+          ),
           Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
@@ -3208,7 +3208,9 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
-          Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+          Layer.provideMerge(
+            ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+          ),
           Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
@@ -3354,7 +3356,9 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
-          Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+          Layer.provideMerge(
+            ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+          ),
           Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
@@ -3511,9 +3515,9 @@ it.layer(
         ),
       );
       readSeed = false;
-      const services = yield* Layer.build(ProviderInstanceRegistryHydration.layer).pipe(
-        Effect.provide(dependencies),
-      );
+      const services = yield* Layer.build(
+        ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+      ).pipe(Effect.provide(dependencies));
       failCurrentRead = input.failCurrentRead ?? false;
       yield* PubSub.publish(changes, undefined);
       yield* Deferred.succeed(consume, undefined);
@@ -3586,7 +3590,9 @@ it.layer(
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const layerProviderRegistry = ProviderRegistry.layer.pipe(
-            Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+            Layer.provideMerge(
+              ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+            ),
             Layer.provideMerge(scientAntigravityInstallationLayer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),

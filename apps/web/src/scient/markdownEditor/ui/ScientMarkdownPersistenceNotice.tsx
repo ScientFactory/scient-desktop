@@ -127,6 +127,7 @@ export function ScientMarkdownPersistenceNotice({
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const detailsText = details.join("\n");
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets notice state and updates the aria-live announcement when the persistence issue changes
   useEffect(() => {
     if (issue === previousIssue.current) return;
     previousIssue.current = issue;

@@ -50,6 +50,7 @@ export function ComputeInstallationRow({
   const verifyRuntime = useAtomCommand(computeEnvironment.verifyRuntime, { reportFailure: false });
   const lock = useRef(false);
   const mounted = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks component liveness in a ref so late async verification replies do not set state after unmount
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -67,6 +68,7 @@ export function ComputeInstallationRow({
     onError: () => setCopyError("The path could not be copied. Try again."),
   });
   const passed = result?.readiness === "ready" && result.connection === "verified";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds a 4-second timer that hides the success indicator, cleared on unmount or re-test
   useEffect(() => {
     if (result?.readiness !== "ready" || result.connection !== "verified") return;
     const timeout = setTimeout(() => setShowSuccess(false), 4_000);

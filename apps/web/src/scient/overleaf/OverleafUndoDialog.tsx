@@ -72,7 +72,7 @@ export function OverleafUndoDialog(props: {
   const { environmentId, workspaceRoot, connection, attemptNumber, onClose } = props;
   const [phase, setPhase] = useState<Phase>({ _tag: "loading" });
 
-  // oxlint-disable-next-line t3code/react-effect-budget -- Opening the dialog reads the undoable sends from the server; the answer is dropped once it closes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Opening the dialog reads the undoable sends from the server; the answer is dropped once it closes.
   useEffect(() => {
     let cancelled = false;
     listOverleafUndoableSends(environmentId, {

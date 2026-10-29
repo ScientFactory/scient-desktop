@@ -546,7 +546,7 @@ const makeHarness = Effect.fn("ProjectCommandsTest.makeHarness")(function* (
     networkStatus: yield* SubscriptionRef.make<NetworkStatus>("online"),
     start: Effect.void,
     register: () => Effect.succeed(true),
-    registerPlatform: () => Effect.void,
+    assertKnownAddress: () => Effect.die("Unexpected address check"),
     reconcilePlatform: () => Effect.void,
     remove: () => Effect.void,
     removeRoute: () => Effect.void,

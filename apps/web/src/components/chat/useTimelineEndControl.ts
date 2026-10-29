@@ -44,6 +44,7 @@ export function useTimelineEndControl({
   const [unreadBelowCount, setUnreadBelowCount] = useState(0);
   const onReachedEndRef = useRef(onReachedEnd);
   const onLeftEndRef = useRef(onLeftEnd);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the reached/left-end callback refs current for the debounced end control
   useLayoutEffect(() => {
     onReachedEndRef.current = onReachedEnd;
     onLeftEndRef.current = onLeftEnd;

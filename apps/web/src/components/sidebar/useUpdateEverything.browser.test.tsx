@@ -52,7 +52,7 @@ const testState = vi.hoisted(() => ({
     vi.fn<
       (request: {
         environmentId: EnvironmentId;
-        input: { targetVersion: string; continueRunningThreads?: boolean };
+        input: { targetVersion: string };
       }) => Promise<AsyncResult.AsyncResult<{ targetVersion: string }, never>>
     >(),
 }));
@@ -101,6 +101,8 @@ vi.mock("~/state/server", async () => {
     updateOutdatedServer: Symbol("update-outdated-server"),
   };
 });
+// Server update actions read each server's version to refuse a cross-track update.
+vi.mock("~/state/entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: () => testState.updateServer,
 }));
@@ -320,26 +322,11 @@ it.each(["failure", "refresh"] as const)(
       phase === "failure"
         ? AsyncResult.failureWithPrevious(Cause.fail("403"), { previous: Option.some(previous) })
         : AsyncResult.waiting(previous);
-    // The still-eligible desktop's current flags, not the original confirmed flags, drive dispatch.
-    testState.environments = testState.environments.map((entry) =>
-      entry.environmentId === "desktop"
-        ? {
-            ...entry,
-            serverConfig: {
-              ...entry.serverConfig,
-              settings: { continueThreadsAfterServerUpdate: false },
-            },
-          }
-        : entry,
-    );
     await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
     await pass.finish();
     expect(testState.updateServer.mock.calls).toMatchObject([
       [{ environmentId: "desktop", input: { targetVersion: "0.6.2" } }],
     ]);
-    expect(testState.updateServer.mock.calls[0]![0].input).not.toHaveProperty(
-      "continueRunningThreads",
-    );
 
     testState.availability = AsyncResult.success(true);
     await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
@@ -522,12 +509,10 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
       );
       await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
     });
-    // Confirmed with flags the eligible server no longer has.
     const confirmed = (id: string, selfUpdate: ServerSelfUpdateCapability): ServerUpdateTarget => ({
       environmentId: EnvironmentId.make(id),
       serverLabel: id,
       selfUpdate,
-      continueThreadsAfterServerUpdate: false,
       targetVersion: "0.6.2",
     });
     const service = confirmed("service", "boot-service");
@@ -569,14 +554,13 @@ it.each(["availability", "scope", "version", "mechanism", "owner"] as const)(
     if (change === "owner") {
       expect(update).not.toHaveBeenCalled();
     } else {
-      // The eligible retry keeps its confirmed version and mechanism, with current flags.
+      // The eligible retry keeps its confirmed version and mechanism.
       expect(update.mock.calls).toEqual([
         [
           expect.objectContaining({
             environmentId: "desktop",
             selfUpdate: "desktop-managed",
             targetVersion: "0.6.2",
-            continueThreadsAfterServerUpdate: true,
           }),
           { quiet: false },
         ],
@@ -692,17 +676,8 @@ describe("a server withdrawn when its step starts", () => {
     });
     expect(circleOffersRetry(run, "service")).toBe(false);
 
-    // Back online with a changed flag: Retry returns and takes the current flags.
-    testState.environments = [
-      {
-        ...service,
-        serverConfig: {
-          ...service.serverConfig,
-          settings: { continueThreadsAfterServerUpdate: false },
-        },
-      },
-      testState.environments[1]!,
-    ];
+    // Back online: Retry returns and takes its current target.
+    testState.environments = [service, testState.environments[1]!];
     await act(async () => await _fixture.root0!.rerender(<Probe _fixture={_fixture} />));
     expect(circleOffersRetry(run, "service")).toBe(true);
     await retryFromCircle(run, ["service"], update);
@@ -712,7 +687,6 @@ describe("a server withdrawn when its step starts", () => {
           environmentId: "service",
           selfUpdate: "boot-service",
           targetVersion: "0.6.2",
-          continueThreadsAfterServerUpdate: false,
         }),
         { quiet: false },
       ],
@@ -795,7 +769,7 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
     });
     expect(_fixture.current!.hasUpdates).toBe(true);
     expect(_fixture.current!.summary).toBe("Update 1 provider");
-    expect(_fixture.current!.lines).toEqual(["lab: Codex"]);
+    expect(_fixture.current!.rows).toMatchObject([{ label: "lab", providers: ["Codex"] }]);
   });
 
   it("updates managed runtimes before servers and hands off a staged one", async () => {
@@ -892,8 +866,8 @@ describe("Scient-managed runtimes and self-updating remotes", () => {
       );
       await _fixture.root0.rerender(<Probe _fixture={_fixture} />);
     });
-    expect(_fixture.current!.skipped).toEqual([
-      { environmentId: "bearer", label: "bearer", reason: "needs a manual update" },
+    expect(_fixture.current!.rows.filter((row) => row.skipped !== null)).toMatchObject([
+      { environmentId: "bearer", label: "bearer", skipped: "needs a manual update" },
     ]);
   });
 });

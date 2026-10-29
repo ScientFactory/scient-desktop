@@ -77,6 +77,7 @@ export function useLatexDocumentCompiler(input: {
       stopOwned();
     };
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the compile root over the environment connection when the target or refresh key changes
   useEffect(
     () => watchRoot(target, key, input.selectedPath, input.refreshKey),
     [target, key, input.selectedPath, input.refreshKey],
@@ -106,6 +107,7 @@ export function useLatexDocumentCompiler(input: {
       disposed = true;
     };
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads toolchain capabilities over the environment connection when the refresh key changes
   useEffect(
     () => readCapabilities(environmentId, input.offline, input.refreshKey, input.report),
     [environmentId, input.offline, input.refreshKey, input.report],

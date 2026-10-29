@@ -12,7 +12,7 @@ export type ScientMcpToolSummaryAction =
 
 function tool(
   labels: T3McpToolDefinition["labels"],
-  summaryAction: ScientMcpToolSummaryAction,
+  summaryAction: T3McpToolDefinition["summaryAction"],
 ): T3McpToolDefinition {
   return { displayName: `${labels[0]} ${labels[3]}`, labels, icon: "scient", summaryAction };
 }
@@ -74,6 +74,10 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_compute_inventory: tool(
     ["Check", "Checking", "Checked", "compute runtimes"],
     "scient-compute",
+  ),
+  t3_handoff_summary_read: tool(
+    ["Read", "Reading", "Read", "a saved handoff summary"],
+    "thread-read",
   ),
 };
 

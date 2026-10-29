@@ -68,6 +68,7 @@ export function useInPlaceRename(input: {
 
   // After each commit: if the panel now shows the document at the path its
   // session holds, every view has followed it (children commit first).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resolves rename-follow waiter promises once the panel commits the document at the held path
   useEffect(() => {
     if (lease === null || relativePath === null || lease.target.relativePath !== relativePath)
       return;

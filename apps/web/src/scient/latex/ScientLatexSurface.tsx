@@ -609,6 +609,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // resolved, the old resolution stands for it, so nothing reloads.
   const [moved, setMoved] = useState<{ readonly from: string; readonly to: string } | null>(null);
   const documentId = props.persistence?.documentId ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the persistence registry move notifications for this document until unmount
   useEffect(
     () =>
       documentId === null
@@ -668,6 +669,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const [wordExportOpen, setWordExportOpen] = useState(false);
   // The build messages card is temporary: a click anywhere else closes it.
   const diagnosticsCard = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for outside pointer and Escape key events on the document while the diagnostics card is open
   useEffect(() => {
     if (!diagnosticsOpen) return;
     const closeOnOutsidePress = (event: PointerEvent) => {
@@ -725,6 +727,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // Edits are validated against the latest binding, including one an accepted
   // edit installed before the next render.
   const sourceBinding = useRef(currentBinding);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the current source binding for edit handlers to read
   useLayoutEffect(() => {
     sourceBinding.current = currentBinding;
   }, [currentBinding]);
@@ -797,6 +800,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       acknowledgePresentation(props.relativePath, request);
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges the presentation request with the parent through its imperative callback
   useEffect(
     () =>
       acknowledgePresentationRequest(
@@ -813,8 +817,10 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     ],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts watching the build target over the environment connection until the target changes
   useEffect(() => (target === null ? undefined : startWatchingLatexBuild(target)), [target]);
   const previousBindingTarget = useRef(target);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- notifies the binding-change registry when the watcher observes a new binding change
   useEffect(() => {
     if (previousBindingTarget.current !== target) {
       previousBindingTarget.current = target;
@@ -852,6 +858,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       : null;
   const linkedSourceReveal =
     preferredMode === "split" ? (visualSourceReveal ?? citationSourceReveal) : citationSourceReveal;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the persistence snapshot stream to track edit time and notify binding changes on save
   useEffect(() => {
     if (persistence === null) return;
     let previous = persistence.getSnapshot();
@@ -948,6 +955,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     finishVisualEditingRef.current?.();
     setFinishedVisualRevealRequestId(requestId);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- finishes the visual reveal once the reveal request needs it, through the imperative finish callback
   useLayoutEffect(() => {
     if (!visualRevealNeedsFinish) return;
     finishVisualForReveal(revealRequestId);
@@ -1002,6 +1010,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   // that build compiled, then keeps them through edits as hints.
   const [pageAnchors, setPageAnchors] = useState<LatexBuildPageAnchors | null>(null);
   const buildRoot = build.snapshot?.rootRelativePath ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests page anchors over the environment connection, aborted when the build descriptor changes
   useEffect(() => {
     if (!pdfMatchesBuffer || descriptor?._tag !== "generated-pdf" || buildRoot === null) return;
     const key = `${descriptor.artifactId}:${descriptor.revisionId}`;
@@ -1038,6 +1047,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     syncRequestRef.current += 1;
     pdfPageRef.current = null;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets sync state when the PDF descriptor revision changes
   useEffect(() => resetSyncForRevision(descriptorRevision), [descriptorRevision]);
 
   // A forward answer belongs to one source, build and PDF.
@@ -1064,6 +1074,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const retireForwardSync = useEffectEvent((..._changes: readonly unknown[]) => {
     syncRequestRef.current += 1;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retires stale forward-sync answers when any sync input changes
   useLayoutEffect(
     () =>
       retireForwardSync(
@@ -1097,6 +1108,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   );
 
   // External refreshes and freshness hints invalidate answers even without a local edit.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bumps the sync request counter on each persistence snapshot from the subscription
   useEffect(() => {
     if (persistence === null) return;
     let previous = persistence.getSnapshot();
@@ -1190,6 +1202,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
 
   const inverseSyncEnabled = mode === "split" && splitPreview === "pdf";
   const inverseSyncEnabledRef = useRef(inverseSyncEnabled);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring inverse-sync enablement for the sync handler to read
   useLayoutEffect(() => {
     inverseSyncEnabledRef.current = inverseSyncEnabled;
   }, [inverseSyncEnabled]);
@@ -1336,6 +1349,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     localVisualDraftRef.current = pending;
     setHasLocalVisualDraft(pending);
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this document input with the latex inputs registry until unmount
   useLayoutEffect(
     () =>
       latexDocumentInputs.register({
@@ -1402,6 +1416,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     sourceNeedsAttention ||
     visualProjectState.error !== null;
   const compilerOwner = useRef({ target, persistence, blocked: compilerEditBlocked });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the compiler owner, cleared to blocked on unmount
   useLayoutEffect(() => {
     compilerOwner.current = { target, persistence, blocked: compilerEditBlocked };
     return () => {
@@ -1455,6 +1470,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     };
     requestManagedLatexInstall(target);
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes the install-build intent ref once the compiler state matches it
   useEffect(() => {
     const intent = installBuildIntent.current;
     if (intent === null) return;
@@ -1602,6 +1618,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     requestBuild: requestAutoBuild,
   });
   const surfaceRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the save shortcut claim and keydown listener on the surface DOM node until unmount
   useEffect(() => {
     const host = surfaceRef.current;
     if (!host) return;
@@ -1655,6 +1672,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const readerHosted = mergesReaderBar && hostedReaders > 0;
   // The header row hides controls only when it runs out of room, one at a
   // time in this order, and shows them again as soon as they fit.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the header row DOM node fit until unmount
   useLayoutEffect(() => {
     if (!headerRow) return;
     return observeLatexHeaderFit(headerRow, HEADER_FIT_STEPS);
@@ -1670,6 +1688,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     const active = document.activeElement;
     if (active === null || active === document.body || !active.isConnected) current.focus();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores DOM focus to the pressed switch after the header row redraws
   useEffect(
     () => restoreSwitchFocus(mode, splitPreview, readerHosted, hostedReaders, readerSlot),
     [mode, splitPreview, readerHosted, hostedReaders, readerSlot],
@@ -1770,10 +1789,12 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const exportWord = () => setWordExportOpen(true);
   // The file header's download button offers the same exports.
   const downloadActions = useRef({ pdf: exportPdf, word: exportWord });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the export actions for the parent callback to invoke
   useLayoutEffect(() => {
     downloadActions.current = { pdf: exportPdf, word: exportWord };
   });
   const onDownloadActions = props.onDownloadActions;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes download actions to the parent through its imperative callback
   useEffect(() => {
     onDownloadActions({
       pdf: () => downloadActions.current.pdf(),
@@ -1783,6 +1804,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
       wordDisabled: wordExportDisabled,
     });
   }, [onDownloadActions, pdfExportDisabled, wordExportDisabled]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the parent download actions on unmount
   useEffect(() => () => onDownloadActions(null), [onDownloadActions]);
   const onRenameContext = props.onRenameContext;
   const renameIncludedBy =
@@ -1813,6 +1835,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     build.managedInstall === null &&
     (build.snapshot === null ||
       (build.snapshot.state === "idle" && build.snapshot.descriptor === null));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes rename context to the parent through its imperative callback
   useEffect(() => {
     onRenameContext({
       includedBy: renameIncludedBy,
@@ -1833,9 +1856,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     build.snapshot?.state === "running" ||
     build.snapshot?.state === "publishing" ||
     build.snapshot?.pendingRerun === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring rename readiness for the rename participant to read
   useLayoutEffect(() => {
     renameReady.current = !renameBlocked && !buildBusy;
   }, [renameBlocked, buildBusy]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this document with the rename participant registry until unmount
   useEffect(
     () =>
       documentId === null
@@ -1846,6 +1871,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           }),
     [documentId],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the parent rename context on unmount
   useEffect(() => () => onRenameContext(null), [onRenameContext]);
   const exportMenu = (plain: boolean) => (
     <DocumentExportMenuItems

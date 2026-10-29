@@ -141,7 +141,7 @@ function SignedInSitesDialog({
       .then(setSites)
       .catch(() => setSites([])),
   );
-  // oxlint-disable-next-line t3code/react-effect-budget -- Read this profile's signed-in sites from the desktop when the view opens.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read this profile's signed-in sites from the desktop when the view opens.
   useEffect(() => {
     void load();
   }, []);
@@ -772,7 +772,7 @@ export function BrowserProfiles({
     void followSourceNames(renames);
   });
   const fetchSources = useEffectEvent(loadSources);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Each time Accounts opens, read what the source browsers show without quitting them: names, emails, pictures and colours.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Each time Accounts opens, read what the source browsers show without quitting them: names, emails, pictures and colours.
   useEffect(() => {
     if (!canWrite || !hydrated || profileIds === "") return;
     let live = true;

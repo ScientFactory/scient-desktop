@@ -27,7 +27,6 @@ import { ArrowUpIcon, PaperclipIcon, XIcon } from "lucide-react";
 import { ChevronDownIcon } from "lucide-react";
 // SCIENT-FORK:END
 import {
-  createRef,
   useEffect,
   useReducer,
   useRef,
@@ -44,10 +43,10 @@ import { useTheme } from "~/hooks/useTheme";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { deriveActiveWorkStartedAt, derivePhase } from "~/session-logic";
-import type { ChatComposerHandle } from "../chat/ChatComposer";
 import { ComposerControl, ComposerControlIcon } from "../chat/ComposerControl";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
 import { GuestMessageAttachments } from "../chat/GuestMessageAttachments";
+import { HostImageUrlContext } from "../chat/hostImageUrl";
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
 import { GuestMessageName, guestBubbleClassName } from "../chat/guestMessageStyle";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
@@ -62,6 +61,7 @@ import {
   applyGuestStreamEvent,
   formatGuestExpiry,
   guestAttachmentUrl,
+  guestMediaUrl,
   createGuestAttachmentUrls,
   guestFilesProblem,
   initialGuestStreamState,
@@ -177,6 +177,7 @@ export function GuestPage() {
   // A browser that already joined this share goes straight back in, even from the spent link.
   // Sessions are per share, so one for another link never stands in for this one.
   const [access, setAccess] = useState<GuestAccess>(shareId === null ? "none" : "checking");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches whether this browser already has a guest session and ignores the answer after cleanup
   useEffect(() => {
     if (shareId === null) return;
     let live = true;
@@ -197,6 +198,7 @@ export function GuestPage() {
   }, [credential, shareId]);
   // Pasting another guest link into this tab changes only the hash, which does not reload the
   // page; reload so the new invite is read instead of the one already captured.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hashchange listener reloads the page when another guest link is pasted into this tab
   useEffect(() => {
     const onHashChange = () => {
       if (window.location.hash !== "") window.location.reload();
@@ -235,15 +237,18 @@ function GuestSession({ shareId }: { readonly shareId: string }) {
     ...initialGuestStreamState,
     awaitingRowIds: readAwaitingRowIds(),
   }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists the awaiting row ids to sessionStorage so a reload keeps them
   useEffect(() => writeAwaitingRowIds(stream.awaitingRowIds), [stream.awaitingRowIds]);
   // EventSource closes for good only on a non-200 response, which the guest routes send for a
   // missing, invalid, or ended session. Network drops reconnect on their own.
   const [rejected, setRejected] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sets document.title to the shared thread's title
   useEffect(() => {
     if (stream.view) document.title = stream.view.title;
   }, [stream.view]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the guest EventSource stream and closes it on cleanup
   useEffect(() => {
     const source = new EventSource(
       `${GUEST_ROUTE_PREFIX}/stream?${GUEST_SHARE_PARAM}=${encodeURIComponent(shareId)}`,
@@ -343,7 +348,6 @@ function NameForm({
 // The timeline needs an environment id to key its rows. Nothing behind it loads on this page;
 // see isGuestPage.
 const GUEST_ENVIRONMENT_ID = EnvironmentId.make("guest");
-const NO_COMPOSER = createRef<ChatComposerHandle>();
 const NO_TURN_DIFFS: ReadonlyArray<never> = [];
 const NO_OPTIMISTIC_MESSAGES: ReadonlyArray<never> = [];
 const ignore = () => {};
@@ -384,6 +388,7 @@ function GuestThread({
   const openFile = useStableCallback((file: { readonly id: string }) =>
     openInNewTab(guestAttachmentUrl(shareId, file.id)),
   );
+  const hostImageUrl = useStableCallback((path: string) => guestMediaUrl(shareId, path));
   const activityRun = deriveThreadActivityRun(projection);
   const runtime = deriveThreadStructureRuntime(projection);
   const runlessWorkStartedAt = deriveRunlessWorkStartedAt(projection);
@@ -396,7 +401,6 @@ function GuestThread({
   // SCIENT-FORK:END
   const follow = useTimelineFollow({
     legendListRef: listRef,
-    composerRef: NO_COMPOSER,
     composerOverlayElement: null,
     composerTimelineInset: 0,
     routeThreadKey: threadKey,
@@ -429,6 +433,7 @@ function GuestThread({
   // SCIENT-FORK:START
   const isAtEnd = follow.isTimelineAtLogicalEndStable;
   // SCIENT-FORK:END
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the timeline to the end after commit when new unplaced messages appear
   useEffect(() => {
     const previous = new Set(previousUnplacedKey.current.split(","));
     previousUnplacedKey.current = unplacedKey;
@@ -436,6 +441,7 @@ function GuestThread({
   }, [unplacedKey, scrollToEnd, previousUnplacedKey]);
   const footerRef = useRef<HTMLOListElement>(null);
   const hasFooter = unplaced.length > 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver on the footer keeps it scrolled into view while following
   useEffect(() => {
     const footer = footerRef.current;
     if (!hasFooter || footer === null) return;
@@ -452,54 +458,54 @@ function GuestThread({
         <ExpiryLabel expiresAt={expiresAt} />
       </header>
       <div className="relative min-h-0 flex-1">
-        <MessagesTimeline
-          listRef={listRef}
-          timelineEntries={entries}
-          isWorking={isWorking}
-          activeTurnInProgress={isWorking}
-          activeTurnStartedAt={workStartedAt}
-          latestRun={activityRun}
-          runningRunId={runningRunId}
-          turnDiffSummaries={NO_TURN_DIFFS}
-          runs={projection.runs}
-          routeThreadKey={threadKey}
-          onOpenThread={ignore}
-          onRollbackCheckpoint={ignore}
-          supportsConversationRollback={false}
-          onRevertToTurnCount={ignore}
-          isRevertingCheckpoint={false}
-          onImageExpand={openExpandedImage}
-          onFileOpen={openFile}
-          onFileDownload={openFile}
-          renderHtmlRender={renderHtmlRender}
-          turnItemSource={turnItemSource}
-          activeThreadEnvironmentId={GUEST_ENVIRONMENT_ID}
-          markdownCwd={undefined}
-          resolvedTheme={resolvedTheme}
-          timestampFormat="locale"
-          workspaceRoot={undefined}
-          anchorMessageId={null}
-          onAnchorReady={ignore}
-          onAnchorSizeChanged={ignore}
-          contentInsetEndAdjustment={0}
-          emptyPlaceholderInset={0}
-          // SCIENT-FORK:START — Scient's reading end (chat/useTimelineFollow.ts).
-          onIsAtEndChange={follow.onIsAtEndChange}
-          onManualNavigation={follow.cancelTimelinePositioning}
-          // SCIENT-FORK:END
-          cancelPositionRestoreRef={follow.cancelPositionRestoreRef}
-          footer={
-            unplaced.length === 0 ? null : (
-              <ol ref={footerRef} className="chat-content-lane flex flex-col gap-4 pb-4">
-                {unplaced.map((message) => (
-                  <li key={message.id}>
-                    <UnplacedGuestMessage shareId={shareId} message={message} />
-                  </li>
-                ))}
-              </ol>
-            )
-          }
-        />
+        <HostImageUrlContext value={hostImageUrl}>
+          <MessagesTimeline
+            listRef={listRef}
+            timelineEntries={entries}
+            isWorking={isWorking}
+            activeTurnStartedAt={workStartedAt}
+            latestRun={activityRun}
+            runningRunId={runningRunId}
+            turnDiffSummaries={NO_TURN_DIFFS}
+            runs={projection.runs}
+            routeThreadKey={threadKey}
+            onOpenThread={ignore}
+            supportsConversationRollback={false}
+            onRevertToTurnCount={ignore}
+            isRevertingCheckpoint={false}
+            onImageExpand={openExpandedImage}
+            onFileOpen={openFile}
+            onFileDownload={openFile}
+            renderHtmlRender={renderHtmlRender}
+            turnItemSource={turnItemSource}
+            activeThreadEnvironmentId={GUEST_ENVIRONMENT_ID}
+            markdownCwd={undefined}
+            resolvedTheme={resolvedTheme}
+            timestampFormat="locale"
+            workspaceRoot={undefined}
+            anchorMessageId={null}
+            onAnchorReady={ignore}
+            onAnchorSizeChanged={ignore}
+            contentInsetEndAdjustment={0}
+            emptyPlaceholderInset={0}
+            // SCIENT-FORK:START — Scient's reading end (chat/useTimelineFollow.ts).
+            onIsAtEndChange={follow.onIsAtEndChange}
+            onManualNavigation={follow.cancelTimelinePositioning}
+            // SCIENT-FORK:END
+            cancelPositionRestoreRef={follow.cancelPositionRestoreRef}
+            footer={
+              unplaced.length === 0 ? null : (
+                <ol ref={footerRef} className="chat-content-lane flex flex-col gap-4 pb-4">
+                  {unplaced.map((message) => (
+                    <li key={message.id}>
+                      <UnplacedGuestMessage shareId={shareId} message={message} />
+                    </li>
+                  ))}
+                </ol>
+              )
+            }
+          />
+        </HostImageUrlContext>
         {/* SCIENT-FORK:START — Scient's reading end replaces the shared Scroll to end button. */}
         {follow.showScrollToBottom ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center">

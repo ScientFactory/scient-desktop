@@ -52,6 +52,7 @@ export class GitWorkflowService extends Context.Service<
     readonly localStatus: (
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
+    readonly currentBranch: (cwd: string) => Effect.Effect<string | null, GitManagerServiceError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
       options?: GitManager.GitRemoteStatusOptions,
@@ -204,13 +205,6 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (handle.kind !== "git") {
-      return yield* new GitManagerError({
-        operation,
-        cwd,
-        detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
-      });
-    }
     return handle;
   });
 
@@ -230,14 +224,6 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (handle.kind !== "git") {
-      return yield* new GitCommandError({
-        operation,
-        command: "vcs-route",
-        cwd,
-        detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
-      });
-    }
     return handle;
   });
 
@@ -266,13 +252,6 @@ export const make = Effect.gen(function* () {
       if (!handle) {
         return "not-repository" satisfies GitStatusRepositoryState;
       }
-      if (handle.kind !== "git") {
-        return yield* new GitManagerError({
-          operation,
-          cwd,
-          detail: `The ${operation} workflow currently supports Git repositories only; detected ${handle.kind}. (${cwd})`,
-        });
-      }
       return "repository" satisfies GitStatusRepositoryState;
     },
   );
@@ -294,14 +273,6 @@ export const make = Effect.gen(function* () {
     );
     if (!handle) {
       return false;
-    }
-    if (handle.kind !== "git") {
-      return yield* new GitCommandError({
-        operation,
-        command: "vcs-route",
-        cwd,
-        detail: `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
-      });
     }
     return true;
   });
@@ -391,6 +362,36 @@ export const make = Effect.gen(function* () {
               ),
         ),
       );
+    }),
+    currentBranch: Effect.fn("GitWorkflowService.currentBranch")(function* (cwd) {
+      // SCIENT-FORK: Scient's repository check answers a status word, not a boolean.
+      if (
+        (yield* detectGitRepositoryForStatus("GitWorkflowService.currentBranch", cwd)) !==
+        "repository"
+      ) {
+        return null;
+      }
+      const result = yield* git.execute({
+        operation: "GitWorkflowService.currentBranch",
+        cwd,
+        args: ["symbolic-ref", "--quiet", "HEAD"],
+        allowNonZeroExit: true,
+        timeoutMs: 5_000,
+      });
+      if (result.exitCode === 0) {
+        return result.stdout.trim().replace(/^refs\/heads\//, "") || null;
+      }
+      if (result.exitCode === 1) return null;
+      return yield* new GitCommandError({
+        operation: "GitWorkflowService.currentBranch",
+        command: "git symbolic-ref",
+        cwd,
+        argumentCount: 3,
+        ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+        detail: "Failed to read the checked-out branch.",
+      });
     }),
     remoteStatus: Effect.fn("GitWorkflowService.remoteStatus")(function (input, options) {
       return detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(

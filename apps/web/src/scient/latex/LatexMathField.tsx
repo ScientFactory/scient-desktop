@@ -188,6 +188,7 @@ export const LatexMathField = forwardRef<
   const mountField = useRef<() => void>(() => {});
   const viewport = useRef<ReturnType<typeof installLatexMathViewport> | null>(null);
   const viewportEditing = useRef(editing);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes editing state into the imperative math viewport controller
   useLayoutEffect(() => {
     viewportEditing.current = editing;
     viewport.current?.setEditing(Boolean(display && editing && !disabled));
@@ -195,6 +196,7 @@ export const LatexMathField = forwardRef<
   const documentMacros = useContext(LatexDocumentMathContext);
   const commandContext = useContext(LatexCommandContext);
   const completionContext = useRef(commandContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the command context for the math field to read
   useLayoutEffect(() => {
     completionContext.current = commandContext;
   }, [commandContext]);
@@ -203,6 +205,7 @@ export const LatexMathField = forwardRef<
   const baseMacros = useRef<MacroDictionary>({});
   const appliedMacroSignature = useRef("");
   const displayMode = useRef(display);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps refs mirroring macros and configuration for the imperative math field to read
   useLayoutEffect(() => {
     initialMacros.current = documentMacros;
     currentConfiguration.current = { value, display, disabled };
@@ -217,6 +220,7 @@ export const LatexMathField = forwardRef<
   const journalKey = useRef(draftKey);
   // An in-place rename moves where drafts are kept. A field with unsaved input
   // keeps its key until that input is published (a rename waits for it anyway).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the draft journal key stable until unsaved input is published
   useLayoutEffect(() => {
     if (!dirty.current) journalKey.current = draftKey;
   }, [draftKey]);
@@ -236,6 +240,7 @@ export const LatexMathField = forwardRef<
   const shortcutHint = useRef(onShortcutHint);
   const copyFormat = useRef(formatCopiedMath);
   const parseMathClipboard = useRef(parsePastedMath);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps refs mirroring event callbacks for the imperative math field to call
   useLayoutEffect(() => {
     change.current = onChange;
     focus.current = onFocus;
@@ -369,6 +374,7 @@ export const LatexMathField = forwardRef<
     }),
     [],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the MathLive mathfield element mounted into the container DOM node until unmount
   useEffect(() => {
     const container = host.current;
     if (!container) return;
@@ -1553,12 +1559,14 @@ export const LatexMathField = forwardRef<
       dispose?.();
     };
   }, [draftId, reportDraft]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the math field into its DOM host when editing begins
   useEffect(() => {
     if (editing) mountField.current();
   }, [editing]);
   const refreshPreview = useEffectEvent((..._changes: readonly unknown[]) => {
     renderPreview.current();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-renders the math preview DOM when the value, display, or macros change
   useEffect(
     () => refreshPreview(value, display, documentMacros, commandContext.colors),
     [value, display, documentMacros, commandContext.colors],
@@ -1595,15 +1603,18 @@ export const LatexMathField = forwardRef<
     math.addEventListener("mode-change", apply);
     return () => math.removeEventListener("mode-change", apply);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies document macros into the MathLive field when the document context changes
   useEffect(
     () => applyDocumentMacros(documentMacros, commandContext.colors, draftId, reportDraft),
     [documentMacros, commandContext.colors, draftId, reportDraft],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs aria label and default mode onto the MathLive field DOM element
   useEffect(() => {
     if (!field.current) return;
     field.current.setAttribute("aria-label", display ? "Display equation" : "Inline equation");
     field.current.defaultMode = display ? "math" : "inline-math";
   }, [display]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs read-only state and external value into the MathLive field, preserving its selection
   useEffect(() => {
     if (!field.current) return;
     if (field.current.readOnly !== disabled) field.current.readOnly = disabled;

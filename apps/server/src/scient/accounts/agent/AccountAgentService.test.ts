@@ -15,7 +15,12 @@ import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { ProjectionStoreV2, layerMemory } from "../../../orchestration-v2/ProjectionStore.ts";
+import {
+  ProjectionStoreV2,
+  layer as projectionStoreLayer,
+} from "../../../orchestration-v2/ProjectionStore.ts";
+import { layerMemory as sqlitePersistenceMemory } from "../../../persistence/Sqlite.ts";
+import * as Layer from "effect/Layer";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { accountAgentOperations } from "./AccountAgentService.ts";
@@ -125,5 +130,5 @@ it.effect(
       } finally {
         yield* Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true }));
       }
-    }).pipe(Effect.provide(layerMemory)),
+    }).pipe(Effect.provide(projectionStoreLayer.pipe(Layer.provide(sqlitePersistenceMemory)))),
 );

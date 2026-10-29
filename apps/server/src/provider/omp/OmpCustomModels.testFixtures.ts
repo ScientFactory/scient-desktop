@@ -1,4 +1,3 @@
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
 import type { OmpRpcNotification } from "effect-omp-rpc/client";
 import { OmpAgentMessage } from "effect-omp-rpc/schema";
 import * as Deferred from "effect/Deferred";
@@ -53,37 +52,6 @@ export const watchRpcTextTurn = Effect.fnUntraced(function* <E>(
     }),
     Effect.andThen(() => fail("RPC stream ended before a successful turn.")),
     Effect.catchCause(() => fail("RPC stream failed before a successful turn.")),
-    Effect.forkScoped,
-  );
-  return Deferred.await(terminal);
-});
-
-export const watchAdapterTextTurn = Effect.fnUntraced(function* <E>(
-  events: Stream.Stream<ProviderRuntimeEvent, E>,
-) {
-  const terminal = yield* Deferred.make<string, Error>();
-  let text = "";
-  yield* events.pipe(
-    Stream.runForEach((event) => {
-      if (event.type === "content.delta" && event.payload.streamKind === "assistant_text") {
-        text += event.payload.delta;
-      }
-      if (event.type === "turn.completed") {
-        return event.payload.state === "completed"
-          ? Deferred.succeed(terminal, text)
-          : Deferred.fail(terminal, new Error(`Adapter turn ${event.payload.state}.`));
-      }
-      if (["turn.aborted", "runtime.error", "session.exited"].includes(event.type)) {
-        return Deferred.fail(terminal, new Error(`Adapter emitted ${event.type}.`));
-      }
-      return Effect.void;
-    }),
-    Effect.andThen(() =>
-      Deferred.fail(terminal, new Error("Adapter stream ended before completion.")),
-    ),
-    Effect.catchCause(() =>
-      Deferred.fail(terminal, new Error("Adapter stream failed before completion.")),
-    ),
     Effect.forkScoped,
   );
   return Deferred.await(terminal);

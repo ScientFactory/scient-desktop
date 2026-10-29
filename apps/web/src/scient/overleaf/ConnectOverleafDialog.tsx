@@ -26,7 +26,7 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Radio, RadioGroup } from "~/components/ui/radio-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { ensureBrowseDirectoryPath } from "~/lib/projectPaths";
+import { ensureBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjectPathSearch } from "~/state/queries";
 

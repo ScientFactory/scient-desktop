@@ -142,6 +142,7 @@ describe("buildThreadActionMenuItems", () => {
     const copyItem = items.find((item) => item.id === "copy");
     expect(copyItem?.children?.map((child) => child.id)).toEqual([
       "copy-path",
+      "copy-thread",
       "copy-thread-id",
       "copy-conversation-markdown",
     ]);
@@ -149,10 +150,13 @@ describe("buildThreadActionMenuItems", () => {
   });
   // SCIENT-FORK:END
 
-  it("disables archive while the thread is running", () => {
-    const archiveItem = buildThreadActionMenuItems({ ...baseState, isRunning: true }).find(
-      (item) => item.id === "archive",
-    );
-    expect(archiveItem?.disabled).toBe(true);
+  it("disables archive and turning into a project while the thread is running", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      isRunning: true,
+      canTurnIntoProject: true,
+    });
+    expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
+    expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
 });

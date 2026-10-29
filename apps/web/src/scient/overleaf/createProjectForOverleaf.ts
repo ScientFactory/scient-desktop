@@ -10,7 +10,10 @@ import {
 } from "@t3tools/contracts";
 
 import { toastManager } from "~/components/ui/toast";
-import { findProjectByPath, inferProjectTitleFromPath } from "~/lib/projectPaths";
+import {
+  findProjectByPath,
+  inferProjectTitleFromPath,
+} from "@t3tools/client-runtime/state/projects";
 import { waitForProjectProjection } from "~/lib/projectProjection";
 import {
   initializeScientProjectForOpening,

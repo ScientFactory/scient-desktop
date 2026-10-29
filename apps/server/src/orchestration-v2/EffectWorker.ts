@@ -133,11 +133,7 @@ export const layerExecutor: Layer.Layer<
           // SCIENT-FORK:END
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({
-              threadId: effect.threadId,
-              sourceRunId,
-              ...(effect.request.updateRequested === true ? { updateRequested: true } : {}),
-            }).pipe(
+            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
               Effect.tapError(() =>
@@ -866,7 +862,6 @@ export class OrchestrationEffectWorkerV2 extends Context.Service<
 
 export interface OrchestrationEffectWorkerOptions {
   readonly workerId?: string;
-  readonly leaseDurationMs?: number;
   readonly maxAttempts?: number;
 }
 
@@ -883,7 +878,6 @@ export const layerWithOptions = (
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const executor = yield* OrchestrationEffectExecutorV2;
       const workerId = options.workerId ?? `orchestration-v2:${process.pid}`;
-      const leaseDurationMs = Math.max(1, options.leaseDurationMs ?? 30_000);
       const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
       const wasCancelled = (effectId: string) =>
         outbox.get(effectId).pipe(
@@ -979,7 +973,7 @@ export const layerWithOptions = (
       const runOnce = Effect.fnUntraced(
         function* (excludeRestartContinuations = false) {
           const claimExit = yield* Effect.exit(
-            outbox.claimNext({ workerId, leaseDurationMs, excludeRestartContinuations }),
+            outbox.claimNext({ workerId, excludeRestartContinuations }),
           );
           yield* increment(orchestrationEffectClaimsTotal, {
             result: Exit.isFailure(claimExit)

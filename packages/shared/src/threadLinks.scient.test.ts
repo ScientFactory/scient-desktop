@@ -1,68 +1,49 @@
 import { describe, expect, it } from "vite-plus/test";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   formatThreadLink,
-  formatEnvironmentQualifiedThreadLink,
-  parseEnvironmentQualifiedThreadLinkHref,
   parseThreadLinkHref,
   percentDecodedThreadLinkId,
   relabelThreadLinks,
 } from "./threadLinks.ts";
 
+const local = EnvironmentId.make("local");
+
 describe("thread links", () => {
-  it("reads stored qualified links without resolving them in the message's environment", () => {
+  it("opens stored environment-qualified v1 links in their recorded environment", () => {
     const href = "t3-thread://v1/studio%20mac/mcp%3A%281%29%2F2";
-    expect(parseEnvironmentQualifiedThreadLinkHref(href)).toEqual({
+    expect(parseThreadLinkHref(href)).toEqual({
       environmentId: "studio mac",
       threadId: "mcp:(1)/2",
     });
-    expect(parseThreadLinkHref(href)).toBeNull();
-    expect(relabelThreadLinks(`[Recorded title](${href})`, () => "Local duplicate")).toBe(
-      `[Recorded title](${href})`,
+    expect(relabelThreadLinks(`[Recorded title](${href})`, local, () => undefined)).toBe(
+      "Recorded title",
     );
-    const copied = formatEnvironmentQualifiedThreadLink(
-      "studio mac",
-      "mcp:(1)/2",
-      "Fix [the] build\nnow",
-    );
-    expect(copied).toBe("[Fix the build now](t3-thread://v1/studio%20mac/mcp%3A%281%29%2F2)");
-    expect(parseEnvironmentQualifiedThreadLinkHref(/\]\((.+)\)$/.exec(copied)![1]!)).toEqual({
-      environmentId: "studio mac",
-      threadId: "mcp:(1)/2",
-    });
   });
 
   it("rejects malformed historical links instead of redirecting them locally", () => {
     for (const href of [
-      "https://t3.codes",
-      "t3-thread://v1/only-one",
       "t3-thread://v1/env/%E0%A4%A",
       "t3-thread://v1/%20/thread",
       "t3-thread://v1/env/thread/extra",
     ]) {
-      expect(parseEnvironmentQualifiedThreadLinkHref(href)).toBeNull();
-      if (
-        href.startsWith("t3-thread://v1/") &&
-        href.slice("t3-thread://v1/".length).includes("/")
-      ) {
-        expect(parseThreadLinkHref(href)).toBeNull();
-      }
+      expect(parseThreadLinkHref(href)).toBeNull();
     }
   });
 
   it("writes slash and parenthesis ids safely and resolves them only after literal lookup", () => {
-    const markdown = formatThreadLink("mcp:(1)/2", "Fix [the] build\nnow");
+    const threadId = ThreadId.make("mcp:(1)/2");
+    const markdown = formatThreadLink({ environmentId: null, threadId }, "Fix [the] build\nnow");
     expect(markdown).toBe("[Fix the build now](t3-thread://v1/mcp:%281%29%2F2)");
-    const href = /\]\((.+)\)$/.exec(markdown)![1]!;
-    const written = parseThreadLinkHref(href)!;
-    expect(written).toBe("mcp:%281%29%2F2");
-    expect(parseEnvironmentQualifiedThreadLinkHref(href)).toBeNull();
-    expect(percentDecodedThreadLinkId(written)).toBe("mcp:(1)/2");
+    const written = parseThreadLinkHref(/\]\((.+)\)$/.exec(markdown)![1]!)!;
+    expect(written).toEqual({ environmentId: null, threadId: "mcp:%281%29%2F2" });
+    expect(percentDecodedThreadLinkId(written.threadId)).toBe("mcp:(1)/2");
     const titles = new Map([["mcp:(1)/2", "Current title"]]);
-    expect(relabelThreadLinks(markdown, (id) => titles.get(id))).toBe(
+    expect(relabelThreadLinks(markdown, local, (ref) => titles.get(ref.threadId))).toBe(
       "[Current title](t3-thread://v1/mcp:%281%29%2F2)",
     );
     titles.set("mcp:%281%29%2F2", "Literal title");
-    expect(relabelThreadLinks(markdown, (id) => titles.get(id))).toBe(
+    expect(relabelThreadLinks(markdown, local, (ref) => titles.get(ref.threadId))).toBe(
       "[Literal title](t3-thread://v1/mcp:%281%29%2F2)",
     );
   });

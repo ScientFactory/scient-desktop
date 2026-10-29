@@ -1,33 +1,31 @@
 import {
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_SECTIONS,
   t3AcpPromptWithInstructions,
-  t3OrchestrationPromptForFirstRun,
+  t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
   type T3AcpPromptWithInstructionsInput,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import { scientAgentCopy } from "./ScientAgentCopy.ts";
 
-/**
- * Scient chat renders chart and diagram fences inline, so upstream's chart rule
- * yields to them. Each section stays under Codex's 4,000-byte context entry cap.
- */
-const SCIENT_ORCHESTRATION_ADDITIONS: ReadonlyArray<string> = [
-  `### Scient visuals
-
-A chart or diagram that fits a fenced \`mermaid\`, \`vega-lite\`, or \`plotly\` block goes in your reply as that block instead of \`html_render\`. Show other visuals that say more than prose, such as rich tables, image collages, or mockups, without being asked.`,
-];
-
-/** Upstream's orchestration rules in Scient's names, then Scient's additions; one Codex entry each. */
-export const SCIENT_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
-  ...T3_CODE_ORCHESTRATION_SECTIONS.map(scientAgentCopy),
-  ...SCIENT_ORCHESTRATION_ADDITIONS,
-];
+/** Upstream's orchestration rules in Scient's copy; one Codex entry each. */
+export const SCIENT_ORCHESTRATION_SECTIONS: ReadonlyArray<string> =
+  T3_CODE_ORCHESTRATION_SECTIONS.map(scientAgentCopy);
 
 export const SCIENT_ORCHESTRATION_INSTRUCTIONS = `
 
 ${SCIENT_ORCHESTRATION_SECTIONS.join("\n\n")}
 `;
+
+/** Upstream's device rules in Scient's copy, for sessions holding the `device` capability. */
+export const SCIENT_DEVICE_TOOL_INSTRUCTIONS = scientAgentCopy(T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
+
+/** Claude Code defers MCP tools behind ToolSearch, so Claude's copy says how to load them. */
+export const SCIENT_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = scientAgentCopy(
+  T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
+);
 
 // Upstream keeps this note private in ClaudeAdapterV2.ts (CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS);
 // this is its exact text. Claude Code defers MCP tools behind ToolSearch.
@@ -61,22 +59,29 @@ export function buildScientAcpPromptWithInstructions(
 
 /**
  * Providers without a system/developer-instruction channel receive this
- * context in the first prompt. Keep the wrapper explicit so it cannot be
- * mistaken for text authored by the user.
+ * context in the prompt until it is delivered, and again after compaction.
+ * Keep the wrapper explicit so it cannot be mistaken for text authored by the user.
  */
-export function buildScientOrchestrationPromptForFirstRun(input: {
+export function buildScientOrchestrationPrompt(input: {
   readonly prompt: string;
-  readonly runOrdinal: number;
   readonly hasT3Mcp: boolean;
+  readonly hasDeviceTools: boolean;
+  readonly orchestrationDelivered: boolean;
+  readonly deviceInstructionsDelivered: boolean;
 }): string {
-  return t3OrchestrationPromptForFirstRun({
+  return t3OrchestrationPrompt({
     ...input,
     instructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
+    deviceInstructions: SCIENT_DEVICE_TOOL_INSTRUCTIONS,
     wrapperElement: "scient_orchestration_instructions",
   });
 }
 
+/**
+ * OpenCode's per-message Scient awareness already carries the device block for
+ * sessions holding `device`, so this system text stays orchestration only.
+ */
 export const buildScientOrchestrationSystemPrompt = (hasT3Mcp: boolean): string | undefined =>
-  t3OrchestrationSystemPrompt(hasT3Mcp) === undefined
+  t3OrchestrationSystemPrompt(hasT3Mcp, false) === undefined
     ? undefined
     : SCIENT_ORCHESTRATION_INSTRUCTIONS;

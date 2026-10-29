@@ -48,6 +48,7 @@ export function useScientSplit(options: UseScientSplitOptions) {
   const previousAxisRef = useRef(axis);
   const bounds = { minimum: options.minimum, fallback: options.fallback };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the split fraction into the primary pane DOM node style
   useLayoutEffect(() => {
     const pane = primaryPaneRef.current;
     if (pane === null || dragRef.current !== null) return;
@@ -68,6 +69,7 @@ export function useScientSplit(options: UseScientSplitOptions) {
     dragRef.current = null;
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases pointer capture and document cursor styles on unmount
   useEffect(
     () => () => {
       const drag = dragRef.current;
@@ -76,6 +78,7 @@ export function useScientSplit(options: UseScientSplitOptions) {
     [releaseDrag],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases an in-flight pointer drag and clears the pane DOM style when the split deactivates
   useEffect(() => {
     if (options.active) return;
     const drag = dragRef.current;
@@ -83,6 +86,7 @@ export function useScientSplit(options: UseScientSplitOptions) {
     primaryPaneRef.current?.style.removeProperty("flex-basis");
   }, [options.active, releaseDrag]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases an in-flight pointer drag when the split axis changes
   useEffect(() => {
     if (previousAxisRef.current === axis) return;
     previousAxisRef.current = axis;

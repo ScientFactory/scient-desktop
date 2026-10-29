@@ -74,6 +74,7 @@ function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
   state: DesktopUpdateState | null,
 ): boolean {
+  // SCIENT-FORK: the release-notes popover stays on prerelease tracks.
   return (
     showUpdateDetails &&
     (state?.channel === "beta" || state?.channel === "nightly") &&
@@ -165,7 +166,7 @@ const toastUpdateError: ReportLocalUpdateError = (title, description) => {
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 };
 
-async function downloadLocalUpdate(
+export async function downloadLocalUpdate(
   bridge: DesktopBridge,
   {
     // SCIENT-FORK:START — a finished download offers Restart in place (see handleAction).
@@ -212,6 +213,7 @@ function SidebarUpdateControl() {
   const releaseNotesTriggerId = useId();
   // SCIENT-FORK:START — one ready notice and install owner, anchored to this control.
   const updateReadyNoticeRef = useRef<ScientUpdateReadyNoticeHandle | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the imperative ready notice when its owner unmounts
   useEffect(() => () => updateReadyNoticeRef.current?.close(), []);
   // Resolves true when the app is relaunching; a bulk pass passes `reportError` for its summary.
   const installFromFooter = (
@@ -647,7 +649,7 @@ function SidebarUpdateControl() {
         {showReleaseNotesPopover && state ? (
           <PopoverPopup
             align="center"
-            aria-label={`${state.channel === "beta" ? "Beta" : "Nightly"} update release notes`}
+            aria-label="Update release notes"
             initialFocus={false}
             onKeyDownCapture={(event) => {
               if (

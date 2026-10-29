@@ -55,6 +55,17 @@ import type { ServerUpdateTarget } from "../ServerUpdateAction";
 
 const UPDATE_RESTART_DELAY_MS = 5_000;
 
+/** Servers this desktop app runs; they update with it. */
+export function isHostedByThisApp(
+  environment: ReturnType<typeof useEnvironments>["environments"][number],
+) {
+  return (
+    isElectron &&
+    (environment.entry.target._tag === "PrimaryConnectionTarget" ||
+      isDesktopLocalConnectionTarget(environment.entry.target))
+  );
+}
+
 export type ReportLocalUpdateError = (title: string, description: string) => void;
 
 /**
@@ -72,16 +83,15 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     label: environment.label,
     serverConfig: environment.serverConfig,
     connected: environment.connection.phase === "connected",
-    hostedByThisApp:
-      isElectron &&
-      (environment.entry.target._tag === "PrimaryConnectionTarget" ||
-        isDesktopLocalConnectionTarget(environment.entry.target)),
+    hostedByThisApp: isHostedByThisApp(environment),
     canMaintain: canUpdateServer(sessionStates[index]!),
     updateState: updateStates[index]!,
   }));
+  // SCIENT-FORK: npm waits do not apply; exact artifact availability below gates servers.
   const { targets: behindServers, skipped: unreachable } = collectServerUpdateTargets(
     machines,
     targetVersion,
+    localUpdateVersion !== null,
   );
   // SCIENT-FORK:START — do not advertise or dispatch an unqualified exact artifact target.
   const needsExactArtifact = behindServers.some(
@@ -92,11 +102,13 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   );
   const servers = supportedBulkServerTargets(behindServers, exactArtifactAvailable);
   const committedServersRef = useRef(servers);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed eligibility to the module-level update-run store
   useLayoutEffect(() => {
     committedServersRef.current = servers;
     // A failed server's Retry rechecks the same eligibility.
     publishQualifiedUpdateRunServers(servers);
   }, [committedServersRef, servers]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- withdraws published eligibility when the sidebar owner unmounts
   useLayoutEffect(
     () => () => {
       // A delayed pass or retry cannot retain eligibility after its sidebar owner leaves.
@@ -122,9 +134,11 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
   const providers = useProviderUpdates();
   const updateServer = useServerUpdate();
 
-  const { summary, lines } = describeUpdateEverything({
+  const view = describeUpdateEverything({
     localVersion: localUpdateVersion,
+    localMachines: machines.filter((machine) => machine.hostedByThisApp),
     servers,
+    skipped,
     // SCIENT-FORK:START — managed runtimes are part of the pass.
     providerMachines: [
       ...providers.machines.map((machine) => ({
@@ -144,10 +158,8 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     hasUpdates:
       servers.length > 0 || providers.machines.length > 0 || managedRuntimes.targets.length > 0,
     // SCIENT-FORK:END
-    summary,
-    lines,
+    ...view,
     restarts,
-    skipped,
     // SCIENT-FORK:START — the sidebar's circle for other machines and providers.
     otherServers,
     // SCIENT-FORK:END

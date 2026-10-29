@@ -61,7 +61,7 @@ export function OverleafFileChip(props: {
   useOverleafAgentRunWatch(environmentId, cwd);
   // Saves are watched for the app's lifetime (overleafSaveWatch); a chip that mounts reads a
   // status a save made stale, or one older than a few seconds, again.
-  // oxlint-disable-next-line t3code/react-effect-budget -- A chip appearing re-reads the server's status if a save made it stale; the save watch starts with the first chip.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A chip appearing re-reads the server's status if a save made it stale; the save watch starts with the first chip.
   useEffect(() => {
     ensureOverleafSaveWatch();
     if (connectionId !== null)

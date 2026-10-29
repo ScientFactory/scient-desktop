@@ -120,6 +120,7 @@ export function useChatViewForkCommand(input: {
               prompt: forkCommandTarget.message.text,
               attachments: forkCommandTarget.message.attachments ?? [],
             };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prepares the fork over the environment connection when the fork dialog opens on a source
   useEffect(() => {
     if (forkDialogOpen && forkSource) void prepareFork(forkSource);
   }, [forkDialogOpen, forkSource, prepareFork]);
@@ -150,6 +151,7 @@ export function useClearForkCommandOnThreadChange(
   activeThreadId: ThreadId | null,
   activeThreadEnvironmentId: EnvironmentId | null,
 ): void {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the fork command target when the active thread changes away from it
   useEffect(() => {
     setForkCommandTarget((current) =>
       current &&
@@ -457,6 +459,7 @@ export function useForkPdfContinuityPending(
     subscribeForkPdfContinuity,
     () => activeThreadRef !== null && hasPendingForkPdfContinuity(activeThreadRef),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores fork PDF continuity over the environment connection once the destination workspace root is known
   useLayoutEffect(() => {
     if (!activeThreadRef || !forkPdfContinuityPending || activeWorkspaceRoot === undefined) return;
     restoreForkPdfContinuity({
@@ -513,6 +516,7 @@ export function useForkLandingReveal(input: {
   const [positionedThreadKey, setPositionedThreadKey] = useState<string | null>(null);
   const ready = landing.pending && isForkLandingReady({ ...readiness, positionedThreadKey });
   const { threadKey } = input;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settles the fork-landing registry entry once the landing reports ready
   useLayoutEffect(() => {
     if (ready) settleForkLanding(threadKey);
   }, [ready, threadKey]);

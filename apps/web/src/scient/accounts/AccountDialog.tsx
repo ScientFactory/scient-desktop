@@ -564,7 +564,7 @@ export function AccountDialog({
     profiles.filter((profile) => profile.kind !== "incognito").map(({ id, name }) => [id, name]),
   );
   // Keyed on profile ids and names, so a rebuilt profile list doesn't refetch in a loop.
-  // oxlint-disable-next-line t3code/react-effect-budget -- Read only domain metadata from native browser profiles when the picker opens.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read only domain metadata from native browser profiles when the picker opens.
   useEffect(() => {
     let active = true;
     void Promise.all(
@@ -612,7 +612,7 @@ export function AccountDialog({
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
   const save = useAccountCommand(accountsState.save, environmentId);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Debounce local keychain metadata discovery and discard stale responses.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce local keychain metadata discovery and discard stale responses.
   useEffect(() => {
     if (details || !query.trim() || !snapshot.stores.keychain.available) return;
     let active = true;

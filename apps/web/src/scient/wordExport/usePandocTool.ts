@@ -60,6 +60,7 @@ export function usePandocTool(
   const [requesting, setRequesting] = useState(false);
   const [checks, setChecks] = useState(0);
   const onInstalledRef = useRef(onInstalled);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps onInstalledRef holding the latest callback
   useLayoutEffect(() => {
     onInstalledRef.current = onInstalled;
   });
@@ -110,6 +111,7 @@ export function usePandocTool(
     );
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the Pandoc tool status and invalidates stale reads when the environment changes
   useEffect(() => {
     void read();
     return () => {
@@ -121,6 +123,7 @@ export function usePandocTool(
     };
   }, [read]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the Pandoc install status on a timer while an install is active
   useEffect(() => {
     if (!isActivePandocInstall(status) || error !== null) return;
     const timer = setTimeout(() => void read(), PANDOC_INSTALL_POLL_MS);

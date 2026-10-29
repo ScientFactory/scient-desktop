@@ -80,6 +80,7 @@ export function useEmptySectionCleanup(input: {
     .join("\n");
 
   // Record what is visible now. Never stamps or removes, so it needs no grace.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records current section occupancy with the cleanup catalog
   useEffect(() => {
     for (const environmentId of environmentsKey.length > 0 ? environmentsKey.split("\n") : []) {
       void sweepEmpty(EnvironmentId.make(environmentId), {
@@ -90,6 +91,7 @@ export function useEmptySectionCleanup(input: {
     }
   }, [environmentsKey, occupancyByEnvironment, sweepEmpty]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs empty-section sweeps on timers and reports removals via imperative toasts
   useEffect(() => {
     const loaded = new Set(loadedKey.length > 0 ? loadedKey.split("\n") : []);
     for (const id of unjudgeableKey.length > 0 ? unjudgeableKey.split("\n") : []) {

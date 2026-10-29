@@ -25,6 +25,7 @@ export function ScientVoiceCommentControl({
   const client = getVoiceBridge();
   const [ready, setReady] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the voice client's model state when the client changes, ignoring stale completions
   useEffect(() => {
     if (!client) return;
     let current = true;

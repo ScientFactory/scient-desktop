@@ -49,6 +49,7 @@ import {
 } from "../ui/combobox";
 import { ModelEsque } from "./providerIconUtils";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
+import { registerModelPickerContent } from "../../modelPickerVisibility";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import {
   modelPickerJumpCommandForIndex,
@@ -278,6 +279,7 @@ function ModelPickerList({
     setShowBottomScrollFade(itemKeys.length > 5);
   }
   const measureScrollFades = useEffectEvent(updateScrollFades);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the list scroller in animation frames after a new list lays out to set scroll fades
   useLayoutEffect(() => {
     let nestedFrame = 0;
     const frame = window.requestAnimationFrame(() => {
@@ -330,6 +332,7 @@ function ModelPickerList({
 // Capture gives picker shortcuts priority over the composer.
 function WindowKeyDownListener({ onKeyDown }: { onKeyDown: (event: KeyboardEvent) => void }) {
   const handleKeyDown = useEffectEvent(onKeyDown);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a capture-phase window keydown listener for the picker's lifetime
   useEffect(() => {
     const listener = (event: KeyboardEvent) => handleKeyDown(event);
     window.addEventListener("keydown", listener, true);
@@ -378,6 +381,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const [searchQuery, setSearchQuery] = useState("");
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this picker's mount to global keydown handlers
+  useLayoutEffect(() => registerModelPickerContent(), []);
   const highlightedModelKeyRef = useRef<string | null>(null);
   const { favorites } = useEnvironmentModelPreferences(props.environmentId);
   const activeEntry = props.instanceEntries.find(
@@ -929,7 +934,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
       <div
         ref={pickerContentRef}
-        className="relative flex max-h-[min(21.625rem,var(--available-height,85vh))] w-screen max-w-90 flex-row overflow-hidden"
+        // SCIENT-FORK: 320 px fits the model names with their badges; the setup panel matches it.
+        className="relative flex max-h-[min(21.625rem,var(--available-height,85vh))] w-screen max-w-80 flex-row overflow-hidden"
         style={
           isSearchingModels
             ? { height: searchHeight }

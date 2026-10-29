@@ -176,6 +176,7 @@ it.live(
         "scient_accounts_list",
         "scient_compute_inventory",
         "scient_document_export",
+        "scient_handoff_summary_read",
         "scient_latex_build",
         "scient_overleaf_connect",
         "scient_overleaf_kept_copies",
@@ -198,7 +199,6 @@ it.live(
         "scient_sources_remove",
         "scient_sources_review",
         "scient_sources_update",
-        "scient_thread_read",
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",

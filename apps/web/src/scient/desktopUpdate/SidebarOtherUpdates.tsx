@@ -287,6 +287,7 @@ export function SidebarOtherUpdates({
   const doneKeys = rows.flatMap(({ item, state }) => (state.status === "done" ? [item.key] : []));
   const finishedKey = circle === "done" && !open ? doneKeys.join("\n") : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the timer that forgets finished update entries after their visible dwell, cleared on unmount
   useEffect(() => {
     if (finishedKey === null) return;
     const timer = window.setTimeout(

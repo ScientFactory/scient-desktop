@@ -37,7 +37,6 @@ const providerDependenciesLayer = Layer.mergeAll(
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({
     reportClientActivity: () => Effect.void,
     removeRpcClient: () => Effect.void,
-    reportHostPowerState: () => Effect.void,
     snapshot: Effect.succeed({
       hostPower: {
         source: "unknown",
@@ -57,8 +56,6 @@ const providerDependenciesLayer = Layer.mergeAll(
       shouldRunOpportunisticWork: true,
       updatedAt: EPOCH,
     }),
-    streamChanges: Stream.empty,
-    hasDemand: () => Effect.succeed(true),
     shouldRunScopeWork: () => Effect.succeed(true),
     shouldRunOpportunisticWork: Effect.succeed(true),
   }),

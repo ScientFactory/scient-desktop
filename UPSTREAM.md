@@ -616,6 +616,37 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`6d450a4284852af137b2f3407fddd89eb76e7644` is recorded in
+[the 2026-10-29 6d450a4284 receipt](docs/internals/t3-upstream-sync-20261029-6d450a4284.md),
+stacked on #694. Literal merge `49d0d85dde06de7b398f4d117a098cd41fb862a7` has owned base
+`abe2e529285a9b1b204e507d5673d2fd3dff5dbd` and the frozen official target as parents,
+retaining the 44 official commits after `9826dbb990`. Scient keeps its Stable/Beta update
+picker and adopts the updater's release floor and guarded downgrade; upstream's npm-based
+fleet track switch is not adopted. Upstream's out-of-usage fallback, turning a thread
+without a project into a project, local-first Git status and Electron 44.10.0 are in.
+Immutable migrations (none added), cloud, telemetry, relay, mobile publication and
+release controls remain. Release remains separate.
+
+The previous committed alignment through
+`9826dbb9904b2591bfbf60d1317486b59132f56b` is recorded in
+[the 2026-10-28 8e76f945d2 receipt](docs/internals/t3-upstream-sync-20261028-8e76f945d2.md)
+([Scient PR #694](https://github.com/ScientFactory/scient-desktop/pull/694)).
+Literal merge `f3c25c6c49cf8cc3e76a61ddb71553ffb5029f2e` has owned base
+`b3ea3c2fd48441e00f85247920decf96afcc1541` and the frozen official target as parents,
+retaining the 102 official commits after `a56ecdafa7`; owned-main catch-up
+`0f956df756f3c2a866b1d9df672ea4320728e3c7` includes `eaf4ccdd8e`; official extension
+`05313ed5470d673fa4a51fcf394b59fe86267490` retains the next 53 through `9826dbb990`, with
+upstream's grouped composer, the boring sidebar in place of the deleted legacy sidebar,
+bounded history pages and Simlock as a Labs alpha. Update-time thread
+continuation and thread-continuation gating are removed with upstream; thread links
+use upstream's v2 format while older links still parse; upstream's peer links land
+as migrations 074-076 with `scient_*` tool names; Labs keeps upstream's page.
+Upstream's dead-code sweep also removes the Scient code that only it reached, and
+every Scient React effect now states its reason. Native V2, immutable migrations,
+storage identities and cloud, telemetry, relay, updater, mobile publication and
+release controls remain. Release remains separate.
+
+The previous committed alignment through
 `a56ecdafa7c944286f3b45aa51486be4ffe079fd` is recorded in
 [the 2026-10-27 a56ecdafa7 receipt](docs/internals/t3-upstream-sync-20261027-a56ecdafa7.md)
 ([Scient PR #684](https://github.com/ScientFactory/scient-desktop/pull/684)).
@@ -1061,7 +1092,9 @@ opts in; an externally managed OpenCode server does not.
 See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
 
 Scient's injected MCP connection is named `scient`, and the omitted-history
-reader is `scient_thread_read`. Tool descriptions, provider-qualified names,
+reader is `scient_thread_inspect` (upstream `t3_thread_read`). Scient's own
+`scient_handoff_summary_read` pages saved handoff summaries that upstream's
+reader omits. Tool descriptions, provider-qualified names,
 generated handoff instructions and activity presentation use Scient identity.
 Preserve this public boundary when adopting upstream toolkits. Historical
 `t3-code`/`t3_` activity identities are normalized only for display; they are not
@@ -1156,6 +1189,12 @@ index for untracked files. A freshly timestamped copy can bypass Git's racy-clea
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,
 retain split-index handling, and preserve the deterministic regression in
 `GitVcsDriverCore.test.ts`; do not replace it with a timing delay or size-changing fixture.
+
+`effect-codex-app-server`'s client runs the caller's `onTermination` hook and
+then fails its own termination signal. Upstream's handler replaces the caller's
+hook, so Scient's session cleanup never ran. The order matters: the signal can
+retire the session and interrupt the hook. Retire the marked block when upstream
+composes the two.
 
 Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
 Preserve the optional durable completion marker in shell/detail snapshots, its

@@ -1,3 +1,4 @@
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -5,13 +6,17 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  ProviderDriverKind,
+  type ServerProvider,
   type Project as ProjectRecord,
   type ModelSelection,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -30,6 +35,7 @@ import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitWorkflow from "../../../git/GitWorkflowService.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -64,6 +70,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
           }),
       }),
       ServerSettings.layerTest(),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -142,6 +149,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
           }),
       }),
       ServerSettings.layerTest(),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -250,6 +258,7 @@ it.effect("refuses name-only projects through the real service while the Scient 
           }),
       }),
       ServerSettings.layerTest(),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
       NodeCrypto.layer,
       Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -325,12 +334,15 @@ it.effect("refuses name-only projects through the real service while the Scient 
 
 const projectLaunchHarness = (input: {
   readonly runtimeModeCeiling: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
+  readonly fallbackModel?: ModelSelection;
+  readonly providers?: readonly ServerProvider[];
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
   readonly threadCaller?: boolean;
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly overrideModel?: ModelSelection;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
+  readonly webOrigin?: string;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -349,8 +361,16 @@ const projectLaunchHarness = (input: {
     providerInstanceId: modelSelection.instanceId,
     modelSelection,
   };
+  // The project's own default model, which a test can clear between launches.
+  const projectDefaults: { model: ModelSelection | null } = {
+    model: input.overrideModel === undefined ? modelSelection : null,
+  };
   const layerDependencies = Layer.mergeAll(
+    Layer.mock(ProviderRegistry.ProviderRegistry)({
+      getProviders: Effect.succeed(input.providers ?? []),
+    }),
     ServerSettings.layerTest({
+      fallbackModelSelection: input.fallbackModel ?? null,
       ...(input.defaultRuntimeMode === undefined
         ? {}
         : { defaultRuntimeMode: input.defaultRuntimeMode }),
@@ -393,17 +413,28 @@ const projectLaunchHarness = (input: {
             sessionId: "session-1",
             label: "Claude Code",
             access: input.runtimeModeCeiling,
+            webOrigin: input.webOrigin,
           },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
-      getThreadShell: (requested) =>
-        Effect.sync(() => {
-          expect(input.threadCaller).toBe(true);
+      // A thread exists once a launch started it; otherwise only the thread caller is known.
+      getThreadShell: (requested) => {
+        const launch = input.launched.find((candidate) => candidate.threadId === requested);
+        if (launch !== undefined)
+          return Effect.succeed({
+            id: launch.threadId,
+            projectId: launch.projectId,
+            modelSelection: launch.modelSelection,
+            deletedAt: null,
+          } as unknown as OrchestrationV2ThreadShell);
+        if (input.threadCaller !== true) return Effect.succeed(null);
+        return Effect.sync(() => {
           expect(requested).toBe(sourceThreadId);
           return caller;
-        }),
+        });
+      },
     }),
     Layer.mock(ThreadLaunch.ThreadLaunchService)({
       checkWorktreeBase: input.checkWorktreeBase ?? (() => Effect.void),
@@ -431,11 +462,12 @@ const projectLaunchHarness = (input: {
             ? Option.some({
                 id,
                 workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: input.overrideModel === undefined ? modelSelection : null,
+                defaultModelSelection: projectDefaults.model,
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
     }),
+    Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
     DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
   ).pipe(
@@ -448,7 +480,13 @@ const projectLaunchHarness = (input: {
     ),
     Layer.provideMerge(NodeServices.layer),
   );
-  return { projectId, modelSelection, sourceThreadId, dependencies: layerDependencies };
+  return {
+    projectId,
+    modelSelection,
+    sourceThreadId,
+    projectDefaults,
+    dependencies: layerDependencies,
+  };
 };
 
 it.effect(
@@ -478,7 +516,7 @@ it.effect(
       expect(result.at(-1)?.result).toMatchObject({
         projectId,
         modelSelection,
-        link: `[Fix](t3-thread://v1/${launched[0]?.threadId})`,
+        link: `<t3-thread://v2/environment/${launched[0]?.threadId}>`,
       });
       expect(launched[0]).toMatchObject({
         projectId,
@@ -498,6 +536,7 @@ it.effect(
         runtimeModeCeiling: "full-access",
         defaultRuntimeMode: "auto-accept-edits",
         launched,
+        webOrigin: "https://box.example.ts.net",
       });
       const fullClientToolkit = yield* ProjectToolkit.pipe(
         Effect.provide(
@@ -509,10 +548,108 @@ it.effect(
       const fullClientResult = yield* fullClientToolkit
         .handle("scient_thread_launch", { title: "Fix", projectId })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(fullClient.dependencies));
-      expect(fullClientResult.at(-1)?.result).toMatchObject({ projectId, modelSelection });
+      expect(fullClientResult.at(-1)?.result).toMatchObject({
+        projectId,
+        modelSelection,
+        link: `https://box.example.ts.net/environment/${encodeURIComponent(launched[1]?.threadId ?? "")}`,
+      });
       expect(launched).toHaveLength(2);
       expect(launched[1]?.runtimeMode).toBe("auto-accept-edits");
     }),
+);
+
+it.effect("a launch retried with the same clientRequestId replays the first one", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = projectLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = (clientRequestId: string | undefined) =>
+      toolkit
+        .handle("scient_thread_launch", {
+          title: "Fix",
+          projectId,
+          message: "Fix the bug",
+          ...(clientRequestId === undefined ? {} : { clientRequestId }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    yield* launch("fix-1");
+    yield* launch("fix-1");
+    yield* launch("fix-2");
+    yield* launch(undefined);
+    yield* launch(undefined);
+    const ids = launched.map((input) => [input.commandId, input.threadId]);
+    // The same key sends the same command and thread ids, which the launch
+    // service replays instead of starting a second thread.
+    expect(ids[0]).toEqual(ids[1]);
+    expect(ids[0]?.[0]).toMatch(/^mcp:launch:[0-9a-f]{64}$/);
+    expect(ids[2]).not.toEqual(ids[0]);
+    // Without a key every launch is new.
+    expect(ids[3]).not.toEqual(ids[4]);
+  }),
+);
+
+it.effect("a launch key of any length or content gives a short id and never a defect", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = projectLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = (clientRequestId: string) =>
+      toolkit
+        .handle("scient_thread_launch", { title: "Fix", projectId, clientRequestId })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    // Percent-encoding would grow this six times; scratch folders are named from the id.
+    yield* launch("\u00e9".repeat(256));
+    expect(launched.map((input) => input.commandId)).toEqual([
+      expect.stringMatching(/^mcp:launch:[0-9a-f]{64}$/),
+    ]);
+
+    const loneSurrogate = yield* launch("key-\ud800").pipe(Effect.exit);
+    expect(Exit.isFailure(loneSurrogate) && Cause.hasDies(loneSurrogate.cause)).toBe(false);
+    expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("a retried launch replays after the project loses its default model", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, modelSelection, projectDefaults, dependencies } = projectLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = toolkit
+      .handle("scient_thread_launch", { title: "Fix", projectId, clientRequestId: "fix-1" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    yield* launch;
+    projectDefaults.model = null;
+    const retried = (yield* launch).at(-1)?.result;
+    expect(retried).toMatchObject({ projectId, modelSelection });
+    expect(launched.map((input) => input.threadId)).toEqual([
+      launched[0]?.threadId,
+      launched[0]?.threadId,
+    ]);
+  }),
 );
 
 it.effect("a launch binds only an existing checkout that is one of the project's worktrees", () =>
@@ -632,5 +769,97 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
 
     expect((yield* launchFrom("main")).at(-1)?.result).toMatchObject({ projectId });
     expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("a retried worktree launch replays after its base ref is gone", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const base = { exists: true };
+    const { projectId, dependencies } = projectLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
+        base.exists || workspaceStrategy.type !== "worktree"
+          ? Effect.void
+          : Effect.fail(
+              new ThreadLaunch.ThreadLaunchBaseRefError({
+                projectId,
+                projectTitle: "Client target",
+                workspaceRoot: "/projects/client-target",
+                baseRef: workspaceStrategy.baseRef,
+              }),
+            ),
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const launch = toolkit
+      .handle("scient_thread_launch", {
+        title: "Fix",
+        projectId,
+        clientRequestId: "fix-worktree",
+        workspaceStrategy: { type: "worktree", baseRef: "feature", startFromOrigin: false },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    yield* launch;
+    base.exists = false;
+    expect((yield* launch).at(-1)?.result).toMatchObject({ projectId });
+    expect(launched.map((input) => input.threadId)).toEqual([
+      launched[0]?.threadId,
+      launched[0]?.threadId,
+    ]);
+  }),
+);
+
+it.effect("a client launches with the fallback for an exhausted default", () =>
+  Effect.gen(function* () {
+    const launched: ThreadLaunch.ThreadLaunchInput[] = [];
+    const fallbackModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+    const providers: ServerProvider[] = ["claudeAgent", "codex"].map((driver) => ({
+      instanceId: ProviderInstanceId.make(driver),
+      driver: ProviderDriverKind.make(driver),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      version: null,
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+      ...(driver === "claudeAgent"
+        ? {
+            usageLimits: {
+              checkedAt: "2026-01-01T00:00:00Z",
+              windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+            },
+          }
+        : {}),
+    }));
+    const { projectId, dependencies } = projectLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched,
+      fallbackModel,
+      providers,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("scient_thread_launch", {
+        projectId,
+        title: "Fallback",
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({
+      modelSelection: fallbackModel,
+    });
+    expect(launched[0]?.modelSelection).toEqual(fallbackModel);
   }),
 );

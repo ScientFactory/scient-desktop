@@ -59,6 +59,7 @@ export class CheckpointRootScopePrepareError extends Schema.TaggedError<Checkpoi
   }
 }
 
+// SCIENT-FORK:START — root checkpoint scopes stay bound to their captured workspace.
 export class CheckpointScopeEnsureError extends Schema.TaggedError<CheckpointScopeEnsureError>()(
   "CheckpointScopeEnsureError",
   {
@@ -70,6 +71,7 @@ export class CheckpointScopeEnsureError extends Schema.TaggedError<CheckpointSco
     return `Failed to ensure checkpoint scope ${this.scopeId}.`;
   }
 }
+// SCIENT-FORK:END
 
 export class CheckpointBaselineCaptureError extends Schema.TaggedError<CheckpointBaselineCaptureError>()(
   "CheckpointBaselineCaptureError",
@@ -125,7 +127,9 @@ export class CheckpointDeleteStaleRefsError extends Schema.TaggedError<Checkpoin
 
 export const CheckpointServiceV2Error = Schema.Union([
   CheckpointRootScopePrepareError,
+  // SCIENT-FORK:START
   CheckpointScopeEnsureError,
+  // SCIENT-FORK:END
   CheckpointBaselineCaptureError,
   CheckpointCaptureError,
   CheckpointRestoreError,
@@ -144,9 +148,11 @@ export interface CheckpointServiceV2Shape {
     readonly cwd: string;
     readonly createdAt: DateTime.Utc;
   }) => Effect.Effect<OrchestrationV2CheckpointScope, CheckpointServiceV2Error>;
+  // SCIENT-FORK:START
   readonly ensureScope: (
     scope: OrchestrationV2CheckpointScope,
   ) => Effect.Effect<OrchestrationV2CheckpointScope, CheckpointServiceV2Error>;
+  // SCIENT-FORK:END
   readonly captureBaseline: (input: {
     readonly scope: OrchestrationV2CheckpointScope;
     readonly ordinalWithinScope: number;
@@ -286,6 +292,7 @@ export const layer: Layer.Layer<
     const isGitCheckpointable = (cwd: string) =>
       checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
 
+    // SCIENT-FORK:START — root checkpoint scopes stay bound to their captured workspace.
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) =>
       rootScopeWorkspaceMatches(scope)
         ? Effect.succeed(scope)
@@ -295,6 +302,7 @@ export const layer: Layer.Layer<
               cause: "The checkpoint root no longer matches its captured workspace identity.",
             }),
           );
+    // SCIENT-FORK:END
 
     const captureBaseline: CheckpointServiceV2Shape["captureBaseline"] = (input) =>
       withWorkspaceLock(
@@ -629,7 +637,9 @@ export const layer: Layer.Layer<
               }),
           ),
         ),
+      // SCIENT-FORK:START
       ensureScope,
+      // SCIENT-FORK:END
       captureBaseline,
       materializeBaselineCheckpoint,
       capture,

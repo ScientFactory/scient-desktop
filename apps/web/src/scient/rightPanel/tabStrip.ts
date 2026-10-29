@@ -32,7 +32,7 @@ export function useScientTabStrip(
     activeSurface && isScientNewTabSurface(activeSurface) ? activeSurface : undefined;
   const needsNewTab = props.open !== false && props.surfaces.length === 0;
   const addNewTab = useEffectEvent(() => props.onAddNewTab?.({ whenEmpty: true }));
-  // oxlint-disable-next-line t3code/react-effect-budget -- An open panel emptied by any owner (close, move, thread switch) gets its New tab.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- An open panel emptied by any owner (close, move, thread switch) gets its New tab.
   useEffect(() => {
     if (needsNewTab) addNewTab();
   }, [needsNewTab]);

@@ -268,11 +268,6 @@
       "path": "apps/web/src/components/chat/ChatComposer.tsx",
       "anchor": "composerSkillPrompt",
       "purpose": "Reuse the same invocation token for composer selection and the shared skill card."
-    },
-    {
-      "path": "scripts/effect-budget.json",
-      "anchor": "\"apps/web/src/scient/extensions/extensionActions.ts\"",
-      "purpose": "The shared React effect budget records existing Scient extensions lifecycle owners; new effects still require their own scoped justification and lint validation."
     }
   ],
   "scientMounts": [

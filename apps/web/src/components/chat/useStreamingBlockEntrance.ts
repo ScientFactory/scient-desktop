@@ -134,9 +134,11 @@ export function useStreamingBlockEntrance(
   messageId: string | null | undefined,
 ) {
   const streamingRef = useRef(isStreaming);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps streamingRef current with isStreaming for the reveal loop
   useLayoutEffect(() => {
     streamingRef.current = isStreaming;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the line-by-line reveal: rAF loop, mutation/resize observers and CSS variable writes on the message DOM node
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root || !messageId || typeof window === "undefined") return;

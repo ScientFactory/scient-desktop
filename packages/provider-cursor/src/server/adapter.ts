@@ -32,7 +32,6 @@ import {
   type ServerProviderModel,
   type ThreadId,
 } from "@t3tools/contracts";
-import { CursorSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -51,8 +50,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { CursorTransportFailure } from "./transportFailure.ts";
 import { cursorContextWindowTokens, cursorSdkModelSelection } from "./sdkModel.ts";
 import { probeCursorSkills, hasCursorSkillMention, rewriteCursorSkillMentions } from "./skills.ts";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { t3OrchestrationPromptForFirstRun } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -63,11 +61,6 @@ import {
 } from "@t3tools/provider-core/server/attachmentPrompt";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
-  ProviderAdapterDriverCreateError,
-  type ProviderAdapterDriver,
-  type ProviderAdapterDriverCreateInput,
-} from "@t3tools/provider-core/server/adapterDriver";
-import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
   subagentThreadTitle,
@@ -76,9 +69,8 @@ import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import { ConfigurationError } from "./sdk.ts";
 export { cursorSdkModelSelection } from "./sdkModel.ts";
 
-export const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
+const CURSOR_DRIVER_KIND = CursorAgentSdk.CURSOR_PROVIDER;
 export const CURSOR_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CURSOR_DRIVER_KIND);
-const DEFAULT_CURSOR_SETTINGS = Schema.decodeSync(CursorSettings)({});
 const isTurnStartError = Schema.is(ProviderAdapter.ProviderAdapterTurnStartError);
 
 export const CursorProviderCapabilitiesV2 = {
@@ -644,6 +636,29 @@ function nestedGrepWorkspaceResults(success: Record<string, unknown>): Record<st
   );
 }
 
+function nestedArray(value: unknown): ReadonlyArray<unknown> {
+  return Array.isArray(value) ? value : [];
+}
+
+function nestedLsDirectory(rawNode: unknown): CursorLsDirectoryNode {
+  const node = unknownRecord(rawNode);
+  return {
+    absPath: typeof node?.absPath === "string" ? node.absPath : "",
+    childrenDirs: nestedArray(node?.childrenDirs).map(nestedLsDirectory),
+    childrenFiles: nestedArray(node?.childrenFiles).flatMap((rawFile) => {
+      const name = unknownRecord(rawFile)?.name;
+      return typeof name === "string" ? [{ name }] : [];
+    }),
+    childrenWereProcessed: node?.childrenWereProcessed === true,
+    fullSubtreeExtensionCounts: Object.fromEntries(
+      Object.entries(unknownRecord(node?.fullSubtreeExtensionCounts) ?? {}).filter(
+        (entry): entry is [string, number] => typeof entry[1] === "number",
+      ),
+    ),
+    numFiles: typeof node?.numFiles === "number" ? node.numFiles : 0,
+  };
+}
+
 export function nestedToolCallFromEnvelope(
   envelope: Record<string, unknown>,
 ): { readonly callId: string; readonly toolCall: ToolCall } | undefined {
@@ -749,6 +764,66 @@ export function nestedToolCallFromEnvelope(
         } as unknown as ToolCall,
       };
     }
+    case "lsToolCall":
+      return {
+        callId: nestedCallId,
+        toolCall: {
+          type: "ls",
+          args: { path: typeof args.path === "string" ? args.path : "" },
+          result: nestedToolResult(call.result, (value) => ({
+            directoryTreeRoot: nestedLsDirectory(value.directoryTreeRoot),
+          })),
+        } as unknown as ToolCall,
+      };
+    case "readLintsToolCall":
+      return {
+        callId: nestedCallId,
+        toolCall: {
+          type: "readLints",
+          args: {
+            paths: nestedArray(args.paths).filter(
+              (path): path is string => typeof path === "string",
+            ),
+          },
+          result: nestedToolResult(call.result, (value) => ({
+            fileDiagnostics: nestedArray(value.fileDiagnostics).map((rawFile) => {
+              const file = unknownRecord(rawFile);
+              return {
+                path: typeof file?.path === "string" ? file.path : "",
+                diagnostics: nestedArray(file?.diagnostics).flatMap((rawDiagnostic) => {
+                  const diagnostic = unknownRecord(rawDiagnostic);
+                  return diagnostic === undefined
+                    ? []
+                    : [
+                        {
+                          ...diagnostic,
+                          message: typeof diagnostic.message === "string" ? diagnostic.message : "",
+                        },
+                      ];
+                }),
+              };
+            }),
+            totalFiles: typeof value.totalFiles === "number" ? value.totalFiles : 0,
+            totalDiagnostics:
+              typeof value.totalDiagnostics === "number" ? value.totalDiagnostics : 0,
+          })),
+        } as unknown as ToolCall,
+      };
+    case "mcpToolCall":
+      return {
+        callId: nestedCallId,
+        toolCall: {
+          type: "mcp",
+          args,
+          result: nestedToolResult(call.result, (value) => ({
+            content: nestedArray(value.content).flatMap((rawPart) => {
+              const part = unknownRecord(rawPart);
+              return part === undefined ? [] : [part];
+            }),
+            isError: value.isError === true,
+          })),
+        } as unknown as ToolCall,
+      };
     default: {
       const type = wrapperName.slice(0, -"ToolCall".length);
       return {
@@ -884,13 +959,12 @@ interface CursorLiveAgent {
 
 export interface CursorAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
-  readonly settings: CursorSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly getModels?: () => ReadonlyArray<ServerProviderModel>;
   readonly turnStartError?: CursorTurnStartErrorMapper;
-  // SCIENT-FORK:START — optional host copy preserves package defaults and first-run gates.
-  /** Host-owned first-run prompt text; defaults to the package's generic T3 policy. */
-  readonly orchestrationPromptForFirstRun?: typeof t3OrchestrationPromptForFirstRun;
+  // SCIENT-FORK:START — optional host copy preserves package defaults and delivery gates.
+  /** Host-owned prompt text; defaults to the package's generic T3 policy. */
+  readonly orchestrationPromptForFirstRun?: typeof t3OrchestrationPrompt;
   /** Host-owned runtime text; defaults to the package's generic T3 policy. */
   readonly runtimeInstructions?: typeof buildRuntimeInstructions;
   // SCIENT-FORK:END
@@ -958,6 +1032,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         });
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const liveAgent = yield* Ref.make<CursorLiveAgent | null>(null);
+        // What the native conversation was told since it started or was last compacted.
+        const told = yield* Ref.make<{
+          readonly agent: string;
+          readonly orchestration: boolean;
+          readonly device: boolean;
+        } | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
@@ -2242,6 +2322,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
+          hasDeviceTools: boolean,
+          delivered: { readonly orchestration: boolean; readonly device: boolean },
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
@@ -2261,10 +2343,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 .map((skill) => skill.name),
             );
           }
-          // SCIENT-FORK:START — inject host-owned first-run wording through the shared gate.
-          const userText = (
-            adapterOptions.orchestrationPromptForFirstRun ?? t3OrchestrationPromptForFirstRun
-          )({
+          // SCIENT-FORK:START — inject host-owned wording through the shared delivery gate.
+          const orchestrationPrompt =
+            adapterOptions.orchestrationPromptForFirstRun ?? t3OrchestrationPrompt;
+          // SCIENT-FORK:END
+          const userText = orchestrationPrompt({
             prompt: yield* providerMessageTextWithAttachmentPaths({
               text:
                 cursorSkillNames === undefined
@@ -2277,10 +2360,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               preserveOverflow: host.preserveAttachmentContext === true,
               // SCIENT-FORK:END
             }),
-            runOrdinal: turnInput.runOrdinal,
             hasT3Mcp: mcpServers !== undefined,
+            hasDeviceTools,
+            orchestrationDelivered: delivered.orchestration,
+            deviceInstructionsDelivered: delivered.device,
           });
-          // SCIENT-FORK:END
           const images = yield* Effect.forEach(
             turnInput.message.attachments.filter(isProviderNativeImageAttachment),
             (attachment: ChatAttachment) =>
@@ -2345,12 +2429,27 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               modelSelection: turnInput.modelSelection,
               runtimePolicy: turnInput.runtimePolicy,
             });
-            const mcpServers = cursorMcpServers(
+            // SCIENT-FORK:START — disabled MCP stays disabled for the turn.
+            const mcpSession =
               input.configureMcp === false
                 ? undefined
-                : yield* mcpSessions.read(turnInput.threadId),
+                : yield* mcpSessions.read(turnInput.threadId);
+            // SCIENT-FORK:END
+            const mcpServers = cursorMcpServers(mcpSession);
+            const hasDeviceTools =
+              mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
+            const known = yield* Ref.get(told);
+            // A conversation this process has not sent to was told on its first run.
+            const delivered =
+              known?.agent === agent.nativeThreadId
+                ? known
+                : { orchestration: turnInput.runOrdinal > 1, device: false };
+            const message = yield* resolveUserMessage(
+              turnInput,
+              mcpServers,
+              hasDeviceTools,
+              delivered,
             );
-            const message = yield* resolveUserMessage(turnInput, mcpServers);
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
             // MCP send overrides replace the ambient servers loaded when the agent opens.
@@ -2400,6 +2499,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     }),
                 ),
               );
+            const compacted = message === "/compress";
+            yield* Ref.set(told, {
+              agent: agent.nativeThreadId,
+              orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
+              device: !compacted && hasDeviceTools,
+            });
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();
             const providerTurnId = idAllocator.derive.providerTurn({
@@ -2496,7 +2601,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                                     cause: result.error,
                                     // makeProviderFailure never reads a cause's own text.
                                     message: result.error?.message,
-                                    class: "provider_error",
+                                    class: CursorAgentSdk.isCursorUsageLimitError(result.error)
+                                      ? "usage_limit"
+                                      : "provider_error",
                                   })
                                 : makeProviderFailure({
                                     cause: transportFailure,
@@ -2522,7 +2629,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                               message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
                                 ? CursorAgentSdk.cursorSdkFailureMessage(cause)
                                 : undefined,
-                              class: "transport_error",
+                              class: CursorAgentSdk.isCursorUsageLimitError(cause)
+                                ? "usage_limit"
+                                : "transport_error",
                             }),
                           }),
                     });
@@ -2808,62 +2917,3 @@ export type CursorAdapterV2DriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
-
-export interface CursorAdapterV2DriverOptions {
-  readonly turnStartError?: CursorTurnStartErrorMapper;
-  // SCIENT-FORK:START — pass host instruction copy through the provider driver.
-  readonly orchestrationPromptForFirstRun?: typeof t3OrchestrationPromptForFirstRun;
-  readonly runtimeInstructions?: typeof buildRuntimeInstructions;
-  // SCIENT-FORK:END
-}
-
-export function makeCursorAdapterV2Driver(
-  options: CursorAdapterV2DriverOptions = {},
-): ProviderAdapterDriver<CursorSettings, CursorAdapterV2DriverEnv> {
-  return {
-    driverKind: CURSOR_DRIVER_KIND,
-    configSchema: CursorSettings,
-    defaultConfig: (): CursorSettings => DEFAULT_CURSOR_SETTINGS,
-    create: Effect.fn("CursorAdapterV2Driver.create")(
-      function* (input: ProviderAdapterDriverCreateInput<CursorSettings>) {
-        const hostEnvironment = yield* HostProcess.Environment;
-        return yield* makeCursorAdapterV2({
-          instanceId: input.instanceId,
-          settings: {
-            ...input.config,
-            enabled: input.enabled,
-          },
-          environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-          ...(options.turnStartError ? { turnStartError: options.turnStartError } : {}),
-          // SCIENT-FORK:START — retain optional host text at the adapter boundary.
-          ...(options.orchestrationPromptForFirstRun === undefined
-            ? {}
-            : { orchestrationPromptForFirstRun: options.orchestrationPromptForFirstRun }),
-          ...(options.runtimeInstructions === undefined
-            ? {}
-            : { runtimeInstructions: options.runtimeInstructions }),
-          // SCIENT-FORK:END
-        });
-      },
-      (effect, input) =>
-        effect.pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapterDriverCreateError({
-                driver: CURSOR_DRIVER_KIND,
-                instanceId: input.instanceId,
-                detail: "Failed to create Cursor Agent SDK adapter.",
-                cause,
-              }),
-          ),
-        ),
-    ),
-  };
-}
-
-/**
- * Default native Cursor adapter for hosts without application-owned prompt policy.
- *
- * @public
- */
-export const CursorAdapterV2Driver = makeCursorAdapterV2Driver();

@@ -96,7 +96,6 @@ describe("followLimitIndex", () => {
       updatedAt: at,
       streaming,
     },
-    durationStart: at,
     showAssistantMeta: false,
     showAssistantCopyButton: false,
     assistantCopyStreaming: false,

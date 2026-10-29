@@ -29,7 +29,7 @@ function launcherCommand(launcherPath: string) {
 /** Desktop can run its bundled launcher without Node; other surfaces use the installed Scient command. */
 export async function resolveTriageCommand(bridge: DesktopBridge | undefined) {
   try {
-    const state = await bridge?.cliCommand?.getState();
+    const state = await bridge?.cliCommand.getState();
     // Windows reports onPath from its PATH entry alone; only an existing launcher proves it runs.
     if (state?.launcherPath) {
       return state.onPath
@@ -139,7 +139,7 @@ export function buildErrorReport(error: unknown, environment: BootErrorEnvironme
 
 function clientPlatform(bridge: DesktopBridge | undefined) {
   try {
-    return bridge?.getClientPlatform?.() ?? navigator.platform;
+    return bridge?.getClientPlatform() ?? navigator.platform;
   } catch {
     return navigator.platform;
   }

@@ -81,10 +81,12 @@ function useSourceNoteState(input: {
   const saveAgainRef = useRef(false);
   const conflictRef = useRef(false);
   const onSaveRef = useRef(input.onSave);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps onSaveRef holding the latest save callback
   useLayoutEffect(() => {
     onSaveRef.current = input.onSave;
   }, [input.onSave]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the remote note record into draft state when it changes
   useEffect(() => {
     recordRef.current = input.record;
     const remote = noteText(input.record);
@@ -159,12 +161,14 @@ function useSourceNoteState(input: {
       });
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- autosaves the draft on a debounce timer
   useEffect(() => {
     if (draft === confirmed || status === "conflict" || status === "error") return;
     const timer = setTimeout(() => void persist(), NOTE_AUTOSAVE_DELAY_MS);
     return () => clearTimeout(timer);
   }, [confirmed, draft, persist, status]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists an unsaved note draft on unmount
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -224,6 +228,7 @@ function SourceNoteEditorBridge(props: {
   const acceptedValueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
   const onFormatChangeRef = useRef(props.onFormatChange);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps onChange and onFormatChange refs holding the latest callbacks
   useLayoutEffect(() => {
     onChangeRef.current = props.onChange;
     onFormatChangeRef.current = props.onFormatChange;
@@ -241,6 +246,7 @@ function SourceNoteEditorBridge(props: {
     [editor, props.editorRef],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs external value changes into the Lexical editor as markdown
   useEffect(() => {
     if (props.value === acceptedValueRef.current) return;
     acceptedValueRef.current = props.value;
@@ -252,10 +258,12 @@ function SourceNoteEditorBridge(props: {
     );
   }, [editor, props.value]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the Lexical editor at the end when autoFocus is set
   useEffect(() => {
     if (props.autoFocus) focusEditorAtEnd(editor);
   }, [editor, props.autoFocus]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes active selection formats from the Lexical editor's update listener
   useEffect(() => {
     const publishActiveFormats = (editorState: EditorState) => {
       editorState.read(() => {
@@ -390,6 +398,7 @@ function InlineNoteEditor(props: { readonly note: ReturnType<typeof useSourceNot
   const [editing, setEditing] = useState(() => props.note.draft.length === 0);
   const editorRef = useRef<SourceNoteEditorHandle>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves editor focus to the end when editing starts
   useEffect(() => {
     if (editing) editorRef.current?.focusAtEnd();
   }, [editing]);

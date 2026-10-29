@@ -9,27 +9,21 @@ import { McpSchema, McpServer, Tool } from "effect/ai";
 import { ScientThreadsToolkitRegistrationLive } from "../../McpHttpServer.ts";
 import { scientOperationCatalog } from "../../ScientOperationCatalog.ts";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
-import { LegacyV1ThreadImporter } from "../../../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import { McpInvocationContext, type McpCapability } from "../../McpInvocationContext.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { workspaceResolverForTest } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
-import { ScientThreadReadTool } from "./tools.ts";
+import { ScientHandoffSummaryReadTool } from "./tools.ts";
 
 const TestLayer = ScientThreadsToolkitRegistrationLive.pipe(
   Layer.provide(Layer.mock(ProjectionStoreV2)({ getThreadShell: () => Effect.succeed(null) })),
-  Layer.provide(
-    Layer.mock(LegacyV1ThreadImporter)({
-      ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
-    }),
-  ),
   Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
   Layer.provideMerge(McpServer.McpServer.layer),
 );
 
-it.effect("registers the read-only Scient thread reader contract", () =>
+it.effect("registers the read-only handoff summary reader contract", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const registered = server.tools.find(({ tool }) => tool.name === "scient_thread_read");
+    const registered = server.tools.find(({ tool }) => tool.name === "scient_handoff_summary_read");
 
     expect(registered?.tool.annotations).toMatchObject({
       readOnlyHint: true,
@@ -44,32 +38,27 @@ it.effect("registers the read-only Scient thread reader contract", () =>
     };
     expect(inputSchema.type).toBe("object");
     expect(Object.keys(inputSchema.properties ?? {}).sort()).toEqual([
-      "afterPosition",
       "contextHandoffId",
-      "itemId",
-      "limit",
-      "maxCharsPerItem",
-      "runLimit",
       "textOffset",
       "threadId",
-      "view",
     ]);
-    expect(inputSchema.required).toEqual(["threadId"]);
+    expect(inputSchema.required).toEqual(["threadId", "contextHandoffId"]);
   }).pipe(Effect.provide(TestLayer)),
 );
 
-it("admits scient_thread_read only with the threads:read session grant", () => {
-  const operation = scientOperationCatalog.forTool("scient_thread_read");
+it("admits scient_handoff_summary_read only with the threads:read session grant", () => {
+  const operation = scientOperationCatalog.forTool("scient_handoff_summary_read");
   expect(operation).toMatchObject({
-    id: "threads.read",
+    id: "threads.handoff-summary.read",
     family: "threads",
     scope: "thread",
     requiredCapabilities: ["threads:read"],
     effects: { readOnly: true, destructive: false, idempotent: true, openWorld: false },
   });
+  expect(scientOperationCatalog.forTool("scient_thread_read")).toBeUndefined();
   expect(scientOperationCatalog.forTool("t3_thread_read")).toBeUndefined();
-  expect(operation?.input).toBe(ScientThreadReadTool.parametersSchema);
-  expect(Tool.getJsonSchema(ScientThreadReadTool).type).toBe("object");
+  expect(operation?.input).toBe(ScientHandoffSummaryReadTool.parametersSchema);
+  expect(Tool.getJsonSchema(ScientHandoffSummaryReadTool).type).toBe("object");
   expect(hasOperationCapabilities(operation!, new Set(["threads:read"]))).toBe(true);
   expect(
     hasOperationCapabilities(
@@ -80,19 +69,13 @@ it("admits scient_thread_read only with the threads:read session grant", () => {
 });
 
 it.effect(
-  "dispatches the renamed reader, rejects the retired name, and honors revoked grants",
+  "dispatches the summary reader, rejects the retired names, and honors revoked grants",
   () => {
     const lookup = vi.fn(() => Effect.succeed(null));
     const layer = ScientThreadsToolkitRegistrationLive.pipe(
       Layer.provide(
         Layer.mock(ProjectionStoreV2)({
           getThreadShell: lookup,
-        }),
-      ),
-      Layer.provide(
-        Layer.mock(LegacyV1ThreadImporter)({
-          ensureTranscript: () =>
-            Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
         }),
       ),
       Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
@@ -114,7 +97,7 @@ it.effect(
         getClient: Effect.die("Unused client callback"),
       });
       const call = (name: string, capabilities: ReadonlySet<McpCapability>) =>
-        server.callTool({ name, arguments: { threadId } }).pipe(
+        server.callTool({ name, arguments: { threadId, contextHandoffId: "handoff" } }).pipe(
           Effect.provideService(McpSchema.McpServerClient, client),
           Effect.provideService(McpInvocationContext, {
             environmentId: EnvironmentId.make("environment-reader-cutover"),
@@ -131,15 +114,17 @@ it.effect(
         );
       const granted = new Set<McpCapability>();
       granted.add("threads:read");
-      yield* call("scient_thread_read", granted);
+      yield* call("scient_handoff_summary_read", granted);
       expect(lookup).toHaveBeenCalledExactlyOnceWith(threadId);
 
-      const retired = yield* Effect.flip(call("t3_thread_read", granted));
-      expect(retired._tag).toBe("InvalidParams");
+      for (const name of ["scient_thread_read", "t3_thread_read"]) {
+        const retired = yield* Effect.flip(call(name, granted));
+        expect(retired._tag).toBe("InvalidParams");
+      }
       expect(lookup).toHaveBeenCalledTimes(1);
 
       granted.clear();
-      const revoked = yield* call("scient_thread_read", granted);
+      const revoked = yield* call("scient_handoff_summary_read", granted);
       expect(revoked.isError).toBe(true);
       expect(lookup).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layer));

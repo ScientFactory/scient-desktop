@@ -51,6 +51,7 @@ export function useScientReleaseNotes(options?: {
   const [isCardVisible, setCardVisible] = useState(decision.kind === "show");
   const [isDialogOpen, setDialogOpenState] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists the handled release version to storage on silent bootstrap
   useEffect(() => {
     if (decision.kind === "silent-bootstrap") {
       setStorage({ lastHandledVersion: decision.nextLastHandledVersion });

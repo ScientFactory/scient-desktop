@@ -12,6 +12,7 @@ function EditorCodeBlockActions({
   readonly onWrapChange: (wrapped: boolean) => void;
 }) {
   const [wrapped, setWrapped] = useCodeBlockWordWrap();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the persisted word-wrap state to the code block node's onWrapChange handler
   useLayoutEffect(() => onWrapChange(wrapped), [onWrapChange, wrapped]);
   return <CodeBlockActions wrapped={wrapped} onWrapChange={setWrapped} readCode={readCode} />;
 }

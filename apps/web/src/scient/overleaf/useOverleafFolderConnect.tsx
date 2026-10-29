@@ -69,7 +69,7 @@ export function useOverleafTreeMarks(input: {
     .map((connection) => connection.folder)
     .toSorted()
     .join("\u0000");
-  // oxlint-disable-next-line t3code/react-effect-budget -- The file tree's row renderer reads linked folders from a ref outside React; this publishes each change and asks it to redraw.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The file tree's row renderer reads linked folders from a ref outside React; this publishes each change and asks it to redraw.
   useEffect(() => {
     foldersRef.current = new Set(folderKey === "" ? [] : folderKey.split("\u0000"));
     onFoldersChanged();

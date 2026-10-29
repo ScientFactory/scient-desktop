@@ -85,7 +85,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   ),
   pullRequests: Schema.optionalKey(Schema.Boolean),
   pullRequestChecks: Schema.optionalKey(Schema.Boolean),
-  /** Absent on older servers; serialize context as legacy text for them. */
+  /** Every protocol-2 server sends this; older mobile builds still read it. */
   inlineMessageContext: Schema.optionalKey(Schema.Boolean),
   /** Queue operations retain typed context independently of immediate-turn support. */
   threadQueueMessageContext: Schema.optionalKey(Schema.Boolean),
@@ -114,7 +114,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Hide the switch when absent; older servers silently drop per-project provider patches. */
   projectProviderInstanceOverrides: Schema.optionalKey(Schema.Boolean),
   threadSnooze: Schema.optionalKey(Schema.Boolean),
-  /** Clear published themes when absent; older servers never send updates. */
+  /** Every protocol-2 server sends this; older mobile builds still read it. */
   environmentThemes: Schema.optionalKey(Schema.Boolean),
   usageLimitSources: Schema.optionalKey(Schema.Boolean),
   /** Honors `workspaceSnapshotsOnDemand`; older servers send every snapshot and drop them in the stream. */
@@ -130,6 +130,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadSections: Schema.optionalKey(Schema.Boolean),
   // SCIENT-FORK:END
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
+  threadProjectFromScratch: Schema.optionalKey(Schema.Boolean),
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
   /** Server understands titleOverride on thread.fork. Absent on older
@@ -141,6 +142,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   Independent of threadPullRequests; servers supporting both advertise both. */
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
   threadStop: Schema.optionalKey(Schema.Boolean),
+  /** Absent on older servers and on Windows hosts, which cannot stop a discovered server. */
+  localServerStop: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.pull-request.link / .unlink, exposes `pullRequests` on
   threads, and routes PullRequestRef.host across projects on the same host. Same
   version-skew contract as threadSettlement. */
@@ -161,12 +164,28 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   ignoredFileListing: Schema.optionalKey(Schema.Boolean),
   environmentIcon: Schema.optionalKey(Schema.Boolean),
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** The desktop app switches update tracks when a server update request names one. */
+  desktopAppChannelSwitch: Schema.optionalKey(Schema.Boolean),
   /** Subscribe to command output only when advertised; older servers never send it. */
   commandOutputStreaming: Schema.optionalKey(Schema.Boolean),
   /** Hosts headless Chromium tabs streamed over /api/preview-stream for clients without a local runtime. */
   serverBrowser: Schema.optionalKey(Schema.Boolean),
   /** Prints an existing server browser page and publishes its PDF in this environment. */
   serverBrowserPdfExport: Schema.optionalKey(Schema.Boolean),
+  /** Server links to other environments (`PeerLink`) and its agents can work
+      in them. Absent on servers from before linking, which clients must not
+      offer linking for. */
+  peerLinks: Schema.optionalKey(Schema.Boolean),
+  /** Server's `/mcp` narrows an OAuth client's modes from `T3-Mode-Limit`, so
+      a linked environment's calls keep its agent's limits. Another environment
+      links to this one only when it is set. */
+  mcpModeLimitHeader: Schema.optionalKey(Schema.Boolean),
+  /** Work a linked environment starts here stays within its link
+      (`linkOrigin`). Another environment links to this one only when it is
+      set, since without it that work could change the user's own threads. */
+  linkFence: Schema.optionalKey(Schema.Boolean),
+  /** Server answers server.prepareTriage. */
+  triage: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
@@ -177,6 +196,8 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   serverVersion: TrimmedNonEmptyString,
   /** Missing metadata denotes protocol 1. Bump this for breaking wire changes. */
   orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
+  /** Highest migration this server's database holds; absent on older servers. */
+  databaseMigration: Schema.optionalKey(Schema.Int),
   capabilities: ExecutionEnvironmentCapabilities,
 });
 export type ExecutionEnvironmentDescriptor = typeof ExecutionEnvironmentDescriptor.Type;

@@ -207,14 +207,16 @@ export function renderHistory(
   return [context, ...messages.map(renderHistoricalMessage)].join("\n\n");
 }
 
+const jsonByteLength = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
+
 export function historyCost(
   messages: ReadonlyArray<OrchestrationV2HistoricalMessage>,
   context: string,
 ): number {
   return (
     Math.max(
-      Buffer.byteLength(JSON.stringify(historyResponseItems(messages, context))),
-      Buffer.byteLength(JSON.stringify(renderHistory(messages, context))),
+      jsonByteLength(historyResponseItems(messages, context)),
+      jsonByteLength(renderHistory(messages, context)),
     ) + 256
   );
 }
@@ -293,6 +295,6 @@ export function handoffCoverage(input: {
   return [
     `Provider context handoff. Thread: ${input.threadId}. Covered app runs: ${input.coveredRunOrdinals.from}-${input.coveredRunOrdinals.to}.`,
     `Source item range: ${input.items.at(0)?.id ?? "none"} through ${input.items.at(-1)?.id ?? "none"}.`,
-    `Recover omitted history using scient_thread_read({threadId:"${input.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. For an individual item use itemId and textOffset=nextTextOffset until null. Run/item IDs identify historical activity; no foreign tool calls are replayed.`,
+    `Recover omitted history using scient_thread_inspect({threadId:"${input.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. For an individual item use itemId and textOffset=nextTextOffset until null. Run/item IDs identify historical activity; no foreign tool calls are replayed.`,
   ].join("\n");
 }

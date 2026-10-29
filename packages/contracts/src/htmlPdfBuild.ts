@@ -7,17 +7,11 @@ import {
   BrowserPdfExportProfile,
   BrowserPdfExportSourceSignals,
 } from "./browserPdfExport.ts";
+import { isTrimmedUnadvertised } from "./scientToolSchemas.ts";
 
 const BoundedText = Schema.String.check(Schema.isMaxLength(2_048));
-const ProjectHtmlPath = Schema.String.check(
-  Schema.isTrimmed(),
-  Schema.isNonEmpty(),
-  Schema.isMaxLength(1_024),
-  Schema.isPattern(/^[^\x00]+$/u),
-);
-
-const ProjectPdfPath = Schema.String.check(
-  Schema.isTrimmed(),
+const ProjectPath = Schema.String.check(
+  isTrimmedUnadvertised(),
   Schema.isNonEmpty(),
   Schema.isMaxLength(1_024),
   Schema.isPattern(/^[^\x00]+$/u),
@@ -25,12 +19,11 @@ const ProjectPdfPath = Schema.String.check(
 
 /** The deliberately small public input for a project-owned HTML document build. */
 export const ScientPdfBuildInput = Schema.Struct({
-  sourcePath: ProjectHtmlPath.annotate({
-    description: "Project-relative path to an existing .html, .htm, or .xhtml source document.",
+  sourcePath: ProjectPath.annotate({
+    description: "Project-relative .html, .htm, or .xhtml file.",
   }),
-  outputPath: ProjectPdfPath.annotate({
-    description:
-      "Project-relative .pdf path where the validated PDF should be written or replaced.",
+  outputPath: ProjectPath.annotate({
+    description: "Project-relative .pdf path. An existing file is replaced.",
   }),
 });
 export type ScientPdfBuildInput = typeof ScientPdfBuildInput.Type;
@@ -68,8 +61,8 @@ export const ControlledPdfPresentRequest = Schema.Struct({
 export type ControlledPdfPresentRequest = typeof ControlledPdfPresentRequest.Type;
 
 export const ScientPdfBuildResult = Schema.Struct({
-  sourcePath: ProjectHtmlPath,
-  outputPath: ProjectPdfPath,
+  sourcePath: ProjectPath,
+  outputPath: ProjectPath,
   source: PdfSourceDescriptor,
   title: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
   pageCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),

@@ -334,9 +334,10 @@ function everythingFixture(): ReturnType<typeof useUpdateEverything> {
   return {
     hasUpdates: true,
     summary: "Update 1 server",
-    lines: ["alvin: server to 0.6.21"],
+    version: null,
+    providerCount: 0,
+    rows: [{ environmentId: alvin, label: "alvin", app: "server", skipped: null, providers: [] }],
     restarts: [],
-    skipped: [],
     otherServers: [
       {
         environmentId: alvin,

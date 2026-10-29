@@ -9,6 +9,7 @@ export function useScheduledTaskLink(
   environmentId?: EnvironmentId,
 ) {
   const intent = useRef({ environmentId, targetId, opened: false });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the deep-linked task once when its target becomes available
   useEffect(() => {
     if (intent.current.targetId !== targetId || intent.current.environmentId !== environmentId) {
       intent.current = { environmentId, targetId, opened: false };

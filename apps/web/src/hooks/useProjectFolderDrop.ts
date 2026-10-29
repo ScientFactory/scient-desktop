@@ -21,6 +21,7 @@ export function useProjectFolderDrop(input: {
     setIsActive(false);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the drag-depth counter when folder drop is disabled
   useEffect(() => {
     if (!enabled) dragDepthRef.current = 0;
   }, [enabled]);

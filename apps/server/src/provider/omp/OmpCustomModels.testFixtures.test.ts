@@ -1,11 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProviderRuntimeEvent } from "@t3tools/contracts";
 import type { OmpRpcNotification } from "effect-omp-rpc/client";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
-import { watchAdapterTextTurn, watchRpcTextTurn } from "./OmpCustomModels.testFixtures.ts";
+import { watchRpcTextTurn } from "./OmpCustomModels.testFixtures.ts";
 
 const nativeEnd = (stopReason: string, isTerminal = true): OmpRpcNotification => ({
   _tag: "Event",
@@ -25,19 +23,6 @@ const nativeEnd = (stopReason: string, isTerminal = true): OmpRpcNotification =>
     ],
   },
 });
-const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
-const runtimeEvent = (type: string, payload: unknown) =>
-  decodeRuntimeEvent({
-    type,
-    eventId: "qualification-event",
-    provider: "scient",
-    sessionId: "qualification-session",
-    threadId: "qualification-thread",
-    createdAt: "2026-10-02T00:00:00.000Z",
-    payload,
-  });
-const textDelta = (delta: string, streamKind = "assistant_text") =>
-  runtimeEvent("content.delta", { streamKind, delta });
 
 describe("custom model live qualification outcomes", () => {
   it.effect("returns only assistant text from a successful native terminal", () =>
@@ -94,44 +79,6 @@ describe("custom model live qualification outcomes", () => {
         ),
       );
       expect((yield* completed.pipe(Effect.flip)).message).toBe("RPC protocol failure.");
-    }),
-  );
-
-  it.effect("collects adapter assistant deltas only and requires successful completion", () =>
-    Effect.gen(function* () {
-      const completed = yield* watchAdapterTextTurn(
-        Stream.make(
-          textDelta("Do not include reasoning", "reasoning_text"),
-          textDelta("CUSTOM_"),
-          textDelta("ADAPTER_OK"),
-          runtimeEvent("turn.completed", { state: "completed" }),
-        ),
-      );
-      expect(yield* completed).toBe("CUSTOM_ADAPTER_OK");
-    }),
-  );
-
-  it.effect.each(
-    (
-      [
-        ["turn.completed", { state: "failed" }],
-        ["turn.aborted", { reason: "cancelled" }],
-        ["session.exited", { reason: "stopped" }],
-      ] as const
-    ).map(([type, payload]) => ({
-      caseTitle: `rejects ${type} ${JSON.stringify(payload)} despite the requested text`,
-      type,
-      payload,
-    })),
-  )("$caseTitle", ({ type, payload }) =>
-    Effect.gen(function* () {
-      const completed = yield* watchAdapterTextTurn(
-        Stream.concat(
-          Stream.make(textDelta("CUSTOM_ADAPTER_OK"), runtimeEvent(type, payload)),
-          Stream.never,
-        ),
-      );
-      expect(yield* completed.pipe(Effect.flip)).toBeInstanceOf(Error);
     }),
   );
 

@@ -2,7 +2,6 @@ import { render as _fixtureRender, type Screen } from "../../test/render";
 import "../index.css";
 
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vitest/browser";
 
 vi.mock("@tanstack/react-router", async (original) => ({
   ...(await original<typeof import("@tanstack/react-router")>()),
@@ -61,34 +60,13 @@ it("opens tables with wrapped cells even when Word wrap is off", async () => {
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-  const { container, viewport, cells } = await mountTable(_fixture);
+  const { viewport, cells } = await mountTable(_fixture);
 
   await vi.waitFor(() => {
-    expect(container.dataset.expanded).toBe("true");
     expect(clippedCells(cells)).toEqual([]);
     expect(viewport.clientWidth).toBeGreaterThan(0);
     expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth);
   });
-});
-
-it("keeps full single-line cells reachable by horizontal scrolling when collapsed", async () => {
-  await using _fixture = _createFixture();
-  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
-
-  const { container, viewport, cells } = await mountTable(_fixture);
-  await userEvent.click(
-    container.querySelector<HTMLButtonElement>('button[aria-label="Collapse table cells"]')!,
-  );
-  await vi.waitFor(() => {
-    expect(container.dataset.expanded).toBe("false");
-    expect(clippedCells(cells)).toEqual([]);
-    expect(viewport.scrollWidth).toBeGreaterThan(viewport.clientWidth);
-  });
-
-  await userEvent.wheel(viewport, { delta: { x: 2000 } });
-  await vi.waitFor(() =>
-    expect(viewport.scrollLeft).toBe(viewport.scrollWidth - viewport.clientWidth),
-  );
 });
 
 function _createFixture() {

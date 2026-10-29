@@ -277,12 +277,6 @@ export function parseCgroup2Mounts(
   return mounts;
 }
 
-export function parseCgroup2Mount(
-  contents: string,
-): { readonly mountPoint: string; readonly root: string } | undefined {
-  return parseCgroup2Mounts(contents)[0];
-}
-
 export function wrapCommandForLinuxCgroup(
   lease: AcpLinuxCgroupLease,
   command: string,
@@ -1217,11 +1211,6 @@ export class AcpSessionRuntime extends Context.Service<
      * Never send a prompt already cancelled before its write. Bound the wait; callers close the session on failure.
      */
     readonly cancelAndAwaitPrompt: (timeout: Duration.Input) => Effect.Effect<void>;
-    readonly processContainment:
-      | "cgroup-v2"
-      | "process-ledger-reduced-guarantee"
-      | "process-group"
-      | "none";
     readonly terminateProcessGroup?: Effect.Effect<void, AcpProcessGroupTerminationError>;
     readonly setMode: (
       modeId: string,
@@ -2543,14 +2532,6 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   });
 
   return {
-    processContainment:
-      linuxCgroupLease !== undefined
-        ? "cgroup-v2"
-        : options.ownDescendantProcessGroups === true
-          ? "process-ledger-reduced-guarantee"
-          : options.ownDetachedProcessGroup === true
-            ? "process-group"
-            : "none",
     handleRequestPermission: acp.handleRequestPermission,
     handleElicitation: acp.handleElicitation,
     handleMcpConnect: acp.handleMcpConnect,

@@ -180,7 +180,7 @@ automatic positions separately.
 
 When **Working section (beta)** is on, the default sidebar uses that feature's own ordering
 instead. Automatic placement still works in Sections view. Search results keep their search order;
-the mobile app and legacy sidebar keep their existing behavior.
+the mobile app keeps its existing behavior.
 
 ## Start a new thread
 
@@ -205,7 +205,13 @@ Scient creates one internal scratch project per machine and a separate plain fol
 each conversation under its data directory. Files, Sources, Documents, and Compute use
 that conversation's folder. Scratch conversations do not have Git branches, checkpoints,
 or turn diffs. Deleting a conversation keeps its folder; moving a started scratch
-conversation and its files into another project is not yet supported.
+conversation and its files into another existing project is not yet supported.
+
+When the work grows into something real, pick **Turn into project** from the
+thread's menu. The thread's folder becomes a project where it is, so nothing
+moves and the agent keeps working in the same place. Other threads in that folder
+move with it. Rename the project in its settings, and use **Initialize Git** to
+get branch and diff controls.
 
 The option is available on a connected machine whose configured scratch location is outside
 Git. Git does not need to be installed: the server verifies its own scratch folders through
@@ -315,6 +321,18 @@ cannot drag or move threads within it. Your saved order returns when you turn it
 
 This belongs to the default Pinned and Active layout. Turn off **Group by section** to use it;
 the Sections view replaces that layout and never folds threads into a shelf.
+
+### Group threads by project (beta)
+
+Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
+threads in a folder for each project. A project with no active threads has no folder until you
+pick it in the project filter. Click a folder to open or close it. A closed folder shows how
+many threads it holds, and a dot when one of them needs you. Use the pen button on a folder, or
+right-click it, to start a thread in that project. Pinned threads stay above the folders, and
+Snoozed and Settled stay below them. In this mode you cannot drag threads, and the Working section
+is off. Each device keeps its own choice.
+Folders replace the default Pinned and Active layout; with **Group by section** on, the Sections
+view shows instead.
 
 ## Settle finished work
 
@@ -486,7 +504,25 @@ Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
 
+On web and desktop, the thread details card lists the web servers that the
+thread's terminals or its Claude agent started, with their ports. A server the
+agent started stays listed after the agent's turn ends.
+Select a server to open it in the browser panel. **Stop** ends the server's job
+and keeps the agent, the terminal, and Scient running. Stop needs terminal
+access to the environment and is not available on Windows.
+
+To choose what the thread details card shows, right-click the card or open
+**Settings → Appearance → Thread details**. Hidden rows keep their keyboard
+shortcuts, such as Open in editor and project scripts. **Reset to default** brings
+back the standard rows.
+
 ## Snooze until later
+
+To change the choices in the snooze menu, open **Settings → Threads → Snooze options**.
+Each option is a duration, such as 3 hours, or a time on a day, such as 9:00 PM
+tomorrow. A weekday means the next one after today. Menus list the options soonest
+first and hide a today option after its time passes. Saved with **All environments**
+selected, the options apply to every connected environment, and the mobile app uses them too.
 
 Choose **Snooze → Custom…** from a thread's menu to pick a date and time in your
 local time zone, or a duration in minutes, hours, or days. Durations start when

@@ -110,7 +110,9 @@ describe("reconcileDesiredCloudLink", () => {
   it.effect("requires stored CLI authorization without exposing an HTTP endpoint", () =>
     Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      const error = yield* Effect.flip(link.reconcileDesiredLink("http://127.0.0.1:3774"));
+      const error = yield* Effect.flip(
+        link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3774"),
+      );
 
       expect(error._tag).toBe("CloudLinkAuthorizationMissingError");
     }).pipe(
@@ -125,10 +127,15 @@ describe("reconcileDesiredCloudLink", () => {
           ),
         ),
       ),
-      Effect.provideService(
-        ServerSecretStore.ServerSecretStore,
-        makeSecretStore(unusedSecretStoreOperation),
-      ),
+      Effect.provideService(ServerSecretStore.ServerSecretStore, {
+        ...makeSecretStore(unusedSecretStoreOperation),
+        get: (name) =>
+          Effect.succeed(
+            name === CLOUD_CLI_DESIRED_LINK_SECRET
+              ? Option.some(new TextEncoder().encode("managed"))
+              : Option.none(),
+          ),
+      }),
       Effect.provideService(
         ServerEnvironment.ServerEnvironment,
         ServerEnvironment.ServerEnvironment.of({

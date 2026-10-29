@@ -17,7 +17,6 @@ type Entry = {
   readonly idleGeneration: number;
   readonly busyTurns: ReadonlySet<string>;
   readonly idleFiber: Fiber.Fiber<void, never> | null;
-  readonly lastActivityAtMs: number;
 };
 
 const entry = (
@@ -28,7 +27,6 @@ const entry = (
   idleGeneration: 1,
   busyTurns: new Set<string>(),
   idleFiber,
-  lastActivityAtMs: 0,
 });
 
 /** A runtime A whose idle retirement was declined while one start held its reservation. */

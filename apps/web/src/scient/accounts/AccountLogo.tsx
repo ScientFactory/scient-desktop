@@ -45,7 +45,7 @@ export function SiteFavicon({ site }: { readonly site: string }) {
     }
     return request;
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Ask the desktop for this site's cached icon when its row appears.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Ask the desktop for this site's cached icon when its row appears.
   useEffect(() => {
     let live = true;
     void lookUp(site)?.then((icon) => {

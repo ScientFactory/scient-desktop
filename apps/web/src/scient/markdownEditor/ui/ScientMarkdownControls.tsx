@@ -723,6 +723,7 @@ function LinkEditorTrigger({
   /** No button: only the place the link editor opens from (Link is in Insert). */
   readonly anchorOnly?: boolean;
 }) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the link editor handle and acknowledges the controller's link-edit request
   useEffect(() => {
     if (openRequest === 0) return;
     handle.open(triggerId);
@@ -1031,6 +1032,7 @@ function SelectionToolbar({
   const [place, setPlace] = useState<"above" | "below">("above");
   const [selectingWithPointer, setSelectingWithPointer] = useState(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks pointer-driven text selection via window pointer and blur listeners
   useEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return;
@@ -1061,6 +1063,7 @@ function SelectionToolbar({
     );
     setAnchor(measuredSelectionAnchor.current);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the toolbar anchor in step with the editor controller's selection
   useLayoutEffect(
     () =>
       synchronizeSelectionAnchor(
@@ -1081,6 +1084,7 @@ function SelectionToolbar({
 
   // Keep the toolbar glued to the selection while the document scrolls.
   const hasAnchor = anchor !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the toolbar anchor in step with window scroll and resize listeners
   useEffect(() => {
     if (!hasAnchor) return;
     const update = () => setAnchor(controller.selectionToolbarAnchor());
@@ -1093,6 +1097,7 @@ function SelectionToolbar({
   }, [controller, hasAnchor]);
 
   // Clamp horizontally and flip below the selection when there is no room above.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps or flips its anchor against the viewport before paint
   useLayoutEffect(() => {
     const element = toolbarRef.current;
     if (!element || anchor === null) return;
@@ -1219,12 +1224,14 @@ export function ScientMarkdownControls({
   const slashItems =
     snapshot.slashQuery === null ? [] : filterScientMarkdownSlashCommands(snapshot.slashQuery);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the toolbar chrome when a link-edit request targets an empty selection
   useEffect(() => {
     if (snapshot.linkEditRequest !== 0 && snapshot.selectionEmpty) {
       onExpandedChange(true);
     }
   }, [onExpandedChange, snapshot.linkEditRequest, snapshot.selectionEmpty]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands the toolbar chrome when the math panel is opened by keyboard
   useEffect(() => {
     // A keyboard-opened palette must also work when formatting chrome is closed.
     if (mathPanel.open && snapshot.editable) onExpandedChange(true);

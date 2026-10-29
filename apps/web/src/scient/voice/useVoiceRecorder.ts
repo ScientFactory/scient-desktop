@@ -99,6 +99,7 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
   const levelsAnimationFrameRef = useRef<number | null>(null);
 
   const onAutoStopRef = useRef(options?.onAutoStop);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps onAutoStopRef holding the latest callback
   useEffect(() => {
     onAutoStopRef.current = options?.onAutoStop;
   }, [options?.onAutoStop]);
@@ -321,6 +322,7 @@ export function useVoiceRecorder(options?: UseVoiceRecorderOptions): VoiceRecord
     await finalize(false);
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tears down the audio pipeline on unmount unless a stop already owns it
   useEffect(() => {
     mountedRef.current = true;
     return () => {

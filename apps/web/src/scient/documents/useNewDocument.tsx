@@ -125,6 +125,7 @@ function caretInTitle(): boolean {
 
 function useCaretInTitle(enabled: boolean): boolean {
   const [inTitle, setInTitle] = useState(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks document focus and selection events on a per-frame basis to know whether the caret sits in the title
   useEffect(() => {
     if (!enabled) return;
     // Focus moves through `body` between fields; judge once it has landed.
@@ -188,21 +189,25 @@ export function useNewDocument(input: {
   // The document on screen now: work that finishes later puts the caret back
   // only if its document is still the one showing.
   const shown = useRef<string | null>(relativePath);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the shown relative path for async rename handlers to read
   useLayoutEffect(() => {
     shown.current = relativePath;
   }, [relativePath]);
   const onRenamed = useEffectEvent(input.onRenamed);
   // The lease this view shows now, for a rename that started on another one.
   const boundLease = useRef(input.lease);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the bound rename lease for async rename handlers to read
   useLayoutEffect(() => {
     boundLease.current = input.lease;
   });
   const busyRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [, setRetryTick] = useState(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the busy-retry timer held in a ref on unmount
   useEffect(() => () => clearTimeout(busyRetry.current), []);
   const cancelBusyRetry = useEffectEvent((..._changes: readonly unknown[]) =>
     clearTimeout(busyRetry.current),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the busy-retry timer when the rename lease changes
   useEffect(() => cancelBusyRetry(input.lease), [input.lease]);
 
   const draft = snapshot?.draftSource ?? null;
@@ -216,6 +221,7 @@ export function useNewDocument(input: {
   // The first edit beyond the title ends the choice of template. Only an edit
   // seen after the untouched document counts: an editor can briefly show what
   // it held before the file was read.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates the new-documents registry when the draft passes its untouched/settled boundaries
   useEffect(() => {
     if (!key || entry?.format !== "latex" || entry.settled || draft === null) return;
     if (untouched && !entry.seenUntouched) newDocuments.update(key, { seenUntouched: true });
@@ -404,6 +410,7 @@ export function useNewDocument(input: {
     );
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- performs the title-driven file rename or folder move over the workspace connection once the title is saved
   useEffect(() => {
     if (!ready || renaming.current || !key || !entry || !lease || !snapshot) return;
     const stem = newDocumentStem(savedTitle);

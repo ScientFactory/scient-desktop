@@ -39,7 +39,6 @@ export class AnalyticsService extends Context.Service<
   // SCIENT-FORK:START — Scient first-party analytics replaces the PostHog client
   /** No-op layer for tests and callers that intentionally disable analytics. */
   static readonly layerDisabled = Layer.succeed(AnalyticsService, disabledAnalyticsService);
-  static readonly layerTest = AnalyticsService.layerDisabled;
   // SCIENT-FORK:END
 }
 

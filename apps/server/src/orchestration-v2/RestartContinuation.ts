@@ -180,14 +180,10 @@ export function restartContinuationRun(
 }
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
-  function* (input: {
-    readonly threadId: ThreadId;
-    readonly sourceRunId: RunId;
-    readonly updateRequested?: true;
-  }) {
+  function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!enabled && input.updateRequested !== true) return;
+    if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
@@ -195,20 +191,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       ["messages", "runs", "providerTurns", "attempts", "runtimeRequests", "turnItems"],
       { messageIds: [messageId], turnItemTypes: ["secret_request"] },
     );
-    // SCIENT-FORK:START — an update's authority covers only a turn the restart
-    // cut mid-way. A settled turn that lost awaited work follows the project's
-    // continuation preference, as it would after any other restart.
-    const requestedSource = projection.runs.find((run) => run.id === input.sourceRunId);
-    const updateAuthority =
-      input.updateRequested === true &&
-      requestedSource !== undefined &&
-      !isRestartNoteSource(requestedSource, projection.providerTurns);
-    // SCIENT-FORK:END
     if (
-      !updateAuthority &&
-      (enabled === null ||
-        !resolveProjectSettings(enabled, projection.thread.projectId).settings
-          .continueThreadsAfterServerUpdate)
+      !resolveProjectSettings(enabled, projection.thread.projectId).settings
+        .continueThreadsAfterServerUpdate
     )
       return;
     if (projection.messages.some((message) => message.id === messageId)) return;

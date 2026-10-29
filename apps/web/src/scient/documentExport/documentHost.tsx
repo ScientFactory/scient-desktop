@@ -108,6 +108,7 @@ function ScientDocumentEnvironmentHost(props: {
     executeScientDocumentHostRequest(environmentId, httpBaseUrl, request, signal);
   const [requestHandlerAtom] = useState(() => Atom.make<ScientDocumentRequestHandler>({ handle }));
   const setRequestHandler = useAtomSet(requestHandlerAtom);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the request-handler atom registry in step with the latest handle callback
   useEffect(() => {
     setRequestHandler({ handle });
   }, [handle, setRequestHandler]);

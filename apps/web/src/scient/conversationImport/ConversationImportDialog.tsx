@@ -91,7 +91,9 @@ export function ConversationImportDialogHost({
   const request = useConversationImportRequests((state) => state.queue[0] ?? null);
   const queued = useConversationImportRequests((state) => state.queue.length);
   const [drag, setDrag] = useState<ConversationFileDrag | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs the window-level file drop target until unmount
   useEffect(() => installConversationImportDropTarget(window, setDrag), []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the desktop bridge file-open and menu-action channels until unmount
   useEffect(() => {
     const bridge = window.desktopBridge;
     const collect = () => {
@@ -117,6 +119,7 @@ export function ConversationImportDialogHost({
     };
   }, []);
   const announced = useRef(queued);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts an imperative toast when a queued import arrives while setup suspends the dialog
   useEffect(() => {
     if (suspended && queued > announced.current) {
       toastManager.add({
@@ -422,6 +425,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   // Every file and destination is sent and checked as soon as it is chosen.
   // Changing either, closing, or cancelling stops the transfer and releases
   // what the server staged.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the staged import and its AbortController over the environment connection until the attempt changes or unmounts
   useEffect(() => {
     const { source, environmentId, markdownMode } = attempt;
     if (source._tag === "choose" || environmentId === null || fileProblem !== null) return;
@@ -537,6 +541,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
   }, [attempt, fileProblem]);
 
   // While this dialog is on screen, a dropped file replaces its file.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sets the global conversation-import replaceable flag while this dialog is mounted
   useEffect(() => {
     setConversationImportReplaceable(true);
     return () => setConversationImportReplaceable(false);
@@ -549,6 +554,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
 
   // A finished check puts focus on Import when focus is still where the file
   // came in (the dialog itself), never away from a choice being made.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the Import button when a finished check leaves focus at the dialog entry
   useEffect(() => {
     if (preview === null) return;
     const active = document.activeElement;
@@ -656,6 +662,7 @@ function ConversationImportDialog({ source }: { readonly source: ConversationImp
     if (confirmation !== null) void askServer(confirmation);
   });
   const checks = confirmation?.checks ?? 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-runs the confirmation check over the environment connection when the checks counter advances
   useEffect(() => {
     if (checks > 0) recheck();
   }, [checks]);

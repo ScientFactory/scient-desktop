@@ -374,7 +374,6 @@ export default defineConfig(({ mode }) => {
               "@base-ui/react/toggle",
               "@base-ui/react/toggle-group",
               "@daypicker/react",
-              "@formkit/auto-animate",
               "@pierre/diffs/utils/parsePatchFiles",
               "@pierre/trees",
               "effect/reactivity/AsyncResult",

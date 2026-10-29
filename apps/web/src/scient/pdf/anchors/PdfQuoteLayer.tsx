@@ -97,6 +97,7 @@ function PdfQuoteReveal(props: {
   const request = useOwnedPdfReveal(revealKey, owner);
   const clearHighlight = useRef<(() => void) | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- locates and paints the requested quote highlight in the container, aborting on cleanup
   useEffect(() => {
     if (!request || !ready || !container) return;
     const runtime = runtimeRef.current;
@@ -123,12 +124,14 @@ function PdfQuoteReveal(props: {
 
   // The highlight belongs to one document and lasts until the reader is used.
   const highlightedKey = useRef(revealKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the painted quote highlight when the reveal request changes
   useEffect(() => {
     if (highlightedKey.current === revealKey) return;
     highlightedKey.current = revealKey;
     clearHighlight.current?.();
     clearHighlight.current = null;
   }, [revealKey]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the painted quote highlight on pointerdown via a container listener
   useEffect(() => {
     if (!container) return;
     const clear = () => {
@@ -183,10 +186,12 @@ function PdfAskInChat(props: {
       : { refusal: PDF_SELECTION_REFUSAL_COPY["selection-too-large"], range };
   };
   const captureRef = useRef(capture);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps captureRef holding the latest selection capture
   useLayoutEffect(() => {
     captureRef.current = capture;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes text selection in the container and document keydown/selectionchange listeners to place the quote action
   useEffect(() => {
     if (!container || !citable) return;
     const clear = () => setShown(null);
@@ -260,6 +265,7 @@ function PdfAskInChat(props: {
     };
   }, [citable, container]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the quote-action button DOM node within the viewport before paint
   useLayoutEffect(() => {
     const button = buttonRef.current;
     if (!button || !shown) return;

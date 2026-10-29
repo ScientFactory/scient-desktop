@@ -31,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderEventRoutingState, routeProviderEvent } from "../RunExecutionService.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
+import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import { CodexProviderCapabilitiesV2 } from "../Adapters/CodexAdapterV2.ts";
 import { layerFromAdapters as makeLayer } from "../ProviderAdapterRegistry.ts";
 import { layerWithRegistry as makeReplayLayer } from "../testkit/ProviderReplayHarness.ts";
@@ -107,7 +108,15 @@ it.effect(
       const forks = yield* ConversationForkService;
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
         Effect.provide(
-          ProviderEventIngestor.layer.pipe(Layer.provide(layerGitVcsDriverWithoutBranches)),
+          ProviderEventIngestor.layer.pipe(
+            Layer.provide(layerGitVcsDriverWithoutBranches),
+            Layer.provide(
+              Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+                // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+                getInstance: () => Effect.succeed(undefined),
+              }),
+            ),
+          ),
         ),
       );
       const fs = yield* FileSystem.FileSystem;

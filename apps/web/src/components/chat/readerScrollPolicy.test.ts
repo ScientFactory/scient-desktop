@@ -21,7 +21,6 @@ function message(
       updatedAt: "2026-09-29T00:00:00Z",
       streaming: false,
     },
-    durationStart: "2026-09-29T00:00:00Z",
     showAssistantMeta: false,
     showAssistantCopyButton: false,
     assistantCopyStreaming: false,

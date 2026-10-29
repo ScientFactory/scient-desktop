@@ -181,7 +181,7 @@ function DesktopBrowserAccountControls({
   const captureGeneration = useRef(0);
   const [busy, setBusy] = useState(false);
   const currentUrl = useRef(url);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Track the tab's page for fills in flight, and clear it on unmount so a late answer never fills the page another tab now shows.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Track the tab's page for fills in flight, and clear it on unmount so a late answer never fills the page another tab now shows.
   useEffect(() => {
     currentUrl.current = url;
     return () => {
@@ -211,7 +211,7 @@ function DesktopBrowserAccountControls({
       return;
     }
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to the desktop's sign-in captures while this toolbar can save, and drop late comparisons on cleanup.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to the desktop's sign-in captures while this toolbar can save, and drop late comparisons on cleanup.
   useEffect(() => {
     if (!canWrite) return;
     const unsubscribe = window.desktopBridge?.accounts?.onSignInCaptured((capture) =>
@@ -277,7 +277,7 @@ function DesktopBrowserAccountControls({
     attemptedDocument.current = form.documentId;
     void fill(account, form);
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Subscribe to login forms the desktop detects in this tab, and ask once for a form already on the page.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to login forms the desktop detects in this tab, and ask once for a form already on the page.
   useEffect(() => {
     const bridge = window.desktopBridge?.accounts;
     if (!canWrite || !data || !bridge?.originBoundFill) return;

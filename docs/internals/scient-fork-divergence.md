@@ -534,7 +534,7 @@ installed-build, hosted CI or real-provider acceptance.
 
 The retained app prefix can include reasoning and tool facts even when portable provider delivery
 cannot replay them. Historical callbacks and approvals never become active execution. The recovery
-pointer names `scient_thread_read` and omitted item identities. Native session parity is an optional
+pointer names `scient_thread_inspect` and omitted item identities. Native session parity is an optional
 proved strategy, not a promise made by a textual handoff.
 
 ### Running-turn forks
@@ -593,53 +593,22 @@ outcome retains that identity and the unsent draft; retry reads the durable comm
 provisioning status. Once the server is ready, retry resumes only client handoff/navigation.
 Closing the dialog cannot cancel committed server work or let its completion steal navigation.
 
-## Omitted-history recovery: `scient_thread_read`
+## Omitted-history recovery
 
-A fork's first provider turn receives a bounded transcript, so older messages
-can be omitted. The Scient MCP tool `scient_thread_read` lets the model read them
-back from native V2 projections. Its shipped input fields, defaults and paging
-semantics are preserved. It keeps the narrow `threads:read` grant and performs
-no delegated-result acknowledgment. Orchestration's `scient_thread_inspect`
-requires the separate `orchestration` grant: it includes run metadata, can read
-explicitly user-attached context threads, and acknowledges a direct child's
-terminal result when the complete result is read. Both tools are registered
-under distinct names and retain honest side-effect annotations.
+A fork's first provider turn receives a bounded transcript, so older items can be omitted. Recovery
+pointers name `scient_thread_inspect`, upstream's `t3_thread_read` under Scient's tool prefix; it
+pages the timeline (`view:"activity"`, `afterPosition`, `itemId`, `textOffset`). Every MCP-injected
+provider session receives the `orchestration` grant it requires. It acknowledges a direct child's
+terminal result when the complete result is read, so it is not pre-approved in Claude's read-only
+sandbox.
 
-- Input: `threadId` (required), `view` (`messages` default, or `activity`),
-  `afterPosition` (exclusive), `limit` (1–100, default 50), `itemId`,
-  `textOffset`, `maxCharsPerItem` (1–50,000, default 20,000), and `runLimit`.
-  `runLimit` is accepted for input compatibility and ignored by this reader;
-  `scient_thread_inspect` supplies run history.
-- Output: a V2-compatible subset. `thread` includes identity, project, title,
-  V2-vocabulary `status`, model, modes, fork parent, `itemCount`, and archive
-  state. `items` carry `position`, `itemId`, `type`, `status`, `title`,
-  `activityKind`, `messageId`, `turnId`, windowed `text`, `textTruncated`,
-  `nextTextOffset`, and timestamps. The page also returns `nextPosition` and
-  `hasMore`. There is no `recentRuns` field.
-- Timeline: messages of every role, proposed plans, and tool/activity items
-  are paged through `ProjectionStoreV2.getTimelinePage`.
-  Direct item lookup and paging do not inherit the UI's 500-activity limit.
-  Internal fork hydration explicitly requests full retained activity history;
-  ordinary UI reads remain bounded. Native projection positions preserve local
-  and inherited timeline order in both views. The `messages` view returns user
-  messages, assistant messages, and proposed plans. The `activity` view also
-  returns reasoning, system messages, and activities. An activity is rendered
-  as its kind and summary followed by its payload. `maxCharsPerItem` bounds
-  the returned text window; `textOffset` can reach the full stored payload.
-- Paging follows V2: `nextPosition` is the last returned position and is null
-  only when the page is empty, and `hasMore` tells whether to continue. The
-  `itemId` option ignores `view` and `afterPosition`. `textOffset` applies only
-  with `itemId`. Offsets count UTF-16 code units.
-- Authority: the `threads:read` session grant is issued to every
-  MCP-injected provider session. The calling thread comes from the host-issued
-  invocation. It may read itself or a non-deleted thread, including an archived
-  one, in the same project. Other projects fail with `thread_outside_project`.
-  A projectless thread can read only itself. A fork reads its shared history
-  even after the origin is deleted. Explicitly user-attached context
-  from other projects is available only through orchestration inspection.
-  Historical imports may lazily materialize the projection before reading it;
-  reading never acknowledges delegated-child completion or starts work, so the
-  tool is annotated read-only.
+Upstream's reader shows a handoff item's short label, not its saved summary. Scient keeps one
+narrow tool for that gap: `scient_handoff_summary_read({threadId, contextHandoffId, textOffset})`
+returns 20,000-character pages of a retained summary with `nextTextOffset` (null at the end).
+History delivery names it, with both IDs, when a summary is too large to include. It needs only the
+`threads:read` grant, reads the caller or a non-deleted thread in the caller's project, never
+acknowledges or starts work, and is annotated read-only. The former general `scient_thread_read`
+history reader is retired; its name is not a callable alias.
 
 ## Safety and bounded compromises
 
@@ -661,7 +630,7 @@ under distinct names and retain honest side-effect annotations.
 - Retained files are shared, and kept while any conversation that shows them remains, so
   deletion or cleanup of the origin cannot invalidate the fork.
 - Portable handoffs keep whole items within a model-window-derived budget and
-  account for encoded delivery wrappers; omitted items stay readable through `scient_thread_read`.
+  account for encoded delivery wrappers; omitted items stay readable through `scient_thread_inspect`.
 - Provider acceptance cannot be made globally exactly-once without provider
   idempotency. Scient therefore re-delivers uncertain context on a fresh
   native thread. The prior runtime may have accepted work before the connection failed;

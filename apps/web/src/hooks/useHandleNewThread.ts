@@ -19,7 +19,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   getProjectOrderKey,
   selectProjectGroupingSettings,
-} from "../logicalProject";
+} from "@t3tools/client-runtime/state/project-grouping";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   readProject,
@@ -48,6 +48,8 @@ import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore"
 import { getClientSettings } from "./useSettings";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
+import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
+import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { toastManager } from "../components/ui/toast";
 // SCIENT-FORK:START
 import { readCarriedModelSelection } from "../scient/newThread/carriedModelSelection";
@@ -90,6 +92,8 @@ export function createNewThreadHandler(router: AnyRouter) {
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
       replace?: boolean;
+      /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
+      prompt?: string;
       /** Draft project changes carry typed content and transferable attachments; explicit new-thread actions stay fresh. */
       carryComposerContent?: boolean;
       /** The index route is the only best-effort automatic navigation. */
@@ -129,7 +133,14 @@ export function createNewThreadHandler(router: AnyRouter) {
       setDraftThreadContext,
       setLogicalProjectDraftThreadId,
       setModelSelection,
+      setPrompt,
     } = useComposerDraftStore.getState();
+    // Never over text the user wrote: a draft can gain some while this awaits.
+    const seedPrompt = (draftId: DraftId) => {
+      if (options?.prompt === undefined) return;
+      if (composerDraftHasUserContent(getComposerDraft(draftId))) return;
+      setPrompt(draftId, options.prompt);
+    };
     const currentRouteTarget = getCurrentRouteTarget();
     const carrySourceShell =
       currentRouteTarget?.kind === "server" ? readThreadShell(currentRouteTarget.threadRef) : null;
@@ -202,7 +213,26 @@ export function createNewThreadHandler(router: AnyRouter) {
       project?.id ?? null,
       project,
     );
-    const projectDefaultModelSelection = projectSettings.settings.defaultModelSelection;
+    const configuredDefaultModelSelection = projectSettings.settings.defaultModelSelection ?? null;
+    const fallbackResolution = resolveNewThreadModelSelection({
+      defaultSelection:
+        configuredDefaultModelSelection ??
+        (carryModelSelection || useComposerDraftStore.getState().stickyActiveProvider !== null
+          ? null
+          : resolveProjectDefaultProviderModelSelection(
+              environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+              targetServerSettings,
+              projectRef.projectId,
+            )),
+      fallbackSelection: targetServerSettings.fallbackModelSelection ?? null,
+      providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+      settings: targetServerSettings,
+      projectId: projectRef.projectId,
+      now: Date.now(),
+    });
+    const projectDefaultModelSelection = fallbackResolution.fallback
+      ? fallbackResolution.selection
+      : configuredDefaultModelSelection;
     const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
     const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
       resolveNewThreadModelSelectionOverride({
@@ -356,6 +386,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           draftId: emptyStoredDraftThread.draftId,
           threadId: emptyStoredDraftThread.threadId,
         };
+        seedPrompt(emptyStoredDraftThread.draftId);
         const routeTargetAfterWrites = getCurrentRouteTarget();
         if (
           routeTargetAfterWrites?.kind === "draft" &&
@@ -397,6 +428,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         interactionMode: latestActiveDraftThread.interactionMode,
         ...pickExplicitWorkspaceOptions(options),
       });
+      seedPrompt(currentRouteTarget.draftId);
       options?.onNavigationReady?.();
       return Promise.resolve({
         draftId: currentRouteTarget.draftId,
@@ -425,6 +457,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           ...pickExplicitWorkspaceOptions(options),
         });
         carryComposerContentTo(racedDraft.draftId);
+        seedPrompt(racedDraft.draftId);
         if (!canCommitNavigation()) return null;
         options?.onNavigationReady?.();
         await router.navigate({
@@ -455,6 +488,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
       }
       carryComposerContentTo(draftId);
+      seedPrompt(draftId);
 
       if (!canCommitNavigation()) return null;
       options?.onNavigationReady?.();

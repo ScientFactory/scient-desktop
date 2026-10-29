@@ -108,6 +108,7 @@ export function useWorkingRowExit(
   const onExitEnd = useStableCallback(() =>
     setState((previous) => (previous.exiting ? { ...previous, exiting: null } : previous)),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- safety timer that ends the exit if the row's Web Animations finish event never fires
   useEffect(() => {
     if (!exiting) return;
     const timeout = window.setTimeout(onExitEnd, UNPLAYED_EXIT_TIMEOUT_MS);
@@ -125,6 +126,7 @@ export function useWorkingRowExit(
 export function useWorkingRowExitAnimation({ exiting, onExitEnd }: WorkingRowExit) {
   const rootRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useMediaQuery(REDUCED_MOTION_QUERY);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the working-row exit with a WAAPI height/opacity animation on the row DOM node
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!exiting || !root) return;

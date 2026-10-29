@@ -86,6 +86,7 @@ export const PlotlyView = forwardRef<PlotlyViewController, PlotlyViewProps>(func
   });
   const presentationQueueRef = useRef<Promise<void>>(Promise.resolve());
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps callback and presentation refs holding the latest values for the Plotly view
   useLayoutEffect(() => {
     onErrorRef.current = onError;
     onReadyRef.current = onReady;
@@ -205,8 +206,10 @@ export const PlotlyView = forwardRef<PlotlyViewController, PlotlyViewProps>(func
       };
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the Plotly view into the host DOM node and tears it down when inputs change
   useEffect(() => mountView(initialState, parsed), [initialState, parsed, mountView]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- queues theme and surface presentation updates on the mounted Plotly view
   useEffect(() => {
     const mounted = mountedRef.current;
     if (mounted == null) return;
@@ -220,6 +223,7 @@ export const PlotlyView = forwardRef<PlotlyViewController, PlotlyViewProps>(func
       });
   }, [surface, theme]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resizes the Plotly graph in step with the host DOM node's size via ResizeObserver
   useEffect(() => {
     const host = hostRef.current;
     if (host == null) return;

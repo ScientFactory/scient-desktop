@@ -2,8 +2,6 @@ import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
 import {
   ComposerContextId,
-  EnvironmentId,
-  ProviderInstanceId,
   EventId,
   type OrchestrationMessageContext,
   ThreadId,
@@ -16,9 +14,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
-import { readScientThreadForInvocation } from "../../mcp/toolkits/threads/handlers.ts";
-import { AgentInvocationContext } from "../../scient/operations/AgentInvocationContext.ts";
-
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
@@ -741,7 +736,7 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
     }),
   );
 
-  it.effect("retrieves the oldest of 501 imported legacy activities through scoped MCP", () =>
+  it.effect("retrieves the oldest of 501 imported legacy activities through the timeline", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
@@ -790,26 +785,18 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
       );
       yield* Effect.logInfo("Legacy 501 imported oldest item", oldest);
       assert.isDefined(oldest);
-      const result = yield* readScientThreadForInvocation({
-        threadId,
+      const page = yield* projections.getTimelinePage(threadId, {
         view: "activity",
         itemId: oldest!.id,
-      }).pipe(
-        Effect.provideService(AgentInvocationContext, {
-          environmentId: EnvironmentId.make("review-environment"),
-          threadId,
-          providerSessionId: "review-session",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          capabilities: new Set(["threads:read"] as const),
-          issuedAt: 1,
-        }),
+        limit: 1,
+      });
+      assert.strictEqual(page.totalItems, 501);
+      assert.strictEqual(page.items.length, 1);
+      assert.strictEqual(
+        page.items[0]?.sourceItemId,
+        "migration:v1:history:activity:review-tool-0",
       );
-      yield* Effect.logInfo("Legacy 501 scoped MCP result", result);
-      assert.strictEqual(result.thread.itemCount, 501);
-      assert.strictEqual(result.items.length, 1);
-      assert.strictEqual(result.items[0]?.itemId, "migration:v1:history:activity:review-tool-0");
-      assert.include(result.items[0]!.text, "Result 0");
-      assert.include(result.items[0]!.text, "review-tool-0");
+      assert.include(JSON.stringify(page.items[0]!.item), "Result 0");
     }),
   );
 });

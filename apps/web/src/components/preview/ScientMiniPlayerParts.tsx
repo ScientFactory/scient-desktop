@@ -122,6 +122,7 @@ export function useMiniPlayerMeasuredLayout(
   setLayout: Dispatch<SetStateAction<Layout | null>>,
 ): void {
   // The composer grows on its own (drafts, banners), so it is observed alongside the column.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the player container and composer DOM nodes and observes their resize
   useLayoutEffect(() => {
     if (canvasFrame) return;
     const element = containerRef.current;

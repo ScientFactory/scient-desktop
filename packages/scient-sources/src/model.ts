@@ -1,6 +1,10 @@
 import * as Schema from "effect/Schema";
 
-const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
+// Agents reading tool schemas gain nothing from the trimmed-string regex; decoding still enforces it.
+const NonEmptyString = Schema.String.check(
+  Schema.isTrimmed({ toJsonSchema: () => [{}, true] }),
+  Schema.isNonEmpty(),
+);
 const NullableText = Schema.NullOr(Schema.String);
 
 export const ScientSourceType = Schema.Literals([

@@ -462,6 +462,7 @@ function DocumentsSection(props: {
     setJumpedFormat(targetFormat);
   }
   if (jumpedFormat !== null && jumpedFormat === stored) setJumpedFormat(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists a format jump into the stored-format preference when the section is jumped to
   useEffect(() => {
     if (jumpedFormat !== null) setStored(jumpedFormat);
   }, [jumpedFormat, setStored]);

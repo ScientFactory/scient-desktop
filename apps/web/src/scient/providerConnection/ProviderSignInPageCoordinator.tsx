@@ -21,6 +21,7 @@ export function ProviderSignInPageCoordinator() {
   const claim = useAtomCommand(claimProviderSignInPage, {
     reportFailure: false,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this page's sign-in claimer in the module registry until unmount
   useEffect(() => {
     setProviderSignInPageClaimer(async (environmentId, input) => {
       const result = await claim({ environmentId, input });
@@ -44,6 +45,7 @@ export function ProviderSignInPageCoordinator() {
 
 function EnvironmentSignInObserver(props: { readonly environmentId: EnvironmentId }) {
   const providers = useAtomValue(serverEnvironment.providersValueAtom(props.environmentId));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds provider snapshots to the sign-in openings observer outside React
   useEffect(() => {
     if (providers) observeProviderSignInSnapshots(props.environmentId, providers);
   }, [props.environmentId, providers]);

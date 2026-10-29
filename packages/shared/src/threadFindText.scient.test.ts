@@ -1,7 +1,6 @@
 import { EnvironmentId, ThreadId, type FileCitation } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { parseComposerCitationHref, serializeComposerCitation } from "./composerCitations.ts";
-import { formatEnvironmentQualifiedThreadLink } from "./threadLinks.ts";
 import { searchableMessageSegments } from "./threadFindText.ts";
 
 const assistantSegments = (text: string, cwd?: string) =>
@@ -43,11 +42,9 @@ it("indexes file quote chip labels without projecting their hidden workspace or 
 });
 
 it("keeps the authored label of environment-qualified thread links", () => {
-  expect(
-    assistantSegments(
-      formatEnvironmentQualifiedThreadLink("remote", "thread", "Readable conversation"),
-    ),
-  ).toEqual(["Readable conversation"]);
+  expect(assistantSegments("[Readable conversation](t3-thread://v1/remote/thread)")).toEqual([
+    "Readable conversation",
+  ]);
 });
 
 it.each([

@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { isCurrentPreviewRuntimeTab } from "~/browser/previewRuntimeTabId";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { readThreadPreviewState } from "~/previewStateStore";
 import type { BrowserPdfExportOwner } from "./browserPdfExportOwnerModel";
 
@@ -18,10 +18,7 @@ export async function waitForNavigationReadiness(
   while (Date.now() <= deadline) {
     const state = readThreadPreviewState(threadRef);
     const session = state.sessions[tabId];
-    if (
-      !session ||
-      !isCurrentPreviewRuntimeTab(threadRef, state.serverEpoch, tabId, runtimeTabId)
-    ) {
+    if (!session || previewRuntimeTabId(threadRef, state.serverEpoch, tabId) !== runtimeTabId) {
       throw new Error("The HTML document tab was replaced during PDF update.");
     }
     if (session.navStatus._tag === "LoadFailed")

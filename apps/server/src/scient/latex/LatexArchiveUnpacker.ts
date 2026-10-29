@@ -3,6 +3,7 @@
  * LZMA. After failed extraction, clear partial output and run only the digest-verified
  * self-extractor. Prefer system tar where it works; this trusts the same pinned release as latexmk.
  */
+import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -143,7 +144,7 @@ export const make = Effect.gen(function* () {
         detail: "Expanding the LaTeX distribution took too long and was stopped.",
       });
     }
-    const missingTar = yield* ProcessRunner.isWindowsCommandNotFound(result.code, result.stderr);
+    const missingTar = yield* isWindowsCommandNotFound(result.code, result.stderr);
     if (missingTar) {
       return yield* new LatexArchiveUnpackError({
         reason: "unpacker-unavailable",

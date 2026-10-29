@@ -30,10 +30,12 @@ export function usePlotlyViewportActivity(
   const [active, setActive] = useState(false);
   const everActivatedRef = useRef(false);
   const onDeactivateRef = useRef(onDeactivate);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps onDeactivateRef holding the latest callback
   useLayoutEffect(() => {
     onDeactivateRef.current = onDeactivate;
   }, [onDeactivate]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the element's viewport proximity via IntersectionObserver and keeps the WebGL activity pool registration in step
   useEffect(() => {
     if (element == null) return;
     const webGlRegistration = hasWebGl

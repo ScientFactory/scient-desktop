@@ -15,6 +15,14 @@
       "types": "./src/antigravityModelPresentation.ts",
       "default": "./src/antigravityModelPresentation.ts"
     },
+    "./zip/bounded-zip": {
+      "types": "./src/zip/boundedZip.ts",
+      "default": "./src/zip/boundedZip.ts"
+    },
+    "./zip/directory": {
+      "types": "./src/zip/zipDirectory.ts",
+      "default": "./src/zip/zipDirectory.ts"
+    },
     "./workspace-basename-lookup": {
       "types": "./src/workspaceBasenameLookup.ts",
       "default": "./src/workspaceBasenameLookup.ts"
@@ -66,6 +74,10 @@
     "./secret-request": {
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
+    },
+    "./link-request": {
+      "types": "./src/linkRequest.ts",
+      "default": "./src/linkRequest.ts"
     },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
@@ -235,6 +247,14 @@
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
     },
+    "./state/peerLinks": {
+      "types": "./src/state/peerLinks.ts",
+      "default": "./src/state/peerLinks.ts"
+    },
+    "./state/peerPairingCode": {
+      "types": "./src/state/peerPairingCode.ts",
+      "default": "./src/state/peerPairingCode.ts"
+    },
     "./state/preview": {
       "types": "./src/state/preview.ts",
       "default": "./src/state/preview.ts"
@@ -386,6 +406,10 @@
     "./state/thread-execution": {
       "types": "./src/state/threadExecution.ts",
       "default": "./src/state/threadExecution.ts"
+    },
+    "./state/pending-user-input": {
+      "types": "./src/state/pendingUserInput.ts",
+      "default": "./src/state/pendingUserInput.ts"
     },
     "./state/thread-requests": {
       "types": "./src/state/threadRequests.ts",
@@ -583,6 +607,7 @@
     "@t3tools/source-control-core": "workspace:*",
     "@t3tools/source-control-definitions": "workspace:*",
     "effect": "catalog:",
+    "jszip": "3.10.1",
     "three": "0.180.0"
   },
   "devDependencies": {

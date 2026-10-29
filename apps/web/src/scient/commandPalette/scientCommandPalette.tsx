@@ -28,7 +28,7 @@ import type { CommandPaletteContent } from "~/components/CommandPaletteContent";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { useProjectFolderDrop } from "~/hooks/useProjectFolderDrop";
 import { useScientProjectInitialization } from "~/hooks/useScientProjectInitialization";
-import { ensureBrowseDirectoryPath } from "~/lib/projectPaths";
+import { ensureBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
 import { isFilesystemBrowseQuery } from "@t3tools/client-runtime/state/projects";
 import type { ScientProjectInitializationDecision } from "~/lib/scientProjectInitialization";
 import { getAvailableNewFolderName, getAvailableNewProjectPath } from "~/lib/projectEntry";
@@ -70,6 +70,7 @@ export function useScientCommandPaletteProjectInitialization(open: boolean) {
     prepareForOpening: prepareScientProjectForOpening,
     resolveDecision: resolveProjectInitializationDecision,
   } = useScientProjectInitialization();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels a pending project-initialization decision when the palette closes
   useLayoutEffect(() => {
     if (!open) resolveProjectInitializationDecision("cancel");
   }, [open, resolveProjectInitializationDecision]);

@@ -51,7 +51,7 @@ vi.mock("../composerDraftStore", () => ({ useComposerDraftStore: () => vi.fn() }
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
 // SCIENT-FORK:START
 const attention = vi.hoisted(() => ({
-  serverTracked: false,
+  serverConfigLoaded: true,
   markUnread: vi.fn(),
   markVisited: vi.fn(),
 }));
@@ -84,13 +84,9 @@ const threadShell = vi.hoisted(() => ({
 }));
 vi.mock("../state/entities", async (original) => ({
   ...(await original<typeof import("../state/entities")>()),
-  // SCIENT-FORK:START
-  readEnvironmentSupportsVisitedTracking: () => attention.serverTracked,
+  // SCIENT-FORK:START — the mark-unread cases also cover an unloaded server config.
+  readEnvironmentServerConfigLoaded: () => attention.serverConfigLoaded,
   // SCIENT-FORK:END
-  readEnvironmentSupportsPinning: () => true,
-  readEnvironmentSupportsPinReorder: () => true,
-  readEnvironmentSupportsSettlement: () => true,
-  readEnvironmentSupportsSnooze: () => true,
   readThreadShell: () => threadShell,
 }));
 vi.mock("../state/use-atom-command", () => ({
@@ -140,7 +136,7 @@ beforeEach(() => {
   router.navigate.mockClear();
   router.state.matches[0]!.params = {};
   // SCIENT-FORK:START
-  attention.serverTracked = false;
+  attention.serverConfigLoaded = true;
   attention.markUnread.mockReset();
   threadShell.latestCompletedAnswer = undefined;
   // SCIENT-FORK:END
@@ -320,6 +316,7 @@ describe("settle and snooze Undo", () => {
 // SCIENT-FORK:START
 describe("local mark-unread canonical answer", () => {
   it("rewinds against the earlier completed answer, not a later answerless run", () => {
+    attention.serverConfigLoaded = false;
     threadShell.latestCompletedAnswer = {
       turnId: TurnId.make("old-run"),
       messageId: MessageId.make("old-answer"),
@@ -333,12 +330,12 @@ describe("local mark-unread canonical answer", () => {
     expect(commands.markUnread).not.toHaveBeenCalled();
   });
   it("does not invent an answer when canonical projection is explicit null", () => {
+    attention.serverConfigLoaded = false;
     threadShell.latestCompletedAnswer = null;
     useThreadActions().markThreadUnread(target);
     expect(attention.markUnread).toHaveBeenCalledExactlyOnceWith(expect.any(String), null);
   });
   it("retains the explicit server mark-unread command for tracking-capable environments", () => {
-    attention.serverTracked = true;
     useThreadActions().markThreadUnread(target);
     expect(commands.markUnread).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,

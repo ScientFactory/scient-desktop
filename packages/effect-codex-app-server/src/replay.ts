@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -112,26 +113,12 @@ export class CodexAppServerReplayRuntimeExitError extends Schema.TaggedError<Cod
   }
 }
 
-export class CodexAppServerReplayIncompleteError extends Schema.TaggedError<CodexAppServerReplayIncompleteError>()(
-  "CodexAppServerReplayIncompleteError",
-  {
-    scenario: Schema.String,
-    cursor: Schema.Number,
-    remaining: Schema.Number,
-  },
-) {
-  override get message(): string {
-    return `Codex app-server replay ended with ${this.remaining} unconsumed entries in scenario ${this.scenario}.`;
-  }
-}
-
 export const CodexAppServerReplayError = Schema.Union([
   CodexAppServerReplayJsonParseError,
   CodexAppServerReplayExhaustedError,
   CodexAppServerReplayUnexpectedOutboundError,
   CodexAppServerReplayFrameMismatchError,
   CodexAppServerReplayRuntimeExitError,
-  CodexAppServerReplayIncompleteError,
 ]);
 export type CodexAppServerReplayError = typeof CodexAppServerReplayError.Type;
 
@@ -289,11 +276,13 @@ function sameFrame(
   strict = false,
 ): boolean {
   const normalize = (frame: unknown) =>
-    stableStringify(
-      strict
-        ? normalizeReplayFrame(frame, true)
-        : normalizeThreadRequest(normalizeReplayFrame(frame), ignoredConfigKeys),
-    );
+    strict
+      ? stableStringify(normalizeReplayFrame(frame, true))
+      : pipe(
+          normalizeReplayFrame(frame),
+          (request) => normalizeThreadRequest(request, ignoredConfigKeys),
+          stableStringify,
+        );
   return normalize(left) === normalize(right);
 }
 

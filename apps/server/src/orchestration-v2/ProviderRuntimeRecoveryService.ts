@@ -2,9 +2,8 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  isProviderNativeSubagentThread,
   type OrchestrationV2DomainEvent,
-  type OrchestrationV2Run,
-  type RunId,
   type ProviderThreadId,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Subagent,
@@ -17,7 +16,6 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -38,13 +36,6 @@ import {
   mergeRestartCancelledBackgroundWork,
   neverStarted,
 } from "./RestartBackgroundNote.ts";
-
-// SCIENT-FORK:START ? an explicitly authorized update continues only a turn it
-// cuts mid-way. A settled turn that the restart wakes for the awaited work it
-// lost follows its project's continuation preference instead.
-const updateMayContinue = (run: Pick<OrchestrationV2Run, "status">): boolean =>
-  run.status === "running" || run.status === "starting";
-// SCIENT-FORK:END
 
 export class ProviderRuntimeRecoveryError extends Schema.TaggedError<ProviderRuntimeRecoveryError>()(
   "ProviderRuntimeRecoveryError",
@@ -82,8 +73,6 @@ export class ProviderRuntimeRecoveryService extends Context.Service<
       trigger: "startup" | "shutdown",
     ) => Effect.Effect<ProviderRuntimeReconciliationSummary, ProviderRuntimeRecoveryError>;
     readonly prepareForShutdown: Effect.Effect<void, ProviderRuntimeRecoveryError>;
-    readonly prepareForUpdate: Effect.Effect<ReadonlyArray<ThreadId>, ProviderRuntimeRecoveryError>;
-    readonly clearUpdateContinuation: (threadIds: ReadonlyArray<ThreadId>) => Effect.Effect<void>;
     readonly recover: Effect.Effect<ProviderRuntimeRecoverySummary, ProviderRuntimeRecoveryError>;
   }
 >()("t3/orchestration-v2/ProviderRuntimeRecoveryService") {}
@@ -108,15 +97,19 @@ function isNonterminalTurnItemStatus(status: string): boolean {
   return status === "pending" || status === "running" || status === "waiting";
 }
 
-function isNonterminalNodeStatus(status: string): boolean {
-  return status === "pending" || status === "running" || status === "waiting";
-}
-
+/**
+ * A delegate_task child. Its own thread is reconciled and continued on its own
+ * (here, or in the linked environment it runs in) and reports back through
+ * the app, so it is not provider background work.
+ */
 function isAppOwnedDelegation(task: {
   readonly origin: OrchestrationV2Subagent["origin"];
   readonly childThreadId: ThreadId | null;
+  readonly remoteChild?: OrchestrationV2Subagent["remoteChild"];
 }): boolean {
-  return task.origin === "app_owned" && task.childThreadId !== null;
+  return (
+    task.origin === "app_owned" && (task.childThreadId !== null || task.remoteChild !== undefined)
+  );
 }
 
 function isAppOwnedDelegationItem(
@@ -182,7 +175,6 @@ function latestStartedRun(
 
 export const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
-  const updateContinuations = yield* Ref.make<ReadonlyMap<ThreadId, RunId>>(new Map());
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
@@ -237,16 +229,37 @@ export const make = Effect.gen(function* () {
         }
         runs.push(run);
       }
+      const pendingRequests = projection.runtimeRequests.filter(
+        (request) => request.status === "pending",
+      );
+      // The lost provider callback cannot resume; persisted questions can be
+      // answered by a new user message in threads that accept messages.
+      const questions = pendingRequests.filter(
+        (request) =>
+          request.kind === "user_input" &&
+          request.responseCapability.type === "live" &&
+          projection.turnItems.some(
+            (item) =>
+              item.type === "user_input_request" &&
+              item.requestId === request.id &&
+              item.nodeId === request.nodeId &&
+              item.questions.length > 0 &&
+              item.questions.every((question) => question.question.trim().length > 0),
+          ) &&
+          !isProviderNativeSubagentThread(projection.thread),
+      );
+      const recoveredRequestIds = new Set(questions.map((request) => request.id));
       const messageRequestNodeIds = new Set(
-        projection.runtimeRequests
+        pendingRequests
           .filter(
             (request) =>
-              request.status === "pending" && request.responseCapability.type === "message",
+              request.responseCapability.type === "message" || recoveredRequestIds.has(request.id),
           )
           .map((request) => request.nodeId),
       );
-      const requests = projection.runtimeRequests.filter(
-        (request) => request.status === "pending" && request.responseCapability.type !== "message",
+      const requests = pendingRequests.filter(
+        (request) =>
+          request.responseCapability.type !== "message" && !recoveredRequestIds.has(request.id),
       );
       // Delegated task rows, items and nodes stay open: the child settles them.
       const delegatedTaskNodeIds = new Set<string>([
@@ -341,6 +354,16 @@ export const make = Effect.gen(function* () {
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
           payload: { ...run, queueHeld: true },
+        });
+      }
+      for (const question of questions) {
+        events.push({
+          id: yield* allocateEventId(),
+          type: "runtime-request.updated",
+          threadId: projection.thread.id,
+          nodeId: question.nodeId,
+          occurredAt: now,
+          payload: { ...question, responseCapability: { type: "message" } },
         });
       }
       for (const request of requests) {
@@ -445,6 +468,8 @@ export const make = Effect.gen(function* () {
             candidate.runId === run.id &&
             (candidate.nodeId === null || !messageRequestNodeIds.has(candidate.nodeId)) &&
             !isAppOwnedDelegationItem(candidate) &&
+            // A link card waits on the user, not the run, and answers by message.
+            candidate.type !== "link_request" &&
             (candidate.status === "pending" ||
               candidate.status === "running" ||
               candidate.status === "waiting"),
@@ -515,7 +540,7 @@ export const make = Effect.gen(function* () {
         if (item.nodeId !== null && item.nodeId !== undefined) {
           const staleItemNode = projection.nodes.find(
             (candidate) =>
-              candidate.id === item.nodeId && isNonterminalNodeStatus(candidate.status),
+              candidate.id === item.nodeId && isNonterminalTurnItemStatus(candidate.status),
           );
           if (staleItemNode !== undefined && !cancelledStaleNodeIds.has(staleItemNode.id)) {
             cancelledStaleNodeIds.add(staleItemNode.id);
@@ -757,21 +782,18 @@ export const make = Effect.gen(function* () {
 
   const prepareForShutdown = Effect.gen(function* () {
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    const updateIntent = yield* Ref.get(updateContinuations);
+    if (!enabled) return;
     const threadIds = yield* projections.getRecoveryThreadIds("runtime");
     for (const threadId of threadIds) {
       yield* Effect.gen(function* () {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-        const run = restartContinuationRun(projection, yield* DateTime.now);
-        if (!run) return;
-        const updateRequested = updateMayContinue(run) && updateIntent.get(threadId) === run.id;
         if (
-          !updateRequested &&
-          (enabled === null ||
-            !resolveProjectSettings(enabled, projection.thread.projectId).settings
-              .continueThreadsAfterServerUpdate)
+          !resolveProjectSettings(enabled, projection.thread.projectId).settings
+            .continueThreadsAfterServerUpdate
         )
           return;
+        const run = restartContinuationRun(projection, yield* DateTime.now);
+        if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({
           commandId,
@@ -781,11 +803,7 @@ export const make = Effect.gen(function* () {
               id: `effect:restart-continuation:${run.id}`,
               commandId,
               threadId,
-              request: {
-                type: "provider-runtime.continue",
-                sourceRunId: run.id,
-                ...(updateRequested ? { updateRequested: true as const } : {}),
-              },
+              request: { type: "provider-runtime.continue", sourceRunId: run.id },
             },
           ],
         });
@@ -805,38 +823,7 @@ export const make = Effect.gen(function* () {
     return (yield* reconcile("startup")) satisfies ProviderRuntimeRecoverySummary;
   });
 
-  // Update intent stays local until shutdown has stopped the effect worker.
-  // Publishing a continuation earlier would let a live worker consume it while
-  // its source run is still running. Capture exact runs so a later user turn
-  // cannot inherit an earlier update request's authority.
-  const prepareForUpdate = Effect.gen(function* () {
-    const selected = new Map<ThreadId, RunId>();
-    for (const threadId of yield* projections.getRecoveryThreadIds("runtime")) {
-      const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-      const run = restartContinuationRun(projection, yield* DateTime.now);
-      if (run !== undefined && updateMayContinue(run)) selected.set(threadId, run.id);
-    }
-    yield* Ref.set(updateContinuations, selected);
-    return [...selected.keys()];
-  }).pipe(
-    Effect.mapError(
-      (cause) => new ProviderRuntimeRecoveryError({ operation: "read-projections", cause }),
-    ),
-  );
-  const clearUpdateContinuation = (threadIds: ReadonlyArray<ThreadId>) =>
-    Ref.update(updateContinuations, (current) => {
-      const next = new Map(current);
-      for (const threadId of threadIds) next.delete(threadId);
-      return next;
-    });
-
-  return ProviderRuntimeRecoveryService.of({
-    reconcile,
-    prepareForShutdown,
-    prepareForUpdate,
-    clearUpdateContinuation,
-    recover,
-  });
+  return ProviderRuntimeRecoveryService.of({ reconcile, prepareForShutdown, recover });
 });
 
 export const layer = Layer.effect(ProviderRuntimeRecoveryService, make);

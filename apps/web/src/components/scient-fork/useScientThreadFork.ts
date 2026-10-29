@@ -343,10 +343,12 @@ export function useScientThreadFork({
     () => false,
   );
   const activeOrigin = useRef(originKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps activeOrigin in step with the origin key for async fork guards
   useLayoutEffect(() => {
     activeOrigin.current = originKey;
   }, [originKey]);
   const mounted = useRef(true);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state so async fork work stops writing after unmount
   useEffect(() => {
     mounted.current = true;
     return () => {

@@ -57,6 +57,7 @@ import {
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderEventIngestor from "../ProviderEventIngestor.ts";
+import * as ProviderInstanceRegistry from "../../provider/ProviderInstanceRegistry.ts";
 import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import { layerProviderRuntimeTestServices } from "./ProviderRuntimeTestServices.ts";
 
@@ -538,7 +539,17 @@ function makeTestLayer(input: {
       }),
     );
   const providerEventIngestorTestLayer = ProviderEventIngestor.layer.pipe(
-    Layer.provide(Layer.mergeAll(configuredEventSinkLayer, IdAllocator.layer, TestStoresLayer)),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off - Optional instances require undefined rather than void.
+          getInstance: () => Effect.succeed(undefined),
+        }),
+        configuredEventSinkLayer,
+        IdAllocator.layer,
+        TestStoresLayer,
+      ),
+    ),
   );
   return Layer.mergeAll(
     TestStoresLayer,

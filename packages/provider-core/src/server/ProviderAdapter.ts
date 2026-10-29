@@ -422,6 +422,7 @@ export interface ProviderAdapterV2EnsureThreadInput {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly providerSessionId?: ProviderSessionId;
   readonly existingProviderThread?: OrchestrationV2ProviderThread;
+  readonly forceNewNativeThread?: boolean;
 }
 
 export interface ProviderAdapterV2TurnInput {
@@ -466,7 +467,6 @@ export interface ProviderAdapterV2RuntimeRequestResponseInput {
   readonly decision?: ProviderApprovalDecision;
   readonly feedback?: string;
   readonly answers?: ProviderUserInputAnswers;
-  readonly response?: unknown;
 }
 
 export interface ProviderAdapterV2ThreadSnapshot {
@@ -627,9 +627,10 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
    * here so the session manager defers idle release while it is pending.
    */
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-  /** Overrides the session-wide probe so sibling threads cannot keep this root subscription open. */
+  /** Root-subscription probe; replacement checks opt in to subagents owned by the live process. */
   readonly hasPendingBackgroundWorkForThread?: (
     providerThread: OrchestrationV2ProviderThread,
+    options?: { readonly includeSubagents?: boolean },
   ) => Effect.Effect<boolean>;
   /** Trusted adapter-owned immutable hash of the actual native launch; never protocol metadata. */
   readonly modelContextWindowLaunchFingerprint?: string;

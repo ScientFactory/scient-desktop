@@ -1259,7 +1259,8 @@ describe("loaded native Pi serialized request guard", () => {
           mcpSession: undefined,
           extensionPath,
         });
-        assert.isFalse(launch.hasT3Mcp);
+        assert.notProperty(launch.env, "T3_MCP_URL");
+        assert.notProperty(launch.env, "T3_MCP_BEARER_TOKEN");
         assert.include(launch.args, extensionPath);
         const source = yield* fs.readFileString(extensionPath);
         const h = yield* Effect.tryPromise(() => loadContextGuard(source));

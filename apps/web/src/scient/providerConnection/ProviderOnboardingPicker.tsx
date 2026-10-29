@@ -20,7 +20,7 @@ import { BlocksIcon, ChevronRightIcon, SearchIcon, SettingsIcon } from "lucide-r
 import { useEffect, useState } from "react";
 
 import { ModelPickerNewChatFooter } from "../../components/chat/ModelPickerNewChatFooter";
-import { ComposerControl, ComposerControlChevron } from "../../components/chat/ComposerControl";
+import { ComposerControl } from "../../components/chat/ComposerControl";
 import { composerFloatingLayerProps } from "../../components/chat/composerEventScope";
 import {
   DRIVER_OPTIONS,
@@ -204,6 +204,7 @@ export function ProviderOnboardingPicker(props: {
       props.fallbackSelection,
     selectedEntry ? props.modelPreferences?.[selectedEntry.instanceId]?.hiddenModels : undefined,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the ready provider selection to the host selection path and closes the picker
   useEffect(() => {
     if (
       overlay.instanceId !== null ||
@@ -258,7 +259,7 @@ export function ProviderOnboardingPicker(props: {
                 ref={pickerTriggerRef}
                 aria-label={reconnectEntry ? triggerLabel : "Choose and connect your AI"}
                 className={cn(
-                  "-ms-px min-w-0 justify-between whitespace-nowrap ps-0",
+                  "min-w-0 justify-between whitespace-nowrap",
                   props.compact ? "max-w-48 shrink-0" : "max-w-60 shrink sm:max-w-64",
                 )}
                 data-provider-onboarding-trigger="true"
@@ -284,7 +285,6 @@ export function ProviderOnboardingPicker(props: {
                 </span>
               ) : null}
             </span>
-            <ComposerControlChevron />
           </PopoverTrigger>
           <PopoverPopup
             {...composerFloatingLayerProps}
@@ -295,7 +295,7 @@ export function ProviderOnboardingPicker(props: {
             suspended={overlay.instanceId !== null}
           >
             <div
-              className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-90 overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
+              className="dropdown-glass model-picker-surface relative flex h-screen max-h-86.5 w-screen max-w-80 overflow-hidden rounded-lg text-popover-foreground [clip-path:inset(0_round_var(--radius-lg))]"
               data-model-picker-content="true"
               data-provider-onboarding-picker="true"
             >
