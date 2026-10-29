@@ -21,7 +21,10 @@ import {
   findScientBackslashMathSpans,
   type ScientBackslashMathSpan,
 } from "~/scient/math/scientMathText";
-import { isPlausibleScientSingleDollarTex } from "~/scient/math/scientSingleDollarMath";
+import {
+  isPlausibleScientSingleDollarTex,
+  isScientShellConcatenation,
+} from "~/scient/math/scientSingleDollarMath";
 import {
   parsedReferenceAttributes,
   preserveMarkdownReferences,
@@ -598,6 +601,7 @@ gfmTokenizer.inline.ruler.after("escape", "scient_inline_math", (state, silent) 
   if (end >= state.posMax) return false;
   const tex = state.src.slice(start + 1, end);
   if (!isPlausibleScientSingleDollarTex(tex)) return false;
+  if (isScientShellConcatenation(tex, state.src[end + 1])) return false;
   if (!silent) {
     const token = state.push("scient_inline_math", "math", 0);
     token.content = tex;
