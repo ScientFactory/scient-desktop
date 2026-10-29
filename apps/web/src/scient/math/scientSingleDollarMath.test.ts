@@ -358,6 +358,7 @@ describe("scientific subscripts and charges", () => {
     "$PWD$HOME",
     "Between $5, and 10$",
     "$(echo A, B)$",
+    "PS1='$USER, localhost$ '",
     "$PCO_2$10",
     "`$PCO_2$`",
     String.raw`\$PCO_2$`,

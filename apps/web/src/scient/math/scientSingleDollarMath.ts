@@ -57,9 +57,11 @@ const IDENTIFIER_PATH_PATTERN = /^[A-Z][A-Z0-9_]*[/:.]/;
 // the author's emphasis delimiter, and letting it qualify a span would let
 // `*a $b* c$` destroy the emphasis and render "b* c" as a formula.
 const SPACED_CONTENT_SIGNAL_PATTERN = /[\\^_{}=+\-<>|]/;
-// A list of terms (`x, y`, `[0, 1]`, `K(x, y)`) spaces only after its commas;
-// words after a comma (`5, and 10`, `echo A, B`) are prose.
-const COMMA_LIST_PATTERN = /^\S+(?:, \S+)+$/;
+// A list of terms (`x, y`, `[0, 1]`, `K(x, y)`) spaces only after its commas
+// and holds no words; `5, and 10`, `echo A, B` and `$USER, localhost$` are prose.
+function isCommaList(content: string): boolean {
+  return /^\S+(?:, \S+)+$/.test(content) && !/\p{L}{2}/u.test(content);
+}
 const COLON_SIGNAL_PATTERN = /[\\^_{}=<>]/;
 // Every plausible formula ends in an alphanumeric (any script), a closing
 // bracket, factorial, prime, or percent. Content ending in a bare binder —
@@ -184,11 +186,7 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   if (content.endsWith("'") && !PRIME_END_PATTERN.test(content)) return false;
   // An unescaped trailing % is a TeX comment and always renders wrong.
   if (content.endsWith("%") && !content.endsWith("\\%")) return false;
-  if (
-    /\s/.test(content) &&
-    !SPACED_CONTENT_SIGNAL_PATTERN.test(content) &&
-    !COMMA_LIST_PATTERN.test(content)
-  )
+  if (/\s/.test(content) && !SPACED_CONTENT_SIGNAL_PATTERN.test(content) && !isCommaList(content))
     return false;
   if (content.includes(":") && !COLON_SIGNAL_PATTERN.test(content)) return false;
   if (content.includes("](") || content.includes("][") || content.includes("[^")) return false;
@@ -219,7 +217,7 @@ export function isPlausibleScientSingleDollarTex(content: string): boolean {
   // contains spaces a shell flag's `-`/`+` is not enough (`$(date -u)$`).
   if (content.startsWith("(")) {
     const signal = /\s/.test(content) ? /[\\^_=]/ : /[\\^_+\-*/=,]/;
-    if (!signal.test(content) && !COMMA_LIST_PATTERN.test(content)) return false;
+    if (!signal.test(content) && !isCommaList(content)) return false;
   }
   if (DOMAIN_LIKE_PATTERN.test(content) && !INTERPOLATION_SIGNAL_PATTERN.test(content)) {
     return false;
