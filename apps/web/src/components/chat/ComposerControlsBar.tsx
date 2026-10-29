@@ -6,7 +6,6 @@ import { CircleAlertIcon } from "lucide-react";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerControl } from "./ComposerControl";
 import {
-  ComposerPermissionsSection,
   ComposerFooterModeControls,
   ComposerModelPicker,
   type RuntimeModeOption,
@@ -22,7 +21,6 @@ import {
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
-import { shortcutLabelForCommand } from "../../keybindings";
 import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -175,7 +173,6 @@ export function ComposerControlsBar(props: {
     planModeEnabled,
   });
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
-  const permissionsChipHidden = accessMatchesDefault || props.permissionsShownInStrip;
   const providerTraitsPickerInput = {
     onNativeModelChange: (model: string) => onProviderModelSelect(selectedInstanceId, model),
     provider: selectedProvider,
@@ -192,27 +189,7 @@ export function ComposerControlsBar(props: {
     isComposerOwned: true,
     effortDisplay: props.effortDisplay,
     triggerClassName: cn("ps-1.5 pe-1", TEXT_CONTROL_STATES),
-    // Permissions always live in the effort menu, so the section never unmounts while open.
-    extraMenuContent: (
-      <ComposerPermissionsSection
-        runtimeMode={compatibleRuntimeMode}
-        runtimeModeOptions={compatibleRuntimeModeOptions}
-        onRuntimeModeChange={handleRuntimeModeChange}
-      />
-    ),
-    ...(permissionsChipHidden
-      ? {
-          extraMenuHint: [
-            `Permissions: ${
-              compatibleRuntimeModeOptions.find((option) => option.mode === compatibleRuntimeMode)
-                ?.label ?? compatibleRuntimeMode
-            }`,
-            shortcutLabelForCommand(keybindings, "composer.mode"),
-          ]
-            .filter(Boolean)
-            .join(" · "),
-        }
-      : {}),
+    // SCIENT-FORK: Permissions open their own card (chip or strip), not the effort menu.
   } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
   const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
   const {
@@ -221,10 +198,10 @@ export function ComposerControlsBar(props: {
     hiddenBlockCount: restingHiddenBlockCount,
     hiddenBlockIds: hiddenRestingBlockIds,
     traitsHidden: traitsBlockHidden,
-    effortOwnsModeShortcut,
     overflowShowsPermissions,
   } = resolveComposerControlsOwnership({
-    matchesDefault: permissionsChipHidden,
+    matchesDefault: accessMatchesDefault,
+    shownInStrip: props.permissionsShownInStrip,
     hasTraits: providerTraitsPicker !== null,
     planModeUiEnabled,
     collapsed: composerControlsCollapsed,
@@ -234,7 +211,6 @@ export function ComposerControlsBar(props: {
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
     hidden: composerControlsHidden || traitsBlockHidden,
-    extraMenuOwnsModeShortcut: effortOwnsModeShortcut,
   });
   const restingBlockDefs = [
     ...(providerTraitsPicker

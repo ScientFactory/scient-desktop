@@ -4,31 +4,38 @@
  * The rule: Permissions have exactly one visible home and composer.mode exactly one target.
  */
 export function resolveComposerControlsOwnership(input: {
-  /** Permissions hide while the mode is the default, or while the new-thread strip names it. */
+  /** The thread uses the user's default permissions. */
   readonly matchesDefault: boolean;
-  /** The model has an effort (traits) menu, which then always holds Permissions. */
+  // SCIENT-FORK:START — Permissions open their own card; the effort menu never holds them.
+  /** The new-thread strip below the composer names the permissions and opens their card. */
+  readonly shownInStrip: boolean;
+  // SCIENT-FORK:END
+  /** The model has an effort (traits) menu. */
   readonly hasTraits: boolean;
   readonly planModeUiEnabled: boolean;
   readonly collapsed: boolean;
   /** How many trailing blocks the width measurement moved into the overflow menu. */
   readonly measuredHiddenBlockCount: number;
 }) {
-  const accessDisplay = !input.matchesDefault
-    ? input.collapsed
-      ? ("icon" as const)
-      : ("label" as const)
-    : // Without traits there is no effort menu to hold Permissions, so keep an icon.
-      input.hasTraits
-      ? ("hidden" as const)
+  // SCIENT-FORK:START — Permissions open their own card; the effort menu never holds them.
+  // The strip button is their home in a new thread; otherwise the chip stays, as an icon at
+  // the user's default.
+  const accessDisplay = input.shownInStrip
+    ? ("hidden" as const)
+    : !input.matchesDefault && !input.collapsed
+      ? ("label" as const)
       : ("icon" as const);
+  // SCIENT-FORK:END
   const showModeBlock = !(accessDisplay === "hidden" && !input.planModeUiEnabled);
   const blockIds = [
     ...(input.hasTraits ? ["traits" as const] : []),
     ...(showModeBlock ? ["mode" as const] : []),
   ];
   const hiddenFor = (count: number) => blockIds.slice(blockIds.length - count);
+  // SCIENT-FORK:START — Permissions overflow with their chip, not with the effort menu.
   const overflowShowsPermissionsFor = (hidden: ReadonlyArray<string>) =>
-    hidden.includes(input.hasTraits ? "traits" : "mode");
+    accessDisplay !== "hidden" && hidden.includes("mode");
+  // SCIENT-FORK:END
   const overflowHasContent = (hidden: ReadonlyArray<string>) =>
     hidden.includes("traits") ||
     (input.planModeUiEnabled && hidden.includes("mode")) ||
@@ -53,11 +60,6 @@ export function resolveComposerControlsOwnership(input: {
     hiddenBlockIds,
     traitsHidden,
     modeHidden,
-    /**
-     * The effort chip answers composer.mode while the chip is hidden or overflowed, until the
-     * effort chip overflows too; then the overflow menu (which holds Permissions) answers it.
-     */
-    effortOwnsModeShortcut: (input.matchesDefault || modeHidden) && !traitsHidden,
     overflowShowsPermissions: overflowShowsPermissionsFor(hiddenBlockIds),
   };
 }
