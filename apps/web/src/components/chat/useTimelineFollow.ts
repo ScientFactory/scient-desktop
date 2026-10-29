@@ -1,6 +1,6 @@
 import { canApplySendAnchor, savedPositionIsAtEnd, readerAtReadingEnd } from "./readerScrollPolicy";
 import { followModeAfterEndTransition, useTimelineEndControl } from "./useTimelineEndControl";
-import { useQueuedDeliveryFollow, useResponseFollow } from "./responseFollow";
+import { useArrivedPromptFollow, useResponseFollow } from "./responseFollow";
 import { type ChatMessage } from "../../types";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -132,8 +132,11 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     messages: timelineMessages,
     loaded: !isServerThread || serverProjection !== null,
   });
-  const { start: startResponseFollow, clear: clearResponseFollow } = responseFollow;
-  const followSentPrompt = responseFollow.followSent;
+  const {
+    start: startResponseFollow,
+    join: joinResponseFollow,
+    clear: clearResponseFollow,
+  } = responseFollow;
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const programmaticScrollPendingRef = useRef(false);
   const cancelPositionRestoreRef = useRef<(() => void) | null>(null);
@@ -239,8 +242,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     pageScrollControllerRef.current?.releaseActiveKey();
   };
   const onComposerPageScrollReleaseStable = useStableCallback(onComposerPageScrollRelease);
-  // SCIENT-FORK:START — Scroll to end releases room and follows once; it never re-arms live following.
-  // Sends capture end position and frame the prompt; queued prompts delivered at the end share responseFollow.
+  // SCIENT-FORK:START — Scroll to end releases room and rejoins the follow while the thread works.
+  // Sends capture end position and frame the prompt; prompts arriving at the end share responseFollow.
   const scrollToEnd = (animated = false) => {
     cancelTimelinePositioning();
     const generation = anchorUserScrollGenerationRef.current;
@@ -258,6 +261,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
         programmaticScrollPendingRef.current = false;
         setTimelinePositioningPending(false);
         legendListRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
+        // At the end of a working thread, the reader follows it again.
+        joinResponseFollow();
       });
     });
   };
@@ -285,30 +290,31 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       // to the end. Retain existing tail space until it can disappear without
       // clamping the viewport.
       cancelTimelinePositioning();
-      followSentPrompt(messageId, snapshot.firstMessage);
+      startResponseFollow(messageId);
       return;
     }
     cancelPositionRestoreRef.current?.();
-    // The first prompt keeps its placement; its answer is revealed.
-    followSentPrompt(messageId, snapshot.firstMessage);
+    // The first prompt keeps its placement; the follow starts from there.
+    startResponseFollow(messageId);
     timelineScrollModeRef.current = "anchoring-new-turn";
     setTimelinePositioningPending(true);
     positionedTimelineAnchorRef.current = null;
     setTimelineAnchor({ threadKey: activeThreadKey, messageId });
   };
-  // A queued prompt the server delivers while the reader is at the end gets the same follow
-  // as a send.
+  // A prompt arriving while the reader is at the end, from anywhere, gets the same follow as a send.
   const latestPrompt = timelineMessages.findLast((message) => message.role === "user") ?? null;
   const readerWasAtEnd = () => isAtEndRef.current;
-  const followDeliveredPrompt = (promptId: MessageId) => {
+  const followArrivedPrompt = (promptId: MessageId) => {
+    if (!responseFollow.followable(promptId)) return;
     cancelTimelinePositioning();
-    startResponseFollow(promptId, true);
+    startResponseFollow(promptId);
   };
-  useQueuedDeliveryFollow({
+  useArrivedPromptFollow({
     threadKey: routeThreadKey,
     latestPrompt,
     readerAtEnd: readerWasAtEnd,
-    follow: followDeliveredPrompt,
+    followingPromptId: responseFollow.promptId,
+    follow: followArrivedPrompt,
   });
   // SCIENT-FORK:END
   useEffect(() => {
@@ -625,8 +631,8 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     composerRef.current?.restoreAfterTimelineReachedEnd();
   };
   const onToolOutputCollapsedAtEndStable = useStableCallback(onToolOutputCollapsedAtEnd);
-  // SCIENT-FORK: upstream follows footer growth here. Scient's reading end is the latest
-  // answer, so footer rows (state line, queued turns) never move a reader resting there.
+  // SCIENT-FORK: upstream follows footer growth here. Footer status never moves the reader; the
+  // follow and chat/queuedRunsInView.ts keep the reader's queued messages in view.
 
   // SCIENT-FORK:START — the end-control hook owns the pill, the unread count
   // and the follow modes (its onReachedEnd/onLeftEnd above). The tool-activity

@@ -59,6 +59,10 @@
 .scient-math-inline {
   display: inline-block;
   max-width: 100%;
+  /* A trailing subscript or root ends in KaTeX's 2px strut (.vlist-s), past the
+     formula's box; the room keeps it from scrolling, the margin keeps the spacing. */
+  padding-inline-end: 2px;
+  margin-inline-end: -2px;
   vertical-align: middle;
   overflow-x: auto;
   overflow-y: hidden;

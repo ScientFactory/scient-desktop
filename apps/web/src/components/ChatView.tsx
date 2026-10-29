@@ -452,6 +452,7 @@ import { branchMismatchBannerItem } from "./chat/ThreadActivityBanners";
 import { ThreadNow } from "./chat/ThreadNow";
 import { useDelayedStatus } from "../hooks/useDelayedStatus";
 import { useTimelineFollow } from "./chat/useTimelineFollow";
+import { useQueuedRunsInView } from "./chat/queuedRunsInView";
 import {
   type EnvironmentUnavailableState,
   useSystemComposerBanners,
@@ -2674,6 +2675,20 @@ function ChatViewContent(props: ChatViewProps) {
     currentRouteThreadKeyRef,
     setTimelineAnchor,
   });
+  // SCIENT-FORK:START — the reader's queued messages stay reachable (chat/queuedRunsInView.ts).
+  const [queuedRunsElement, setQueuedRunsElement] = useState<HTMLDivElement | null>(null);
+  const queuedRunsHiddenBelow = useQueuedRunsInView({
+    listRef: legendListRef,
+    element: queuedRunsElement,
+    composerInset: composerTimelineInset,
+    threadKey: routeThreadKey,
+    ownQueuedIds: optimisticUserMessages.flatMap((message) =>
+      message.queueAdmission === undefined ? [] : [message.id],
+    ),
+    readerAtEnd: isTimelineAtLogicalEndStable,
+    following: responseFollow.promptId !== null,
+  });
+  // SCIENT-FORK:END
 
   useEffect(() => {
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
@@ -3702,7 +3717,8 @@ function ChatViewContent(props: ChatViewProps) {
             onFileOpen={openFileAttachmentStable}
           />
         ) : null}
-        {hasQueuedTurns ? queuedRunsControl : null}
+        {/* SCIENT-FORK: the queue's element, for chat/queuedRunsInView.ts. */}
+        {hasQueuedTurns ? <div ref={setQueuedRunsElement}>{queuedRunsControl}</div> : null}
       </>
     );
   const pendingSidebarFileDrops = useSidebarPendingFileDropStore((state) => state.pending);
@@ -4128,7 +4144,8 @@ function ChatViewContent(props: ChatViewProps) {
                   : { historyControls: threadHistoryControls })}
               />
 
-              {showScrollToBottom && !isThreadFindActive && (
+              {/* SCIENT-FORK: a queue hidden below the reading area shows the control too. */}
+              {(showScrollToBottom || queuedRunsHiddenBelow) && !isThreadFindActive && (
                 <div
                   className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
                   style={{ bottom: scrollToEndClearance + 4 }}
