@@ -613,6 +613,18 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`6d450a4284852af137b2f3407fddd89eb76e7644` is recorded in
+[the 2026-10-29 6d450a4284 receipt](docs/internals/t3-upstream-sync-20261029-6d450a4284.md),
+stacked on #694. Literal merge `49d0d85dde06de7b398f4d117a098cd41fb862a7` has owned base
+`abe2e529285a9b1b204e507d5673d2fd3dff5dbd` and the frozen official target as parents,
+retaining the 44 official commits after `9826dbb990`. Scient keeps its Stable/Beta update
+picker and adopts the updater's release floor and guarded downgrade; upstream's npm-based
+fleet track switch is not adopted. Upstream's out-of-usage fallback, turning a thread
+without a project into a project, local-first Git status and Electron 44.10.0 are in.
+Immutable migrations (none added), cloud, telemetry, relay, mobile publication and
+release controls remain. Release remains separate.
+
+The previous committed alignment through
 `9826dbb9904b2591bfbf60d1317486b59132f56b` is recorded in
 [the 2026-10-28 8e76f945d2 receipt](docs/internals/t3-upstream-sync-20261028-8e76f945d2.md)
 ([Scient PR #694](https://github.com/ScientFactory/scient-desktop/pull/694)).
