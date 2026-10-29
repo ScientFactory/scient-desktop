@@ -239,6 +239,7 @@ export function needsManagedRuntimeRecovery(provider: ServerProvider | undefined
   return (
     provider?.driver !== "cursor" &&
     runtime?.source === "scient_managed" &&
+    runtime.healthy !== true &&
     provider?.status === "error" &&
     provider.auth.status !== "unauthenticated"
   );

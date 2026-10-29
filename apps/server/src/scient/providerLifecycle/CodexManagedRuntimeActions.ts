@@ -632,6 +632,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         catalog: yield* catalogService.freshness,
         operation: null,
         message,
+        ...(latestSource === "scient_managed" ? { healthy: latestManagedRuntimeHealthy } : {}),
         diagnostics: buildDiagnostics({
           source: latestSource,
           executable: latestExecutable,

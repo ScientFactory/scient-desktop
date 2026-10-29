@@ -541,10 +541,7 @@ export function CodexInlineSetup(props: {
     return (
       <SetupFrame>
         <AssistedSetupStatus
-          body={
-            localError ??
-            "Codex couldn’t confirm your ChatGPT account, usually because it can’t reach OpenAI. Check your internet connection or VPN, then try again."
-          }
+          body={localError ?? "Check your internet connection or VPN, then try again."}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
           role="alert"
           title="Codex can’t check your account"

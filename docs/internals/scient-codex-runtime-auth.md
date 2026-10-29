@@ -44,8 +44,10 @@ unchanged.
 The probe proves the account API, not the account. Signed in, Codex asks OpenAI before it answers
 the read, so an error Codex returns for a request it took (no network, for example) still passes.
 Only a parse, unknown-method or bad-params rejection, or a failure before Codex answers, fails the
-probe. Connectivity is the provider status check's to report: when that check cannot read the
-account, the setup card offers to check again, with signing in as the secondary action.
+probe. The runtime summary's `healthy` field carries that result, so a failed status check of a
+healthy private runtime is never offered as a repair. Connectivity is the status check's to report:
+when it cannot read the account, the setup card offers to check again, with signing in as the
+secondary action.
 
 ## Diagnostics boundary
 
