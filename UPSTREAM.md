@@ -616,6 +616,18 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`dd148481531a0a090780a2ade20588566db099a2` is recorded in
+[the 2026-10-30 dd14848153 receipt](docs/internals/t3-upstream-sync-20261030-dd14848153.md).
+Literal merge `e86962f1278340f6fdbdda071ebe1cc0a11aec22` has owned base
+`51505395956e7dc959e00c868b10048a63f89946` (#707, which carries #694) and the frozen
+official target as parents, retaining the 99 official commits after `6d450a4284`.
+Upstream's server performance work is in; Scient keeps full SQLite durability, its
+counts-free startup heartbeat, and its settings, sidebar-section and fork-history
+additions on upstream's faster shapes. Upstream's migration 073 lands as Scient 077.
+1Password secret providers stay behind upstream's off-by-default flag. Release remains
+separate.
+
+The previous committed alignment through
 `6d450a4284852af137b2f3407fddd89eb76e7644` is recorded in
 [the 2026-10-29 6d450a4284 receipt](docs/internals/t3-upstream-sync-20261029-6d450a4284.md),
 stacked on #694. Literal merge `49d0d85dde06de7b398f4d117a098cd41fb862a7` has owned base
