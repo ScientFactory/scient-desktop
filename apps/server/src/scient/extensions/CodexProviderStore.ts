@@ -675,13 +675,6 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
         } satisfies ExtensionPluginContents;
       }),
     );
-  const keyServerRoot = (id: string) =>
-    withClient(
-      Effect.fn("CodexProviderStore.keyServerRoot")(function* (client: Client) {
-        const { detail, item, installed } = yield* detailFor(client, id);
-        return yield* localKeyRoot(detail, item, installed);
-      }),
-    );
   const skillDocument = (id: string, skillId: string) =>
     withClient(
       Effect.fn("CodexProviderStore.skillDocument")(function* (client: Client) {
@@ -754,7 +747,6 @@ export const makeCodexProviderStore = Effect.fn("makeCodexProviderStore")(functi
     );
   return {
     contents,
-    keyServerRoot,
     skillDocument,
     search,
     entry,

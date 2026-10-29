@@ -56,12 +56,11 @@ const keyPluginRoot = Effect.acquireRelease(
 );
 const actions = (
   listPlugins: ProviderPluginActions["listPlugins"],
-  // Startup reads only these store members.
-  store?: Pick<NonNullable<ProviderPluginActions["store"]>, "keyServerRoot" | "contents">,
+  listPluginRoots?: ProviderPluginActions["listPluginRoots"],
 ) =>
   ({
     listPlugins,
-    ...(store ? { store: store as ProviderPluginActions["store"] } : {}),
+    ...(listPluginRoots ? { listPluginRoots } : {}),
     readMcpServer: () => Effect.never,
     uninstall: () => Effect.void,
     startMcpSignIn: () => Effect.fail({ message: "Not used" }),
@@ -82,41 +81,27 @@ const prepare = (driver: string, pluginActions: ProviderPluginActions) =>
     return yield* preparePluginKeyStartup(providers, agent, undefined);
   });
 
-it.effect("starts Codex with the readable plugins when the catalog no longer has one", () =>
+it.effect("starts Codex from plugin folders, rechecking fresh before preparing any key", () =>
   Effect.gen(function* () {
     const root = yield* keyPluginRoot;
-    let contentsReads = 0;
+    const reads: boolean[] = [];
     const policies = yield* prepare(
       "codex",
       actions(
-        () =>
-          Effect.succeed({
-            sequence: 1,
-            plugins: [plugin("removed"), plugin("keyless"), plugin("keyed")],
+        () => Effect.die("The catalog listing must not run before a session starts."),
+        ({ fresh }) =>
+          Effect.sync(() => {
+            reads.push(fresh === true);
+            return [
+              { id: "uncached", name: "uncached", enabled: true },
+              // Disabled outside Scient since the last listing: only a fresh read knows.
+              { id: "keyed", name: "keyed", enabled: fresh !== true, root },
+            ];
           }),
-        {
-          keyServerRoot: (id) =>
-            id === "removed"
-              ? Effect.fail({ message: "remote plugin catalog request failed with status 404" })
-              : Effect.succeed(id === "keyed" ? root : undefined),
-          contents: () => {
-            contentsReads++;
-            return Effect.succeed({
-              requiredKeys: ["TOKEN"],
-              mcpServers: [{ name: "api" }],
-              apps: [],
-              skills: [],
-              hooks: [],
-              commands: [],
-              agents: [],
-            });
-          },
-        },
       ),
     );
-    expect(policies.map((policy) => policy.bindingPluginId)).toEqual(["keyed"]);
-    // Plugins whose own files declare no keys are never read in full.
-    expect(contentsReads).toBe(1);
+    expect(policies).toEqual([]);
+    expect(reads).toEqual([false, true]);
   }).pipe(Effect.scoped),
 );
 

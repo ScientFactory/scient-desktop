@@ -479,9 +479,6 @@ it.effect(
         fixture.state.localPlugins = [plugin("local", { version: "cached-remote" })];
         yield* store.search({ refresh: true });
         expect((yield* store.contents("local")).requiredKeys).toEqual(["SYNTHETIC_KEY"]);
-        expect(yield* store.keyServerRoot("local")).toBe(
-          yield* Effect.promise(() => NodeFSP.realpath(root)),
-        );
 
         fixture.state.skills = [
           { name: "search", path: NodePath.join(NodeOS.tmpdir(), "outside/SKILL.md") },
@@ -710,7 +707,6 @@ it.effect("keeps the client and other plugins' apps when the catalog no longer h
         ["sample", 1],
         ["removed", 0],
       ]);
-      expect((yield* store.keyServerRoot("removed").pipe(Effect.result))._tag).toBe("Failure");
       expect(openings).toBe(1);
     }),
   ),

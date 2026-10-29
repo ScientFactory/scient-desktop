@@ -9,20 +9,50 @@ modules named `chat/…` are Scient-only files inside upstream's
 `components/chat/` directory. Open questions and candidates for change are
 collected at the end.
 
-## The few ideas everything rests on
+## First principles
 
-- **Nothing moves the view on its own,** with two exceptions: the reveal after
-  a send (and its follow), and keeping the end in view when something above
-  it resizes while the thread is idle. Agent activity never pulls the view
-  down by itself otherwise.
+The timeline does two jobs that pull against each other:
+
+1. **Show what the agent is doing now.** While it works, the reader at the
+   bottom wants to see its live activity, not a stale screen.
+2. **Never move text while the reader is reading it.**
+
+Everything in this document resolves that tension the same way:
+
+- **Work is watched; answers are read.** Thinking, tool steps, compaction and
+  short progress notes ("Checking the logs next.") go by like a status
+  display, so the view keeps up with them. A real answer, a plan or a card is
+  read line by line, so the view stops before its start passes the top
+  margin. "A real answer" is the same rule that keeps an answer visible when
+  its turn folds (`keepsSettledAnswerVisible`, in
+  `scient/threadTimeline/keptAnswers.ts`): structure, an image, or at least
+  400 characters. A message still arriving counts as read until it is
+  finished, because it cannot be judged yet. Work the reader opened (an
+  expanded tool group or reasoning) counts as read too.
+- **The reader decides.** Being at the bottom while the agent works means
+  following it, whoever started the run. Scrolling up leaves; coming back to
+  the bottom, or Scroll to end, rejoins. What the reader has scrolled past is
+  read and no longer stops the view, except an answer still arriving: an
+  answer is never followed down.
+- **Nothing else moves the view.** New rows below a reader who is not at the
+  bottom, footer status, and messages arriving while the reader is away stay
+  where they land; the Scroll to end control says what is below. The one
+  exception is keeping the end in view when something above it resizes while
+  the thread is idle.
+- **The reader's own queued messages are part of the end.** They are what the
+  reader acts on next, so they are kept reachable (see "Your queued
+  messages").
+
+Terms used below:
+
 - **The reading area** is the timeline minus the composer that floats over its
   bottom. "The top margin" is 24px below the timeline's top
   (`CHAT_TIMELINE_ANCHOR_OFFSET`, matching the titlebar fade).
 - **"At the end"** is one rule used everywhere: the Scroll to end control,
-  sending, saved positions and the composer. It decides what "the end" is,
-  then lets a little of it hide behind the composer (see the next section).
-- **The follow** is what moves the view after a send. It never scrolls past
-  the point where your sent message's text reaches the top margin.
+  sending, joining the follow, saved positions and the composer. It decides
+  what "the end" is, then lets a little of it hide behind the composer (see
+  the next section).
+- **The follow** is what moves the view while the reader follows a run.
 - **Reduced motion** (the system setting) turns every animation in this
   document into an instant change.
 
@@ -56,13 +86,16 @@ Owner: `useReadingRestoreTarget` and `useReadingPositionRestore` in
 - **Coming back after resting at the end** (not following): you land on the
   same row and offset, not at the new end. If new content arrived below, the
   Scroll to end control shows.
+- **Opening a working thread, or coming back to one, at its end** joins its
+  follow (see "Who follows").
 - **Coming back to a thread you left while the follow was still going** (saved
-  as the followed prompt's id; resting at the end alone is not following): you
-  land where the follow would be now, not where you left.
-  - **Everything since your message fits:** the end of its response (the
-    bottom, unless a later message was sent from elsewhere meanwhile).
-  - **It doesn't fit:** your message at the top margin.
-  - **Your message is at the top but its latest answer's first lines would still be below the screen:** that answer's start goes at the top margin instead.
+  as the followed prompt's id): you land where the follow would be now, not
+  where you left.
+  - **Nothing in the response since you left is read content:** the end of
+    its response (the bottom, unless a later message was sent meanwhile).
+  - **Otherwise:** the first answer, plan or card of that response at the top
+    margin, or its end if that comes first.
+  - **That answer is at the top but a later answer's first lines would still be below the screen:** the later answer's start goes at the top margin instead.
   - **A later message sent from elsewhere** while you were away, and what
     follows it, never move it further, whether your message's run is still
     working or has finished.
@@ -83,39 +116,62 @@ Owner: `useReadingRestoreTarget` and `useReadingPositionRestore` in
 - **What else is saved:** expanded tool groups, reasoning and folds are saved with the position and re-applied.
 - **The Scroll to end control** shows immediately on open if you had left away from the end.
 
-## Sending a message
+## Who follows
 
-Owner: `chat/responseFollow.ts` (the one owner of the follow, called from
-`ChatView.tsx`'s `frameSubmittedMessage`), `chat/useBoundedAnswerFollow.ts`.
+Owner: `chat/responseFollow.ts` (the one owner of the follow: `start`, `join`,
+`useArrivedPromptFollow`), called from `chat/useTimelineFollow.ts`;
+`MessagesTimeline.tsx` reports arriving at the end.
 
-- **Sent while away from the end:** nothing moves. The Scroll to end control
-  stays available.
-- **The thread's first message** (from the centered draft):
-  1. The composer glides from the center to the bottom: 260ms, fast start,
-     soft landing (`chat/timelineEntranceMotion.ts`, curve in
-     `chat/draftHeroTransition.ts`). This always animates, not only when the
-     opt-in panel animation setting is on.
-  2. Room is reserved below the message, and it is placed at the top margin
-     (LegendList anchored end space, from upstream T3).
-  3. The message fades in, revealed from the top down: 300ms, starting 100ms
-     in.
-  4. The reserved room stays until real content fills the screen below it.
-     Scroll to end or scrolling away releases it.
-- **A later message sent at the end,** and a queued message delivered while
-  you are at the end:
-  1. No reserved room. The view glides to the normal bottom, with the usual
-     16px gap above the composer.
-  2. It then follows everything the agent produces (thinking, tool steps,
-     text), staying at the bottom, until your message's text reaches the top
-     margin.
-  3. After that it only shows the first lines (48px) of a newer message
-     pushed below the screen, and never follows an answer down to its end.
-- **A queued message counts as "delivered"** when V2 marks the delivered
-  prompt so (`queued_turn`, or `promoted_queued_to_steer`). It keeps its
-  message id, so this window's own queued send counts too, even when the
-  delivery arrives before the send's receipt. A message promoted to a steer
-  is followed with the run it went into. A message sent directly from
-  another window is never followed.
+The follow belongs to one prompt's V2 run. A reader at the end starts or
+rejoins it:
+
+- **You send a message at the end** (`frameSubmittedMessage`). Sent while away
+  from the end, nothing moves; Scroll to end stays available.
+- **A prompt arrives while you are at the end,** from anywhere: your queued
+  message delivered (V2's `queued_turn` or `promoted_queued_to_steer` intent,
+  which keeps its message id, so it counts even when the delivery arrives
+  before the send's receipt), another window, your phone, a schedule, another
+  agent or a guest. A thread's first listing is not an arrival.
+- **You arrive at the end while its latest prompt's run works:** scrolling
+  down to it, Scroll to end, or opening the thread there. Joining a follow
+  already running only marks what you scrolled past as read.
+- **A follow you ended stays ended** while you stay at the end: you have to
+  leave the end and come back. Scrolling a little up within the end's
+  allowance ends it but does not leave the end.
+
+**The thread's first message** (from the centered draft) keeps its entrance:
+
+1. The composer glides from the center to the bottom: 260ms, fast start, soft
+   landing (`chat/timelineEntranceMotion.ts`, curve in
+   `chat/draftHeroTransition.ts`). This always animates, not only when the
+   opt-in panel animation setting is on.
+2. Room is reserved below the message, and it is placed at the top margin
+   (LegendList anchored end space, from upstream T3).
+3. The message fades in, revealed from the top down: 300ms, starting 100ms in.
+4. The reserved room stays until real content fills the screen below it.
+   Scroll to end or scrolling away releases it.
+5. Then the follow carries on as for any message. Later messages get no
+   reserved room: the view glides to the normal bottom, with the usual 16px
+   gap above the composer.
+
+## Where the follow stops
+
+`followLimitIndex` and `boundedAnswerScrollDelta` in
+`chat/useBoundedAnswerFollow.ts`; `chat/liveFollowOffset.ts` places a returning
+reader with the same rule.
+
+- **It follows the response to its live end:** thinking, tool steps, short
+  progress notes, your own prompt scrolling away above, and your queued
+  messages after the latest response.
+- **It stops at the first read row** of the response whose start would pass
+  the top margin: an answer, a plan, a card, a message still arriving, or work
+  you expanded. Rows you had already scrolled past when you joined do not
+  stop it, unless still arriving.
+- **After it stops** it only shows the first lines (48px) of a newer message
+  pushed below the screen, never past that message's start. Everything else
+  below is announced by Scroll to end.
+- **A response ends at the next prompt.** A later prompt and what follows it
+  belong to that prompt's own follow.
 
 ## How the follow moves
 
@@ -132,17 +188,19 @@ Owner: `chat/responseFollow.ts` (the one owner of the follow, called from
     touch, or a scrollbar drag): the follow stops writing the scroll
     position, and picks up from rest 250ms after your input stops. It used
     to fight your scroll and feel hesitant.
-  - **Scrolling up** by any means cancels the follow for good.
+  - **Scrolling up** by any means ends the follow until you come back to the
+    end (see "Who follows").
   - **Keys count only when they scroll the timeline:** focus in it or
     nowhere, no modifier, not typing in a field. Arrow keys in a menu or a
     shortcut such as ⌘↑ leave the follow be.
-  - **Clicks and text selection** never cancel it.
+  - **Clicks** never cancel it. **Selecting text** in the timeline holds the
+    view still; the follow resumes once the selection is cleared.
 - **Far behind** (more than a screen to go): it skips all but the last screen
   at once, then glides.
 - **When it ends:** once the prompt's own V2 run has ended and its last
-  message has been revealed; or when you scroll up, click Scroll to end, or
-  switch threads; or when the send fails. While the run is queued,
-  preparing or starting, it waits rather than ending.
+  message has been revealed; or when you scroll up or switch threads; or when
+  the send fails. Scroll to end ends it and rejoins at the bottom. While the
+  run is queued, preparing or starting, it waits rather than ending.
 - **At rest:** with nothing to reveal it does nothing until the content, the
   view or an answer's reveal changes.
 
@@ -284,12 +342,16 @@ rule itself is `isSubstantiveAnswer` in
 - **Showing and hiding:**
   - It shows 150ms after you leave the end, and repeated scroll events don't
     restart that delay. It hides at once when you reach the end.
+  - It also shows, at once, while your queued messages are below the reading
+    area, even when the reading end is in view. Its label then says how many
+    are queued ("Scroll to end · 1 queued").
   - It reacts only to crossing the end, never to repeated events. ChatView
     hands every end report to it unfiltered: the timeline never pins itself
     to the end, so content growing below you (for example after a follow has
     stopped at the top margin) always brings the control back.
 - **Clicking it** jumps to the true bottom with an animation. It also releases
-  any reserved room and restores a scroll-collapsed composer.
+  any reserved room and restores a scroll-collapsed composer. While the thread
+  works, you then follow it again.
 - **The unread count** counts new final answers below the reading area.
   - **What counts:** the latest assistant message of each response. Progress
     notes a later message supersedes don't count.
@@ -300,6 +362,26 @@ rule itself is `isSubstantiveAnswer` in
     counted.
 - **Position:** the control floats 4px above the composer area, skipping
   docked banners that don't overlap it.
+
+## Your queued messages
+
+`chat/queuedRunsInView.ts`; the queue itself is upstream's `QueuedRunsControl`
+at the end of the timeline, after the thread's status rows.
+
+Your queued messages carry actions (Send now, Edit, Remove), so they are kept
+reachable rather than treated as status:
+
+- **While you follow a run,** the queue is part of the end the follow keeps in
+  view.
+- **Queuing a message while at the end** brings it, and its Send now, into
+  view above the composer.
+- **A queue wholly in view stays in view** when it grows (another message,
+  Show all) or the composer grows over it (editing a queued message).
+- **Otherwise nothing moves:** a message queued from another window or by a
+  guest while you are away from it, or a queue below where you are reading.
+  Scroll to end shows and names it instead.
+- **Other footer rows** (the thread's status, background work, guest messages
+  waiting, sign-in requests) never move the view.
 
 ## Moving through the conversation
 
@@ -394,9 +476,12 @@ Recorded in `UPSTREAM.md`:
   the top, including runs started from another window. Scroll to end
   re-arms the pinning.
 - **How Scient scrolls:** pinning is off (`maintainScrollAtEnd={false}`).
-  Only sends from this window, and queued deliveries while you are at the
-  end, are followed, and only until the prompt reaches the top margin.
-  Scroll to end is one-shot.
+  A reader at the end of a working thread follows it, whoever started the
+  run, but the follow stops before an answer, plan or card's start passes the
+  top margin (work and short notes are followed through). Scroll to end, or
+  coming back to the end, rejoins. Footer status never moves the view; the
+  reader's queued messages are kept reachable instead of upstream's
+  footer-growth follow.
 - **Other reading differences:**
   - the reading-end rule for "at the end" (T3: a flat 40px band at the true
     bottom);
@@ -444,6 +529,12 @@ Known rough edges, found while mapping this:
   the very bottom of the viewport, including the strip behind the composer.
   It also comes back when you return to the thread.
 - **A restore in progress restarts** whenever new rows stream in.
+- **The answer jumps when its turn folds.** When a run settles, its work
+  folds behind "Worked for…" above the final answer. Measured with a long run
+  and the answer's start at the top margin, the answer moves by 200–400px
+  instead of holding still, with or without the follow. Holding only message
+  rows as LegendList's anchor does not fix it; the list repositions wrongly
+  when many rows above are replaced at once. Not yet investigated further.
 - **Long code blocks and tables** in a streaming answer are revealed by height
   like text. Each takes as long as its number of lines.
 - **A streaming answer first seen mid-stream** (entering the thread, or

@@ -283,11 +283,12 @@ export function resolveReadingRow(
 }
 
 /**
- * Recheck reveal eligibility when the latest queued prompt becomes delivered: delivery can arrive
- * before this window learns its send was queued. Require the same thread and a reader previously at
- * the end.
+ * Whether the thread's latest prompt just arrived for a reader at the end of the same thread: a new
+ * prompt from anywhere, or one already listed that V2 now reports delivered from the queue (its
+ * delivery can arrive before this window learns its send was queued). A thread's first listing is
+ * not an arrival.
  */
-export function shouldRevealArrivedPrompt(input: {
+export function shouldFollowArrivedPrompt(input: {
   previous: { threadKey: string | null; id: string | null; delivered: boolean } | null;
   threadKey: string | null;
   latestPromptId: string | null;
@@ -298,11 +299,10 @@ export function shouldRevealArrivedPrompt(input: {
   const { previous } = input;
   return (
     input.latestPromptId !== null &&
-    input.delivered &&
     previous !== null &&
     previous.threadKey === input.threadKey &&
     previous.id !== null &&
-    (previous.id !== input.latestPromptId || !previous.delivered) &&
+    (previous.id !== input.latestPromptId || (input.delivered && !previous.delivered)) &&
     input.readerAtEnd
   );
 }
