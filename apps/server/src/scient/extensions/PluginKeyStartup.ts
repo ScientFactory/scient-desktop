@@ -1,11 +1,15 @@
-import type { PluginKeyTarget, ProviderInstanceId, ServerProviderPlugin } from "@t3tools/contracts";
+import type { PluginKeyTarget, ProviderInstanceId } from "@t3tools/contracts";
 import type { McpPluginKeyPolicy } from "@t3tools/provider-core/server/mcpSession";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
-import type { ProviderPluginActions } from "../../provider/ScientProviderInstanceSeams.ts";
+import type {
+  ProviderPluginActionFailure,
+  ProviderPluginActions,
+  ProviderPluginRoot,
+} from "../../provider/ScientProviderInstanceSeams.ts";
 import { pluginKeyHttpOrigins } from "./PluginKeyHttpServers.ts";
 import {
   readLocalPluginContents,
@@ -33,29 +37,45 @@ export const orStartWithoutPluginKeys =
       ),
     );
 
-const pluginKeyPolicy = Effect.fnUntraced(function* (
-  codex: boolean,
+/**
+ * Installed plugins and their own folders, where plugins declare keys. Never the catalog: a
+ * plugin's keys and servers are read from its folder. Session start may use the last listing;
+ * key use and key status read `fresh`, so a disabled or removed plugin stops receiving keys.
+ */
+export const listPluginKeyRoots = (
   actions: ProviderPluginActions,
-  plugin: ServerProviderPlugin,
-) {
-  const parsed = decodePath(plugin);
-  const listedPath = parsed._tag === "Some" ? parsed.value.path : undefined;
-  // Only a plugin's own files can declare keys, so check them before reading anything else.
-  const root = codex ? yield* actions.store?.keyServerRoot?.(plugin.id) ?? Effect.void : listedPath;
+  cwd: string | undefined,
+  fresh: boolean,
+): Effect.Effect<ReadonlyArray<ProviderPluginRoot>, ProviderPluginActionFailure> =>
+  actions.listPluginRoots
+    ? actions.listPluginRoots({ ...(cwd ? { cwd } : {}), fresh })
+    : actions.listPlugins(cwd ? { cwd } : {}).pipe(
+        Effect.map((listing) =>
+          listing.plugins.map((plugin) => {
+            const parsed = decodePath(plugin);
+            return {
+              id: plugin.id,
+              name: plugin.name,
+              enabled: plugin.enabled,
+              root: parsed._tag === "Some" ? parsed.value.path : undefined,
+            };
+          }),
+        ),
+      );
+
+const pluginKeyPolicy = Effect.fnUntraced(function* (codex: boolean, plugin: ProviderPluginRoot) {
+  const root = plugin.root;
   if (!root) return undefined;
   const declaredKeys = yield* Effect.tryPromise(() => readLocalPluginRequiredKeys(root));
   if (!declaredKeys?.length) return undefined;
-  const contents = codex
-    ? yield* actions.store?.contents?.(plugin.id) ?? Effect.void
-    : yield* Effect.tryPromise(() => readLocalPluginContents(root));
-  if (!contents?.requiredKeys?.length) return undefined;
-  const path = listedPath ?? root;
+  const contents = yield* Effect.tryPromise(() => readLocalPluginContents(root));
+  if (!contents.requiredKeys?.length) return undefined;
   return {
     pluginId: codex ? plugin.id : plugin.name,
     bindingPluginId: plugin.id,
     requiredKeys: contents.requiredKeys,
     pluginName: plugin.name.split("@")[0]!,
-    path,
+    path: root,
     serverNames: contents.mcpServers.map((server) => server.name),
   } satisfies McpPluginKeyPolicy;
 });
@@ -70,11 +90,11 @@ export const preparePluginKeyStartup = Effect.fn("PluginKeyStartup.prepare")(
     if (!provider || (provider.driver !== "claudeAgent" && provider.driver !== "codex")) return [];
     const actions = yield* providers.getProviderPluginActionsForInstance(instanceId);
     if (!actions || (yield* actions.isRetired)) return [];
-    const listing = yield* actions.listPlugins(cwd ? { cwd } : {});
+    const plugins = yield* listPluginKeyRoots(actions, cwd, false);
     const policies = yield* Effect.forEach(
-      listing.plugins.filter((plugin) => plugin.enabled),
+      plugins.filter((plugin) => plugin.enabled),
       (plugin) =>
-        pluginKeyPolicy(provider.driver === "codex", actions, plugin).pipe(
+        pluginKeyPolicy(provider.driver === "codex", plugin).pipe(
           orStartWithoutPluginKeys(
             "Starting without keys for a plugin that could not be read.",
             undefined,
@@ -101,15 +121,9 @@ export const readPluginKeyTransport = Effect.fn("PluginKeyStartup.readTransport"
   const actions = yield* providers.getProviderPluginActionsForInstance(target.agent);
   if (!actions || (yield* actions.isRetired))
     return { origins: new Map<string, string[]>(), commandLineBlocked: false };
-  const plugin = (yield* actions.listPlugins(target.cwd ? { cwd: target.cwd } : {})).plugins.find(
+  const root = (yield* listPluginKeyRoots(actions, target.cwd, true)).find(
     (plugin) => plugin.id === target.pluginId,
-  );
-  if (!plugin) return { origins: new Map<string, string[]>(), commandLineBlocked: false };
-  const parsed = decodePath(plugin);
-  const root =
-    parsed._tag === "Some"
-      ? parsed.value.path
-      : yield* actions.store?.keyServerRoot?.(plugin.id) ?? Effect.void;
+  )?.root;
   return root
     ? {
         origins: pluginKeyHttpOrigins(

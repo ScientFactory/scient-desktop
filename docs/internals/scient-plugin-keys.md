@@ -97,9 +97,11 @@ credential-store values are never projected into this field. Runtime environment
 expansion is never used. Claude's declared sensitive setting names can be
 lowercase; they remain the declared identity rather than being renamed.
 
-Codex local/git source contents are scanned only after installation and when an
-absolute plugin root is available. Remote-only entries without local contents
-omit the field; absence means unknown, not that no keys are needed. Invalid,
+Codex plugin contents are scanned only after installation and when an absolute
+plugin root is available: a local source path, or the version Codex unpacked
+into its plugin cache (see [Plugin folders](#plugin-folders)). Remote-only
+entries without local contents omit the field; absence means unknown, not that
+no keys are needed. Invalid,
 unreadable, escaped or truncated manifests also leave requirements unknown rather
 than publishing an apparently complete empty or partial list. Discovery
 does not install a plugin, run a server, create an account, or change delivery.
@@ -157,10 +159,26 @@ path are implemented and tested offline. Remaining work:
 2. Live stdio delivery qualification in Claude/Codex, packaged Electron, and Linux.
    Windows is withheld because Node's `execve` is unavailable there. Env-only
    stdio delivery is implemented below; secret-bearing arguments stay suppressed.
-3. Local-root discovery for remote-only plugins without a verified cache path.
-   Missing requirements remain unknown, rather than guessed from server names.
-4. Authorized real-provider tool calls and visual acceptance in a desktop
+3. Authorized real-provider tool calls and visual acceptance in a desktop
    candidate. No live token is needed or permitted in fixtures or logs.
+
+## Plugin folders
+
+Key requirements and server definitions come only from a plugin's own folder, so
+finding them never reads the plugin catalog or app details. Claude reports each
+plugin's path. Codex's `plugin/installed` reports a local plugin's source path;
+any other installed plugin lives in Codex's plugin cache as
+`<marketplace>/<plugin>/<version>`, built from Codex's own marketplace name,
+plugin name and installed version. Each must be one path segment, and the folder
+must resolve inside the cache through any links; a remote plugin Codex has not
+unpacked has no folder.
+
+`plugin/installed` alone takes Codex 0.7–3 seconds, so session preparation
+answers from the last listing for that workspace and refreshes it behind.
+Scient's own installs and removals clear that listing; a plugin installed or
+enabled outside Scient is seen from the session after next. HTTP key
+authorization and key status always list fresh, so a disabled or removed
+plugin stops receiving keys.
 
 ## Native startup suppression (unverified live)
 
@@ -221,10 +239,9 @@ replacements. Codex uses a quoted native server key beside its disabled
 plugin-scoped transport. Reserved Scient names and unresolved Codex native
 ownership collisions are withheld. There is no arbitrary name-collision override.
 
-Codex supports local/git source roots and roots verified from skill paths inside
-its configured plugin cache. The server-only root port is never exposed as an
-RPC that reads arbitrary paths. Remote plugins without either source remain
-unknown. Transient registrations store no credentials, are absent from the
+Codex roots come from [Plugin folders](#plugin-folders). The server-only root
+listing is never exposed as an RPC that reads arbitrary paths. Remote plugins
+without an unpacked folder remain unknown. Transient registrations store no credentials, are absent from the
 user's connector file/list and are capped at 1,000 per runtime. Old session
 bearers are still controlled by the existing MCP registry; a runtime restart
 releases registration metadata. Unsupported stdio servers stay suppressed (see the launcher constraints below).
@@ -289,13 +306,8 @@ Claude SDK/Codex plugin replacement and packaged Electron execution remain
 (SEA) server deployments also withhold this path: their executable cannot run an
 external launcher module; they need a separately qualified Node launcher runtime.
 
-Remote-only discovery still requires a verified root. Codex can already derive a
-contained cache root from a provider-reported skill path, even for a remote source.
-A remote-only plugin with neither a local/git source path nor a verified cached
-skill path remains unknown. The provider detail contract does not identify a
-verified manifest root for this case; guessing cache paths from display names or
-opaque ids would risk inspecting another plugin's files. No user plugin cache or
-credential/config values were inspected to qualify this gap.
+Remote-only discovery uses the cached folder described in
+[Plugin folders](#plugin-folders), never display names or opaque ids.
 
 ## HTTP response completion and rejected keys
 

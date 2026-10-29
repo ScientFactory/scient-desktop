@@ -226,7 +226,9 @@ refs through `VcsCheckpointOps`; `CheckpointDiffQuery` serves diff reads. These 
 Git-independent file-history backend.
 
 Capture admission retains its limits (512 MiB per changed file, 1 GiB in changed files, bounded
-path enumeration and execution time). Symlink accounting does not follow targets; porcelain paths
+path enumeration and execution time). A turn's first message waits for the size scan, so a scan
+that cannot finish in 2 seconds counts as too large, and a workspace found too large is not
+rescanned for 10 minutes. Symlink accounting does not follow targets; porcelain paths
 resolve from the repository root within the staging pathspec. Declined capture has a typed
 availability error. Capture stages in a temporary repository and publishes only after staging
 succeeds, with cleanup on failure or interruption. Shared-workspace restore safety is enforced by
