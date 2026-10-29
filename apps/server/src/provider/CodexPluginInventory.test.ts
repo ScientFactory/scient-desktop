@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- synthetic plugin folders only.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -14,6 +19,7 @@ import type * as CodexSchema from "effect-codex-app-server/schema";
 import {
   CODEX_WORKSPACE_LISTING_CONCURRENCY,
   CodexInventoryIncomplete,
+  codexInstalledPluginRoots,
   makeCodexNativeInventory,
   optionalCodexInventory,
   parseCodexInstalledPlugins,
@@ -828,3 +834,57 @@ describe("makeCodexNativeInventory", () => {
     }),
   );
 });
+
+it.effect("finds plugin folders in Codex's cache by its own names, never outside the cache", () =>
+  Effect.gen(function* () {
+    const home = yield* Effect.acquireRelease(
+      Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-codex-roots-"))),
+      (path) => Effect.promise(() => NodeFSP.rm(path, { recursive: true, force: true })),
+    );
+    const cache = NodePath.join(home, "cache");
+    const cached = NodePath.join(cache, "remote-store", "keyed", "1.0.0");
+    yield* Effect.promise(async () => {
+      await NodeFSP.mkdir(cached, { recursive: true });
+      await NodeFSP.mkdir(NodePath.join(home, "outside"), { recursive: true });
+    });
+    const roots = yield* codexInstalledPluginRoots(
+      {
+        marketplaces: [
+          {
+            name: "remote-store",
+            plugins: [
+              summary({
+                id: "keyed@remote",
+                name: "keyed",
+                version: "1.0.0",
+                source: { type: "remote" },
+              }),
+              summary({
+                id: "absent@remote",
+                name: "absent",
+                version: "1.0.0",
+                source: { type: "remote" },
+              }),
+              summary({
+                id: "escape@remote",
+                name: "..",
+                version: "outside",
+                source: { type: "remote" },
+              }),
+            ],
+          },
+        ],
+      },
+      cache,
+    );
+    const real = yield* Effect.promise(() => NodeFSP.realpath(cached));
+    assert.deepStrictEqual(
+      roots.map((plugin) => [plugin.id, plugin.root]),
+      [
+        ["keyed@remote", real],
+        ["absent@remote", undefined],
+        ["escape@remote", undefined],
+      ],
+    );
+  }).pipe(Effect.scoped),
+);
