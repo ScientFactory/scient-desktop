@@ -1,6 +1,9 @@
 // SCIENT-FORK:START — prepare native key-server suppression before provider startup.
 import { ConnectorRuntime } from "../scient/extensions/ExtensionsServices.ts";
-import { preparePluginKeyStartup } from "../scient/extensions/PluginKeyStartup.ts";
+import {
+  orStartWithoutPluginKeys,
+  preparePluginKeyStartup,
+} from "../scient/extensions/PluginKeyStartup.ts";
 import { preparePluginKeyHttpDelivery } from "../scient/extensions/PluginKeyHttpDelivery.ts";
 import { ServerConfig } from "../config.ts";
 import {
@@ -747,7 +750,9 @@ export const layerWithOptions = (
                       Effect.map((thread) => thread.projectId),
                       Effect.orElseSucceed(() => undefined),
                     ),
-                  }).pipe(Effect.orDie)
+                  }).pipe(
+                    orStartWithoutPluginKeys("Starting without plugin keys for local servers.", []),
+                  )
                 : [];
             const pluginHttpRuntime = yield* Effect.serviceOption(ConnectorRuntime);
             const pluginHttp =
@@ -765,6 +770,11 @@ export const layerWithOptions = (
                         Effect.orElseSucceed(() => undefined),
                       ),
                     },
+                  ).pipe(
+                    orStartWithoutPluginKeys("Starting without plugin keys for remote servers.", {
+                      connectors: [],
+                      serverNames: {},
+                    }),
                   )
                 : { connectors: [], serverNames: {} };
             connectorPlan = {
