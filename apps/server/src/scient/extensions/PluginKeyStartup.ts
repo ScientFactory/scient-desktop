@@ -90,21 +90,25 @@ export const preparePluginKeyStartup = Effect.fn("PluginKeyStartup.prepare")(
     if (!provider || (provider.driver !== "claudeAgent" && provider.driver !== "codex")) return [];
     const actions = yield* providers.getProviderPluginActionsForInstance(instanceId);
     if (!actions || (yield* actions.isRetired)) return [];
-    const plugins = yield* listPluginKeyRoots(actions, cwd, false);
-    const policies = yield* Effect.forEach(
-      plugins.filter((plugin) => plugin.enabled),
-      (plugin) =>
-        pluginKeyPolicy(provider.driver === "codex", plugin).pipe(
-          orStartWithoutPluginKeys(
-            "Starting without keys for a plugin that could not be read.",
-            undefined,
-            {
-              pluginId: plugin.id,
-            },
+    const policiesFor = (plugins: ReadonlyArray<ProviderPluginRoot>) =>
+      Effect.forEach(
+        plugins.filter((plugin) => plugin.enabled),
+        (plugin) =>
+          pluginKeyPolicy(provider.driver === "codex", plugin).pipe(
+            orStartWithoutPluginKeys(
+              "Starting without keys for a plugin that could not be read.",
+              undefined,
+              {
+                pluginId: plugin.id,
+              },
+            ),
           ),
-        ),
-    );
-    return policies.filter(Predicate.isNotUndefined);
+      ).pipe(Effect.map((policies) => policies.filter(Predicate.isNotUndefined)));
+    const policies = yield* policiesFor(yield* listPluginKeyRoots(actions, cwd, false));
+    // The last listing can only rule keys out: keys are prepared for plugins enabled right now.
+    return policies.length > 0 && actions.listPluginRoots
+      ? yield* policiesFor(yield* listPluginKeyRoots(actions, cwd, true))
+      : policies;
   },
   Effect.timeout(PLUGIN_KEY_STARTUP_TIMEOUT),
   orStartWithoutPluginKeys(

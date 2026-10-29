@@ -174,11 +174,12 @@ must resolve inside the cache through any links; a remote plugin Codex has not
 unpacked has no folder.
 
 `plugin/installed` alone takes Codex 0.7–3 seconds, so session preparation
-answers from the last listing for that workspace and refreshes it behind.
-Scient's own installs and removals clear that listing; a plugin installed or
-enabled outside Scient is seen from the session after next. HTTP key
-authorization and key status always list fresh, so a disabled or removed
-plugin stops receiving keys.
+answers from the last listing for that workspace and refreshes it behind. That
+listing can only rule keys out: when it shows a plugin that needs keys, the
+listing is read fresh before any key is prepared. Scient's own installs and
+removals clear it; a plugin installed or enabled outside Scient is seen from the
+session after next. HTTP key authorization and key status always list fresh, so
+a disabled or removed plugin stops receiving keys.
 
 ## Native startup suppression (unverified live)
 

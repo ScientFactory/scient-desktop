@@ -81,23 +81,27 @@ const prepare = (driver: string, pluginActions: ProviderPluginActions) =>
     return yield* preparePluginKeyStartup(providers, agent, undefined);
   });
 
-it.effect("starts Codex from installed plugins' own folders without reading the catalog", () =>
+it.effect("starts Codex from plugin folders, rechecking fresh before preparing any key", () =>
   Effect.gen(function* () {
     const root = yield* keyPluginRoot;
+    const reads: boolean[] = [];
     const policies = yield* prepare(
       "codex",
       actions(
         () => Effect.die("The catalog listing must not run before a session starts."),
-        () =>
-          Effect.succeed([
-            { id: "uncached", name: "uncached", enabled: true },
-            { id: "keyed", name: "keyed", enabled: true, root },
-          ]),
+        ({ fresh }) =>
+          Effect.sync(() => {
+            reads.push(fresh === true);
+            return [
+              { id: "uncached", name: "uncached", enabled: true },
+              // Disabled outside Scient since the last listing: only a fresh read knows.
+              { id: "keyed", name: "keyed", enabled: fresh !== true, root },
+            ];
+          }),
       ),
     );
-    expect(policies).toMatchObject([
-      { bindingPluginId: "keyed", requiredKeys: ["TOKEN"], serverNames: ["api"], path: root },
-    ]);
+    expect(policies).toEqual([]);
+    expect(reads).toEqual([false, true]);
   }).pipe(Effect.scoped),
 );
 
