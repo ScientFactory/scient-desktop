@@ -245,6 +245,11 @@ export const ProviderRuntimeSummary = Schema.Struct({
   catalog: Schema.optionalKey(ProviderRuntimeCatalogFreshness),
   operation: Schema.NullOr(ProviderRuntimeOperation),
   message: TrimmedNonEmptyString,
+  /**
+   * Whether the selected runtime passed the provider's own capability check, for a provider that
+   * runs one. A failed status check of a healthy runtime is not a repair; absent keeps older rules.
+   */
+  healthy: Schema.optionalKey(Schema.Boolean),
   diagnostics: Schema.optionalKey(ProviderRuntimeDiagnostics),
   installation: Schema.optionalKey(ProviderRegistryInstallation),
 });
