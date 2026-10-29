@@ -735,37 +735,40 @@ clients must update before sending to a server using the new queue protocol.
 
 ## Reading while an answer arrives
 
-By default, an answer grows below your reading position. Reaching the bottom
-or clicking Scroll to end does not enable automatic following, and tool
-activity does not pull the conversation downward. "The bottom" means the end
-of the latest answer's text, and you still count as at the bottom with up to
-its last three lines hidden behind the composer. A changed-files list, tool
-activity, timestamps or your own message sent after that answer do not count
-as unread. While the agent is working, everything it has produced since your
-latest message is new: when its latest step or answer is below you, **Scroll
-to end** appears. The same holds after you stop the turn or it fails, and
-when it finishes without writing an answer.
+While the agent works and you are at the bottom, the view follows it: thinking,
+tool steps and short progress notes scroll by at a calm pace, so you always see
+what it is doing now. It stops for things you read: when an answer, a plan or a
+card arrives, the view follows it only until its start reaches the top of the
+reading area, then stays there while the rest grows below. Work you opened
+yourself, such as an expanded tool group, counts as something you read too.
+After that stop, a newer message pushed below the screen shows just its first
+lines. "The bottom" means the end of the latest content, and you still count as
+at the bottom with up to its last three lines hidden behind the composer.
 
-Sending at the bottom (by that same rule) gently reveals your message and its
-answer. The first message retains its existing placement
-near the top. After a later message, the view follows everything the agent
-produces (thinking, tool steps and text) at a calm pace, staying at the bottom.
-Movement stops when your sent message's first line reaches the top
-of the reading area; only the bubble's padding may pass above it. It then stays there
-while the rest grows below the screen. When progress notes, reasoning or tool
-activity push the message the agent is writing below the screen, the reveal
-continues just far enough to show that message's first lines, never its end. A
-queued message that is sent while you are at the bottom is revealed the same way.
-Messages sent from another window are not followed.
-If you were reading earlier content, sending leaves that position alone.
-Scrolling back up cancels both pending placement and limited answer following,
-including during an upload; clicking, selecting text, or scrolling down does not.
+This works the same however the agent's turn started: from this window, another
+window or device, a schedule, another agent, or a queued message that starts
+while you are at the bottom. Opening a working thread at its end follows it too.
+Your own message is part of the work going by; it may scroll away above.
+
+Scrolling up stops following, and the agent's activity then never pulls the
+view down. Scroll back to the bottom, or click **Scroll to end**, and you follow
+it again; what you scrolled past is treated as read, except an answer still
+arriving, which is never followed down. Selecting text holds the view still
+until you clear the selection. Clicking does not stop following. If you send a
+message while reading earlier content, your position stays where it is.
+
+Your queued messages stay reachable. While you follow the agent they are part
+of the end it keeps in view; queuing a message at the bottom brings it and its
+**Send now** into view; and a queue that is fully in view stays in view when it
+grows or the composer grows while you edit. When your queue is below where you
+are reading, **Scroll to end** appears and says how many messages are queued.
 
 While nothing is running and you are at the end, the end stays in view when the
 window resizes or a diagram or image finishes rendering.
 
-Use the existing **Scroll to end** button for a single jump. It appears when more
-content remains below you, not just blank space reserved for message placement.
+**Scroll to end** jumps to the bottom. It appears when more content remains
+below you, not just blank space reserved for message placement, or when your
+queued messages are out of view.
 Its small count shows
 new answers below your view that you have not reached yet: once per response,
 not once per progress note or streaming update. It excludes your messages and

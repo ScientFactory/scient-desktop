@@ -594,7 +594,7 @@ it("counts new answers below the reader once while streaming, then clears them o
   expect(onUnreadBelowChange.mock.lastCall?.[0]).toBe(0);
 });
 
-it("reveals a growing answer only until the sent prompt text reaches the top margin", async (context) => {
+it("reveals a growing answer only until its start reaches the top margin", async (context) => {
   await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -630,19 +630,20 @@ it("reveals a growing answer only until the sent prompt text reaches the top mar
     await render(_fixture, "geometry:bounded", [...entries, answer], extra);
     await advanceClock(_fixture, 80);
   }
-  const promptTextTop = () => {
+  const answerTop = () => {
     const state = _fixture.listRef.current!.getState();
     const index = state.data.findIndex(
-      (row: { message?: { id: string } }) => row.message?.id === entries[9]!.message.id,
+      (row: { message?: { id: string } }) => row.message?.id === answer.message.id,
     );
-    const body = state.elementAtIndex(index)!.querySelector('[data-user-message-body="true"]')!;
-    return body.getBoundingClientRect().top - node.getBoundingClientRect().top;
+    return (
+      state.elementAtIndex(index)!.getBoundingClientRect().top - node.getBoundingClientRect().top
+    );
   };
   // The same eased reveal; a slow runner needs more than the default second.
   await vi.waitFor(() => {
-    expect(promptTextTop()).toBeLessThanOrEqual(25);
+    expect(answerTop()).toBeLessThanOrEqual(25);
   });
-  expect(promptTextTop()).toBeGreaterThanOrEqual(23);
+  expect(answerTop()).toBeGreaterThanOrEqual(23);
   expect(node.scrollTop).toBeGreaterThan(initial);
   const capped = node.scrollTop;
   await render(
@@ -705,7 +706,7 @@ it("manual scrolling cancels limited answer following without rearming it", asyn
   expect(Math.abs(node.scrollTop - original)).toBeLessThanOrEqual(1);
 });
 
-it("keeps the sent prompt visible even when a full answer arrives before layout settles", async (context) => {
+it("stops at the answer's start even when a full answer arrives before layout settles", async (context) => {
   await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
@@ -731,33 +732,21 @@ it("keeps the sent prompt visible even when a full answer arrives before layout 
   await advanceClock(_fixture, 64);
   const list = _fixture.listRef.current!;
   await render(_fixture, "geometry:fast-answer", [...entries, prompt, answer], extra);
-  // Observe the prompt alignment reached by the controlled reveal.
+  const answerTop = () => {
+    const state = list.getState();
+    const index = state.data.findIndex(
+      (row: { message?: { id: string } }) => row.message?.id === answer.message.id,
+    );
+    return (
+      state.elementAtIndex(index)!.getBoundingClientRect().top -
+      list.getScrollableNode()!.getBoundingClientRect().top
+    );
+  };
+  // Observe the answer's alignment reached by the controlled reveal.
   await vi.waitFor(() => {
-    expect(
-      (() => {
-        const state = list.getState();
-        const answerIndex = state.data.findIndex(
-          (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
-        );
-        return (
-          state
-            .elementAtIndex(answerIndex)!
-            .querySelector('[data-user-message-body="true"]')!
-            .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top
-        );
-      })(),
-    ).toBeLessThanOrEqual(25);
+    expect(answerTop()).toBeLessThanOrEqual(25);
   });
-  const state = list.getState();
-  const answerIndex = state.data.findIndex(
-    (row: { message?: { id: string } }) => row.message?.id === prompt.message.id,
-  );
-  expect(
-    state
-      .elementAtIndex(answerIndex)!
-      .querySelector('[data-user-message-body="true"]')!
-      .getBoundingClientRect().top - list.getScrollableNode()!.getBoundingClientRect().top,
-  ).toBeGreaterThanOrEqual(23);
+  expect(answerTop()).toBeGreaterThanOrEqual(23);
 });
 
 it("retains the reading position when the same thread briefly has no loaded rows", async (context) => {

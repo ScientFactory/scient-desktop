@@ -808,10 +808,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — ChatView owns the follow; a finished one ends there too.
   // A finished reveal (revealed or cancelled) no longer holds off idle end keeping.
   const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
+  // Where the reader last was, for the follow to rejoin only on arriving at the end.
+  const readerEndRef = useRef<{ threadKey: string; atEnd: boolean } | null>(null);
   const onFollowFinished = responseFollow?.onFinished;
   const onResumeFollow = responseFollow?.onResume;
   const onRevealFinished = (promptId: string) => {
     setFinishedRevealPromptId(promptId);
+    // A follow that ended stays ended until the reader leaves the end and comes back.
+    readerEndRef.current = { threadKey: listIdentityKey, atEnd: true };
     onFollowFinished?.(promptId);
     // The saved reading position records a follow still going: save it again
     // now, rather than at the reader's next scroll or the next content change.
@@ -828,7 +832,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     suspended:
       findActive || timelinePositioningPending || restoringThreadPosition || positionHistoryLoading,
     composerInset: contentInsetEndAdjustment,
-    followResponse: responseFollow?.followsResponse ?? false,
+    followResponse: responseFollow !== undefined,
+    joined: responseFollow?.joined ?? 0,
     onFinished: onRevealFinished,
   });
   // SCIENT-FORK:END
@@ -1162,7 +1167,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // content, otherwise the latest turn's answer). Reserved anchor space and
     // what trails a finished answer are not unread content.
     const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished);
-    if (isAtEnd !== undefined && !citationPositioning) onIsAtEndChange(isAtEnd);
+    if (isAtEnd !== undefined && !citationPositioning) {
+      onIsAtEndChange(isAtEnd);
+      // Arriving at the end, or landing there on opening the thread, joins a working thread's
+      // follow; a reader who stays at the end after ending it does not rejoin.
+      const previous = readerEndRef.current;
+      readerEndRef.current = { threadKey: listIdentityKey, atEnd: isAtEnd };
+      if (
+        isAtEnd &&
+        !timelinePositioningPending &&
+        (previous?.threadKey !== listIdentityKey || !previous.atEnd)
+      )
+        responseFollow?.onReachedEnd();
+    }
     // Whether the reader rests at the reading end, measured on screen (the
     // list's positions can trail the rendered rows by a frame).
     const restingGap = viewport

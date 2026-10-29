@@ -17,7 +17,7 @@ idle end keeping, restore), `readingPositionStore.ts` (session storage),
 (return to a follow), `useTimelineEndControl.ts` and `unreadTimelineMessages.ts` (Scroll to
 end and its count). They are mounted in marked regions of `ChatView.tsx`,
 `MessagesTimeline.tsx` and `timelineScrollAnchoring.ts`; ChatView's reader navigation
-(placement cancel, one-shot Scroll to end, gesture listeners, thread-switch reset) stays in
+(placement cancel, Scroll to end, gesture listeners, thread-switch reset) stays in
 marked regions there because it shares refs with upstream's anchor callbacks. The outer
 timeline never maintains the live end during streaming, tool activity, completion, or queued
 sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at the reading
@@ -63,21 +63,28 @@ stays on underneath the reveal. The timeline's working state (`chat/timelineWork
 send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
 started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
 reset at admission; V2 reports that phase as connecting).
-Preserve the existing first-message framing. One controller in ChatView owns the send follow
-(`chat/responseFollow.ts`): eligible sends, and queued prompts the server delivers while the
-reader is at the end (V2's `queued_turn`/`promoted_queued_to_steer` input intent on the
-delivered prompt, which keeps its message id), start it; it settles from the V2 run answering
-that prompt (the run its message belongs to, so a promoted steer follows the run it went into,
-not its cancelled queue run), never from the thread looking busy. A prompt's response ends at the
-next prompt. It reveals the prompt and the start of its response's latest
-message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followResponse`
-follows the whole response's end, traces and tools included, at a calmer pace): capped at the prompt's first line
-reaching the top margin, past it only to show a message pushed below the fold, never
-past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
-cancels pending placement and bounded following; scrolling down, clicks and selection do not.
-An upward scroll away from the end without reader input (assistive technology) also ends a
-fresh-open end restore. Footer metadata never moves the reader: upstream's footer-growth follow
-(`onFooterGrow`) is not composed (marked in `useTimelineFollow.ts`).
+Preserve the existing first-message framing. One controller in ChatView owns the follow
+(`chat/responseFollow.ts`), whose rule is that work is watched and answers are read. A reader at
+the end of a working thread follows it: a send at the end, a prompt arriving at the end from
+anywhere (including a queued prompt V2 delivers: its `queued_turn`/`promoted_queued_to_steer`
+input intent keeps the message id, so it counts before the send's receipt), and arriving at the
+end while the latest prompt's run works (scrolling down, Scroll to end, opening the thread there)
+start or rejoin it. A follow the reader ended stays ended until they leave the end and come back.
+It settles from the V2 run answering that prompt (the run its message belongs to, so a promoted
+steer follows the run it went into, not its cancelled queue run), never from the thread looking
+busy. A prompt's response ends at the next prompt. `chat/useBoundedAnswerFollow.ts` follows the
+response's live end (traces, tools, short progress notes, the reader's queued messages after the
+latest response) at a calm pace, and stops before the start of a read row passes the top margin:
+a message still arriving, one `keepsSettledAnswerVisible` keeps when its turn folds, a plan, a
+card, or work the reader expanded. Read rows the reader had scrolled past when they joined do not
+stop it, unless still arriving. Past the stop it only shows the first lines of a message pushed
+below the fold. Scrolling up by any means (wheel, keys, touch, scrollbar)
+cancels pending placement and bounded following; scrolling down and clicks do not, and a text
+selection holds it still. An upward scroll away from the end without reader input (assistive
+technology) also ends a fresh-open end restore. Footer status never moves the reader: upstream's
+footer-growth follow (`onFooterGrow`) is not composed (marked in `useTimelineFollow.ts`); the
+reader's queued messages are kept reachable by the follow and `chat/queuedRunsInView.ts`, which
+also shows Scroll to end while they are hidden below.
 Keys count only when they scroll the timeline: focus in it or nowhere, no modifier, not in a
 field (a menu's arrow keys or a shortcut leave the follow be).
 While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
@@ -86,13 +93,14 @@ from rest 250ms after their input stops. ChatView hands every end report to
 `useTimelineEndControl`, which reacts to transitions only and changes the follow modes there.
 The timeline never pins to its end, so a report of leaving it is never swallowed (upstream's
 handler swallows it because its list pins; restoring that hides Scroll to end while an answer
-grows below). The existing Scroll to end button is a one-shot action with an
-unread badge counting responses, not a follow toggle, and it ends the follow. Do not add a
+grows below). The existing Scroll to end button jumps to the bottom with an unread badge
+counting responses; while the thread works the reader then follows it again. Do not add a
 second navigation button. A reader who leaves while the follow is still going (saved as
 `followingPromptId`; never inferred from resting at the end) comes back to where the follow
-would be now for that saved prompt (`chat/liveFollowOffset.ts`): its response's end if it all
-fits, else the prompt at the top margin, or its latest message's start there if it would be below
-the screen; a later prompt (from another window) never moves it further. The follow then carries
+would be now for that saved prompt (`chat/liveFollowOffset.ts`, the same stop rule): its
+response's end unless that passes a read row's start, else that row at the top margin, or its
+latest message's start there if it would be below the screen; a later prompt (from another
+window) never moves it further. The follow then carries
 on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.

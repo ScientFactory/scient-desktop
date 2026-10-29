@@ -1,36 +1,61 @@
 import { describe, expect, it } from "vite-plus/test";
+import { MessageId, RunId } from "@t3tools/contracts";
+import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import {
   endTransition,
   savedPositionIsAtEnd,
-  shouldRevealArrivedPrompt,
+  shouldFollowArrivedPrompt,
 } from "./readerScrollPolicy";
 import { CHAT_TIMELINE_ANCHOR_OFFSET } from "./timelineScrollAnchoring";
-import { boundedAnswerScrollDelta, placeUnmountedRow } from "./useBoundedAnswerFollow";
+import {
+  boundedAnswerScrollDelta,
+  followLimitIndex,
+  placeUnmountedRow,
+} from "./useBoundedAnswerFollow";
 
 // Viewport 0..600, reading margin at the anchor offset.
 const view = { viewportTop: 0, viewportBottom: 600 };
 
 describe("boundedAnswerScrollDelta", () => {
-  it("reveals growth only while the prompt keeps room above it", () => {
-    expect(
-      boundedAnswerScrollDelta({ ...view, promptTextTop: 300, answerTop: 400, answerBottom: 900 }),
-    ).toBe(300 - CHAT_TIMELINE_ANCHOR_OFFSET);
-    // The prompt at the margin: the growing answer is read, not followed.
+  it("follows the response to its live end while nothing limits it", () => {
     expect(
       boundedAnswerScrollDelta({
         ...view,
-        promptTextTop: CHAT_TIMELINE_ANCHOR_OFFSET,
-        answerTop: 100,
+        limitTop: null,
+        answerTop: null,
+        answerBottom: 340,
+        endBelow: 1500,
+      }),
+    ).toBe(1500);
+  });
+
+  it("stops once a reading row's start reaches the margin", () => {
+    expect(
+      boundedAnswerScrollDelta({
+        ...view,
+        limitTop: 300,
+        answerTop: 300,
+        answerBottom: 900,
+        endBelow: 1500,
+      }),
+    ).toBe(300 - CHAT_TIMELINE_ANCHOR_OFFSET);
+    // At the margin: the growing answer is read, not followed.
+    expect(
+      boundedAnswerScrollDelta({
+        ...view,
+        limitTop: CHAT_TIMELINE_ANCHOR_OFFSET,
+        answerTop: CHAT_TIMELINE_ANCHOR_OFFSET,
         answerBottom: 2000,
+        endBelow: 1400,
       }),
     ).toBe(0);
   });
 
-  it("goes past the prompt only to show the first lines of a message pushed below the fold", () => {
+  it("goes past the limit only to show the first lines of a message pushed below the fold", () => {
     // Traces pushed the latest message to 900: show its first lines, no more.
     const delta = boundedAnswerScrollDelta({
       ...view,
-      promptTextTop: CHAT_TIMELINE_ANCHOR_OFFSET,
+      limitTop: CHAT_TIMELINE_ANCHOR_OFFSET,
       answerTop: 900,
       answerBottom: 2000,
     });
@@ -43,78 +68,116 @@ describe("boundedAnswerScrollDelta", () => {
     expect(
       boundedAnswerScrollDelta({
         ...view,
-        promptTextTop: -500,
+        limitTop: -500,
         answerTop: CHAT_TIMELINE_ANCHOR_OFFSET + 10,
         answerBottom: 3000,
       }),
     ).toBe(0);
   });
+});
 
-  it("follows a later prompt's whole response to the end, only until the prompt reaches the top", () => {
-    // No answer yet; the conversation's end (a trace) is 150px below its resting place.
+describe("followLimitIndex", () => {
+  const at = "2026-10-29T00:00:00Z";
+  const message = (
+    id: string,
+    role: "user" | "assistant",
+    text: string,
+    streaming = false,
+  ): MessagesTimelineRow => ({
+    kind: "message",
+    id,
+    createdAt: at,
+    message: {
+      id: MessageId.make(id),
+      runId: RunId.make("run"),
+      role,
+      text,
+      createdAt: at,
+      updatedAt: at,
+      streaming,
+    },
+    durationStart: at,
+    showAssistantMeta: false,
+    showAssistantCopyButton: false,
+    assistantCopyStreaming: false,
+  });
+  const work = (id: string, expanded: boolean): MessagesTimelineRow => ({
+    kind: "work-toggle",
+    id,
+    createdAt: at,
+    groupId: id,
+    hiddenCount: 3,
+    expanded,
+    summary: "Ran 3 commands",
+    summaryKind: "command",
+    hasFailure: false,
+  });
+  const answer = `## Result\n\n${"A real answer. ".repeat(30)}`;
+  const limit = (rows: MessagesTimelineRow[], passed: string[] = []) =>
+    rows[followLimitIndex(rows, 0, rows.length - 1, new Set(passed))]?.id ?? null;
+
+  it("passes work, thinking and finished short notes; stops at what the reader reads", () => {
+    const prompt = message("prompt", "user", "Check the logs");
+    // Work and progress notes are watched, not read.
     expect(
-      boundedAnswerScrollDelta({
-        ...view,
-        promptTextTop: 300,
-        answerTop: null,
-        answerBottom: 340,
-        endBelow: 150,
-      }),
-    ).toBe(150);
+      limit([prompt, work("tools", false), message("note", "assistant", "Checking the logs.")]),
+    ).toBeNull();
+    // A note still arriving, a real answer, and work the reader opened are read.
+    expect(limit([prompt, work("tools", false), message("live", "assistant", "Che", true)])).toBe(
+      "live",
+    );
     expect(
-      boundedAnswerScrollDelta({
-        ...view,
-        promptTextTop: 100,
-        answerTop: null,
-        answerBottom: 140,
-        endBelow: 1500,
-      }),
-    ).toBe(100 - CHAT_TIMELINE_ANCHOR_OFFSET);
+      limit([prompt, message("note", "assistant", "Ok."), message("answer", "assistant", answer)]),
+    ).toBe("answer");
+    expect(limit([prompt, work("opened", true), message("note", "assistant", "Ok.")])).toBe(
+      "opened",
+    );
   });
 
-  it("reveals the prompt itself before any answer exists", () => {
-    expect(
-      boundedAnswerScrollDelta({ ...view, promptTextTop: 500, answerTop: null, answerBottom: 700 }),
-    ).toBe(100);
+  it("lets the reader's scrolling past a finished answer release it, but never a streaming one", () => {
+    const prompt = message("prompt", "user", "Check the logs");
+    const rows = [prompt, message("answer", "assistant", answer), work("tools", false)];
+    expect(limit(rows, ["answer"])).toBeNull();
+    const streaming = [prompt, message("answer", "assistant", answer, true)];
+    expect(limit(streaming, ["answer"])).toBe("answer");
   });
 });
 
-describe("shouldRevealArrivedPrompt", () => {
+describe("shouldFollowArrivedPrompt", () => {
   const previous = { threadKey: "thread", id: "p1", delivered: false };
   const arrived = {
     previous,
     threadKey: "thread",
     latestPromptId: "p2",
-    delivered: true,
+    delivered: false,
     readerAtEnd: true,
   };
 
-  it("reveals a queued prompt the server delivered while the reader was at the end", () => {
-    expect(shouldRevealArrivedPrompt(arrived)).toBe(true);
+  it("follows a new prompt from anywhere while the reader is at the end", () => {
+    expect(shouldFollowArrivedPrompt(arrived)).toBe(true);
+    expect(shouldFollowArrivedPrompt({ ...arrived, delivered: true })).toBe(true);
   });
 
-  it("reveals a prompt already listed here once V2 reports it delivered from the queue", () => {
+  it("follows a prompt already listed here once V2 reports it delivered from the queue", () => {
     // Sent from this window and shown before its receipt said it was queued.
-    expect(shouldRevealArrivedPrompt({ ...arrived, previous: { ...previous, id: "p2" } })).toBe(
-      true,
-    );
-    // Already a delivered prompt: nothing new arrived.
+    const listed = { ...arrived, previous: { ...previous, id: "p2" } };
+    expect(shouldFollowArrivedPrompt({ ...listed, delivered: true })).toBe(true);
+    // Nothing new arrived.
+    expect(shouldFollowArrivedPrompt(listed)).toBe(false);
     expect(
-      shouldRevealArrivedPrompt({
-        ...arrived,
+      shouldFollowArrivedPrompt({
+        ...listed,
+        delivered: true,
         previous: { ...previous, id: "p2", delivered: true },
       }),
     ).toBe(false);
   });
 
-  it("leaves direct sends, readers away from the end, and thread changes alone", () => {
-    // A direct send (from this or another window) is not a queued delivery.
-    expect(shouldRevealArrivedPrompt({ ...arrived, delivered: false })).toBe(false);
-    expect(shouldRevealArrivedPrompt({ ...arrived, readerAtEnd: false })).toBe(false);
-    expect(shouldRevealArrivedPrompt({ ...arrived, threadKey: "other" })).toBe(false);
-    // Opening a thread, or its first prompt, is not an arrival.
-    expect(shouldRevealArrivedPrompt({ ...arrived, previous: null })).toBe(false);
-    expect(shouldRevealArrivedPrompt({ ...arrived, previous: { ...previous, id: null } })).toBe(
+  it("leaves readers away from the end, thread changes and a thread's first listing alone", () => {
+    expect(shouldFollowArrivedPrompt({ ...arrived, readerAtEnd: false })).toBe(false);
+    expect(shouldFollowArrivedPrompt({ ...arrived, threadKey: "other" })).toBe(false);
+    expect(shouldFollowArrivedPrompt({ ...arrived, previous: null })).toBe(false);
+    expect(shouldFollowArrivedPrompt({ ...arrived, previous: { ...previous, id: null } })).toBe(
       false,
     );
   });
