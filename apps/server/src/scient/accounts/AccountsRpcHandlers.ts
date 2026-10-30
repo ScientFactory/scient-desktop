@@ -76,6 +76,12 @@ export const makeAccountsRpcHandlers = ({
         accounts.removeProfile(input.profileId).pipe(Effect.as({})),
         attributes,
       ),
+    [WS_METHODS.accountsProfileChoose]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsProfileChoose,
+        accounts.chooseProfile(input).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsHandoffShow]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsHandoffShow,
@@ -164,6 +170,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         setAgentAccess: unavailable,
         updateProfile: unavailable,
         removeProfile: unavailable,
+        chooseProfile: unavailable,
         setHandoff: unavailable,
         removeHandoff: Effect.fn("AccountsService.removeHandoff")(() => Effect.void),
         handoffCancelled: Effect.fn("AccountsService.handoffCancelled")(() =>

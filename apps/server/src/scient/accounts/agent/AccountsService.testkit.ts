@@ -80,6 +80,7 @@ export function fakeAccounts(
     setAgentAccess: () => unavailable,
     updateProfile: () => unavailable,
     removeProfile: () => unavailable,
+    chooseProfile: () => unavailable,
     respondApproval: () => unavailable,
     activity: () => Effect.succeed([]),
     keychainCandidates: () => unavailable,

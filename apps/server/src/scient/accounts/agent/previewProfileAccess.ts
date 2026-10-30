@@ -13,6 +13,7 @@ import {
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { pickBrowserProfile } from "@t3tools/shared/scientBrowserProfileChoice";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 
@@ -111,11 +112,39 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
         : status.profiles?.find(
             (item) => item.id === input.profileId || item.name === input.profileId,
           );
+    const choosing = existing?.profileId === undefined && input.profileId === undefined;
+    const known = choosing
+      ? yield* accounts.forSession(
+          scope,
+          status.profiles?.map((item) => item.id),
+        )
+      : undefined;
+    // Without a named profile, the same order as the user's own tabs: their switch for this site
+    // here, the profile signed in to the site, this conversation's, the project's, the default.
     const profileId =
       existing?.profileId ??
       profile?.id ??
-      (input.profileId === undefined
-        ? (status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID)
+      (known
+        ? pickBrowserProfile({
+            url: input.url,
+            threadId: scope.threadId,
+            projectId: scope.projectId,
+            profiles: (status.profiles ?? []).flatMap((item) => {
+              const record = known.profiles.find((entry) => entry.profileId === item.id);
+              return known.agentAccess &&
+                record &&
+                authorizationDecision(known.agentAccess, record, scope).decision === "allowed"
+                ? [item.id]
+                : [];
+            }),
+            signIns: known.accounts.flatMap((account) =>
+              account.details.kind === "website" && account.details.profileId
+                ? [{ profileId: account.details.profileId, sites: account.details.sites }]
+                : [],
+            ),
+            choices: known.profileChoices,
+            defaultProfileId: status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
+          }).profileId
         : undefined);
     if (profileId === undefined)
       return yield* new AccountsError({

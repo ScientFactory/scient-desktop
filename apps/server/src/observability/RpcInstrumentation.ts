@@ -289,6 +289,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsImportPasswords]: "accounts",
   [WS_METHODS.accountsFillValues]: "accounts",
   [WS_METHODS.accountsMatchSignIn]: "accounts",
+  [WS_METHODS.accountsProfileChoose]: "accounts",
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient extensions RPCs.
   [WS_METHODS.extensionsList]: "extensions",

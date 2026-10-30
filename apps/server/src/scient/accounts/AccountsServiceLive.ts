@@ -42,6 +42,7 @@ import {
   type AccountSessionScope,
   type AccountAuthorization,
 } from "./AccountsService.ts";
+import { withoutProfile, withThreadChoice } from "./profileChoices.ts";
 import { AccountVault } from "./AccountVault.ts";
 import {
   AccountPersistence,
@@ -174,6 +175,7 @@ export const layer = Layer.effect(
         agentAccess: state.agentAccess,
         accounts: state.accounts.map((account) => account.summary),
         profiles: state.profiles,
+        ...(state.profileChoices ? { profileChoices: state.profileChoices } : {}),
         stores: {
           scient: { protection },
           keychain: { available: protection === "keychain", platform: sources.platform },
@@ -836,8 +838,36 @@ export const layer = Layer.effect(
             commit({
               ...state,
               profiles: state.profiles.filter((profile) => profile.profileId !== profileId),
+              ...(state.profileChoices
+                ? { profileChoices: withoutProfile(state.profileChoices, profileId) }
+                : {}),
             }),
           ),
+        ),
+      ),
+      chooseProfile: Effect.fn("AccountsService.chooseProfile")((input) =>
+        locked(
+          Effect.gen(function* () {
+            const current = state.profileChoices ?? { projects: {}, threads: {} };
+            yield* commit(
+              {
+                ...state,
+                profileChoices:
+                  "threadId" in input
+                    ? withThreadChoice(current, input, yield* now)
+                    : {
+                        ...current,
+                        projects: Object.fromEntries([
+                          ...Object.entries(current.projects).filter(
+                            ([projectId]) => projectId !== input.projectId,
+                          ),
+                          ...(input.profileId === null ? [] : [[input.projectId, input.profileId]]),
+                        ]),
+                      },
+              },
+              true,
+            );
+          }),
         ),
       ),
       respondApproval: Effect.fn("AccountsService.respondApproval")((approvalId, decision) =>
@@ -1139,6 +1169,7 @@ export const layer = Layer.effect(
                     .map((id) => effectiveProfile(state.profiles, id))
                     .filter((profile) => inScope(profile.scope, scope.projectId))
                 : [],
+              profileChoices: state.profileChoices,
             };
           }),
         ),

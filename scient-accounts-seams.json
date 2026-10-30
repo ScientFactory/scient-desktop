@@ -14,7 +14,8 @@
     "apps/web/src/routes/_chat.settings.accounts.tsx",
     "packages/contracts/src/clientRpcPermissions.scient.test.ts",
     "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts",
-    "packages/shared/src/scientAccountSecretRequest.ts"
+    "packages/shared/src/scientAccountSecretRequest.ts",
+    "packages/shared/src/scientBrowserProfileChoice.ts"
   ],
   "accountsDiffSignals": [
     "scient/accounts",
@@ -234,6 +235,21 @@
       "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: only scient_account_add may open an Accounts card.",
       "purpose": "Reserve the Accounts card id prefix so request_secret cannot imitate an Accounts card."
+    },
+    {
+      "path": "apps/web/src/components/preview/openPreviewSession.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    },
+    {
+      "path": "apps/web/src/browser/openFileInPreview.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    },
+    {
+      "path": "apps/web/src/components/preview/openTerminalLinkInPreview.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
     }
   ],
   "scientMounts": [

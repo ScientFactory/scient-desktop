@@ -435,11 +435,43 @@ export type AccountHandoff = typeof AccountHandoff.Type;
 
 export const AccountHandoffCancelInput = Schema.Struct({ handoffId: TrimmedNonEmptyString });
 
+/**
+ * Which browser profile a tab opens in, as the user chose it: per project, and per conversation
+ * (its profile and, per site, the profile the user switched that site's tab to).
+ */
+export const BrowserProfileChoices = Schema.Struct({
+  projects: Schema.Record(ProjectId, BrowserProfileId),
+  threads: Schema.Record(
+    ThreadId,
+    Schema.Struct({
+      profileId: BrowserProfileId,
+      sites: Schema.Record(
+        Schema.String,
+        Schema.Struct({ profileId: BrowserProfileId, at: IsoDateTime }),
+      ),
+    }),
+  ),
+});
+export type BrowserProfileChoices = typeof BrowserProfileChoices.Type;
+
+export const BrowserProfileChoiceInput = Schema.Union([
+  /** The user switched a conversation's tab to this profile, on this page's site. */
+  Schema.Struct({
+    threadId: ThreadId,
+    profileId: BrowserProfileId,
+    url: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  }),
+  /** "Use in this project"; null clears it. */
+  Schema.Struct({ projectId: ProjectId, profileId: Schema.NullOr(BrowserProfileId) }),
+]);
+export type BrowserProfileChoiceInput = typeof BrowserProfileChoiceInput.Type;
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
   accounts: Schema.Array(AccountSummary),
   profiles: Schema.Array(BrowserProfileRecord),
+  profileChoices: Schema.optional(BrowserProfileChoices),
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
   handoffs: Schema.optional(Schema.Array(AccountHandoff)),

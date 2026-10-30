@@ -133,6 +133,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accountsImportPasswords]: AuthSettingsWriteScope,
   [WS_METHODS.accountsFillValues]: AuthSettingsWriteScope,
   [WS_METHODS.accountsMatchSignIn]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsProfileChoose]: AuthSettingsWriteScope,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient extensions: reads observe, every change is a settings write.
   [WS_METHODS.extensionsList]: AuthOrchestrationReadScope,

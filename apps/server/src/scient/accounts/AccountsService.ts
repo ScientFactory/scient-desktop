@@ -4,6 +4,8 @@
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
 import type {
+  BrowserProfileChoiceInput,
+  BrowserProfileChoices,
   AccountHandoff,
   CliPasswordStoreInput,
   CliPasswordStoreResult,
@@ -69,6 +71,7 @@ export interface SessionAccounts {
   readonly accounts: ReadonlyArray<AccountSummary>;
   /** Every listed profile id with its effective record (defaults filled in). */
   readonly profiles: ReadonlyArray<BrowserProfileRecord>;
+  readonly profileChoices?: BrowserProfileChoices | undefined;
 }
 
 export type AccountAuthorization =
@@ -102,6 +105,8 @@ export interface AccountsServiceShape {
     input: BrowserProfileRecordUpdateInput,
   ) => Effect.Effect<void, AccountsError>;
   readonly removeProfile: (profileId: BrowserProfileId) => Effect.Effect<void, AccountsError>;
+  /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
+  readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;
   readonly respondApproval: (
     approvalId: string,
     decision: AccountApprovalDecision,

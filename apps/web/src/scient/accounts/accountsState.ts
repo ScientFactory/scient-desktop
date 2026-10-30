@@ -87,6 +87,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsProfileRemove,
     ...lane,
   }),
+  chooseProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:chooseProfile",
+    tag: WS_METHODS.accountsProfileChoose,
+    ...lane,
+  }),
   showHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:showHandoff",
     tag: WS_METHODS.accountsHandoffShow,
