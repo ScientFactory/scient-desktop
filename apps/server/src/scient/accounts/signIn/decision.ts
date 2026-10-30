@@ -6,6 +6,12 @@ export function decideSignIn(
   sites: ReadonlyArray<string>,
   available: { username: boolean; password: boolean; otp: boolean },
 ) {
+  if (page.broken && !page.signedIn)
+    return {
+      type: "needs-user",
+      kind: undefined,
+      message: "The site's sign-in page didn't load. Try again later.",
+    } as const;
   if (!matchesAccountOrigin(page.origin, sites))
     return {
       type: "needs-user",
@@ -53,6 +59,14 @@ export function decideSignIn(
       message: "Enter the missing sign-in information in the browser.",
     } as const;
   return { type: "fill", fields, submit: page.submit } as const;
+}
+
+/** Nothing here to fill or press, so another address may still reach the sign-in. */
+export function pageOffersNoSignIn(page: SignInDetection, sites: ReadonlyArray<string>) {
+  if (page.broken) return !page.signedIn;
+  if (page.signedIn || page.limited || page.challenge) return false;
+  if (!matchesAccountOrigin(page.origin, sites)) return false;
+  return !(page.username || page.password || page.otp || page.stay || page.signInLink);
 }
 
 export interface SignInSubmission {

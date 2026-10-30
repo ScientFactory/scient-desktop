@@ -7,6 +7,25 @@ import { readAccountCookies, typeAccountValue } from "../agent/browserOperations
 
 const decodeDetection = Schema.decodeUnknownSync(SignInDetection);
 
+it("calls a failed page broken, but not a sign-in form that answers with an error status", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await (await browser.newContext()).newPage();
+    const answer = { status: 400, body: "<h1>Bad request</h1>" };
+    await page.route("https://**/*", (route) =>
+      route.fulfill({ contentType: "text/html", ...answer }),
+    );
+    await page.goto("https://login.example.com/old-step");
+    expect(decodeDetection(await page.evaluate(signInDetectionScript)).broken).toBe(true);
+    answer.status = 401;
+    answer.body = '<form><input type="password"><button>Sign in</button></form>';
+    await page.goto("https://login.example.com/form");
+    expect(decodeDetection(await page.evaluate(signInDetectionScript)).broken).toBeUndefined();
+  } finally {
+    await browser.close();
+  }
+});
+
 it("detects static login steps, refuses look-alike fills, and reads only the requested site's HttpOnly cookies over CDP", async () => {
   const browser = await chromium.launch({ headless: true });
   try {

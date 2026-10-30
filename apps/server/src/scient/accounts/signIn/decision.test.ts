@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { decideSignIn, decideSignInContinuation, type SignInSubmission } from "./decision.ts";
+import {
+  decideSignIn,
+  decideSignInContinuation,
+  pageOffersNoSignIn,
+  type SignInSubmission,
+} from "./decision.ts";
 import type { SignInDetection } from "./detection.ts";
 import { matchesAccountOrigin } from "./origin.ts";
 import { accountOtp, parseTotp } from "./totp.ts";
@@ -23,6 +28,34 @@ describe("account sign-in decisions", () => {
         available,
       ),
     ).toMatchObject({ type: "needs-user", kind: undefined });
+  });
+
+  it("says a sign-in page failed to load instead of asking the user to finish", () => {
+    expect(
+      decideSignIn(
+        { ...page, origin: "null", username: null, password: null, broken: true },
+        ["example.com"],
+        available,
+      ),
+    ).toMatchObject({
+      type: "needs-user",
+      kind: undefined,
+      message: expect.stringContaining("load"),
+    });
+  });
+
+  it("looks elsewhere only from a page with no way to sign in", () => {
+    const empty = { ...page, username: null, password: null, submit: null };
+    const sites = ["example.com"];
+    expect(pageOffersNoSignIn(empty, sites)).toBe(true);
+    expect(pageOffersNoSignIn({ ...empty, broken: true }, sites)).toBe(true);
+    expect(pageOffersNoSignIn(page, sites)).toBe(false);
+    expect(pageOffersNoSignIn({ ...empty, signInLink: "#sign-in" }, sites)).toBe(false);
+    expect(pageOffersNoSignIn({ ...empty, signedIn: true }, sites)).toBe(false);
+    expect(pageOffersNoSignIn({ ...empty, challenge: "captcha" }, sites)).toBe(false);
+    expect(pageOffersNoSignIn({ ...empty, limited: true }, sites)).toBe(false);
+    // Another company's sign-in step keeps going; leaving it would break the sign-in.
+    expect(pageOffersNoSignIn({ ...empty, origin: "https://idp.other.org" }, sites)).toBe(false);
   });
 
   it("follows a home page's sign-in link", () => {

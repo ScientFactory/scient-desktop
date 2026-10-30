@@ -17,6 +17,7 @@ export const SignInDetection = Schema.Struct({
   stay: Schema.optional(Schema.String),
   signInLink: Schema.optional(Schema.String),
   limited: Schema.optional(Schema.Boolean),
+  broken: Schema.optional(Schema.Boolean),
   signedIn: Schema.Boolean,
 });
 export type SignInDetection = typeof SignInDetection.Type;
@@ -73,8 +74,12 @@ export const signInDetectionScript = String.raw`(() => {
     ? Array.from(document.querySelectorAll('a, button, [role="button"]')).find(element => visible(element) && /^(sign in|log in|login)$/i.test(element.textContent?.trim() ?? ""))
     : undefined;
   const limited = !password && !otp && new RegExp(${JSON.stringify(SITE_LIMITED_TEXT)}, "i").test(text);
+  // Some sign-in pages answer 401, so a status only counts on a page with no form.
+  const status = performance.getEntriesByType("navigation")[0]?.responseStatus ?? 0;
+  const broken = !password && !otp && !username && !limited && !captcha && (location.protocol === "chrome-error:" || status >= 400);
   return {
     ...(limited ? { limited: true } : {}),
+    ...(broken ? { broken: true } : {}),
     ...(signInLink ? { signInLink: path(signInLink) } : {}),
     ...(push && numbers.size === 1 ? { number: [...numbers][0] } : {}),
     ...(remember ? { remember: path(remember) } : {}),

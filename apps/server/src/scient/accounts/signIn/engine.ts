@@ -16,7 +16,12 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { authorizePreviewProfile, recordProfileUse } from "../agent/previewProfileAccess.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
-import { decideSignIn, decideSignInContinuation, type SignInSubmission } from "./decision.ts";
+import {
+  decideSignIn,
+  decideSignInContinuation,
+  pageOffersNoSignIn,
+  type SignInSubmission,
+} from "./decision.ts";
 import { SignInDetection, signInDetectionScript, tickRememberScript } from "./detection.ts";
 import { accountOtp, parseTotp } from "./totp.ts";
 import { matchesAccountOrigin } from "./origin.ts";
@@ -80,8 +85,13 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   const firstSite = details.sites[0];
   const siteUrl =
     firstSite && (firstSite.startsWith("https://") ? firstSite : `https://${firstSite}`);
+  // A tab already on the site stays put: a saved address may be a step of an old sign-in, and the
+  // page may already be the one to use.
   const destination =
-    details.loginUrl ?? (reuse ? (onSite ? undefined : siteUrl) : onSite ? current?.url : siteUrl);
+    reuse && onSite ? undefined : (details.loginUrl ?? (onSite ? current?.url : siteUrl));
+  const otherAddresses = [...new Set([details.loginUrl, siteUrl])].filter(
+    (url): url is string => url !== undefined && url !== destination,
+  );
   const openInput = {
     ...(destination ? { url: destination } : {}),
     ...(details.profileId === undefined ? {} : { profileId: details.profileId }),
@@ -167,6 +177,18 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       }
       if (continuation.type !== "continue" && !page.signedIn)
         return { outcome: continuation.type, message: continuation.message, tabId: target };
+      const nextAddress = pageOffersNoSignIn(page, details.sites)
+        ? otherAddresses.shift()
+        : undefined;
+      if (nextAddress !== undefined) {
+        yield* invoke(
+          "open",
+          { url: nextAddress, reuseExistingTab: true, tabId: target, open: false },
+          target,
+        );
+        yield* invoke("accountWaitForLoad", {}, target);
+        continue;
+      }
       let action = decideSignIn(page, details.sites, {
         username: details.username !== undefined,
         password: password !== undefined,

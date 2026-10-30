@@ -288,3 +288,106 @@ it.effect(
       expect(opens[2]).toMatchObject({ url: "https://example.com", reuseExistingTab: true });
     }),
 );
+
+it.effect(
+  "tries the site when a saved sign-in address is dead, and stays on a page already open",
+  () =>
+    Effect.gen(function* () {
+      const profileId = BrowserProfileId.make("default");
+      const scope = {
+        threadId: ThreadId.make("thread-fixture"),
+        projectId: ProjectId.make("project-fixture"),
+        unattended: true,
+      };
+      const account: AccountSummary = {
+        accountId: AccountId.make("acc_fixture4"),
+        name: "Fixture",
+        details: {
+          kind: "website",
+          sites: ["example.com"],
+          username: "fixture-user",
+          loginUrl: "https://example.com/signin/old-step?token=expired",
+        },
+        secrets: { password: { source: { type: "scient" } } },
+        controls: {
+          access: "allowed",
+          permission: "full",
+          visibility: "hidden",
+          scope: { type: "all-projects" },
+        },
+        status: "ready",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      const tab = {
+        tabId: "tab-fixture",
+        url: "https://other.example.org",
+        profileId,
+        ownedByCaller: true,
+      };
+      let status: PreviewAutomationStatus = {
+        available: true,
+        visible: false,
+        tabId: tab.tabId,
+        url: tab.url,
+        title: null,
+        loading: false,
+        defaultProfileId: profileId,
+        profiles: [{ id: profileId, name: "Default" }],
+        tabs: [tab],
+      };
+      let address = tab.url;
+      const opened: Array<string | undefined> = [];
+      const broker = PreviewAutomationBroker.of({
+        connect: () => Effect.succeed(Stream.empty),
+        focusHost: () => Effect.void,
+        respond: () => Effect.void,
+        invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+          Effect.sync(() => {
+            if (request.operation === "open") {
+              const { url } = request.input as { url?: string };
+              opened.push(url);
+              if (url) address = url;
+            }
+            if (request.operation !== "evaluate") return status as A;
+            const dead = address.includes("old-step");
+            return {
+              origin: "https://example.com",
+              username: null,
+              password: null,
+              otp: null,
+              submit: null,
+              challenge: null,
+              ...(dead ? { broken: true } : {}),
+              signedIn: !dead,
+            } as A;
+          }),
+      });
+      const run = signIn(scope, account, { password: Redacted.make("synthetic-password") }).pipe(
+        Effect.provideService(
+          AccountsService,
+          fakeAccounts({ profiles: [defaultBrowserProfileRecord(profileId)] }).service,
+        ),
+        Effect.provideService(PreviewAutomationBroker, broker),
+        Effect.provideService(AgentInvocationContext, {
+          ...scope,
+          environmentId: EnvironmentId.make("env-fixture"),
+          providerSessionId: "session-fixture",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          capabilities: new Set(["preview", "accounts"] as const),
+          issuedAt: 0,
+        }),
+      );
+      expect((yield* run).outcome).toBe("signed-in");
+      expect(opened).toEqual([
+        account.details.kind === "website" ? account.details.loginUrl : "",
+        "https://example.com",
+      ]);
+
+      opened.length = 0;
+      address = "https://example.com/account-chooser";
+      status = { ...status, tabs: [{ ...tab, url: address }] };
+      expect((yield* run).outcome).toBe("signed-in");
+      expect(opened).toEqual([undefined]);
+    }),
+);
