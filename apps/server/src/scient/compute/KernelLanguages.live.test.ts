@@ -23,11 +23,15 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { DuplexProcess, layer as duplexProcessLayer } from "../execution/LocalDuplexProcess.ts";
-import { ExecutionProcess, layer as executionProcessLayer } from "../execution/LocalExecutionProcess.ts";
+import {
+  ExecutionProcess,
+  layer as executionProcessLayer,
+} from "../execution/LocalExecutionProcess.ts";
 import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
 import { JULIA_KERNEL_LANGUAGE } from "./JuliaComputeRuntime.ts";
@@ -36,15 +40,18 @@ import { JUPYTER_BRIDGE_TRANSPORT_KIND, buildLaunchPlan } from "./PythonRuntimeA
 import { R_KERNEL_LANGUAGE } from "./RComputeRuntime.ts";
 import { SQL_LANGUAGE_ID, sqlKernelSpec } from "./SqlComputeRuntime.ts";
 
-// The bridge host, which for SQL must also have duckdb; private kernels are set up under the
-// kernel directory when it does not have them yet.
+// Opt-in: the bridge host Python (for SQL it also needs duckdb) and a directory for Scient's private
+// kernels, which are set up there from CRAN and the Julia registry when missing.
 const TEST_PYTHON = NodeProcess.env.SCIENT_TEST_PYTHON;
 const KERNEL_DIR = NodeProcess.env.SCIENT_TEST_KERNEL_DIR;
+const SETUP_TIMEOUT_MS = 20 * 60_000;
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const bridgePath = NodePath.join(here, "bridge", "scient_compute_bridge.py");
-const Live = Layer.mergeAll(duplexProcessLayer, executionProcessLayer, OwnedLocalEndpoints.layer).pipe(
-  Layer.provideMerge(NodeServices.layer),
-);
+const Live = Layer.mergeAll(
+  duplexProcessLayer,
+  executionProcessLayer,
+  OwnedLocalEndpoints.layer,
+).pipe(Layer.provideMerge(NodeServices.layer));
 
 const runs = (executable: string, args: ReadonlyArray<string>) =>
   NodeChildProcess.spawnSync(executable, args, { stdio: "ignore" }).status === 0;
@@ -153,7 +160,8 @@ function text(events: ReadonlyArray<ComputeTransportEvent>, mediaType = "text/pl
   return events
     .flatMap((event) => {
       if (event._tag !== "output") return [];
-      if (event.output._tag === "stream") return mediaType === "text/plain" ? [event.output.text] : [];
+      if (event.output._tag === "stream")
+        return mediaType === "text/plain" ? [event.output.text] : [];
       if (event.output._tag !== "display-data" && event.output._tag !== "execute-result") return [];
       return event.output.bundle.representations.flatMap((representation) =>
         representation.mediaType === mediaType && representation.data._tag === "text"
@@ -195,7 +203,6 @@ const interruptAndRestart = Effect.fn("KernelLanguages.interruptAndRestart")(fun
     session.events,
     (event) => event._tag === "accepted" && event.requestId === requestId,
   );
-  yield* Effect.sleep("1 second");
   yield* session.channel.interrupt({
     requestId,
     expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
@@ -221,7 +228,11 @@ const kernelSession = Effect.fn("KernelLanguages.kernelSession")(function* (
 ) {
   const transport = yield* bridgeTransport(language.startupTimeoutMs);
   const binding: ComputeRuntimeBinding = yield* makeKernelRuntimeBinding(language, {
-    host: { bridgePath, transport: () => transport, executable: () => Effect.succeed(TEST_PYTHON!) },
+    host: {
+      bridgePath,
+      transport: () => transport,
+      executable: () => Effect.succeed(TEST_PYTHON!),
+    },
     computeDir: KERNEL_DIR!,
     processes: yield* ExecutionProcess,
     configuredExecutable: () => Effect.succeed(null),
@@ -237,14 +248,14 @@ const kernelSession = Effect.fn("KernelLanguages.kernelSession")(function* (
   if ((yield* verify()).readiness !== "ready") {
     const managed = binding.managedRuntime!;
     yield* managed.manage("install");
-    for (;;) {
-      const status = yield* managed.status();
-      if (status.operation === null) {
-        expect(status.failure ?? null).toBeNull();
-        break;
-      }
-      yield* Effect.sleep("2 seconds");
-    }
+    const settled = yield* managed.status().pipe(
+      Effect.repeat({
+        // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- setup is a forked download and build that, as in Settings, is observable only through status
+        schedule: Schedule.spaced("1 second"),
+        until: (status) => status.operation === null,
+      }),
+    );
+    expect(settled.failure ?? null).toBeNull();
   }
   expect((yield* verify()).readiness).toBe("ready");
   const launch = yield* binding.adapter.prepareLaunch({
@@ -255,7 +266,8 @@ const kernelSession = Effect.fn("KernelLanguages.kernelSession")(function* (
   return { binding, session: yield* openSession(language.languageId, binding.transport, launch) };
 });
 
-const makeProject = () => NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-kernel-")));
+const makeProject = () =>
+  NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-kernel-")));
 
 describe.runIf(enabled)("kernel language integration", () => {
   it.live.runIf(hasR)(
@@ -273,8 +285,8 @@ describe.runIf(enabled)("kernel language integration", () => {
           expect(text(yield* execute(session, 'exists("x")', next))).toContain("FALSE");
           yield* session.channel.shutdown({ expectedGeneration: next });
         }),
-      ).pipe(Effect.provide(Live), Effect.timeout("20 minutes")),
-    20 * 60_000,
+      ).pipe(Effect.provide(Live)),
+    SETUP_TIMEOUT_MS,
   );
 
   it.live.runIf(hasJulia)(
@@ -302,8 +314,8 @@ describe.runIf(enabled)("kernel language integration", () => {
           yield* session.channel.shutdown({ expectedGeneration: next });
           if (!userDepotExisted) expect(NodeFS.existsSync(userDepot)).toBe(false);
         }),
-      ).pipe(Effect.provide(Live), Effect.timeout("20 minutes")),
-    20 * 60_000,
+      ).pipe(Effect.provide(Live)),
+    SETUP_TIMEOUT_MS,
   );
 
   it.live.runIf(hasDuckDb)(
@@ -357,7 +369,6 @@ describe.runIf(enabled)("kernel language integration", () => {
           });
           yield* session.channel.shutdown({ expectedGeneration: next });
         }),
-      ).pipe(Effect.provide(Live), Effect.timeout("2 minutes")),
-    120_000,
+      ).pipe(Effect.provide(Live)),
   );
 });

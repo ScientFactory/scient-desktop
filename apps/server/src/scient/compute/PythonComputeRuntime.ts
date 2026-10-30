@@ -401,78 +401,79 @@ export const pythonRuntimeBinding: Effect.Effect<
     );
   const adapter = makeAdapter(false);
   const managedPythonAdapter = makeAdapter(true);
-  const bridgeTransport = (startupTimeoutMs?: number) => makeComputeBridgeTransport(duplexProcesses, {
-    ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
-    prepareKernelEndpoints: (request) =>
-      Effect.uninterruptible(
-        Effect.gen(function* () {
-          const releaseUsage = yield* retain(request.launch.executable).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ComputeTransportError({
-                  operation: "open",
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-          );
-          return yield* ownedLocalEndpoints
-            .reserveProtectedLoopbackTcpPorts({
-              owner: `compute/${request.sessionId}`,
-              purpose: "jupyter-kernel-channels",
-              count: 5,
-            })
-            .pipe(
+  const bridgeTransport = (startupTimeoutMs?: number) =>
+    makeComputeBridgeTransport(duplexProcesses, {
+      ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
+      prepareKernelEndpoints: (request) =>
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const releaseUsage = yield* retain(request.launch.executable).pipe(
               Effect.mapError(
                 (cause) =>
                   new ComputeTransportError({
                     operation: "open",
-                    message: "Unable to reserve private kernel endpoints.",
+                    message: cause.message,
                     cause,
                   }),
               ),
-              Effect.flatMap((lease) => {
-                const [shell, iopub, stdin, heartbeat, control] = lease.ports;
-                if (
-                  shell === undefined ||
-                  iopub === undefined ||
-                  stdin === undefined ||
-                  heartbeat === undefined ||
-                  control === undefined
-                ) {
-                  return lease.release.pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        new ComputeTransportError({
-                          operation: "open",
-                          message: "The private kernel endpoint reservation was incomplete.",
-                        }),
+            );
+            return yield* ownedLocalEndpoints
+              .reserveProtectedLoopbackTcpPorts({
+                owner: `compute/${request.sessionId}`,
+                purpose: "jupyter-kernel-channels",
+                count: 5,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ComputeTransportError({
+                      operation: "open",
+                      message: "Unable to reserve private kernel endpoints.",
+                      cause,
+                    }),
+                ),
+                Effect.flatMap((lease) => {
+                  const [shell, iopub, stdin, heartbeat, control] = lease.ports;
+                  if (
+                    shell === undefined ||
+                    iopub === undefined ||
+                    stdin === undefined ||
+                    heartbeat === undefined ||
+                    control === undefined
+                  ) {
+                    return lease.release.pipe(
+                      Effect.andThen(
+                        Effect.fail(
+                          new ComputeTransportError({
+                            operation: "open",
+                            message: "The private kernel endpoint reservation was incomplete.",
+                          }),
+                        ),
+                      ),
+                    );
+                  }
+                  return Effect.succeed({
+                    ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
+                    handoff: lease.handoff.pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ComputeTransportError({
+                            operation: "handshake",
+                            message: "Unable to hand private endpoints to the Python kernel.",
+                            cause,
+                          }),
                       ),
                     ),
-                  );
-                }
-                return Effect.succeed({
-                  ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
-                  handoff: lease.handoff.pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ComputeTransportError({
-                          operation: "handshake",
-                          message: "Unable to hand private endpoints to the Python kernel.",
-                          cause,
-                        }),
-                    ),
-                  ),
-                  // The transport releases this composite lease only after the
-                  // process tree is confirmed stopped (or never started).
-                  release: lease.release.pipe(Effect.andThen(Effect.sync(releaseUsage))),
-                });
-              }),
-              Effect.onError(() => Effect.sync(releaseUsage)),
-            );
-        }),
-      ),
-  });
+                    // The transport releases this composite lease only after the
+                    // process tree is confirmed stopped (or never started).
+                    release: lease.release.pipe(Effect.andThen(Effect.sync(releaseUsage))),
+                  });
+                }),
+                Effect.onError(() => Effect.sync(releaseUsage)),
+              );
+          }),
+        ),
+    });
   // Any ready Python can host the bridge for another language's kernel; prefer the managed one.
   const hostExecutable = Effect.fn("PythonComputeRuntime.kernelHostExecutable")(function* (
     configuredExecutable: string | null,

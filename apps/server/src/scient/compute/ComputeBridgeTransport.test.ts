@@ -676,7 +676,9 @@ describe("jupyter bridge output mapping", () => {
                   mediaType: "image/png",
                   encoding: "base64",
                   // IRkernel wraps base64 into MIME-style lines.
-                  data: Buffer.from(bytes).toString("base64").replace(/.{1,76}/gu, "$&\n"),
+                  data: Buffer.from(bytes)
+                    .toString("base64")
+                    .replace(/.{1,76}/gu, "$&\n"),
                 },
               ],
               metadataJson: '{"image/png":{"width":12}}',

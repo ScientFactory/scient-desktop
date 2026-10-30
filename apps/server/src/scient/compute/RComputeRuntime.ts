@@ -5,7 +5,7 @@ import { ComputeLanguageId } from "@scientfactory/compute";
 
 import { KERNEL_PROBE_MARKER, type KernelLanguage } from "./KernelComputeRuntime.ts";
 
-export const R_LANGUAGE_ID = ComputeLanguageId.make("r");
+const R_LANGUAGE_ID = ComputeLanguageId.make("r");
 
 const R_FLAGS = ["--no-echo", "--no-save", "--no-restore"];
 

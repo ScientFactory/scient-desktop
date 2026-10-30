@@ -115,11 +115,14 @@ class ScientSqlKernel(Kernel):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._connection = duckdb.connect(":memory:")
+        self._cancelled = threading.Event()
 
     def _run_statements(self, code: str, results: list[Any], failure: list[BaseException]) -> None:
         try:
             position = 0
             for statement in self._connection.extract_statements(code):
+                if self._cancelled.is_set():
+                    return
                 offset = code.find(statement.query.strip(), position)
                 if offset >= 0:
                     position = offset
@@ -143,14 +146,18 @@ class ScientSqlKernel(Kernel):
         """Run on a worker so an interrupt reaches the query without waiting for DuckDB."""
         results: list[Any] = []
         failure: list[BaseException] = []
+        self._cancelled.clear()
         worker = threading.Thread(target=self._run_statements, args=(code, results, failure))
         worker.start()
         try:
             while worker.is_alive():
                 worker.join(JOIN_INTERVAL)
         except KeyboardInterrupt:
-            self._connection.interrupt()
-            worker.join()
+            # DuckDB interrupts only a running query, so keep asking until the worker stops.
+            self._cancelled.set()
+            while worker.is_alive():
+                self._connection.interrupt()
+                worker.join(JOIN_INTERVAL)
             raise
         if failure:
             raise failure[0]

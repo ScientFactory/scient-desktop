@@ -119,7 +119,7 @@ function manageError(message: string, cause?: unknown): ComputeOperationError {
 /** The tab-separated line a probe prints after this marker, whatever startup files print. */
 export const KERNEL_PROBE_MARKER = "scient-probe";
 
-export function parseKernelProbe(stdout: string): KernelInstallationProbe {
+function parseKernelProbe(stdout: string): KernelInstallationProbe {
   const line = stdout
     .split(/\r?\n/u)
     .findLast((candidate) => candidate.startsWith(`${KERNEL_PROBE_MARKER}\t`));
@@ -136,7 +136,7 @@ export function parseKernelProbe(stdout: string): KernelInstallationProbe {
 }
 
 /** Keeps a private kernel apart per installation and version, since packages are built for one. */
-export function privateKernelDirectory(
+function privateKernelDirectory(
   computeDir: string,
   languageId: string,
   probe: KernelInstallationProbe,
@@ -256,9 +256,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     return result;
   });
 
-  const kernelState = Effect.fn("KernelComputeRuntime.kernelState")(function* (
-    executable: string,
-  ) {
+  const kernelState = Effect.fn("KernelComputeRuntime.kernelState")(function* (executable: string) {
     const installationProbe = yield* probe(executable);
     const privateDirectory = privateKernelDirectory(
       input.computeDir,
@@ -318,7 +316,8 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
           packages: [],
         };
       }
-      const kernelVersion = state.success.probe.ownKernelVersion ?? state.success.privateKernelVersion;
+      const kernelVersion =
+        state.success.probe.ownKernelVersion ?? state.success.privateKernelVersion;
       const host = yield* Effect.result(hostExecutable());
       const missing = [
         ...(kernelVersion === null ? [language.kernelPackage] : []),
@@ -459,7 +458,10 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
           : {
               operationId: operation.operationId,
               action: operation.action,
-              phase: operation.action === "remove" ? ("removing" as const) : ("installing-packages" as const),
+              phase:
+                operation.action === "remove"
+                  ? ("removing" as const)
+                  : ("installing-packages" as const),
               startedAt: operation.startedAt,
               downloadedBytes: null,
               totalBytes: null,
@@ -499,8 +501,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       return yield* manageError(`${language.kernelPackage} has no runtime choice.`);
     if (operation !== null) return yield* status();
     const current = yield* target();
-    if (current === null)
-      return yield* manageError(`${language.displayName} was not found.`);
+    if (current === null) return yield* manageError(`${language.displayName} was not found.`);
     const { privateDirectory } = current.state;
     const work = Effect.gen(function* () {
       if (action === "remove")

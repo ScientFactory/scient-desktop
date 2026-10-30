@@ -806,7 +806,9 @@ describe("Scientific Computing settings interactions", () => {
     expect(row.textContent).toContain("Not installed");
     await click(_fixture, "Set up", row);
     expect(mocks.manage).toHaveBeenCalledWith(
-      expect.objectContaining({ input: expect.objectContaining({ languageId: "r", action: "install" }) }),
+      expect.objectContaining({
+        input: expect.objectContaining({ languageId: "r", action: "install" }),
+      }),
     );
 
     mocks.languages = [python(), r([])];

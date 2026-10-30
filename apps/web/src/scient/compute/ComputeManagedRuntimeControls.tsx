@@ -587,9 +587,7 @@ export function ManagedRuntimeMaintenanceMenu({
           {showRepair ? (
             <MenuItem
               aria-label={
-                connection
-                  ? "Rebuild MATLAB connection"
-                  : `Rebuild ${kernel ?? "managed Python"}`
+                connection ? "Rebuild MATLAB connection" : `Rebuild ${kernel ?? "managed Python"}`
               }
               disabled={busy || !canProvision}
               onClick={() => void runtime.act("repair")}
@@ -600,7 +598,9 @@ export function ManagedRuntimeMaintenanceMenu({
           {hasNonDestructiveAction ? <MenuSeparator /> : null}
           <MenuItem
             aria-label={
-              connection ? "Remove MATLAB connection helper" : `Remove ${kernel ?? "managed Python"}`
+              connection
+                ? "Remove MATLAB connection helper"
+                : `Remove ${kernel ?? "managed Python"}`
             }
             variant="destructive"
             disabled={busy}

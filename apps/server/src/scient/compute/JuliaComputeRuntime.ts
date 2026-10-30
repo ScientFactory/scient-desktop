@@ -5,7 +5,7 @@ import { ComputeLanguageId } from "@scientfactory/compute";
 
 import { KERNEL_PROBE_MARKER, type KernelLanguage } from "./KernelComputeRuntime.ts";
 
-export const JULIA_LANGUAGE_ID = ComputeLanguageId.make("julia");
+const JULIA_LANGUAGE_ID = ComputeLanguageId.make("julia");
 
 const JULIA_FLAGS = ["--startup-file=no", "--history-file=no"];
 
@@ -98,7 +98,14 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
   launch: ({ executable, privateDirectory, environment, platform }) => {
     const separator = platform === "win32" ? ";" : ":";
     return {
-      argv: [executable, "-i", "--color=yes", "-e", "import IJulia; IJulia.run_kernel()", "{connection_file}"],
+      argv: [
+        executable,
+        "-i",
+        "--color=yes",
+        "-e",
+        "import IJulia; IJulia.run_kernel()",
+        "{connection_file}",
+      ],
       // An empty entry stands for Julia's defaults, so the user's own depot and environment stay
       // first and keep receiving their package changes.
       environment:

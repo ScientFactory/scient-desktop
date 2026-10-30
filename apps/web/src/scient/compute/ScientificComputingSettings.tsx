@@ -470,7 +470,9 @@ function LanguageRuntimeSummary({
                 : managedDescription
           }
           status={
-            showManagedNotice && !toolkitOwnsNotice && (!inlineManagedProgress || runtime.failure) ? (
+            showManagedNotice &&
+            !toolkitOwnsNotice &&
+            (!inlineManagedProgress || runtime.failure) ? (
               <ManagedRuntimeNotice runtime={runtime} showProgress={!inlineManagedProgress} />
             ) : undefined
           }

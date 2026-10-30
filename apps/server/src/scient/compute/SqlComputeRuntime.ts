@@ -18,7 +18,7 @@ import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
 import { PYTHON_LANGUAGE_ID } from "./PythonRuntimeAdapter.ts";
 
 export const SQL_LANGUAGE_ID = ComputeLanguageId.make("sql");
-export const SQL_KERNEL_SCRIPT_NAME = "scient_sql_kernel.py";
+const SQL_KERNEL_SCRIPT_NAME = "scient_sql_kernel.py";
 
 // Tables and views are a SQL session's variables.
 const SQL_VARIABLES = `SELECT json_object(
