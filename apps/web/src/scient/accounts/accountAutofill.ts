@@ -20,6 +20,12 @@ function runtimeTab(id: string) {
   }
 }
 
+/** The server's record of a fill in a runtime tab, which keeps the page from agents that may not use it. */
+export function filledTabRecord(runtimeTabId: string, url: string) {
+  const tab = runtimeTab(runtimeTabId);
+  return tab ? { threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, url } : undefined;
+}
+
 const filled = new Map<string, { readonly accountId: string; readonly url: string }>();
 const listeners = new Set<() => void>();
 

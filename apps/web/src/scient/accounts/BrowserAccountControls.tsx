@@ -19,7 +19,7 @@ import { useAccountCommand, useAccounts } from "./useAccounts";
 import { capturedSignInInput, matchingAccounts, signInLabel } from "./accountsView";
 
 import { SaveStores } from "./SaveStores";
-import { autofilledTabs } from "./accountAutofill";
+import { autofilledTabs, filledTabRecord } from "./accountAutofill";
 
 const NEVER_KEY = "scient.accounts.never-save.v1";
 function neverSaveSites(): ReadonlyArray<string> {
@@ -225,9 +225,11 @@ function DesktopBrowserAccountControls({
     const requestedUrl = currentUrl.current;
     setBusy(true);
     try {
+      const tab = filledTabRecord(tabId, requestedUrl);
       const result = await getValues({
         accountId: account.accountId,
         origin: new URL(requestedUrl).origin,
+        ...(tab ? { tab } : {}),
       });
       if (result.ok && currentUrl.current === requestedUrl) {
         const filled = await window.desktopBridge?.accounts?.fill({

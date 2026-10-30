@@ -63,21 +63,16 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   const status = yield* invoke<PreviewAutomationStatus>("status", {}, tabId);
   const current = status.tabs?.find((tab) => tab.tabId === (tabId ?? status.tabId));
   const onSite = current?.url ? matchesAccountOrigin(current.url, details.sites) : false;
-  // The agent's own tab on the account's site is used even in another profile: the password
-  // works anywhere. A new tab opens the sign-in page, this page, or the account's first site.
-  const reuse =
-    current?.ownedByCaller === true &&
-    (details.profileId === undefined ||
-      current.profileId === details.profileId ||
-      (tabId !== undefined && onSite));
+  const sameProfile = details.profileId === undefined || current?.profileId === details.profileId;
+  // The agent's own tab is used when it is on the account's site (in any profile: the password
+  // works anywhere) or in the account's profile, where it is sent to the site. A new tab opens the
+  // sign-in page, this page, or the account's first site.
+  const reuse = current?.ownedByCaller === true && (sameProfile || (tabId !== undefined && onSite));
   const firstSite = details.sites[0];
+  const siteUrl =
+    firstSite && (firstSite.startsWith("https://") ? firstSite : `https://${firstSite}`);
   const destination =
-    details.loginUrl ??
-    (reuse
-      ? undefined
-      : onSite
-        ? current?.url
-        : firstSite && (firstSite.startsWith("https://") ? firstSite : `https://${firstSite}`));
+    details.loginUrl ?? (reuse ? (onSite ? undefined : siteUrl) : onSite ? current?.url : siteUrl);
   const openInput = {
     ...(destination ? { url: destination } : {}),
     ...(details.profileId === undefined ? {} : { profileId: details.profileId }),

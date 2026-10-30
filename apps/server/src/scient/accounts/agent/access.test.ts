@@ -189,6 +189,8 @@ it.effect("keeps a page autofill filled from agents that may not use its sign-in
     expect(
       (yield* check({ ...site, controls: defaultAccountControls("website") }, login))._tag,
     ).toBe("Success");
-    expect((yield* check(site, "https://example.com/other"))._tag).toBe("Success");
+    // A changed address on the same site may still hold the filled form.
+    expect((yield* check(site, "https://example.com/other"))._tag).toBe("Failure");
+    expect((yield* check(site, "https://other.example.org/"))._tag).toBe("Success");
   }),
 );

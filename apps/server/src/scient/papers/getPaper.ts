@@ -111,32 +111,31 @@ export const getPaper = Effect.fn("Papers.get")(function* (input: {
     | { status: "needs-sign-in" | "no-access" | "limit"; message: string; openUrl?: string }
     | undefined;
   if (account) {
-    const day = DateTime.formatIsoDate(yield* DateTime.now);
-    const used = fetchesByDay.get(day) ?? 0;
-    if (used >= LIBRARY_DAILY_LIMIT)
-      note = {
-        status: "limit",
-        message: `Today's ${LIBRARY_DAILY_LIMIT} library downloads are used, to keep the library's access safe. Try again tomorrow.`,
-      };
-    else {
-      const result = yield* withAccountUse(
-        scope,
-        { type: "account", accountId: account.accountId },
-        "sign-in",
-        Effect.gen(function* () {
-          const pause = yield* Random.nextBetween(LIBRARY_PAUSE_MS.min, LIBRARY_PAUSE_MS.max);
-          const wait = lastLibraryFetch + pause - (yield* Clock.currentTimeMillis);
-          if (wait > 0) yield* Effect.sleep(wait);
-          fetchesByDay.clear();
-          fetchesByDay.set(day, used + 1);
-          const fetched = yield* fetchThroughLibrary(scope, account, paper.landingUrl);
-          lastLibraryFetch = yield* Clock.currentTimeMillis;
-          return fetched;
-        }).pipe(library.withPermits(1)),
-      );
-      if (result?.status === "saved") return yield* saved(result.bytes, "library", true);
-      if (result) note = result;
-    }
+    const result = yield* withAccountUse(
+      scope,
+      { type: "account", accountId: account.accountId },
+      "sign-in",
+      // The count, the pause and the fetch are one step, so parallel requests can't pass the cap.
+      Effect.gen(function* () {
+        const day = DateTime.formatIsoDate(yield* DateTime.now);
+        const used = fetchesByDay.get(day) ?? 0;
+        if (used >= LIBRARY_DAILY_LIMIT)
+          return {
+            status: "limit" as const,
+            message: `Today's ${LIBRARY_DAILY_LIMIT} library downloads are used, to keep the library's access safe. Try again tomorrow.`,
+          };
+        const pause = yield* Random.nextBetween(LIBRARY_PAUSE_MS.min, LIBRARY_PAUSE_MS.max);
+        const wait = lastLibraryFetch + pause - (yield* Clock.currentTimeMillis);
+        if (wait > 0) yield* Effect.sleep(wait);
+        fetchesByDay.clear();
+        fetchesByDay.set(day, used + 1);
+        const fetched = yield* fetchThroughLibrary(scope, account, paper.landingUrl);
+        lastLibraryFetch = yield* Clock.currentTimeMillis;
+        return fetched;
+      }).pipe(library.withPermits(1)),
+    );
+    if (result?.status === "saved") return yield* saved(result.bytes, "library", true);
+    if (result) note = result;
   }
   const other = yield* firstPdf(paper.openAccess.filter((copy) => !copy.published));
   if (other) return yield* saved(other, "open-access", false);

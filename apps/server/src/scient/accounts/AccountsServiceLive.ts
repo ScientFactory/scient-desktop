@@ -123,7 +123,8 @@ export const layer = Layer.effect(
         target.type === "account" ? target.accountId : target.profileId,
       ]);
     const handoffs = new Map<string, AccountHandoff>();
-    // In memory only: the account autofill put into a tab, keyed by thread and tab.
+    // In memory only, never trimmed while the server runs: a forgotten entry would expose a filled
+    // page. The account autofill put into a tab, keyed by thread and tab.
     const filledTabs = new Map<string, { accountId: AccountId; url: string }>();
     const handoffReveals = new Map<string, Effect.Effect<void, AccountsError>>();
     const cancelledHandoffs = new Set<string>();
@@ -1137,7 +1138,6 @@ export const layer = Layer.effect(
               const key = `${tab.threadId}\u0000${tab.tabId}`;
               filledTabs.delete(key);
               filledTabs.set(key, { accountId, url: tab.url });
-              if (filledTabs.size > 200) filledTabs.delete(filledTabs.keys().next().value!);
             }
             return {
               ...(details.username === undefined ? {} : { username: details.username }),

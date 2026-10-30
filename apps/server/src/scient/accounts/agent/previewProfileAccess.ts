@@ -44,13 +44,15 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
       message:
         "This browser profile is unavailable to this session. Change its access in Settings → Accounts.",
     });
-  // Autofill fills every tab for the user; a page holding a sign-in this agent may not use stays
-  // closed to it until the page changes, so the agent cannot read the filled password.
+  // Autofill fills every tab for the user; a tab holding a sign-in this agent may not use stays
+  // closed to it while it shows that site (a page may change its address without clearing the
+  // form), so the agent cannot read the filled password.
   const filled = yield* accounts.filledTab(scope.threadId, tab.tabId);
-  const page = (url: string | null | undefined) => url?.split("#")[0];
+  const site = (url: string | null | undefined) =>
+    url && URL.canParse(url) ? new URL(url).origin : url;
   if (
     filled &&
-    page(filled.url) === page(tab.url) &&
+    site(filled.url) === site(tab.url) &&
     !session.accounts.some(
       (account) =>
         account.accountId === filled.accountId &&
@@ -60,7 +62,7 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
     return yield* new AccountsError({
       reason: "denied",
       message:
-        "The user is signing in on this tab with an account you may not use. Continue after the page changes, or use another tab.",
+        "The user signed in on this tab with an account you may not use. Use another tab for this site.",
     });
 });
 

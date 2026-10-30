@@ -282,5 +282,9 @@ it.effect(
         profileId: work,
         reuseExistingTab: false,
       });
+      // The agent's own tab in the account's profile, on another site, is sent to the account's site.
+      status = { ...status, tabs: [{ ...status.tabs![0]!, profileId: work }] };
+      yield* run();
+      expect(opens[2]).toMatchObject({ url: "https://example.com", reuseExistingTab: true });
     }),
 );
