@@ -510,7 +510,7 @@ export const pythonRuntimeBinding: Effect.Effect<
       languageId: PYTHON_LANGUAGE_ID,
       displayName: "Python",
       sourceExtensions: [".py"],
-      capabilities: [...REQUIRED_COMPUTE_CAPABILITIES, "variables"],
+      capabilities: [...REQUIRED_COMPUTE_CAPABILITIES, "variables", "tables"],
     },
     toolkitSupport: {
       descriptors: PYTHON_TOOLKIT_CATALOG,

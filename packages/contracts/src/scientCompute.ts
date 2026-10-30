@@ -124,6 +124,7 @@ export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>
       "stop",
       "outputs",
       "variables",
+      "table",
       "subscribe",
       "save",
     ]),

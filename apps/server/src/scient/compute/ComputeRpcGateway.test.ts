@@ -154,6 +154,7 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
         variables: [],
         truncated: false,
       }),
+    readTable: () => Effect.die(new Error("unused readTable")),
     submitExecution: () => Effect.die(new Error("unused submitExecution")),
     cancelExecution: () => Effect.die(new Error("unused cancelExecution")),
     interruptSession: () => Effect.die(new Error("unused interruptSession")),

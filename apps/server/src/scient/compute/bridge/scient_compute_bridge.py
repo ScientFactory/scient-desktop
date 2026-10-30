@@ -74,6 +74,7 @@ LIVENESS_INTERVAL = 1.0
 INTERRUPT_BUSY_TIMEOUT = 2.0
 INTERRUPT_SETTLE_TIMEOUT = 2.0
 INSPECTION_TIMEOUT = 5.0
+TABLE_TIMEOUT = 30.0
 
 MAX_VARIABLES = 200
 MAX_VARIABLE_NAME = 256
@@ -93,10 +94,11 @@ SERVER_MESSAGE_TYPES = {
     "execute",
     "interrupt",
     "inspect-variables",
+    "inspect-table",
     "restart",
     "shutdown",
 }
-REQUEST_ID_TYPES = {"execute", "interrupt", "inspect-variables"}
+REQUEST_ID_TYPES = {"execute", "interrupt", "inspect-variables", "inspect-table"}
 
 # Registered by type name: pandas is never imported just to start a session.
 # Keep this in the selected kernel (not the transport) so it also survives restart.
@@ -361,6 +363,200 @@ VARIABLE_INSPECTION_EXPRESSION = r"""
     __import__("builtins").type(__import__("builtins").len),
 )
 """.strip()
+
+# Pages a table-like value without entering history or the user's namespace.  It runs in a
+# fresh dict each time; the one view it remembers (sort and search order) lives on a private
+# module and is keyed by the execution count, so any run invalidates it.
+TABLE_PAGE_SOURCE = r"""
+import json, math, reprlib, sys, types
+
+MAX_COLUMNS = 1024
+MAX_ROWS = 200
+MAX_CELLS = 16384
+MAX_CELL = 200
+MAX_LABEL = 256
+
+_short = reprlib.Repr()
+_short.maxstring = MAX_CELL
+_short.maxother = MAX_CELL
+
+
+def _cut(text, limit=MAX_CELL):
+    return text if len(text) <= limit else text[:limit] + "\u2026"
+
+
+def _cell(value, pd, np):
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return None if math.isnan(value) else repr(value)
+    if isinstance(value, str):
+        return _cut(value)
+    if isinstance(value, (bool, int)):
+        return str(value)
+    if pd is not None:
+        if value is pd.NaT or value is pd.NA:
+            return None
+        if isinstance(value, pd.Timestamp):
+            text = value.isoformat(sep=" ")
+            return text[:-9] if text.endswith(" 00:00:00") else text
+    if np is not None and isinstance(value, np.generic):
+        if isinstance(value, (np.floating, np.datetime64)) and np.isnan(value):
+            return None
+        return _cut(str(value))
+    return _cut(_short.repr(value))
+
+
+class _FrameTable:
+    def __init__(self, frame, pd, np):
+        self.frame, self.pd, self.np = frame, pd, np
+        self.length, self.column_count = frame.shape
+        self.width = min(self.column_count, MAX_COLUMNS)
+
+    def columns(self):
+        types_ = self.pd.api.types
+        result = []
+        for index in range(self.width):
+            dtype = self.frame.dtypes.iloc[index]
+            kind = (
+                "boolean" if types_.is_bool_dtype(dtype)
+                else "integer" if types_.is_integer_dtype(dtype)
+                else "number" if types_.is_float_dtype(dtype)
+                else "datetime" if types_.is_datetime64_any_dtype(dtype)
+                else "text" if types_.is_string_dtype(dtype) or types_.is_object_dtype(dtype)
+                else "other"
+            )
+            result.append({
+                "name": _cut(str(self.frame.columns[index]), 4096),
+                "type": kind,
+                "label": _cut(str(dtype), MAX_LABEL),
+            })
+        return result
+
+    def matches(self, needle):
+        mask = self.np.zeros(self.length, dtype=bool)
+        for index in range(self.width):
+            column = self.frame.iloc[:, index]
+            found = column.astype(str).str.lower().str.contains(needle, regex=False)
+            mask |= found.to_numpy(dtype=bool, na_value=False) & column.notna().to_numpy()
+        return self.np.flatnonzero(mask)
+
+    def order(self, positions, column, descending):
+        keys = self.frame.iloc[:, column]
+        if positions is not None:
+            keys = keys.iloc[positions]
+        keys = keys.reset_index(drop=True)
+        options = dict(ascending=not descending, kind="stable", na_position="last")
+        try:
+            ordered = keys.sort_values(**options).index.to_numpy()
+        except TypeError:
+            ordered = keys.astype(str).where(keys.notna()).sort_values(**options).index.to_numpy()
+        return ordered if positions is None else positions[ordered]
+
+    def rows(self, positions):
+        part = self.frame.iloc[positions, : self.width]
+        columns = [part.iloc[:, index].tolist() for index in range(self.width)]
+        return [
+            {
+                "label": _cut(str(label), MAX_LABEL),
+                "cells": [_cell(column[row], self.pd, self.np) for column in columns],
+            }
+            for row, label in enumerate(part.index.tolist())
+        ]
+
+
+class _ArrayTable:
+    def __init__(self, array, np):
+        self.array = array if array.ndim == 2 else array.reshape(-1, 1)
+        self.np = np
+        self.length, self.column_count = self.array.shape
+        self.width = min(self.column_count, MAX_COLUMNS)
+
+    def columns(self):
+        kinds = {"b": "boolean", "i": "integer", "u": "integer", "f": "number", "M": "datetime",
+                 "U": "text", "S": "text", "O": "text"}
+        kind = kinds.get(self.array.dtype.kind, "other")
+        label = _cut(str(self.array.dtype), MAX_LABEL)
+        return [{"name": str(index), "type": kind, "label": label} for index in range(self.width)]
+
+    def matches(self, needle):
+        text = self.np.char.lower(self.array[:, : self.width].astype(str))
+        return self.np.flatnonzero((self.np.char.find(text, needle) >= 0).any(axis=1))
+
+    def order(self, positions, column, descending):
+        keys = self.array[:, column] if positions is None else self.array[positions, column]
+        if keys.dtype.kind in "biuf":
+            keys = keys.astype(float)
+            ordered = self.np.argsort(-keys if descending else keys, kind="stable")
+        else:
+            ordered = self.np.argsort(keys.astype(str), kind="stable")
+            ordered = ordered[::-1] if descending else ordered
+        return ordered if positions is None else positions[ordered]
+
+    def rows(self, positions):
+        return [
+            {"label": str(position), "cells": [_cell(value, None, self.np) for value in row]}
+            for position, row in zip(positions, self.array[positions, : self.width].tolist())
+        ]
+
+
+def scient_table_page(namespace, raw):
+    request = json.loads(raw)
+    name = request["name"]
+    if name not in namespace:
+        raise LookupError("No variable named %s." % name)
+    value = namespace[name]
+    pd, np = sys.modules.get("pandas"), sys.modules.get("numpy")
+    if pd is not None and isinstance(value, pd.Series):
+        table = _FrameTable(value.to_frame(), pd, np)
+    elif pd is not None and isinstance(value, pd.DataFrame):
+        table = _FrameTable(value, pd, np)
+    elif np is not None and isinstance(value, np.ndarray) and value.ndim in (1, 2):
+        table = _ArrayTable(value, np)
+    else:
+        raise TypeError("%s is not a table." % name)
+
+    sort, needle = request["sort"], request["search"].strip().lower()
+    if sort is not None and sort["column"] >= table.width:
+        sort = None
+    positions = None
+    if sort is not None or needle:
+        shell = getattr(sys.modules.get("IPython"), "get_ipython", lambda: None)()
+        key = (name, id(value), table.length, getattr(shell, "execution_count", None),
+               json.dumps(sort), needle)
+        cache = sys.modules.get("_scient_table_view")
+        if cache is None:
+            cache = sys.modules["_scient_table_view"] = types.ModuleType("_scient_table_view")
+            cache.view = None
+        if key[3] is not None and cache.view is not None and cache.view[0] == key:
+            positions = cache.view[1]
+        else:
+            positions = table.matches(needle) if needle else None
+            if sort is not None:
+                positions = table.order(positions, sort["column"], sort["descending"])
+            cache.view = (key, positions)
+    count = table.length if positions is None else len(positions)
+    offset = min(request["offset"], count)
+    limit = min(request["limit"], MAX_ROWS, max(1, MAX_CELLS // max(1, table.width)))
+    window = (
+        list(range(offset, min(count, offset + limit)))
+        if positions is None
+        else [int(position) for position in positions[offset : offset + limit]]
+    )
+    return json.dumps(
+        {
+            "columns": table.columns(),
+            "columnCount": table.column_count,
+            "rowCount": table.length,
+            "matchCount": count,
+            "truncated": False,
+            "offset": offset,
+            "rows": table.rows(window) if window else [],
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+"""
 
 MEDIA_TYPE_PATTERN = re.compile(
     r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
@@ -730,6 +926,8 @@ class ScientBridge:
         self._kernel_client: Any = None
         self._kernel_pid: Optional[int] = None
         self._variables_expression: Optional[str] = VARIABLE_INSPECTION_EXPRESSION
+        # Table pages are read by Python source, so only the default ipykernel serves them.
+        self._serves_tables = True
         self._startup_timeout: int = STARTUP_TIMEOUT
         self._working_directory = os.path.realpath(os.getcwd())
         self._execution_task: Optional[asyncio.Task[None]] = None
@@ -738,7 +936,7 @@ class ScientBridge:
         self._kernel_transitioning = False
         self._running = True
         self._handshake_complete = False
-        self._capabilities = ["execute", "interrupt", "restart", "shutdown", "variables"]
+        self._capabilities = ["execute", "interrupt", "restart", "shutdown", "variables", "tables"]
         self._stop = asyncio.Event()
         self._write_lock = asyncio.Lock()
 
@@ -1129,6 +1327,7 @@ class ScientBridge:
         self._variables_expression = (
             VARIABLE_INSPECTION_EXPRESSION if kernel is None else kernel["variablesExpression"]
         )
+        self._serves_tables = kernel is None
         # Kernels that compile on first start (IJulia) ask for longer than ipykernel needs.
         self._startup_timeout = (kernel or {}).get("startupTimeoutSeconds") or STARTUP_TIMEOUT
         # ``stdout=DEVNULL`` is the other half of keeping the protocol intact.
@@ -1168,7 +1367,11 @@ class ScientBridge:
                 "languageId": language.get("name", "python"),
                 "languageVersion": language.get("version", "unknown"),
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": self._capabilities,
+                "capabilities": [
+                    capability
+                    for capability in self._capabilities
+                    if capability != "tables" or self._serves_tables
+                ],
             },
         )
         self._ensure_kernel_monitor()
@@ -1433,8 +1636,7 @@ class ScientBridge:
         await self._flush()
         self._execution_task = asyncio.create_task(self._correlate(request_id, msg_id))
 
-    async def _handle_inspect_variables(self, request_id: str) -> None:
-        """Return a bounded live namespace summary without entering history."""
+    def _require_idle_kernel(self) -> None:
         if self._kernel_client is None:
             raise ProtocolViolation("No kernel is running.")
         if self._kernel_transitioning:
@@ -1442,43 +1644,53 @@ class ScientBridge:
         if self._mapping.active_request_id is not None:
             raise ProtocolViolation("An execution is already active.")
 
+    async def _evaluate_silently(self, key: str, expression: str, timeout: float) -> dict[str, Any]:
+        """Evaluate one user expression outside history and return its result record."""
+        msg_id = self._kernel_client.execute(
+            "",
+            silent=True,
+            store_history=False,
+            user_expressions={key: expression},
+            allow_stdin=False,
+        )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                message = await self._kernel_client.get_shell_msg(timeout=0)
+            except queue.Empty:
+                if not await self._kernel_alive():
+                    raise RuntimeError("The kernel process exited during inspection.")
+                await asyncio.sleep(IDLE_POLL_INTERVAL)
+                continue
+            if message.get("parent_header", {}).get("msg_id") != msg_id:
+                continue
+            content = message.get("content", {})
+            reply = content if isinstance(content, dict) else {}
+            if reply.get("status") != "ok":
+                raise RuntimeError("The kernel could not inspect its current state.")
+            result = reply.get("user_expressions", {}).get(key, {})
+            return result if isinstance(result, dict) else {}
+        raise TimeoutError("Inspection timed out.")
+
+    @staticmethod
+    def _expression_value(expression: dict[str, Any]) -> Any:
+        plain = expression.get("data", {}).get("text/plain")
+        if not isinstance(plain, str):
+            raise RuntimeError("The runtime returned an unreadable result.")
+        return decode_variable_summary(plain)
+
+    async def _handle_inspect_variables(self, request_id: str) -> None:
+        """Return a bounded live namespace summary without entering history."""
+        self._require_idle_kernel()
         try:
             if self._variables_expression is None:
                 raise RuntimeError("This kernel does not provide variable inspection.")
-            msg_id = self._kernel_client.execute(
-                "",
-                silent=True,
-                store_history=False,
-                user_expressions={"scient_variables": self._variables_expression},
-                allow_stdin=False,
+            expression = await self._evaluate_silently(
+                "scient_variables", self._variables_expression, INSPECTION_TIMEOUT
             )
-            deadline = time.monotonic() + INSPECTION_TIMEOUT
-            reply: Optional[dict[str, Any]] = None
-            while time.monotonic() < deadline:
-                try:
-                    message = await self._kernel_client.get_shell_msg(timeout=0)
-                except queue.Empty:
-                    if not await self._kernel_alive():
-                        raise RuntimeError("The kernel process exited during variable inspection.")
-                    await asyncio.sleep(IDLE_POLL_INTERVAL)
-                    continue
-                if message.get("parent_header", {}).get("msg_id") != msg_id:
-                    continue
-                content = message.get("content", {})
-                reply = content if isinstance(content, dict) else {}
-                break
-
-            if reply is None:
-                raise TimeoutError("Variable inspection timed out.")
-            if reply.get("status") != "ok":
-                raise RuntimeError("The kernel could not inspect its current variables.")
-            expression = reply.get("user_expressions", {}).get("scient_variables", {})
             if expression.get("status") != "ok":
                 raise RuntimeError("The runtime could not summarize its current variables.")
-            plain = expression.get("data", {}).get("text/plain")
-            if not isinstance(plain, str):
-                raise RuntimeError("The runtime returned an unreadable variable summary.")
-            decoded = decode_variable_summary(plain)
+            decoded = self._expression_value(expression)
             variables = decoded.get("variables") if isinstance(decoded, dict) else None
             if not isinstance(variables, list):
                 raise RuntimeError("The runtime returned an invalid variable list.")
@@ -1526,6 +1738,40 @@ class ScientBridge:
                 {"variables": [], "truncated": False, "error": detail},
                 request_id,
             )
+
+    async def _handle_inspect_table(self, payload: dict[str, Any], request_id: str) -> None:
+        """Return one bounded page of a table-like variable without entering history."""
+        self._require_idle_kernel()
+        try:
+            if not self._serves_tables:
+                raise RuntimeError("This kernel does not provide table paging.")
+            name, query = payload.get("name"), payload.get("query")
+            if not isinstance(name, str) or not name or not isinstance(query, dict):
+                raise ProtocolViolation("inspect-table requires a name and a query.")
+            request = json.dumps({**query, "name": name})
+            expression = await self._evaluate_silently(
+                "scient_table",
+                f"(lambda _ns: (exec({TABLE_PAGE_SOURCE!r}, _ns), "
+                f"_ns['scient_table_page'](globals(), {request!r}))[1])({{}})",
+                TABLE_TIMEOUT,
+            )
+            if expression.get("status") != "ok":
+                raise RuntimeError(str(expression.get("evalue") or "The table could not be read."))
+            table = self._expression_value(expression)
+            if not isinstance(table, dict) or not isinstance(table.get("rows"), list):
+                raise RuntimeError("The runtime returned an invalid table.")
+            # Escaped text can outgrow a frame; fewer rows always fit, and the grid asks again.
+            while True:
+                try:
+                    self._send("table", {"table": table, "error": None}, request_id)
+                    return
+                except ValueError:
+                    if len(table["rows"]) <= 1:
+                        raise
+                    table["rows"] = table["rows"][: len(table["rows"]) // 2]
+        except Exception as error:  # noqa: BLE001 - a failed page is reported, not fatal
+            detail, _ = truncate_utf8(str(error), MAX_DETAIL)
+            self._send("table", {"table": None, "error": detail}, request_id)
 
     async def _correlate(self, request_id: str, msg_id: str) -> None:
         """Pump both kernel channels until the execution is complete.
@@ -1912,6 +2158,8 @@ class ScientBridge:
             await self._handle_interrupt(request_id)
         elif msg_type == "inspect-variables":
             await self._handle_inspect_variables(request_id)
+        elif msg_type == "inspect-table":
+            await self._handle_inspect_table(payload, request_id)
         elif msg_type == "restart":
             await self._restart_kernel(payload["nextGeneration"])
         elif msg_type == "shutdown":

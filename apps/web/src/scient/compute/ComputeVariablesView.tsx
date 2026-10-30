@@ -1,9 +1,10 @@
 import type { ComputeVariableSnapshot } from "@t3tools/contracts";
-import { LoaderCircle, RefreshCw } from "lucide-react";
+import { LoaderCircle, RefreshCw, Table2 } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { isTableVariable } from "~/scient/dataTable/ComputeVariableTable";
 
 function Centered(props: { readonly children: ReactNode }) {
   return (
@@ -23,6 +24,7 @@ export function ComputeVariablesView(props: {
   readonly selectedIsLive: boolean;
   readonly onShowLive: () => void;
   readonly onRefresh: () => void;
+  readonly onOpenTable?: (name: string) => void;
 }) {
   if (!props.hasLiveSession) return <Centered>No running session</Centered>;
   if (!props.selectedIsLive) {
@@ -98,7 +100,21 @@ export function ComputeVariablesView(props: {
                         scope="row"
                         className="break-words px-2 py-1.5 font-mono font-medium text-foreground"
                       >
-                        {variable.name}
+                        {props.onOpenTable && isTableVariable(variable) ? (
+                          <button
+                            type="button"
+                            className="inline-flex max-w-full items-center gap-1 text-left hover:underline"
+                            onClick={() => props.onOpenTable?.(variable.name)}
+                          >
+                            <span className="break-words">{variable.name}</span>
+                            <Table2
+                              className="size-3 shrink-0 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                          </button>
+                        ) : (
+                          variable.name
+                        )}
                       </th>
                       <td className="break-words px-2 py-1.5 text-muted-foreground">
                         {variable.typeName}

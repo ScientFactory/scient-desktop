@@ -49,12 +49,15 @@ import {
   type BridgeMessage,
   type DisplayPayload,
   type KernelPortsPayload,
+  type TablePayload,
 } from "./BridgeProtocol.ts";
 import { inspectComputeStaticImage } from "./ComputeStaticImage.ts";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 const DEFAULT_INTERRUPT_TIMEOUT_MS = 10_000;
 const DEFAULT_VARIABLES_TIMEOUT_MS = 10_000;
+// The bridge gives the kernel 30 seconds to sort or search a large table.
+const DEFAULT_TABLE_TIMEOUT_MS = 35_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
 const DEFAULT_FINALIZER_SHUTDOWN_MS = 5_000;
 const DEFAULT_MAX_EVENT_QUEUE_BYTES = 32 * 1024 * 1024;
@@ -599,6 +602,7 @@ export function makeComputeBridgeTransport(
           "kernel-ready",
           "interrupt-result",
           "variables",
+          "table",
           "restarted",
           "shutdown-complete",
         ]);
@@ -1308,6 +1312,51 @@ export function makeComputeBridgeTransport(
           }),
         );
 
+      const inspectTable: ComputeChannel["inspectTable"] = (tableRequest) =>
+        commandGate.withPermits(1)(
+          Effect.suspend(() => {
+            if (MutableRef.get(transitioning)) {
+              return Effect.fail(transportError("table", "The runtime is changing generation."));
+            }
+            if (MutableRef.get(activeRequestId) !== null) {
+              return Effect.fail(transportError("table", "An execution is already active."));
+            }
+            MutableRef.set(inspectingVariables, true);
+            return ensureGeneration("table", tableRequest.expectedGeneration).pipe(
+              Effect.andThen(
+                requestResponse(
+                  "table",
+                  {
+                    type: "inspect-table",
+                    payload: { name: tableRequest.name, query: tableRequest.query },
+                    generation: tableRequest.expectedGeneration,
+                    requestId: tableRequest.requestId,
+                  },
+                  {
+                    type: "table",
+                    generation: tableRequest.expectedGeneration,
+                    requestId: tableRequest.requestId,
+                  },
+                  DEFAULT_TABLE_TIMEOUT_MS,
+                ),
+              ),
+              Effect.flatMap((message) => {
+                const payload = message.payload as TablePayload;
+                return payload.table === null
+                  ? Effect.fail(
+                      transportError("table", payload.error ?? "The table could not be read."),
+                    )
+                  : Effect.succeed(payload.table);
+              }),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  MutableRef.set(inspectingVariables, false);
+                }),
+              ),
+            );
+          }),
+        );
+
       const restart: ComputeChannel["restart"] = (restartRequest) =>
         commandGate.withPermits(1)(
           ensureGeneration("restart", restartRequest.expectedGeneration).pipe(
@@ -1441,6 +1490,7 @@ export function makeComputeBridgeTransport(
         execute,
         interrupt,
         inspectVariables,
+        inspectTable,
         restart,
         shutdown,
       } satisfies ComputeChannel;

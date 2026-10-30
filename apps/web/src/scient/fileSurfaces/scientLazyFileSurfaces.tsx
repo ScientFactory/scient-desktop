@@ -3,8 +3,8 @@ import { lazy, type ReactNode, Suspense } from "react";
 import { Spinner } from "~/components/ui/spinner";
 
 /*
- * The Scient surfaces the files panel mounts for PDFs, LaTeX, compute sources
- * and notebooks. Each loads on first use.
+ * The Scient surfaces the files panel mounts for PDFs, LaTeX, compute sources,
+ * notebooks and data tables. Each loads on first use.
  */
 export const ScientPdfReader = lazy(() =>
   import("~/scient/pdf/ScientPdfReader").then((module) => ({
@@ -19,6 +19,12 @@ export const ScientLatexSurface = lazy(() =>
 export const ScientComputeFileSurface = lazy(() =>
   import("~/scient/compute/ScientComputeFileSurface").then((module) => ({
     default: module.ScientComputeFileSurface,
+  })),
+);
+
+export const ScientDataFileTable = lazy(() =>
+  import("~/scient/dataTable/DataFileTable").then((module) => ({
+    default: module.DataFileTable,
   })),
 );
 

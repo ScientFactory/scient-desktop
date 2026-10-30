@@ -310,6 +310,7 @@ import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcH
 import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
 // SCIENT-FORK:END
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
+import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
 import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
@@ -1880,6 +1881,7 @@ export const layerWsRpc = (
         serverSettings,
       });
       const analysis = yield* AnalysisService.AnalysisService;
+      const dataTables = yield* DataTables.DataTables;
       const compute = yield* ComputeSessionService.ComputeSessionService;
       const computeGateway = makeComputeRpcGateway({
         workspaceResolver: yield* WorkspaceBindingResolver,
@@ -3821,6 +3823,7 @@ export const layerWsRpc = (
           observeRpcStreamEffect,
           analysis,
           computeGateway,
+          dataTables,
           saveComputeOutput,
           computeNotebookOutputs,
         }),

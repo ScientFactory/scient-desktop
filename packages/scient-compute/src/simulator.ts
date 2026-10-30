@@ -309,6 +309,13 @@ export function createSimulatedComputeTransport(plan: SimulatedComputeRuntime): 
               ),
         );
 
+      const inspectTable: ComputeChannel["inspectTable"] = (tableRequest) =>
+        mutateCurrentGeneration(
+          "table",
+          tableRequest.expectedGeneration,
+          Effect.fail(transportError("table", `No table named '${tableRequest.name}'.`)),
+        );
+
       const restart: ComputeChannel["restart"] = (restartRequest) =>
         mutateCurrentGeneration(
           "restart",
@@ -360,6 +367,7 @@ export function createSimulatedComputeTransport(plan: SimulatedComputeRuntime): 
         execute,
         interrupt,
         inspectVariables,
+        inspectTable,
         restart,
         shutdown,
       } satisfies ComputeChannel;

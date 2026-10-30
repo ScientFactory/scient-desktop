@@ -40,6 +40,7 @@ export class ComputeOperationError extends Schema.TaggedError<ComputeOperationEr
       "verify",
       "manage",
       "variables",
+      "table",
     ]),
     reason: Schema.Literals([
       // The session is not there, or is not in a state that can run code.

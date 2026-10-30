@@ -11,6 +11,7 @@ import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObs
 import type { makeComputeNotebookOutputs } from "../compute/ComputeNotebookOutputs.ts";
 import type { makeComputeOutputSave } from "../compute/ComputeOutputSave.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
+import type * as DataTables from "../data/DataTables.ts";
 import type * as AnalysisService from "./AnalysisService.ts";
 
 export const makeScientificRpcHandlers = ({
@@ -20,11 +21,13 @@ export const makeScientificRpcHandlers = ({
   computeGateway,
   saveComputeOutput,
   computeNotebookOutputs,
+  dataTables,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStreamEffect"> & {
   readonly analysis: AnalysisService.AnalysisService["Service"];
   readonly computeGateway: ComputeRpcGateway;
   readonly saveComputeOutput: ReturnType<typeof makeComputeOutputSave>;
   readonly computeNotebookOutputs: ReturnType<typeof makeComputeNotebookOutputs>;
+  readonly dataTables: DataTables.DataTables["Service"];
 }) =>
   WsScientificRpcGroup.of({
     [WS_METHODS.analysisConfigureRuntime]: (input) =>
@@ -142,6 +145,14 @@ export const makeScientificRpcHandlers = ({
     [WS_METHODS.computeInspectVariables]: (input) =>
       observeRpcEffect(WS_METHODS.computeInspectVariables, computeGateway.inspectVariables(input), {
         "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeReadTable]: (input) =>
+      observeRpcEffect(WS_METHODS.computeReadTable, computeGateway.readTable(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.dataReadFileTable]: (input) =>
+      observeRpcEffect(WS_METHODS.dataReadFileTable, dataTables.readFileTable(input), {
+        "rpc.aggregate": "workspace",
       }),
     [WS_METHODS.computeSaveOutput]: (input) =>
       observeRpcEffect(WS_METHODS.computeSaveOutput, saveComputeOutput(input), {

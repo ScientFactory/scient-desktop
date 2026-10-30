@@ -44,12 +44,13 @@ export function useComputeVariables(input: {
   const current =
     state.owner === owner ? state : { owner, snapshot: null, error: null, loading: false };
   const request = useRef<symbol | null>(null);
-  const available =
-    liveSession !== null &&
-    (runtimes.data?.languages
-      .find((language) => language.descriptor.languageId === liveSession.languageId)
-      ?.descriptor.capabilities.includes("variables") ??
-      false);
+  const capabilities =
+    liveSession === null
+      ? []
+      : (runtimes.data?.languages.find(
+          (language) => language.descriptor.languageId === liveSession.languageId,
+        )?.descriptor.capabilities ?? []);
+  const available = capabilities.includes("variables");
 
   const refresh = useStableCallback(async () => {
     const session: ComputeSessionRecord | null = liveSession;
@@ -119,6 +120,7 @@ export function useComputeVariables(input: {
     error: current.error,
     loading: current.loading,
     available,
+    tables: capabilities.includes("tables"),
     refresh: () => void refresh(),
   };
 }

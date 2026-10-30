@@ -88,6 +88,7 @@ export * from "./scientSources.ts";
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
+export * from "./scientData.ts";
 export * from "./scientSkills.ts";
 // SCIENT-FORK:START — Scient Extensions contracts (new files, no upstream edits).
 export * from "./scient/secrets.ts";

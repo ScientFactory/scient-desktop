@@ -59,6 +59,13 @@ import {
   ComputeSubmitProjectExecutionInput,
   ComputeVerifyRuntimeInput,
 } from "../scientCompute.ts";
+import {
+  ComputeTableInput,
+  DataFileTable,
+  DataFileTableError,
+  DataFileTableInput,
+  DataTablePage,
+} from "../scientData.ts";
 
 /** Spread into rpc.ts WS_METHODS where these methods have always been listed. */
 export const SCIENT_SCIENTIFIC_WS_METHODS = {
@@ -93,9 +100,13 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeListExecutions: "compute.listExecutions",
   computeListOutputs: "compute.listOutputs",
   computeInspectVariables: "compute.inspectVariables",
+  computeReadTable: "compute.readTable",
   computeSaveOutput: "compute.saveOutput",
   computeNotebookOutputs: "compute.notebookOutputs",
   subscribeComputeSessions: "subscribe.computeSessions",
+
+  // Scient-owned data file viewer
+  dataReadFileTable: "data.readFileTable",
 } as const;
 
 /** Spread into the streaming subscriptions at the end of rpc.ts WS_METHODS. */
@@ -310,6 +321,18 @@ const WsComputeInspectVariablesRpc = Rpc.make(
   },
 );
 
+const WsComputeReadTableRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeReadTable, {
+  payload: ComputeTableInput,
+  success: DataTablePage,
+  error: ComputeRpcError,
+});
+
+const WsDataReadFileTableRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataReadFileTable, {
+  payload: DataFileTableInput,
+  success: DataFileTable,
+  error: Schema.Union([DataFileTableError, EnvironmentAuthorizationError]),
+});
+
 const WsComputeSaveOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSaveOutput, {
   payload: ComputeSaveProjectOutputInput,
   success: ComputeSaveProjectOutputResult,
@@ -361,6 +384,8 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeListExecutionsRpc,
   WsComputeListOutputsRpc,
   WsComputeInspectVariablesRpc,
+  WsComputeReadTableRpc,
+  WsDataReadFileTableRpc,
   WsComputeSaveOutputRpc,
   WsComputeNotebookOutputsRpc,
   WsSubscribeComputeSessionsRpc,

@@ -5,6 +5,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { ComputeVariableTableDialog } from "~/scient/dataTable/ComputeVariableTable";
 import { scientComputeSurface } from "~/scient/rightPanel/surfaces";
 
 import type { ComputeContextId } from "./computeContextStore";
@@ -160,6 +161,7 @@ export function ComputePanel(props: {
     model,
   });
   const { contextBinding, selectedSession, liveSession, runtimes, events } = model;
+  const [openTable, setOpenTable] = useState<string | null>(null);
 
   const entries = computeFeedEntries({
     session: selectedSession,
@@ -307,6 +309,7 @@ export function ComputePanel(props: {
             if (liveSession !== null) model.chooseSession(liveSession.sessionId);
           }}
           onRefresh={variables.refresh}
+          {...(variables.tables ? { onOpenTable: setOpenTable } : {})}
         />
       ) : selectedSession !== null || entries.length > 0 ? (
         <ComputeResultsFeed
@@ -352,6 +355,16 @@ export function ComputePanel(props: {
           runtimesPending={runtimes.isPending}
         />
       )}
+      {liveSession !== null ? (
+        <ComputeVariableTableDialog
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          sessionId={liveSession.sessionId}
+          generation={liveSession.generation}
+          name={openTable}
+          onClose={() => setOpenTable(null)}
+        />
+      ) : null}
     </section>
   );
 }
