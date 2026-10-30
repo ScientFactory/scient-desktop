@@ -22,9 +22,12 @@ const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
 
 function settingsBreadcrumbLabel(pathname: string): string | null {
   const normalizedPathname = pathname.replace(/\/+$/, "") || "/";
-  // SCIENT-FORK:START — Extensions category and item pages fall back to the section.
+  // SCIENT-FORK:START — Extensions and language pages fall back to their section.
   if (normalizedPathname.startsWith("/settings/extensions/")) {
     return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? "Extensions";
+  }
+  if (normalizedPathname.startsWith("/settings/scientific-computing/")) {
+    return "Scientific Computing";
   }
   // SCIENT-FORK:END
   return SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;

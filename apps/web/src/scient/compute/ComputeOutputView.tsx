@@ -182,7 +182,8 @@ function ComputeDiagnostic(props: {
                     variant="outline"
                     render={
                       <Link
-                        to="/settings/scientific-computing"
+                        to="/settings/scientific-computing/$languageId"
+                        params={{ languageId: "python" }}
                         search={{ environmentId: props.environmentId }}
                       />
                     }

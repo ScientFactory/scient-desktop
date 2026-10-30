@@ -8,7 +8,8 @@ import {
   automaticComputeRuntimeLabel,
   computeCurrentRuntimeSummary,
   computeLanguageAbsent,
-  computeLanguageListDetail,
+  computeLanguageDetail,
+  computeLanguageDownloadUrl,
   computeLanguagePrimaryAction,
   computeManagedPrimaryAction,
   computeRuntimePickerLabel,
@@ -464,15 +465,19 @@ describe("what a language shows", () => {
     problem: null,
   };
   const preference = { enabled: true, executable: "" };
-  const detail = (item: ComputeLanguageRuntimeInventory, enabled = true) =>
-    computeLanguageListDetail(
+  const detail = (item: ComputeLanguageRuntimeInventory, enabled = true) => {
+    const current = { ...preference, enabled };
+    return computeLanguageDetail(
       item,
       computeCurrentRuntimeSummary({
         language: item,
-        preference: { ...preference, enabled },
+        preference: current,
         managed: item.managedRuntime,
       }),
+      current,
+      item.managedRuntime,
     );
+  };
 
   it("names where a runtime came from, not just that it is on the system", () => {
     expect(
@@ -498,10 +503,16 @@ describe("what a language shows", () => {
     ).toBe("Automatic · Homebrew");
     expect(
       computeRuntimePickerLabel(
-        { executable: "/k", source: "conventional", version: null, problem: null, origin: "Rust" },
-        "Rust",
+        {
+          executable: "/k",
+          source: "conventional",
+          version: null,
+          problem: null,
+          origin: "Octave",
+        },
+        "GNU Octave",
       ),
-    ).toBe("Rust");
+    ).toBe("GNU Octave");
   });
 
   it("says Scient can always set up Python and SQL, and others need their language", () => {
@@ -513,21 +524,33 @@ describe("what a language shows", () => {
     expect(computeLanguageAbsent(language("r", [found]))).toBe(false);
   });
 
-  it("shows the state in the list, never just the switch", () => {
+  it("says what a language runs on, or what it needs", () => {
     const kernel = { ...status, selection: "existing" as const };
-    expect(detail(language("r", [found], kernel))).toBe("4.6.2");
+    expect(detail(language("r", [found], kernel))).toBe("4.6.2 · System");
     expect(detail(language("r", [found], kernel), false)).toBe("Off");
-    expect(detail(language("r", [found], { ...status, installed: false }))).toBe("Set up");
+    expect(detail(language("r", [found], { ...status, installed: false }))).toBe("Needs setup");
     expect(detail(language("rust", [{ ...found, version: null }]))).toBe("Found");
     expect(
       detail(language("r", [{ ...found, problem: "The selected R executable was not found." }])),
-    ).toBe("Problem");
+    ).toBe("The selected R executable was not found.");
     expect(
       detail(
         language("sql", [{ ...found, source: "managed" as const, version: "3.14.7" }], status),
       ),
     ).toBe("Ready");
-    expect(detail(language("matlab", [found], { ...status, installed: false }))).toBe("Connect");
+    expect(detail(language("matlab", [found], { ...status, installed: false }))).toBe(
+      "Not connected",
+    );
+  });
+
+  it("points to where a missing language comes from", () => {
+    expect(computeLanguageDownloadUrl(language("r", []))).toContain("r-project");
+    const setup = { needs: "evcxr", url: "https://example.org/evcxr" };
+    const rust = language("rust", []);
+    expect(computeLanguageDownloadUrl({ ...rust, descriptor: { ...rust.descriptor, setup } })).toBe(
+      setup.url,
+    );
+    expect(computeLanguageDownloadUrl(language("spss", []))).toBeUndefined();
   });
 
   it("offers one action, the most urgent", () => {

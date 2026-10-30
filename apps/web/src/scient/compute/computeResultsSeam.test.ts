@@ -55,6 +55,10 @@ const settingsSource = NodeFS.readFileSync(
   NodePath.join(here, "ScientificComputingSettings.tsx"),
   "utf8",
 );
+const languagePageSource = NodeFS.readFileSync(
+  NodePath.join(here, "ComputeLanguagePage.tsx"),
+  "utf8",
+);
 const languagePanelSource = NodeFS.readFileSync(
   NodePath.join(here, "ComputeLanguagePanel.tsx"),
   "utf8",
@@ -114,7 +118,7 @@ describe("compute result surface seam", () => {
   it("keeps runtime recovery contextual to the file toolbar", () => {
     expect(pythonActionsSource).toContain("resolveComputeRuntimeToolbarState");
     expect(pythonActionsSource).toContain("Scientific Computing");
-    expect(pythonActionsSource).toContain('to="/settings/scientific-computing"');
+    expect(pythonActionsSource).toContain('to="/settings/scientific-computing/$languageId"');
     expect(pythonActionsSource).not.toContain("Check again");
     expect(pythonActionsSource).toContain("computeRuntimeSetupActionLabel");
     expect(pythonActionsSource).toContain('runtimeToolbar.kind === "switch"');
@@ -205,11 +209,10 @@ describe("compute result surface seam", () => {
 
 // regression: 78962a11ee feat(compute): checkpoint runtime settings and managed package improvements
 it("keeps default selection separate from installation actions using shared settings rows", () => {
-  expect(settingsSource).toContain("SettingsRow");
-  expect(settingsSource).toContain("SettingsSection");
-  expect(settingsSource).toContain('variant="plain"');
-  expect(settingsSource).toContain("SettingsSourceStrip");
-  expect(settingsSource).toContain("SettingsSourcePanel");
+  expect(languagePageSource).toContain("SettingsRow");
+  expect(languagePageSource).toContain("SettingsSection");
+  expect(languagePageSource).toContain('variant="plain"');
+  expect(languagePageSource).toContain("SettingsSourcePanel");
   expect(settingsSource).not.toContain("Python & MATLAB");
   expect(settingsSource).not.toContain("Advanced");
   expect(languagePanelSource).toContain('title="Runtime"');
@@ -220,6 +223,6 @@ it("keeps default selection separate from installation actions using shared sett
   expect(languagePanelSource).toContain("ManagedRuntimeMaintenanceMenu");
   expect(languagePanelSource).toContain("ComputeInstallationRow");
   expect(settingsSource).not.toContain("coming soon");
-  expect(settingsSource).toContain('title="Scientific Computing"');
+  expect(languagePageSource).toContain('title="Scientific Computing"');
   expect(pythonActionsSource).toContain("runtimeVersion:");
 });

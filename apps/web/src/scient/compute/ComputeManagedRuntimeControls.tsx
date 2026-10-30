@@ -85,12 +85,15 @@ function fallbackManagedRuntimeFailure(
   retryAction: ComputeManagedRuntimeAction | null,
 ): ComputeManagedRuntimeFailureView {
   return {
+    // A refused removal already says what to do, and nothing was being set up.
     summary:
-      languageId === "matlab"
-        ? "MATLAB connection failed"
-        : usesManagedPython(languageId)
-          ? "Python setup failed"
-          : "Kernel setup failed",
+      retryAction === "remove"
+        ? detail
+        : languageId === "matlab"
+          ? "MATLAB connection failed"
+          : usesManagedPython(languageId)
+            ? "Python setup failed"
+            : "Kernel setup failed",
     detail,
     retryAction,
   };
@@ -444,18 +447,22 @@ export function ManagedRuntimeNotice({
               </TooltipTrigger>
               <TooltipPopup>Copy the full error</TooltipPopup>
             </Tooltip>
-            <Popover>
-              <PopoverTrigger
-                render={<Button size="icon-xs" variant="ghost-muted" aria-label="Error details" />}
-              >
-                <ChevronDown className="size-3" aria-hidden />
-              </PopoverTrigger>
-              <PopoverPopup align="end" className="w-80 max-w-[calc(100vw-2rem)]" padding="tight">
-                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
-                  {failure.detail}
-                </pre>
-              </PopoverPopup>
-            </Popover>
+            {failure.detail === failure.summary ? null : (
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button size="icon-xs" variant="ghost-muted" aria-label="Error details" />
+                  }
+                >
+                  <ChevronDown className="size-3" aria-hidden />
+                </PopoverTrigger>
+                <PopoverPopup align="end" className="w-80 max-w-[calc(100vw-2rem)]" padding="tight">
+                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
+                    {failure.detail}
+                  </pre>
+                </PopoverPopup>
+              </Popover>
+            )}
           </>
         ) : null}
       </div>
@@ -481,7 +488,7 @@ export function ManagedRuntimeNotice({
       ) : null}
       {failure ? (
         <div className="flex min-w-0 items-center gap-1 text-destructive" role="alert">
-          <span className="min-w-0 truncate">{failure.summary}</span>
+          <span className="min-w-0 break-words">{failure.summary}</span>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -502,14 +509,16 @@ export function ManagedRuntimeNotice({
             </TooltipTrigger>
             <TooltipPopup>Copy the full error</TooltipPopup>
           </Tooltip>
-          <details className="min-w-0">
-            <summary className="w-fit cursor-pointer list-none text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
-              Details
-            </summary>
-            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
-              {failure.detail}
-            </pre>
-          </details>
+          {failure.detail === failure.summary ? null : (
+            <details className="min-w-0">
+              <summary className="w-fit cursor-pointer list-none text-muted-foreground marker:content-none [&::-webkit-details-marker]:hidden">
+                Details
+              </summary>
+              <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words text-[11px] text-destructive">
+                {failure.detail}
+              </pre>
+            </details>
+          )}
         </div>
       ) : null}
     </div>

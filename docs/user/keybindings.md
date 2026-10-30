@@ -11,8 +11,7 @@ than a copied list because available actions can change between versions.
 
 ## Shortcut sections
 
-The Shortcuts page uses the same source selector as Skills and Scientific
-Computing. Choose **General**, **Write**, **Source**, **Tables**, **Markdown**, **Math**, or **PDF** to show only that
+The Shortcuts page uses the same source selector as Skills. Choose **General**, **Write**, **Source**, **Tables**, **Markdown**, **Math**, or **PDF** to show only that
 part of the product. General contains application commands; the other sections
 contain document-authoring and reading commands. The selected section stays open.
 

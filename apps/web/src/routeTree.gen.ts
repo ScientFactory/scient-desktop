@@ -60,6 +60,7 @@ import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draf
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 import { Route as ChatSettingsSkillsProjectRouteImport } from './routes/_chat.settings.skills_.project'
 import { Route as ChatSettingsSkillsExternalRouteImport } from './routes/_chat.settings.skills_.external'
+import { Route as ChatSettingsScientificComputingLanguageIdRouteImport } from './routes/_chat.settings.scientific-computing_.$languageId'
 import { Route as ChatSettingsExtensionsInstalledRouteImport } from './routes/_chat.settings.extensions_.installed'
 import { Route as ChatSettingsExtensionsAllRouteImport } from './routes/_chat.settings.extensions_.all'
 import { Route as ChatSettingsExtensionsStoreInstanceIdRouteImport } from './routes/_chat.settings.extensions_.store.$instanceId'
@@ -335,6 +336,12 @@ const ChatSettingsSkillsExternalRoute =
     path: '/skills/external',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsScientificComputingLanguageIdRoute =
+  ChatSettingsScientificComputingLanguageIdRouteImport.update({
+    id: '/scientific-computing_/$languageId',
+    path: '/scientific-computing/$languageId',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsExtensionsInstalledRoute =
   ChatSettingsExtensionsInstalledRouteImport.update({
     id: '/extensions_/installed',
@@ -449,6 +456,7 @@ export interface FileRoutesByFullPath {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
+  '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/settings/skills/external': typeof ChatSettingsSkillsExternalRoute
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
@@ -511,6 +519,7 @@ export interface FileRoutesByTo {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
+  '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/settings/skills/external': typeof ChatSettingsSkillsExternalRoute
   '/settings/skills/project': typeof ChatSettingsSkillsProjectRoute
   '/settings/extensions/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
@@ -575,6 +584,7 @@ export interface FileRoutesById {
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/_chat/settings/extensions_/all': typeof ChatSettingsExtensionsAllRoute
   '/_chat/settings/extensions_/installed': typeof ChatSettingsExtensionsInstalledRoute
+  '/_chat/settings/scientific-computing_/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
   '/_chat/settings/skills_/external': typeof ChatSettingsSkillsExternalRoute
   '/_chat/settings/skills_/project': typeof ChatSettingsSkillsProjectRoute
   '/_chat/settings/extensions_/category/$category': typeof ChatSettingsExtensionsCategoryCategoryRoute
@@ -639,6 +649,7 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
+    | '/settings/scientific-computing/$languageId'
     | '/settings/skills/external'
     | '/settings/skills/project'
     | '/settings/extensions/category/$category'
@@ -701,6 +712,7 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
+    | '/settings/scientific-computing/$languageId'
     | '/settings/skills/external'
     | '/settings/skills/project'
     | '/settings/extensions/category/$category'
@@ -764,6 +776,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/worktrees'
     | '/_chat/settings/extensions_/all'
     | '/_chat/settings/extensions_/installed'
+    | '/_chat/settings/scientific-computing_/$languageId'
     | '/_chat/settings/skills_/external'
     | '/_chat/settings/skills_/project'
     | '/_chat/settings/extensions_/category/$category'
@@ -1145,6 +1158,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsSkillsExternalRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/scientific-computing_/$languageId': {
+      id: '/_chat/settings/scientific-computing_/$languageId'
+      path: '/scientific-computing/$languageId'
+      fullPath: '/settings/scientific-computing/$languageId'
+      preLoaderRoute: typeof ChatSettingsScientificComputingLanguageIdRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/extensions_/installed': {
       id: '/_chat/settings/extensions_/installed'
       path: '/extensions/installed'
@@ -1255,6 +1275,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsWorktreesRoute: typeof ChatSettingsWorktreesRoute
   ChatSettingsExtensionsAllRoute: typeof ChatSettingsExtensionsAllRoute
   ChatSettingsExtensionsInstalledRoute: typeof ChatSettingsExtensionsInstalledRoute
+  ChatSettingsScientificComputingLanguageIdRoute: typeof ChatSettingsScientificComputingLanguageIdRoute
   ChatSettingsSkillsExternalRoute: typeof ChatSettingsSkillsExternalRoute
   ChatSettingsSkillsProjectRoute: typeof ChatSettingsSkillsProjectRoute
   ChatSettingsExtensionsCategoryCategoryRoute: typeof ChatSettingsExtensionsCategoryCategoryRoute
@@ -1304,6 +1325,8 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsWorktreesRoute: ChatSettingsWorktreesRoute,
   ChatSettingsExtensionsAllRoute: ChatSettingsExtensionsAllRoute,
   ChatSettingsExtensionsInstalledRoute: ChatSettingsExtensionsInstalledRoute,
+  ChatSettingsScientificComputingLanguageIdRoute:
+    ChatSettingsScientificComputingLanguageIdRoute,
   ChatSettingsSkillsExternalRoute: ChatSettingsSkillsExternalRoute,
   ChatSettingsSkillsProjectRoute: ChatSettingsSkillsProjectRoute,
   ChatSettingsExtensionsCategoryCategoryRoute:

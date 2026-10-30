@@ -1202,7 +1202,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   aria-label={`${runtimeToolbar.label}. Open Scientific Computing`}
                   render={
                     <Link
-                      to="/settings/scientific-computing"
+                      to="/settings/scientific-computing/$languageId"
+                      params={{ languageId: props.language.languageId }}
                       search={{ environmentId: props.environmentId }}
                     />
                   }

@@ -143,10 +143,8 @@ export function ComputeLanguagePanel({
             ],
           }
         : {}),
-      ...(part === "managed-python" &&
-      action === "install" &&
-      selected !== undefined &&
-      selected.source !== "managed"
+      // Only a Python the user chose stays selected; Automatic moves to what they just set up.
+      ...(part === "managed-python" && action === "install" && preference.executable.trim()
         ? { selectionAfterInstall: "existing" as const }
         : {}),
     });
@@ -250,7 +248,9 @@ export function ComputeLanguagePanel({
               ? "Connects Scient to MATLAB"
               : languageId === "sql"
                 ? "Includes DuckDB"
-                : (runtime.status.runtimeVersion ?? "Private to Scient")
+                : part === "kernel" && runtime.status.runtimeVersion
+                  ? `${runtime.status.runtimeVersion} · Private to Scient`
+                  : "Private to Scient"
           }
           installation={
             part === "managed-python"

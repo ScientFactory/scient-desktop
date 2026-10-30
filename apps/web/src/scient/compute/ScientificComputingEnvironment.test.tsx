@@ -77,6 +77,9 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (atom: unknown) =>
     atom === mocks.updateAtom ? mocks.updateSettings : mocks.refreshRuntimeInventory,
 }));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children }: { children?: ReactNode }) => <a href="#language">{children}</a>,
+}));
 vi.mock("~/components/ui/switch", () => ({
   Switch: ({ onCheckedChange }: { onCheckedChange: (enabled: boolean) => void }) => {
     mocks.toggle = onCheckedChange;
@@ -84,6 +87,7 @@ vi.mock("~/components/ui/switch", () => ({
   },
 }));
 vi.mock("~/components/settings/settingsLayout", () => ({
+  useSettingsSearchTarget: () => undefined,
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SettingsSection: ({
     children,
@@ -117,6 +121,7 @@ vi.mock("~/components/settings/settingsLayout", () => ({
   ),
 }));
 
+import { ComputeLanguagePage } from "./ComputeLanguagePage";
 import { ScientificComputingSettings } from "./ScientificComputingSettings";
 
 describe("Scientific Computing environment ownership", () => {
@@ -131,7 +136,10 @@ describe("Scientific Computing environment ownership", () => {
 
   it("reads, edits, and inspects the requested remote server, not the primary", () => {
     renderToStaticMarkup(
-      <ScientificComputingSettings environmentId={EnvironmentId.make("remote-server")} />,
+      <ComputeLanguagePage
+        languageId="matlab"
+        environmentId={EnvironmentId.make("remote-server")}
+      />,
     );
     expect(mocks.readSettings).toHaveBeenCalledWith("remote-server");
     mocks.toggle?.(true);
@@ -154,7 +162,7 @@ describe("Scientific Computing environment ownership", () => {
   });
 
   it("uses the primary environment only when none was requested", () => {
-    const markup = renderToStaticMarkup(<ScientificComputingSettings />);
+    const markup = renderToStaticMarkup(<ComputeLanguagePage languageId="matlab" />);
     expect(mocks.readSettings).toHaveBeenCalledWith("local-server");
     expect(markup).toContain("Runtime");
   });

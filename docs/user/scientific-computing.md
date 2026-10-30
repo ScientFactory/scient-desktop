@@ -35,13 +35,13 @@ does not install them silently. Existing sessions retain their original environm
 Selecting a system or project Python does not add these packages to that installation.
 
 Setting up managed Python from a file that has no usable runtime enables Python and selects the new
-environment. Setting it up from Settings while an existing Python is already selected leaves that
-selection unchanged; the managed environment becomes another explicit runtime choice.
+environment. So does setting it up from Settings on **Automatic**. If you chose another Python, that
+choice stays, and the managed environment becomes another runtime you can select.
 
 The managed environment is optional. To use Python you already maintain instead:
 
 1. Open **Settings → Scientific Computing** for the server environment you want to use.
-2. Select **Python** in the language list.
+2. Open **Python**.
 3. Turn on **Use Python in Scient** if it is off.
 4. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
    **Found on this computer**, fill in **Custom path** and choose **Use**.
@@ -53,14 +53,15 @@ control. Prefer a project `.venv` or another virtual environment you control. Sc
 with `pip --user`; do not force packages into a Homebrew- or system-managed Python merely to make
 runtime discovery succeed.
 
-Settings → Scientific Computing lists the languages that run on this computer or that Scient can
-set up, and shows one at a time. Under each name is its state: its version when ready, or what it
-needs: **Set up**, **Connect**, **Problem** or **Off**. **Found** means a language's own kernel was
-found and has not been started yet. Languages that are not on this computer are under
-**More languages**, each with what it needs. Each optional Toolkit has its own **Download**
+Settings → Scientific Computing shows every language at once. **On this computer** lists what runs
+here or what Scient can set up, each with what it runs on, or what it needs: **Needs setup**,
+**Not connected**, **Off** or a problem. **Found** means a language's own kernel was found and has
+not been started yet. **Not installed** lists the rest, each with what it needs and a **Get** link.
+SPSS says **Coming soon**. Each language opens its own page, and a file's language status opens that
+page directly. Each optional Toolkit has its own **Download**
 action; installed Toolkits have a small menu with **Remove**. There is no separate Apply step.
-Toolkits appear once Scient-managed Python is installed. Toolkit operations continue when another
-language is selected; status reflects the server's verified installation, not the click.
+Toolkits appear once Scient-managed Python is installed. Toolkit operations continue when you leave
+the page; status reflects the server's verified installation, not the click.
 You can request more Toolkits while another is installing. Each row shows its own progress,
 queue, cancellation, or retry action. Pending requests are combined into the next verified
 environment build; they do not run competing installers against the working environment.
@@ -69,8 +70,8 @@ and survives navigation, but not a server restart. A failed request can be retri
 Cancel immediately shows **Cancelling…** and prevents repeated clicks while the request is pending.
 For an active build, feedback remains while shutdown and cleanup finish; a failed cancellation
 restores the control so you can try again.
-Every language has the same panel. **Runtime** shows what new sessions use, with the one action it
-needs, if any. Next comes what Scient itself adds, if anything: Scient-managed Python, a private
+Every language page has the same rows. **Runtime** shows what new sessions use, with the one action
+it needs, if any. Next comes what Scient itself adds, if anything: Scient-managed Python, a private
 IRkernel or IJulia, or the MATLAB connection helper, with its maintenance menu. **Found on this
 computer** opens the full list, each with its version, where it came from (such as Homebrew, uv or
 a conda environment), its path and **Test**. The last row turns the language on or off for you and
@@ -210,7 +211,7 @@ Python selected for Python.
 
 Any installed Jupyter kernel works in notebooks and for agents. Scient finds kernels in Jupyter's
 usual folders and in every Python environment it can see. Rust, GNU Octave, Stata and Wolfram
-Language are always listed, with what each needs, and are found by the refresh control as soon as
+Language are always shown, with what each needs, and are found by the refresh control as soon as
 they are installed. Another language appears after restarting Scient. These languages have no
 Variables pane, and Scient has no private part in them.
 
@@ -221,7 +222,7 @@ Variables pane, and Scient has no private part in them.
 | Stata            | Stata 17 or later and [nbstata](https://hugetim.github.io/nbstata/)                                          |
 | Wolfram Language | Wolfram Engine and [WolframLanguageForJupyter](https://github.com/WolframResearch/WolframLanguageForJupyter) |
 
-SPSS is listed but cannot run yet, because it has no Jupyter kernel. A notebook in a language that
+SPSS is shown as **Coming soon** because it has no Jupyter kernel yet. A notebook in a language that
 is not installed opens normally and shows **Not installed**.
 
 ## Connect your MATLAB installation

@@ -1144,7 +1144,6 @@ describe("compute runtime inspection", () => {
             const service = yield* ComputeSessionService;
             const [row] = yield* service.runtimeInventory({
               configuredExecutables: {},
-              enabledLanguageIds: new Set([PYTHON]),
             });
             expect(row?.descriptor.languageId).toBe(PYTHON);
             expect(row?.installations).toEqual([]);

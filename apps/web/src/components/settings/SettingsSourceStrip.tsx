@@ -1,16 +1,7 @@
 import { ChevronDownIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { observeResize } from "../../lib/observeResize";
-import { cn } from "../../lib/utils";
 import { SETTINGS_SOURCE_RISE, settingsSourceOutline } from "./settingsSourceOutline";
-
-function lastRowBottom(strip: HTMLElement) {
-  return Math.max(
-    ...Array.from(strip.querySelectorAll("button[aria-controls]")).map(
-      (button) => button.getBoundingClientRect().bottom,
-    ),
-  );
-}
 
 /** Owns only the decorative connection between a disclosure strip and its panel. */
 export function SettingsSourceGroup({
@@ -51,10 +42,7 @@ export function SettingsSourceGroup({
         body.width,
         body.height,
         Number.parseFloat(getComputedStyle(panel).borderTopLeftRadius),
-        // The tab only joins the panel from the row next to it.
-        center < viewport.left || center > viewport.right || label.bottom < lastRowBottom(strip)
-          ? null
-          : center - body.left,
+        center < viewport.left || center > viewport.right ? null : center - body.left,
       );
       const next = path
         ? {
@@ -127,17 +115,12 @@ export function SettingsSourcePanel(props: Omit<ComponentProps<"div">, "classNam
 
 export function SettingsSourceStrip(props: {
   readonly label: string;
-  /** Every item stays visible on more rows, rather than scrolling off the side. */
-  readonly wrap?: boolean;
   readonly children: ReactNode;
 }) {
   return (
     <div
       aria-label={props.label}
-      className={cn(
-        "settings-source-strip flex items-center py-1",
-        props.wrap ? "flex-wrap gap-1" : "overflow-x-auto",
-      )}
+      className="settings-source-strip flex items-center overflow-x-auto py-1"
       role="group"
     >
       {props.children}
@@ -153,8 +136,6 @@ export function SettingsSourceStripItem(props: {
   readonly icon: ReactNode;
   readonly label: string;
   readonly separated: boolean;
-  /** Off for tabs that only switch, where there is nothing to fold. */
-  readonly chevron?: boolean;
   readonly onToggle: () => void;
 }) {
   return (
@@ -174,12 +155,10 @@ export function SettingsSourceStripItem(props: {
             <span className="max-w-52 truncate text-sm font-medium text-foreground">
               {props.label}
             </span>
-            {props.chevron === false ? null : (
-              <ChevronDownIcon
-                aria-hidden
-                className="size-3.5 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-180"
-              />
-            )}
+            <ChevronDownIcon
+              aria-hidden
+              className="size-3.5 shrink-0 text-muted-foreground transition-transform group-aria-expanded:rotate-180"
+            />
           </span>
           {props.detail ? (
             <span className="block text-xs text-muted-foreground">{props.detail}</span>

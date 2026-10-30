@@ -91,7 +91,7 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
   spss: {
     name: "SPSS",
     extension: ".sps",
-    setup: { needs: "Not supported yet: SPSS has no Jupyter kernel" },
+    setup: { needs: "No Jupyter kernel exists for SPSS yet" },
   },
   stata: {
     name: "Stata",

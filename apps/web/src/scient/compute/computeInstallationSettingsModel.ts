@@ -45,7 +45,11 @@ export function computeRuntimePickerLabel(
 ): string {
   const version = installation.version ?? languageName;
   const origin = runtimeOriginLabel(installation);
-  const base = version === origin ? origin : `${version} · ${origin}`;
+  // A kernel's display name usually repeats the language.
+  const base =
+    installation.version === null && languageName.includes(origin)
+      ? languageName
+      : `${version} · ${origin}`;
   const duplicates = installations.filter(
     (candidate) =>
       candidate.executable !== installation.executable &&
@@ -252,27 +256,45 @@ export function computeCurrentRuntimeSummary(input: {
   };
 }
 
-/** The one word under a language's name: its version when ready, otherwise what it needs. */
-export function computeLanguageListDetail(
+const LANGUAGE_DOWNLOADS: Readonly<Record<string, string>> = {
+  matlab: "https://www.mathworks.com/products/matlab.html",
+  r: "https://cloud.r-project.org/",
+  julia: "https://julialang.org/install/",
+};
+
+/** Where to get a language that is not on this computer. */
+export function computeLanguageDownloadUrl(
+  language: ComputeLanguageRuntimeInventory,
+): string | undefined {
+  return language.descriptor.setup?.url ?? LANGUAGE_DOWNLOADS[language.descriptor.languageId];
+}
+
+/** The line under a language's name: what it runs on when ready, otherwise what it needs. */
+export function computeLanguageDetail(
   language: ComputeLanguageRuntimeInventory,
   summary: ComputeCurrentRuntimeSummary,
+  preference: ScientificComputingLanguageSettings,
+  managed: ComputeManagedRuntimeStatus | null,
 ): string {
   switch (summary.kind) {
     case "disabled":
       return "Off";
     case "ready":
-    case "update-managed":
+    case "update-managed": {
       // SQL's version would be its Python's. A kernel with no version has not been started yet.
       if (language.descriptor.languageId === "sql") return "Ready";
-      return summary.title === language.descriptor.displayName ? "Found" : summary.title;
+      const selected = defaultComputeInstallation(language, preference, managed);
+      if (selected === undefined || selected.version === null) return "Found";
+      return computeRuntimePickerLabel(selected, language.descriptor.displayName);
+    }
     case "setup":
-      return "Set up";
+      return "Needs setup";
     case "connect":
-      return "Connect";
+      return "Not connected";
     case "missing":
       return "Not installed";
     default:
-      return "Problem";
+      return summary.title;
   }
 }
 
