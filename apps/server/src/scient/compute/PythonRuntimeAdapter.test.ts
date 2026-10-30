@@ -1,8 +1,8 @@
 // @effect-diagnostics preferSchemaOverJson:off -- test data uses JSON for probe simulation.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import {
   ComputeRuntimeError,
@@ -15,14 +15,16 @@ import {
   buildProfile,
   checkReadiness,
   computeFingerprint,
-  discoverCandidates,
   makePythonRuntimeAdapter,
+  pythonCandidates,
   parseProbeOutput,
   OBSERVED_PYTHON_PACKAGES,
   PYTHON_LANGUAGE_ID,
   JUPYTER_BRIDGE_TRANSPORT_KIND,
   PROBE_SCRIPT,
 } from "./PythonRuntimeAdapter.ts";
+import { RuntimeDiscoveryHostReference } from "./RuntimeDiscovery.ts";
+import { fakeDiscoveryHost } from "./RuntimeDiscoveryTestHost.ts";
 
 const validProbeOutput = JSON.stringify({
   executable: "/usr/bin/python3",
@@ -55,11 +57,20 @@ const profile: ComputeRuntimeProfile = {
   displayName: "Python 3.12.0 (path)",
 };
 
+const onHost =
+  (host: ReturnType<typeof fakeDiscoveryHost>, environment: Record<string, string> = {}) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(RuntimeDiscoveryHostReference, host),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, { HOME: "/home/ada", ...environment }),
+    );
+
 describe("Python filesystem inventory", () => {
   it.effect("keeps a selected PATH installation's provenance and virtualenvs distinct", () =>
     Effect.gen(function* () {
       const adapter = makePythonRuntimeAdapter(() => Effect.never, "/bridge.py");
-      for (const configuredExecutable of ["python3", "/system/python"]) {
+      for (const configuredExecutable of ["python3", "/system/python3"]) {
         const rows = yield* adapter.listInstallations!({
           projectRoot: null,
           configuredExecutable,
@@ -67,7 +78,7 @@ describe("Python filesystem inventory", () => {
         });
         expect(rows).toEqual([
           {
-            executable: "/system/python",
+            executable: "/system/python3",
             source: "path",
             configured: true,
             version: null,
@@ -80,23 +91,17 @@ describe("Python filesystem inventory", () => {
         configuredExecutable: "/venv/bin/python",
         refresh: true,
       });
-      expect(rows.map((row) => row.executable)).toEqual(["/venv/bin/python", "/system/python"]);
+      expect(rows.map((row) => row.executable)).toEqual(["/venv/bin/python", "/system/python3"]);
     }).pipe(
-      Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provideService(HostProcess.Environment, {}),
-      Effect.provideService(SpawnExecutableResolution, (command) =>
-        command === "python3" || command === "python" || command === "/system/python"
-          ? "/system/python"
-          : command === "/venv/bin/python"
-            ? command
-            : undefined,
-      ),
+      onHost(fakeDiscoveryHost({ files: ["/system/python3", "/venv/bin/python"] }), {
+        PATH: "/system",
+      }),
     ),
   );
 
   it.effect.each(
     [true, false].map((selected) => ({
-      caseTitle: `preserves managed ownership when also found on PATH (selected=${selected})`,
+      caseTitle: `preserves managed ownership when also configured (selected=${selected})`,
       selected,
     })),
   )("$caseTitle", ({ selected }) =>
@@ -124,11 +129,7 @@ describe("Python filesystem inventory", () => {
           problem: null,
         },
       ]);
-    }).pipe(
-      Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provideService(HostProcess.Environment, {}),
-      Effect.provideService(SpawnExecutableResolution, () => "/managed/python"),
-    ),
+    }).pipe(onHost(fakeDiscoveryHost({ files: ["/managed/python"] }))),
   );
 
   it.effect("preserves managed selection and venv identity without spawning a probe", () =>
@@ -167,10 +168,8 @@ describe("Python filesystem inventory", () => {
       available = false;
       expect((yield* adapter.listInstallations!(request))[0]?.problem).toContain("repair");
     }).pipe(
-      Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provideService(HostProcess.Environment, {}),
-      Effect.provideService(SpawnExecutableResolution, (command) =>
-        command.startsWith("/") ? command : undefined,
+      onHost(
+        fakeDiscoveryHost({ files: ["/managed/venv/bin/python", "/project/venv/bin/python"] }),
       ),
     ),
   );
@@ -192,13 +191,35 @@ describe("Python filesystem inventory", () => {
           version: null,
           problem: expect.stringContaining("not found"),
         },
-        { executable: "/usr/bin/python3", source: "path", version: null, problem: null },
+        { executable: "/usr/local/bin/python3", source: "path", version: null, problem: null },
       ]);
     }).pipe(
-      Effect.provideService(HostProcess.Platform, "darwin"),
-      Effect.provideService(HostProcess.Environment, {}),
-      Effect.provideService(SpawnExecutableResolution, (command) =>
-        command === "python3" ? "/usr/bin/python3" : undefined,
+      onHost(fakeDiscoveryHost({ files: ["/usr/local/bin/python3"] }), { PATH: "/usr/local/bin" }),
+    ),
+  );
+
+  it.effect("lists a conda environment outside PATH with where it came from", () =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(() => Effect.never, "/bridge.py");
+      expect(
+        yield* adapter.listInstallations!({ projectRoot: null, configuredExecutable: null }),
+      ).toEqual([
+        {
+          executable: "/home/ada/miniforge3/envs/lab/bin/python",
+          source: "conventional",
+          origin: "conda: lab",
+          version: null,
+          problem: null,
+        },
+      ]);
+    }).pipe(
+      onHost(
+        fakeDiscoveryHost({
+          files: [
+            "/home/ada/miniforge3/envs/lab/bin/python",
+            "/home/ada/miniforge3/envs/lab/conda-meta/history",
+          ],
+        }),
       ),
     ),
   );
@@ -380,384 +401,432 @@ describe("python fingerprint", () => {
   });
 });
 
-describe("python candidate discovery", () => {
-  it("places configured executable first", () => {
-    const candidates = discoverCandidates("/project", "/custom/python", "darwin");
-    expect(candidates[0]).toEqual({ executable: "/custom/python", source: "configured" });
-  });
+describe("python candidate order", () => {
+  const found = [
+    {
+      executable: "/p/.venv/bin/python",
+      source: "project" as const,
+      origin: ".venv",
+      problem: null,
+    },
+    { executable: "/usr/bin/python3", source: "path" as const, origin: null, problem: null },
+  ];
 
-  it("places explicitly selected managed Python before an existing configured runtime", () => {
-    const candidates = discoverCandidates("/nonexistent", "/custom/python", "darwin", {
-      executable: "/managed/python",
-      selected: true,
-    });
-    expect(candidates.slice(0, 2)).toEqual([
-      { executable: "/managed/python", source: "managed" },
-      { executable: "/custom/python", source: "configured" },
+  it("places a selected managed Python, then the configured one, before discovered runtimes", () => {
+    expect(
+      pythonCandidates(found, "/custom/python", {
+        executable: "/managed/python",
+        selected: true,
+      }).map((candidate) => [candidate.executable, candidate.source]),
+    ).toEqual([
+      ["/managed/python", "managed"],
+      ["/custom/python", "configured"],
+      ["/p/.venv/bin/python", "project"],
+      ["/usr/bin/python3", "path"],
     ]);
   });
 
-  it("keeps an installed but unselected managed runtime behind existing runtimes", () => {
-    const candidates = discoverCandidates("/nonexistent", "/custom/python", "darwin", {
-      executable: "/managed/python",
-      selected: false,
-    });
-    expect(candidates[0]).toEqual({ executable: "/custom/python", source: "configured" });
-    expect(candidates.at(-1)).toEqual({ executable: "/managed/python", source: "managed" });
-  });
-
-  it("places project .venv before PATH candidates", () => {
-    // This test uses a real directory that may or may not have .venv.
-    // The important assertion is ordering when .venv exists.
-    const tmpDir = require("node:fs").mkdtempSync("/tmp/scient-test-");
-    try {
-      require("node:fs").mkdirSync(`${tmpDir}/.venv/bin`, { recursive: true });
-      require("node:fs").writeFileSync(`${tmpDir}/.venv/bin/python`, "");
-      const candidates = discoverCandidates(tmpDir, null, "darwin");
-      expect(candidates[0]).toEqual({
-        executable: `${tmpDir}/.venv/bin/python`,
-        source: "project",
-      });
-      expect(candidates[1]).toEqual({ executable: "python3", source: "path" });
-    } finally {
-      require("node:fs").rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("lists python3 before python on Unix", () => {
-    const candidates = discoverCandidates("/nonexistent", null, "darwin");
-    const pathCandidates = candidates.filter((c) => c.source === "path");
-    expect(pathCandidates[0]).toEqual({ executable: "python3", source: "path" });
-    expect(pathCandidates[1]).toEqual({ executable: "python", source: "path" });
-  });
-
-  it("lists python.exe before python3.exe on Windows", () => {
-    const candidates = discoverCandidates("C:\\project", null, "win32");
-    const pathCandidates = candidates.filter((c) => c.source === "path");
-    expect(pathCandidates[0]).toEqual({ executable: "python.exe", source: "path" });
-    expect(pathCandidates[1]).toEqual({ executable: "python3.exe", source: "path" });
-  });
-
-  it("deduplicates candidates", () => {
-    const candidates = discoverCandidates("/nonexistent", "python3", "darwin");
-    const pathSources = candidates.filter((c) => c.source === "path");
-    expect(pathSources).toHaveLength(1);
+  it("keeps an unselected managed Python last and a configured duplicate under its choice", () => {
+    expect(
+      pythonCandidates(found, "/usr/bin/python3", {
+        executable: "/managed/python",
+        selected: false,
+      }).map((candidate) => [candidate.executable, candidate.source]),
+    ).toEqual([
+      ["/usr/bin/python3", "configured"],
+      ["/p/.venv/bin/python", "project"],
+      ["/managed/python", "managed"],
+    ]);
   });
 });
 
-describe("python runtime adapter", () => {
-  const fakeSpawnProbe = (stdout: string) => (_executable: string) => Effect.succeed(stdout);
+// Discovery here sees only the configured or managed runtime each test names.
+it.layer(Layer.succeed(RuntimeDiscoveryHostReference, fakeDiscoveryHost({})))(
+  "python runtime adapter",
+  (it) => {
+    const fakeSpawnProbe = (stdout: string) => (_executable: string) => Effect.succeed(stdout);
 
-  const fakeFailingProbe = (_executable: string) =>
-    Effect.fail(new ComputeRuntimeError({ operation: "discover", message: "Probe failed." }));
+    const fakeFailingProbe = (_executable: string) =>
+      Effect.fail(new ComputeRuntimeError({ operation: "discover", message: "Probe failed." }));
 
-  it.effect("discovers profiles from viable candidates", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-      const profiles = yield* adapter.discover({
-        projectRoot: "/nonexistent",
-        configuredExecutable: null,
-      });
-      expect(profiles.length).toBeGreaterThan(0);
-      expect(profiles[0]!.languageId).toBe(PYTHON_LANGUAGE_ID);
-    }),
-  );
+    it.effect("discovers profiles from viable candidates", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(
+          fakeSpawnProbe(validProbeOutput),
+          "/app/bridge.py",
+        );
+        const profiles = yield* adapter.discover({
+          projectRoot: "/nonexistent",
+          configuredExecutable: null,
+        });
+        expect(profiles.length).toBeGreaterThan(0);
+        expect(profiles[0]!.languageId).toBe(PYTHON_LANGUAGE_ID);
+      }).pipe(
+        onHost(fakeDiscoveryHost({ files: ["/usr/local/bin/python3"] }), {
+          PATH: "/usr/local/bin",
+        }),
+      ),
+    );
 
-  it("keeps environment discovery independent from a project's .venv", () => {
-    expect(discoverCandidates(null, null, "darwin")).toEqual([
-      { executable: "python3", source: "path" },
-      { executable: "python", source: "path" },
-    ]);
-  });
-
-  it.effect("reuses the selected probe across discovery, verification, and fingerprinting", () =>
-    Effect.gen(function* () {
-      let calls = 0;
-      const adapter = makePythonRuntimeAdapter(
-        () =>
-          Effect.sync(() => {
-            calls += 1;
-            return validProbeOutput;
-          }),
-        "/app/bridge.py",
-      );
-      const profiles = yield* adapter.discover({
-        projectRoot: "/nonexistent",
-        configuredExecutable: "/usr/bin/python3",
-      });
-      const selected = profiles[0]!;
-      const afterDiscovery = calls;
-      yield* adapter.verify({ profile: selected, cwd: "/project", environment: {} });
-      yield* adapter.fingerprintEnvironment(selected);
-      expect(calls).toBe(afterDiscovery);
-    }),
-  );
-
-  it.effect("bypasses the short-lived probe cache on an explicit refresh", () =>
-    Effect.gen(function* () {
-      let calls = 0;
-      const adapter = makePythonRuntimeAdapter(
-        () =>
-          Effect.sync(() => {
-            calls += 1;
-            return validProbeOutput;
-          }),
-        "/app/bridge.py",
-      );
-      yield* adapter.discover({
-        projectRoot: null,
-        configuredExecutable: "/usr/bin/python3",
-      });
-      const afterFirstInspection = calls;
-      yield* adapter.discover({
-        projectRoot: null,
-        configuredExecutable: "/usr/bin/python3",
-        refresh: true,
-      });
-      expect(calls).toBeGreaterThan(afterFirstInspection);
-    }),
-  );
-
-  it("reads package versions without importing scientific packages", () => {
-    expect(PROBE_SCRIPT).toContain("metadata.version(pkg)");
-    expect(PROBE_SCRIPT).not.toContain("__import__(pkg)");
-  });
-
-  it.effect("returns a configured-but-invalid profile without replacing it", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(fakeFailingProbe, "/app/bridge.py");
-      const profiles = yield* adapter.discover({
-        projectRoot: "/nonexistent",
-        configuredExecutable: "/bad/python",
-      });
-      expect(profiles).toHaveLength(1);
-      expect(profiles[0]!.source).toBe("configured");
-      expect(profiles[0]!.languageVersion).toBe("unknown");
-    }),
-  );
-
-  it.effect("does not let a stale configured path replace selected managed Python", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(
-        (executable) =>
-          executable === "/managed/python"
-            ? Effect.succeed(JSON.stringify({ ...parseProbeOutput(validProbeOutput), executable }))
-            : fakeFailingProbe(executable),
-        "/app/bridge.py",
-        {
-          managedRuntime: () => Effect.succeed({ executable: "/managed/python", selected: true }),
-        },
-      );
-      const profiles = yield* adapter.discover({
-        projectRoot: null,
-        configuredExecutable: "/removed/python",
-      });
-      expect(profiles[0]).toMatchObject({ source: "managed", executable: "/managed/python" });
-      expect(profiles[1]).toMatchObject({
-        source: "configured",
-        executable: "/removed/python",
-        languageVersion: "unknown",
-      });
-    }),
-  );
-
-  it.effect("reports a missing selected managed runtime without choosing another Python", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(fakeFailingProbe, "/app/bridge.py", {
-        managedRuntime: () => Effect.succeed({ executable: "/managed/python", selected: true }),
-      });
-      const profiles = yield* adapter.discover({
-        projectRoot: null,
-        configuredExecutable: "/custom/python",
-      });
-      expect(profiles[0]).toMatchObject({
-        source: "managed",
-        executable: "/managed/python",
-        languageVersion: "unknown",
-      });
-    }),
-  );
-
-  it.effect(
-    "keeps an unavailable managed choice first while allowing an explicit existing choice",
-    () =>
+    it.effect("keeps a broken project environment first instead of falling through to PATH", () =>
       Effect.gen(function* () {
         const probed: string[] = [];
+        const adapter = makePythonRuntimeAdapter((executable) => {
+          probed.push(executable);
+          return Effect.succeed(
+            JSON.stringify({ ...parseProbeOutput(validProbeOutput), executable }),
+          );
+        }, "/app/bridge.py");
+        const profiles = yield* adapter.discover({ projectRoot: "/p", configuredExecutable: null });
+        expect(profiles.map((candidate) => [candidate.source, candidate.languageVersion])).toEqual([
+          ["project", "unknown"],
+          ["path", "3.12.0"],
+        ]);
+        expect(probed).toEqual(["/usr/local/bin/python3"]);
+        const verification = yield* adapter.verify({
+          profile: profiles[0]!,
+          cwd: "/p",
+          environment: {},
+        });
+        expect(verification.message).toBe(
+          "The project environment cannot run. Its Python is missing. Recreate the environment.",
+        );
+      }).pipe(
+        onHost(
+          fakeDiscoveryHost({
+            files: ["/usr/local/bin/python3"],
+            links: { "/p/.venv/bin/python": "/gone/python3" },
+          }),
+          { PATH: "/usr/local/bin" },
+        ),
+      ),
+    );
+
+    it.effect("lists a runtime whose probe fails, with the failure, instead of hiding it", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(fakeFailingProbe, "/app/bridge.py");
+        const profiles = yield* adapter.discover({ projectRoot: null, configuredExecutable: null });
+        expect(profiles).toMatchObject([{ source: "path", languageVersion: "unknown" }]);
+        expect(
+          (yield* adapter.verify({ profile: profiles[0]!, cwd: "/p", environment: {} })).message,
+        ).toBe("This Python cannot run: Probe failed.");
+      }).pipe(
+        onHost(fakeDiscoveryHost({ files: ["/usr/local/bin/python3"] }), {
+          PATH: "/usr/local/bin",
+        }),
+      ),
+    );
+
+    it.effect("reuses the selected probe across discovery, verification, and fingerprinting", () =>
+      Effect.gen(function* () {
+        let calls = 0;
         const adapter = makePythonRuntimeAdapter(
-          (executable) => {
-            probed.push(executable);
-            return executable === "/custom/python"
+          () =>
+            Effect.sync(() => {
+              calls += 1;
+              return validProbeOutput;
+            }),
+          "/app/bridge.py",
+        );
+        const profiles = yield* adapter.discover({
+          projectRoot: "/nonexistent",
+          configuredExecutable: "/usr/bin/python3",
+        });
+        const selected = profiles[0]!;
+        const afterDiscovery = calls;
+        yield* adapter.verify({ profile: selected, cwd: "/project", environment: {} });
+        yield* adapter.fingerprintEnvironment(selected);
+        expect(calls).toBe(afterDiscovery);
+      }),
+    );
+
+    it.effect("bypasses the short-lived probe cache on an explicit refresh", () =>
+      Effect.gen(function* () {
+        let calls = 0;
+        const adapter = makePythonRuntimeAdapter(
+          () =>
+            Effect.sync(() => {
+              calls += 1;
+              return validProbeOutput;
+            }),
+          "/app/bridge.py",
+        );
+        yield* adapter.discover({
+          projectRoot: null,
+          configuredExecutable: "/usr/bin/python3",
+        });
+        const afterFirstInspection = calls;
+        yield* adapter.discover({
+          projectRoot: null,
+          configuredExecutable: "/usr/bin/python3",
+          refresh: true,
+        });
+        expect(calls).toBeGreaterThan(afterFirstInspection);
+      }),
+    );
+
+    it("reads package versions without importing scientific packages", () => {
+      expect(PROBE_SCRIPT).toContain("metadata.version(pkg)");
+      expect(PROBE_SCRIPT).not.toContain("__import__(pkg)");
+    });
+
+    it.effect("returns a configured-but-invalid profile without replacing it", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(fakeFailingProbe, "/app/bridge.py");
+        const profiles = yield* adapter.discover({
+          projectRoot: "/nonexistent",
+          configuredExecutable: "/bad/python",
+        });
+        expect(profiles).toHaveLength(1);
+        expect(profiles[0]!.source).toBe("configured");
+        expect(profiles[0]!.languageVersion).toBe("unknown");
+        expect(
+          (yield* adapter.verify({ profile: profiles[0]!, cwd: "/project", environment: {} }))
+            .message,
+        ).toContain("Probe failed.");
+      }),
+    );
+
+    it.effect("does not let a stale configured path replace selected managed Python", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(
+          (executable) =>
+            executable === "/managed/python"
               ? Effect.succeed(
                   JSON.stringify({ ...parseProbeOutput(validProbeOutput), executable }),
                 )
-              : fakeFailingProbe(executable);
-          },
+              : fakeFailingProbe(executable),
           "/app/bridge.py",
           {
-            managedRuntime: () =>
-              Effect.succeed({ executable: "/managed/python", selected: true, available: false }),
+            managedRuntime: () => Effect.succeed({ executable: "/managed/python", selected: true }),
           },
         );
         const profiles = yield* adapter.discover({
           projectRoot: null,
-          configuredExecutable: "/custom/python",
-          refresh: true,
+          configuredExecutable: "/removed/python",
         });
-        expect(profiles[0]).toMatchObject({ source: "managed", languageVersion: "unknown" });
-        expect(profiles[1]).toMatchObject({ source: "configured", executable: "/custom/python" });
-        expect(
-          (yield* adapter.verify({ profile: profiles[0]!, cwd: "/project", environment: {} }))
-            .readiness,
-        ).toBe("unusable");
-        expect(probed).not.toContain("/managed/python");
+        expect(profiles[0]).toMatchObject({ source: "managed", executable: "/managed/python" });
+        expect(profiles[1]).toMatchObject({
+          source: "configured",
+          executable: "/removed/python",
+          languageVersion: "unknown",
+        });
       }),
-  );
-
-  it.effect("does not silently choose system Python when managed-state inspection fails", () =>
-    Effect.gen(function* () {
-      let probed = false;
-      const failure = new ComputeRuntimeError({
-        operation: "discover",
-        message: "Managed root is unsafe.",
-      });
-      const adapter = makePythonRuntimeAdapter(
-        () => {
-          probed = true;
-          return Effect.succeed(validProbeOutput);
-        },
-        "/app/bridge.py",
-        { managedRuntime: () => Effect.fail(failure) },
-      );
-      const result = yield* Effect.result(
-        adapter.discover({ projectRoot: null, configuredExecutable: null }),
-      );
-      expect(result).toMatchObject({ _tag: "Failure", failure });
-      expect(probed).toBe(false);
-    }),
-  );
-
-  it.effect("verifies a ready environment", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-      const verification = yield* adapter.verify({
-        profile,
-        cwd: "/project",
-        environment: {},
-      });
-      expect(verification.readiness).toBe("ready");
-      expect(verification.connection).toBe("detected");
-      expect(verification.message).toBeNull();
-      const reported = JSON.parse(validProbeOutput).packages as Record<string, string | null>;
-      expect(verification.packages).toEqual(
-        OBSERVED_PYTHON_PACKAGES.map((name) => ({ name, version: reported[name] ?? null })),
-      );
-    }),
-  );
-
-  it.effect("verifies a missing-requirement environment", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(
-        fakeSpawnProbe(
-          JSON.stringify({
-            ...JSON.parse(validProbeOutput),
-            packages: {
-              jupyter_client: null,
-              ipykernel: null,
-              matplotlib: null,
-              numpy: null,
-              pandas: null,
-              plotly: null,
-            },
-          }),
-        ),
-        "/app/bridge.py",
-      );
-      const verification = yield* adapter.verify({
-        profile,
-        cwd: "/project",
-        environment: {},
-      });
-      expect(verification.readiness).toBe("missing-requirement");
-      expect(verification.connection).toBeUndefined();
-      expect(verification.missingRequirements).toContain("jupyter_client");
-      expect(verification.message).toBe(
-        "Create or select a Python environment that satisfies: jupyter_client, ipykernel. " +
-          "Project .venv environments are detected when that project is open. " +
-          "Scient's isolated compute bridge does not load packages installed with pip --user.",
-      );
-    }),
-  );
-
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it.effect("builds a launch plan through prepareLaunch", () =>
-    Effect.gen(function* () {
-      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-      const plan = yield* adapter.prepareLaunch({
-        profile,
-        cwd: "/project",
-        environment: { PYTHONUTF8: "1" },
-      });
-      expect(plan.args).toEqual(["-I", "-u", "/app/bridge.py"]);
-    }),
-  );
-
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it("normalizes diagnostics through the adapter", () => {
-    const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-    const diagnostics = adapter.normalizeDiagnostic(
-      {
-        name: "ValueError",
-        value: "bad value",
-        traceback: ["line 1", "line 2"],
-      },
-      { projectRoot: "/project", submittedSource: null },
     );
-    expect(diagnostics).toHaveLength(1);
-    expect(diagnostics[0]!.errorName).toBe("ValueError");
-  });
 
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it.effect("computes a fingerprint through the adapter", () =>
-    Effect.gen(function* () {
+    it.effect("reports a missing selected managed runtime without choosing another Python", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(fakeFailingProbe, "/app/bridge.py", {
+          managedRuntime: () => Effect.succeed({ executable: "/managed/python", selected: true }),
+        });
+        const profiles = yield* adapter.discover({
+          projectRoot: null,
+          configuredExecutable: "/custom/python",
+        });
+        expect(profiles[0]).toMatchObject({
+          source: "managed",
+          executable: "/managed/python",
+          languageVersion: "unknown",
+        });
+      }),
+    );
+
+    it.effect(
+      "keeps an unavailable managed choice first while allowing an explicit existing choice",
+      () =>
+        Effect.gen(function* () {
+          const probed: string[] = [];
+          const adapter = makePythonRuntimeAdapter(
+            (executable) => {
+              probed.push(executable);
+              return executable === "/custom/python"
+                ? Effect.succeed(
+                    JSON.stringify({ ...parseProbeOutput(validProbeOutput), executable }),
+                  )
+                : fakeFailingProbe(executable);
+            },
+            "/app/bridge.py",
+            {
+              managedRuntime: () =>
+                Effect.succeed({ executable: "/managed/python", selected: true, available: false }),
+            },
+          );
+          const profiles = yield* adapter.discover({
+            projectRoot: null,
+            configuredExecutable: "/custom/python",
+            refresh: true,
+          });
+          expect(profiles[0]).toMatchObject({ source: "managed", languageVersion: "unknown" });
+          expect(profiles[1]).toMatchObject({ source: "configured", executable: "/custom/python" });
+          expect(
+            (yield* adapter.verify({ profile: profiles[0]!, cwd: "/project", environment: {} }))
+              .readiness,
+          ).toBe("unusable");
+          expect(probed).not.toContain("/managed/python");
+        }),
+    );
+
+    it.effect("does not silently choose system Python when managed-state inspection fails", () =>
+      Effect.gen(function* () {
+        let probed = false;
+        const failure = new ComputeRuntimeError({
+          operation: "discover",
+          message: "Managed root is unsafe.",
+        });
+        const adapter = makePythonRuntimeAdapter(
+          () => {
+            probed = true;
+            return Effect.succeed(validProbeOutput);
+          },
+          "/app/bridge.py",
+          { managedRuntime: () => Effect.fail(failure) },
+        );
+        const result = yield* Effect.result(
+          adapter.discover({ projectRoot: null, configuredExecutable: null }),
+        );
+        expect(result).toMatchObject({ _tag: "Failure", failure });
+        expect(probed).toBe(false);
+      }),
+    );
+
+    it.effect("verifies a ready environment", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(
+          fakeSpawnProbe(validProbeOutput),
+          "/app/bridge.py",
+        );
+        const verification = yield* adapter.verify({
+          profile,
+          cwd: "/project",
+          environment: {},
+        });
+        expect(verification.readiness).toBe("ready");
+        expect(verification.connection).toBe("detected");
+        expect(verification.message).toBeNull();
+        const reported = JSON.parse(validProbeOutput).packages as Record<string, string | null>;
+        expect(verification.packages).toEqual(
+          OBSERVED_PYTHON_PACKAGES.map((name) => ({ name, version: reported[name] ?? null })),
+        );
+      }),
+    );
+
+    it.effect("verifies a missing-requirement environment", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(
+          fakeSpawnProbe(
+            JSON.stringify({
+              ...JSON.parse(validProbeOutput),
+              packages: {
+                jupyter_client: null,
+                ipykernel: null,
+                matplotlib: null,
+                numpy: null,
+                pandas: null,
+                plotly: null,
+              },
+            }),
+          ),
+          "/app/bridge.py",
+        );
+        const verification = yield* adapter.verify({
+          profile,
+          cwd: "/project",
+          environment: {},
+        });
+        expect(verification.readiness).toBe("missing-requirement");
+        expect(verification.connection).toBeUndefined();
+        expect(verification.missingRequirements).toContain("jupyter_client");
+        expect(verification.message).toBe(
+          "Create or select a Python environment that satisfies: jupyter_client, ipykernel. " +
+            "Project .venv environments are detected when that project is open. " +
+            "Scient's isolated compute bridge does not load packages installed with pip --user.",
+        );
+      }),
+    );
+
+    // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+    it.effect("builds a launch plan through prepareLaunch", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(
+          fakeSpawnProbe(validProbeOutput),
+          "/app/bridge.py",
+        );
+        const plan = yield* adapter.prepareLaunch({
+          profile,
+          cwd: "/project",
+          environment: { PYTHONUTF8: "1" },
+        });
+        expect(plan.args).toEqual(["-I", "-u", "/app/bridge.py"]);
+      }),
+    );
+
+    // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+    it("normalizes diagnostics through the adapter", () => {
       const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-      const fp = yield* adapter.fingerprintEnvironment(profile);
-      expect(fp.hash).toMatch(/^sha256:/);
-    }),
-  );
+      const diagnostics = adapter.normalizeDiagnostic(
+        {
+          name: "ValueError",
+          value: "bad value",
+          traceback: ["line 1", "line 2"],
+        },
+        { projectRoot: "/project", submittedSource: null },
+      );
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]!.errorName).toBe("ValueError");
+    });
 
-  it.effect("fails rather than dies when a probe cannot be parsed", () =>
-    Effect.gen(function* () {
-      // A wrapper script, a stray banner, a Python that prints nothing useful.
-      // The coordinator starts a session without a fingerprint, but only if it
-      // is told in the failure channel -- a defect would take the start down.
-      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe("not json at all"), "/app/bridge.py");
-      const error = yield* Effect.flip(adapter.fingerprintEnvironment(profile));
-      expect(error.operation).toBe("fingerprint");
-      expect(error.message).toContain("malformed");
-    }),
-  );
+    // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+    it.effect("computes a fingerprint through the adapter", () =>
+      Effect.gen(function* () {
+        const adapter = makePythonRuntimeAdapter(
+          fakeSpawnProbe(validProbeOutput),
+          "/app/bridge.py",
+        );
+        const fp = yield* adapter.fingerprintEnvironment(profile);
+        expect(fp.hash).toMatch(/^sha256:/);
+      }),
+    );
 
-  it.effect("answers a configured interpreter that cannot describe itself with itself", () =>
-    Effect.gen(function* () {
-      // The probe runs and says nothing usable, which is as unusable as a probe
-      // that would not run. Falling through to whatever else is installed would
-      // silently run the user's code on an interpreter they did not choose.
-      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe("not json at all"), "/app/bridge.py");
-      const profiles = yield* adapter.discover({
-        projectRoot: "/nonexistent",
-        configuredExecutable: "/bad/python",
-      });
-      expect(profiles).toHaveLength(1);
-      expect(profiles[0]!.source).toBe("configured");
-      expect(profiles[0]!.executable).toBe("/bad/python");
-      expect(profiles[0]!.languageVersion).toBe("unknown");
-    }),
-  );
+    it.effect("fails rather than dies when a probe cannot be parsed", () =>
+      Effect.gen(function* () {
+        // A wrapper script, a stray banner, a Python that prints nothing useful.
+        // The coordinator starts a session without a fingerprint, but only if it
+        // is told in the failure channel -- a defect would take the start down.
+        const adapter = makePythonRuntimeAdapter(
+          fakeSpawnProbe("not json at all"),
+          "/app/bridge.py",
+        );
+        const error = yield* Effect.flip(adapter.fingerprintEnvironment(profile));
+        expect(error.operation).toBe("fingerprint");
+        expect(error.message).toContain("malformed");
+      }),
+    );
 
-  // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
-  it("reports the correct language and transport kind", () => {
-    const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
-    expect(adapter.languageId).toBe(PYTHON_LANGUAGE_ID);
-    expect(adapter.transportKind).toBe(JUPYTER_BRIDGE_TRANSPORT_KIND);
-  });
-});
+    it.effect("answers a configured interpreter that cannot describe itself with itself", () =>
+      Effect.gen(function* () {
+        // The probe runs and says nothing usable, which is as unusable as a probe
+        // that would not run. Falling through to whatever else is installed would
+        // silently run the user's code on an interpreter they did not choose.
+        const adapter = makePythonRuntimeAdapter(
+          fakeSpawnProbe("not json at all"),
+          "/app/bridge.py",
+        );
+        const profiles = yield* adapter.discover({
+          projectRoot: "/nonexistent",
+          configuredExecutable: "/bad/python",
+        });
+        expect(profiles).toHaveLength(1);
+        expect(profiles[0]!.source).toBe("configured");
+        expect(profiles[0]!.executable).toBe("/bad/python");
+        expect(profiles[0]!.languageVersion).toBe("unknown");
+      }),
+    );
+
+    // regression: c4de0a4c6f feat: implement Phase 2 compute session bridge protocol and Python runtime
+    it("reports the correct language and transport kind", () => {
+      const adapter = makePythonRuntimeAdapter(fakeSpawnProbe(validProbeOutput), "/app/bridge.py");
+      expect(adapter.languageId).toBe(PYTHON_LANGUAGE_ID);
+      expect(adapter.transportKind).toBe(JUPYTER_BRIDGE_TRANSPORT_KIND);
+    });
+  },
+);
