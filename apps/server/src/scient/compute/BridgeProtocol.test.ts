@@ -553,8 +553,8 @@ describe("bridge protocol direction sets", () => {
   it("places every type in exactly one direction", () => {
     const allTypes = new Set([...SERVER_TO_BRIDGE_TYPES, ...BRIDGE_TO_SERVER_TYPES]);
     expect(allTypes.size).toBe(SERVER_TO_BRIDGE_TYPES.size + BRIDGE_TO_SERVER_TYPES.size);
-    expect(SERVER_TO_BRIDGE_TYPES.size).toBe(7);
-    expect(BRIDGE_TO_SERVER_TYPES.size).toBe(13);
+    expect(SERVER_TO_BRIDGE_TYPES.size).toBe(8);
+    expect(BRIDGE_TO_SERVER_TYPES.size).toBe(14);
   });
 });
 
