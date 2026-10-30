@@ -69,6 +69,8 @@ export const ComputeExecutionSource = Schema.Union([
     bufferState: Schema.Literals(["saved", "dirty"]),
     revision: Schema.NullOr(Label),
     range: Schema.NullOr(ComputeSourceRange),
+    /** The notebook cell this run belongs to. */
+    cell: Schema.optional(ShortText),
   }),
 ]);
 export type ComputeExecutionSource = typeof ComputeExecutionSource.Type;

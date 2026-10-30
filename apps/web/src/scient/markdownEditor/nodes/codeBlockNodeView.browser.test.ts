@@ -46,6 +46,8 @@ describe("persistent nested code editor", () => {
       return {
         destroy: vi.fn(),
         focus: vi.fn(),
+        focusEdge: vi.fn(),
+        caretAtEdge: vi.fn(() => false),
         refreshAppearance: vi.fn(),
         replaceExternalCode: vi.fn(),
         setEditable: vi.fn(),
@@ -82,6 +84,8 @@ describe("persistent nested code editor", () => {
     const view = {
       editable: input.editable ?? true,
       focus: vi.fn(),
+      focusEdge: vi.fn(),
+      caretAtEdge: vi.fn(() => false),
       get state() {
         return state;
       },
@@ -186,6 +190,8 @@ describe("persistent nested code editor", () => {
     const editor = {
       destroy: vi.fn(),
       focus: vi.fn(),
+      focusEdge: vi.fn(),
+      caretAtEdge: vi.fn(() => false),
       refreshAppearance: vi.fn(),
       replaceExternalCode: vi.fn(),
       setEditable: vi.fn(),
@@ -370,6 +376,8 @@ describe("persistent nested code editor", () => {
     const editor = {
       destroy: vi.fn(),
       focus: vi.fn(),
+      focusEdge: vi.fn(),
+      caretAtEdge: vi.fn(() => false),
       refreshAppearance: vi.fn(),
       replaceExternalCode: vi.fn(),
       setEditable: vi.fn(),

@@ -1106,6 +1106,25 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /** A notebook stops at the first cell that did not succeed; later cells depend on it. */
+  const cancelQueuedNotebookCells = Effect.fn("ComputeSessionService.cancelQueuedNotebookCells")(
+    function* (live: LiveComputeSession, source: ComputeExecutionSource) {
+      if (source._tag !== "document" || source.cell === undefined) return;
+      const pending = yield* Ref.get(live.pendingRef);
+      for (const executionId of (yield* Ref.get(live.queueRef)).pending) {
+        const queued = pending.get(executionId)?.request.source;
+        if (queued?._tag !== "document" || queued.cell === undefined) continue;
+        if (queued.path !== source.path) continue;
+        yield* Ref.update(
+          live.queueRef,
+          (queue) => cancelComputeExecution(queue, executionId).state,
+        );
+        yield* setExecutionStatus("submit", live, executionId, "cancelled");
+        yield* appendJournal("submit", live, "execution-cancelled", null, executionId);
+      }
+    },
+  );
+
   /** Brings the session record back in line with the queue after it moves. */
   const syncQueueCounters = Effect.fn("ComputeSessionService.syncQueueCounters")(function* (
     operation: ComputeOperation,
@@ -1980,9 +1999,13 @@ const make = Effect.gen(function* () {
         if (event.generation !== record.generation) return false;
         const executionId = ComputeExecutionId.make(event.requestId);
         yield* collectProjectOutputs(live, event);
+        const finished = (yield* Ref.get(live.pendingRef)).get(executionId);
         yield* setExecutionStatus("submit", live, executionId, event.outcome);
         yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
         yield* appendJournal("submit", live, "execution-finished", event.outcome, executionId);
+        if (event.outcome !== "succeeded" && finished !== undefined) {
+          yield* cancelQueuedNotebookCells(live, finished.request.source);
+        }
         yield* syncQueueCounters("submit", live);
         return true;
       }

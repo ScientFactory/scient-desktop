@@ -12,7 +12,14 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDown, LoaderCircle, Play } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { Button } from "~/components/ui/button";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
@@ -26,6 +33,7 @@ import {
   AlertDialogTitle,
 } from "~/components/ui/alert-dialog";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
@@ -89,8 +97,17 @@ export interface ComputeFileActionsHandle {
   readonly runFile: () => void;
   readonly runPrimary: (selection?: ComputeTextRange | null) => void;
   readonly runCellAtLine: (line: number) => void;
-  /** Runs exact code as one cell; the returned slice comes back with its submission. */
-  readonly runCode: (code: string) => ComputeCodeSlice;
+  /** Queues notebook cells in order, each recorded against its cell; settles once submitted. */
+  readonly runCells: (cells: ReadonlyArray<ComputeNotebookCell>) => Promise<void>;
+}
+
+export interface ComputeNotebookCell {
+  readonly id: string;
+  readonly code: string;
+}
+
+interface ComputeRunSlice extends ComputeCodeSlice {
+  readonly cells?: ReadonlyArray<ComputeNotebookCell>;
 }
 
 interface ComputeFileActionsProps {
@@ -110,10 +127,13 @@ interface ComputeFileActionsProps {
   readonly onExecutionSubmitted: (
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
-    slice?: ComputeCodeSlice,
   ) => void;
-  /** Notebooks run cell by cell: the primary action runs every cell and the file menu goes. */
+  /** Notebooks run cell by cell: the primary action runs every cell. */
   readonly runAll?: () => void;
+  /** The notebook's own entries for the Run menu. */
+  readonly runMenu?: ReactNode;
+  /** Controls placed just before the Run button. */
+  readonly leadingActions?: ReactNode;
 }
 
 function reportFailure(
@@ -498,10 +518,12 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const onExecutionSubmitted = props.onExecutionSubmitted;
     const run = async (
       kind: ComputeRunKind,
-      slice: ComputeCodeSlice | null,
+      slice: ComputeRunSlice | null,
       requestedExecutable?: string,
     ) => {
-      if (slice === null || operation !== null || refreshing || switching) return;
+      if (slice === null || refreshing || switching) return;
+      // Notebook cells wait in `waitingCells`; only one batch is ever in this path.
+      if (operation !== null && slice.cells === undefined) return;
       // Keyboard shortcuts and the empty-results action use this same path;
       // a disabled toolbar must not be bypassed through an imperative handle.
       if (!runtimeToolbar.canRun) {
@@ -690,32 +712,57 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         return;
       }
 
-      const executionId = ComputeExecutionId.make(randomUUID());
-      const submitted = await submitExecution({
-        environmentId: props.environmentId,
-        input: {
-          cwd: props.cwd,
-          sessionId: session.sessionId,
-          executionId,
-          expectedGeneration: session.generation,
-          code: slice.code,
-          source: {
-            _tag: "document",
-            origin: kind,
-            path: props.relativePath,
-            bufferState: props.sourcePending ? "dirty" : "saved",
-            revision: props.sourceRevision,
-            range: slice.range,
+      for (const part of slice.cells ?? [{ id: undefined, code: slice.code }]) {
+        const executionId = ComputeExecutionId.make(randomUUID());
+        const submitted = await submitExecution({
+          environmentId: props.environmentId,
+          input: {
+            cwd: props.cwd,
+            sessionId: session.sessionId,
+            executionId,
+            expectedGeneration: session.generation,
+            code: part.code,
+            source: {
+              _tag: "document",
+              origin: kind,
+              path: props.relativePath,
+              bufferState: props.sourcePending ? "dirty" : "saved",
+              revision: props.sourceRevision,
+              range: part.id === undefined ? slice.range : null,
+              ...(part.id === undefined ? {} : { cell: part.id }),
+            },
           },
-        },
-      });
-      setOperation(null);
-      if (submitted._tag === "Success") {
-        onExecutionSubmitted(session.sessionId, executionId, slice);
-      } else if (!isAtomCommandInterrupted(submitted)) {
-        reportFailure(`Unable to run ${props.language.displayName}`, submitted);
-        refreshSessions();
+        });
+        if (submitted._tag === "Success") {
+          onExecutionSubmitted(session.sessionId, executionId);
+          continue;
+        }
+        if (!isAtomCommandInterrupted(submitted)) {
+          reportFailure(`Unable to run ${props.language.displayName}`, submitted);
+          refreshSessions();
+        }
+        break;
       }
+      setOperation(null);
+    };
+
+    const stableRun = useStableCallback(run);
+    const waitingCells = useRef<ComputeNotebookCell[]>([]);
+    const cellRun = useRef<Promise<void> | null>(null);
+    const runCells = (cells: ReadonlyArray<ComputeNotebookCell>): Promise<void> => {
+      waitingCells.current.push(...cells);
+      cellRun.current ??= (async () => {
+        while (waitingCells.current.length > 0) {
+          const batch = waitingCells.current.splice(0);
+          await stableRun("cell", {
+            code: batch.map((cell) => cell.code).join("\n"),
+            range: { startLine: 0, startColumn: 0, endLine: 0, endColumn: 0 },
+            cells: batch,
+          });
+        }
+        cellRun.current = null;
+      })();
+      return cellRun.current;
     };
 
     const runWithChosenRuntime = (executable: string) => {
@@ -1005,20 +1052,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         },
         runCellAtLine: (line) =>
           void run("cell", computeCell(props.contents, line, props.language.cellMarker)),
-        runCode: (code) => {
-          const lines = code.split("\n");
-          const slice: ComputeCodeSlice = {
-            code,
-            range: {
-              startLine: 0,
-              startColumn: 0,
-              endLine: lines.length - 1,
-              endColumn: lines.at(-1)?.length ?? 0,
-            },
-          };
-          void run("cell", slice);
-          return slice;
-        },
+        runCells,
       }),
       [props.contents, props.editorSelection, props.selection, props.language.cellMarker, run],
     );
@@ -1115,6 +1149,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               </ScientTooltip>
             )}
           </div>
+          {props.leadingActions}
           <div className="flex shrink-0 items-center">
             <ScientTooltip content={primaryRunTooltip}>
               <span className="inline-flex">
@@ -1130,12 +1165,16 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                         ? "MATLAB definition file"
                         : primary.label
                   }
-                  disabled={liveRunDisabled || primary.slice === null}
+                  disabled={
+                    props.runAll
+                      ? !runtimeToolbar.canRun
+                      : liveRunDisabled || primary.slice === null
+                  }
                   onClick={() =>
                     props.runAll ? props.runAll() : void run(primary.kind, primary.slice)
                   }
                 >
-                  {operation === primary.kind ? (
+                  {operation === primary.kind && !props.runAll ? (
                     <LoaderCircle className="animate-spin" />
                   ) : (
                     <Play />
@@ -1161,7 +1200,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 <ChevronDown />
               </MenuTrigger>
               <MenuPopup align="end" side="bottom">
-                {props.runAll ? null : (
+                {props.runAll ? (
+                  props.runMenu
+                ) : (
                   <>
                     <MenuItem
                       disabled={busy || !runtimeToolbar.canRun || selectionSlice === null}

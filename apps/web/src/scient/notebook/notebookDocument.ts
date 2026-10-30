@@ -7,12 +7,22 @@ export type NotebookCellType = "code" | "markdown" | "raw";
 
 export type NotebookOutput = Readonly<Record<string, unknown>>;
 
+/** Scient's record of a cell's last run, kept in the cell's `metadata.scient`. */
+export interface NotebookCellRun {
+  readonly execution: string;
+  /** `notebookCodeHash` of the code that produced the outputs. */
+  readonly code: string;
+  readonly at: string;
+  readonly ms: number | null;
+}
+
 export interface NotebookCell {
   readonly id: string;
   readonly cellType: NotebookCellType;
   readonly source: string;
   readonly outputs: ReadonlyArray<NotebookOutput>;
   readonly executionCount: number | null;
+  readonly run: NotebookCellRun | null;
   /** The cell as read, for fields Scient does not edit (metadata, attachments). */
   readonly raw: Readonly<Record<string, unknown>>;
 }
@@ -37,13 +47,43 @@ function sourceLines(source: string): string[] {
   return source.length === 0 ? [] : source.split(/(?<=\n)/);
 }
 
+/** A short hash, so a cell can tell whether its outputs came from the code it shows now. */
+export function notebookCodeHash(code: string): string {
+  let hash = 0x811c9dc5;
+  const text = code.trimEnd();
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function readCellRun(metadata: unknown): NotebookCellRun | null {
+  const run = isRecord(metadata) ? metadata.scient : undefined;
+  if (!isRecord(run)) return null;
+  const { execution, code, at, ms } = run;
+  if (typeof execution !== "string" || typeof code !== "string" || typeof at !== "string") {
+    return null;
+  }
+  return { execution, code, at, ms: typeof ms === "number" ? ms : null };
+}
+
 let generatedIds = 0;
 function newNotebookCellId(): string {
   generatedIds += 1;
   return `${Date.now().toString(36)}${generatedIds.toString(36)}`.slice(-12);
 }
 
+/** The last notebook read or written; typing must not reparse every saved figure. */
+let latest: { readonly text: string; readonly document: NotebookDocument | null } | null = null;
+
 export function parseNotebook(text: string): NotebookDocument | null {
+  if (latest?.text === text) return latest.document;
+  const document = readNotebook(text);
+  latest = { text, document };
+  return document;
+}
+
+function readNotebook(text: string): NotebookDocument | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text.trim().length === 0 ? "{}" : text);
@@ -73,6 +113,7 @@ export function parseNotebook(text: string): NotebookDocument | null {
         source: notebookText(cell.source),
         outputs: Array.isArray(cell.outputs) ? cell.outputs.filter(isRecord) : [],
         executionCount: typeof cell.execution_count === "number" ? cell.execution_count : null,
+        run: readCellRun(cell.metadata),
         raw: cell,
       };
     }),
@@ -80,11 +121,12 @@ export function parseNotebook(text: string): NotebookDocument | null {
 }
 
 function serializeCell(cell: NotebookCell): Record<string, unknown> {
+  const { scient: _run, ...metadata } = isRecord(cell.raw.metadata) ? cell.raw.metadata : {};
   const base: Record<string, unknown> = {
     ...cell.raw,
     cell_type: cell.cellType,
     id: cell.id,
-    metadata: isRecord(cell.raw.metadata) ? cell.raw.metadata : {},
+    metadata: cell.run === null ? metadata : { ...metadata, scient: cell.run },
     // An unedited cell keeps its saved form, so saving does not rewrite the whole file.
     source:
       cell.raw.source !== undefined && notebookText(cell.raw.source) === cell.source
@@ -103,7 +145,7 @@ function serializeCell(cell: NotebookCell): Record<string, unknown> {
 export function serializeNotebook(document: NotebookDocument): string {
   const nbformatMinor =
     typeof document.raw.nbformat_minor === "number" ? Math.max(document.raw.nbformat_minor, 5) : 5;
-  return `${JSON.stringify(
+  const text = `${JSON.stringify(
     {
       ...document.raw,
       cells: document.cells.map(serializeCell),
@@ -114,6 +156,8 @@ export function serializeNotebook(document: NotebookDocument): string {
     null,
     1,
   )}\n`;
+  latest = { text, document };
+  return text;
 }
 
 export function emptyNotebookCell(cellType: NotebookCellType): NotebookCell {
@@ -123,6 +167,7 @@ export function emptyNotebookCell(cellType: NotebookCellType): NotebookCell {
     source: "",
     outputs: [],
     executionCount: null,
+    run: null,
     raw: {},
   };
 }
@@ -154,6 +199,29 @@ export function insertNotebookCell(
 
 export function removeNotebookCell(document: NotebookDocument, cellId: string): NotebookDocument {
   return { ...document, cells: document.cells.filter((cell) => cell.id !== cellId) };
+}
+
+export function clearNotebookOutputs(document: NotebookDocument): NotebookDocument {
+  return {
+    ...document,
+    cells: document.cells.map((cell) =>
+      cell.cellType === "code" ? { ...cell, outputs: [], executionCount: null, run: null } : cell,
+    ),
+  };
+}
+
+export function convertNotebookCell(
+  document: NotebookDocument,
+  cellId: string,
+  cellType: NotebookCellType,
+): NotebookDocument {
+  return updateNotebookCell(document, cellId, (cell) => ({
+    ...cell,
+    cellType,
+    outputs: [],
+    executionCount: null,
+    run: null,
+  }));
 }
 
 export function moveNotebookCell(

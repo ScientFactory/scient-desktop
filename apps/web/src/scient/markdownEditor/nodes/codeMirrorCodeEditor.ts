@@ -121,6 +121,10 @@ export interface ScientCodeChange {
 
 export interface ScientNestedCodeEditor {
   readonly focus: () => void;
+  /** Focuses with the caret at one end of the code. */
+  readonly focusEdge: (edge: "start" | "end") => void;
+  /** Whether the caret sits on the first or last visual line. */
+  readonly caretAtEdge: (edge: "start" | "end") => boolean;
   readonly refreshAppearance: () => void;
   readonly replaceExternalCode: (code: string, language?: string) => void;
   readonly setEditable: (editable: boolean) => void;
@@ -269,6 +273,17 @@ export function createScientNestedCodeEditor(input: {
 
   return {
     focus: () => view.focus(),
+    focusEdge: (edge) => {
+      view.dispatch({ selection: { anchor: edge === "start" ? 0 : view.state.doc.length } });
+      view.focus();
+    },
+    caretAtEdge: (edge) => {
+      const { main } = view.state.selection;
+      if (!main.empty) return false;
+      const caret = view.coordsAtPos(main.head);
+      const end = view.coordsAtPos(edge === "start" ? 0 : view.state.doc.length);
+      return caret !== null && end !== null && Math.abs(caret.top - end.top) < 2;
+    },
     refreshAppearance: () => {
       const nextIsDark = documentRoot.classList.contains("dark");
       if (destroyed || nextIsDark === isDark) return;

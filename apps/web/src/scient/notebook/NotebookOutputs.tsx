@@ -1,6 +1,7 @@
 /* oxlint-disable react/no-array-index-key -- Notebook outputs keep their saved order and have no identity. */
 import type { Root, RootContent } from "mdast";
 
+import { ComputeOutputBlock } from "~/scient/compute/ComputeOutputBlock";
 import { ComputeRichOutput, type ComputeRichDisplay } from "~/scient/compute/ComputeRichOutput";
 import { computeDisplays } from "~/scient/compute/computeRichRepresentation";
 import { renderTerminalText } from "~/scient/compute/computeTerminalText";
@@ -77,26 +78,30 @@ export function NotebookOutputs(props: {
     <div className="min-w-0 space-y-2 px-3 py-2">
       {props.outputs.map((output, index) => {
         switch (output.output_type) {
-          case "stream":
+          case "stream": {
+            const text = notebookText(output.text);
             return (
-              <ComputeTerminalOutput
-                key={index}
-                terminal={renderTerminalText(notebookText(output.text))}
-                stream={output.name === "stderr" ? "stderr" : "stdout"}
-              />
-            );
-          case "error":
-            return (
-              <div key={index} className="text-destructive">
+              <ComputeOutputBlock key={index} tail copy={() => ({ text })}>
                 <ComputeTerminalOutput
-                  terminal={renderTerminalText(
-                    Array.isArray(output.traceback) && output.traceback.length > 0
-                      ? output.traceback.filter((line) => typeof line === "string").join("\n")
-                      : `${String(output.ename)}: ${String(output.evalue)}`,
-                  )}
+                  terminal={renderTerminalText(text)}
+                  stream={output.name === "stderr" ? "stderr" : "stdout"}
                 />
-              </div>
+              </ComputeOutputBlock>
             );
+          }
+          case "error": {
+            const text =
+              Array.isArray(output.traceback) && output.traceback.length > 0
+                ? output.traceback.filter((line) => typeof line === "string").join("\n")
+                : `${String(output.ename)}: ${String(output.evalue)}`;
+            return (
+              <ComputeOutputBlock key={index} copy={() => ({ text })}>
+                <div className="text-destructive">
+                  <ComputeTerminalOutput terminal={renderTerminalText(text)} />
+                </div>
+              </ComputeOutputBlock>
+            );
+          }
           case "display_data":
           case "execute_result":
             return typeof output.data === "object" && output.data !== null ? (

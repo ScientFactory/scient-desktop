@@ -3375,6 +3375,43 @@ describe("compute session execution", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("stops a notebook's queued cells when one of its cells does not succeed", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const cell = (path: string, id: string): ComputeExecutionSource => ({
+        _tag: "document",
+        origin: "cell",
+        path,
+        bufferState: "saved",
+        revision: null,
+        range: null,
+        cell: id,
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("quiet-hold", "first", undefined, cell("a.ipynb", "1"));
+          yield* waitForExecution(ComputeExecutionId.make("first"), "running");
+          yield* submit("print(1)", "second", undefined, cell("a.ipynb", "2"));
+          yield* submit("print(1)", "other-notebook", undefined, cell("b.ipynb", "1"));
+          yield* submit("print(1)", "console");
+
+          yield* service.interruptSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+
+          yield* waitForExecution(ComputeExecutionId.make("second"), "cancelled");
+          yield* waitForExecution(ComputeExecutionId.make("other-notebook"), "succeeded");
+          yield* waitForExecution(ComputeExecutionId.make("console"), "succeeded");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("returns the same execution for a repeated submission", () =>
     Effect.gen(function* () {
       const test = yield* harness();

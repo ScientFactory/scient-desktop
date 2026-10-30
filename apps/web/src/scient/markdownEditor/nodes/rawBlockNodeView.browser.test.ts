@@ -44,6 +44,8 @@ function fixture(
     },
     dispatch,
     focus: vi.fn(),
+    focusEdge: vi.fn(),
+    caretAtEdge: vi.fn(() => false),
   } as unknown as EditorView;
   const nodeView = createScientRawBlockNodeView(
     node,
@@ -67,6 +69,8 @@ describe("raw Markdown source islands", () => {
       return {
         destroy: vi.fn(),
         focus: vi.fn(),
+        focusEdge: vi.fn(),
+        caretAtEdge: vi.fn(() => false),
         refreshAppearance: vi.fn(),
         replaceExternalCode: vi.fn(),
         setEditable: vi.fn(),
