@@ -868,7 +868,7 @@ class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
                 # this case deliberately replaces it with a real local kernel.
                 self.b._kernel_manager = None
                 await self.b._start_kernel(
-                    {"workingDirectory": directory, "kernelName": None}
+                    {"workingDirectory": directory, "kernel": None}
                 )
                 cell_code = "import os\nos.chdir('/')\nraise RuntimeError('cell source')\n"
                 await self.b._handle_execute(
@@ -1520,7 +1520,7 @@ class TestKernelEndpointAssignment(unittest.IsolatedAsyncioTestCase):
                 await self.b._start_kernel(
                     {
                         "workingDirectory": directory,
-                        "kernelName": None,
+                        "kernel": None,
                         "kernelPorts": {
                             "ip": "127.0.0.1",
                             "shell": 41001,

@@ -176,10 +176,10 @@ function extractFrames(
  * project-local locations there; clients must never infer file authority from traceback text. Strip
  * controls and bound diagnostics.
  */
-export function normalizePythonDiagnostic(
+/** Bounded, control-free error text for any Jupyter kernel's error report. */
+export function normalizeDiagnosticText(
   report: ComputeRuntimeErrorReport,
-  context: ComputeDiagnosticContext,
-): ReadonlyArray<ComputeDiagnostic> {
+): Omit<ComputeDiagnostic, "frames"> {
   const errorName = truncateOnByteBoundary(stripAnsi(report.name), MAX_ERROR_NAME_BYTES);
   const message = truncateOnByteBoundary(stripAnsi(report.value), MAX_ERROR_VALUE_BYTES);
 
@@ -192,5 +192,13 @@ export function normalizePythonDiagnostic(
     .filter((line) => line.length > 0)
     .slice(0, MAX_TRACEBACK_LINES);
 
-  return [{ errorName, message, traceback, frames: extractFrames(traceback, context) }];
+  return { errorName, message, traceback };
+}
+
+export function normalizePythonDiagnostic(
+  report: ComputeRuntimeErrorReport,
+  context: ComputeDiagnosticContext,
+): ReadonlyArray<ComputeDiagnostic> {
+  const text = normalizeDiagnosticText(report);
+  return [{ ...text, frames: extractFrames(text.traceback, context) }];
 }

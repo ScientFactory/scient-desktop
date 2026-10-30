@@ -9,6 +9,8 @@ import {
   ComputeRuntimeError,
   ComputeTransportError,
   REQUIRED_COMPUTE_CAPABILITIES,
+  type ComputeLanguageAdapter,
+  type ComputeTransport,
 } from "@scientfactory/compute";
 import { ExecutionRunId, type ExecutionProcessPort } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -62,6 +64,20 @@ export const BRIDGE_SCRIPT_NAME = "scient_compute_bridge.py";
  * that copies the bridge there and the resolver below that looks for it.
  */
 export const STAGED_BRIDGE_DIRECTORY = "scient-compute-bridge";
+
+/** What another language needs from Python to run its Jupyter kernel behind the same bridge. */
+export interface KernelBridgeHost {
+  readonly bridgePath: string;
+  /** Reserves private kernel ports and keeps a managed host generation in use while it runs. */
+  readonly transport: (startupTimeoutMs?: number) => ComputeTransport;
+  /** A Python that can run the bridge, given the configured Python preference. */
+  readonly executable: (
+    configuredExecutable: string | null,
+  ) => Effect.Effect<string, ComputeRuntimeError>;
+  /** Discovers Pythons with Scient-managed Python first, whatever Python's own default is. */
+  readonly managedPythonAdapter: ComputeLanguageAdapter;
+  readonly managedRuntime?: NonNullable<ComputeRuntimeBinding["managedRuntime"]>;
+}
 
 /**
  * Allow cold interpreter/disk startup but bound silence so an arbitrary configured interpreter
@@ -257,6 +273,7 @@ export const makeSpawnProbe = Effect.fn("PythonComputeRuntime.makeSpawnProbe")(f
 export const pythonRuntimeBinding: Effect.Effect<
   ComputeRuntimeBinding & {
     readonly managedRuntime?: ReturnType<typeof makeManagedPythonRuntimeController>;
+    readonly kernelHost: KernelBridgeHost;
   },
   ComputeRuntimeError,
   | DuplexProcess
@@ -348,36 +365,44 @@ export const pythonRuntimeBinding: Effect.Effect<
       catch: (cause) =>
         runtimeError("The requested Python environment is unavailable or being removed.", cause),
     });
-  const adapter = makePythonRuntimeAdapter(
-    (executable) => spawnProbe(executable, retain(executable)),
-    bridgePath,
+  const inspectManaged = () =>
     managedSetup === null
-      ? {}
-      : {
-          managedRuntime: () =>
-            Effect.tryPromise({
-              try: () => managedSetup.manager.inspect(),
-              catch: (cause) =>
-                new ComputeRuntimeError({
-                  operation: "discover",
-                  message: "Unable to inspect Scientific Python.",
-                  cause,
-                }),
-            }).pipe(
-              Effect.map((status) =>
-                status === null
-                  ? null
-                  : {
-                      executable: status.executable,
-                      selected: status.record.selection === "managed",
-                      available: status.available,
-                      version: status.record.active.pythonVersion,
-                    },
+      ? Effect.succeed(null)
+      : Effect.tryPromise({
+          try: () => managedSetup.manager.inspect(),
+          catch: (cause) =>
+            new ComputeRuntimeError({
+              operation: "discover",
+              message: "Unable to inspect Scientific Python.",
+              cause,
+            }),
+        });
+  const makeAdapter = (preferManaged: boolean) =>
+    makePythonRuntimeAdapter(
+      (executable) => spawnProbe(executable, retain(executable)),
+      bridgePath,
+      managedSetup === null
+        ? {}
+        : {
+            managedRuntime: () =>
+              inspectManaged().pipe(
+                Effect.map((status) =>
+                  status === null
+                    ? null
+                    : {
+                        executable: status.executable,
+                        selected: preferManaged || status.record.selection === "managed",
+                        available: status.available,
+                        version: status.record.active.pythonVersion,
+                      },
+                ),
               ),
-            ),
-        },
-  );
-  const transport = makeComputeBridgeTransport(duplexProcesses, {
+          },
+    );
+  const adapter = makeAdapter(false);
+  const managedPythonAdapter = makeAdapter(true);
+  const bridgeTransport = (startupTimeoutMs?: number) => makeComputeBridgeTransport(duplexProcesses, {
+    ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
     prepareKernelEndpoints: (request) =>
       Effect.uninterruptible(
         Effect.gen(function* () {
@@ -448,9 +473,38 @@ export const pythonRuntimeBinding: Effect.Effect<
         }),
       ),
   });
+  // Any ready Python can host the bridge for another language's kernel; prefer the managed one.
+  const hostExecutable = Effect.fn("PythonComputeRuntime.kernelHostExecutable")(function* (
+    configuredExecutable: string | null,
+  ) {
+    const managed = yield* inspectManaged();
+    if (managed?.available === true) return managed.executable;
+    const profiles = yield* adapter.discover({ projectRoot: null, configuredExecutable });
+    for (const profile of profiles) {
+      const verification = yield* adapter.verify({
+        profile,
+        cwd: NodeOS.tmpdir(),
+        environment,
+      });
+      if (verification.readiness === "ready") return profile.executable;
+    }
+    return yield* new ComputeRuntimeError({
+      operation: "prepare",
+      message: "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
+    });
+  });
+  const managedRuntime =
+    managedSetup === null ? undefined : { ...managedSetup.managedRuntime, tracksUsage: true };
   return {
     adapter,
-    transport,
+    transport: bridgeTransport(),
+    kernelHost: {
+      bridgePath,
+      transport: bridgeTransport,
+      executable: hostExecutable,
+      managedPythonAdapter,
+      ...(managedRuntime === undefined ? {} : { managedRuntime }),
+    },
     descriptor: {
       languageId: PYTHON_LANGUAGE_ID,
       displayName: "Python",
@@ -461,9 +515,7 @@ export const pythonRuntimeBinding: Effect.Effect<
       descriptors: PYTHON_TOOLKIT_CATALOG,
       assess: assessPythonToolkits,
     },
-    ...(managedSetup === null
-      ? {}
-      : { managedRuntime: { ...managedSetup.managedRuntime, tracksUsage: true } }),
+    ...(managedRuntime === undefined ? {} : { managedRuntime }),
   };
 });
 

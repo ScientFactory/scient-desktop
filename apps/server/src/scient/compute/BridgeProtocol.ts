@@ -158,14 +158,21 @@ export const KernelPortsPayload = Schema.Struct({
 });
 export type KernelPortsPayload = typeof KernelPortsPayload.Type;
 
+/** An exact kernel command chosen by the host; never a kernelspec name the bridge looks up. */
+export const KernelSpecPayload = Schema.Struct({
+  argv: Schema.NonEmptyArray(Schema.NonEmptyString.check(Schema.isMaxLength(MaxPathLength))).check(
+    Schema.isMaxLength(64),
+  ),
+  language: Label,
+  interruptMode: Schema.Literals(["signal", "message"]),
+  variablesExpression: Schema.NullOr(Schema.NonEmptyString.check(Schema.isMaxLength(64 * 1024))),
+});
+export type KernelSpecPayload = typeof KernelSpecPayload.Type;
+
 export const StartKernelPayload = Schema.Struct({
   workingDirectory: Schema.NonEmptyString.check(Schema.isMaxLength(MaxPathLength)),
-  /**
-   * A null kernelspec starts ipykernel in the already-selected bridge interpreter, preventing
-   * kernelspec lookup from redirecting Python. Named kernelspecs are reserved for other installed
-   * runtimes.
-   */
-  kernelName: Schema.NullOr(Label),
+  /** Null starts ipykernel in the bridge interpreter itself, which the host already selected. */
+  kernel: Schema.NullOr(KernelSpecPayload),
   /**
    * Optional because non-Jupyter bridges share this envelope. The Python host
    * supplies it so private ZeroMQ listeners are known before they exist.
