@@ -1070,7 +1070,6 @@ describe("compute runtime inspection", () => {
             const service = yield* ComputeSessionService;
             const rows = yield* service.runtimeInventory({
               configuredExecutables: {},
-              enabledLanguageIds: new Set([PYTHON, other.languageId]),
             });
             expect(rows[0]?.failureMessage).toBe("Python unavailable");
             expect(rows[1]?.installations[0]?.executable).toBe("/matlab");
