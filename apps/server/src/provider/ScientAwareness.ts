@@ -48,7 +48,7 @@ Scient skills are instructions the user manages in Scient, separate from your pr
 export const SCIENT_SKILLS_AWARENESS = buildScientSkillsAwareness(CANONICAL_SCIENT_TOOL_PROJECTION);
 
 const buildScientComputeAwareness = (tools: ScientToolProjection): string => `## Scient Compute
-To see which runtimes Scient has configured or found, call \`${tools.name("scient_compute_inventory")}\`. It only lists them: it does not check that they work, and it starts nothing.`;
+Run data analysis and figures with \`${tools.name("scient_compute_run")}\`, not a shell interpreter: the user sees each run, variables persist, and you get the output and figures back. \`${tools.name("scient_compute_sessions")}\` finds the user's sessions, such as an open file.${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
 
 export const SCIENT_COMPUTE_AWARENESS = buildScientComputeAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
@@ -62,7 +62,7 @@ export function buildScientAwareness(
   return [
     SCIENT_CORE_AWARENESS,
     ...(capabilities?.has("preview") ? [buildScientPreviewAwareness(tools)] : []),
-    ...(capabilities?.has("compute:inventory") ? [buildScientComputeAwareness(tools)] : []),
+    ...(capabilities?.has("compute") ? [buildScientComputeAwareness(tools)] : []),
     // Included only when the session may drive the environment's mobile devices.
     ...(capabilities?.has("device") ? [SCIENT_DEVICE_TOOL_INSTRUCTIONS] : []),
     ...(capabilities?.has("documents:build")

@@ -158,6 +158,8 @@ export interface ComputeRuntimeBinding {
         readonly isRemoving: () => boolean;
         /** Production bindings may enforce precise process-scoped environment ownership. */
         readonly tracksUsage?: boolean;
+        /** Setup replaces files live sessions load from, so it waits for them like removal. */
+        readonly rebuildsInPlace?: boolean;
         readonly status: () => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
         readonly manage: (
           action: ComputeManagedRuntimeAction,
@@ -667,7 +669,10 @@ const make = Effect.gen(function* () {
       options?: ComputeManagedRuntimeProvisionOptions,
     ) {
       const controller = yield* managedController(languageId);
-      if (action === "remove" && !controller.tracksUsage) {
+      const destructive =
+        action === "remove" ||
+        (controller.rebuildsInPlace === true && (action === "install" || action === "repair"));
+      if (destructive && !controller.tracksUsage) {
         const liveSessions = yield* Ref.get(sessionsRef);
         if (
           [...liveSessions.values()].some((session) => session.adapter.languageId === languageId) ||
@@ -676,7 +681,9 @@ const make = Effect.gen(function* () {
           return yield* computeError(
             "manage",
             "operation-failed",
-            `Stop live ${languageId} sessions and finish connection verification before removing its Scient-managed runtime.`,
+            action === "remove"
+              ? `Stop live ${languageId} sessions and finish connection verification before removing its Scient-managed runtime.`
+              : `Stop live ${languageId} sessions before rebuilding its kernel.`,
           );
         }
       }
@@ -2378,6 +2385,7 @@ const make = Effect.gen(function* () {
       sessionId: input.sessionId,
       projectId: input.projectId,
       label: labelText(input.label),
+      ...(input.owner === undefined ? {} : { owner: input.owner }),
       languageId: binding.adapter.languageId,
       transportKind: binding.adapter.transportKind,
       workingDirectory: shortText(projectRoot),
@@ -2675,6 +2683,7 @@ const make = Effect.gen(function* () {
       code: input.code,
       codeHash: codeHash(input.code),
       source: input.source,
+      ...(input.actor === undefined ? {} : { actor: input.actor }),
       submittedAt,
       environmentFingerprint: record.environmentFingerprint,
     };

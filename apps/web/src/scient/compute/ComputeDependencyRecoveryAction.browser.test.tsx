@@ -32,34 +32,15 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: "refresh" | "start" | "stop") => mocks[command],
 }));
 vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => mocks.get }));
-vi.mock("~/components/ui/toast", () => ({ toastManager: { add: mocks.toast } }));
+vi.mock("~/components/ui/toast", () => ({
+  toastManager: { add: mocks.toast },
+  stackedThreadToast: (toast: unknown) => toast,
+}));
 vi.mock("@tanstack/react-router", async (_actualRouter) => ({
   ...(await _actualRouter<typeof import("@tanstack/react-router")>()),
   Link: ({ children }: { children: ReactNode }) => (
     <a href="/settings/scientific-computing">{children}</a>
   ),
-}));
-vi.mock("~/components/ui/contextual-confirmation", () => ({
-  ContextualConfirmation: (props: {
-    open: boolean;
-    description: string;
-    onOpenChange: (open: boolean) => void;
-    onConfirm: () => void;
-  }) =>
-    props.open ? (
-      <div role="alertdialog">
-        <p>{props.description}</p>
-        <button onClick={() => props.onOpenChange(false)}>Cancel</button>
-        <button
-          onClick={() => {
-            props.onOpenChange(false);
-            props.onConfirm();
-          }}
-        >
-          Confirm
-        </button>
-      </div>
-    ) : null,
 }));
 import { ComputeDependencyRecoveryAction } from "./ComputeDependencyRecoveryAction";
 import { ComputeOutputView } from "./ComputeOutputView";
@@ -194,22 +175,6 @@ describe("confirmed managed-Python recovery action", () => {
     _fixture.container.remove();
     vi.unstubAllGlobals();
   }
-  it("requires confirmation, warns of variable loss, and Cancel performs no commands", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    await render(_fixture);
-    await click(_fixture, "Start a new session with managed Python…");
-    expect(_fixture.container.textContent).toContain("clears its in-memory variables");
-    expect(_fixture.container.textContent).toContain("Run history is kept");
-    expect(_fixture.container.textContent).toContain("No code is rerun");
-    expect(_fixture.container.textContent).toContain("default Python environment stays unchanged");
-    await click(_fixture, "Cancel");
-    expect(mocks.refresh).not.toHaveBeenCalled();
-    expect(mocks.start).not.toHaveBeenCalled();
-    expect(mocks.stop).not.toHaveBeenCalled();
-  });
   it.each([true, false])(
     "only an owned error result exposes the recovery action: %s",
     async (owned) => {
@@ -244,21 +209,20 @@ describe("confirmed managed-Python recovery action", () => {
             />,
           ),
       );
-      expect(
-        _fixture.container.textContent?.includes("Start a new session with managed Python…"),
-      ).toBe(owned);
+      expect(_fixture.container.textContent?.includes("Switch to Scient-managed Python")).toBe(
+        owned,
+      );
       expect(_fixture.container.textContent).toContain("ModuleNotFoundError");
       expect(mocks.start).not.toHaveBeenCalled();
     },
   );
-  it("refreshes the owning host and starts the explicit managed executable only after confirmation", async () => {
+  it("refreshes the owning host and starts the explicit managed executable in one step", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     await render(_fixture);
-    await click(_fixture, "Start a new session with managed Python…");
-    await click(_fixture, "Confirm");
+    await click(_fixture, "Switch to Scient-managed Python");
     expect(mocks.refresh).toHaveBeenCalledExactlyOnceWith({
       environmentId,
       input: { cwd: "/remote/project", refresh: true },
@@ -320,8 +284,7 @@ describe("confirmed managed-Python recovery action", () => {
         });
       }
       await render(_fixture);
-      await click(_fixture, "Start a new session with managed Python…");
-      await click(_fixture, "Confirm");
+      await click(_fixture, "Switch to Scient-managed Python");
       expect(mocks.start).not.toHaveBeenCalled();
       expect(mocks.stop).not.toHaveBeenCalled();
       expect(getComputeContext(contextId)).toMatchObject({
@@ -331,7 +294,7 @@ describe("confirmed managed-Python recovery action", () => {
       expect(mocks.toast).toHaveBeenCalledWith(expect.objectContaining({ type: "error" }));
     },
   );
-  it("immediately shows pending feedback and blocks duplicate confirmation while checking readiness", async () => {
+  it("immediately blocks a duplicate switch while checking readiness", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -343,11 +306,8 @@ describe("confirmed managed-Python recovery action", () => {
       }),
     );
     await render(_fixture);
-    await click(_fixture, "Start a new session with managed Python…");
-    await click(_fixture, "Confirm");
-    const button = _fixture.container.querySelector("button")!;
-    expect(button.textContent).toBe("Starting managed Python…");
-    expect(button.disabled).toBe(true);
+    await click(_fixture, "Switch to Scient-managed Python");
+    expect(_fixture.container.querySelector("button")!.disabled).toBe(true);
     await act(() => {
       resolve({ _tag: "Success", value: inspection() });
     });
@@ -367,8 +327,7 @@ describe("confirmed managed-Python recovery action", () => {
     );
     mocks.get.mockImplementation(async () => ({ _tag: "Success", value: current }));
     await render(_fixture);
-    await click(_fixture, "Start a new session with managed Python…");
-    await click(_fixture, "Confirm");
+    await click(_fixture, "Switch to Scient-managed Python");
     expect(mocks.get).not.toHaveBeenCalled();
     current = { ...session, activity: "busy" };
     await act(() => {

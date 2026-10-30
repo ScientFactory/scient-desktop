@@ -80,8 +80,18 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
   builtIn({
     pluginId: "scient.compute",
     displayName: "Compute",
-    description: "Read-only inventory of configured and managed scientific computing runtimes.",
-    components: [tools("compute:inventory", ["scient_compute_inventory"])],
+    description: "Run Python, R, Julia, SQL and MATLAB in sessions shared with the user.",
+    components: [
+      tools("compute", [
+        "scient_compute_run",
+        "scient_compute_output",
+        "scient_compute_sessions",
+        "scient_compute_variables",
+        "scient_compute_control",
+        "scient_compute_setup",
+        "scient_compute_inventory",
+      ]),
+    ],
     settingsPath: "/settings/scientific-computing",
   }),
   builtIn({

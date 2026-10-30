@@ -3,7 +3,6 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   COMPUTE_PROTOCOL_VERSION,
-  ComputeLanguageId,
   ComputeRepresentationBundle,
   ComputeSessionGeneration,
   ComputeTransportError,
@@ -177,11 +176,17 @@ function estimateEventBytes(event: ComputeTransportEvent): number {
  * image without ending the namespace and discarding variables; only protocol-invalid frames are
  * fatal.
  */
+// Kernels may wrap base64 into MIME-style lines (IRkernel does); whitespace carries no data.
+const readBase64 = (data: string): Uint8Array | null => {
+  const compact = data.replace(/\s+/gu, "");
+  return compact.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(compact)
+    ? new Uint8Array(Buffer.from(compact, "base64"))
+    : null;
+};
+
 function decodePngPayload(data: string): Uint8Array | string {
-  if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
-    return "An image output was dropped: its data was not readable base64.";
-  }
-  const bytes = new Uint8Array(Buffer.from(data, "base64"));
+  const bytes = readBase64(data);
+  if (bytes === null) return "An image output was dropped: its data was not readable base64.";
   if (bytes.byteLength > MAX_PNG_DECODED_BYTES) {
     return "An image output was dropped: it exceeded the decoded byte limit.";
   }
@@ -203,10 +208,8 @@ function decodeSvgPayload(data: string): Uint8Array | string {
 }
 
 function decodeBase64Payload(data: string): Uint8Array | string {
-  if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
-    return "A rich representation was dropped: its data was not readable base64.";
-  }
-  const bytes = new Uint8Array(Buffer.from(data, "base64"));
+  const bytes = readBase64(data);
+  if (bytes === null) return "A rich representation was dropped: its data was not readable base64.";
   if (bytes.byteLength > MAX_PNG_DECODED_BYTES) {
     return "A rich representation was dropped: it exceeded the decoded byte limit.";
   }
@@ -1111,13 +1114,9 @@ export function makeComputeBridgeTransport(
               {
                 type: "start-kernel",
                 generation: request.generation,
-                // A null kernel name asks the bridge for the interpreter that
-                // is already running it, which is what a Python session wants.
-                // A future language ships its own kernel spec name here without
-                // the bridge having to guess from the launch plan.
                 payload: {
                   workingDirectory: request.launch.cwd,
-                  kernelName: null,
+                  kernel: request.launch.kernel ?? null,
                   ...(endpointLease === null ? {} : { kernelPorts: endpointLease.ports }),
                 },
               },
@@ -1134,17 +1133,18 @@ export function makeComputeBridgeTransport(
             if (payload.protocolVersion !== COMPUTE_PROTOCOL_VERSION) {
               return yield* transportError("handshake", "Kernel protocol version mismatch.");
             }
-            if (payload.languageId !== request.languageId) {
+            const expectedLanguage = request.launch.kernel?.language ?? request.languageId;
+            if (payload.languageId !== expectedLanguage) {
               return yield* transportError(
                 "handshake",
-                `Expected language '${request.languageId}', received '${payload.languageId}'.`,
+                `Expected language '${expectedLanguage}', received '${payload.languageId}'.`,
               );
             }
             if (!hasCapabilities(payload.capabilities, request.requiredCapabilities)) {
               return yield* transportError("handshake", "Kernel capabilities are incomplete.");
             }
             const runtime: ComputeRuntimeIdentity = {
-              languageId: ComputeLanguageId.make(payload.languageId),
+              languageId: request.languageId,
               transportKind: ComputeTransportKind.make(request.transportKind),
               protocolVersion: payload.protocolVersion,
               languageVersion: payload.languageVersion,

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Scient compute bridge for one directly selected Python interpreter.
+"""Scient compute bridge for one Jupyter kernel.
 
 The bridge speaks a length-prefixed JSON protocol on stdout and reserves stderr
-for bounded diagnostics.  It uses the selected interpreter itself to launch
-``ipykernel``; global kernelspec selection never decides which Python runs user
-code.
+for bounded diagnostics.  By default it launches ``ipykernel`` in the
+interpreter running the bridge; otherwise it starts the exact kernel command the
+host sends.  Global kernelspec selection never decides what runs user code.
 
 Two invariants shape almost everything below.
 
@@ -84,6 +84,9 @@ MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991
 MAX_SOURCE_PATH = 4096
 MAX_SOURCE_NAME = 256
 MAX_SOURCE_HASH = 256
+
+# Kernels name an interrupt as the error, or (IJulia) wrap it and lead the value with its name.
+INTERRUPT_ERROR_NAMES = ("KeyboardInterrupt", "InterruptException")
 
 SERVER_MESSAGE_TYPES = {
     "hello",
@@ -252,6 +255,9 @@ def _scient_cache(transformed_code, number=0, raw_code=None):
 _scient_shell.compile.cache = _scient_cache
 _scient_shell.events.register("pre_run_cell", _scient_pre_run)
 _scient_shell.events.register("post_run_cell", lambda _result: _scient_restore_source_context())
+
+# Inline figures also carry a PDF, so a shown figure can be saved as vector graphics.
+_scient_shell.config.InlineBackend.figure_formats = {"png", "pdf"}
 """
 
 
@@ -651,6 +657,43 @@ def validate_source_context(value: Any) -> Optional[dict[str, Any]]:
     return dict(value)
 
 
+def validate_kernel_spec(value: Any) -> Optional[dict[str, Any]]:
+    """Accept an exact kernel command from the host, or None for ipykernel here."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ProtocolViolation("start-kernel kernel must be an object or null.")
+    argv = value.get("argv")
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or not all(isinstance(part, str) and part for part in argv)
+        or "{connection_file}" not in argv
+    ):
+        raise ProtocolViolation("start-kernel kernel argv must name {connection_file}.")
+    language = value.get("language")
+    if not isinstance(language, str) or not language:
+        raise ProtocolViolation("start-kernel kernel language must be a non-empty string.")
+    if value.get("interruptMode") not in {"signal", "message"}:
+        raise ProtocolViolation("start-kernel kernel interruptMode must be signal or message.")
+    expression = value.get("variablesExpression")
+    if expression is not None and (not isinstance(expression, str) or not expression):
+        raise ProtocolViolation("start-kernel kernel variablesExpression must be a string or null.")
+    timeout = value.get("startupTimeoutSeconds")
+    if timeout is not None and (not isinstance(timeout, int) or not 1 <= timeout <= 600):
+        raise ProtocolViolation("start-kernel kernel startupTimeoutSeconds must be 1-600.")
+    return value
+
+
+def decode_variable_summary(plain: str) -> Any:
+    """Read a kernel's text/plain summary: a JSON object, or a string literal holding one."""
+    try:
+        value = ast.literal_eval(plain)
+    except (SyntaxError, ValueError):
+        value = plain
+    return json.loads(value) if isinstance(value, str) else value
+
+
 def detach_protocol_stream() -> BinaryIO:
     """Move the protocol off file descriptor 1 and hand back the real pipe.
 
@@ -770,7 +813,11 @@ class ExecuteMapping:
             return "succeeded"
         if status == "abort":
             return "cancelled"
-        if self.interrupt_requested and reply.get("ename") == "KeyboardInterrupt":
+        evalue = reply.get("evalue")
+        if self.interrupt_requested and (
+            reply.get("ename") in INTERRUPT_ERROR_NAMES
+            or (isinstance(evalue, str) and evalue.startswith(INTERRUPT_ERROR_NAMES))
+        ):
             return "cancelled"
         return "failed"
 
@@ -878,6 +925,10 @@ class ScientBridge:
         self._kernel_manager: Any = None
         self._kernel_client: Any = None
         self._kernel_pid: Optional[int] = None
+        self._variables_expression: Optional[str] = VARIABLE_INSPECTION_EXPRESSION
+        # Table pages are read by Python source, so only the default ipykernel serves them.
+        self._serves_tables = True
+        self._startup_timeout: int = STARTUP_TIMEOUT
         self._working_directory = os.path.realpath(os.getcwd())
         self._execution_task: Optional[asyncio.Task[None]] = None
         self._kernel_monitor_task: Optional[asyncio.Task[None]] = None
@@ -1154,32 +1205,28 @@ class ScientBridge:
 
     @staticmethod
     def _make_kernel_manager(
-        kernel_name: Optional[str], kernel_ports: Optional[dict[str, Any]] = None
+        kernel: Optional[dict[str, Any]], kernel_ports: Optional[dict[str, Any]] = None
     ) -> Any:
         """Build the manager for this session's kernel.
 
         ``None`` means Python, and launches ``ipykernel`` inside this very
         interpreter: the server already chose the interpreter when it spawned the
-        bridge, so no kernelspec installed elsewhere on the machine can redirect
-        which Python runs the user's code.  A name selects an installed
-        kernelspec instead, which is how another language reuses this transport
-        without the bridge having to know the language.
+        bridge.  Another language arrives as an exact command line, so no
+        kernelspec installed elsewhere on the machine can redirect what runs the
+        user's code, and the bridge never has to know the language.
         """
         from jupyter_client import AsyncKernelManager
+        from jupyter_client.kernelspec import KernelSpec, KernelSpecManager
 
-        if kernel_name is not None:
-            manager = AsyncKernelManager(kernel_name=kernel_name)
-        else:
-            from jupyter_client.kernelspec import KernelSpec, KernelSpecManager
+        class FixedKernelSpecManager(KernelSpecManager):
+            def __init__(self, spec: Any) -> None:
+                super().__init__()
+                self._spec = spec
 
-            class SelectedInterpreterKernelSpecManager(KernelSpecManager):
-                def __init__(self, spec: Any) -> None:
-                    super().__init__()
-                    self._spec = spec
+            def get_kernel_spec(self, _kernel_name: str) -> Any:
+                return self._spec
 
-                def get_kernel_spec(self, _kernel_name: str) -> Any:
-                    return self._spec
-
+        if kernel is None:
             spec = KernelSpec(
                 argv=[
                     sys.executable,
@@ -1195,10 +1242,17 @@ class ScientBridge:
                 display_name="Scient Python",
                 language="python",
             )
-            manager = AsyncKernelManager(
-                kernel_name="scient-python",
-                kernel_spec_manager=SelectedInterpreterKernelSpecManager(spec),
+        else:
+            spec = KernelSpec(
+                argv=list(kernel["argv"]),
+                display_name="Scient " + kernel["language"],
+                language=kernel["language"],
+                interrupt_mode=kernel["interruptMode"],
             )
+        manager = AsyncKernelManager(
+            kernel_name="scient-kernel",
+            kernel_spec_manager=FixedKernelSpecManager(spec),
+        )
 
         if kernel_ports is not None:
             # These sockets were reserved and registered as private before the
@@ -1230,7 +1284,7 @@ class ScientBridge:
 
     async def _kernel_info(self) -> dict[str, Any]:
         msg_id = self._kernel_client.kernel_info()
-        deadline = time.monotonic() + STARTUP_TIMEOUT
+        deadline = time.monotonic() + self._startup_timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1249,9 +1303,7 @@ class ScientBridge:
         working_directory = payload.get("workingDirectory") or os.getcwd()
         if not isinstance(working_directory, str):
             raise ProtocolViolation("start-kernel workingDirectory must be a string.")
-        kernel_name = payload.get("kernelName")
-        if kernel_name is not None and (not isinstance(kernel_name, str) or not kernel_name):
-            raise ProtocolViolation("start-kernel kernelName must be a non-empty string or null.")
+        kernel = validate_kernel_spec(payload.get("kernel"))
         kernel_ports = payload.get("kernelPorts")
         if kernel_ports is not None:
             names = ("shell", "iopub", "stdin", "heartbeat", "control")
@@ -1271,7 +1323,13 @@ class ScientBridge:
 
         self._working_directory = os.path.realpath(working_directory)
 
-        self._kernel_manager = self._make_kernel_manager(kernel_name, kernel_ports)
+        self._kernel_manager = self._make_kernel_manager(kernel, kernel_ports)
+        self._variables_expression = (
+            VARIABLE_INSPECTION_EXPRESSION if kernel is None else kernel["variablesExpression"]
+        )
+        self._serves_tables = kernel is None
+        # Kernels that compile on first start (IJulia) ask for longer than ipykernel needs.
+        self._startup_timeout = (kernel or {}).get("startupTimeoutSeconds") or STARTUP_TIMEOUT
         # ``stdout=DEVNULL`` is the other half of keeping the protocol intact.
         # ``detach_protocol_stream`` already moved the real pipe out of reach, so
         # this only stops the kernel from inheriting whatever now sits on fd 1 --
@@ -1297,7 +1355,7 @@ class ScientBridge:
         self._kernel_pid = self._read_kernel_pid()
         self._kernel_client = self._kernel_manager.client()
         self._kernel_client.start_channels()
-        await self._kernel_client.wait_for_ready(timeout=STARTUP_TIMEOUT)
+        await self._kernel_client.wait_for_ready(timeout=self._startup_timeout)
         info = await self._kernel_info()
         language = info.get("language_info", {})
         if not isinstance(language, dict):
@@ -1309,7 +1367,11 @@ class ScientBridge:
                 "languageId": language.get("name", "python"),
                 "languageVersion": language.get("version", "unknown"),
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": self._capabilities,
+                "capabilities": [
+                    capability
+                    for capability in self._capabilities
+                    if capability != "tables" or self._serves_tables
+                ],
             },
         )
         self._ensure_kernel_monitor()
@@ -1440,7 +1502,7 @@ class ScientBridge:
             self._kernel_pid = self._read_kernel_pid()
             self._kernel_client = self._kernel_manager.client()
             self._kernel_client.start_channels()
-            await self._kernel_client.wait_for_ready(timeout=STARTUP_TIMEOUT)
+            await self._kernel_client.wait_for_ready(timeout=self._startup_timeout)
         finally:
             self._kernel_transitioning = False
         # Cancellation is a fact only after replacement succeeded.  If restart
@@ -1611,23 +1673,24 @@ class ScientBridge:
         raise TimeoutError("Inspection timed out.")
 
     @staticmethod
-    def _expression_json(expression: dict[str, Any]) -> Any:
+    def _expression_value(expression: dict[str, Any]) -> Any:
         plain = expression.get("data", {}).get("text/plain")
-        encoded = ast.literal_eval(plain) if isinstance(plain, str) else None
-        if not isinstance(encoded, str):
+        if not isinstance(plain, str):
             raise RuntimeError("The runtime returned an unreadable result.")
-        return json.loads(encoded)
+        return decode_variable_summary(plain)
 
     async def _handle_inspect_variables(self, request_id: str) -> None:
         """Return a bounded live namespace summary without entering history."""
         self._require_idle_kernel()
         try:
+            if self._variables_expression is None:
+                raise RuntimeError("This kernel does not provide variable inspection.")
             expression = await self._evaluate_silently(
-                "scient_variables", VARIABLE_INSPECTION_EXPRESSION, INSPECTION_TIMEOUT
+                "scient_variables", self._variables_expression, INSPECTION_TIMEOUT
             )
             if expression.get("status") != "ok":
                 raise RuntimeError("The runtime could not summarize its current variables.")
-            decoded = self._expression_json(expression)
+            decoded = self._expression_value(expression)
             variables = decoded.get("variables") if isinstance(decoded, dict) else None
             if not isinstance(variables, list):
                 raise RuntimeError("The runtime returned an invalid variable list.")
@@ -1680,6 +1743,8 @@ class ScientBridge:
         """Return one bounded page of a table-like variable without entering history."""
         self._require_idle_kernel()
         try:
+            if not self._serves_tables:
+                raise RuntimeError("This kernel does not provide table paging.")
             name, query = payload.get("name"), payload.get("query")
             if not isinstance(name, str) or not name or not isinstance(query, dict):
                 raise ProtocolViolation("inspect-table requires a name and a query.")
@@ -1692,7 +1757,7 @@ class ScientBridge:
             )
             if expression.get("status") != "ok":
                 raise RuntimeError(str(expression.get("evalue") or "The table could not be read."))
-            table = self._expression_json(expression)
+            table = self._expression_value(expression)
             if not isinstance(table, dict) or not isinstance(table.get("rows"), list):
                 raise RuntimeError("The runtime returned an invalid table.")
             # Escaped text can outgrow a frame; fewer rows always fit, and the grid asks again.

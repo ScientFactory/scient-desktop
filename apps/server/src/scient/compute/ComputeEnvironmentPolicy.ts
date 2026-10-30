@@ -2,8 +2,9 @@
 import * as NodePath from "node:path";
 
 /**
- * Removing credential and Python/Jupyter overrides is hygiene, not sandboxing: user code retains
- * the server account's filesystem, network, and process authority.
+ * Python/Jupyter overrides would change how the bridge loads, and the app's own sign-in tokens
+ * are not the user's. The user's own credentials (cloud, API keys) stay available to their code, as in
+ * their terminal. This is hygiene, not sandboxing.
  */
 export const ENVIRONMENT_DENYLIST: ReadonlyArray<string> = [
   // Python overrides that could change bridge code resolution.
@@ -18,35 +19,18 @@ export const ENVIRONMENT_DENYLIST: ReadonlyArray<string> = [
   "JUPYTER_PATH",
   "JUPYTER_DATA_DIR",
   "IPYTHONDIR",
-  // Include the application's unprefixed sign-in tokens; prefix rules already catch
-  // ANTHROPIC_AUTH_TOKEN and similar credentials.
+  // Sign-in tokens the application itself holds for its providers and GitHub.
   "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_AUTH_TOKEN",
   "GH_TOKEN",
-  // Known cloud/provider credential keys (exact match).
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
-  "GOOGLE_API_KEY",
-  "AZURE_OPENAI_API_KEY",
-  "AWS_ACCESS_KEY_ID",
-  "AWS_SECRET_ACCESS_KEY",
-  "AWS_SESSION_TOKEN",
-  "GITHUB_TOKEN",
-  "LINEAR_API_KEY",
-  "SLACK_BOT_TOKEN",
+  "ELECTRON_RUN_AS_NODE",
 ] as const;
 
-/**
- * Environment variable prefixes removed from every compute launch.
- *
- * Every key starting with one of these prefixes is removed.  These cover
- * Scient/T3-owned configuration, pairing, telemetry, updater, signing, and
- * service-credential namespaces that user code should not inherit.
- */
+/** Scient/T3-owned configuration namespaces that user code should not inherit. */
 export const ENVIRONMENT_PREFIX_DENYLIST: ReadonlyArray<string> = [
   "SCIENT_",
   "T3_",
-  "ANTHROPIC_",
-  "OPENAI_",
+  "T3CODE_",
   "FF_",
   "FFF_",
 ] as const;

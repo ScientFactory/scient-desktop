@@ -137,6 +137,20 @@ describe("installation selection", () => {
     expect(defaultComputeInstallation(matlab, preference, status)?.source).toBe("path");
   });
 
+  it("defaults SQL to Scient-managed Python, which has DuckDB, until a Python is chosen", () => {
+    const sql = {
+      ...inventory,
+      descriptor: { ...inventory.descriptor, languageId: ComputeLanguageId.make("sql") },
+      configuredExecutable: null,
+    };
+    const automatic = { enabled: true, executable: "" };
+    expect(defaultComputeInstallation(sql, automatic, null)?.source).toBe("managed");
+    expect(
+      defaultComputeInstallation(sql, { ...automatic, executable: "/system/python" }, null)
+        ?.executable,
+    ).toBe("/system/python");
+  });
+
   it("keeps a configured alias selected without changing its system provenance", () => {
     const language = { ...inventory, configuredExecutable: "python3" };
     expect(

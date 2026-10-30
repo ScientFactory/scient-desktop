@@ -257,6 +257,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.computeInspectVariables]: "compute",
   [WS_METHODS.computeReadTable]: "compute",
   [WS_METHODS.dataReadFileTable]: "filesystem",
+  [WS_METHODS.computeSaveOutput]: "compute",
+  [WS_METHODS.computeNotebookOutputs]: "compute",
   [WS_METHODS.subscribeComputeSessions]: "subscribe",
   [WS_METHODS.skillsList]: "skills",
   [WS_METHODS.skillsReadDocument]: "skills",

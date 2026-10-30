@@ -8,7 +8,12 @@ import {
   ComputeSessionId,
 } from "./contract.ts";
 import { Count, Label, ShortText, StreamText } from "./primitives.ts";
-import { ComputeExecutionSource, ComputeProjectId } from "./record.ts";
+import {
+  ComputeExecutionActor,
+  ComputeExecutionSource,
+  ComputeProjectId,
+  ComputeSessionOwner,
+} from "./record.ts";
 
 /**
  * Commands bind project/session and expected generation so stale clients cannot mutate replacement
@@ -77,6 +82,7 @@ export const ComputeStartSessionInput = Schema.Struct({
   sessionId: ComputeSessionId,
   languageId: ComputeLanguageId,
   label: Label,
+  owner: Schema.optional(ComputeSessionOwner),
   workingDirectory: ShortText,
   configuredExecutable: Schema.NullOr(ShortText),
   /** An explicit per-session choice, distinct from the environment's default preference. */
@@ -100,6 +106,7 @@ export const ComputeSubmitExecutionInput = Schema.Struct({
   expectedGeneration: ComputeSessionGeneration,
   code: StreamText,
   source: ComputeExecutionSource,
+  actor: Schema.optional(ComputeExecutionActor),
 });
 export type ComputeSubmitExecutionInput = typeof ComputeSubmitExecutionInput.Type;
 

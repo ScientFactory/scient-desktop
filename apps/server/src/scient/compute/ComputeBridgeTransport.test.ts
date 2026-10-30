@@ -331,7 +331,7 @@ describe("jupyter bridge handshake", () => {
         const sent = bridge.sent();
         expect(sent.map((message) => message.type)).toEqual(["hello", "start-kernel"]);
         expect(sent.map((message) => message.sequence)).toEqual([0, 1]);
-        expect(sent[1]?.payload).toEqual({ workingDirectory: "/project", kernelName: null });
+        expect(sent[1]?.payload).toEqual({ workingDirectory: "/project", kernel: null });
       }),
     ),
   );
@@ -370,7 +370,7 @@ describe("jupyter bridge handshake", () => {
           expect(bridge.sent().find((message) => message.type === "start-kernel")?.payload).toEqual(
             {
               workingDirectory: "/project",
-              kernelName: null,
+              kernel: null,
               kernelPorts: ports,
             },
           );
@@ -675,7 +675,10 @@ describe("jupyter bridge output mapping", () => {
                 {
                   mediaType: "image/png",
                   encoding: "base64",
-                  data: Buffer.from(bytes).toString("base64"),
+                  // IRkernel wraps base64 into MIME-style lines.
+                  data: Buffer.from(bytes)
+                    .toString("base64")
+                    .replace(/.{1,76}/gu, "$&\n"),
                 },
               ],
               metadataJson: '{"image/png":{"width":12}}',

@@ -124,7 +124,7 @@ describe("bridge protocol payload schemas", () => {
     });
     const payload = decodeStartKernel({
       workingDirectory: "/project",
-      kernelName: null,
+      kernel: null,
       kernelPorts,
     });
     expect(payload.kernelPorts?.control).toBe(41_005);

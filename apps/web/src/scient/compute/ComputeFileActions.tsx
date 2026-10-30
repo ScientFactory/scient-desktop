@@ -76,7 +76,6 @@ import {
 } from "./computeContextStore";
 
 import type { ComputeSourceLanguage } from "./computeSourceLanguage";
-import { useComputeFilePresentationStore } from "./computeFilePresentationStore";
 
 type ComputeRunKind = "selection" | "cell" | "file";
 type PendingComputeRun = {
@@ -90,6 +89,8 @@ export interface ComputeFileActionsHandle {
   readonly runFile: () => void;
   readonly runPrimary: (selection?: ComputeTextRange | null) => void;
   readonly runCellAtLine: (line: number) => void;
+  /** Runs exact code as one cell; the returned slice comes back with its submission. */
+  readonly runCode: (code: string) => ComputeCodeSlice;
 }
 
 interface ComputeFileActionsProps {
@@ -109,7 +110,10 @@ interface ComputeFileActionsProps {
   readonly onExecutionSubmitted: (
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
+    slice?: ComputeCodeSlice,
   ) => void;
+  /** Notebooks run cell by cell: the primary action runs every cell and the file menu goes. */
+  readonly runAll?: () => void;
 }
 
 function reportFailure(
@@ -198,6 +202,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       reportFailure: false,
     });
     const stopSession = useAtomCommand(computeEnvironment.stopSession, { reportFailure: false });
+    const manageRuntime = useAtomCommand(computeEnvironment.manageRuntime, {
+      reportFailure: false,
+    });
     const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
       reportFailure: false,
     });
@@ -332,11 +339,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       languageName: props.language.displayName,
       runtimeVersion:
         liveSession?.runtime?.languageVersion ?? readyRuntime?.profile.languageVersion ?? null,
-      runtimeSource:
-        activeRuntime?.profile.source ??
-        liveSession?.runtime?.source ??
-        readyRuntime?.profile.source ??
-        null,
       liveSession,
       runtimeInspectionPending: runtimes.isPending || refreshing,
       readyRuntimeAvailable: readyRuntime !== null,
@@ -629,6 +631,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             // Null preserves server-side default resolution. A non-null value
             // is the runtime explicitly chosen immediately before this Run.
             executable: requestedExecutable ?? null,
+            owner: { _tag: "file", path: props.relativePath },
           },
         });
         if (started._tag !== "Success") {
@@ -708,7 +711,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       });
       setOperation(null);
       if (submitted._tag === "Success") {
-        onExecutionSubmitted(session.sessionId, executionId);
+        onExecutionSubmitted(session.sessionId, executionId, slice);
       } else if (!isAtomCommandInterrupted(submitted)) {
         reportFailure(`Unable to run ${props.language.displayName}`, submitted);
         refreshSessions();
@@ -763,7 +766,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           ownerKey: props.contextId,
         });
       if (parent.lifecycle === "closing" || parent.lifecycle === "close-failed") return;
-      const parentContextId = props.contextId;
       const childId = createComputeContextId();
       const sessionId = ComputeSessionId.make(randomUUID());
       const executionId = ComputeExecutionId.make(randomUUID());
@@ -779,7 +781,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         return;
       setOperation("fresh");
       onRunRequested();
-      useComputeFilePresentationStore.getState().setResultsContext(props.contextId, childId);
       return await (async () => {
         const started = await startSession({
           environmentId: props.environmentId,
@@ -788,6 +789,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             sessionId,
             languageId: props.language.languageId,
             executable: null,
+            owner: { _tag: "file", path: props.relativePath },
             runOnce: {
               executionId,
               code: fileSlice.code,
@@ -824,7 +826,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             )
           ) {
             useComputeContextStore.getState().removeContext(childId);
-            useComputeFilePresentationStore.getState().setResultsContext(parentContextId, null);
           }
           if (!isAtomCommandInterrupted(started)) reportFailure("Unable to run fresh", started);
           return;
@@ -952,7 +953,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     // selection determines whether a detected connection is independent.
     const hasIndependentRuntime =
       readyRuntime !== null &&
-      (props.language.languageId === "python"
+      (props.language.languageId === "python" || props.language.languageId === "sql"
         ? readyRuntime.profile.source !== "managed"
         : managedRuntime.status?.selection === "existing");
     // A live session takes precedence over discovery of a replacement runtime.
@@ -974,9 +975,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       (props.language.languageId !== "matlab" && !runtimeToolbar.canRun && readyRuntime === null);
     const runtimeNote =
       [
-        liveSession?.runtime
-          ? `${computeRuntimeDisplayLabel(liveSession.runtime, props.language.displayName)}: ${liveSession.runtime.executable}`
-          : null,
+        liveSession?.runtime ? liveSession.runtime.executable : null,
         runtimeToolbar.kind === "status" ? runtimeToolbar.note : null,
       ]
         .filter(Boolean)
@@ -1006,6 +1005,20 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         },
         runCellAtLine: (line) =>
           void run("cell", computeCell(props.contents, line, props.language.cellMarker)),
+        runCode: (code) => {
+          const lines = code.split("\n");
+          const slice: ComputeCodeSlice = {
+            code,
+            range: {
+              startLine: 0,
+              startColumn: 0,
+              endLine: lines.length - 1,
+              endColumn: lines.at(-1)?.length ?? 0,
+            },
+          };
+          void run("cell", slice);
+          return slice;
+        },
       }),
       [props.contents, props.editorSelection, props.selection, props.language.cellMarker, run],
     );
@@ -1037,11 +1050,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                       disabled={stoppingUnusedSession !== null}
                       aria-label="Choose a compute session to stop"
                       ref={capacityAnchor}
-                      title="Stop an unused compute session to free host capacity"
                     />
                   }
                 >
-                  <span className="truncate">Capacity · choose session</span>
+                  <span className="truncate">Stop a session…</span>
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" className="min-w-64">
                   {freshCapacityBlocked && liveSession !== null && props.contextId !== undefined ? (
@@ -1055,14 +1067,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     </MenuItem>
                   ) : null}
                   {capacitySessions.length === 0 ? (
-                    <MenuItem
-                      disabled
-                      title="Other slots may be held by sessions, tests, or batch runs on this host"
-                    >
-                      {liveSession !== null
-                        ? "This tab already has an active session"
-                        : "Capacity is in use elsewhere on this host"}
-                    </MenuItem>
+                    <MenuItem disabled>No other sessions</MenuItem>
                   ) : (
                     capacitySessions.map((session) => (
                       <MenuItem
@@ -1070,8 +1075,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                         disabled={stoppingUnusedSession !== null}
                         onClick={() => void stopUnusedSession(session)}
                       >
-                        Stop {computeSessionOwnerLabel(session, props.environmentId, props.cwd)} ·{" "}
-                        {session.status.replaceAll("-", " ")}
+                        Stop {computeSessionOwnerLabel(session, props.environmentId, props.cwd)}
                       </MenuItem>
                     ))
                   )}
@@ -1082,7 +1086,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 size="xs"
                 variant="ghost-muted"
                 className="min-w-0 max-w-full"
-                title={`${runtimeNote ? `${runtimeNote}. ` : ""}Switch to the selected ${props.language.displayName} environment`}
+                title={runtimeNote}
                 aria-label={`Switch ${props.language.displayName} environment`}
                 disabled={switching || props.contextId === undefined}
                 onClick={requestRuntimeSwitch}
@@ -1103,7 +1107,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     />
                   }
                 >
-                  {runtimeToolbar.kind === "status" && runtimeToolbar.label.includes("…") ? (
+                  {runtimeToolbar.kind === "status" && runtimeToolbar.busy ? (
                     <LoaderCircle className="animate-spin" aria-hidden />
                   ) : null}
                   <span className="truncate font-normal">{runtimeToolbar.label}</span>
@@ -1119,9 +1123,17 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   size="xs"
                   variant="outline"
                   shape="group-start"
-                  aria-label={primaryRunBlocked ? "MATLAB definition file" : primary.label}
+                  aria-label={
+                    props.runAll
+                      ? "Run all"
+                      : primaryRunBlocked
+                        ? "MATLAB definition file"
+                        : primary.label
+                  }
                   disabled={liveRunDisabled || primary.slice === null}
-                  onClick={() => void run(primary.kind, primary.slice)}
+                  onClick={() =>
+                    props.runAll ? props.runAll() : void run(primary.kind, primary.slice)
+                  }
                 >
                   {operation === primary.kind ? (
                     <LoaderCircle className="animate-spin" />
@@ -1129,7 +1141,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     <Play />
                   )}
                   <span className="hidden @[15rem]/python-file-actions:inline">
-                    {primaryRunBlocked ? "Definition" : primary.label}
+                    {props.runAll ? "Run all" : primaryRunBlocked ? "Definition" : primary.label}
                   </span>
                 </Button>
               </span>
@@ -1149,40 +1161,47 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 <ChevronDown />
               </MenuTrigger>
               <MenuPopup align="end" side="bottom">
-                <MenuItem
-                  disabled={busy || !runtimeToolbar.canRun || selectionSlice === null}
-                  onClick={() => void run("selection", selectionSlice)}
-                >
-                  Run selection
-                </MenuItem>
-                <MenuItem
-                  disabled={busy || !runtimeToolbar.canRun || cellSlice === null}
-                  onClick={() => void run("cell", cellSlice)}
-                >
-                  Run cell
-                </MenuItem>
-                <MenuItem
-                  disabled={busy || !runtimeToolbar.canRun || fileRunBlocked || fileSlice === null}
-                  title={fileRunBlocked ? (matlabFileCapability.reason ?? undefined) : undefined}
-                  onClick={() => void run("file", fileSlice)}
-                >
-                  Run file
-                </MenuItem>
-                {props.contextId !== undefined ? (
-                  <MenuItem
-                    disabled={
-                      busy ||
-                      !languagePreference.enabled ||
-                      readyRuntime === null ||
-                      fileRunBlocked ||
-                      fileSlice === null
-                    }
-                    title="Run in a new session without clearing the current session’s variables"
-                    onClick={() => void runFresh()}
-                  >
-                    Run fresh
-                  </MenuItem>
-                ) : null}
+                {props.runAll ? null : (
+                  <>
+                    <MenuItem
+                      disabled={busy || !runtimeToolbar.canRun || selectionSlice === null}
+                      onClick={() => void run("selection", selectionSlice)}
+                    >
+                      Run selection
+                    </MenuItem>
+                    <MenuItem
+                      disabled={busy || !runtimeToolbar.canRun || cellSlice === null}
+                      onClick={() => void run("cell", cellSlice)}
+                    >
+                      Run cell
+                    </MenuItem>
+                    <MenuItem
+                      disabled={
+                        busy || !runtimeToolbar.canRun || fileRunBlocked || fileSlice === null
+                      }
+                      title={
+                        fileRunBlocked ? (matlabFileCapability.reason ?? undefined) : undefined
+                      }
+                      onClick={() => void run("file", fileSlice)}
+                    >
+                      Run file
+                    </MenuItem>
+                    {props.contextId !== undefined ? (
+                      <MenuItem
+                        disabled={
+                          busy ||
+                          !languagePreference.enabled ||
+                          readyRuntime === null ||
+                          fileRunBlocked ||
+                          fileSlice === null
+                        }
+                        onClick={() => void runFresh()}
+                      >
+                        Run fresh
+                      </MenuItem>
+                    ) : null}
+                  </>
+                )}
                 {runtimeToolbar.kind === "switch" ? (
                   <>
                     <MenuSeparator />
@@ -1223,7 +1242,14 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               label: "Use current",
               onSelect: () => runWithChosenRuntime(preRunRuntimeChoice.current.profile.executable),
             }}
-            onConfirm={() => runWithChosenRuntime(preRunRuntimeChoice.managed.profile.executable)}
+            onConfirm={() => {
+              runWithChosenRuntime(preRunRuntimeChoice.managed.profile.executable);
+              // The choice holds for new sessions, so the next file does not ask again.
+              void manageRuntime({
+                environmentId: props.environmentId,
+                input: { languageId: props.language.languageId, action: "use-managed" },
+              });
+            }}
           />
         )}
         <ContextualConfirmation

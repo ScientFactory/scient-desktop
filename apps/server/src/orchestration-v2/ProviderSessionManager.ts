@@ -716,7 +716,7 @@ export const layerWithOptions = (
               "worktree",
               "pull-requests",
               "documents:build",
-              "compute:inventory",
+              "compute",
               "sources:read",
               "sources:write",
               "threads:read",

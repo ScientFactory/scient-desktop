@@ -68,6 +68,7 @@ export const OBSERVED_PYTHON_PACKAGES = [
   "tabulate",
   "jinja2",
   "defusedxml",
+  "duckdb",
   "xarray",
   "pyarrow",
   "h5py",

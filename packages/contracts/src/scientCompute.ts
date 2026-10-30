@@ -2,6 +2,7 @@ import {
   ComputeCapability,
   ComputeExecutionId,
   ComputeExecutionRecord,
+  ComputeExecutionActor,
   ComputeExecutionSource,
   computeOutputByteLength,
   ComputeLanguageId,
@@ -14,12 +15,12 @@ import {
   ComputeProjectId,
   projectComputeOutputs,
   sameComputeRepresentationBundle,
-  selectComputeRepresentation,
   ComputeRuntimeProfile,
   ComputeRuntimeInstallation,
   ComputeRuntimeVerification,
   ComputeSessionGeneration,
   ComputeSessionId,
+  ComputeSessionOwner,
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeTransportKind,
@@ -37,7 +38,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export { ComputeToolkitId, ComputeManagedToolkitChange };
+export {
+  ComputeExecutionActor,
+  ComputeManagedToolkitChange,
+  ComputeSessionOwner,
+  ComputeToolkitId,
+};
 
 const ComputeCwd = Schema.String.check(Schema.isMaxLength(4096));
 const ComputeExecutable = Schema.String.check(Schema.isMaxLength(4096));
@@ -120,6 +126,7 @@ export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>
       "variables",
       "table",
       "subscribe",
+      "save",
     ]),
     reason: Schema.Literals([
       "project-not-initialized",
@@ -169,6 +176,7 @@ export const ComputeStartProjectSessionInput = Schema.Struct({
   sessionId: ComputeSessionId,
   languageId: ComputeLanguageId,
   executable: Schema.NullOr(ComputeExecutable),
+  owner: Schema.optional(ComputeSessionOwner),
   runOnce: Schema.optional(
     Schema.Struct({
       executionId: ComputeExecutionId,
@@ -208,6 +216,7 @@ export const ComputeSubmitProjectExecutionInput = Schema.Struct({
   expectedGeneration: ComputeSessionGeneration,
   code: ComputeCode,
   source: ComputeExecutionSource,
+  actor: Schema.optional(ComputeExecutionActor),
 });
 export type ComputeSubmitProjectExecutionInput = typeof ComputeSubmitProjectExecutionInput.Type;
 
@@ -233,6 +242,34 @@ export const ComputeListProjectOutputsInput = Schema.Struct({
 });
 export type ComputeListProjectOutputsInput = typeof ComputeListProjectOutputsInput.Type;
 
+/** Copies a stored figure or resource into the project; an existing file is never replaced. */
+export const ComputeSaveProjectOutputInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  executionId: Schema.NullOr(ComputeExecutionId),
+  contentHash: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  kind: Schema.Literals(["image", "resource"]),
+  relativePath: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(1024)),
+});
+export type ComputeSaveProjectOutputInput = typeof ComputeSaveProjectOutputInput.Type;
+
+export const ComputeSaveProjectOutputResult = Schema.Struct({ relativePath: Schema.String });
+export type ComputeSaveProjectOutputResult = typeof ComputeSaveProjectOutputResult.Type;
+
+/** A finished run as nbformat 4 outputs, figures inlined, for notebook files. */
+export const ComputeNotebookOutputsInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  executionId: ComputeExecutionId,
+});
+export type ComputeNotebookOutputsInput = typeof ComputeNotebookOutputsInput.Type;
+
+export const ComputeNotebookOutputsResult = Schema.Struct({
+  outputs: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+  executionCount: Schema.NullOr(Schema.Int),
+});
+export type ComputeNotebookOutputsResult = typeof ComputeNotebookOutputsResult.Type;
+
 export const ComputeListProjectSessionsResult = Schema.Array(ComputeSessionRecord);
 export const ComputeGetProjectSessionResult = Schema.NullOr(ComputeSessionRecord);
 export const ComputeListProjectExecutionsResult = Schema.Array(ComputeExecutionRecord);
@@ -251,7 +288,6 @@ export {
   ComputeProjectId,
   projectComputeOutputs,
   sameComputeRepresentationBundle,
-  selectComputeRepresentation,
   ComputeRuntimeVerification,
   ComputeSessionGeneration,
   ComputeSessionId,

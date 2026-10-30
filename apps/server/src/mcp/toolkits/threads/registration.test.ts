@@ -63,7 +63,7 @@ it("admits scient_handoff_summary_read only with the threads:read session grant"
   expect(
     hasOperationCapabilities(
       operation!,
-      new Set(["sources:read", "sources:write", "documents:build", "compute:inventory"]),
+      new Set(["sources:read", "sources:write", "documents:build", "compute"]),
     ),
   ).toBe(false);
 });

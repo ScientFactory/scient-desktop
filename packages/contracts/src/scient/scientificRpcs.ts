@@ -48,6 +48,10 @@ import {
   ComputeRuntimeInspection,
   ComputeRuntimeInventory,
   ComputeRuntimeVerification,
+  ComputeNotebookOutputsInput,
+  ComputeNotebookOutputsResult,
+  ComputeSaveProjectOutputInput,
+  ComputeSaveProjectOutputResult,
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeVariableSnapshot,
@@ -97,6 +101,8 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeListOutputs: "compute.listOutputs",
   computeInspectVariables: "compute.inspectVariables",
   computeReadTable: "compute.readTable",
+  computeSaveOutput: "compute.saveOutput",
+  computeNotebookOutputs: "compute.notebookOutputs",
   subscribeComputeSessions: "subscribe.computeSessions",
 
   // Scient-owned data file viewer
@@ -327,6 +333,18 @@ const WsDataReadFileTableRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataReadFil
   error: Schema.Union([DataFileTableError, EnvironmentAuthorizationError]),
 });
 
+const WsComputeSaveOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSaveOutput, {
+  payload: ComputeSaveProjectOutputInput,
+  success: ComputeSaveProjectOutputResult,
+  error: ComputeRpcError,
+});
+
+const WsComputeNotebookOutputsRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeNotebookOutputs, {
+  payload: ComputeNotebookOutputsInput,
+  success: ComputeNotebookOutputsResult,
+  error: ComputeRpcError,
+});
+
 const WsSubscribeComputeSessionsRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.subscribeComputeSessions,
   {
@@ -368,5 +386,7 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeInspectVariablesRpc,
   WsComputeReadTableRpc,
   WsDataReadFileTableRpc,
+  WsComputeSaveOutputRpc,
+  WsComputeNotebookOutputsRpc,
   WsSubscribeComputeSessionsRpc,
 );

@@ -1,5 +1,4 @@
 import {
-  ChartNoAxesCombinedIcon,
   ChevronRightIcon,
   DatabaseIcon,
   ExternalLinkIcon,
@@ -34,10 +33,6 @@ import pythonLogo from "~/assets/compute/python.svg";
 import matlabLogo from "~/assets/compute/matlab.svg";
 import juliaLogo from "~/assets/compute/julia.svg";
 import rLogo from "~/assets/compute/r.svg";
-import rustLogo from "~/assets/compute/rust.svg";
-import spssLogo from "~/assets/compute/spss.svg";
-import octaveLogo from "~/assets/compute/octave.svg";
-import wolframLogo from "~/assets/compute/wolfram.svg";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import {
@@ -84,26 +79,15 @@ const LANGUAGE_LOGOS: Readonly<Record<string, string>> = {
   matlab: matlabLogo,
   julia: juliaLogo,
   r: rLogo,
-  rust: rustLogo,
-  spss: spssLogo,
-  octave: octaveLogo,
-  wolfram: wolframLogo,
 };
 const LANGUAGE_SYMBOLS: Readonly<Record<string, LucideIcon>> = {
   sql: DatabaseIcon,
-  stata: ChartNoAxesCombinedIcon,
 };
-// Presentation-only previews; these must not become runtime inventory entries.
-const UPCOMING_LANGUAGES = [
-  { id: "julia", label: "Julia" },
-  { id: "r", label: "R" },
-  { id: "rust", label: "Rust" },
-  { id: "spss", label: "SPSS" },
-  { id: "sql", label: "SQL" },
-  { id: "octave", label: "GNU Octave" },
-  { id: "wolfram", label: "Wolfram Language" },
-  { id: "stata", label: "Stata" },
-] as const;
+const LANGUAGE_DOWNLOADS: Readonly<Record<string, string>> = {
+  matlab: "https://www.mathworks.com/products/matlab.html",
+  r: "https://cloud.r-project.org/",
+  julia: "https://julialang.org/install/",
+};
 
 import { PythonToolkitSettings, type ToolkitChange } from "./PythonToolkitSettings";
 import { ComputeInstallationRow } from "./ComputeInstallationRow";
@@ -159,6 +143,10 @@ function LanguageRuntimeSummary({
   const languageId = language.descriptor.languageId;
   const isPython = languageId === "python";
   const isMatlab = languageId === "matlab";
+  // SQL runs DuckDB in Scient-managed Python; other languages bring a Jupyter kernel package.
+  const usesManagedPython = isPython || languageId === "sql";
+  const isKernel = !usesManagedPython && !isMatlab;
+  const kernelName = runtime.status?.displayName ?? language.descriptor.displayName;
   const summary = computeCurrentRuntimeSummary({
     language,
     preference,
@@ -246,7 +234,7 @@ function LanguageRuntimeSummary({
             ],
           }
         : {}),
-      ...(isPython &&
+      ...(usesManagedPython &&
       action === "install" &&
       selectedInstallation !== undefined &&
       selectedInstallation.source !== "managed"
@@ -280,7 +268,12 @@ function LanguageRuntimeSummary({
               summary.kind === "unavailable"
             ? `${summary.title} · ${summary.detail}`
             : summary.title;
-  const pythonManagedAction = isPython ? computeManagedPrimaryAction(runtime.status) : null;
+  const pythonManagedAction = usesManagedPython
+    ? computeManagedPrimaryAction(runtime.status)
+    : null;
+  // A kernel the installation already has needs no private copy.
+  const kernelMissing =
+    isKernel && !runtime.status?.installed && runtime.status?.selection !== "existing";
   const primaryManagedAction: ComputeManagedRuntimeAction | null = helperNeedsRetarget
     ? "repair"
     : pythonManagedAction === "repair"
@@ -322,7 +315,7 @@ function LanguageRuntimeSummary({
           Connect MATLAB
         </Button>
       );
-    if (isPython && !runtime.status?.installed)
+    if ((usesManagedPython && !runtime.status?.installed) || kernelMissing)
       return (
         <Button size="xs" variant="outline" disabled={disabled} onClick={setup}>
           Set up
@@ -365,13 +358,13 @@ function LanguageRuntimeSummary({
       );
     return null;
   })();
-  const managedDescription = isPython
+  const managedDescription = isMatlab
     ? runtime.status?.installed
-      ? (runtime.status.runtimeVersion ?? "Version not checked")
-      : "Not installed"
-    : runtime.status?.installed
       ? "Connection helper installed"
-      : "Connect Scient to the selected MATLAB installation.";
+      : "Connect Scient to the selected MATLAB installation."
+    : runtime.status?.installed || (isKernel && !kernelMissing)
+      ? (runtime.status?.runtimeVersion ?? "Version not checked")
+      : "Not installed";
   return (
     <>
       <SettingsRow
@@ -439,66 +432,65 @@ function LanguageRuntimeSummary({
             }
           />
         ))}
-      {isMatlab && !loading && language.installations.length === 0 ? (
+      {LANGUAGE_DOWNLOADS[languageId] && !loading && language.installations.length === 0 ? (
         <SettingsRow
-          id="matlab-installation-missing"
-          title="MATLAB installation"
+          id={`${languageId}-installation-missing`}
+          title={`${language.descriptor.displayName} installation`}
           description="Not found"
           control={
             <Button
               size="xs"
               variant="outline"
-              render={
-                <a
-                  href="https://www.mathworks.com/products/matlab.html"
-                  target="_blank"
-                  rel="noreferrer"
-                />
-              }
+              render={<a href={LANGUAGE_DOWNLOADS[languageId]} target="_blank" rel="noreferrer" />}
             >
-              Get MATLAB <ExternalLinkIcon />
+              Get {language.descriptor.displayName} <ExternalLinkIcon />
             </Button>
           }
         />
       ) : null}
-      <ComputeInstallationRow
-        key={`managed:${runtimeFingerprint}`}
-        installation={
-          isPython
-            ? language.installations.find((installation) => installation.source === "managed")
-            : undefined
-        }
-        environmentId={environmentId}
-        languageId={languageId}
-        isDefault={isPython && selectedInstallation?.source === "managed"}
-        disabled={disabled || !preference.enabled}
-        id={`${languageId}-managed-runtime`}
-        title={isPython ? "Scient-managed Python" : "MATLAB connection"}
-        description={
-          connectionNeedsRepair
-            ? null
-            : runtime.status?.updateCheck === "unavailable"
-              ? `${managedDescription} · Update check unavailable`
-              : managedDescription
-        }
-        status={
-          showManagedNotice && !toolkitOwnsNotice && (!inlineManagedProgress || runtime.failure) ? (
-            <ManagedRuntimeNotice runtime={runtime} showProgress={!inlineManagedProgress} />
-          ) : undefined
-        }
-        action={managedAction}
-        renderMenu={(installationActions) => (
-          <ManagedRuntimeMaintenanceMenu
-            installationActions={installationActions}
-            runtime={runtime}
-            connection={isMatlab}
-            omitAction={primaryManagedAction}
-            canProvision={selectedInstallation !== undefined}
-            disabled={refreshing || !environmentId}
-            connectionNeedsRetarget={connectionNeedsRetarget}
-          />
-        )}
-      />
+      {isKernel && language.installations.length === 0 ? null : (
+        <ComputeInstallationRow
+          key={`managed:${runtimeFingerprint}`}
+          installation={
+            usesManagedPython
+              ? language.installations.find((installation) => installation.source === "managed")
+              : undefined
+          }
+          environmentId={environmentId}
+          languageId={languageId}
+          isDefault={usesManagedPython && selectedInstallation?.source === "managed"}
+          disabled={disabled || !preference.enabled}
+          id={`${languageId}-managed-runtime`}
+          title={isMatlab ? "MATLAB connection" : isKernel ? kernelName : "Scient-managed Python"}
+          description={
+            connectionNeedsRepair
+              ? null
+              : runtime.status?.updateCheck === "unavailable"
+                ? `${managedDescription} · Update check unavailable`
+                : managedDescription
+          }
+          status={
+            showManagedNotice &&
+            !toolkitOwnsNotice &&
+            (!inlineManagedProgress || runtime.failure) ? (
+              <ManagedRuntimeNotice runtime={runtime} showProgress={!inlineManagedProgress} />
+            ) : undefined
+          }
+          action={managedAction}
+          renderMenu={(installationActions) => (
+            <ManagedRuntimeMaintenanceMenu
+              installationActions={installationActions}
+              runtime={runtime}
+              connection={isMatlab}
+              {...(isKernel ? { kernel: kernelName } : {})}
+              omitAction={primaryManagedAction}
+              canProvision={selectedInstallation !== undefined}
+              disabled={refreshing || !environmentId}
+              connectionNeedsRetarget={connectionNeedsRetarget}
+            />
+          )}
+        />
+      )}
     </>
   );
 }
@@ -729,20 +721,22 @@ function LanguageRuntimeRecovery({
   );
 }
 
-const PENDING_RUNTIME_DESCRIPTORS: ReadonlyArray<ComputeLanguageDescriptor> = [
+const PENDING_RUNTIME_DESCRIPTORS: ReadonlyArray<ComputeLanguageDescriptor> = (
+  [
+    ["python", "Python", ".py"],
+    ["r", "R", ".r"],
+    ["julia", "Julia", ".jl"],
+    ["sql", "SQL", ".sql"],
+    ["matlab", "MATLAB", ".m"],
+  ] as const
+).map(([languageId, displayName, extension]) =>
   ComputeLanguageDescriptor.make({
-    languageId: ComputeLanguageId.make("python"),
-    displayName: "Python",
-    sourceExtensions: [".py"],
+    languageId: ComputeLanguageId.make(languageId),
+    displayName,
+    sourceExtensions: [extension],
     capabilities: ["execute", "interrupt", "restart", "shutdown"],
   }),
-  ComputeLanguageDescriptor.make({
-    languageId: ComputeLanguageId.make("matlab"),
-    displayName: "MATLAB",
-    sourceExtensions: [".m"],
-    capabilities: ["execute", "interrupt", "restart", "shutdown"],
-  }),
-];
+);
 
 function pendingRuntimeInventory(
   preferences: Readonly<Record<string, ScientificComputingLanguageSettings>>,
@@ -823,32 +817,18 @@ function EnvironmentScientificComputingSettings({
     "python",
     Schema.String,
   );
-  const upcomingLanguages = UPCOMING_LANGUAGES.filter(
-    (preview) =>
-      !displayedLanguages.some((language) => language.descriptor.languageId === preview.id),
-  );
-  const selectedPreview = upcomingLanguages.find((preview) => preview.id === storedLanguageId);
-  const selectedLanguage = selectedPreview
-    ? undefined
-    : (displayedLanguages.find((language) => language.descriptor.languageId === storedLanguageId) ??
-      displayedLanguages[0]);
-  const selectedId = selectedPreview?.id ?? selectedLanguage?.descriptor.languageId;
-  const languageItems = [
-    ...displayedLanguages.map((language) => ({
-      id: language.descriptor.languageId,
-      label: language.descriptor.displayName,
-      detail: resolveScientificComputingLanguageSettings(
-        preferences,
-        language.descriptor.languageId,
-      ).enabled
-        ? "On"
-        : "Off",
-    })),
-    ...upcomingLanguages.map((preview) => ({
-      ...preview,
-      detail: "Coming soon",
-    })),
-  ];
+  const selectedLanguage =
+    displayedLanguages.find((language) => language.descriptor.languageId === storedLanguageId) ??
+    displayedLanguages[0];
+  const selectedId = selectedLanguage?.descriptor.languageId;
+  const languageItems = displayedLanguages.map((language) => ({
+    id: language.descriptor.languageId,
+    label: language.descriptor.displayName,
+    detail: resolveScientificComputingLanguageSettings(preferences, language.descriptor.languageId)
+      .enabled
+      ? "On"
+      : "Off",
+  }));
   const [collapsed, setCollapsed] = useState(false);
   // Keep the pending action when moving between language disclosures.
   const [toolkitChange, setToolkitChange] = useState<ToolkitChange | null>(null);
@@ -971,10 +951,7 @@ function EnvironmentScientificComputingSettings({
                           aria-hidden="true"
                           width={24}
                           height={24}
-                          className={cn(
-                            "size-6 shrink-0 object-contain",
-                            languageId === "rust" && "dark:invert",
-                          )}
+                          className="size-6 shrink-0 object-contain"
                         />
                       ) : (
                         <LanguageSymbol
@@ -996,15 +973,6 @@ function EnvironmentScientificComputingSettings({
                 );
               })}
             </SettingsSourceStrip>
-            {selectedPreview ? (
-              <SettingsSourcePanel
-                id={`scientific-computing-${selectedPreview.id}`}
-                aria-labelledby={`scientific-computing-${selectedPreview.id}-trigger`}
-                hidden={collapsed}
-              >
-                <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">Coming soon</p>
-              </SettingsSourcePanel>
-            ) : null}
             {selectedLanguage && selectedPreference ? (
               <SelectedLanguageRuntime
                 key={selectedLanguage.descriptor.languageId}

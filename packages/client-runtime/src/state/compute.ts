@@ -536,6 +536,16 @@ export function createComputeEnvironmentAtoms<R, E>(
       scheduler: sessionScheduler,
       concurrency: { mode: "singleFlight", key: sessionKey },
     }),
+    saveOutput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:save-output",
+      tag: WS_METHODS.computeSaveOutput,
+      scheduler: executionScheduler,
+    }),
+    notebookOutputs: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:notebook-outputs",
+      tag: WS_METHODS.computeNotebookOutputs,
+      scheduler: executionScheduler,
+    }),
     submitExecution: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:submit-execution",
       tag: WS_METHODS.computeSubmitExecution,

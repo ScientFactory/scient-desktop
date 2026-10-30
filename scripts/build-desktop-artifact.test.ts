@@ -1585,7 +1585,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
   );
 
-  it.effect("packs both Compute bridge scripts as files external interpreters can read", () =>
+  it.effect("packs the Compute bridge scripts as files external interpreters can read", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1593,7 +1593,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const source = path.join(root, "source");
       const bridgeDirectory = path.join(source, COMPUTE_BRIDGE_ASAR_UNPACK_DIR);
       yield* fs.makeDirectory(bridgeDirectory, { recursive: true });
-      const names = ["scient_compute_bridge.py", "scient_matlab_engine_bridge.py"];
+      const names = [
+        "scient_compute_bridge.py",
+        "scient_matlab_engine_bridge.py",
+        "scient_sql_kernel.py",
+      ];
       for (const name of names) yield* fs.writeFileString(path.join(bridgeDirectory, name), name);
       for (const archive of ["app.asar", "server.asar"]) {
         const asarPath = path.join(root, archive);

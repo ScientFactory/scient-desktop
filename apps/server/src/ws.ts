@@ -312,6 +312,8 @@ import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcH
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
+import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
+import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
 import {
   makeAnalysisRuntimeInspectionHandlers,
   makeScientificRpcHandlers,
@@ -1886,6 +1888,17 @@ export const layerWsRpc = (
         compute,
         serverSettings: yield* ScientificRuntimePreferences,
         workspaceFileSystem,
+      });
+      const saveComputeOutput = makeComputeOutputSave({
+        gateway: computeGateway,
+        compute,
+        workspaceFileSystem,
+        fileSystem: yield* FileSystem.FileSystem,
+      });
+      const computeNotebookOutputs = makeComputeNotebookOutputs({
+        gateway: computeGateway,
+        compute,
+        fileSystem: yield* FileSystem.FileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
@@ -3811,6 +3824,8 @@ export const layerWsRpc = (
           analysis,
           computeGateway,
           dataTables,
+          saveComputeOutput,
+          computeNotebookOutputs,
         }),
       });
       // SCIENT-FORK:START — Scient extensions RPCs.
