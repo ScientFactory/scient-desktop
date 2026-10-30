@@ -93,6 +93,8 @@ import Migration0073 from "./Migrations/073_ThreadMessageSearch.ts";
 import Migration0074 from "./Migrations/074_PeerLinks.ts";
 import Migration0075 from "./Migrations/075_PeerLinkFence.ts";
 import Migration0076 from "./Migrations/076_WaitingLinkRequestIndex.ts";
+// T3's migration 73 lands at the next free ID; Scient already recorded 073-076.
+import Migration0077 from "./Migrations/077_ActiveTurnItemIndexes.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -190,6 +192,8 @@ export const migrationEntries = [
   [74, "PeerLinks", Migration0074],
   [75, "PeerLinkFence", Migration0075],
   [76, "WaitingLinkRequestIndex", Migration0076],
+  // T3's migration 73 follows Scient's immutable migration sequence.
+  [77, "ActiveTurnItemIndexes", Migration0077],
   // SCIENT-FORK:END
 ] as const;
 

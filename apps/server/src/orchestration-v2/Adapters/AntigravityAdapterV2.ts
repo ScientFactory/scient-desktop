@@ -35,6 +35,7 @@ import {
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
+import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 // SCIENT-FORK:START Scient ACP application bridge
 import { scientAcpProviderBridge } from "./ScientAcpApplicationBridge.ts";
 // SCIENT-FORK:END Scient ACP application bridge
@@ -274,6 +275,7 @@ export function makeAntigravityAcpAdapterFlavor(
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     supportsCompaction: true,
+    requiresSignIn: isAntigravitySignInRequiredError,
   };
 }
 

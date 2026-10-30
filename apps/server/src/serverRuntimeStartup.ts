@@ -308,8 +308,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
     });
     targets.bootstrapProjectId = project.id;
     targets.bootstrapProjectCreated = created;
-    const shell = yield* threads.getShellSnapshot();
-    const existingThread = shell.threads.find(
+    const existingThread = (yield* threads.listActiveShellIndex()).find(
       (thread) =>
         thread.projectId === project.id && thread.lineage.relationshipToParent !== "subagent",
     );
