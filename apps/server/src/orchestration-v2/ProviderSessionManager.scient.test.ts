@@ -133,7 +133,7 @@ it.effect.each(
                 "worktree",
                 "pull-requests",
                 "documents:build",
-                "compute:inventory",
+                "compute",
                 "sources:read",
                 "sources:write",
                 "threads:read",
@@ -2827,7 +2827,7 @@ it.effect(
             "worktree",
             "pull-requests",
             "documents:build",
-            "compute:inventory",
+            "compute",
             "sources:read",
             "sources:write",
             "threads:read",
@@ -2849,9 +2849,11 @@ it.effect(
           listScientComputeInventory(),
         ).pipe(
           Effect.provideService(AgentInvocationContext, invocation),
-          Effect.provideService(ComputeMcpGateway, {
-            runtimeInventory: () => Effect.succeed({ languages: [] }),
-          }),
+          Effect.provide(
+            Layer.mock(ComputeMcpGateway)({
+              runtimeInventory: () => Effect.succeed({ languages: [] }),
+            }),
+          ),
         );
         assert.deepEqual(inventory, { languages: [] });
         // The grant admits the reader; this thread simply retains no such handoff.

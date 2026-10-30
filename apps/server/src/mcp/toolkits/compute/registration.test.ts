@@ -10,7 +10,7 @@ import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 
 const TestLayer = ScientComputeToolkitRegistrationLive.pipe(
   Layer.provide(
-    Layer.succeed(ComputeMcpGateway, {
+    Layer.mock(ComputeMcpGateway)({
       runtimeInventory: () => Effect.succeed({ languages: [] }),
     }),
   ),
@@ -18,25 +18,18 @@ const TestLayer = ScientComputeToolkitRegistrationLive.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
 );
 
-it.effect("registers an object-shaped read-only Compute inventory tool", () =>
+it.effect("registers the Compute tools with object input schemas", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const registered = server.tools.find(({ tool }) => tool.name === "scient_compute_inventory");
-
-    expect(
-      server.tools
-        .filter(({ tool }) => tool.name.startsWith("scient_compute_"))
-        .map(({ tool }) => tool.name),
-    ).toEqual(["scient_compute_inventory"]);
-    expect(registered?.tool.inputSchema.type).toBe("object");
-    expect(registered?.tool.description).toContain(
-      "a listed executable is not permission to launch it",
-    );
-    expect(registered?.tool.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    });
+    const compute = server.tools.filter(({ tool }) => tool.name.startsWith("scient_compute_"));
+    expect(compute.map(({ tool }) => tool.name).toSorted()).toEqual([
+      "scient_compute_control",
+      "scient_compute_inventory",
+      "scient_compute_output",
+      "scient_compute_run",
+      "scient_compute_sessions",
+      "scient_compute_variables",
+    ]);
+    for (const { tool } of compute) expect(tool.inputSchema.type).toBe("object");
   }).pipe(Effect.provide(TestLayer)),
 );

@@ -2369,6 +2369,7 @@ const make = Effect.gen(function* () {
       sessionId: input.sessionId,
       projectId: input.projectId,
       label: labelText(input.label),
+      ...(input.owner === undefined ? {} : { owner: input.owner }),
       languageId: binding.adapter.languageId,
       transportKind: binding.adapter.transportKind,
       workingDirectory: shortText(projectRoot),
@@ -2666,6 +2667,7 @@ const make = Effect.gen(function* () {
       code: input.code,
       codeHash: codeHash(input.code),
       source: input.source,
+      ...(input.actor === undefined ? {} : { actor: input.actor }),
       submittedAt,
       environmentFingerprint: record.environmentFingerprint,
     };

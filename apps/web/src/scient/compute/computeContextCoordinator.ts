@@ -381,7 +381,14 @@ export async function replaceComputeContextSession(
     if (!reserved) return { kind: "cancelled" };
     const started = await input.startSession({
       environmentId: binding.environmentId,
-      input: { cwd: binding.cwd, sessionId: input.replacementSessionId, ...runtime },
+      input: {
+        cwd: binding.cwd,
+        sessionId: input.replacementSessionId,
+        ...runtime,
+        ...(binding.relativePath === null
+          ? {}
+          : { owner: { _tag: "file" as const, path: binding.relativePath } }),
+      },
     });
     if (started._tag !== "Success") {
       const error = squashAtomCommandFailure(started);

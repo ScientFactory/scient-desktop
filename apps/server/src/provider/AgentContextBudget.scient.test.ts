@@ -9,7 +9,7 @@ import budget from "./agentContextBudget.scient.json" with { type: "json" };
 // Every capability with an awareness block, so a session granted all of them is measured.
 const ALL_AWARENESS_CAPABILITIES: ReadonlySet<McpCapability> = new Set([
   "preview",
-  "compute:inventory",
+  "compute",
   "device",
   "documents:build",
   "skills:read",

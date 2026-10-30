@@ -332,11 +332,7 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
         });
         const threadId = ThreadId.make("thread-claude-accept-edits");
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-        const capabilities = new Set([
-          "documents:build",
-          "compute:inventory",
-          "skills:read",
-        ] as const);
+        const capabilities = new Set(["documents:build", "compute", "skills:read"] as const);
         if (granted) {
           yield* mcpSessions.set({
             environmentId: EnvironmentId.make("claude-native-awareness"),

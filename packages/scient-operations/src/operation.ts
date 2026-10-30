@@ -20,7 +20,7 @@ export type OperationCapability =
   // SCIENT-FORK:END
   | "preview"
   | "documents:build"
-  | "compute:inventory"
+  | "compute"
   | "skills:read"
   | "sources:read"
   | "sources:write"

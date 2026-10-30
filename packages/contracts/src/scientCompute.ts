@@ -2,6 +2,7 @@ import {
   ComputeCapability,
   ComputeExecutionId,
   ComputeExecutionRecord,
+  ComputeExecutionActor,
   ComputeExecutionSource,
   computeOutputByteLength,
   ComputeLanguageId,
@@ -20,6 +21,7 @@ import {
   ComputeRuntimeVerification,
   ComputeSessionGeneration,
   ComputeSessionId,
+  ComputeSessionOwner,
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeTransportKind,
@@ -37,7 +39,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export { ComputeToolkitId, ComputeManagedToolkitChange };
+export {
+  ComputeExecutionActor,
+  ComputeManagedToolkitChange,
+  ComputeSessionOwner,
+  ComputeToolkitId,
+};
 
 const ComputeCwd = Schema.String.check(Schema.isMaxLength(4096));
 const ComputeExecutable = Schema.String.check(Schema.isMaxLength(4096));
@@ -168,6 +175,7 @@ export const ComputeStartProjectSessionInput = Schema.Struct({
   sessionId: ComputeSessionId,
   languageId: ComputeLanguageId,
   executable: Schema.NullOr(ComputeExecutable),
+  owner: Schema.optional(ComputeSessionOwner),
   runOnce: Schema.optional(
     Schema.Struct({
       executionId: ComputeExecutionId,
@@ -207,6 +215,7 @@ export const ComputeSubmitProjectExecutionInput = Schema.Struct({
   expectedGeneration: ComputeSessionGeneration,
   code: ComputeCode,
   source: ComputeExecutionSource,
+  actor: Schema.optional(ComputeExecutionActor),
 });
 export type ComputeSubmitProjectExecutionInput = typeof ComputeSubmitProjectExecutionInput.Type;
 
