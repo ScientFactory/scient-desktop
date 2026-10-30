@@ -76,6 +76,7 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_compute_sessions: tool(["List", "Listing", "Listed", "compute sessions"], "scient-compute"),
   t3_compute_variables: tool(["Read", "Reading", "Read", "session variables"], "scient-compute"),
   t3_compute_control: tool(["Control", "Controlling", "Controlled", "a session"], "scient-compute"),
+  t3_compute_setup: tool(["Set up", "Setting up", "Set up", "Scientific Python"], "scient-compute"),
   t3_compute_inventory: tool(
     ["Check", "Checking", "Checked", "compute runtimes"],
     "scient-compute",

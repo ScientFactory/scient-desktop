@@ -203,6 +203,32 @@ const ScientComputeControlTool = Tool.make("scient_compute_control", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, operation("compute.control"));
 
+const ScientComputeSetupTool = Tool.make("scient_compute_setup", {
+  description:
+    "Install Scient-managed Python, a private scientific Python (NumPy, pandas, SciPy, Matplotlib, seaborn, statsmodels, scikit-learn, SymPy, Plotly and more), or add its Toolkits: python-large-data (Arrow/Parquet, HDF5, NetCDF, Zarr, Dask, xarray), python-image-analysis, python-bioinformatics. Use it when a package is missing instead of installing into the user's own Python. The first install takes a few minutes; call again to check progress.",
+  parameters: Schema.Struct({
+    toolkits: Schema.optional(
+      Schema.Array(Schema.String.check(Schema.isMaxLength(64))).check(Schema.isMaxLength(16)),
+    ),
+    waitSeconds: Schema.optional(WaitSeconds),
+  }),
+  success: Schema.Struct({
+    installed: Schema.Boolean,
+    busy: Schema.Boolean,
+    runtime: Schema.NullOr(Schema.String),
+    toolkits: Schema.Array(Schema.String),
+    failure: Schema.NullOr(Schema.String),
+  }),
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Set up Scient-managed Python")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, { ...operation("compute.setup"), scope: "thread" });
+
 const ScientComputeInventoryTool = Tool.make("scient_compute_inventory", {
   description:
     "List the languages and runtimes Scient Compute has configured or found on this server, including Scient-managed Python and its Toolkits.",
@@ -227,5 +253,6 @@ export const ScientComputeToolkit = Toolkit.make(
   ScientComputeSessionsTool,
   ScientComputeVariablesTool,
   ScientComputeControlTool,
+  ScientComputeSetupTool,
   ScientComputeInventoryTool,
 );

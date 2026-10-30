@@ -28,6 +28,7 @@ it.effect("registers the Compute tools with object input schemas", () =>
       "scient_compute_output",
       "scient_compute_run",
       "scient_compute_sessions",
+      "scient_compute_setup",
       "scient_compute_variables",
     ]);
     for (const { tool } of compute) expect(tool.inputSchema.type).toBe("object");

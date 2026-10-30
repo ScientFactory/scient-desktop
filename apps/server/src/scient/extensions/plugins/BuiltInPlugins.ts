@@ -88,6 +88,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
         "scient_compute_sessions",
         "scient_compute_variables",
         "scient_compute_control",
+        "scient_compute_setup",
         "scient_compute_inventory",
       ]),
     ],

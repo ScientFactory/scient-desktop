@@ -7,7 +7,9 @@ import {
   ComputeSessionId,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   TERMINAL_COMPUTE_SESSION_STATUSES,
+  ComputeToolkitId,
   type ComputeExecutionRecord,
+  type ComputeManagedRuntimeStatus,
   type ComputeSessionRecord,
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
@@ -125,11 +127,17 @@ const agentSession = Effect.fn("ScientComputeToolkit.agentSession")(function* (
       session.owner.threadId === scope.threadId,
   );
   if (existing !== undefined) return existing;
+  // The agent's own session uses Scient-managed Python when it is installed: it carries the
+  // scientific packages, and the user's default stays theirs.
+  const inventory = yield* scope.gateway.runtimeInventory();
+  const managed = inventory.languages
+    .find((language) => language.descriptor.languageId === languageId)
+    ?.installations.find((installation) => installation.source === "managed");
   return yield* scope.gateway.startSession({
     cwd: scope.cwd,
     sessionId: ComputeSessionId.make(`agent-${NodeCrypto.randomUUID()}`),
     languageId,
-    executable: null,
+    executable: managed?.problem === null ? managed.executable : null,
     owner: { _tag: "agent", threadId: scope.threadId },
   });
 }, Effect.mapError(computeFailed));
@@ -392,6 +400,48 @@ const controlScientCompute = Effect.fn("ScientComputeToolkit.control")(function*
   return { session: sessionSummary(updated, scope.threadId) };
 });
 
+const PYTHON = ComputeLanguageId.make("python");
+const SETUP_POLL_SECONDS = 2;
+
+const setupSummary = (status: ComputeManagedRuntimeStatus) => ({
+  installed: status.installed,
+  busy: status.operation !== null,
+  runtime: status.runtimeVersion,
+  toolkits: [...(status.toolkitIds ?? [])],
+  failure: status.failureMessage,
+});
+
+const setupScientCompute = Effect.fn("ScientComputeToolkit.setup")(function* (input: {
+  readonly toolkits?: ReadonlyArray<string> | undefined;
+  readonly waitSeconds?: number | undefined;
+}) {
+  const scope = yield* agentScope();
+  const requested = (input.toolkits ?? []).map((id) => ComputeToolkitId.make(id));
+  let status = yield* scope.gateway.managedRuntimeStatus({ languageId: PYTHON });
+  if (status.operation === null && !status.installed) {
+    status = yield* scope.gateway.manageRuntime({
+      languageId: PYTHON,
+      action: "install",
+      toolkitIds: requested,
+    });
+  } else if (status.operation === null) {
+    for (const toolkitId of requested) {
+      if (status.toolkitIds?.includes(toolkitId)) continue;
+      status = yield* scope.gateway.manageRuntime({
+        languageId: PYTHON,
+        action: "update",
+        toolkitChange: { toolkitId, action: "install" },
+      });
+    }
+  }
+  const polls = Math.ceil((input.waitSeconds ?? DEFAULT_RUN_WAIT_SECONDS) / SETUP_POLL_SECONDS);
+  for (let poll = 0; status.operation !== null && poll < polls; poll += 1) {
+    yield* Effect.sleep(Duration.seconds(SETUP_POLL_SECONDS));
+    status = yield* scope.gateway.managedRuntimeStatus({ languageId: PYTHON });
+  }
+  return setupSummary(status);
+}, Effect.mapError(computeFailed));
+
 export const listScientComputeInventory = Effect.fn("ScientComputeToolkit.inventory")(function* () {
   const invocation = yield* AgentInvocationContext.AgentInvocationContext;
   if (!invocation.capabilities.has("compute")) {
@@ -416,6 +466,7 @@ const handlers = {
   scient_compute_sessions: () => listScientComputeSessions(),
   scient_compute_variables: listScientComputeVariables,
   scient_compute_control: controlScientCompute,
+  scient_compute_setup: setupScientCompute,
   scient_compute_inventory: () => listScientComputeInventory(),
 } satisfies Parameters<typeof ScientComputeToolkit.toLayer>[0];
 
