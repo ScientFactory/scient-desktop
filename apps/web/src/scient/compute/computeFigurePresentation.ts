@@ -22,6 +22,15 @@ export interface ComputeFigurePresentation {
   readonly viewer: PreviewStaticImageSurfaceDescriptor;
   readonly reference: ComputeFigureReference;
   readonly nativeDownload: ComputeFigureNativeDownload | null;
+  /** Copies Save to project can write; empty for a figure that is already a project file. */
+  readonly saveTargets: ReadonlyArray<ComputeFigureSaveTarget>;
+}
+
+export interface ComputeFigureSaveTarget {
+  readonly format: string;
+  readonly kind: "image" | "resource";
+  readonly contentHash: string;
+  readonly relativePath: string;
 }
 
 export interface ComputeFigureNativeDownload {
@@ -49,6 +58,37 @@ function figureNames(output: ComputeStaticImageOutput, runtimeDisplayOrdinal: nu
     label: projectPath === null ? `Figure ${runtimeDisplayOrdinal}` : fileName,
     sourcePath: projectPath,
   };
+}
+
+/** `figures/<source file stem>.<ext>`; the server adds -2, -3… instead of overwriting. */
+function figureSaveTargets(
+  output: ComputeStaticImageOutput,
+  source: ComputeExecutionSource | null,
+): ReadonlyArray<ComputeFigureSaveTarget> {
+  if (output.origin?._tag === "project-file") return [];
+  const fileName = source?._tag === "document" ? (source.path.split("/").at(-1) ?? "") : "";
+  const stem = fileName.replace(/\.[^.]*$/u, "") || "figure";
+  const extension = FIGURE_EXTENSIONS[output.mediaType];
+  const image: ComputeFigureSaveTarget = {
+    format: extension.toUpperCase(),
+    kind:
+      output.mediaType === "image/png" || output.mediaType === "image/svg+xml"
+        ? "image"
+        : "resource",
+    contentHash: output.contentHash,
+    relativePath: `figures/${stem}.${extension}`,
+  };
+  return output.pdf === undefined
+    ? [image]
+    : [
+        image,
+        {
+          format: "PDF",
+          kind: "resource",
+          contentHash: output.pdf.contentHash,
+          relativePath: `figures/${stem}.pdf`,
+        },
+      ];
 }
 
 function computeOutputResource(input: {
@@ -178,5 +218,11 @@ export function computeFigurePresentation(input: {
           fileName: names.fileName.replace(/\.(png|svg)$/i, ".fig"),
           byteLength: input.output.nativeFigure.byteLength,
         };
-  return { inline, viewer, reference, nativeDownload };
+  return {
+    inline,
+    viewer,
+    reference,
+    nativeDownload,
+    saveTargets: figureSaveTargets(input.output, input.source),
+  };
 }

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useRef, type ReactNode } from "react";
+import { lazy, Suspense, useRef } from "react";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { sanitizeDocumentHtml } from "~/components/files/DocumentPages";
@@ -55,7 +55,11 @@ export function ComputeTable(props: { readonly table: ComputeTablePreview }) {
               <tr key={index}>
                 {row.map((cell, column) => (
                   <td key={props.table.columns[column]} dir="auto">
-                    {cell === null ? "" : String(cell)}
+                    {cell === null ? (
+                      <span className="text-muted-foreground">NaN</span>
+                    ) : (
+                      String(cell)
+                    )}
                   </td>
                 ))}
               </tr>
@@ -82,10 +86,13 @@ function sanitizeComputeHtml(source: string): string | null {
   return visible ? html : null;
 }
 
-function ComputeHtml(props: { readonly html: string; readonly fallback: () => ReactNode }) {
+function ComputeHtml(props: {
+  readonly html: string;
+  readonly fallback: ReadonlyArray<ComputeRichDisplay>;
+}) {
   const element = useRef<HTMLDivElement>(null);
   const html = sanitizeComputeHtml(props.html);
-  if (html === null) return props.fallback();
+  if (html === null) return <ComputeRichOutput displays={props.fallback} />;
   return (
     <ComputeOutputBlock copy={() => ({ text: element.current?.innerText ?? "", html })}>
       <div
@@ -140,9 +147,7 @@ export function ComputeRichOutput(props: { readonly displays: ReadonlyArray<Comp
         </Suspense>
       );
     case "html":
-      return (
-        <ComputeHtml html={display.html} fallback={() => <ComputeRichOutput displays={rest} />} />
-      );
+      return <ComputeHtml html={display.html} fallback={rest} />;
     case "markdown":
       return (
         <ComputeOutputBlock copy={() => ({ text: display.text })}>

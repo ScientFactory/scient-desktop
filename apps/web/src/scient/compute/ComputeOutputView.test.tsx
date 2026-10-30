@@ -65,7 +65,7 @@ describe("dependency recovery presentation", () => {
     const markup = renderDiagnostic("python", "No module named 'pandas'");
     expect(markup).toContain("ModuleNotFoundError");
     expect(markup).toContain("Original traceback retained");
-    expect(markup).toContain("Choose Python environment…");
+    expect(markup).toContain("Python settings");
     expect(markup).toContain('data-environment="remote-scient-host"');
     expect(markup).not.toContain("reports pandas installed");
   });
@@ -75,7 +75,7 @@ describe("dependency recovery presentation", () => {
     ["python", "No module named 'project_utils'"],
   ])("does not suggest an environment change for %s / %s", (language, message) => {
     const markup = renderDiagnostic(language, message);
-    expect(markup).not.toContain("Choose Python environment");
+    expect(markup).not.toContain("Python settings");
     expect(markup).toContain("Original traceback retained");
   });
 });

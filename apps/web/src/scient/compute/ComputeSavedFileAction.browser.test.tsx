@@ -84,7 +84,7 @@ const saved = {
 
 async function pickFile(_fixture: _Fixture) {
   await mount(_fixture, <ComputeSavedFileAction {...props} />);
-  const button = _fixture.host.querySelector<HTMLButtonElement>("button[title]");
+  const button = _fixture.host.querySelector<HTMLButtonElement>("button");
   expect(button).not.toBeNull();
   await act(() => button!.click());
   const picker = [...document.querySelectorAll("button")].find(

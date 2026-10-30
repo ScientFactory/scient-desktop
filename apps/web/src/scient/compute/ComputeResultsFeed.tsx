@@ -94,10 +94,6 @@ export function ComputeResultsFeed(
   const visible = entries.slice(-shown);
   const newestKey = entries.findLast((entry) => entry.kind !== "restart")?.key ?? null;
 
-  const scrollToEnd = () => {
-    const node = viewport.current;
-    if (node !== null) node.scrollTop = node.scrollHeight;
-  };
   // Content and viewport both report; the reader's position decides whether to stay at the end.
   const observe = (content: HTMLDivElement | null) => {
     const node = content?.parentElement;
@@ -118,7 +114,8 @@ export function ComputeResultsFeed(
   useEffect(() => {
     if (followRequest === null) return;
     following.current = true;
-    scrollToEnd();
+    const node = viewport.current;
+    if (node !== null) node.scrollTop = node.scrollHeight;
     onFollowRequestConsumed?.(followRequest);
   }, [followRequest, onFollowRequestConsumed]);
 

@@ -19,13 +19,13 @@ const FEED_EXECUTION_LIMIT = 200;
 
 /**
  * Session truth for one Results surface: durable queries reconciled with the live stream. A
- * file tab sees its bound session and its Run fresh children; project history may pick any.
+ * file tab sees every run of its bound session, whoever submitted it, and its Run fresh children;
+ * project history may pick any session.
  */
 export function useComputePanelSessions(input: {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly contextId: ComputeContextId | undefined;
-  readonly sourcePath: string | undefined;
 }) {
   const [chosenSessionId, setChosenSessionId] = useState<string | null>(null);
   const contextBinding = useComputeContextStore((state) =>
@@ -123,12 +123,7 @@ export function useComputePanelSessions(input: {
       []) {
       byId.set(execution.request.executionId, execution);
     }
-    return [...byId.values()].filter(
-      (execution) =>
-        input.sourcePath === undefined ||
-        (execution.request.source._tag === "document" &&
-          execution.request.source.path === input.sourcePath),
-    );
+    return [...byId.values()];
   })();
 
   const refresh = useStableCallback(() => {

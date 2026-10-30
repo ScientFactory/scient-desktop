@@ -17,6 +17,7 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { useEnvironmentQuery } from "~/state/query";
 import { formatDateTimeTimestamp } from "~/timestampFormat";
 
@@ -107,50 +108,57 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
 
   const source = execution.request.source;
   const status = execution.result?.status ?? null;
+  const failed = status === "failed" || status === "lost";
   const label = computeSourceLabel(source, { includePath: props.includeSourcePath });
   const reveal =
     source._tag === "document" && props.onRevealSource !== undefined
       ? () => props.onRevealSource?.(source)
       : null;
   const duration = computeRunDurationLabel(execution.result);
+  const when = [formatDateTimeTimestamp(execution.request.submittedAt, timestampFormat), duration]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <article className="min-w-0 px-3 py-2" aria-label={`${label} run`}>
-      <header className="flex min-h-6 items-center gap-2 text-[11px] text-muted-foreground">
-        {reveal === null ? (
-          <span className="min-w-0 truncate font-medium">{label}</span>
-        ) : (
-          <button
-            type="button"
-            className="min-w-0 cursor-pointer truncate rounded-[4px] font-medium outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-            title={formatDateTimeTimestamp(execution.request.submittedAt, timestampFormat)}
-            onClick={reveal}
-          >
-            {label}
-          </button>
-        )}
-        {props.fresh ? <span>Fresh</span> : null}
+      <header className="flex min-h-5 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <ScientTooltip content={when}>
+          {reveal === null ? (
+            <span className="min-w-0 truncate">{label}</span>
+          ) : (
+            <button
+              type="button"
+              className="min-w-0 cursor-pointer truncate rounded-[4px] outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              onClick={reveal}
+            >
+              {label}
+            </button>
+          )}
+        </ScientTooltip>
+        {props.fresh ? <span className="shrink-0 text-muted-foreground/70">Fresh</span> : null}
+        {execution.request.actor?._tag === "agent" ? (
+          <span className="shrink-0 text-muted-foreground/70">Agent</span>
+        ) : null}
         <span className="flex-1" />
-        {status !== "succeeded" ? (
-          <span
-            className={cn(
-              "flex shrink-0 items-center gap-1",
-              (status === "failed" || status === "lost") && "text-destructive",
+        {!terminal ? (
+          <>
+            {status === "queued" ? (
+              <span className="shrink-0">{computeExecutionStatusLabel(execution.result)}</span>
+            ) : (
+              <LoaderCircle className="size-3 shrink-0 animate-spin" aria-label="Running" />
             )}
-          >
-            {!terminal ? <LoaderCircle className="size-3 animate-spin" /> : null}
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              aria-label="Cancel run"
+              onClick={() => void cancel()}
+            >
+              <Square className="size-3" />
+            </Button>
+          </>
+        ) : status !== "succeeded" && !outputs.some((output) => output._tag === "diagnostic") ? (
+          <span className={cn("shrink-0", failed && "text-destructive")}>
             {computeExecutionStatusLabel(execution.result)}
           </span>
-        ) : null}
-        {duration !== null ? <span className="shrink-0 tabular-nums">{duration}</span> : null}
-        {!terminal ? (
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            aria-label="Cancel run"
-            onClick={() => void cancel()}
-          >
-            <Square className="size-3" />
-          </Button>
         ) : null}
       </header>
       {outputs.length === 0 && persisted.error ? (

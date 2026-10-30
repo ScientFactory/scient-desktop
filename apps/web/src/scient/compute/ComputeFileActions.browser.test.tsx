@@ -317,6 +317,7 @@ describe("Python file run actions", () => {
         sessionId: expect.any(String),
         languageId: "python",
         executable: null,
+        owner: { _tag: "file", path: "test.py" },
       },
     });
     expect(mocks.submit.mock.calls[0]?.[0].input).toMatchObject({
@@ -410,6 +411,7 @@ describe("Python file run actions", () => {
             sessionId: expect.any(String),
             languageId: "python",
             executable,
+            owner: { _tag: "file", path: "test.py" },
           },
         });
       } finally {

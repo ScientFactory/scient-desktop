@@ -228,7 +228,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: null,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Checking Python…", canRun: false });
+    ).toEqual({ kind: "status", label: "Python", canRun: false, busy: true });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: null,
@@ -237,9 +237,8 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
         runtimeVersion: pythonRuntime.languageVersion,
-        runtimeSource: pythonRuntime.source,
       }),
-    ).toEqual({ kind: "status", label: "Python 3.12.13 · Custom", canRun: true });
+    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: null,
@@ -272,7 +271,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python capacity reached", canRun: true });
+    ).toEqual({ kind: "status", label: "Python", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         contextLifecycle: "starting",
@@ -283,7 +282,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python retry start", canRun: true });
+    ).toEqual({ kind: "status", label: "Python", canRun: true });
   });
 
   it("uses the active session as authority for Python run availability", () => {
@@ -301,7 +300,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: null,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python · Custom · Running", canRun: true });
+    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: true, busy: true });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: {
@@ -316,7 +315,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "R active", canRun: false });
+    ).toEqual({ kind: "status", label: "R", canRun: false });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: {
@@ -331,7 +330,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python starting", canRun: false });
+    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: false, busy: true });
   });
 
   it("offers an explicit switch without blocking a deliberately chosen live runtime", () => {
@@ -349,7 +348,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/scient/managed/python",
         scientificPackagesMissing: true,
       }),
-    ).toEqual({ kind: "switch", label: "Python · Custom", canRun: true });
+    ).toEqual({ kind: "switch", label: "Python 3.12.13", canRun: true });
   });
 
   it("distinguishes scientific packages from the ability to run ordinary Python", () => {
@@ -406,7 +405,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/MATLAB/bin/matlab",
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "MATLAB · Custom", canRun: true });
+    ).toEqual({ kind: "status", label: "MATLAB R2026a", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         languageId: "matlab",
@@ -430,7 +429,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/MATLAB/bin/matlab",
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "MATLAB · Custom", canRun: true });
+    ).toEqual({ kind: "status", label: "MATLAB R2026a", canRun: true });
   });
 
   it("does not offer a switch from stale inspection data or while work is running", () => {
@@ -450,7 +449,7 @@ describe("python compute surface model", () => {
     };
     expect(resolveComputeRuntimeToolbarState(input)).toEqual({
       kind: "status",
-      label: "Python · Custom",
+      label: "Python 3.12.13",
       canRun: true,
     });
     expect(
@@ -459,7 +458,7 @@ describe("python compute surface model", () => {
         runtimeInspectionPending: false,
         liveSession: { ...liveSession, activity: "busy" },
       }),
-    ).toEqual({ kind: "status", label: "Python · Custom · Running", canRun: true });
+    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: true, busy: true });
   });
 
   it("accepts a stop as shutdown only for the exact session, generation and a terminal status", () => {

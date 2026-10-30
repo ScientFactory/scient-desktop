@@ -33,16 +33,18 @@ describe("compute context bindings", () => {
     const first = { sessionId: ComputeSessionId.make("session-12345678"), label: "Python" };
     const second = { sessionId: ComputeSessionId.make("session-87654321"), label: "Python" };
     useComputeContextStore.getState().reserveSession({ contextId, sessionId: first.sessionId });
-    expect(computeSessionOwnerLabel(first, environmentId, "/project")).toBe(
-      "Python · analysis.py · 12345678",
-    );
-    expect(computeSessionOwnerLabel(second, environmentId, "/project")).toBe("Python · 87654321");
+    expect(computeSessionOwnerLabel(first, environmentId, "/project")).toBe("Python · analysis.py");
+    expect(computeSessionOwnerLabel(second, environmentId, "/project")).toBe("Python");
     expect(computeSessionOwnerLabel(first, EnvironmentId.make("another-host"), "/project")).toBe(
-      "Python · 12345678",
+      "Python",
     );
-    expect(computeSessionOwnerLabel(first, environmentId, "/another-project")).toBe(
-      "Python · 12345678",
-    );
+    expect(
+      computeSessionOwnerLabel(
+        { ...second, owner: { _tag: "agent" as const, threadId: "thread-2" } },
+        environmentId,
+        "/project",
+      ),
+    ).toBe("Python · Agent");
   });
   it("keeps same-file ownership stable without sharing independent contexts", () => {
     const fileContext = computeFileContextId({

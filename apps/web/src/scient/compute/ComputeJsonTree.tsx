@@ -17,7 +17,11 @@ function Scalar(props: { readonly value: unknown }) {
   );
 }
 
-function JsonNode(props: { readonly name: string | null; readonly value: unknown; readonly open: boolean }) {
+function JsonNode(props: {
+  readonly name: string | null;
+  readonly value: unknown;
+  readonly open: boolean;
+}) {
   const { value } = props;
   const label =
     props.name === null ? null : <span className="text-muted-foreground">{props.name}: </span>;
@@ -35,7 +39,7 @@ function JsonNode(props: { readonly name: string | null; readonly value: unknown
   const summary = Array.isArray(value) ? `[${entries.length}]` : `{${entries.length}}`;
   return (
     <details open={props.open} className="ps-4 [&>summary]:-ms-4">
-      <summary className="cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-ring">
+      <summary className="cursor-pointer select-none outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring">
         {label}
         <span className="text-muted-foreground">{summary}</span>
       </summary>
@@ -52,7 +56,7 @@ function JsonNode(props: { readonly name: string | null; readonly value: unknown
 /** A compact, collapsed-by-default view of a JSON result; the root level starts open. */
 export function ComputeJsonTree(props: { readonly value: unknown }) {
   return (
-    <div className="-ms-4 font-mono text-xs leading-relaxed">
+    <div className="font-mono text-xs leading-relaxed">
       <JsonNode name={null} value={props.value} open />
     </div>
   );

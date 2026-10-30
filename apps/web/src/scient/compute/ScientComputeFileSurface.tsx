@@ -490,11 +490,7 @@ function ComputeFileSurfaceContent(
                 threadRef={props.threadRef}
                 sourcePath={props.relativePath}
                 sourceRunUnavailableReason={sourceRunUnavailableReason}
-                sourceLanguageId={props.language.languageId}
-                sourceRevision={props.revision}
-                sourcePending={props.sourcePending}
                 contextId={resultsContextId}
-                focusSessionId={focusExecution?.sessionId ?? null}
                 focusExecutionId={focusExecution?.executionId ?? null}
                 onFocusConsumed={handleFocusConsumed}
                 onRunSource={handleEmptyResultsRun}

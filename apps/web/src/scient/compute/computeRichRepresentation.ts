@@ -1,6 +1,9 @@
-import type { ComputeProjectedOutput, ComputeRepresentation } from "@t3tools/contracts";
+import type { ComputeProjectedOutput } from "@t3tools/contracts";
 
-import { computeProjectedStaticImage, type ComputeStaticImageOutput } from "./computeResultPresentation";
+import {
+  computeProjectedStaticImage,
+  type ComputeStaticImageOutput,
+} from "./computeResultPresentation";
 
 const COMPUTE_TABLE_MEDIA_TYPE = "application/vnd.dataresource+json";
 const COMPUTE_PLOTLY_MEDIA_TYPE = "application/vnd.plotly.v1+json";
@@ -11,6 +14,7 @@ const MAX_CELL_TEXT = 512;
 const MAX_RICH_SOURCE = 1_000_000;
 
 type RepresentationOutput = Extract<ComputeProjectedOutput, { readonly _tag: "representation" }>;
+type ComputeRepresentation = RepresentationOutput["bundle"]["representations"][number];
 type Cell = string | number | boolean | null;
 export interface ComputeTablePreview {
   readonly columns: ReadonlyArray<string>;
@@ -88,7 +92,7 @@ function inline(representation: ComputeRepresentation | undefined): string | nul
 }
 
 /**
- * Renderers for one rich result in Jupyter's preference order; a renderer that cannot show its
+ * Renderers for one rich result, preferred first; a renderer that cannot show its
  * representation falls through to the next. Only inline, bounded data is eligible, except images,
  * which are retained resources.
  */
@@ -105,6 +109,9 @@ export function computeDisplays(output: RepresentationOutput): ReadonlyArray<Com
   );
   if (vegaLite?.data._tag === "json" && vegaLite.data.json.length <= MAX_RICH_SOURCE)
     displays.push({ kind: "vega-lite", source: vegaLite.data.json });
+  const table = text(COMPUTE_TABLE_MEDIA_TYPE);
+  const parsedTable = table === null ? null : parseComputeTable(table);
+  if (parsedTable !== null) displays.push({ kind: "table", table: parsedTable });
   const html = text("text/html");
   if (html !== null) displays.push({ kind: "html", html });
   const markdown = text("text/markdown");
@@ -113,9 +120,6 @@ export function computeDisplays(output: RepresentationOutput): ReadonlyArray<Com
   if (latex !== null) displays.push({ kind: "latex", text: latex });
   const image = computeProjectedStaticImage(output);
   if (image !== null) displays.push({ kind: "image", image });
-  const table = text(COMPUTE_TABLE_MEDIA_TYPE);
-  const parsedTable = table === null ? null : parseComputeTable(table);
-  if (parsedTable !== null) displays.push({ kind: "table", table: parsedTable });
   const json = byType.get("application/json");
   if (json?.data._tag === "json" && json.data.json.length <= MAX_RICH_SOURCE)
     displays.push({ kind: "json", json: json.data.json });

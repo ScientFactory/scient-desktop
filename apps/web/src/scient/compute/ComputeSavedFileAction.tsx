@@ -85,9 +85,8 @@ export function ComputeSavedFileAction(props: {
         variant="ghost-muted"
         disabled={props.disabled || reading}
         onClick={() => setOpen(true)}
-        title="Run the saved disk contents in this tab's session; unsaved editor changes are not included"
       >
-        {reading ? <LoaderCircle className="animate-spin" /> : <Play />} Run saved file…
+        {reading ? <LoaderCircle className="animate-spin" /> : <Play />} Run file…
       </Button>
       <CommandDialog open={open} onOpenChange={setOpen}>
         {open ? (

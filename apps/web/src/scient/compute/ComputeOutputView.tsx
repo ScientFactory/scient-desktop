@@ -17,7 +17,10 @@ import { computeFigurePresentation } from "./computeFigurePresentation";
 import { ComputeFigure } from "./ComputeFigure";
 import { computeOutputBlocks, type ComputeOutputBlock as Block } from "./computeOutputBlocks";
 import { ComputeOutputBlock } from "./ComputeOutputBlock";
-import { computeSystemEventLabel, type ComputeStaticImageOutput } from "./computeResultPresentation";
+import {
+  computeSystemEventLabel,
+  type ComputeStaticImageOutput,
+} from "./computeResultPresentation";
 import { computeDisplays, type ComputeDisplay } from "./computeRichRepresentation";
 import { ComputeRichOutput, type ComputeRichDisplay } from "./ComputeRichOutput";
 import { renderTerminalText } from "./computeTerminalText";
@@ -36,7 +39,6 @@ type ProjectedBlock =
       readonly kind: "figure";
       readonly key: string;
       readonly image: ComputeStaticImageOutput;
-      readonly observedProjectFile: boolean;
       readonly displayOrdinal: number;
       readonly runtimeDisplayOrdinal: number;
     }
@@ -72,7 +74,6 @@ function projectBlocks(outputs: ReadonlyArray<ComputeOutput>): ReadonlyArray<Pro
             kind: "figure",
             key,
             image: output,
-            observedProjectFile: output.origin?._tag === "project-file",
             displayOrdinal,
             runtimeDisplayOrdinal,
           },
@@ -88,7 +89,6 @@ function projectBlocks(outputs: ReadonlyArray<ComputeOutput>): ReadonlyArray<Pro
               kind: "figure",
               key,
               image: preferred.image,
-              observedProjectFile: false,
               displayOrdinal,
               runtimeDisplayOrdinal,
             },
@@ -160,16 +160,14 @@ function ComputeDiagnostic(props: {
         });
   const summary = `${diagnostic.errorName}: ${diagnostic.message}`;
   return (
-    <ComputeOutputBlock
-      copy={() => ({ text: [summary, ...diagnostic.traceback].join("\n") })}
-    >
+    <ComputeOutputBlock copy={() => ({ text: [summary, ...diagnostic.traceback].join("\n") })}>
       <div className="rounded-md border border-destructive/25 bg-destructive/5 p-2 text-xs">
         <div className="flex items-start gap-2">
           <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
           <div className="min-w-0">
             <p className="font-medium break-words text-destructive">{summary}</p>
             {recovery !== null ? (
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {managed !== null && props.dependencyRecovery !== undefined ? (
                   <ComputeDependencyRecoveryAction
                     contextId={props.dependencyRecovery.contextId}
@@ -178,20 +176,20 @@ function ComputeDiagnostic(props: {
                     executable={managed.executable}
                     onSettled={props.dependencyRecovery.onSettled}
                   />
-                ) : null}
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  className="mt-1"
-                  render={
-                    <Link
-                      to="/settings/scientific-computing"
-                      search={{ environmentId: props.environmentId }}
-                    />
-                  }
-                >
-                  Choose Python environment…
-                </Button>
+                ) : (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    render={
+                      <Link
+                        to="/settings/scientific-computing"
+                        search={{ environmentId: props.environmentId }}
+                      />
+                    }
+                  >
+                    Python settings
+                  </Button>
+                )}
               </div>
             ) : null}
             <ComputeDiagnosticFrames frames={diagnostic.frames} threadRef={props.threadRef} />
@@ -287,7 +285,7 @@ export function ComputeOutputView(props: {
                   source: props.source ?? null,
                 })}
                 environmentId={props.environmentId}
-                observedProjectFile={block.observedProjectFile}
+                cwd={props.cwd}
                 threadRef={props.threadRef}
               />
             );

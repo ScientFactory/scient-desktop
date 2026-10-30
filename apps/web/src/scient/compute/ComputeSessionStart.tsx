@@ -15,7 +15,13 @@ import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "~/components/ui/select";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
 import { computeEnvironment } from "~/state/compute";
@@ -65,7 +71,13 @@ export function useComputeSessionStart(input: {
   const readyRuntimes: ReadonlyArray<ReadyRuntime> = languages.flatMap((language) =>
     language.runtimes.flatMap((candidate) =>
       language.enabled && candidate.verification.readiness === "ready"
-        ? [{ language, candidate, key: `${language.descriptor.languageId}:${candidate.profile.executable}` }]
+        ? [
+            {
+              language,
+              candidate,
+              key: `${language.descriptor.languageId}:${candidate.profile.executable}`,
+            },
+          ]
         : [],
     ),
   );
@@ -74,8 +86,7 @@ export function useComputeSessionStart(input: {
     runtimeKey === ""
       ? (readyRuntimes.find((runtime) => runtime.candidate === defaultRuntime) ?? null)
       : (readyRuntimes.find((runtime) => runtime.key === runtimeKey) ?? null);
-  const canRetry =
-    retryAvailable || (contextBinding?.lifecycle === "starting" && !starting);
+  const canRetry = retryAvailable || (contextBinding?.lifecycle === "starting" && !starting);
   const capacitySessions = allSessions.filter(
     (session) =>
       !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status) &&
@@ -200,7 +211,11 @@ export function useComputeSessionStart(input: {
     setStopping(session.sessionId);
     const result = await stopSession({
       environmentId: input.environmentId,
-      input: { cwd: input.cwd, sessionId: session.sessionId, expectedGeneration: session.generation },
+      input: {
+        cwd: input.cwd,
+        sessionId: session.sessionId,
+        expectedGeneration: session.generation,
+      },
     }).catch((error: unknown) => {
       toastManager.add({
         type: "error",
@@ -229,7 +244,8 @@ export function useComputeSessionStart(input: {
       input.model.refresh();
       return;
     }
-    if (!isAtomCommandInterrupted(result)) reportComputeFailure(`Unable to stop ${session.label}`, result);
+    if (!isAtomCommandInterrupted(result))
+      reportComputeFailure(`Unable to stop ${session.label}`, result);
   };
 
   return {
@@ -263,9 +279,7 @@ export function ComputeCapacityMenu(props: {
   return (
     <Menu>
       <MenuTrigger
-        render={
-          <Button size="xs" variant="ghost-muted" disabled={props.start.stopping !== null} />
-        }
+        render={<Button size="xs" variant="ghost-muted" disabled={props.start.stopping !== null} />}
       >
         <span className="font-normal text-warning">Stop a session…</span>
       </MenuTrigger>

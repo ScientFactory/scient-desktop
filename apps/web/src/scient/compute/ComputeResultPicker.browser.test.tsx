@@ -40,7 +40,7 @@ it("adds no control when there are no additional results", async () => {
   expect(screen.container.innerHTML).toBe("");
 });
 
-it("selects only this tab's retained results without mutating execution ownership", async () => {
+it("offers the session feed and MATLAB batch runs; fresh runs stay in the feed", async () => {
   await using _fixture = _createFixture();
   await _setupFixture0(_fixture);
 
@@ -68,11 +68,9 @@ it("selects only this tab's retained results without mutating execution ownershi
   try {
     await act(async () => await root.rerender(<ComputeResultPicker contextId={owner} />));
     await page.getByRole("button", { name: "Choose results" }).click();
-    await expect.element(page.getByRole("menuitemradio", { name: "Fresh run 1" })).toBeVisible();
-    await expect.element(page.getByRole("menuitemradio", { name: "MATLAB batch 1" })).toBeVisible();
-    await page.getByRole("menuitemradio", { name: "Fresh run 1" }).click();
-    expect(getComputeFilePresentation(owner).resultsContextId).toBe(fresh);
-    await page.getByRole("menuitemradio", { name: "MATLAB batch 1" }).click();
+    await expect.element(page.getByRole("menuitemradio", { name: "Batch 1" })).toBeVisible();
+    expect(page.getByRole("menuitemradio").elements()).toHaveLength(2);
+    await page.getByRole("menuitemradio", { name: "Batch 1" }).click();
     expect(getComputeFilePresentation(owner).resultsContextId).toBe(batch);
     await act(() =>
       vi

@@ -20,25 +20,30 @@ function byTime(left: { at: string; id: string }, right: { at: string; id: strin
  * history and marks a divider where the session's generation changed, including after the last run.
  */
 export function computeFeedEntries(input: {
-  readonly session: ComputeSessionRecord;
+  readonly session: ComputeSessionRecord | null;
   readonly executions: ReadonlyArray<ComputeExecutionRecord>;
   readonly freshSessions: ReadonlyArray<ComputeSessionRecord>;
 }): ReadonlyArray<ComputeFeedEntry> {
+  const { session } = input;
+  const runs =
+    session === null
+      ? []
+      : input.executions.map((execution) => ({
+          at: execution.request.submittedAt,
+          id: execution.request.executionId,
+          entry: {
+            kind: "run",
+            key: execution.request.executionId,
+            session,
+            execution,
+          } satisfies ComputeFeedEntry,
+        }));
   const items = [
-    ...input.executions.map((execution) => ({
-      at: execution.request.submittedAt,
-      id: execution.request.executionId,
-      entry: {
-        kind: "run",
-        key: execution.request.executionId,
-        session: input.session,
-        execution,
-      } satisfies ComputeFeedEntry,
-    })),
-    ...input.freshSessions.map((session) => ({
-      at: session.createdAt,
-      id: session.sessionId,
-      entry: { kind: "fresh", key: session.sessionId, session } satisfies ComputeFeedEntry,
+    ...runs,
+    ...input.freshSessions.map((fresh) => ({
+      at: fresh.createdAt,
+      id: fresh.sessionId,
+      entry: { kind: "fresh", key: fresh.sessionId, session: fresh } satisfies ComputeFeedEntry,
     })),
   ].toSorted(byTime);
 
@@ -54,8 +59,8 @@ export function computeFeedEntries(input: {
     }
     entries.push(entry);
   }
-  if (generation !== null && input.session.generation > generation) {
-    entries.push({ kind: "restart", key: `restart:${input.session.generation}` });
+  if (session !== null && generation !== null && session.generation > generation) {
+    entries.push({ kind: "restart", key: `restart:${session.generation}` });
   }
   return entries;
 }

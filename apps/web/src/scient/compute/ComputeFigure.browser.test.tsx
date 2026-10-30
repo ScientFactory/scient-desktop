@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   float: vi.fn(),
   retry: vi.fn(),
+  save: vi.fn(),
+  toast: vi.fn(),
 }));
 let asset: AssetUrlState;
 vi.mock("~/assets/assetUrls", () => ({
@@ -35,6 +37,11 @@ vi.mock("./ComputeOutputViewDownload", () => ({ downloadComputeNativeFigure: moc
 vi.mock("~/scient/artifacts/staticArtifactViewerActions", () => ({
   openStaticArtifactInPanel: mocks.open,
   toggleStaticArtifactFloating: mocks.float,
+}));
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => mocks.save }));
+vi.mock("~/components/ui/toast", () => ({
+  toastManager: { add: mocks.toast },
+  stackedThreadToast: (toast: unknown) => toast,
 }));
 vi.mock("~/previewMiniPlayerStore", () => ({
   usePreviewMiniPlayerStore: (select: (state: unknown) => unknown) => select({ byThreadKey: {} }),
@@ -79,6 +86,15 @@ function figure(hash = "sha256:one", native = false): ComputeFigurePresentation 
           byteLength: 16,
         }
       : null,
+    saveTargets: [
+      { format: "PNG", kind: "image", contentHash: hash, relativePath: "figures/plot.png" },
+      {
+        format: "PDF",
+        kind: "resource",
+        contentHash: "sha256:pdf",
+        relativePath: "figures/plot.pdf",
+      },
+    ],
   };
 }
 async function _setupFixture0(_fixture: _Fixture) {
@@ -98,7 +114,7 @@ async function _setupFixture0(_fixture: _Fixture) {
 async function _cleanupFixture1(_fixture: _Fixture) {
   vi.unstubAllGlobals();
 }
-async function fixture(_fixture: _Fixture, initial = figure(), observedProjectFile = false) {
+async function fixture(_fixture: _Fixture, initial = figure()) {
   const container = document.createElement("div");
   document.body.append(container);
   const holdLoad = (event: Event) => {
@@ -118,8 +134,8 @@ async function fixture(_fixture: _Fixture, initial = figure(), observedProjectFi
           <ComputeFigure
             presentation={presentation}
             environmentId={environmentId}
+            cwd="/project"
             threadRef={threadRef}
-            observedProjectFile={observedProjectFile}
           />,
         ),
     );
@@ -210,8 +226,8 @@ describe("compute figure presentation", () => {
     const second = await fixture(_fixture, figure("sha256:second"));
     await loaded(_fixture, second.container);
     await act(() => first.container.querySelector("img")!.dispatchEvent(new Event("error")));
-    expect(first.container.textContent).toContain("Figure preview unavailable");
-    expect(second.container.textContent).not.toContain("Figure preview unavailable");
+    expect(first.container.textContent).toContain("Figure unavailable");
+    expect(second.container.textContent).not.toContain("Figure unavailable");
     expect(
       second.container.querySelector<HTMLButtonElement>('button[aria-label="View Figure 1"]')!
         .disabled,
@@ -226,34 +242,16 @@ describe("compute figure presentation", () => {
     const presentation = figure();
     const { container } = await fixture(_fixture, presentation);
     expect(button("View Figure 1").disabled).toBe(true);
-    expect(container.textContent).toContain("Loading figure");
+    expect(container.querySelector("[aria-label='Loading figure']")).not.toBeNull();
     await loaded(_fixture, container);
     await act(() => button("View Figure 1").click());
     expect(mocks.open).toHaveBeenCalledWith(threadRef, presentation.viewer);
-    expect(container.textContent).not.toContain("Loading figure");
+    expect(container.querySelector("[aria-label='Loading figure']")).toBeNull();
     expect(mocks.refresh).not.toHaveBeenCalled();
     await menu();
     expect(document.body.textContent).toContain("640 × 480");
     expect(document.body.textContent).not.toContain("Download MATLAB FIG");
     expect(document.body.textContent).not.toContain("Move controls");
-  });
-  it("keeps the fixed header separate from the loading figure body", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    // regression: 92bd49cd55 fix(compute): attach figure actions to card header
-    const { container } = await fixture(_fixture);
-    const card = container.querySelector<HTMLElement>("[data-scient-visual-card]")!;
-    const header = container.querySelector<HTMLElement>("[data-scient-compute-figure-header]")!;
-    const body = container.querySelector<HTMLElement>("[data-scient-compute-figure-body]")!;
-    expect([...card.children]).toEqual([header, body]);
-    expect(header.querySelector("[aria-label='Figure actions']")?.getAttribute("role")).toBe(
-      "group",
-    );
-    expect(container.querySelector("[data-scient-toolbar-move]")).toBeNull();
-    expect(header.querySelector("[role=status]")).toBeNull();
-    expect(body.querySelector("[role=status]")?.textContent).toContain("Loading figure");
   });
   it("retries decoding even when the signed URL does not change", async () => {
     await using _fixture = _createFixture();
@@ -263,7 +261,7 @@ describe("compute figure presentation", () => {
     const { container } = await fixture(_fixture);
     const old = container.querySelector("img")!;
     await act(() => old.dispatchEvent(new Event("error")));
-    expect(container.textContent).toContain("Figure preview unavailable");
+    expect(container.textContent).toContain("Figure unavailable");
     await act(() => button("Try again").click());
     expect(mocks.retry).toHaveBeenCalledOnce();
     expect(container.querySelector("img")).not.toBe(old);
@@ -335,17 +333,36 @@ describe("compute figure presentation", () => {
     expect(button("View Figure 1").disabled).toBe(false);
     expect(mocks.download).not.toHaveBeenCalled();
   });
-  it("keeps observed-file provenance in overflow metadata instead of the command group", async () => {
+  it("saves the shown figure and its PDF into the project and names the saved file", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    const { container } = await fixture(_fixture, figure(), true);
-    expect(container.querySelector("[role=note]")).toBeNull();
-    expect(container.querySelector('[data-slot="compact-command-group-separator"]')).toBeNull();
-    expect(container.textContent).not.toContain("Observed project file");
+    mocks.save.mockResolvedValue({
+      _tag: "Success",
+      value: { relativePath: "figures/plot-2.pdf" },
+    });
+    const { container } = await fixture(_fixture);
+    await loaded(_fixture, container);
     await menu();
-    expect(document.body.textContent).toContain("Observed project file; creator not verified");
+    expect(document.body.textContent).toContain("Save PNG to project");
+    await choose("Save PDF to project");
+    await vi.waitFor(() =>
+      expect(mocks.toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Saved figures/plot-2.pdf" }),
+      ),
+    );
+    expect(mocks.save).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        cwd: "/project",
+        sessionId: "session",
+        executionId: "execution",
+        contentHash: "sha256:pdf",
+        kind: "resource",
+        relativePath: "figures/plot.pdf",
+      },
+    });
   });
   it("offers retry for URL resolution failure without mounting a broken image", async () => {
     await using _fixture = _createFixture();

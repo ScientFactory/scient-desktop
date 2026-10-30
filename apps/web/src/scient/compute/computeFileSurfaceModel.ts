@@ -119,7 +119,7 @@ export const COMPUTE_FILE_VIEW_LABELS: Readonly<Record<ComputeFileView, string>>
   results: "Results",
 };
 
-export const DEFAULT_COMPUTE_FILE_RESULTS_VIEW: ComputeFileResultsView = "results";
+export const DEFAULT_COMPUTE_FILE_RESULTS_VIEW: ComputeFileResultsView = "split";
 export const DEFAULT_COMPUTE_FILE_SPLIT_LAYOUT: ComputeFileSplitLayout = "side-by-side";
 export const DEFAULT_COMPUTE_FILE_SPLIT = 0.5;
 export const MIN_COMPUTE_FILE_SPLIT = 0.3;
@@ -140,6 +140,8 @@ export type ComputeRuntimeToolbarState =
       readonly kind: "status";
       readonly label: string;
       readonly canRun: boolean;
+      /** Starting, closing or running: shown as a spinner, never as a word. */
+      readonly busy?: true;
       readonly note?: string;
     }
   | {
@@ -171,7 +173,7 @@ const COMPUTE_FILE_SPLIT_BOUNDS = {
 export function normalizeComputeFileResultsView(
   value: string | null | undefined,
 ): ComputeFileResultsView {
-  return value === "split" ? "split" : DEFAULT_COMPUTE_FILE_RESULTS_VIEW;
+  return value === "results" ? "results" : DEFAULT_COMPUTE_FILE_RESULTS_VIEW;
 }
 
 export function computeFileViewAfterRun(
@@ -224,26 +226,19 @@ export function nudgeComputeFileSplit(
   );
 }
 
-function computeRuntimePresenceLabel(
+/** "Python 3.14": the language and version, never the install source or session identity. */
+export function computeRuntimeVersionLabel(
   languageName: string,
   version: string | null | undefined,
-  source: ComputeRuntimeProfile["source"] | null | undefined,
 ): string {
   const trimmed = version?.trim();
-  if (trimmed && trimmed !== "unknown") {
-    const versionLabel = `${languageName} ${trimmed}`;
-    return source === null || source === undefined
-      ? versionLabel
-      : `${versionLabel} · ${computeRuntimeSourceLabel(source)}`;
-  }
-  return languageName;
+  return trimmed && trimmed !== "unknown" ? `${languageName} ${trimmed}` : languageName;
 }
 
 export function resolveComputeRuntimeToolbarState(input: {
   readonly languageId?: string;
   readonly languageName?: string;
   readonly runtimeVersion?: string | null;
-  readonly runtimeSource?: ComputeRuntimeProfile["source"] | null;
   readonly liveSession: ComputeRuntimeToolbarSession | null;
   readonly runtimeInspectionPending: boolean;
   readonly readyRuntimeAvailable: boolean;
@@ -262,39 +257,29 @@ export function resolveComputeRuntimeToolbarState(input: {
   const languageId = input.languageId ?? "python";
   const languageName = input.languageName ?? "Python";
   const session = input.liveSession;
-  const presenceLabel = computeRuntimePresenceLabel(
-    languageName,
-    input.runtimeVersion,
-    input.runtimeSource,
-  );
+  const label = computeRuntimeVersionLabel(languageName, input.runtimeVersion);
+  const note = input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {};
   if (input.contextLifecycle === "starting") {
-    if (input.capacityRecoveryAvailable) {
-      return { kind: "status", label: `${languageName} capacity reached`, canRun: true };
-    }
-    if (input.startingRetryAvailable) {
-      return { kind: "status", label: `${languageName} retry start`, canRun: true };
-    }
-    return { kind: "status", label: `${languageName} starting`, canRun: false };
+    return input.capacityRecoveryAvailable || input.startingRetryAvailable
+      ? { kind: "status", label, canRun: true }
+      : { kind: "status", label, canRun: false, busy: true };
   }
   if (input.contextLifecycle === "closing") {
-    return { kind: "status", label: `${languageName} closing`, canRun: false };
+    return { kind: "status", label, canRun: false, busy: true };
   }
   if (input.contextLifecycle === "close-failed") {
-    return { kind: "status", label: `${languageName} close needs retry`, canRun: false };
+    return { kind: "status", label, canRun: false };
   }
   if (session !== null) {
-    const currentLabel =
-      session.runtime === null
-        ? languageName
-        : `${languageName} · ${computeRuntimeSourceLabel(session.runtime.source)}`;
     if (session.languageId !== languageId) {
-      return { kind: "status", label: `${session.label} active`, canRun: false };
+      return { kind: "status", label: session.label, canRun: false };
     }
+    const current = computeRuntimeVersionLabel(languageName, session.runtime?.languageVersion);
     if (session.status !== "ready") {
-      return { kind: "status", label: `${languageName} ${session.status}`, canRun: false };
+      return { kind: "status", label: current, canRun: false, busy: true };
     }
     if (session.activity === "busy") {
-      return { kind: "status", label: `${currentLabel} · Running`, canRun: true };
+      return { kind: "status", label: current, canRun: true, busy: true };
     }
     if (
       !input.runtimeInspectionPending &&
@@ -302,27 +287,17 @@ export function resolveComputeRuntimeToolbarState(input: {
       input.preferredRuntimeExecutable !== null &&
       session.runtime.executable !== input.preferredRuntimeExecutable
     ) {
-      return { kind: "switch", label: currentLabel, canRun: true };
+      return { kind: "switch", label: current, canRun: true };
     }
-    return {
-      kind: "status",
-      label: currentLabel,
-      canRun: true,
-      ...(input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {}),
-    };
+    return { kind: "status", label: current, canRun: true, ...note };
   }
   // Inspect is a package-metadata probe, not proof that a live kernel already
   // exists. Keep the compact language/version label and let Run own startup.
   if (input.readyRuntimeAvailable) {
-    return {
-      kind: "status",
-      label: presenceLabel,
-      canRun: true,
-      ...(input.scientificPackagesMissing ? { note: SCIENTIFIC_PACKAGES_NOTE } : {}),
-    };
+    return { kind: "status", label, canRun: true, ...note };
   }
   if (input.runtimeInspectionPending) {
-    return { kind: "status", label: `Checking ${languageName}…`, canRun: false };
+    return { kind: "status", label: languageName, canRun: false, busy: true };
   }
   return {
     kind: "setup",

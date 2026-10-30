@@ -64,7 +64,8 @@ export function ComputeSessionControls(props: {
     reportFailure: false,
   });
   const stopSession = useAtomCommand(computeEnvironment.stopSession, { reportFailure: false });
-  const closing = props.binding?.lifecycle === "closing" || props.binding?.lifecycle === "close-failed";
+  const closing =
+    props.binding?.lifecycle === "closing" || props.binding?.lifecycle === "close-failed";
 
   const run = async (kind: SessionCommand, target: ComputeSessionRecord) => {
     if (

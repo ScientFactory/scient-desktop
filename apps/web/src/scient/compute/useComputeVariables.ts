@@ -41,7 +41,8 @@ export function useComputeVariables(input: {
     error: null,
     loading: false,
   });
-  const current = state.owner === owner ? state : { owner, snapshot: null, error: null, loading: false };
+  const current =
+    state.owner === owner ? state : { owner, snapshot: null, error: null, loading: false };
   const request = useRef<symbol | null>(null);
   const available =
     liveSession !== null &&
@@ -90,10 +91,13 @@ export function useComputeVariables(input: {
     }));
   });
 
-  const latestTerminal = [...(events.data?.executions.get(liveSession?.sessionId ?? "")?.values() ?? [])]
+  const latestTerminal = [
+    ...(events.data?.executions.get(liveSession?.sessionId ?? "")?.values() ?? []),
+  ]
     .filter(
       (execution) =>
-        execution.result !== null && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status),
+        execution.result !== null &&
+        TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status),
     )
     .toSorted((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt))
     .at(-1);
@@ -107,7 +111,7 @@ export function useComputeVariables(input: {
   ].join(":");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads kernel variables over the environment connection when the namespace may have changed
   useEffect(() => {
-    void refresh();
+    if (refreshToken !== "") void refresh();
   }, [refreshToken, refresh]);
 
   return {

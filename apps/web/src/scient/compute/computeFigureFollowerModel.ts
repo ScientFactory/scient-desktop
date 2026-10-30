@@ -138,7 +138,7 @@ export function reconcileComputeFigureTarget(input: {
           });
     return {
       _tag: "apply",
-      descriptor: { ...descriptor, statusLabel: "Observed project file" },
+      descriptor,
       revision,
     };
   }

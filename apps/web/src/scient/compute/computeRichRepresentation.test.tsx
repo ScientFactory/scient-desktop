@@ -2,7 +2,7 @@ import { projectComputeOutputs, type ComputeOutput } from "@t3tools/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import { ComputeTable } from "./ComputeRichOutput";
-import { computeRichRepresentation, parseComputeTable } from "./computeRichRepresentation";
+import { computeDisplays, parseComputeTable } from "./computeRichRepresentation";
 
 const tableSource = (
   data: unknown = [{ name: "<script>alert(1)</script>", value: 42 }],
@@ -27,7 +27,7 @@ describe("bounded shared Compute representations", () => {
     expect(table.columns).toHaveLength(24);
     expect(table.rows[0]?.[0]).toHaveLength(513);
     expect(table.truncated).toBe(true);
-    expect(renderToStaticMarkup(<ComputeTable table={table} />)).toContain("Limited preview");
+    expect(renderToStaticMarkup(<ComputeTable table={table} />)).toContain("First 100 rows");
   });
 
   it.each([
@@ -102,7 +102,7 @@ describe("bounded shared Compute representations", () => {
     expect(projected).toHaveLength(1);
     const output = projected[0];
     if (output?._tag !== "representation") throw new Error("Expected representation");
-    expect(computeRichRepresentation(output)).toEqual({
+    expect(computeDisplays(output)[0]).toEqual({
       kind: "plotly",
       source: '{"data":[{"y":[1,2]}]}',
     });

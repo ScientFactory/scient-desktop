@@ -2,7 +2,6 @@ import { useRef, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { ComputeSessionId, type ComputeSessionRecord } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
-import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
 import { toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
 import { computeEnvironment } from "~/state/compute";
@@ -16,7 +15,7 @@ import {
   type ComputeContextId,
 } from "./computeContextStore";
 
-/** A confirmed lifecycle action, not an installer or an automatic retry. */
+/** One click replaces this tab's session with managed Python; never an installer or a retry. */
 export function ComputeDependencyRecoveryAction(props: {
   readonly contextId: ComputeContextId;
   readonly session: ComputeSessionRecord;
@@ -24,10 +23,8 @@ export function ComputeDependencyRecoveryAction(props: {
   readonly executable: string;
   readonly onSettled: () => void;
 }) {
-  const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false);
-  const anchor = useRef<HTMLButtonElement>(null);
   const binding = useComputeContextStore((state) => state.bindings[props.contextId]);
   const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimes, {
     reportFailure: false,
@@ -90,13 +87,7 @@ export function ComputeDependencyRecoveryAction(props: {
           return { languageId: target.languageId, executable: target.executable };
         },
       });
-      if (result.kind === "started") {
-        toastManager.add({
-          type: "success",
-          title: "Managed Python session ready",
-          description: "Variables are cleared.",
-        });
-      } else if (result.kind === "failed") {
+      if (result.kind === "failed") {
         toastManager.add({
           type: "error",
           title: "Unable to start managed Python",
@@ -111,12 +102,10 @@ export function ComputeDependencyRecoveryAction(props: {
   };
 
   return (
-    <>
+    <span className="flex items-center gap-1.5">
       <Button
-        ref={anchor}
         size="xs"
-        variant="ghost-muted"
-        className="mt-1"
+        variant="outline"
         disabled={
           busy ||
           binding?.lifecycle !== "live" ||
@@ -124,21 +113,12 @@ export function ComputeDependencyRecoveryAction(props: {
           props.session.status !== "ready" ||
           props.session.activity !== "idle"
         }
-        onClick={() => setConfirming(true)}
+        onClick={() => void recover()}
       >
         {busy ? <LoaderCircle className="animate-spin" /> : null}
-        {busy ? "Starting managed Python…" : "Start a new session with managed Python…"}
+        Switch to Scient-managed Python
       </Button>
-      <ContextualConfirmation
-        open={confirming}
-        onOpenChange={setConfirming}
-        anchor={anchor}
-        title="Start a new managed Python session?"
-        description="Stops the current session and clears its variables."
-        confirmLabel="Start new session"
-        onConfirm={() => void recover()}
-        busy={busy}
-      />
-    </>
+      <span className="text-[11px] text-muted-foreground">Variables reset</span>
+    </span>
   );
 }

@@ -167,7 +167,11 @@ export function renderTerminalText(source: string): TerminalText {
         else if (final === "G") column = count - 1;
       } else if (kind === "]") {
         let end = index + 1;
-        while (end < text.length && text[end] !== "\u0007" && text.slice(end, end + 2) !== "\u001b\\")
+        while (
+          end < text.length &&
+          text[end] !== "\u0007" &&
+          text.slice(end, end + 2) !== "\u001b\\"
+        )
           end += 1;
         index = text[end] === "\u0007" ? end + 1 : end + 2;
       } else {

@@ -1,17 +1,13 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { ChevronDown, CircleAlert, History, LoaderCircle, Play } from "lucide-react";
-import { Link } from "@tanstack/react-router";
+import { CircleAlert, History, LoaderCircle, Play } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
-import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
-import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { scientComputeSurface } from "~/scient/rightPanel/surfaces";
-import { formatDateTimeTimestamp } from "~/timestampFormat";
 
-import { computeSessionOwnerLabel, type ComputeContextId } from "./computeContextStore";
+import type { ComputeContextId } from "./computeContextStore";
 import { computeFeedEntries, type ComputeFeedEntry } from "./computeFeedModel";
 import type { ComputePanelView } from "./computeFilePresentationStore";
 import {
@@ -22,21 +18,25 @@ import { ComputeResultsFeed } from "./ComputeResultsFeed";
 import type { ComputeExecutionSource } from "./ComputeRunEntry";
 import { ComputeSavedFileAction } from "./ComputeSavedFileAction";
 import { ComputeSessionControls } from "./ComputeSessionControls";
+import { ComputeSessionIndicator } from "./ComputeSessionIndicator";
 import { ComputeSessionNotices } from "./ComputeSessionNotices";
-import { ComputeCapacityMenu, ComputeSessionStart, useComputeSessionStart } from "./ComputeSessionStart";
+import {
+  ComputeCapacityMenu,
+  ComputeSessionStart,
+  useComputeSessionStart,
+} from "./ComputeSessionStart";
 import { ComputeVariablesView } from "./ComputeVariablesView";
 import { useComputePanelSessions } from "./useComputePanelSessions";
 import { useComputeVariables } from "./useComputeVariables";
 
 function ComputePanelTabs(props: {
   readonly value: ComputePanelView;
-  readonly resultsLabel: string;
   readonly onChange: (view: ComputePanelView) => void;
 }) {
   const resultsRef = useRef<HTMLButtonElement>(null);
   const variablesRef = useRef<HTMLButtonElement>(null);
   const tabs: ReadonlyArray<{ value: ComputePanelView; label: string }> = [
-    { value: "results", label: props.resultsLabel },
+    { value: "results", label: "Results" },
     { value: "variables", label: "Variables" },
   ];
   const focus = (view: ComputePanelView) => {
@@ -138,7 +138,6 @@ export function ComputePanel(props: {
   readonly embedded?: boolean;
   readonly resultPicker?: ReactNode;
 }) {
-  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const [localPanelView, setLocalPanelView] = useState<ComputePanelView>("results");
   const panelView = props.panelView ?? localPanelView;
   const setPanelView = props.onPanelViewChange ?? setLocalPanelView;
@@ -147,7 +146,6 @@ export function ComputePanel(props: {
     environmentId: props.environmentId,
     cwd: props.cwd,
     contextId: props.contextId,
-    sourcePath: props.sourcePath,
   });
   const variables = useComputeVariables({
     environmentId: props.environmentId,
@@ -163,14 +161,11 @@ export function ComputePanel(props: {
   });
   const { contextBinding, selectedSession, liveSession, runtimes, events } = model;
 
-  const entries =
-    selectedSession === null
-      ? []
-      : computeFeedEntries({
-          session: selectedSession,
-          executions: model.executions,
-          freshSessions: model.freshSessions,
-        });
+  const entries = computeFeedEntries({
+    session: selectedSession,
+    executions: model.executions,
+    freshSessions: model.freshSessions,
+  });
   const emptyResults = (
     <EmptyComputeResults
       state={resolveComputeEmptyResultsState({
@@ -217,58 +212,28 @@ export function ComputePanel(props: {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-background" aria-label="Scientific results">
-      <header className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b border-border/60 px-3 py-0.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
-          {props.resultPicker}
-          <ComputePanelTabs
-            value={panelView}
-            resultsLabel="Results"
-            onChange={setPanelView}
+      <header className="flex min-h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2">
+        {props.resultPicker}
+        <ComputePanelTabs value={panelView} onChange={setPanelView} />
+        <span className="flex-1" />
+        {standalone && selectedSession !== null ? (
+          <ComputeSessionIndicator
+            sessions={model.contextSessions}
+            selected={selectedSession}
+            environmentId={props.environmentId}
+            cwd={props.cwd}
+            onChoose={model.chooseSession}
           />
-          {standalone && props.contextId === undefined && model.contextSessions.length > 1 ? (
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    size="xs"
-                    variant="ghost-muted"
-                    className="max-w-full"
-                    aria-label="Compute session history"
-                  >
-                    <span className="truncate font-normal">
-                      {selectedSession === null
-                        ? "Sessions"
-                        : computeSessionOwnerLabel(selectedSession, props.environmentId, props.cwd)}
-                    </span>
-                    <ChevronDown className="size-3.5 shrink-0" />
-                  </Button>
-                }
-              />
-              <MenuPopup align="start" side="bottom" className="min-w-56">
-                <MenuRadioGroup
-                  value={selectedSession?.sessionId ?? ""}
-                  onValueChange={(sessionId) => model.chooseSession(sessionId)}
-                >
-                  {model.contextSessions.map((session) => (
-                    <MenuRadioItem key={session.sessionId} value={session.sessionId} size="compact">
-                      {computeSessionOwnerLabel(session, props.environmentId, props.cwd)} ·{" "}
-                      {formatDateTimeTimestamp(session.createdAt, timestampFormat)}
-                    </MenuRadioItem>
-                  ))}
-                </MenuRadioGroup>
-              </MenuPopup>
-            </Menu>
-          ) : null}
-          {standalone ? (
-            <ComputeCapacityMenu start={start} environmentId={props.environmentId} cwd={props.cwd} />
-          ) : null}
-        </div>
+        ) : null}
+        {standalone ? (
+          <ComputeCapacityMenu start={start} environmentId={props.environmentId} cwd={props.cwd} />
+        ) : null}
         {standalone && props.contextId !== undefined && model.allSessions.length > 1 ? (
           <Button
             size="icon-xs"
             variant="ghost-muted"
-            aria-label="Project compute history"
-            title="Project compute history"
+            aria-label="All sessions"
+            title="All sessions"
             onClick={() =>
               useRightPanelStore
                 .getState()
@@ -278,8 +243,8 @@ export function ComputePanel(props: {
             <History />
           </Button>
         ) : null}
-        {liveSession !== null ? (
-          <div className="flex items-center gap-1">
+        {liveSession !== null && model.selectedIsLive ? (
+          <>
             {standalone && props.contextId !== undefined ? (
               <ComputeSavedFileAction
                 contextId={props.contextId}
@@ -295,15 +260,6 @@ export function ComputePanel(props: {
                 }}
               />
             ) : null}
-            {!model.selectedIsLive ? (
-              <Button
-                size="xs"
-                variant="ghost"
-                onClick={() => model.chooseSession(liveSession.sessionId)}
-              >
-                Live
-              </Button>
-            ) : null}
             <ComputeSessionControls
               environmentId={props.environmentId}
               cwd={props.cwd}
@@ -312,7 +268,7 @@ export function ComputePanel(props: {
               binding={contextBinding}
               onSettled={model.refresh}
             />
-          </div>
+          </>
         ) : standalone &&
           props.contextId !== undefined &&
           model.contextSessions.length > 0 &&
@@ -321,27 +277,8 @@ export function ComputePanel(props: {
             {start.starting ? <LoaderCircle className="animate-spin" /> : <Play />}
             New session
           </Button>
-        ) : standalone && model.contextSessions.length > 0 && !runtimes.isPending ? (
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            render={
-              <Link
-                to="/settings/scientific-computing"
-                search={{ environmentId: props.environmentId }}
-              />
-            }
-          >
-            Scientific Computing
-          </Button>
         ) : null}
       </header>
-
-      {events.data?.stale ? (
-        <div className="flex items-center gap-2 border-b border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
-          <LoaderCircle className="size-3 animate-spin" /> Refreshing…
-        </div>
-      ) : null}
 
       {contextBinding?.lifecycle === "close-failed" ? (
         <div className="flex items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -371,9 +308,9 @@ export function ComputePanel(props: {
           }}
           onRefresh={variables.refresh}
         />
-      ) : selectedSession !== null ? (
+      ) : selectedSession !== null || entries.length > 0 ? (
         <ComputeResultsFeed
-          key={selectedSession.sessionId}
+          key={selectedSession?.sessionId ?? "fresh"}
           environmentId={props.environmentId}
           cwd={props.cwd}
           threadRef={props.threadRef}
@@ -389,7 +326,9 @@ export function ComputePanel(props: {
             ? {}
             : { onFollowRequestConsumed: props.onFocusConsumed })}
           lead={
-            sessionNotices !== undefined && sessionNotices.outputs.length > 0 ? (
+            selectedSession !== null &&
+            sessionNotices !== undefined &&
+            sessionNotices.outputs.length > 0 ? (
               <ComputeSessionNotices
                 cwd={props.cwd}
                 environmentId={props.environmentId}

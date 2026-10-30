@@ -56,23 +56,24 @@ export function ComputeOutputBlock(props: {
       </div>
       {props.tail && clipped ? null : toggle}
       {props.copy !== null ? (
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          className="absolute end-0 top-0 bg-background opacity-0 group-focus-within/output:opacity-100 group-hover/output:opacity-100"
-          aria-label={isCopied ? "Copied" : "Copy output"}
-          onClick={() => {
-            const copy = props.copy?.();
-            if (copy === undefined) return;
-            copyToClipboard(
-              copy.text,
-              undefined,
-              copy.html === undefined ? undefined : { "text/html": copy.html },
-            );
-          }}
-        >
-          {isCopied ? <Check className="size-3" /> : <Copy className="size-3" />}
-        </Button>
+        <span className="absolute end-0 top-0 rounded-[4px] bg-background opacity-0 group-focus-within/output:opacity-100 group-hover/output:opacity-100">
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={isCopied ? "Copied" : "Copy output"}
+            onClick={() => {
+              const copy = props.copy?.();
+              if (copy === undefined) return;
+              copyToClipboard(
+                copy.text,
+                undefined,
+                copy.html === undefined ? undefined : { "text/html": copy.html },
+              );
+            }}
+          >
+            {isCopied ? <Check className="size-3" /> : <Copy className="size-3" />}
+          </Button>
+        </span>
       ) : null}
     </div>
   );
