@@ -106,6 +106,9 @@ const layerElectronMenu = (
       Deferred.succeed(applicationMenuTemplate, template).pipe(Effect.asVoid),
     popupTemplate: () => Effect.void,
     showContextMenu: () => Effect.succeedNone,
+    // SCIENT-FORK:START — the Dock menu opens another app window.
+    setDockMenu: () => Effect.void,
+    // SCIENT-FORK:END
   } satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const configureMenu = (

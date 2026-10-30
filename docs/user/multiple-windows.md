@@ -10,6 +10,8 @@ Scient server.
 
 - **File > New Window** (`Cmd+Option+Shift+N` on macOS, `Ctrl+Alt+Shift+N`
   on Windows and Linux) opens a new window beside the current one.
+- On macOS, right-click Scient's icon in the Dock and choose **New Window**.
+  This works even when no Scient window is open.
 - **Open in new window** in a thread's menu (right-click the thread in the
   sidebar, or use the menu in the conversation header) opens that conversation
   in its own window. Right-click a draft in the sidebar for the same command.
@@ -55,5 +57,6 @@ it moves, so scroll position and typed form input are not kept.
 - When you quit and reopen Scient, one window opens, where you last moved or
   resized a window.
 - Each window's title in the Window menu is the app name.
+- The Windows taskbar and Linux launcher menus do not offer **New Window**.
 - A window that opens a conversation already open in another window, or
   reloads, starts with the side panel as the last window to change it left it.

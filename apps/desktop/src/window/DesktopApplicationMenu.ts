@@ -341,6 +341,11 @@ export const make = Effect.gen(function* () {
     );
 
     yield* electronMenu.setApplicationMenu(template);
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    if (environment.platform === "darwin") {
+      yield* electronMenu.setDockMenu([{ label: "New Window", click: newWindowClick }]);
+    }
+    // SCIENT-FORK:END
   }).pipe(Effect.withSpan("desktop.menu.configure"));
 
   return DesktopApplicationMenu.of({

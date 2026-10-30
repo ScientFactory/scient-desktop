@@ -22,11 +22,13 @@ history), opens 28px down and right of the window it was opened from (wrapping t
 the work area's corner at the edge), and does not open a second detached DevTools
 in development.
 
-`openNewWindow(route, { atCursor })` serves both **File > New Window**
+`openNewWindow(route, { atCursor })` serves **File > New Window**
 (`CmdOrCtrl+Alt+Shift+N`; the renderer already uses Mod+N, Mod+Shift+N and
-Mod+Alt+N) and the bridge method behind every **Open in new window**. With
-`atCursor` the window opens under the pointer instead of cascading, kept inside
-that display's work area (`windowBoundsAtPoint`).
+Mod+Alt+N), **New Window** in the macOS Dock icon's menu
+(`ElectronMenu.setDockMenu`), and the bridge method behind every **Open in new
+window**. With no window open, the new window takes the saved main window
+bounds. With `atCursor` the window opens under the pointer instead of
+cascading, kept inside that display's work area (`windowBoundsAtPoint`).
 It accepts only an in-app path (`parseAppWindowRoute`); anything else opens the
 default route. It refuses while the app quits, and while the backend is not yet
 confirmed (it reveals the splash instead): a window opened before then can be
@@ -135,6 +137,10 @@ events during a tab drag. A drag that ends outside the viewport opens the window
 
 - Every window's title is the app name, because upstream pins the title.
 - A relaunch restores one window.
+- Only macOS offers **New Window** from the app icon. The Windows taskbar would
+  need a jump list task that relaunches the app with an argument the primary
+  instance handles in `second-instance`; Linux would need a desktop entry
+  action.
 - A `storage` write that lands between a window loading a store and attaching
   its listener is adopted only at the next write.
 
@@ -150,6 +156,8 @@ out of the window and back in. A live check with two and three windows covered
 drafts in different threads, settings and side panel tabs updating in the other
 window, the browser tab placeholder, **Show here**, a host window closing,
 quitting with two windows open, and dragging a browser tab out (through
-synthetic DevTools input) so its page moved to a maximized new window. The
-native **New Window** menu item, window close button, the context menus and a
-drag with a real pointer need manual review.
+synthetic DevTools input) so its page moved to a maximized new window. It also
+read the Dock menu and ran its **New Window** item through the main process's
+inspector, with one window open and with none. The native **New Window** menu
+item, choosing the Dock menu item with the pointer, window close button, the
+context menus and a drag with a real pointer need manual review.
