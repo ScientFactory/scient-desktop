@@ -385,14 +385,9 @@ package.
 Scientific code runs with the filesystem and network authority of the selected Scient server
 environment. It is not sandboxed. Only run code you trust, especially when the server is remote.
 
-Implemented language adapters are enabled by default, but enablement only allows Scient to discover
-and offer an existing compatible runtime. It does not provision a runtime, install packages, create
-an environment, acquire a license, or start code. Every setup or mutation remains an explicit user
-action, and each implemented language can be disabled individually. R, Julia, Rust, SPSS, SQL, GNU
-Octave, Wolfram Language, and Stata are presentation-only previews rather than implemented adapters
-or database connections; arbitrary package installation, notebook editing, rich executable
-HTML/widgets, rich variable drill-down/table browsing, and portable stateful compute-result
-promotion also remain future work.
+Enabled languages only let Scient discover and offer a runtime; nothing is installed until you or an
+agent asks for it. Arbitrary package installation into Scient-managed Python, interactive widgets,
+and saving a session's state as a portable result remain future work.
 
 ### Run fresh and MATLAB batch
 
@@ -422,3 +417,22 @@ On a one-slot host, a live session leaves no room for Run fresh. Scient never st
 the capacity menu offers **Stop this session and run fresh…**, with confirmation that its variables
 will be lost. Cancel keeps the session. Fresh execution begins only after shutdown is confirmed;
 another operation may take the freed slot, in which case the capacity warning remains actionable.
+
+## Notebooks
+
+Jupyter notebooks (`.ipynb`) open as editable notebooks. Code cells run in the notebook's session
+with the same runtime controls as scripts: **Run all** runs the code cells in order and stops at an
+error, **Shift+Enter** runs a cell and moves to the next, and **Cmd/Ctrl+Enter** runs it in place.
+Outputs, figures included, are saved into the notebook file, so it opens with its results in Jupyter
+too. Cells can be added, moved and deleted from the cell's hover actions; double-click a text cell
+to edit it. **Ask in chat** on a cell with outputs puts a reference to it in the chat.
+
+## Working with agents
+
+Agents in a chat can run code in Scient Compute. By default an agent works in its own session for
+that chat, which uses Scient-managed Python when it is installed; asked to, it runs in your
+session, such as an open file or notebook, where its runs appear in Results marked **Agent**. Agents
+see the output and figures of their runs, can read your runs, list a session's variables,
+interrupt or restart a session, and set up Scient-managed Python or its Toolkits. They run with the
+same authority as your own code. **Ask in chat** on a run puts a short reference to it in the chat;
+the agent finds the run itself.
