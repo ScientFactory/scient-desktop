@@ -42,8 +42,17 @@ first that can access it, closing the failed tab. Checks use temporary backgroun
 Off and incognito profiles are skipped. Project scope and the global agent-access switch apply.
 If none works, the agent receives guidance to ask you to sign in or allow a profile in Accounts.
 
-Choosing a profile explicitly or navigating an existing tab keeps that profile. If access fails,
-Scient tells the agent to use `scient_account_find_profile` with the URL.
+When no profile opens a sign-in page and a saved sign-in for that site is Allowed, Scient signs in
+on that tab and returns to the page the agent wanted, so agents never chain these steps themselves.
+Ask me accounts wait for your approval, and a sign-in the site rejected is not repeated until you
+change it.
+
+Choosing a profile explicitly or navigating an existing tab keeps that profile. If access fails and
+no saved sign-in helps, Scient tells the agent to use `scient_account_find_profile` with the URL.
+
+You stay signed in across restarts and updates, including on sites that mark a sign-in as ending
+when the browser closes. Scient also ticks "Remember me" and "Trust this device" beside a saved
+sign-in, so codes come back less often. You can untick them; shared-computer options stay off.
 
 Saved sign-ins fill automatically as a login form appears, in every tab, yours or an agent's,
 without submitting or replacing what you typed. Exact-site matches come first, then your most

@@ -354,6 +354,15 @@ only the account name, host, challenge kind and optional match number reach the 
 Account approvals and hand-offs use the thread notification settings, with desktop notifications
 when the app is unfocused; clicking opens the requesting thread.
 
+`preview_open` and `preview_navigate` run this without an agent call. `previewProfileFallback` first
+looks for another Allowed profile that opens the page (new tabs only), then `signInOnPage` signs in
+with the Allowed website or library account matching the page or the requested address, on the same
+tab, and navigates back to the requested address. `accountsNote` carries the result. Ask accounts
+get a note pointing at `scient_account_sign_in`, which asks; a `lastSignInOutcome` of
+`password-rejected` or `code-rejected` stops automatic attempts until the secret changes, since
+retries can lock an account. Login walls include a redirect to `/login`, `/sso` or a sign-in
+subdomain on the same site, before any password field shows.
+
 The pure parts (`signIn/` detection result → next action, origin matching, TOTP) are Node-tested;
 the detection script itself is exercised against fixture pages.
 
@@ -404,6 +413,19 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   account's profile (or the default profile). Rejected passwords and codes show a short row status;
   a later successful sign-in or editing the password or two-factor key clears it.
 - **Approval cards** appear above the composer of the thread that asked, and on the Accounts page.
+
+## Keeping sessions
+
+Sites mark many sign-ins as session cookies, and Electron does not store those: they are gone on
+quit. `keepSessionCookies`, attached where a persistent browser session is created, gives each one
+an expiry (90 days) as it appears, so restarts, updates and crashes keep it, as in a Chrome that
+reopens where you left off. Signing out and server-side expiry work as before, incognito is
+untouched, and imported cookies pass through the same listener. HttpOnly changes also flush the
+cookie store within 3 seconds instead of Chromium's roughly 30.
+
+Sign-in and autofill tick the page's "Remember me" or "Trust this device" box
+(`shared/scientSignInPage` holds the wording) and sign-in answers "Stay signed in?" with Yes.
+Shared-computer options are left alone. A failed tick never fails a sign-in.
 
 ## Cookie encryption
 
