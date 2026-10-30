@@ -161,7 +161,7 @@ interface KernelState {
 export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBinding")(function* (
   language: KernelLanguage,
   input: {
-    readonly host: KernelBridgeHost;
+    readonly host: Pick<KernelBridgeHost, "bridgePath" | "transport" | "executable">;
     readonly computeDir: string;
     readonly processes: ExecutionProcessPort;
     readonly configuredExecutable: (languageId: string) => Effect.Effect<string | null>;
@@ -325,7 +325,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
         missingRequirements: missing,
         message:
           kernelVersion === null
-            ? `Set up ${language.displayName} to install its Jupyter kernel.`
+            ? `${language.kernelPackage} is not set up.`
             : host._tag === "Failure"
               ? host.failure.message
               : null,
@@ -341,10 +341,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       Effect.mapError((cause) => runtimeError("prepare", cause.message, cause)),
     );
     if (state.probe.ownKernelVersion === null && state.privateKernelVersion === null)
-      return yield* runtimeError(
-        "prepare",
-        `Set up ${language.displayName} to install its Jupyter kernel.`,
-      );
+      return yield* runtimeError("prepare", `${language.kernelPackage} is not set up.`);
     const host = yield* hostExecutable();
     const kernel = language.launch({
       executable: request.profile.executable,
@@ -403,7 +400,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
         executable,
         source,
         ...(executable === configured ? { configured: true } : {}),
-        version: null,
+        version: probeCache.get(executable)?.probe.version ?? null,
         problem: null,
       }),
     );
@@ -442,7 +439,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     const installed = current?.state.privateKernelVersion ?? null;
     const kernelVersion = own ?? installed;
     return {
-      displayName: `${language.displayName} kernel`,
+      displayName: language.kernelPackage,
       ...(current === null ? {} : { installationExecutable: current.installation.executable }),
       installed: installed !== null,
       selection: own === null ? ("managed" as const) : ("existing" as const),
@@ -493,13 +490,11 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     action: ComputeManagedRuntimeAction,
   ) {
     if (action === "use-managed" || action === "use-existing")
-      return yield* manageError(
-        `${language.displayName} uses its own kernel when it has one, otherwise Scient's.`,
-      );
+      return yield* manageError(`${language.kernelPackage} has no runtime choice.`);
     if (operation !== null) return yield* status();
     const current = yield* target();
     if (current === null)
-      return yield* manageError(`Install ${language.displayName} first, then set it up here.`);
+      return yield* manageError(`${language.displayName} was not found.`);
     const { privateDirectory } = current.state;
     const work = Effect.gen(function* () {
       if (action === "remove")
@@ -520,7 +515,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
             failure = {
               reason: action === "remove" ? "remove-failed" : "provision-failed",
               action,
-              summary: `${language.displayName} kernel ${action === "remove" ? "removal" : "setup"} failed`,
+              summary: `${language.kernelPackage} ${action === "remove" ? "removal" : "setup"} failed`,
               detail: (error instanceof Error ? error.message : String(error)).slice(0, 4096),
             };
           }),

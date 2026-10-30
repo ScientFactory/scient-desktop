@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 import {
   ComputeLanguageId,
   REQUIRED_COMPUTE_CAPABILITIES,
+  type ComputeKernelSpec,
   type ComputeLanguageAdapter,
   type ComputeRuntimeProfile,
   type ComputeRuntimeVerification,
@@ -20,7 +21,7 @@ export const SQL_LANGUAGE_ID = ComputeLanguageId.make("sql");
 export const SQL_KERNEL_SCRIPT_NAME = "scient_sql_kernel.py";
 
 // Tables and views are a SQL session's variables.
-const VARIABLES = `SELECT json_object(
+const SQL_VARIABLES = `SELECT json_object(
   'variables', coalesce(json_group_array(json_object(
     'name', name, 'typeName', kind,
     'shape', CASE WHEN rows IS NULL THEN NULL ELSE concat('(', rows, ', ', columns, ')') END,
@@ -47,10 +48,25 @@ const asPython = (profile: ComputeRuntimeProfile): ComputeRuntimeProfile => ({
   languageId: PYTHON_LANGUAGE_ID,
 });
 
+/** DuckDB's kernel runs in the given Python, which must have ipykernel and duckdb. */
+export function sqlKernelSpec(python: string, bridgePath: string): ComputeKernelSpec {
+  return {
+    argv: [
+      python,
+      "-I",
+      NodePath.join(NodePath.dirname(bridgePath), SQL_KERNEL_SCRIPT_NAME),
+      "-f",
+      "{connection_file}",
+    ],
+    language: "sql",
+    interruptMode: "signal",
+    variablesExpression: SQL_VARIABLES,
+  };
+}
+
 /** SQL is DuckDB in a small Python kernel, so its runtimes are Pythons that have DuckDB. */
 export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBinding {
   const python = host.managedPythonAdapter;
-  const kernelPath = NodePath.join(NodePath.dirname(host.bridgePath), SQL_KERNEL_SCRIPT_NAME);
 
   const verifyPython = (profile: ComputeRuntimeProfile) =>
     python.verify({ profile: asPython(profile), cwd: NodeOS.tmpdir(), environment: {} });
@@ -69,7 +85,7 @@ export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBin
           profile: request.profile,
           readiness: "missing-requirement",
           missingRequirements: ["duckdb"],
-          message: "Set up Scientific Python, or choose a Python with DuckDB.",
+          message: "DuckDB is not installed in this Python.",
           packages: [{ name: "duckdb", version: null }],
         };
       }),
@@ -78,7 +94,11 @@ export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBin
   const discover: ComputeLanguageAdapter["discover"] = Effect.fn("SqlComputeRuntime.discover")(
     function* (request) {
       const profiles: ComputeRuntimeProfile[] = [];
-      for (const profile of yield* python.discover(request)) {
+      // Scient-managed Python carries DuckDB, so it leads unless a Python was chosen for SQL.
+      const pythons = [...(yield* python.discover(request))].sort(
+        (a, b) => Number(b.source === "configured") - Number(a.source === "configured"),
+      );
+      for (const profile of pythons) {
         // A configured choice keeps its own failure rather than silently falling back.
         const verification = yield* verifyPython(profile);
         const version = duckdbVersion(verification);
@@ -108,12 +128,7 @@ export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBin
         python.prepareLaunch({ ...request, profile: asPython(request.profile) }).pipe(
           Effect.map((plan) => ({
             ...plan,
-            kernel: {
-              argv: [request.profile.executable, "-I", kernelPath, "-f", "{connection_file}"],
-              language: "sql",
-              interruptMode: "signal" as const,
-              variablesExpression: VARIABLES,
-            },
+            kernel: sqlKernelSpec(request.profile.executable, host.bridgePath),
           })),
         ),
       normalizeDiagnostic: (report) => [{ ...normalizeDiagnosticText(report), frames: [] }],
