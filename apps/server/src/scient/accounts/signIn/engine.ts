@@ -51,11 +51,12 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
     broker
       .invoke<A>({ scope, operation, input, ...(target === undefined ? {} : { tabId: target }) })
       .pipe(
+        // Browser errors are written for agents (a full tab limit, a closed tab); keep them.
         Effect.mapError(
-          () =>
+          (error) =>
             new AccountsError({
               reason: "unavailable",
-              message: "The browser sign-in could not be completed.",
+              message: error.message || "The browser sign-in could not be completed.",
             }),
         ),
       );

@@ -1421,6 +1421,22 @@ const make = Effect.gen(function* () {
     );
   };
 
+  // SCIENT-FORK:START — a desktop page outlives its server connection, so the least recently used
+  // connections of other conversations are released before a new tab is refused for the server
+  // limit; each reconnects on its next use.
+  const releaseDesktopConnections = (threadId: string) => {
+    while (tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT) {
+      const oldest = [...tabs.values()]
+        .filter(
+          (tab) => tab.desktop !== null && tab.threadId !== threadId && tab.viewers.size === 0,
+        )
+        .sort((left, right) => left.usedAt - right.usedAt)[0];
+      if (!oldest) return;
+      dropTab(oldest, false);
+    }
+  };
+  // SCIENT-FORK:END
+
   const assertTabCapacity = (agentSessionId: string) => {
     if (atTabLimit(agentSessionId))
       throw new BrowserControlInterrupted(
@@ -2015,7 +2031,12 @@ const make = Effect.gen(function* () {
             : undefined;
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
-        if (!existing) closeIdleAgentTabs();
+        if (!existing) {
+          closeIdleAgentTabs();
+          // SCIENT-FORK:START — free server connections held by other conversations' desktop pages.
+          releaseDesktopConnections(request.threadId);
+          // SCIENT-FORK:END
+        }
         const tab =
           existing ??
           (await runPromise(

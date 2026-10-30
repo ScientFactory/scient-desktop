@@ -153,10 +153,14 @@ export const accountAgentOperations = {
         const values = yield* accounts.resolveSecrets(accountId, ["password", "totp"]);
         return yield* signIn(scope, account, values, tabId);
       }).pipe(
-        Effect.orElseSucceed(() => ({
-          outcome: "failed" as const,
-          message: "The browser sign-in could not be completed.",
-        })),
+        Effect.catch((error) =>
+          Effect.succeed({
+            outcome: "failed" as const,
+            message: isAccountsError(error)
+              ? error.message
+              : "The browser sign-in could not be completed.",
+          }),
+        ),
       ),
       (result) => result.outcome === "signed-in",
       (result) => result.outcome,
