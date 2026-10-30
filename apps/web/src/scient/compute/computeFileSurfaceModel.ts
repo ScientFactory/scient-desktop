@@ -86,11 +86,34 @@ export function resolveComputePreRunRuntimeChoice(
   return managed === undefined ? null : { current, managed };
 }
 
-/** Discovery order is the server's preference, not a list to skip until something runs. */
+/**
+ * The runtime new sessions use, as the server chose it. Servers without a selection record put
+ * their preference first; that order is not a list to skip until something runs.
+ */
 export function defaultComputeRuntime(languages: ReadonlyArray<ComputeLanguageRuntimeInspection>) {
   const language = languages.find((candidate) => candidate.enabled);
+  if (language?.selection !== undefined) {
+    const executable = language.selection.executable;
+    return (
+      language.runtimes.find(
+        (candidate) =>
+          candidate.profile.executable === executable &&
+          candidate.verification.readiness === "ready",
+      ) ?? null
+    );
+  }
   const candidate = language?.runtimes[0];
   return candidate?.verification.readiness === "ready" ? candidate : null;
+}
+
+/** Why the runtime the user or project chose cannot run, when that blocks Run. */
+export function computeRuntimeBlocker(
+  language: ComputeLanguageRuntimeInspection | null,
+): { readonly mode: "explicit" | "project"; readonly problem: string } | null {
+  const selection = language?.selection;
+  if (selection === undefined || selection.mode === "automatic" || selection.executable !== null)
+    return null;
+  return { mode: selection.mode, problem: selection.problem ?? "" };
 }
 
 import {
@@ -148,6 +171,20 @@ export type ComputeRuntimeToolbarState =
       readonly kind: "switch";
       readonly label: string;
       readonly canRun: true;
+    }
+  | {
+      /** The check failed: retry it. Never presented as "not installed". */
+      readonly kind: "retry";
+      readonly label: string;
+      readonly canRun: false;
+      readonly note?: string;
+    }
+  | {
+      /** The chosen or project runtime cannot run; choose another in settings. */
+      readonly kind: "choose";
+      readonly label: string;
+      readonly canRun: false;
+      readonly note: string;
     };
 
 export function computeRuntimeSetupActionLabel(languageId: string, languageName: string): string {
@@ -244,6 +281,9 @@ export function resolveComputeRuntimeToolbarState(input: {
   readonly readyRuntimeAvailable: boolean;
   readonly preferredRuntimeExecutable: string | null;
   readonly scientificPackagesMissing: boolean;
+  /** The runtime check failed or returned nothing for this language. */
+  readonly runtimeCheckFailure?: string | null;
+  readonly runtimeBlocker?: ReturnType<typeof computeRuntimeBlocker>;
   readonly capacityRecoveryAvailable?: boolean;
   readonly startingRetryAvailable?: boolean;
   readonly contextLifecycle?:
@@ -298,6 +338,25 @@ export function resolveComputeRuntimeToolbarState(input: {
   }
   if (input.runtimeInspectionPending) {
     return { kind: "status", label: languageName, canRun: false, busy: true };
+  }
+  if (input.runtimeCheckFailure != null) {
+    return {
+      kind: "retry",
+      label: `Couldn't check ${languageName}`,
+      canRun: false,
+      ...(input.runtimeCheckFailure ? { note: input.runtimeCheckFailure } : {}),
+    };
+  }
+  if (input.runtimeBlocker != null) {
+    return {
+      kind: "choose",
+      label:
+        input.runtimeBlocker.mode === "project"
+          ? "Project environment can't run"
+          : `${languageName} unavailable`,
+      canRun: false,
+      note: input.runtimeBlocker.problem,
+    };
   }
   return {
     kind: "setup",

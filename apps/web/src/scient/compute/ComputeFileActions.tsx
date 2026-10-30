@@ -64,6 +64,7 @@ import {
   isExactTerminalComputeSession,
   resolveComputePreRunRuntimeChoice,
   resolveComputeRuntimeToolbarState,
+  computeRuntimeBlocker,
   SCIENTIFIC_PYTHON_TOOLKIT_ID,
   computeRuntimeSetupActionLabel,
 } from "./computeFileSurfaceModel";
@@ -172,6 +173,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     );
     const stoppingForFresh = useRef(false);
     const [startRetryAvailable, setStartRetryAvailable] = useState(false);
+    const [runBlocked, setRunBlocked] = useState(false);
     const [switchTarget, setSwitchTarget] = useState<{
       readonly environmentId: EnvironmentId;
       readonly contextId: ComputeContextId;
@@ -197,7 +199,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const runtimes = useEnvironmentQuery(
       computeEnvironment.runtimes({
         environmentId: props.environmentId,
-        input: { cwd: props.cwd, refresh: false },
+        input: { cwd: props.cwd, refresh: false, languageIds: [props.language.languageId] },
       }),
     );
     const exactSessionQuery =
@@ -364,6 +366,13 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       readyRuntimeAvailable: readyRuntime !== null,
       preferredRuntimeExecutable: readyRuntime?.profile.executable ?? null,
       scientificPackagesMissing: missingScientificPackages.length > 0,
+      runtimeCheckFailure: runtimes.isPending
+        ? null
+        : (runtimes.error ??
+          (runtimes.data !== undefined && languageInspection === null
+            ? ""
+            : (languageInspection?.failure ?? null))),
+      runtimeBlocker: computeRuntimeBlocker(languageInspection),
       capacityRecoveryAvailable: capacityBlocked,
       startingRetryAvailable: canRetryStart,
       ...(contextBinding?.lifecycle === undefined
@@ -527,6 +536,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       // Keyboard shortcuts and the empty-results action use this same path;
       // a disabled toolbar must not be bypassed through an imperative handle.
       if (!runtimeToolbar.canRun) {
+        setRunBlocked(true);
         toastManager.add({ type: "info", title: runtimeToolbar.label });
         return;
       }
@@ -1014,6 +1024,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       showManagedNotice ||
       runtimeToolbar.kind === "setup" ||
       runtimeToolbar.kind === "switch" ||
+      runtimeToolbar.kind === "retry" ||
+      runtimeToolbar.kind === "choose" ||
+      // A blocked Run keeps its reason in view, however narrow the toolbar.
+      (runBlocked && !runtimeToolbar.canRun) ||
       capacityBlocked;
     const primaryRunBlocked = primary.kind === "file" && fileRunBlocked;
     const liveRunDisabled = busy || !runtimeToolbar.canRun || primaryRunBlocked;
@@ -1023,7 +1037,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const runtimeNote =
       [
         liveSession?.runtime ? liveSession.runtime.executable : null,
-        runtimeToolbar.kind === "status" ? runtimeToolbar.note : null,
+        "note" in runtimeToolbar ? runtimeToolbar.note : null,
       ]
         .filter(Boolean)
         .join(" · ") || undefined;
@@ -1115,6 +1129,19 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   )}
                 </MenuPopup>
               </Menu>
+            ) : runtimeToolbar.kind === "retry" ? (
+              <ScientTooltip content={runtimeNote ?? "Check again"}>
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  className="min-w-0 max-w-full"
+                  aria-label={`${runtimeToolbar.label}. Check again`}
+                  disabled={refreshing}
+                  onClick={() => void refreshRuntime()}
+                >
+                  <span className="truncate font-normal">{runtimeToolbar.label} · Retry</span>
+                </Button>
+              </ScientTooltip>
             ) : runtimeToolbar.kind === "switch" ? (
               <Button
                 size="xs"

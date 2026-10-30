@@ -23,6 +23,7 @@ import {
   resolveComputeRuntimeToolbarState,
   resolveComputePreRunRuntimeChoice,
   defaultComputeRuntime,
+  computeRuntimeBlocker,
   isComputeCapacityReachedError,
   isExactTerminalComputeSession,
 } from "./computeFileSurfaceModel";
@@ -185,6 +186,87 @@ describe("python compute surface model", () => {
     ).toBe("path");
     expect(defaultComputeRuntime([{ ...language, enabled: false }])).toBeNull();
   });
+  it("follows the server's selection and names an explicit or project blocker", () => {
+    const candidate = (source: "managed" | "path" | "project", ready: boolean) => ({
+      profile: { ...pythonRuntime, source, executable: `/${source}/python` },
+      verification: {
+        profile: { ...pythonRuntime, source, executable: `/${source}/python` },
+        readiness: ready ? ("ready" as const) : ("unusable" as const),
+        missingRequirements: [],
+        packages: [],
+        message: null,
+      },
+      toolkits: [],
+    });
+    const language: ComputeLanguageRuntimeInspection = {
+      descriptor: {
+        languageId: pythonRuntime.languageId,
+        displayName: "Python",
+        sourceExtensions: [".py"],
+        capabilities: [],
+      },
+      enabled: true,
+      configuredExecutable: null,
+      managedRuntime: null,
+      toolkits: [],
+      runtimes: [candidate("managed", true), candidate("path", false)],
+      selection: { mode: "automatic", executable: "/managed/python", problem: null },
+    };
+    expect(defaultComputeRuntime([language])?.profile.source).toBe("managed");
+    expect(computeRuntimeBlocker(language)).toBeNull();
+    const broken = {
+      ...language,
+      runtimes: [candidate("project", false), candidate("path", true)],
+      selection: {
+        mode: "project" as const,
+        executable: null,
+        problem: "Its Python is missing. Recreate the environment.",
+      },
+    };
+    expect(defaultComputeRuntime([broken])).toBeNull();
+    expect(
+      resolveComputeRuntimeToolbarState({
+        liveSession: null,
+        runtimeInspectionPending: false,
+        readyRuntimeAvailable: false,
+        preferredRuntimeExecutable: null,
+        scientificPackagesMissing: false,
+        runtimeBlocker: computeRuntimeBlocker(broken),
+      }),
+    ).toEqual({
+      kind: "choose",
+      label: "Project environment can't run",
+      canRun: false,
+      note: "Its Python is missing. Recreate the environment.",
+    });
+  });
+
+  it("says a failed or empty check failed instead of asking to set up Python", () => {
+    const base = {
+      liveSession: null,
+      runtimeInspectionPending: false,
+      readyRuntimeAvailable: false,
+      preferredRuntimeExecutable: null,
+      scientificPackagesMissing: false,
+    };
+    expect(resolveComputeRuntimeToolbarState({ ...base, runtimeCheckFailure: "" })).toEqual({
+      kind: "retry",
+      label: "Couldn't check Python",
+      canRun: false,
+    });
+    expect(
+      resolveComputeRuntimeToolbarState({ ...base, runtimeCheckFailure: "Probe host crashed." }),
+    ).toMatchObject({ kind: "retry", note: "Probe host crashed." });
+    // A ready runtime from an earlier check still runs.
+    expect(
+      resolveComputeRuntimeToolbarState({
+        ...base,
+        readyRuntimeAvailable: true,
+        runtimeCheckFailure: "Probe host crashed.",
+      }).canRun,
+    ).toBe(true);
+  });
+
   it("remembers only a results layout and keeps the split readable", () => {
     expect(normalizeComputeFileResultsView("split")).toBe("split");
     expect(normalizeComputeFileResultsView("results")).toBe("results");
