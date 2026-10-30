@@ -269,6 +269,7 @@ export function makeComputeRpcGateway(input: {
         ),
       ),
       refresh: request.refresh,
+      ...(request.languageIds === undefined ? {} : { languageIds: new Set(request.languageIds) }),
     });
     return {
       contractVersion: 1 as const,

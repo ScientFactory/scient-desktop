@@ -108,6 +108,8 @@ import {
   type ComputeWorkspaceReceipt,
 } from "./ComputeWorkspaceAdmission.ts";
 import { withComputeWorkspaceReservation } from "./ComputeWorkspaceLifetime.ts";
+import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
+import { chooseRuntime, orderByChoice, type RuntimeChoice } from "./RuntimeSelection.ts";
 import type {
   ResolvedComputeOutputImage,
   ResolvedComputeOutputResource,
@@ -190,17 +192,26 @@ export interface ComputeRuntimeInspectionRequest {
   readonly configuredExecutables: Readonly<Record<string, string | null>>;
   readonly enabledLanguageIds: ReadonlySet<string>;
   readonly refresh: boolean;
+  /** Absent means every language. */
+  readonly languageIds?: ReadonlySet<string>;
 }
 
 export interface ComputeRuntimeInspectionResult {
   readonly descriptor: ComputeRuntimeDescriptor;
   readonly managedRuntime?: ComputeManagedRuntimeStatus | null | undefined;
   readonly toolkits: ReadonlyArray<ComputeToolkitDescriptor>;
+  /** The chosen or blocking runtime first, then the rest in discovery order. */
   readonly runtimes: ReadonlyArray<{
     readonly profile: ComputeRuntimeProfile;
     readonly verification: ComputeRuntimeVerification;
     readonly toolkits: ReadonlyArray<ComputeToolkitAssessment>;
   }>;
+  readonly selection?: {
+    readonly mode: RuntimeChoice["mode"];
+    readonly executable: string | null;
+    readonly problem: string | null;
+  };
+  readonly failure?: string | null;
 }
 
 export interface ComputeRuntimeInventoryResult {
@@ -568,57 +579,55 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const inspectRuntimes = Effect.fn("ComputeSessionService.inspectRuntimes")(function* (
-    input: ComputeRuntimeInspectionRequest,
-  ) {
-    const workingDirectory = yield* runtimeDirectory("inspect", input.workingDirectory);
-    const projectRoot =
-      input.projectRoot === null ? null : yield* runtimeDirectory("inspect", input.projectRoot);
-    const { environment } = runtimeEnvironment();
-    return yield* Effect.forEach(bindings, (binding) =>
-      Effect.gen(function* () {
-        const managedRuntime =
-          binding.managedRuntime === undefined
-            ? null
-            : yield* binding.managedRuntime.status().pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("managed compute runtime status unavailable", {
-                    languageId: binding.adapter.languageId,
-                    cause,
-                  }).pipe(
-                    Effect.as({
-                      installed: false,
-                      selection: "existing" as const,
-                      updateAvailable: false,
-                      runtimeVersion: null,
-                      toolkitRevision: null,
-                      operation: null,
-                      failureMessage: shortText(cause.message),
-                    }),
-                  ),
-                ),
-              );
-        if (!input.enabledLanguageIds.has(binding.adapter.languageId)) {
-          return {
-            descriptor: descriptorFor(binding),
-            managedRuntime,
-            toolkits: binding.toolkitSupport?.descriptors ?? [],
-            runtimes: [],
-          };
-        }
-        const profiles = yield* binding.adapter
-          .discover({
-            projectRoot,
-            configuredExecutable: input.configuredExecutables[binding.adapter.languageId] ?? null,
-            refresh: input.refresh,
-          })
-          .pipe(
-            Effect.mapError((cause) =>
-              computeError("inspect", "runtime-unusable", cause.message, cause),
+  const managedStatusOrFallback = (binding: ComputeRuntimeBinding) =>
+    binding.managedRuntime === undefined
+      ? Effect.succeed(null)
+      : binding.managedRuntime.status().pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("managed compute runtime status unavailable", {
+              languageId: binding.adapter.languageId,
+              cause,
+            }).pipe(
+              Effect.as({
+                installed: false,
+                selection: "existing" as const,
+                updateAvailable: false,
+                runtimeVersion: null,
+                toolkitRevision: null,
+                operation: null,
+                failureMessage: shortText(cause.message),
+              }),
             ),
-          );
-        const runtimes = yield* Effect.forEach(profiles, (profile) =>
-          binding.adapter.verify({ profile, cwd: workingDirectory, environment }).pipe(
+          ),
+        );
+
+  const inspectLanguage = Effect.fn("ComputeSessionService.inspectLanguage")(function* (
+    binding: ComputeRuntimeBinding,
+    input: {
+      readonly projectRoot: string | null;
+      readonly workingDirectory: string;
+      readonly configuredExecutable: string | null;
+      readonly refresh: boolean;
+    },
+  ): Effect.fn.Return<ComputeRuntimeInspectionResult> {
+    const { environment } = runtimeEnvironment();
+    const managedRuntime = yield* managedStatusOrFallback(binding);
+    const base = {
+      descriptor: descriptorFor(binding),
+      managedRuntime,
+      toolkits: binding.toolkitSupport?.descriptors ?? [],
+    };
+    const request = {
+      projectRoot: input.projectRoot,
+      configuredExecutable: input.configuredExecutable,
+      refresh: input.refresh,
+    };
+    return yield* Effect.gen(function* () {
+      const profiles = yield* binding.adapter.discover(request);
+      const runtimes = yield* Effect.forEach(
+        profiles,
+        (profile) =>
+          binding.adapter.verify({ profile, cwd: input.workingDirectory, environment }).pipe(
             Effect.catch((cause) =>
               Effect.succeed({
                 profile,
@@ -634,14 +643,99 @@ const make = Effect.gen(function* () {
               toolkits: binding.toolkitSupport?.assess(verification) ?? [],
             })),
           ),
+        { concurrency: 4 },
+      );
+      const explicit =
+        binding.adapter.selectedExecutable === undefined
+          ? input.configuredExecutable
+          : yield* binding.adapter.selectedExecutable(request);
+      const choice = yield* chooseRuntime(profiles, explicit, (profile) =>
+        Effect.succeed(runtimes.find((runtime) => runtime.profile === profile)!),
+      );
+      return {
+        ...base,
+        runtimes: orderByChoice(runtimes, choice),
+        selection: {
+          mode: choice.mode,
+          executable: choice.selected?.profile.executable ?? null,
+          problem: choice.problem === null ? null : shortText(choice.problem),
+        },
+        failure: null,
+      };
+    }).pipe(
+      // A failed check is reported as such, never as an empty list that reads "not installed".
+      Effect.catch((cause) =>
+        Effect.succeed({ ...base, runtimes: [], failure: shortText(cause.message) }),
+      ),
+    );
+  });
+
+  // Served at once from the last result; a stale one is refreshed in the background.
+  const inspections = makeRuntimeProbeCache<ComputeRuntimeInspectionResult, never>({
+    successTtlMs: 0,
+    concurrency: 8,
+  });
+  const inspectionSnapshots = new Map<
+    string,
+    { readonly result: ComputeRuntimeInspectionResult; readonly at: number }
+  >();
+  const INSPECTION_STALE_MS = 30_000;
+
+  const inspectionSnapshot = Effect.fn("ComputeSessionService.inspectionSnapshot")(function* (
+    key: string,
+    inspect: Effect.Effect<ComputeRuntimeInspectionResult>,
+    refresh: boolean,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const store = inspections.get(
+      key,
+      inspect.pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => inspectionSnapshots.set(key, { result, at: now })),
+        ),
+      ),
+    );
+    const snapshot = refresh ? undefined : inspectionSnapshots.get(key);
+    if (snapshot === undefined) return yield* store;
+    if (now - snapshot.at >= INSPECTION_STALE_MS) yield* Effect.forkIn(store, serviceScope);
+    return snapshot.result;
+  });
+
+  const inspectRuntimes = Effect.fn("ComputeSessionService.inspectRuntimes")(function* (
+    input: ComputeRuntimeInspectionRequest,
+  ) {
+    const workingDirectory = yield* runtimeDirectory("inspect", input.workingDirectory);
+    const projectRoot =
+      input.projectRoot === null ? null : yield* runtimeDirectory("inspect", input.projectRoot);
+    const requested = bindings.filter(
+      (binding) =>
+        input.languageIds === undefined || input.languageIds.has(binding.adapter.languageId),
+    );
+    // Each language is independent: a slow R probe never holds back Python.
+    return yield* Effect.forEach(
+      requested,
+      (binding) => {
+        const languageId = binding.adapter.languageId;
+        if (!input.enabledLanguageIds.has(languageId))
+          return Effect.succeed({
+            descriptor: descriptorFor(binding),
+            managedRuntime: null,
+            toolkits: binding.toolkitSupport?.descriptors ?? [],
+            runtimes: [],
+          });
+        const configuredExecutable = input.configuredExecutables[languageId] ?? null;
+        return inspectionSnapshot(
+          JSON.stringify([languageId, projectRoot, workingDirectory, configuredExecutable]),
+          inspectLanguage(binding, {
+            projectRoot,
+            workingDirectory,
+            configuredExecutable,
+            refresh: input.refresh,
+          }),
+          input.refresh,
         );
-        return {
-          descriptor: descriptorFor(binding),
-          managedRuntime,
-          toolkits: binding.toolkitSupport?.descriptors ?? [],
-          runtimes,
-        };
-      }),
+      },
+      { concurrency: "unbounded" },
     );
   });
 
@@ -2302,36 +2396,57 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.mapError((cause) => computeError("start", "runtime-missing", cause.message, cause)),
       );
-    // A default may prefer the managed runtime; a deliberate session choice
-    // must not. The configured profile also covers an alias whose probe
-    // reports a different canonical executable path.
-    const candidate =
+    const verifyCandidate = (profile: ComputeRuntimeProfile) =>
+      binding.adapter.verify({ profile, cwd: projectRoot, environment }).pipe(
+        Effect.map((verification) => ({ profile, verification })),
+        Effect.mapError((cause) => computeError("start", "runtime-unusable", cause.message, cause)),
+      );
+    // A one-run choice is exact; otherwise the same rule as inspection decides, so Automatic never
+    // treats the first runtime found as a pin and an explicit or project runtime is never replaced.
+    const requested =
       input.requestedExecutable === undefined
-        ? profiles[0]
+        ? null
         : (profiles.find((profile) => profile.executable === input.requestedExecutable) ??
           profiles.find((profile) => profile.source === "configured"));
-    if (candidate === undefined) {
+    if (input.requestedExecutable !== undefined && requested == null) {
       return yield* computeError(
         "start",
         "runtime-missing",
-        input.requestedExecutable === undefined
-          ? `No ${input.languageId} runtime was found for this project.`
-          : "The selected runtime is no longer available. Refresh runtimes and choose it again.",
+        "The selected runtime is no longer available. Refresh runtimes and choose it again.",
       );
     }
-    const verification = yield* binding.adapter
-      .verify({ profile: candidate, cwd: projectRoot, environment })
-      .pipe(
-        Effect.mapError((cause) => computeError("start", "runtime-unusable", cause.message, cause)),
-      );
-    if (verification.readiness !== "ready") {
+    const explicit =
+      binding.adapter.selectedExecutable === undefined
+        ? input.configuredExecutable
+        : yield* binding.adapter
+            .selectedExecutable({ projectRoot, configuredExecutable: input.configuredExecutable })
+            .pipe(
+              Effect.mapError((cause) =>
+                computeError("start", "runtime-missing", cause.message, cause),
+              ),
+            );
+    const choice =
+      requested != null
+        ? yield* verifyCandidate(requested).pipe(
+            Effect.map((checked) =>
+              checked.verification.readiness === "ready"
+                ? { selected: checked, problem: null }
+                : { selected: null, problem: checked.verification.message, blocker: checked },
+            ),
+          )
+        : yield* chooseRuntime(profiles, explicit, verifyCandidate);
+    if (choice.selected === null) {
+      const blocker = "blocker" in choice ? choice.blocker : null;
       return yield* computeError(
         "start",
-        "runtime-unusable",
-        verification.message ??
-          `The ${input.languageId} runtime at ${candidate.executable} cannot be used.`,
+        blocker == null ? "runtime-missing" : "runtime-unusable",
+        choice.problem ??
+          (blocker == null
+            ? `No ${input.languageId} runtime was found for this project.`
+            : `The ${input.languageId} runtime at ${blocker.profile.executable} cannot be used.`),
       );
     }
+    const { verification } = choice.selected;
     const launch = yield* binding.adapter
       .prepareLaunch({ profile: verification.profile, cwd: projectRoot, environment })
       .pipe(
