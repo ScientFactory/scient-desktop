@@ -10,16 +10,17 @@ import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { codeInMailFeed, mailFeedScript, MAIL_FEED_URL } from "../signIn/mailCodes.ts";
-import { readMessageCode } from "../signIn/messageCodes.ts";
+import { readMessageCode, serviceWords } from "../signIn/messageCodes.ts";
 
 /** The newest code from the sources the user turned on, if one arrived since the sign-in began. */
 const findSignInCode = Effect.fn("AccountsAgent.findSignInCode")(function* (
   sinceMs: number,
   profileId: string | undefined,
+  service: ReadonlyArray<string>,
 ) {
   const sources = (yield* (yield* AccountsService).snapshot).codeSources;
   if (sources?.messages) {
-    const code = yield* Effect.try(() => readMessageCode(sinceMs)).pipe(
+    const code = yield* Effect.try(() => readMessageCode(sinceMs, service)).pipe(
       Effect.orElseSucceed(() => undefined),
     );
     if (code !== undefined) return code;
@@ -51,7 +52,7 @@ const findSignInCode = Effect.fn("AccountsAgent.findSignInCode")(function* (
         if (!tabId) return undefined;
         yield* invoke("accountWaitForLoad", {}, tabId);
         const feed = yield* invoke<unknown>("evaluate", { expression: mailFeedScript }, tabId);
-        return typeof feed === "string" ? codeInMailFeed(feed, sinceMs) : undefined;
+        return typeof feed === "string" ? codeInMailFeed(feed, sinceMs, service) : undefined;
       }),
     ({ tabId }) => (tabId ? invoke("close", {}, tabId).pipe(Effect.ignore) : Effect.void),
   ).pipe(Effect.orElseSucceed(() => undefined));
@@ -72,6 +73,10 @@ export const signInCodes = Effect.fn("AccountsAgent.signInCodes")(function* (
   const caller = yield* Effect.serviceOption(McpInvocationContext);
   const requests = yield* Effect.serviceOption(SecretRequests);
   const profileId = "profileId" in account.details ? account.details.profileId : undefined;
+  const service = serviceWords({
+    name: account.name,
+    sites: "sites" in account.details ? account.details.sites : [],
+  });
   return {
     askCode: (site: string): Effect.Effect<string> => {
       const { projectId } = scope;
@@ -101,7 +106,7 @@ export const signInCodes = Effect.fn("AccountsAgent.signInCodes")(function* (
         );
     },
     findCode: (sinceMs: number): Effect.Effect<string | undefined> =>
-      findSignInCode(sinceMs, profileId).pipe(
+      findSignInCode(sinceMs, profileId, service).pipe(
         Effect.provideService(AccountsService, accounts),
         Effect.provideService(PreviewAutomationBroker, broker),
         Effect.provideService(AgentInvocationContext, invocation),

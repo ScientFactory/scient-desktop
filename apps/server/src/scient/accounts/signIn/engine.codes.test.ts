@@ -52,7 +52,11 @@ const status: PreviewAutomationStatus = {
   tabs: [{ tabId: "tab-fixture", url: "https://example.com", profileId, ownedByCaller: true }],
 };
 
-const run = (options: Parameters<typeof signIn>[4], accepted: string) => {
+const run = (
+  options: Parameters<typeof signIn>[4],
+  accepted: string,
+  origin: () => string = () => "https://example.com",
+) => {
   const typed: string[] = [];
   const broker = PreviewAutomationBroker.of({
     connect: () => Effect.succeed(Stream.empty),
@@ -66,7 +70,7 @@ const run = (options: Parameters<typeof signIn>[4], accepted: string) => {
         return (
           request.operation === "evaluate"
             ? {
-                origin: "https://example.com",
+                origin: origin(),
                 username: null,
                 password: null,
                 otp: signedIn ? null : "#otp",
@@ -125,5 +129,25 @@ it.effect("a code the site refuses is reported, not retried", () =>
     );
     expect(result.outcome).toBe("code-rejected");
     expect(typed.filter((text) => text === "000000")).toHaveLength(1);
+  }),
+);
+
+it.effect("a code asked for on one site never goes to another the tab moved to", () =>
+  Effect.gen(function* () {
+    let moved = false;
+    const { result, typed } = yield* run(
+      {
+        askCode: () =>
+          Effect.sync(() => {
+            moved = true;
+            return "654321";
+          }),
+        findCode: () => Effect.never,
+      },
+      "never",
+      () => (moved ? "https://elsewhere.example.com" : "https://example.com"),
+    );
+    expect(typed).toEqual([]);
+    expect(result.outcome).toBe("needs-user");
   }),
 );

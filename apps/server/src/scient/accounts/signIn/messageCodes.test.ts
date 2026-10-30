@@ -4,20 +4,30 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 import { describe, expect, it } from "vite-plus/test";
-import { attributedText, codeInText, readMessageCode } from "./messageCodes.ts";
+import { attributedText, codeInText, readMessageCode, serviceWords } from "./messageCodes.ts";
 
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1);
 
 describe("sign-in codes in messages", () => {
+  const service = ["example"];
   it.each([
-    ["Your verification code is 482913", "482913"],
-    ["482913 is your one-time password", "482913"],
-    ["קוד האימות שלך: 482913", "482913"],
-    ["Your order 482913 has shipped", undefined],
-    ["Your code expires 12/10/2026", undefined],
-    ["Call 03-1234567 about your code", undefined],
+    ["Example: your verification code is 482913", "482913"],
+    ["482913 is your Example one-time password", "482913"],
+    ["Example קוד האימות שלך: 482913", "482913"],
+    ["Example: your order 482913 has shipped", undefined],
+    ["Example: your code expires 12/10/2026", undefined],
+    ["Call Example on 03-1234567 about your code", undefined],
+    ["Your Other Bank code is 482913", undefined],
   ])("%s", (text, code) => {
-    expect(codeInText(text)).toBe(code);
+    expect(codeInText(text, service)).toBe(code);
+  });
+
+  it("names a service by its sites and account, not by what every site shares", () => {
+    expect(serviceWords({ name: "HUJI library", sites: ["huji.ac.il"] })).toEqual(["huji"]);
+    expect(serviceWords({ name: "Work", sites: ["https://login.github.com"] })).toEqual([
+      "github",
+      "work",
+    ]);
   });
 
   it("reads the text out of an archived message body", () => {
@@ -36,17 +46,18 @@ describe("sign-in codes in messages", () => {
     const path = NodePath.join(directory, "chat.db");
     const db = new NodeSqlite.DatabaseSync(path);
     db.exec(
-      "CREATE TABLE message (text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER)",
+      "CREATE TABLE message (text TEXT, attributedBody BLOB, date INTEGER, is_from_me INTEGER, handle_id INTEGER); CREATE TABLE handle (id TEXT)",
     );
     const at = (ms: number) => BigInt(ms - APPLE_EPOCH_MS) * 1_000_000n;
-    const insert = db.prepare("INSERT INTO message VALUES (?, NULL, ?, ?)");
+    const insert = db.prepare("INSERT INTO message VALUES (?, NULL, ?, ?, NULL)");
     const now = Date.UTC(2026, 9, 30, 10);
-    insert.run("Your code is 111111", at(now - 600_000), 0);
-    insert.run("Your code is 222222", at(now - 1_000), 0);
-    insert.run("Your code is 333333", at(now - 500), 1);
+    insert.run("Example code is 111111", at(now - 600_000), 0);
+    insert.run("Example code is 222222", at(now - 1_000), 0);
+    insert.run("Other Bank code is 444444", at(now - 800), 0);
+    insert.run("Example code is 333333", at(now - 500), 1);
     db.close();
-    expect(readMessageCode(now - 60_000, path)).toBe("222222");
-    expect(readMessageCode(now, path)).toBeUndefined();
+    expect(readMessageCode(now - 60_000, ["example"], path)).toBe("222222");
+    expect(readMessageCode(now, ["example"], path)).toBeUndefined();
     NodeFS.rmSync(directory, { recursive: true });
   });
 });

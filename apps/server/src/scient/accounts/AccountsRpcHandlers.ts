@@ -101,8 +101,8 @@ export const makeAccountsRpcHandlers = ({
           .recordUse({
             target: { type: "account", accountId: input.accountId },
             action: "sign-in",
-            signInOutcome: "signed-in",
-            outcome: "ok",
+            signInOutcome: input.outcome,
+            outcome: input.outcome === "signed-in" ? "ok" : "error",
           })
           .pipe(Effect.as({})),
         attributes,

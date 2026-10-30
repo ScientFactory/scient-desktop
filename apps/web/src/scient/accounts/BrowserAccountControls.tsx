@@ -199,7 +199,7 @@ function DesktopBrowserAccountControls({
         if (result.value.result === "same" && accountId) {
           await new Promise((settled) => setTimeout(settled, SIGN_IN_SETTLE_MS));
           const form = await window.desktopBridge?.accounts?.loginForm?.(tabId);
-          if (form === null) void signInSeen({ accountId });
+          if (form === null) void signInSeen({ accountId, outcome: "signed-in" });
         }
       })();
     } catch {

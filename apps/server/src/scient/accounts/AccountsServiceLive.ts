@@ -853,22 +853,24 @@ export const layer = Layer.effect(
         ),
       ),
       setCodeSources: Effect.fn("AccountsService.setCodeSources")((codeSources) =>
-        locked(commit({ ...state, codeSources }, true)),
+        locked(Effect.suspend(() => commit({ ...state, codeSources }, true))),
       ),
       setKeyLink: Effect.fn("AccountsService.setKeyLink")((target, accountId) =>
         locked(
-          commit(
-            {
-              ...state,
-              keyLinks: [
-                ...(state.keyLinks ?? []).filter(
-                  (link) =>
-                    link.instanceId !== target.instanceId || link.variable !== target.variable,
-                ),
-                ...(accountId === undefined ? [] : [{ ...target, accountId }]),
-              ],
-            },
-            true,
+          Effect.suspend(() =>
+            commit(
+              {
+                ...state,
+                keyLinks: [
+                  ...(state.keyLinks ?? []).filter(
+                    (link) =>
+                      link.instanceId !== target.instanceId || link.variable !== target.variable,
+                  ),
+                  ...(accountId === undefined ? [] : [{ ...target, accountId }]),
+                ],
+              },
+              true,
+            ),
           ),
         ),
       ),

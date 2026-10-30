@@ -8,6 +8,7 @@ import {
 import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -180,12 +181,20 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           return { outcome: "needs-user" as const, message: action.message, tabId: target };
         const handoffId = NodeCrypto.randomUUID();
         const startedAt = timestamp;
+        // The code belongs to the page that asked for it, not to wherever the tab is by now.
+        let codeOrigin: string | undefined;
+        const codeNeeded = yield* Deferred.make<void>();
+        const noteCodeNeeded = Effect.suspend(() => {
+          if (action.type !== "needs-user" || action.kind !== "code") return Effect.void;
+          codeOrigin ??= page.origin;
+          return Deferred.succeed(codeNeeded, undefined).pipe(Effect.asVoid);
+        });
         const enterCode = Effect.fn("accounts.signIn.enterCode")(function* (code: string) {
           const field = yield* inspect(step);
-          if (!field.page.otp) return "continue" as const;
+          if (!field.page.otp || field.page.origin !== codeOrigin) return "continue" as const;
           yield* invoke(
             "accountType",
-            { origin: field.page.origin, selector: field.page.otp, text: code, clear: true },
+            { origin: codeOrigin, selector: field.page.otp, text: code, clear: true },
             target,
           );
           submissions.push({
@@ -199,10 +208,15 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           ({ page, timestamp, otpPeriod, continuation } = yield* inspect(step));
           return "continue" as const;
         });
-        const answered =
-          action.kind === "code" && options.askCode
-            ? options.askCode(new URL(page.origin).host).pipe(Effect.flatMap(enterCode))
-            : Effect.never;
+        // A push or CAPTCHA can turn into a code partway, so the card waits until one is needed.
+        const answered = options.askCode
+          ? Deferred.await(codeNeeded).pipe(
+              Effect.andThen(
+                Effect.suspend(() => options.askCode!(new URL(codeOrigin ?? page.origin).host)),
+              ),
+              Effect.flatMap(enterCode),
+            )
+          : Effect.never;
         const wait = Effect.gen(function* () {
           let published = "";
           const update = Effect.fn("accounts.signIn.updateHandoff")(function* () {
@@ -235,6 +249,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           });
           // The card shows this tab live in the conversation; "Open browser" reveals it elsewhere.
           yield* update();
+          yield* noteCodeNeeded;
           for (let poll = 0; poll < 90; poll++) {
             if (yield* accounts.handoffCancelled(handoffId)) return "cancelled" as const;
             // The user's actions navigate the page; a look that fails mid-navigation is retried.
@@ -254,6 +269,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
               return "continue" as const;
             if (timestamp - startedAt >= 180_000) break;
             yield* update();
+            yield* noteCodeNeeded;
             const found =
               action.kind === "code" && options.findCode
                 ? yield* options.findCode(startedAt)

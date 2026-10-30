@@ -18,12 +18,16 @@ const tag = (entry: string, name: string) =>
   new RegExp(`<${name}[^>]*>([\\s\\S]*?)</${name}>`, "iu").exec(entry)?.[1];
 
 /** The newest code among mail that arrived after the sign-in began. */
-export function codeInMailFeed(feed: string, sinceMs: number) {
+export function codeInMailFeed(feed: string, sinceMs: number, service: ReadonlyArray<string>) {
   for (const [entry] of feed.matchAll(/<entry>[\s\S]*?<\/entry>/giu)) {
     const issued = Date.parse(tag(entry, "issued") ?? tag(entry, "modified") ?? "");
     if (!(issued >= sinceMs)) continue;
-    const text = unescape(`${tag(entry, "title") ?? ""} ${tag(entry, "summary") ?? ""}`);
-    const code = codeInText(text);
+    const text = unescape(
+      [tag(entry, "email"), tag(entry, "name"), tag(entry, "title"), tag(entry, "summary")].join(
+        " ",
+      ),
+    );
+    const code = codeInText(text, service);
     if (code !== undefined) return code;
   }
   return undefined;

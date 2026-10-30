@@ -742,8 +742,11 @@ export const AccountMatchSignInResult = Schema.Struct({
 });
 export type AccountMatchSignInResult = typeof AccountMatchSignInResult.Type;
 
-/** The user's own sign-in with this saved password went through. */
-export const AccountSignInSeenInput = Schema.Struct({ accountId: AccountId });
+/** How a sign-in with this saved password on the user's own tab ended. */
+export const AccountSignInSeenInput = Schema.Struct({
+  accountId: AccountId,
+  outcome: Schema.Literals(["signed-in", "password-rejected"]),
+});
 export type AccountSignInSeenInput = typeof AccountSignInSeenInput.Type;
 
 /** Every browser sign-in, or one. */
