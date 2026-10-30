@@ -526,22 +526,26 @@ export function getComputeContext(contextId: ComputeContextId): ComputeContextBi
   return useComputeContextStore.getState().bindings[contextId] ?? null;
 }
 
-/** Presentation only: commands always use the full session id and generation. */
+/** "Python · analysis.py" or "Python · Agent"; commands always use the full session id. */
 export function computeSessionOwnerLabel(
-  session: Pick<ComputeSessionRecord, "sessionId" | "label">,
+  session: Pick<ComputeSessionRecord, "sessionId" | "label" | "owner">,
   environmentId: EnvironmentId,
   cwd: string,
 ): string {
-  const owner = Object.values(useComputeContextStore.getState().bindings).find(
-    (binding) =>
-      binding.environmentId === environmentId &&
-      binding.cwd === cwd &&
-      binding.sessionId === session.sessionId,
+  const binding = Object.values(useComputeContextStore.getState().bindings).find(
+    (candidate) =>
+      candidate.environmentId === environmentId &&
+      candidate.cwd === cwd &&
+      candidate.sessionId === session.sessionId,
   );
-  const identity = session.sessionId.slice(-8);
-  return owner?.relativePath
-    ? `${session.label} · ${owner.relativePath} · ${identity}`
-    : `${session.label} · ${identity}`;
+  const owner =
+    binding?.relativePath ??
+    (session.owner?._tag === "file"
+      ? session.owner.path
+      : session.owner?._tag === "agent"
+        ? "Agent"
+        : null);
+  return owner === null ? session.label : `${session.label} · ${owner}`;
 }
 
 export function ownsLiveComputeSession(

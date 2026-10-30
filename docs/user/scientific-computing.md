@@ -177,17 +177,13 @@ remain visible on the file. Select the file's Python status to open
 the right server's Scientific Computing settings. After choosing or repairing an environment, rerun
 the code yourself; Scient never replays a failed run automatically.
 
-For a missing, recognized Python dependency, the error offers **Choose Python environment…**.
-It can report that Scient-managed Python has the corresponding package installed when current
-runtime inspection supports that suggestion; package presence is not a guarantee that the script
-will succeed. Unknown project imports and missing submodules do not get this suggestion.
-
-When that alternative is ready, the current tab also offers **Start a new session with managed
-Python…**. After confirmation, Scient rechecks the environment and package, stops this tab's
-session with confirmed cleanup, and starts an empty managed session. In-memory variables are lost;
-run history is kept. It does not change your default environment, install packages, or rerun code.
-History-only and temporary fresh-run views do not replace another tab's session. You can instead
-choose an environment in Settings, then use **Switch Python** for an existing file session.
+For a missing, recognized Python dependency, the error offers one action. When Scient-managed
+Python is installed and has the package, it is **Switch to Scient-managed Python**: one click
+rechecks the environment and package, stops this tab's idle session with confirmed cleanup, and
+starts an empty managed session. Variables reset, as the note beside the button says; nothing is
+installed, rerun, or changed in your default environment. Otherwise the error offers
+**Python settings**. Package presence is not a guarantee that the script will succeed. Unknown
+project imports and missing submodules get neither action.
 
 ## Connect your MATLAB installation
 
@@ -239,8 +235,8 @@ automatic Octave fallback takes place.
 Open a `.py` file in the ordinary project editor. Its header offers three views:
 
 - **Code** gives the editor the full surface.
-- **Split** keeps code and the selected run's results side by side.
-- **Results** gives text, errors, and figures the full surface.
+- **Split** keeps code and the results side by side.
+- **Results** gives the results the full surface.
 
 The contextual **Run** action executes exact selected text when one exists, otherwise the explicit
 `# %%` cell containing the caret, and otherwise the whole current buffer. Cmd/Ctrl+Enter uses the
@@ -263,8 +259,8 @@ package member, class-folder member, or `private` function is a definition rathe
 script, so the file action says **Definition** and explains that it must be called from a script.
 The server enforces the same rule even if a stale client attempts the submission.
 
-The first run starts this file tab's session when necessary and reveals **Results** by default, or
-**Split** when that was the last results layout you chose. Each Compute tab owns its own session, so
+The first run starts this file tab's session when necessary and reveals **Split** by default, or
+**Results** when that was the last results layout you chose. Each Compute tab owns its own session, so
 several Python and MATLAB files can run independently within the server's capacity. Values defined
 by one successful execution remain available to later executions in that tab until you restart or
 stop its session.
@@ -289,13 +285,28 @@ recorded revision and source range still match the project file.
 - **Restart** creates a new namespace generation and clears in-memory state.
 - **Stop** ends the live runtime but keeps its transcript.
 
-The results surface shows one selected run rather than an ever-growing feed. Its compact history
-selector lets you revisit earlier runs of the same file. Static PNG and SVG figures emitted with
-normal display behavior such as `plt.show()` or IPython's `display(...)` appear inline at a useful
-size and open directly in Scient's existing full static-image viewer when selected. The small image
-toolbar's menu offers copy, original download, available MATLAB FIG download, and the floating viewer;
-figure details stay in the menu. If a preview cannot load, **Try again** retries the image without
-rerunning your code. Original and native downloads remain available independently of preview decoding.
+Results is the session's feed: every run of the session, oldest first, including runs an agent
+submitted (marked **Agent**) and Run fresh runs. It follows new output while you are scrolled to the
+bottom and stops following when you scroll up. A restart adds a divider instead of clearing earlier
+runs. Each run has one quiet header line naming what ran (**File**, **Cell 4–8**, **Selection 12**,
+plus **unsaved** when relevant); selecting it opens those source lines. Status appears only while a
+run is queued or running, or when it was cancelled or failed without an error shown below it.
+Hover the header for its time and duration.
+
+Results render text with ANSI colors and carriage-return progress bars (such as tqdm), merge
+consecutive stream chunks, and keep standard error subtle. Rich results render HTML (sanitized: no
+scripts, styles, or remote content), Markdown, LaTeX math, JSON as a collapsible tree, pandas tables,
+Plotly, and PNG, SVG, JPEG, and GIF images. Long outputs collapse with **Show all**; hover an output
+to copy it.
+
+Figures emitted with normal display behavior such as `plt.show()` or IPython's `display(...)`
+appear inline at a useful size, directly in the run, and open in Scient's full static-image viewer
+when selected. Figure actions appear
+on hover: open in the viewer, and a menu with copy, original download, available MATLAB FIG
+download, the floating viewer, and **Save to project**. Saving copies the figure into
+`figures/<source file name>.png` (and `.pdf` when Matplotlib supplied one, as Scient-managed Python
+does for shown figures); an existing file is never replaced, so a second save becomes `-2`, `-3`, ….
+If a preview cannot load, **Try again** retries the image without rerunning your code. Original and native downloads remain available independently of preview decoding.
 Moving a figure between the full
 and floating viewers preserves one presentation owner rather than showing two copies; closing that
 viewer stops its updates and later runs never reopen it.
@@ -314,32 +325,17 @@ script that saves figures remains useful without notebook-only display calls. Di
 and reports when a project or execution exceeds its safety limits; Scient never guesses figure paths
 from printed console text.
 
-While the newest run is still updating, its text and status remain current but Results keeps the
-last successful figures from the same file and session generation visible. The figures are labelled
-as previous and link back to the run that produced them. The same continuity remains after a failed,
-cancelled, or lost run; it clears immediately when the new run produces figures or succeeds without
-any.
-
-The selected run's result is shown immediately. The file results surface does not repeat the full
-submitted code beside the editor; it shows only whether the run used the file, a selection, or a
-cell, the relevant line range, and whether the submitted buffer was unsaved. Scient still retains
-the exact submitted bytes as durable provenance. If a saved file has changed since the selected run,
-the same compact context says **Source changed** without exposing a revision hash.
-
-A normal successful file run shows its figures and text directly, without another large card that
-only says **File**. If one run produces several figures, they appear as peer result cards in the same
-run. Compact context remains visible when it matters, such as for a selection, cell, unsaved buffer,
-running execution, or failure. The separate Compute history keeps source labels because it can span
-multiple files.
-
 The separate **Compute** project surface is secondary: use **Scientific computing** from the
 right-panel add menu when you need a kernel that is not tied to the open file, or open project
 history once more than one session exists. It is
 not a second editor and has no generic code composer.
 
-Supported scalar tables appear as bounded previews, and Plotly outputs use Scient's existing
+The separate surface shows one runtime indicator, such as **Python 3.14**, with a spinner while the
+kernel is busy; it becomes a session switcher only when there is more than one session.
+
+pandas tables appear as bounded previews, and Plotly outputs use Scient's existing
 interactive chart viewer. Plotly is part of Scient-managed Python; a user-owned Python must provide
-its own Plotly package. A **Limited preview** label identifies clipped tables; this is not a
+its own Plotly package. A **First 100 rows** caption identifies clipped tables; this is not a
 full dataset browser. Unsupported or malformed rich output retains its available plain-text
 fallback. Viewing results does not enable executable HTML or widgets.
 
@@ -391,8 +387,9 @@ session is untouched. Scient retains the results, then closes the temporary sess
 Fresh does not mean sandboxed: it uses the same selected runtime, packages, project files,
 and server permissions. It can still modify files.
 
-After a fresh or batch run, the compact results selector lets you return to **Session** or
-view a previous run without executing anything. Switching threads or views does not stop
+Fresh runs appear in the file's Results feed, marked **Fresh**. After a MATLAB batch run, the
+compact results selector lets you return to **Session** or view a previous batch run without
+executing anything. Switching threads or views does not stop
 work. Closing the owning file/Compute tab stops its session and any fresh or batch runs;
 if shutdown cannot be confirmed, the tab stays available with an error.
 

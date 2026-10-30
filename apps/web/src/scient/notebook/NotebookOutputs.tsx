@@ -1,21 +1,16 @@
 /* oxlint-disable react/no-array-index-key -- Notebook outputs keep their saved order and have no identity. */
-import { lazy, Suspense } from "react";
 import type { Root, RootContent } from "mdast";
 
-import ChatMarkdown from "~/components/ChatMarkdown";
-import DocumentPages from "~/components/files/DocumentPages";
-import { useTheme } from "~/hooks/useTheme";
-import { ComputeTable } from "~/scient/compute/ComputeRichOutput";
-import { parseComputeTable } from "~/scient/compute/computeRichRepresentation";
+import { ComputeRichOutput, type ComputeRichDisplay } from "~/scient/compute/ComputeRichOutput";
+import { computeDisplays } from "~/scient/compute/computeRichRepresentation";
+import { renderTerminalText } from "~/scient/compute/computeTerminalText";
+import { ComputeTerminalOutput } from "~/scient/compute/ComputeTerminalOutput";
 import { notebookText, type NotebookOutput } from "./notebookDocument";
 
-const PlotlyChartCard = lazy(() =>
-  import("~/scient/visualizations/PlotlyChartCard").then((module) => ({
-    default: module.PlotlyChartCard,
-  })),
-);
+type ComputeRepresentation = Parameters<
+  typeof computeDisplays
+>[0]["bundle"]["representations"][number];
 
-const ANSI_ESCAPE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const RASTER_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
 
 /** Notebook Markdown never loads URLs or turns links into app actions. */
@@ -35,103 +30,42 @@ function inertMarkdown() {
 }
 export const NOTEBOOK_MARKDOWN_PLUGINS = [inertMarkdown];
 
-/** Carriage returns and backspaces as a terminal shows them, colors dropped. */
-function terminalText(raw: string): string {
-  return raw
-    .replace(ANSI_ESCAPE, "")
-    .split("\n")
-    .map((line) => {
-      let shown = "";
-      for (const segment of line.replace(/\r$/, "").split("\r")) {
-        shown = segment + shown.slice(segment.length);
-      }
-      return shown;
-    })
-    .join("\n");
+/** A saved MIME bundle in the shape Compute's renderers read, so notebooks and Results match. */
+function richDisplays(data: Readonly<Record<string, unknown>>): ReadonlyArray<ComputeRichDisplay> {
+  const representations: ComputeRepresentation[] = [];
+  for (const [mediaType, value] of Object.entries(data)) {
+    if (typeof value === "string" || Array.isArray(value))
+      representations.push({ mediaType, data: { _tag: "text", text: notebookText(value) } });
+    else if (value !== null && typeof value === "object")
+      representations.push({ mediaType, data: { _tag: "json", json: JSON.stringify(value) } });
+  }
+  if (representations.length === 0) return [];
+  return computeDisplays({
+    _tag: "representation",
+    kind: "display-data",
+    sequence: 0,
+    observedAt: "",
+    revisionSequence: 0,
+    revisedAt: "",
+    bundle: { representations, metadataJson: null },
+    displayId: null,
+    executionCount: null,
+  }).filter((display): display is ComputeRichDisplay => display.kind !== "image");
 }
 
-function Text(props: { readonly text: string; readonly tone?: "error" | "muted" }) {
-  return (
-    <pre
-      className={
-        props.tone === "error"
-          ? "overflow-x-auto px-4 py-2 font-mono text-xs whitespace-pre-wrap break-words text-destructive"
-          : props.tone === "muted"
-            ? "overflow-x-auto px-4 py-2 font-mono text-xs whitespace-pre-wrap break-words text-muted-foreground"
-            : "overflow-x-auto px-4 py-2 font-mono text-xs whitespace-pre-wrap break-words"
-      }
-    >
-      {props.text}
-    </pre>
-  );
-}
-
-function RichData(props: {
-  readonly data: Readonly<Record<string, unknown>>;
-  readonly label: string;
-}) {
-  const { resolvedTheme } = useTheme();
-  const raster = RASTER_TYPES.find((type) => typeof props.data[type] === "string");
+function Data(props: { readonly data: Readonly<Record<string, unknown>>; readonly label: string }) {
+  const raster = RASTER_TYPES.find((type) => props.data[type] !== undefined);
   if (raster !== undefined) {
     return (
       <img
         src={`data:${raster};base64,${notebookText(props.data[raster]).replace(/\s/g, "")}`}
         alt={props.label}
         loading="lazy"
-        className="max-h-[32rem] max-w-full object-contain px-4 py-2"
+        className="max-h-[32rem] max-w-full object-contain"
       />
     );
   }
-  const table = props.data["application/vnd.dataresource+json"];
-  const parsedTable = table === undefined ? null : parseComputeTable(JSON.stringify(table));
-  if (parsedTable !== null) return <ComputeTable table={parsedTable} />;
-  const plotly = props.data["application/vnd.plotly.v1+json"];
-  if (plotly !== undefined) {
-    return (
-      <Suspense fallback={null}>
-        <PlotlyChartCard
-          language="plotly"
-          source={JSON.stringify(plotly)}
-          theme={resolvedTheme}
-          title={null}
-        />
-      </Suspense>
-    );
-  }
-  if (
-    typeof props.data["image/svg+xml"] === "string" ||
-    Array.isArray(props.data["image/svg+xml"])
-  ) {
-    const svg = notebookText(props.data["image/svg+xml"]);
-    return (
-      <img
-        src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`}
-        alt={props.label}
-        loading="lazy"
-        className="max-h-[32rem] max-w-full object-contain px-4 py-2"
-      />
-    );
-  }
-  if (props.data["text/html"] !== undefined) {
-    return <DocumentPages html={notebookText(props.data["text/html"])} name={props.label} output />;
-  }
-  const markdown = props.data["text/markdown"] ?? props.data["text/latex"];
-  if (markdown !== undefined) {
-    return (
-      <ChatMarkdown
-        text={notebookText(markdown)}
-        cwd={undefined}
-        parseRawHtml={false}
-        extraRemarkPlugins={NOTEBOOK_MARKDOWN_PLUGINS}
-        className="px-4 py-2"
-      />
-    );
-  }
-  if (props.data["text/plain"] !== undefined) {
-    return <Text text={terminalText(notebookText(props.data["text/plain"]))} />;
-  }
-  const json = props.data["application/json"];
-  return json === undefined ? null : <Text text={JSON.stringify(json, null, 2)} />;
+  return <ComputeRichOutput displays={richDisplays(props.data)} />;
 }
 
 export function NotebookOutputs(props: {
@@ -140,37 +74,33 @@ export function NotebookOutputs(props: {
 }) {
   if (props.outputs.length === 0) return null;
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 space-y-2 px-3 py-2">
       {props.outputs.map((output, index) => {
         switch (output.output_type) {
           case "stream":
             return (
-              <Text
+              <ComputeTerminalOutput
                 key={index}
-                text={terminalText(notebookText(output.text))}
-                {...(output.name === "stderr" ? { tone: "muted" as const } : {})}
+                terminal={renderTerminalText(notebookText(output.text))}
+                stream={output.name === "stderr" ? "stderr" : "stdout"}
               />
             );
           case "error":
             return (
-              <Text
-                key={index}
-                tone="error"
-                text={terminalText(
-                  Array.isArray(output.traceback) && output.traceback.length > 0
-                    ? output.traceback.filter((line) => typeof line === "string").join("\n")
-                    : `${String(output.ename)}: ${String(output.evalue)}`,
-                )}
-              />
+              <div key={index} className="text-destructive">
+                <ComputeTerminalOutput
+                  terminal={renderTerminalText(
+                    Array.isArray(output.traceback) && output.traceback.length > 0
+                      ? output.traceback.filter((line) => typeof line === "string").join("\n")
+                      : `${String(output.ename)}: ${String(output.evalue)}`,
+                  )}
+                />
+              </div>
             );
           case "display_data":
           case "execute_result":
             return typeof output.data === "object" && output.data !== null ? (
-              <RichData
-                key={index}
-                data={output.data as Record<string, unknown>}
-                label={props.label}
-              />
+              <Data key={index} data={output.data as Record<string, unknown>} label={props.label} />
             ) : null;
           default:
             return null;

@@ -221,7 +221,7 @@ describe("compute figure follow reconciliation", () => {
       cwd: "/project",
       relativePath: "results/figure.svg",
     });
-    expect(decision.descriptor.statusLabel).toBe("Observed project file");
+    expect(decision.descriptor.statusLabel).toBeUndefined();
   });
 
   it("rejects 20,000 late older completions after a newer revision", () => {

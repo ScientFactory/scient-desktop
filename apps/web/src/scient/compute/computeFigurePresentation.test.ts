@@ -85,6 +85,28 @@ describe("compute figure presentation", () => {
     expect(JSON.stringify(surface)).not.toContain("token");
     expect(surface.sourcePath).toBe("analysis.py");
     expect(surface.fileName).toBe("figure-1.png");
+    expect(presentation.saveTargets).toEqual([
+      {
+        format: "PNG",
+        kind: "image",
+        contentHash: output.contentHash,
+        relativePath: "figures/analysis.png",
+      },
+    ]);
+    const withPdf = computeFigurePresentation({
+      allowFollowing: false,
+      cwd: "/project",
+      session,
+      executionId: ComputeExecutionId.make("execution-1"),
+      output: { ...output, pdf: { contentHash: "sha256:pdf", byteLength: 40 } },
+      displayOrdinal: 1,
+      runtimeDisplayOrdinal: 0,
+      source: { _tag: "console" },
+    });
+    expect(withPdf.saveTargets.map((target) => target.relativePath)).toEqual([
+      "figures/figure.png",
+      "figures/figure.pdf",
+    ]);
   });
 
   it("uses an SVG file identity for SVG output", () => {

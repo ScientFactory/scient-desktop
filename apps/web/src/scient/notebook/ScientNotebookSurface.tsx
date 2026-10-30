@@ -345,7 +345,6 @@ export default function ScientNotebookSurface(props: {
                           session={session}
                           executionId={run.executionId}
                           outputs={live?.outputs ?? []}
-                          emptyLabel=""
                           threadRef={props.threadRef}
                         />
                       </div>

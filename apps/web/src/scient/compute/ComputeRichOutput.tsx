@@ -1,28 +1,49 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useRef } from "react";
+
+import ChatMarkdown from "~/components/ChatMarkdown";
+import { sanitizeDocumentHtml } from "~/components/files/DocumentPages";
 import { useTheme } from "~/hooks/useTheme";
-import { ScrollArea } from "~/components/ui/scroll-area";
-import type { ComputeRichRepresentation, ComputeTablePreview } from "./computeRichRepresentation";
+import { ScientDisplayMath } from "~/scient/math/ScientMath";
+
+import { ComputeJsonTree } from "./ComputeJsonTree";
+import { ComputeOutputBlock } from "./ComputeOutputBlock";
+import {
+  computeLatexMath,
+  type ComputeDisplay,
+  type ComputeTablePreview,
+} from "./computeRichRepresentation";
+import { renderTerminalText } from "./computeTerminalText";
+import { ComputeTerminalOutput } from "./ComputeTerminalOutput";
+import "./scient-compute-output.css";
 
 const PlotlyChartCard = lazy(() =>
   import("~/scient/visualizations/PlotlyChartCard").then((module) => ({
     default: module.PlotlyChartCard,
   })),
 );
+const VegaLiteChartCard = lazy(() =>
+  import("~/scient/visualizations/VegaLiteChartCard").then((module) => ({
+    default: module.VegaLiteChartCard,
+  })),
+);
+
+export type ComputeRichDisplay = Exclude<ComputeDisplay, { readonly kind: "image" }>;
+
+function tableText(table: ComputeTablePreview): string {
+  return [table.columns, ...table.rows]
+    .map((row) => row.map((cell) => (cell === null ? "" : String(cell))).join("\t"))
+    .join("\n");
+}
 
 export function ComputeTable(props: { readonly table: ComputeTablePreview }) {
   return (
-    <figure className="min-w-0 overflow-hidden rounded-md border border-border/70">
-      <ScrollArea className="h-auto max-h-80" scrollbarGutter>
-        <table className="w-full border-collapse text-xs" aria-label="Result table">
-          <thead className="sticky top-0 bg-muted">
+    <figure className="min-w-0">
+      <div className="max-w-full overflow-x-auto">
+        <table className="scient-compute-table text-xs" aria-label="Result table">
+          <thead>
             <tr>
               {props.table.columns.map((column) => (
-                <th
-                  key={column}
-                  scope="col"
-                  className="border-b border-border/60 px-3 py-1.5 text-start font-medium"
-                  dir="auto"
-                >
+                <th key={column} scope="col" dir="auto">
                   {column}
                 </th>
               ))}
@@ -31,47 +52,136 @@ export function ComputeTable(props: { readonly table: ComputeTablePreview }) {
           <tbody>
             {props.table.rows.map((row, index) => (
               // eslint-disable-next-line react/no-array-index-key -- Immutable output rows can be identical and have no persistent row identity.
-              <tr key={index} className="border-b border-border/40 last:border-b-0">
+              <tr key={index}>
                 {row.map((cell, column) => (
-                  <td
-                    key={props.table.columns[column]}
-                    className={
-                      typeof cell === "number"
-                        ? "px-3 py-1.5 text-end tabular-nums"
-                        : "max-w-64 break-words px-3 py-1.5"
-                    }
-                    dir="auto"
-                  >
-                    {cell === null ? "Not available" : String(cell)}
+                  <td key={props.table.columns[column]} dir="auto">
+                    {cell === null ? (
+                      <span className="text-muted-foreground">NaN</span>
+                    ) : (
+                      String(cell)
+                    )}
                   </td>
                 ))}
               </tr>
             ))}
           </tbody>
         </table>
-      </ScrollArea>
-      <figcaption className="border-t border-border/60 px-3 py-1.5 text-[11px] text-muted-foreground">
-        {props.table.rows.length} rows · {props.table.columns.length} columns
-        {props.table.truncated ? " · Limited preview" : ""}
-      </figcaption>
+      </div>
+      {props.table.truncated ? (
+        <figcaption className="mt-1 text-[11px] text-muted-foreground">
+          First {props.table.rows.length} rows
+        </figcaption>
+      ) : null}
     </figure>
   );
 }
 
-export function ComputeRichOutput(props: { readonly representation: ComputeRichRepresentation }) {
-  const { resolvedTheme } = useTheme();
-  return props.representation.kind === "table" ? (
-    <ComputeTable table={props.representation.table} />
-  ) : (
-    <Suspense
-      fallback={<p className="text-xs text-muted-foreground">Loading interactive figure…</p>}
-    >
-      <PlotlyChartCard
-        language="plotly"
-        source={props.representation.source}
-        theme={resolvedTheme}
-        title={null}
+/** Sanitized like saved notebook output: no scripts, styles, links or remote images. */
+function sanitizeComputeHtml(source: string): string | null {
+  const html = sanitizeDocumentHtml(source);
+  const probe = document.createElement("template");
+  probe.innerHTML = html;
+  const visible =
+    (probe.content.textContent ?? "").trim().length > 0 || probe.content.querySelector("img");
+  return visible ? html : null;
+}
+
+function ComputeHtml(props: {
+  readonly html: string;
+  readonly fallback: ReadonlyArray<ComputeRichDisplay>;
+}) {
+  const element = useRef<HTMLDivElement>(null);
+  const html = sanitizeComputeHtml(props.html);
+  if (html === null) return <ComputeRichOutput displays={props.fallback} />;
+  return (
+    <ComputeOutputBlock copy={() => ({ text: element.current?.innerText ?? "", html })}>
+      <div
+        ref={element}
+        className="scient-compute-html"
+        // The sanitizer keeps only inert structural tags and data-URL images.
+        dangerouslySetInnerHTML={{ __html: html }}
       />
-    </Suspense>
+    </ComputeOutputBlock>
   );
+}
+
+function ComputeLatex(props: { readonly text: string }) {
+  const math = computeLatexMath(props.text);
+  return (
+    <ComputeOutputBlock copy={() => ({ text: props.text })}>
+      {math === null ? (
+        <ChatMarkdown text={props.text} cwd={undefined} parseRawHtml={false} />
+      ) : (
+        <ScientDisplayMath tex={math} focusable={false} />
+      )}
+    </ComputeOutputBlock>
+  );
+}
+
+/** Renders the first display that can be shown, falling back through the rest. */
+export function ComputeRichOutput(props: { readonly displays: ReadonlyArray<ComputeRichDisplay> }) {
+  const { resolvedTheme } = useTheme();
+  const [display, ...rest] = props.displays;
+  if (display === undefined) return null;
+  switch (display.kind) {
+    case "plotly":
+      return (
+        <Suspense fallback={null}>
+          <PlotlyChartCard
+            language="plotly"
+            source={display.source}
+            theme={resolvedTheme}
+            title={null}
+          />
+        </Suspense>
+      );
+    case "vega-lite":
+      return (
+        <Suspense fallback={null}>
+          <VegaLiteChartCard
+            language="vega-lite"
+            source={display.source}
+            theme={resolvedTheme}
+            title={null}
+          />
+        </Suspense>
+      );
+    case "html":
+      return <ComputeHtml html={display.html} fallback={rest} />;
+    case "markdown":
+      return (
+        <ComputeOutputBlock copy={() => ({ text: display.text })}>
+          <ChatMarkdown text={display.text} cwd={undefined} parseRawHtml={false} />
+        </ComputeOutputBlock>
+      );
+    case "latex":
+      return <ComputeLatex text={display.text} />;
+    case "table":
+      return (
+        <ComputeOutputBlock copy={() => ({ text: tableText(display.table) })}>
+          <ComputeTable table={display.table} />
+        </ComputeOutputBlock>
+      );
+    case "json": {
+      let value: unknown;
+      try {
+        value = JSON.parse(display.json);
+      } catch {
+        return <ComputeRichOutput displays={rest} />;
+      }
+      return (
+        <ComputeOutputBlock copy={() => ({ text: JSON.stringify(value, null, 2) })}>
+          <ComputeJsonTree value={value} />
+        </ComputeOutputBlock>
+      );
+    }
+    case "text": {
+      const terminal = renderTerminalText(display.text);
+      return (
+        <ComputeOutputBlock copy={() => ({ text: terminal.text })}>
+          <ComputeTerminalOutput terminal={terminal} />
+        </ComputeOutputBlock>
+      );
+    }
+  }
 }

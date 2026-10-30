@@ -76,7 +76,6 @@ import {
 } from "./computeContextStore";
 
 import type { ComputeSourceLanguage } from "./computeSourceLanguage";
-import { useComputeFilePresentationStore } from "./computeFilePresentationStore";
 
 type ComputeRunKind = "selection" | "cell" | "file";
 type PendingComputeRun = {
@@ -334,11 +333,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       languageName: props.language.displayName,
       runtimeVersion:
         liveSession?.runtime?.languageVersion ?? readyRuntime?.profile.languageVersion ?? null,
-      runtimeSource:
-        activeRuntime?.profile.source ??
-        liveSession?.runtime?.source ??
-        readyRuntime?.profile.source ??
-        null,
       liveSession,
       runtimeInspectionPending: runtimes.isPending || refreshing,
       readyRuntimeAvailable: readyRuntime !== null,
@@ -766,7 +760,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           ownerKey: props.contextId,
         });
       if (parent.lifecycle === "closing" || parent.lifecycle === "close-failed") return;
-      const parentContextId = props.contextId;
       const childId = createComputeContextId();
       const sessionId = ComputeSessionId.make(randomUUID());
       const executionId = ComputeExecutionId.make(randomUUID());
@@ -782,7 +775,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         return;
       setOperation("fresh");
       onRunRequested();
-      useComputeFilePresentationStore.getState().setResultsContext(props.contextId, childId);
       return await (async () => {
         const started = await startSession({
           environmentId: props.environmentId,
@@ -828,7 +820,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             )
           ) {
             useComputeContextStore.getState().removeContext(childId);
-            useComputeFilePresentationStore.getState().setResultsContext(parentContextId, null);
           }
           if (!isAtomCommandInterrupted(started)) reportFailure("Unable to run fresh", started);
           return;
@@ -978,9 +969,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       (props.language.languageId !== "matlab" && !runtimeToolbar.canRun && readyRuntime === null);
     const runtimeNote =
       [
-        liveSession?.runtime
-          ? `${computeRuntimeDisplayLabel(liveSession.runtime, props.language.displayName)}: ${liveSession.runtime.executable}`
-          : null,
+        liveSession?.runtime ? liveSession.runtime.executable : null,
         runtimeToolbar.kind === "status" ? runtimeToolbar.note : null,
       ]
         .filter(Boolean)
@@ -1041,11 +1030,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                       disabled={stoppingUnusedSession !== null}
                       aria-label="Choose a compute session to stop"
                       ref={capacityAnchor}
-                      title="Stop an unused compute session to free host capacity"
                     />
                   }
                 >
-                  <span className="truncate">Capacity · choose session</span>
+                  <span className="truncate">Stop a session…</span>
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" className="min-w-64">
                   {freshCapacityBlocked && liveSession !== null && props.contextId !== undefined ? (
@@ -1059,14 +1047,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     </MenuItem>
                   ) : null}
                   {capacitySessions.length === 0 ? (
-                    <MenuItem
-                      disabled
-                      title="Other slots may be held by sessions, tests, or batch runs on this host"
-                    >
-                      {liveSession !== null
-                        ? "This tab already has an active session"
-                        : "Capacity is in use elsewhere on this host"}
-                    </MenuItem>
+                    <MenuItem disabled>No other sessions</MenuItem>
                   ) : (
                     capacitySessions.map((session) => (
                       <MenuItem
@@ -1074,8 +1055,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                         disabled={stoppingUnusedSession !== null}
                         onClick={() => void stopUnusedSession(session)}
                       >
-                        Stop {computeSessionOwnerLabel(session, props.environmentId, props.cwd)} ·{" "}
-                        {session.status.replaceAll("-", " ")}
+                        Stop {computeSessionOwnerLabel(session, props.environmentId, props.cwd)}
                       </MenuItem>
                     ))
                   )}
@@ -1086,7 +1066,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 size="xs"
                 variant="ghost-muted"
                 className="min-w-0 max-w-full"
-                title={`${runtimeNote ? `${runtimeNote}. ` : ""}Switch to the selected ${props.language.displayName} environment`}
+                title={runtimeNote}
                 aria-label={`Switch ${props.language.displayName} environment`}
                 disabled={switching || props.contextId === undefined}
                 onClick={requestRuntimeSwitch}
@@ -1107,7 +1087,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     />
                   }
                 >
-                  {runtimeToolbar.kind === "status" && runtimeToolbar.label.includes("…") ? (
+                  {runtimeToolbar.kind === "status" && runtimeToolbar.busy ? (
                     <LoaderCircle className="animate-spin" aria-hidden />
                   ) : null}
                   <span className="truncate font-normal">{runtimeToolbar.label}</span>
@@ -1195,7 +1175,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                           fileRunBlocked ||
                           fileSlice === null
                         }
-                        title="Run in a new session without clearing the current session’s variables"
                         onClick={() => void runFresh()}
                       >
                         Run fresh

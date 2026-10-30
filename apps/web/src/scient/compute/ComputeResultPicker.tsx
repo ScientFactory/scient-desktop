@@ -4,24 +4,23 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/c
 import { useComputeContextStore, type ComputeContextId } from "./computeContextStore";
 import { useComputeFilePresentationStore } from "./computeFilePresentationStore";
 
-/** Select retained results; never create, stop or rerun a runtime. */
+/** Session feed or a MATLAB batch run; Run fresh runs already appear in the feed. */
 export function ComputeResultPicker({ contextId }: { readonly contextId: ComputeContextId }) {
   const bindings = useComputeContextStore((state) => state.bindings);
   const selected = useComputeFilePresentationStore(
     (state) => state.presentations[contextId]?.resultsContextId ?? contextId,
   );
-  const children = Object.values(bindings).filter(
-    (binding) => binding.parentContextId === contextId,
+  const batches = Object.values(bindings).filter(
+    (binding) => binding.parentContextId === contextId && binding.batchRunId !== undefined,
   );
-  if (children.length === 0) return null;
-  let fresh = 0;
-  let batch = 0;
-  const choices = [{ contextId, label: "Session" }];
-  for (const binding of children) {
-    const label =
-      binding.batchRunId === undefined ? `Fresh run ${++fresh}` : `MATLAB batch ${++batch}`;
-    choices.push({ contextId: binding.contextId, label });
-  }
+  if (batches.length === 0) return null;
+  const choices = [
+    { contextId, label: "Session" },
+    ...batches.map((binding, index) => ({
+      contextId: binding.contextId,
+      label: `Batch ${index + 1}`,
+    })),
+  ];
   return (
     <Menu>
       <MenuTrigger
