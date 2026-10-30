@@ -860,7 +860,7 @@ describe("Python file run actions", () => {
       />,
     );
     const retry = buttonProps().findLast(
-      (button) => button["aria-label"] === "Couldn't check Python. Check again",
+      (button) => button["aria-label"] === "Couldn't check Python. Retry the check",
     )!;
     expect(retry).toBeDefined();
     expect(mocks.markup).not.toContain("Set up Python");

@@ -117,6 +117,8 @@ export type ComputeLanguageRuntimeInventory = typeof ComputeLanguageRuntimeInven
 
 export const ComputeRuntimeInventory = Schema.Struct({
   languages: Schema.Array(ComputeLanguageRuntimeInventory).check(Schema.isMaxLength(32)),
+  /** This machine's selection key; choices are saved under it. Absent from older servers. */
+  hostKey: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
 });
 export type ComputeRuntimeInventory = typeof ComputeRuntimeInventory.Type;
 

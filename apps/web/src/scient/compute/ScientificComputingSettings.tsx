@@ -17,6 +17,7 @@ import type {
 import {
   ComputeLanguageDescriptor,
   ComputeLanguageId,
+  resolveScientificComputingExecutable,
   resolveScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -833,6 +834,8 @@ function EnvironmentScientificComputingSettings({
   // Keep the pending action when moving between language disclosures.
   const [toolkitChange, setToolkitChange] = useState<ToolkitChange | null>(null);
 
+  // Choices are saved for this machine, so a copied or synced profile does not carry them.
+  const hostKey = runtimes.data?.hostKey ?? null;
   const updateLanguage = async (
     languageId: ComputeLanguageRuntimeInventory["descriptor"]["languageId"],
     next: ScientificComputingLanguageSettings,
@@ -843,7 +846,16 @@ function EnvironmentScientificComputingSettings({
         patch: {
           scientificComputing: {
             schemaVersion: 1,
-            languages: { [languageId]: next },
+            languages: {
+              [languageId]:
+                hostKey === null
+                  ? next
+                  : {
+                      enabled: next.enabled,
+                      executable: "",
+                      selections: { [hostKey]: next.executable },
+                    },
+            },
           },
         },
       },
@@ -890,9 +902,14 @@ function EnvironmentScientificComputingSettings({
           selectedLanguage.descriptor.languageId,
         ),
         executable:
-          preferences.languages[selectedLanguage.descriptor.languageId]?.executable ??
-          selectedLanguage.configuredExecutable ??
-          "",
+          hostKey === null
+            ? (preferences.languages[selectedLanguage.descriptor.languageId]?.executable ??
+              selectedLanguage.configuredExecutable ??
+              "")
+            : resolveScientificComputingExecutable(
+                preferences.languages[selectedLanguage.descriptor.languageId],
+                hostKey,
+              ),
       }
     : null;
   return (

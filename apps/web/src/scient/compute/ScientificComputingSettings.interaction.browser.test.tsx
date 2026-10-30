@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   statuses: {} as Record<string, ComputeManagedRuntimeStatus | null>,
   queryErrors: {} as Record<string, string | null>,
   inventoryPending: false,
+  hostKey: null as string | null,
   revision: 0,
   listeners: new Set<() => void>(),
   saveFails: false,
@@ -128,7 +129,7 @@ vi.mock("~/state/query", async () => {
           atom?.kind === "inventory"
             ? mocks.inventoryPending
               ? null
-              : { languages: mocks.languages }
+              : { languages: mocks.languages, ...(mocks.hostKey ? { hostKey: mocks.hostKey } : {}) }
             : atom?.languageId
               ? (mocks.statuses[atom.languageId] ?? null)
               : null,
@@ -216,6 +217,7 @@ describe("Scientific Computing settings interactions", () => {
     mocks.statuses = { python: status() };
     mocks.queryErrors = {};
     mocks.inventoryPending = false;
+    mocks.hostKey = null;
     mocks.saveFails = false;
     mocks.releaseFails = false;
     mocks.calls = [];
@@ -482,6 +484,46 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.preferences.python?.executable).toBe("");
     expect(mocks.calls).toEqual(["save"]);
     expect(mocks.verify).not.toHaveBeenCalled();
+  });
+
+  it("shows and forgets only this machine's choice", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const path = "/opt/conda/envs/lab/bin/python";
+    mocks.hostKey = "host-a";
+    mocks.preferences.python = {
+      enabled: true,
+      executable: "",
+      selections: { "host-a": path, "host-b": "/other/python" },
+    };
+    mocks.statuses.python = { ...status(), selection: "existing" };
+    mocks.languages = [
+      {
+        ...python(),
+        configuredExecutable: path,
+        installations: [
+          {
+            executable: path,
+            source: "configured",
+            configured: true,
+            version: null,
+            problem: null,
+          },
+          ...python().installations,
+        ],
+      },
+    ];
+    await render(_fixture);
+    expect(runtimeValue(_fixture)).toBe(path);
+    await openInstallation(_fixture, path);
+    await clickMenuItem("Forget path");
+    expect(mocks.preferences.python).toEqual({
+      enabled: true,
+      executable: "",
+      selections: { "host-a": "" },
+    });
   });
 
   it("keeps the custom draft and previous default when saving fails", async () => {

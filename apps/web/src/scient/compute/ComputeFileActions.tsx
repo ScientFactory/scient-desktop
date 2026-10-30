@@ -1130,12 +1130,12 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 </MenuPopup>
               </Menu>
             ) : runtimeToolbar.kind === "retry" ? (
-              <ScientTooltip content={runtimeNote ?? "Check again"}>
+              <ScientTooltip content={runtimeNote ?? "Retry the check"}>
                 <Button
                   size="xs"
                   variant="ghost-muted"
                   className="min-w-0 max-w-full"
-                  aria-label={`${runtimeToolbar.label}. Check again`}
+                  aria-label={`${runtimeToolbar.label}. Retry the check`}
                   disabled={refreshing}
                   onClick={() => void refreshRuntime()}
                 >
