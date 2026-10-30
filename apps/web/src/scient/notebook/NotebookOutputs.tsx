@@ -5,6 +5,8 @@ import type { Root, RootContent } from "mdast";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import DocumentPages from "~/components/files/DocumentPages";
 import { useTheme } from "~/hooks/useTheme";
+import { ComputeTable } from "~/scient/compute/ComputeRichOutput";
+import { parseComputeTable } from "~/scient/compute/computeRichRepresentation";
 import { notebookText, type NotebookOutput } from "./notebookDocument";
 
 const PlotlyChartCard = lazy(() =>
@@ -80,6 +82,9 @@ function RichData(props: {
       />
     );
   }
+  const table = props.data["application/vnd.dataresource+json"];
+  const parsedTable = table === undefined ? null : parseComputeTable(JSON.stringify(table));
+  if (parsedTable !== null) return <ComputeTable table={parsedTable} />;
   const plotly = props.data["application/vnd.plotly.v1+json"];
   if (plotly !== undefined) {
     return (

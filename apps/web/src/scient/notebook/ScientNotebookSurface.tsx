@@ -5,7 +5,7 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ArrowDown, ArrowUp, FastForward, Play, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Play, Plus, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -57,6 +57,11 @@ function notebookScript(document: NotebookDocument, marker: string) {
     lines.push(...cell.source.replace(/\n$/, "").split("\n"));
   }
   return { contents: lines.join("\n"), cellLines };
+}
+
+/** Without a returned value the kernel reports no count, so number the run after the latest. */
+function nextExecutionCount(document: NotebookDocument): number {
+  return Math.max(0, ...document.cells.map((cell) => cell.executionCount ?? 0)) + 1;
 }
 
 function cellMarkerFor(languageId: string): string {
@@ -193,7 +198,7 @@ export default function ScientNotebookSurface(props: {
             updateNotebookCell(current, run.cellId, (cell) => ({
               ...cell,
               outputs: result.value.outputs,
-              executionCount: result.value.executionCount ?? cell.executionCount,
+              executionCount: result.value.executionCount ?? nextExecutionCount(current),
             })),
           );
         }
@@ -233,43 +238,37 @@ export default function ScientNotebookSurface(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border/60 px-2">
-        <ComputeFileActions
-          ref={actions}
-          language={language}
-          environmentId={props.environmentId}
-          cwd={props.cwd}
-          relativePath={props.relativePath}
-          contents={script.contents}
-          sourceRevision={snapshot.baselineRevision}
-          sourcePending
-          selection={null}
-          editorSelection={null}
-          contextId={contextId}
-          onRunRequested={() => undefined}
-          onShowMatlabOneShot={() => undefined}
-          onExecutionSubmitted={(sessionId, executionId) => {
-            const cellId = requested.current.shift();
-            if (cellId !== undefined)
-              setRuns((current) => [...current, { cellId, sessionId, executionId }]);
-          }}
-        />
-        <ScientTooltip content="Run all">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Run all"
-            onClick={() => {
-              const codeCells = document.cells.filter((cell) => cell.cellType === "code");
-              const [first, ...rest] = codeCells.map((cell) => cell.id);
+      <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/20 px-2 py-1">
+        <div className="min-w-22 flex-1">
+          <ComputeFileActions
+            ref={actions}
+            language={language}
+            environmentId={props.environmentId}
+            cwd={props.cwd}
+            relativePath={props.relativePath}
+            contents={script.contents}
+            sourceRevision={snapshot.baselineRevision}
+            sourcePending
+            selection={null}
+            editorSelection={null}
+            contextId={contextId}
+            onRunRequested={() => undefined}
+            onShowMatlabOneShot={() => undefined}
+            runAll={() => {
+              const [first, ...rest] = document.cells
+                .filter((cell) => cell.cellType === "code")
+                .map((cell) => cell.id);
               if (first === undefined) return;
               runAll.current = rest;
               runCell(first);
             }}
-          >
-            <FastForward className="size-3.5" />
-          </Button>
-        </ScientTooltip>
+            onExecutionSubmitted={(sessionId, executionId) => {
+              const cellId = requested.current.shift();
+              if (cellId !== undefined)
+                setRuns((current) => [...current, { cellId, sessionId, executionId }]);
+            }}
+          />
+        </div>
       </div>
       <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-4xl py-4">

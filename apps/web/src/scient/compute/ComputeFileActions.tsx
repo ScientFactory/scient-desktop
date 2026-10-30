@@ -110,6 +110,8 @@ interface ComputeFileActionsProps {
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
   ) => void;
+  /** Notebooks run cell by cell: the primary action runs every cell and the file menu goes. */
+  readonly runAll?: () => void;
 }
 
 function reportFailure(
@@ -1121,9 +1123,17 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   size="xs"
                   variant="outline"
                   shape="group-start"
-                  aria-label={primaryRunBlocked ? "MATLAB definition file" : primary.label}
+                  aria-label={
+                    props.runAll
+                      ? "Run all"
+                      : primaryRunBlocked
+                        ? "MATLAB definition file"
+                        : primary.label
+                  }
                   disabled={liveRunDisabled || primary.slice === null}
-                  onClick={() => void run(primary.kind, primary.slice)}
+                  onClick={() =>
+                    props.runAll ? props.runAll() : void run(primary.kind, primary.slice)
+                  }
                 >
                   {operation === primary.kind ? (
                     <LoaderCircle className="animate-spin" />
@@ -1131,7 +1141,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     <Play />
                   )}
                   <span className="hidden @[15rem]/python-file-actions:inline">
-                    {primaryRunBlocked ? "Definition" : primary.label}
+                    {props.runAll ? "Run all" : primaryRunBlocked ? "Definition" : primary.label}
                   </span>
                 </Button>
               </span>
@@ -1151,40 +1161,48 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 <ChevronDown />
               </MenuTrigger>
               <MenuPopup align="end" side="bottom">
-                <MenuItem
-                  disabled={busy || !runtimeToolbar.canRun || selectionSlice === null}
-                  onClick={() => void run("selection", selectionSlice)}
-                >
-                  Run selection
-                </MenuItem>
-                <MenuItem
-                  disabled={busy || !runtimeToolbar.canRun || cellSlice === null}
-                  onClick={() => void run("cell", cellSlice)}
-                >
-                  Run cell
-                </MenuItem>
-                <MenuItem
-                  disabled={busy || !runtimeToolbar.canRun || fileRunBlocked || fileSlice === null}
-                  title={fileRunBlocked ? (matlabFileCapability.reason ?? undefined) : undefined}
-                  onClick={() => void run("file", fileSlice)}
-                >
-                  Run file
-                </MenuItem>
-                {props.contextId !== undefined ? (
-                  <MenuItem
-                    disabled={
-                      busy ||
-                      !languagePreference.enabled ||
-                      readyRuntime === null ||
-                      fileRunBlocked ||
-                      fileSlice === null
-                    }
-                    title="Run in a new session without clearing the current session’s variables"
-                    onClick={() => void runFresh()}
-                  >
-                    Run fresh
-                  </MenuItem>
-                ) : null}
+                {props.runAll ? null : (
+                  <>
+                    <MenuItem
+                      disabled={busy || !runtimeToolbar.canRun || selectionSlice === null}
+                      onClick={() => void run("selection", selectionSlice)}
+                    >
+                      Run selection
+                    </MenuItem>
+                    <MenuItem
+                      disabled={busy || !runtimeToolbar.canRun || cellSlice === null}
+                      onClick={() => void run("cell", cellSlice)}
+                    >
+                      Run cell
+                    </MenuItem>
+                    <MenuItem
+                      disabled={
+                        busy || !runtimeToolbar.canRun || fileRunBlocked || fileSlice === null
+                      }
+                      title={
+                        fileRunBlocked ? (matlabFileCapability.reason ?? undefined) : undefined
+                      }
+                      onClick={() => void run("file", fileSlice)}
+                    >
+                      Run file
+                    </MenuItem>
+                    {props.contextId !== undefined ? (
+                      <MenuItem
+                        disabled={
+                          busy ||
+                          !languagePreference.enabled ||
+                          readyRuntime === null ||
+                          fileRunBlocked ||
+                          fileSlice === null
+                        }
+                        title="Run in a new session without clearing the current session’s variables"
+                        onClick={() => void runFresh()}
+                      >
+                        Run fresh
+                      </MenuItem>
+                    ) : null}
+                  </>
+                )}
                 {runtimeToolbar.kind === "switch" ? (
                   <>
                     <MenuSeparator />
