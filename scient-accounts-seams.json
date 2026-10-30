@@ -71,6 +71,11 @@
       "purpose": "The phone answers approvals and shows sign-ins waiting for the user."
     },
     {
+      "path": "apps/server/src/orchestration-v2/runtimeLayer.ts",
+      "anchor": "Layer.provide(secretRequestStoreLayer),",
+      "purpose": "One-time card answers are encrypted at rest."
+    },
+    {
       "path": "apps/desktop/src/preview/BrowserImport/Sources.ts",
       "anchor": "const counted = (profiles: ReadonlyArray<BrowserImportSourceProfile>) =>",
       "purpose": "Allow metadata discovery without reading browser cookie counts."

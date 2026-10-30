@@ -277,7 +277,9 @@ consumer's project. Activity names the plugin, variable and agent.
   legacy plaintext on its first read. Only Custom models uses this port; its rotation, removal and
   process lifetime rules stay with Custom models. An API key account links to a connection
   (`custom-model` source), so the key is stored once.
-- **`request_secret` values** (upstream, one use, 24 hours) stay one-time secrets.
+- **`request_secret` values** (upstream, one use, 24 hours) stay one-time secrets, sealed at rest
+  through `secretRequestStoreLayer`. Their salt stays plain, because it is read at startup and
+  startup must not wait for the keychain.
   `scient_account_add` reuses upstream's card for keys worth keeping: it calls
   `OrchestratorMcpService.requestSecret` with a server-written label and a `scient-account:`
   `clientRequestId`, consumes the answer through `SecretRequests.consume`, and saves an API-key
