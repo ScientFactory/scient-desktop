@@ -216,6 +216,9 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
+  // SCIENT-FORK:START
+  resolvePastedBrowsePath,
+  // SCIENT-FORK:END
   shouldOfferProjectPathCreation,
   createCommandPaletteSearchState,
   type CommandPaletteGroup,
@@ -3003,6 +3006,16 @@ function OpenCommandPaletteDialog(props: {
             ? { startAddon: <FolderPlusIcon /> }
             : {}),
         onKeyDown: handleKeyDown,
+        // SCIENT-FORK:START — a pasted full path replaces the box instead of joining its text
+        onPaste: (event) => {
+          const pastedPath = isBrowsing
+            ? resolvePastedBrowsePath(event.clipboardData.getData("text/plain"))
+            : null;
+          if (pastedPath === null) return;
+          event.preventDefault();
+          handleQueryChange(pastedPath);
+        },
+        // SCIENT-FORK:END
       }}
       mode="none"
       items={resultRows.itemValues}

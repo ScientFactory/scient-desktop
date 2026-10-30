@@ -1791,6 +1791,15 @@ When aligning, check:
   (Device under More on the New tab page) carry no markers, like the rest of
   Scient's lines there.
 
+## Add project paste
+
+The Add project box starts with the home folder (`~/` until the environment resolves it) or the
+configured base folder. Upstream's input only ever joins pasted text to that, so pasting
+`/Users/dana/thesis` gives `/Users/dana//Users/dana/thesis`, a missing folder inside home that
+Add project creates empty. The marked `onPaste` seam in
+`CommandPalette.tsx` replaces the box when `resolvePastedBrowsePath` sees a full path, and leaves
+every other paste and all typing alone. Drop the seam if upstream fixes this in their picker.
+
 ## Browser downloads and composer focus
 
 Browser download attribution is upstream's, unchanged: `DesktopBrowserHost.humanStartedDownload`
