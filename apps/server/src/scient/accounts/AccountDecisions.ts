@@ -1,7 +1,9 @@
 import {
   defaultBrowserProfileRecord,
   type AccountApprovalDecision,
+  type AccountCheckState,
   type AccountControls,
+  type AccountSummary,
   type AccountTarget,
   type BrowserProfileId,
   type BrowserProfileRecord,
@@ -73,3 +75,15 @@ export const siteMatches = (sites: ReadonlyArray<string>, origin: string) => {
     return false;
   }
 };
+
+/** What a finished sign-in says about the account's status. */
+export const outcomeCheckState = (
+  outcome: NonNullable<AccountSummary["lastSignInOutcome"]>,
+): AccountCheckState =>
+  outcome === "signed-in"
+    ? "signed-in"
+    : outcome === "needs-user"
+      ? "needs-you"
+      : outcome === "failed"
+        ? "unknown"
+        : "rejected";

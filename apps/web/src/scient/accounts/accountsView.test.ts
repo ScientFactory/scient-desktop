@@ -11,6 +11,8 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  accountStatusLabel,
+  activityLine,
   agentMayUse,
   libraryLinkTemplate,
   accountListRows,
@@ -471,4 +473,44 @@ it("lets an agent's tab fill only sign-ins that agent may use", () => {
   expect(
     agentMayUse({ ...controls, access: "ask", allowedProjects: [project] }, true, project),
   ).toBe(true);
+});
+
+describe("account status", () => {
+  const at = "2026-10-30T10:00:00.000Z";
+  const relative = () => "2h ago";
+  it("puts what needs the user first, then the last check", () => {
+    expect(
+      accountStatusLabel(
+        { lastSignInOutcome: "password-rejected", lastCheck: { state: "signed-in", at } },
+        relative,
+      ),
+    ).toBe("Password rejected");
+    expect(
+      accountStatusLabel({ signedOut: true, lastCheck: { state: "signed-in", at } }, relative),
+    ).toBe("Signed out");
+    expect(accountStatusLabel({ lastCheck: { state: "signed-in", at } }, relative)).toBe(
+      "Signed in · 2h ago",
+    );
+    expect(accountStatusLabel({ lastCheck: { state: "needs-you", at } }, relative)).toBe(
+      "Needs you",
+    );
+    expect(accountStatusLabel({}, relative)).toBeNull();
+  });
+
+  it("reads activity as what happened and where", () => {
+    const entry = {
+      at,
+      target: { type: "account", accountId: AccountId.make("acc_fixture1") },
+      action: "request",
+      decision: "allowed",
+      outcome: "ok",
+    } as const;
+    expect(activityLine(entry, "Data cleanup")).toBe("Made a request · Data cleanup");
+    expect(activityLine({ ...entry, decision: "denied" }, undefined)).toBe(
+      "Denied: made a request",
+    );
+    expect(
+      activityLine({ ...entry, action: "sign-in", signInOutcome: "password-rejected" }, undefined),
+    ).toBe("Password rejected");
+  });
 });

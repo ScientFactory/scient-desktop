@@ -11,12 +11,14 @@ import {
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
+  type AccountActivityEntry,
   type AccountControls,
   type AccountDetails,
   type GrantScope,
   type ProjectId,
   type AccountStoresStatus,
   type AccountSummary,
+  type AccountUseAction,
   type AccountSaveInput,
   type DesktopCapturedSignIn,
   type BrowserProfile,
@@ -664,3 +666,50 @@ export const CLI_LOGIN_COMMANDS: Readonly<Record<string, string>> = {
   gcloud: "gcloud auth login",
   glab: "glab auth login",
 };
+
+/** The account's sign-in state in a few words, or nothing when there is nothing to say. */
+export function accountStatusLabel(
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck" | "signedOut">,
+  relativeTime: (iso: string) => string,
+) {
+  if (account.lastSignInOutcome === "password-rejected") return "Password rejected";
+  if (account.lastSignInOutcome === "code-rejected") return "Code rejected";
+  if (account.signedOut) return "Signed out";
+  const check = account.lastCheck;
+  if (!check) return null;
+  if (check.state === "signed-in") return `Signed in · ${relativeTime(check.at)}`;
+  if (check.state === "signed-out") return "Signed out";
+  if (check.state === "needs-you") return "Needs you";
+  if (check.state === "rejected") return "Sign-in rejected";
+  return "Couldn't check";
+}
+
+const ACTIVITY_LABELS: Readonly<Record<AccountUseAction, string>> = {
+  "sign-in": "Signed in",
+  credentials: "Read its credentials",
+  request: "Made a request",
+  "browser-session": "Used its sign-in in a script",
+  "open-profile": "Opened a browser tab",
+};
+const SIGN_IN_OUTCOME_LABELS: Readonly<
+  Record<NonNullable<AccountActivityEntry["signInOutcome"]>, string>
+> = {
+  "signed-in": "Signed in",
+  "needs-user": "Needed you",
+  "password-rejected": "Password rejected",
+  "code-rejected": "Code rejected",
+  failed: "Sign-in failed",
+};
+
+/** One line of an account's activity; `where` names the conversation. */
+export function activityLine(entry: AccountActivityEntry, where: string | undefined) {
+  const what =
+    entry.decision === "denied"
+      ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+      : entry.signInOutcome
+        ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
+        : entry.outcome === "error"
+          ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+          : ACTIVITY_LABELS[entry.action];
+  return where ? `${what} · ${where}` : what;
+}

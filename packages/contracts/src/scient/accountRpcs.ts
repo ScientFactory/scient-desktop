@@ -18,6 +18,7 @@ import {
   AccountSaveInput,
   AccountSaveResult,
   AccountSetControlsInput,
+  AccountsCheckInput,
   AccountsError,
   AccountsSetAgentAccessInput,
   AccountsSnapshot,
@@ -41,6 +42,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSave: "accounts.save",
   accountsRemove: "accounts.remove",
   accountsTest: "accounts.test",
+  accountsCheck: "accounts.check",
   accountsSetControls: "accounts.setControls",
   accountsSetAgentAccess: "accounts.setAgentAccess",
   accountsProfileUpdate: "accounts.profiles.update",
@@ -101,6 +103,13 @@ export const WsAccountsRemoveRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsRe
 export const WsAccountsTestRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsTest, {
   payload: AccountsTestInput,
   success: Empty,
+  error: AccountsRpcError,
+});
+
+/** Opens browser sign-ins one at a time; results arrive through account changes. */
+export const WsAccountsCheckRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsCheck, {
+  payload: AccountsCheckInput,
+  success: Schema.Struct({ checked: Schema.Int }),
   error: AccountsRpcError,
 });
 

@@ -27,6 +27,7 @@ export function fakeAccounts(
   const cancelled = new Set<string>();
   const uses: Array<Omit<AccountActivityEntry, "at" | "decision">> = [];
   const calls: string[] = [];
+  const checks: Array<{ accountId: AccountId; state: string; message?: string | undefined }> = [];
   const accounts = [...(options.accounts ?? [])];
   const saves: Array<AccountSaveInput> = [];
   const unavailable = Effect.fail(
@@ -76,6 +77,10 @@ export function fakeAccounts(
       }),
     remove: () => unavailable,
     test: () => unavailable,
+    recordCheck: (accountId, check) =>
+      Effect.sync(() => {
+        checks.push({ accountId, ...check });
+      }),
     setControls: () => unavailable,
     setAgentAccess: () => unavailable,
     updateProfile: () => unavailable,
@@ -121,5 +126,5 @@ export function fakeAccounts(
         uses.push(entry);
       }),
   });
-  return { service, calls, uses, handoffs, cancelled, saves };
+  return { service, calls, uses, handoffs, cancelled, saves, checks };
 }

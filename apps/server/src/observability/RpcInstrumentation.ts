@@ -274,6 +274,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsSave]: "accounts",
   [WS_METHODS.accountsRemove]: "accounts",
   [WS_METHODS.accountsTest]: "accounts",
+  [WS_METHODS.accountsCheck]: "accounts",
   [WS_METHODS.accountsSetControls]: "accounts",
   [WS_METHODS.accountsSetAgentAccess]: "accounts",
   [WS_METHODS.accountsProfileUpdate]: "accounts",

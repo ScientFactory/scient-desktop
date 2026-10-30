@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
+  ThreadId,
   resolveBrowserProfiles,
   type AccountActivityEntry,
   type AccountSummary,
@@ -37,9 +38,12 @@ import { readLocalApi } from "~/localApi";
 import { ExtensionIcon } from "~/scient/extensions/ExtensionRow";
 import { extensionsInventory } from "~/scient/extensions/extensionsState";
 import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { providersIgnoringCheckedAtAtom } from "~/state/server";
+import { environmentThreadShells } from "~/state/threads";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
 import "./accounts.css";
 import { AccountApprovals } from "./AccountApprovals";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
@@ -51,6 +55,8 @@ import {
   accountIconUrl,
   accountListRows,
   accountManagePage,
+  accountStatusLabel,
+  activityLine,
   isBrowserSignIn,
   isSavedPassword,
   mergeProfiles,
@@ -100,14 +106,10 @@ export function AccountRow({
   const target = { type: "account", accountId: account.accountId } as const;
   const details = account.details;
   const site = details.kind === "website" ? details.sites[0] : undefined;
-  const rejection =
-    account.lastSignInOutcome === "password-rejected"
-      ? "Password rejected"
-      : account.lastSignInOutcome === "code-rejected"
-        ? "Code rejected"
-        : account.signedOut
-          ? "Signed out"
-          : null;
+  const check = useAccountCommand(accountsState.check, environmentId);
+  const statusLabel = accountStatusLabel(account, formatRelativeTimeLabel);
+  const signInAgain =
+    account.signedOut || ["signed-out", "needs-you"].includes(account.lastCheck?.state ?? "");
   const openSite = async (url = site) => {
     if (!url) return;
     await openBrowser(url, details.kind === "website" ? details.profileId : undefined);
@@ -151,7 +153,16 @@ export function AccountRow({
                       .join(" · ")}
             </span>
           </span>
-          {rejection ? <span className="text-xs text-muted-foreground">{rejection}</span> : null}
+          {statusLabel ? (
+            <Tooltip>
+              <TooltipTrigger render={<span className="shrink-0 text-xs text-muted-foreground" />}>
+                {statusLabel}
+              </TooltipTrigger>
+              {account.lastCheck?.message ? (
+                <TooltipPopup>{account.lastCheck.message}</TooltipPopup>
+              ) : null}
+            </Tooltip>
+          ) : null}
           {account.status === "needs-attention" ? (
             <Tooltip>
               <TooltipTrigger
@@ -177,9 +188,20 @@ export function AccountRow({
             disabled={!canWrite || busy}
           />
           <ControlsMenu disabled={!canWrite || busy}>
-            {account.signedOut && details.kind === "website" ? (
+            {signInAgain && details.kind === "website" ? (
               <MenuItem onClick={() => void openSite(details.loginUrl ?? site)}>
                 Sign in again
+              </MenuItem>
+            ) : null}
+            {details.kind === "website" || details.kind === "library" ? (
+              <MenuItem
+                onClick={async () => {
+                  setBusy(true);
+                  await check({ accountId: account.accountId });
+                  setBusy(false);
+                }}
+              >
+                Check sign-in
               </MenuItem>
             ) : null}
             {site ? <MenuItem onClick={() => void openSite()}>Open {site}</MenuItem> : null}
@@ -514,6 +536,8 @@ function AccountsContent({
   >(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [signIns, setSignIns] = useState<ReadonlyArray<AccountSummary> | null>(null);
+  const [checking, setChecking] = useState(false);
+  const checkAll = useAccountCommand(accountsState.check, environmentId);
   const profiles = mergeProfiles(
     useClientSettings((settings) => settings.browserProfiles),
     snapshot.profiles,
@@ -565,6 +589,27 @@ function AccountsContent({
       <SettingsSection
         id="accounts-list"
         title="Accounts"
+        headerAction={
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!canWrite || checking}
+            onClick={async () => {
+              setChecking(true);
+              const result = await checkAll({});
+              setChecking(false);
+              if (result.ok)
+                toastManager.add({
+                  type: "success",
+                  title: result.value.checked
+                    ? `Checked ${result.value.checked} sign-in${result.value.checked === 1 ? "" : "s"}`
+                    : "No sign-ins to check yet",
+                });
+            }}
+          >
+            {checking ? "Checking…" : "Check my accounts"}
+          </Button>
+        }
         titleAction={
           <Menu>
             <MenuTrigger
@@ -778,13 +823,10 @@ function AccountsContent({
             <DialogPanel>
               {activity.map((entry) => (
                 <div key={JSON.stringify(entry)} className="py-2 text-xs">
-                  <time>{new Date(entry.at).toLocaleString()}</time> · {entry.action} ·{" "}
-                  {entry.decision}
-                  {entry.signInOutcome
-                    ? ` · ${entry.signInOutcome}`
-                    : entry.outcome
-                      ? ` · ${entry.outcome}`
-                      : ""}
+                  <time className="text-muted-foreground">
+                    {new Date(entry.at).toLocaleString()}
+                  </time>{" "}
+                  · {activityLine(entry, activityConversation(entry, environmentId))}
                 </div>
               ))}
             </DialogPanel>
@@ -793,6 +835,15 @@ function AccountsContent({
       ) : null}
     </div>
   );
+}
+
+/** The conversation behind an activity entry; the user's own check has none. */
+function activityConversation(entry: AccountActivityEntry, environmentId: EnvironmentId) {
+  if (!entry.threadId) return undefined;
+  if (entry.threadId === ThreadId.make("scient-accounts-check")) return "Check my accounts";
+  return appAtomRegistry.get(
+    environmentThreadShells.threadShellAtom({ environmentId, threadId: entry.threadId }),
+  )?.title;
 }
 
 function AccountsEnvironment({ environmentId }: { environmentId: EnvironmentId }) {

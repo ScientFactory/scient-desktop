@@ -325,7 +325,11 @@ import * as ComputeSessionService from "./scient/compute/ComputeSessionService.t
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
 // SCIENT-FORK:START — Scient Accounts: service-backed transport.
-import { accountsForRpc, makeAccountsRpcHandlers } from "./scient/accounts/AccountsRpcHandlers.ts";
+import {
+  accountsCheckForRpc,
+  accountsForRpc,
+  makeAccountsRpcHandlers,
+} from "./scient/accounts/AccountsRpcHandlers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions RPCs.
 import {
@@ -1432,6 +1436,7 @@ export const layerWsRpc = (
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       // SCIENT-FORK:START — Scient Accounts: share the server-lifetime account owner.
       const accounts = yield* accountsForRpc;
+      const checkAccounts = yield* accountsCheckForRpc;
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient extensions services.
       const extensionServices = {
@@ -3848,7 +3853,12 @@ export const layerWsRpc = (
         WsExtensionsRpcGroup.toLayer(handlers7),
         // SCIENT-FORK:START — Scient Accounts: mount thin handlers.
         WsAccountsRpcGroup.toLayer(
-          makeAccountsRpcHandlers({ accounts, observeRpcEffect, observeRpcStream }),
+          makeAccountsRpcHandlers({
+            accounts,
+            observeRpcEffect,
+            observeRpcStream,
+            check: checkAccounts,
+          }),
         ),
         // SCIENT-FORK:END
       );

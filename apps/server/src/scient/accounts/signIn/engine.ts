@@ -28,6 +28,8 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   account: AccountSummary,
   secrets: Readonly<Record<string, Redacted.Redacted<string>>>,
   tabId?: PreviewTabId,
+  /** The user's own check: their profile's agent access doesn't apply. */
+  options: { readonly userRun?: boolean } = {},
 ) {
   if (account.details.kind !== "website" && account.details.kind !== "library")
     return yield* new AccountsError({
@@ -85,16 +87,17 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       reason: "denied",
       message: "The sign-in URL does not match the account's sites.",
     });
-  const profile = yield* authorizePreviewProfile(session, status, openInput);
-  const opened = yield* recordProfileUse(
-    session,
-    profile.profileId,
+  const open = (profileId: string | undefined) =>
     invoke<PreviewAutomationStatus>(
       "open",
-      { ...openInput, profileId: profile.profileId },
+      { ...openInput, ...(profileId === undefined ? {} : { profileId }) },
       reuse ? current?.tabId : undefined,
-    ),
-  );
+    );
+  const opened = options.userRun
+    ? yield* open(current?.profileId ?? details.profileId)
+    : yield* authorizePreviewProfile(session, status, openInput).pipe(
+        Effect.flatMap(({ profileId }) => recordProfileUse(session, profileId, open(profileId))),
+      );
   if (!opened.tabId)
     return yield* new AccountsError({
       reason: "unavailable",

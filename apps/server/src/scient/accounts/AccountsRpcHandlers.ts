@@ -1,6 +1,14 @@
-import { AccountsError, WS_METHODS, WsAccountsRpcGroup } from "@t3tools/contracts";
+import {
+  AccountsError,
+  WS_METHODS,
+  WsAccountsRpcGroup,
+  type AccountsCheckInput,
+} from "@t3tools/contracts";
 import { Clock, Effect, Option, Stream } from "effect";
 import { websiteSessionStatus } from "./websiteSessions.ts";
+import { checkAccounts } from "./checkAccounts.ts";
+import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
+import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
 
@@ -8,8 +16,10 @@ export const makeAccountsRpcHandlers = ({
   accounts,
   observeRpcEffect,
   observeRpcStream,
+  check,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
+  readonly check: (input: AccountsCheckInput) => Effect.Effect<number, AccountsError>;
 }) => {
   const observedSessions = new Set<string>();
   const attributes = { "rpc.aggregate": "accounts" };
@@ -50,6 +60,12 @@ export const makeAccountsRpcHandlers = ({
       observeRpcEffect(
         WS_METHODS.accountsTest,
         accounts.test(input.accountId).pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsCheck]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsCheck,
+        check(input).pipe(Effect.map((checked) => ({ checked }))),
         attributes,
       ),
     [WS_METHODS.accountsSetControls]: (input) =>
@@ -156,6 +172,23 @@ const unavailable = Effect.fn("AccountsService.unavailable")(function* () {
   return yield* missingService;
 });
 
+/** The user's own account check; it needs the browser, which RPC handlers otherwise don't. */
+export const accountsCheckForRpc = Effect.gen(function* () {
+  const broker = yield* Effect.serviceOption(PreviewAutomationBroker);
+  const accounts = yield* accountsForRpc;
+  const environment = yield* ServerEnvironment;
+  return (input: AccountsCheckInput) =>
+    Option.isNone(broker)
+      ? Effect.fail(
+          new AccountsError({ reason: "unavailable", message: "The browser is unavailable." }),
+        )
+      : environment.getEnvironmentId.pipe(
+          Effect.flatMap((environmentId) => checkAccounts(input, environmentId)),
+          Effect.provideService(AccountsService, accounts),
+          Effect.provideService(PreviewAutomationBroker, broker.value),
+        );
+});
+
 export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
   Effect.map(
     Option.getOrElse(() =>
@@ -166,6 +199,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         save: unavailable,
         remove: unavailable,
         test: unavailable,
+        recordCheck: unavailable,
         setControls: unavailable,
         setAgentAccess: unavailable,
         updateProfile: unavailable,

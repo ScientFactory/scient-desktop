@@ -11,6 +11,7 @@ export const SignInDetection = Schema.Struct({
   number: Schema.optional(Schema.String),
   remember: Schema.optional(Schema.String),
   stay: Schema.optional(Schema.String),
+  signInLink: Schema.optional(Schema.String),
   signedIn: Schema.Boolean,
 });
 export type SignInDetection = typeof SignInDetection.Type;
@@ -63,7 +64,11 @@ export const signInDetectionScript = String.raw`(() => {
       if (visible(candidate) && /^\d{1,3}$/.test(value)) numbers.add(value);
     }
   }
+  const signInLink = !password && !otp && !username
+    ? Array.from(document.querySelectorAll('a, button, [role="button"]')).find(element => visible(element) && /^(sign in|log in|login)$/i.test(element.textContent?.trim() ?? ""))
+    : undefined;
   return {
+    ...(signInLink ? { signInLink: path(signInLink) } : {}),
     ...(push && numbers.size === 1 ? { number: [...numbers][0] } : {}),
     ...(remember ? { remember: path(remember) } : {}),
     ...(stay ? { stay: path(stay) } : {}),

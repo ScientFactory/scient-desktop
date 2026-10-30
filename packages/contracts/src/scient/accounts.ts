@@ -262,6 +262,23 @@ export const AccountSignInOutcome = Schema.Literals([
   "failed",
 ]);
 
+export const AccountCheckState = Schema.Literals([
+  "signed-in",
+  "signed-out",
+  "needs-you",
+  "rejected",
+  "unknown",
+]);
+export type AccountCheckState = typeof AccountCheckState.Type;
+
+/** What Scient last saw when it opened or used this sign-in. */
+export const AccountCheck = Schema.Struct({
+  state: AccountCheckState,
+  at: IsoDateTime,
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type AccountCheck = typeof AccountCheck.Type;
+
 export const AccountSummary = Schema.Struct({
   accountId: AccountId,
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(80)),
@@ -272,6 +289,7 @@ export const AccountSummary = Schema.Struct({
   /** Set only when something is wrong. */
   statusMessage: Schema.optional(TrimmedNonEmptyString),
   lastSignInOutcome: Schema.optional(AccountSignInOutcome),
+  lastCheck: Schema.optional(AccountCheck),
   signedOut: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -652,6 +670,10 @@ export const AccountMatchSignInResult = Schema.Struct({
   accountId: Schema.optional(AccountId),
 });
 export type AccountMatchSignInResult = typeof AccountMatchSignInResult.Type;
+
+/** Every browser sign-in, or one. */
+export const AccountsCheckInput = Schema.Struct({ accountId: Schema.optional(AccountId) });
+export type AccountsCheckInput = typeof AccountsCheckInput.Type;
 
 export const AccountsTestInput = Schema.Struct({ accountId: AccountId });
 

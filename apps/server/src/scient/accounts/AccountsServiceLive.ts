@@ -62,6 +62,7 @@ import {
   inScope,
   sameTarget,
   siteMatches,
+  outcomeCheckState,
 } from "./AccountDecisions.ts";
 import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
@@ -527,6 +528,9 @@ export const layer = Layer.effect(
         ...(warnings.length ? { statusMessage: warnings[0] } : {}),
         ...(!input.secrets?.password && !input.secrets?.totp && existing?.summary.lastSignInOutcome
           ? { lastSignInOutcome: existing.summary.lastSignInOutcome }
+          : {}),
+        ...(!input.secrets?.password && !input.secrets?.totp && existing?.summary.lastCheck
+          ? { lastCheck: existing.summary.lastCheck }
           : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -1325,24 +1329,46 @@ export const layer = Layer.effect(
       resolveSecrets: Effect.fn("AccountsService.resolveSecretsInput")((accountId, fields) =>
         locked(resolve(accountId, fields)),
       ),
+      recordCheck: Effect.fn("AccountsService.recordCheck")((accountId, check) =>
+        locked(
+          Effect.gen(function* () {
+            const account = findAccount(accountId);
+            if (!account) return;
+            yield* commit(
+              replaceAccount({
+                ...account,
+                summary: { ...account.summary, lastCheck: { ...check, at: yield* now } },
+              }),
+              true,
+            );
+          }),
+        ),
+      ),
       recordUse: Effect.fn("AccountsService.recordUse")((entry) =>
         locked(
           Effect.gen(function* () {
             yield* appendActivity({ ...entry, decision: "allowed" });
             if (entry.target.type === "account") {
               const account = findAccount(entry.target.accountId);
-              if (account)
+              if (account) {
+                const at = yield* now;
                 yield* commit(
                   replaceAccount({
                     ...account,
                     summary: {
                       ...account.summary,
-                      lastUsedAt: yield* now,
-                      ...(entry.signInOutcome ? { lastSignInOutcome: entry.signInOutcome } : {}),
+                      lastUsedAt: at,
+                      ...(entry.signInOutcome
+                        ? {
+                            lastSignInOutcome: entry.signInOutcome,
+                            lastCheck: { state: outcomeCheckState(entry.signInOutcome), at },
+                          }
+                        : {}),
                     },
                   }),
                   true,
                 );
+              }
             }
           }),
         ).pipe(Effect.ignore, Effect.forkIn(serviceScope), Effect.asVoid),
