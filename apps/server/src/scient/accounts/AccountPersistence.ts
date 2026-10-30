@@ -1,5 +1,6 @@
 import {
   AccountCodeSources,
+  AccountKeyLink,
   BrowserProfileChoices,
   AccountsError,
   AccountSummary,
@@ -28,6 +29,7 @@ export const AccountsState = Schema.Struct({
   profiles: Schema.Array(BrowserProfileRecord),
   profileChoices: Schema.optional(BrowserProfileChoices),
   codeSources: Schema.optional(AccountCodeSources),
+  keyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
   onePassword: Schema.optional(
     Schema.Union([
       Schema.Struct({

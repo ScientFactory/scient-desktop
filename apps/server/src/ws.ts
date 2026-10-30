@@ -330,6 +330,7 @@ import {
   accountsForRpc,
   makeAccountsRpcHandlers,
 } from "./scient/accounts/AccountsRpcHandlers.ts";
+import { makeAccountKeyLinks } from "./scient/accounts/keyLinks.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions RPCs.
 import {
@@ -1437,6 +1438,7 @@ export const layerWsRpc = (
       // SCIENT-FORK:START — Scient Accounts: share the server-lifetime account owner.
       const accounts = yield* accountsForRpc;
       const checkAccounts = yield* accountsCheckForRpc;
+      const linkAccountKey = yield* makeAccountKeyLinks(accounts);
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient extensions services.
       const extensionServices = {
@@ -3858,6 +3860,7 @@ export const layerWsRpc = (
             observeRpcEffect,
             observeRpcStream,
             check: checkAccounts,
+            linkKey: linkAccountKey,
           }),
         ),
         // SCIENT-FORK:END

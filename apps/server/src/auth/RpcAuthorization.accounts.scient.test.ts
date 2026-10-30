@@ -23,6 +23,7 @@ it.effect(
         observeRpcEffect: (_method, effect) => effect,
         observeRpcStream: (_method, stream) => stream,
         check: () => Effect.succeed(0),
+        linkKey: () => Effect.void,
       });
       const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
       const layer = group.toLayer(handlers);

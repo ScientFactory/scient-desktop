@@ -6,6 +6,7 @@
 import type {
   AccountCheck,
   AccountCodeSources,
+  AccountKeyLink,
   BrowserProfileChoiceInput,
   BrowserProfileChoices,
   AccountHandoff,
@@ -110,6 +111,11 @@ export interface AccountsServiceShape {
   /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
   readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;
   readonly setCodeSources: (sources: AccountCodeSources) => Effect.Effect<void, AccountsError>;
+  /** Without an account, the variable keeps its value and stops following one. */
+  readonly setKeyLink: (
+    target: Pick<AccountKeyLink, "instanceId" | "variable">,
+    accountId?: AccountId,
+  ) => Effect.Effect<void, AccountsError>;
   readonly respondApproval: (
     approvalId: string,
     decision: AccountApprovalDecision,

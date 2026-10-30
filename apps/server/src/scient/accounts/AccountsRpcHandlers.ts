@@ -2,6 +2,7 @@ import {
   AccountsError,
   WS_METHODS,
   WsAccountsRpcGroup,
+  type AccountKeyLink,
   type AccountsCheckInput,
 } from "@t3tools/contracts";
 import { Clock, Effect, Option, Stream } from "effect";
@@ -18,9 +19,11 @@ export const makeAccountsRpcHandlers = ({
   observeRpcEffect,
   observeRpcStream,
   check,
+  linkKey,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
   readonly check: (input: AccountsCheckInput) => Effect.Effect<number, AccountsError>;
+  readonly linkKey: (link: AccountKeyLink) => Effect.Effect<void, AccountsError>;
 }) => {
   const observedSessions = new Set<string>();
   const attributes = { "rpc.aggregate": "accounts" };
@@ -92,6 +95,14 @@ export const makeAccountsRpcHandlers = ({
             })),
           ),
         ),
+        attributes,
+      ),
+    [WS_METHODS.accountsLinkKey]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsLinkKey, linkKey(input).pipe(Effect.as({})), attributes),
+    [WS_METHODS.accountsUnlinkKey]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsUnlinkKey,
+        accounts.setKeyLink(input).pipe(Effect.as({})),
         attributes,
       ),
     [WS_METHODS.accountsSetControls]: (input) =>
@@ -227,6 +238,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         test: unavailable,
         recordCheck: unavailable,
         setCodeSources: unavailable,
+        setKeyLink: unavailable,
         setControls: unavailable,
         setAgentAccess: unavailable,
         updateProfile: unavailable,

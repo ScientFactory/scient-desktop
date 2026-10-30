@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
+  AccountId,
+  PROVIDER_DISPLAY_NAMES,
   ThreadId,
   resolveBrowserProfiles,
   type AccountActivityEntry,
@@ -50,11 +52,12 @@ import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
-import { providersIgnoringCheckedAtAtom } from "~/state/server";
+import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/server";
 import { environmentThreadShells } from "~/state/threads";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import "./accounts.css";
 import { AccountApprovals } from "./AccountApprovals";
+import { ApiKeyAccountPicker } from "./ApiKeyAccountPicker";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import { AccountDialog } from "./AccountDialog";
 import { AccountLogo, SiteFavicon } from "./AccountLogo";
@@ -66,8 +69,10 @@ import {
   accountManagePage,
   accountStatusLabel,
   activityLine,
+  type KeyInUse,
   isBrowserSignIn,
   isSavedPassword,
+  keysInUse,
   mergeProfiles,
   providerManagedAccounts,
 } from "./accountsView";
@@ -531,6 +536,71 @@ function ListDialog({
   );
 }
 
+/** The keys Scient itself runs on. Each is edited where it is used; this says what uses what. */
+function KeysInUseDialog({
+  keys,
+  snapshot,
+  environmentId,
+  canWrite,
+  onClose,
+}: {
+  keys: ReadonlyArray<KeyInUse>;
+  snapshot: AccountsSnapshot;
+  environmentId: EnvironmentId;
+  canWrite: boolean;
+  onClose: () => void;
+}) {
+  const link = useAccountCommand(accountsState.linkKey, environmentId);
+  const unlink = useAccountCommand(accountsState.unlinkKey, environmentId);
+  const savedKeys = snapshot.accounts.flatMap((account) =>
+    account.details.kind === "api-key" && account.secrets.token
+      ? [{ value: account.accountId, name: account.name }]
+      : [],
+  );
+  const linked = (key: KeyInUse) =>
+    snapshot.keyLinks?.find((item) =>
+      key.variables.some(
+        (target) => target.instanceId === item.instanceId && target.variable === item.variable,
+      ),
+    )?.accountId;
+  const follow = async (key: KeyInUse, accountId: string) => {
+    for (const target of key.variables) {
+      await (accountId
+        ? link({ ...target, accountId: AccountId.make(accountId) })
+        : unlink(target));
+    }
+  };
+  return (
+    <ListDialog title="Keys used by Scient" onClose={onClose}>
+      {keys.map((key) => (
+        <SettingsRow
+          key={`${key.href}:${key.name}`}
+          title={<span className="font-mono text-xs">{key.name}</span>}
+          description={key.usedBy.join(", ")}
+          control={
+            <span className="flex items-center gap-2">
+              {key.variables.length && savedKeys.length ? (
+                <ApiKeyAccountPicker
+                  aria-label={`Saved key for ${key.name}`}
+                  emptyLabel="Its own value"
+                  options={savedKeys}
+                  size="xs"
+                  value={linked(key) ?? ""}
+                  disabled={!canWrite}
+                  onChange={(event) => void follow(key, event.currentTarget.value)}
+                />
+              ) : null}
+              <Button size="xs" variant="outline" render={<Link to={key.href} />} onClick={onClose}>
+                Open
+              </Button>
+            </span>
+          }
+        />
+      ))}
+    </ListDialog>
+  );
+}
+
 const FULL_DISK_ACCESS_URL =
   "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles";
 
@@ -619,11 +689,18 @@ function AccountsContent({
     | "browser-sign-ins"
     | "other-sign-ins"
     | "sign-in-codes"
+    | "keys"
     | null
   >(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [signIns, setSignIns] = useState<ReadonlyArray<AccountSummary> | null>(null);
   const [checking, setChecking] = useState(false);
+  const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const keys = keysInUse(
+    serverSettings?.providerInstances ?? {},
+    snapshot.customModelKeys,
+    (driver) => PROVIDER_DISPLAY_NAMES[driver as keyof typeof PROVIDER_DISPLAY_NAMES] ?? driver,
+  );
   const checkAll = useAccountCommand(accountsState.check, environmentId);
   const profiles = mergeProfiles(
     useClientSettings((settings) => settings.browserProfiles),
@@ -770,6 +847,14 @@ function AccountsContent({
             onOpen={() => setDialog("browser-sign-ins")}
           />
         ) : null}
+        {keys.length ? (
+          <ListRow
+            icon={<KeyRoundIcon />}
+            title="Keys used by Scient"
+            detail={keys.map((key) => key.name).join(", ")}
+            onOpen={() => setDialog("keys")}
+          />
+        ) : null}
         <ListRow
           icon={<MessageSquareIcon />}
           title="Sign-in codes"
@@ -859,6 +944,15 @@ function AccountsContent({
             ),
           )}
         </ListDialog>
+      ) : null}
+      {dialog === "keys" ? (
+        <KeysInUseDialog
+          keys={keys}
+          snapshot={snapshot}
+          environmentId={environmentId}
+          canWrite={canWrite}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {dialog === "sign-in-codes" ? (
         <SignInCodesDialog

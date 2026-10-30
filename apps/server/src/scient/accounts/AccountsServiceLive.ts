@@ -179,6 +179,7 @@ export const layer = Layer.effect(
         profiles: state.profiles,
         ...(state.profileChoices ? { profileChoices: state.profileChoices } : {}),
         ...(state.codeSources ? { codeSources: state.codeSources } : {}),
+        ...(state.keyLinks ? { keyLinks: state.keyLinks } : {}),
         stores: {
           scient: { protection },
           keychain: { available: protection === "keychain", platform: sources.platform },
@@ -853,6 +854,23 @@ export const layer = Layer.effect(
       ),
       setCodeSources: Effect.fn("AccountsService.setCodeSources")((codeSources) =>
         locked(commit({ ...state, codeSources }, true)),
+      ),
+      setKeyLink: Effect.fn("AccountsService.setKeyLink")((target, accountId) =>
+        locked(
+          commit(
+            {
+              ...state,
+              keyLinks: [
+                ...(state.keyLinks ?? []).filter(
+                  (link) =>
+                    link.instanceId !== target.instanceId || link.variable !== target.variable,
+                ),
+                ...(accountId === undefined ? [] : [{ ...target, accountId }]),
+              ],
+            },
+            true,
+          ),
+        ),
       ),
       chooseProfile: Effect.fn("AccountsService.chooseProfile")((input) =>
         locked(

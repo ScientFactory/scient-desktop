@@ -82,6 +82,16 @@ export const accountsState = {
     tag: WS_METHODS.accountsSetCodeSources,
     ...lane,
   }),
+  linkKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:linkKey",
+    tag: WS_METHODS.accountsLinkKey,
+    ...lane,
+  }),
+  unlinkKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:unlinkKey",
+    tag: WS_METHODS.accountsUnlinkKey,
+    ...lane,
+  }),
   setControls: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:setControls",
     tag: WS_METHODS.accountsSetControls,

@@ -13,6 +13,7 @@ import {
 import {
   accountStatusLabel,
   activityLine,
+  keysInUse,
   agentMayUse,
   libraryLinkTemplate,
   accountListRows,
@@ -512,5 +513,33 @@ describe("account status", () => {
     expect(
       activityLine({ ...entry, action: "sign-in", signInOutcome: "password-rejected" }, undefined),
     ).toBe("Password rejected");
+  });
+});
+
+describe("keys used by Scient", () => {
+  it("lists secret variables by name, one row per name, and never ordinary settings", () => {
+    const keys = keysInUse(
+      {
+        codex: {
+          driver: "codex",
+          environment: [
+            { name: "OPENAI_API_KEY", sensitive: true },
+            { name: "CODEX_HOME", sensitive: false },
+          ],
+        },
+        work: {
+          driver: "omp",
+          displayName: "Work",
+          environment: [{ name: "OPENAI_API_KEY", sensitive: true }],
+        },
+      },
+      [{ name: "Groq" }],
+      () => "Codex",
+    );
+    expect(keys.map((key) => [key.name, key.usedBy])).toEqual([
+      ["OPENAI_API_KEY", ["Codex", "Work"]],
+      ["Groq", ["Custom models"]],
+    ]);
+    expect(keys[0]?.variables).toHaveLength(2);
   });
 });

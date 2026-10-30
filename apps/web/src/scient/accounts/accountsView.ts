@@ -713,3 +713,51 @@ export function activityLine(entry: AccountActivityEntry, where: string | undefi
           : ACTIVITY_LABELS[entry.action];
   return where ? `${what} · ${where}` : what;
 }
+
+export interface KeyInUse {
+  readonly name: string;
+  readonly usedBy: ReadonlyArray<string>;
+  /** Provider variables can follow a saved key; Custom models keys already live in Accounts. */
+  readonly variables: ReadonlyArray<{ readonly instanceId: string; readonly variable: string }>;
+  readonly href: "/settings/providers" | "/settings/custom-models";
+}
+
+/** The keys Scient itself uses, by name: never their values. Same name, one row. */
+export function keysInUse(
+  instances: Readonly<
+    Record<
+      string,
+      {
+        readonly displayName?: string | undefined;
+        readonly driver: string;
+        readonly environment?:
+          | ReadonlyArray<{ readonly name: string; readonly sensitive: boolean }>
+          | undefined;
+      }
+    >
+  >,
+  customModelKeys: ReadonlyArray<{ readonly name: string }>,
+  driverName: (driver: string) => string,
+): ReadonlyArray<KeyInUse> {
+  const byName = new Map<string, KeyInUse>();
+  for (const [instanceId, instance] of Object.entries(instances))
+    for (const variable of instance.environment ?? []) {
+      if (!variable.sensitive) continue;
+      const existing = byName.get(variable.name);
+      byName.set(variable.name, {
+        name: variable.name,
+        usedBy: [...(existing?.usedBy ?? []), instance.displayName ?? driverName(instance.driver)],
+        variables: [...(existing?.variables ?? []), { instanceId, variable: variable.name }],
+        href: "/settings/providers",
+      });
+    }
+  return [
+    ...byName.values(),
+    ...customModelKeys.map((key) => ({
+      name: key.name,
+      usedBy: ["Custom models"],
+      variables: [],
+      href: "/settings/custom-models" as const,
+    })),
+  ];
+}

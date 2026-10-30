@@ -484,6 +484,19 @@ export const BrowserProfileChoiceInput = Schema.Union([
 ]);
 export type BrowserProfileChoiceInput = typeof BrowserProfileChoiceInput.Type;
 
+/** A provider variable that takes its value from an API-key account, and follows it. */
+export const AccountKeyLink = Schema.Struct({
+  accountId: AccountId,
+  instanceId: TrimmedNonEmptyString,
+  variable: EnvironmentVariableName,
+});
+export type AccountKeyLink = typeof AccountKeyLink.Type;
+
+export const AccountKeyUnlinkInput = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  variable: EnvironmentVariableName,
+});
+
 /** Where Scient may look for a sign-in code. Both are off until the user turns them on. */
 export const AccountCodeSources = Schema.Struct({
   messages: Schema.Boolean,
@@ -503,6 +516,7 @@ export const AccountsSnapshot = Schema.Struct({
   profiles: Schema.Array(BrowserProfileRecord),
   profileChoices: Schema.optional(BrowserProfileChoices),
   codeSources: Schema.optional(AccountCodeSources),
+  keyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
   handoffs: Schema.optional(Schema.Array(AccountHandoff)),
