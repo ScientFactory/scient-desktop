@@ -195,6 +195,7 @@ export const ComputeSubmitProjectCellsInput = Schema.Struct({
   sessionId: ComputeSessionId,
   expectedGeneration: ComputeSessionGeneration,
   path: ComputeCellText,
+  actor: Schema.optional(ComputeExecutionActor),
   cells: Schema.Array(
     Schema.Struct({ cellId: ComputeCellText, executionId: ComputeExecutionId, code: ComputeCode }),
   ).check(Schema.isMaxLength(512)),

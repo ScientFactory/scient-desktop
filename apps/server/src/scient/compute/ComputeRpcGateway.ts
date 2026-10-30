@@ -482,6 +482,7 @@ export function makeComputeRpcGateway(input: {
         executionId: cell.executionId,
         expectedGeneration: request.expectedGeneration,
         code: cell.code,
+        ...(request.actor === undefined ? {} : { actor: request.actor }),
         source: {
           _tag: "document" as const,
           origin: "cell" as const,

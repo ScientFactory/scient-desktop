@@ -443,6 +443,10 @@
       "types": "./src/t3McpToolPresentation.ts",
       "import": "./src/t3McpToolPresentation.ts"
     },
+    "./notebookStaleness": {
+      "types": "./src/notebookStaleness.ts",
+      "import": "./src/notebookStaleness.ts"
+    },
     "./scientMcpToolPresentation": {
       "types": "./src/scientMcpToolPresentation.ts",
       "import": "./src/scientMcpToolPresentation.ts"

@@ -85,6 +85,12 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
           effect.pipe(
             Effect.provideService(ComputeMcpGateway, {
               ...gateway,
+              notebookOutputs: () => Effect.die("not used"),
+              readNotebook: () => Effect.die("not used"),
+              readNotebookOutput: () => Effect.die("not used"),
+              editNotebook: () => Effect.die("not used"),
+              recordNotebookRun: () => Effect.die("not used"),
+              flushNotebook: () => Effect.die("not used"),
               readOutput: (ref, kind) =>
                 Effect.gen(function* () {
                   const resolved =

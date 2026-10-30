@@ -247,6 +247,104 @@ const ScientComputeInventoryTool = Tool.make("scient_compute_inventory", {
     scope: "thread",
   });
 
+const NotebookPath = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(1024)).annotate({
+  description: "The .ipynb file, relative to the project root.",
+});
+const NotebookCellId = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)).annotate({
+  description: "A cell id from scient_notebook_read.",
+});
+
+export const ComputeToolNotebookCell = Schema.Struct({
+  cell: Schema.String,
+  type: Schema.String,
+  source: Schema.String,
+  /** `never run`, `ran`, `failed`, `running`, `edited since it ran`, or `a cell above changed`. */
+  state: Schema.String,
+  count: Schema.NullOr(Schema.Number),
+  output: Schema.String,
+  figures: Schema.Int,
+});
+export type ComputeToolNotebookCell = typeof ComputeToolNotebookCell.Type;
+
+const NotebookResult = Schema.Struct({
+  language: Schema.String,
+  cells: Schema.Array(ComputeToolNotebookCell),
+  images: Schema.optional(Schema.Array(ComputeToolImage)),
+});
+
+const NotebookEditOperation = Schema.Union([
+  Schema.Struct({ op: Schema.Literal("replace"), cell: NotebookCellId, source: Schema.String }),
+  Schema.Struct({
+    op: Schema.Literal("insert"),
+    after: Schema.NullOr(NotebookCellId).annotate({ description: "Null inserts at the top." }),
+    type: Schema.Literals(["code", "markdown"]),
+    source: Schema.String,
+  }),
+  Schema.Struct({ op: Schema.Literal("delete"), cell: NotebookCellId }),
+  Schema.Struct({
+    op: Schema.Literal("move"),
+    cell: NotebookCellId,
+    offset: Schema.Literals([-1, 1]),
+  }),
+  Schema.Struct({ op: Schema.Literal("clear-outputs") }),
+]);
+
+const ScientNotebookReadTool = Tool.make("scient_notebook_read", {
+  description:
+    "Read a Jupyter notebook as cells: source, whether each cell is current, and its output as text. Use this instead of reading the .ipynb file, which is JSON with embedded figures.",
+  parameters: Schema.Struct({
+    path: NotebookPath,
+    cells: Schema.optional(Schema.Array(NotebookCellId)),
+  }),
+  success: NotebookResult,
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read a notebook")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("notebook.read"));
+
+const ScientNotebookEditTool = Tool.make("scient_notebook_edit", {
+  description:
+    "Change a notebook by cell: replace a cell's source, insert, delete or move cells, or clear outputs. The change shows at once in the notebook the user has open. Use this instead of editing the .ipynb file.",
+  parameters: Schema.Struct({
+    path: NotebookPath,
+    edits: Schema.Array(NotebookEditOperation).check(Schema.isMaxLength(256)),
+  }),
+  success: NotebookResult,
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Edit a notebook")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, operation("notebook.edit"));
+
+const ScientNotebookRunTool = Tool.make("scient_notebook_run", {
+  description:
+    "Run notebook cells in the notebook's own session, the one the user sees, and save the results into the file. Runs every code cell by default, in order, and stops at the first failure. Returns each cell's output and figures.",
+  parameters: Schema.Struct({
+    path: NotebookPath,
+    cells: Schema.optional(Schema.Array(NotebookCellId)),
+    waitSeconds: Schema.optional(WaitSeconds),
+    includeImages: Schema.optional(IncludeImages),
+  }),
+  success: NotebookResult,
+  failure: ScientComputeToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Run notebook cells")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, operation("notebook.run"));
+
 export const ScientComputeToolkit = Toolkit.make(
   ScientComputeRunTool,
   ScientComputeOutputTool,
@@ -255,4 +353,7 @@ export const ScientComputeToolkit = Toolkit.make(
   ScientComputeControlTool,
   ScientComputeSetupTool,
   ScientComputeInventoryTool,
+  ScientNotebookReadTool,
+  ScientNotebookEditTool,
+  ScientNotebookRunTool,
 );

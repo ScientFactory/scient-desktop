@@ -1,4 +1,5 @@
 import type { NotebookCellType, NotebookCellView } from "@t3tools/contracts";
+import type { NotebookStaleness } from "@t3tools/shared/notebookStaleness";
 import {
   ArrowDown,
   ArrowUp,
@@ -37,7 +38,6 @@ import {
   NotebookCellOutputs,
   type NotebookPlace,
 } from "./NotebookOutputs";
-import type { NotebookStaleness } from "./notebookStaleness";
 
 type Cell = NotebookCellView;
 

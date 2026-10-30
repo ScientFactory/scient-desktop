@@ -13,7 +13,11 @@ import type {
 } from "@t3tools/contracts";
 import { createStore } from "zustand/vanilla";
 
-import { notebookCodeHash, staleNotebookCells, type NotebookStaleness } from "./notebookStaleness";
+import {
+  notebookCodeHash,
+  staleNotebookCells,
+  type NotebookStaleness,
+} from "@t3tools/shared/notebookStaleness";
 
 export type NotebookCellActivity = "queued" | "running" | null;
 /** An offset in the source, an end of it, or a point on screen (for a rendered Text cell). */

@@ -6,7 +6,6 @@ import {
   ComputeLanguageId,
   ComputeSessionId,
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
-  TERMINAL_COMPUTE_SESSION_STATUSES,
   ComputeToolkitId,
   type ComputeExecutionRecord,
   type ComputeManagedRuntimeStatus,
@@ -19,11 +18,18 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
-import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
+import {
+  agentScope,
+  computeFailed,
+  isLive,
+  ownedSession,
+  toolError,
+  type AgentScope,
+} from "./agentComputeScope.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 import { computeTranscript } from "./computeTranscript.ts";
+import { editScientNotebook, readScientNotebook, runScientNotebook } from "./notebookHandlers.ts";
 import {
-  ScientComputeToolError,
   ScientComputeToolkit,
   type ComputeToolImage,
   type ComputeToolRun,
@@ -34,36 +40,6 @@ const DEFAULT_RUN_WAIT_SECONDS = 120;
 const MAXIMUM_IMAGES = 6;
 const MAXIMUM_IMAGE_BYTES = 4 * 1024 * 1024;
 const RECENT_RUNS = 5;
-const LANGUAGE_ALIASES: Readonly<Record<string, string>> = { py: "python", jl: "julia" };
-
-type ToolErrorCode = ConstructorParameters<typeof ScientComputeToolError>[0]["code"];
-const toolError = (code: ToolErrorCode, message: string) =>
-  new ScientComputeToolError({ code, message });
-const computeFailed = (error: { readonly message: string }) =>
-  toolError("compute-failed", error.message);
-
-/** The thread's project and identity; every compute tool acts in the caller's own project. */
-const agentScope = Effect.fn("ScientComputeToolkit.scope")(function* () {
-  const invocation = yield* AgentInvocationContext.AgentInvocationContext;
-  if (!invocation.capabilities.has("compute")) {
-    return yield* toolError(
-      "capability-unavailable",
-      "This provider session does not grant Scient Compute access.",
-    );
-  }
-  const workspace = yield* consumeAgentWorkspace().pipe(
-    Effect.mapError((error) => toolError(error.code, error.message)),
-  );
-  return {
-    cwd: workspace.binding.canonicalRoot,
-    threadId: invocation.threadId as string,
-    gateway: yield* ComputeMcpGateway,
-  };
-});
-type AgentScope = Effect.Success<ReturnType<typeof agentScope>>;
-
-const isLive = (session: ComputeSessionRecord) =>
-  !TERMINAL_COMPUTE_SESSION_STATUSES.has(session.status);
 
 function ownerLabel(session: ComputeSessionRecord, threadId: string): string {
   const owner = session.owner;
@@ -120,29 +96,9 @@ const agentSession = Effect.fn("ScientComputeToolkit.agentSession")(function* (
   scope: AgentScope,
   requestedLanguage: string | undefined,
 ) {
-  const normalized = (requestedLanguage ?? "python").trim().toLowerCase();
-  const languageId = ComputeLanguageId.make(LANGUAGE_ALIASES[normalized] ?? normalized);
-  const sessions = yield* scope.gateway.listSessions({ cwd: scope.cwd });
-  const existing = sessions.find(
-    (session) =>
-      isLive(session) &&
-      session.languageId === languageId &&
-      session.owner?._tag === "agent" &&
-      session.owner.threadId === scope.threadId,
-  );
-  if (existing !== undefined) return existing;
-  // The agent's own session uses Scient-managed Python when it is installed: it carries the
-  // scientific packages, and the user's default stays theirs.
-  const inventory = yield* scope.gateway.runtimeInventory();
-  const managed = inventory.languages
-    .find((language) => language.descriptor.languageId === languageId)
-    ?.installations.find((installation) => installation.source === "managed");
-  return yield* scope.gateway.startSession({
-    cwd: scope.cwd,
-    sessionId: ComputeSessionId.make(`agent-${NodeCrypto.randomUUID()}`),
-    languageId,
-    executable: managed?.problem === null ? managed.executable : null,
-    owner: { _tag: "agent", threadId: scope.threadId },
+  return yield* ownedSession(scope, requestedLanguage, {
+    _tag: "agent",
+    threadId: scope.threadId,
   });
 }, Effect.mapError(computeFailed));
 
@@ -465,6 +421,9 @@ export const listScientComputeInventory = Effect.fn("ScientComputeToolkit.invent
 });
 
 const handlers = {
+  scient_notebook_read: readScientNotebook,
+  scient_notebook_edit: editScientNotebook,
+  scient_notebook_run: runScientNotebook,
   scient_compute_run: runScientCompute,
   scient_compute_output: readScientComputeOutput,
   scient_compute_sessions: () => listScientComputeSessions(),
