@@ -2870,12 +2870,12 @@ describe("PreviewManager", () => {
   );
 
   // SCIENT-FORK:START scient-preview
-  effectIt.effect("does not copy a CDP-attributed server download into local Downloads", () =>
+  effectIt.effect("copies a person's server download into Downloads, but not the agent's", () =>
     withManagerAndBrowserHost((manager, browserHost) =>
       Effect.gen(function* () {
         const key = { threadId: "thread-download", tabId: "server-tab" };
         const webContents = {
-          getURL: () => "https://example.com/report.csv",
+          getURL: () => "https://example.com/report.pdf",
           getTitle: () => "Report",
           getUserAgent: () => "Electron",
           on: vi.fn(),
@@ -2911,39 +2911,47 @@ describe("PreviewManager", () => {
           browserHost.handleCommandLine(
             JSON.stringify({ type: "cdp", ...key, message: JSON.stringify(message) }),
           );
+        const download = (guid: string) => {
+          debuggerMessage?.(
+            { preventDefault: () => undefined, defaultPrevented: false },
+            "Browser.downloadWillBegin",
+            { guid },
+            "",
+          );
+          const item = {
+            setSavePath: vi.fn(),
+            once: vi.fn(),
+            getSavePath: vi.fn(() => `/srv/downloads/${guid}`),
+            getFilename: vi.fn(() => "report.pdf"),
+          } as unknown as Electron.DownloadItem;
+          willDownload(
+            { preventDefault: () => undefined, defaultPrevented: false },
+            item,
+            webContents,
+          );
+          return item;
+        };
         yield* command({
           id: 1,
           method: "Browser.setDownloadBehavior",
           params: { behavior: "allowAndName", downloadPath: "/srv/downloads" },
         });
+
+        // Chrome's PDF viewer saves from a frame the guest preload never sees,
+        // so a download with no recent agent input must count as the person's.
+        const personal = download("person-report");
+        expect(personal.setSavePath).toHaveBeenCalledWith("/srv/downloads/person-report");
+        expect(personal.once).toHaveBeenCalledWith("done", expect.any(Function));
+
         yield* command({
           id: 2,
           method: "Input.dispatchMouseEvent",
           params: { type: "mousePressed", x: 10, y: 20, button: "left" },
           sessionId: "t3-preview-page",
         });
-        debuggerMessage?.(
-          { preventDefault: () => undefined, defaultPrevented: false },
-          "Browser.downloadWillBegin",
-          { guid: "agent-report" },
-          "",
-        );
-
-        const item = {
-          setSavePath: vi.fn(),
-          once: vi.fn(),
-          getSavePath: vi.fn(() => "/srv/downloads/agent-report"),
-          getFilename: vi.fn(() => "report.csv"),
-        } as unknown as Electron.DownloadItem;
-        willDownload(
-          { preventDefault: () => undefined, defaultPrevented: false },
-          item,
-          webContents,
-        );
-
-        expect(item.setSavePath).toHaveBeenCalledWith("/srv/downloads/agent-report");
-        expect(item.once).not.toHaveBeenCalled();
-        expect(showItemInFolder).not.toHaveBeenCalled();
+        const agents = download("agent-report");
+        expect(agents.setSavePath).toHaveBeenCalledWith("/srv/downloads/agent-report");
+        expect(agents.once).not.toHaveBeenCalled();
       }),
     ),
   );

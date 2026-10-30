@@ -2759,12 +2759,24 @@ function ChatViewContent(props: ChatViewProps) {
   });
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — see the thread-open focus effect below.
+  const composerAutoFocusThreadIdRef = useRef<string | null>(null);
+  // SCIENT-FORK:END
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
   useEffect(() => {
+    // SCIENT-FORK:START — opening a thread or closing its terminal focuses the composer. The
+    // same thread re-resolving (a reconnect) must not pull the caret out of a browser page or a
+    // document the person is typing in.
+    if (terminalUiState.terminalOpen) composerAutoFocusThreadIdRef.current = null;
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    const opened = composerAutoFocusThreadIdRef.current !== activeThread.id;
+    composerAutoFocusThreadIdRef.current = activeThread.id;
     const frame = window.requestAnimationFrame(() => {
-      focusComposerStable();
+      if (opened || shouldRefocusComposerOnWindowFocus(document.activeElement)) {
+        focusComposerStable();
+      }
     });
+    // SCIENT-FORK:END
     return () => {
       window.cancelAnimationFrame(frame);
     };

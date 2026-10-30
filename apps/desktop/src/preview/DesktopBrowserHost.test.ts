@@ -1,9 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron debugger.
 import { describe, expect, it } from "@effect/vitest";
 import { DesktopBrowserEvent } from "@t3tools/contracts";
-// SCIENT-FORK:START scient-agent-input-tracking
-import * as Deferred from "effect/Deferred";
-// SCIENT-FORK:END scient-agent-input-tracking
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -98,18 +95,11 @@ const makeDebuggee = (
 // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary, not a wait for time
 const settle = Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
 
-// SCIENT-FORK:START scient-agent-input-tracking
-const takeEvents = (
-  host: DesktopBrowserHost.DesktopBrowserHost["Service"],
-  count: number,
-  onEvent: (event: DesktopBrowserEvent) => Effect.Effect<unknown> = () => Effect.void,
-) =>
+const takeEvents = (host: DesktopBrowserHost.DesktopBrowserHost["Service"], count: number) =>
   host.events.pipe(
-    Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
-    Stream.tap(onEvent),
-    // SCIENT-FORK:END scient-agent-input-tracking
     Stream.take(count),
     Stream.runCollect,
+    Effect.map((lines) => lines.map((line) => decodeEvent(new TextDecoder().decode(line)))),
   );
 
 /**
@@ -159,14 +149,9 @@ describe("DesktopBrowserHost", () => {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
-      // SCIENT-FORK:START scient-agent-input-tracking
-      const attached = yield* Deferred.make<void>();
-      const reader = yield* takeEvents(host, 2, (event) =>
-        event.type === "attached" ? Deferred.succeed(attached, undefined) : Effect.void,
-      ).pipe(Effect.forkScoped);
+      const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
 
-      yield* Deferred.await(attached);
-      // SCIENT-FORK:END scient-agent-input-tracking
+      yield* Effect.yieldNow;
       const command = (id: number, method: string) =>
         host.handleCommandLine(
           encodeJson({
@@ -955,148 +940,32 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
-  // SCIENT-FORK:START scient-agent-input-tracking
-  it.effect("attributes only the next download to explicit human input", () =>
-    // SCIENT-FORK:END scient-agent-input-tracking
+  it.effect("tells a download the person clicked from one the agent's input started", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
+
       yield* host.handleCommandLine(
         encodeJson({
           type: "cdp",
           ...key,
-          // SCIENT-FORK:START scient-agent-input-tracking
+          message: encodeJson({ id: 1, method: "DOM.getDocument", params: {} }),
+        }),
+      );
+      expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(true);
+      yield* host.handleCommandLine(
+        encodeJson({
+          type: "cdp",
+          ...key,
           message: encodeJson({
-            id: 1,
+            id: 2,
             method: "Input.dispatchMouseEvent",
             params: { type: "mousePressed", x: 1, y: 1 },
           }),
         }),
       );
-      debuggee.emit("Browser.downloadWillBegin", { guid: "agent-download" });
-      expect(host.pendingDownloadWasHuman(debuggee.tab.webContents)).toBe(false);
-
-      host.noteHumanInput(debuggee.tab.webContents);
-      debuggee.emit("Browser.downloadWillBegin", { guid: "human-download" });
-      expect(host.pendingDownloadWasHuman(debuggee.tab.webContents)).toBe(true);
-
-      debuggee.emit("Browser.downloadWillBegin", { guid: "unattributed-download" });
-      expect(host.pendingDownloadWasHuman(debuggee.tab.webContents)).toBe(false);
-
-      host.noteHumanInput(debuggee.tab.webContents);
-      yield* host.handleCommandLine(
-        encodeJson({
-          type: "cdp",
-          ...key,
-          message: JSON.stringify(
-            {
-              id: 2,
-              method: "Runtime.evaluate",
-              params: { expression: "downloadReport()" },
-            },
-            null,
-            2,
-          ),
-        }),
-      );
-      debuggee.emit("Browser.downloadWillBegin", { guid: "delayed-agent-download" });
-      expect(host.pendingDownloadWasHuman(debuggee.tab.webContents)).toBe(false);
+      expect(host.humanStartedDownload(debuggee.tab.webContents)).toBe(false);
     }),
   );
-
-  it.effect("blocks CDP pointer events from the preload human-input and Downloads path", () =>
-    Effect.gen(function* () {
-      const host = yield* DesktopBrowserHost.make;
-      const debuggee = makeDebuggee();
-      const webContents = debuggee.tab.webContents;
-      host.attach(key, debuggee.tab);
-      const attached = yield* Deferred.make<void>();
-      const configured = Promise.withResolvers<void>();
-      const inputsCompleted = Promise.withResolvers<void>();
-      const inputReplyIds = new Set<number>();
-      const reader = yield* takeEvents(host, 4, (event) => {
-        if (event.type === "attached") return Deferred.succeed(attached, undefined);
-        if (event.type === "cdp")
-          return Effect.sync(() => {
-            const id = decodeCdpReply(event.message).id;
-            if (id === 1) configured.resolve();
-            if (id === 2 || id === 3) inputReplyIds.add(id);
-            if (inputReplyIds.size === 2) inputsCompleted.resolve();
-          });
-        return Effect.void;
-      }).pipe(Effect.forkScoped);
-      // Subscribing announces the tab and resets its relay; finish that before sending commands.
-      yield* Deferred.await(attached);
-      const encodeCommand = (message: unknown) =>
-        encodeJson({
-          type: "cdp",
-          ...key,
-          message: encodeJson(message),
-        });
-      const configurationSent = debuggee.nextSend();
-      yield* host.handleCommandLine(
-        encodeCommand({
-          id: 1,
-          method: "Browser.setDownloadBehavior",
-          params: { behavior: "allowAndName", downloadPath: "/srv/downloads" },
-        }),
-      );
-      yield* Effect.promise(() => configurationSent);
-      debuggee.release();
-      yield* Effect.promise(() => configured.promise);
-
-      const pointerSent = debuggee.nextSend();
-      const keySent = debuggee.nextSend();
-      yield* host.handleCommandLine(
-        encodeCommand({
-          id: 2,
-          method: "Input.dispatchMouseEvent",
-          params: { type: "mousePressed", x: 10, y: 20, button: "left" },
-          sessionId: "t3-preview-page",
-        }),
-      );
-      yield* host.handleCommandLine(
-        encodeCommand({
-          id: 3,
-          method: "Input.dispatchKeyEvent",
-          params: { type: "keyDown", key: "Enter", code: "Enter" },
-          sessionId: "t3-preview-page",
-        }),
-      );
-      // The preload's synchronous permission check rejects this trusted DOM
-      // event while the matching agent CDP command is still dispatching.
-      expect(host.canReportHumanInput(webContents, "pointer")).toBe(false);
-      expect(host.canReportHumanInput(webContents, "key")).toBe(false);
-
-      const paths: Array<string> = [];
-      const item = {
-        setSavePath: (path: string) => void paths.push(path),
-      } as unknown as Electron.DownloadItem;
-      debuggee.emit("Browser.downloadWillBegin", { guid: "agent-download" });
-      expect(host.pendingDownloadWasHuman(webContents)).toBe(false);
-      expect(host.placeDownload(webContents, item)).toBe(true);
-      expect(paths).toEqual(["/srv/downloads/agent-download"]);
-
-      yield* Effect.promise(() => Promise.all([pointerSent, keySent]));
-      debuggee.release();
-      // Reply publication precedes CdpRelay's synchronous onComplete. The reply's
-      // Promise receipt resumes after that callback, when input permission is restored.
-      yield* Effect.promise(() => inputsCompleted.promise);
-      const events = yield* Fiber.join(reader);
-      expect(
-        events
-          .filter((event) => event.type === "cdp")
-          .map((event) => decodeCdpReply(event.message).id)
-          .toSorted(),
-      ).toEqual([1, 2, 3]);
-      expect(host.canReportHumanInput(webContents, "pointer")).toBe(true);
-      expect(host.canReportHumanInput(webContents, "key")).toBe(true);
-
-      host.noteHumanInput(webContents);
-      debuggee.emit("Browser.downloadWillBegin", { guid: "human-download" });
-      expect(host.pendingDownloadWasHuman(webContents)).toBe(true);
-    }).pipe(Effect.scoped),
-  );
-  // SCIENT-FORK:END scient-agent-input-tracking
 });

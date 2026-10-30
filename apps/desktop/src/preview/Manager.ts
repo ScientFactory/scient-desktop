@@ -73,7 +73,6 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
-  HUMAN_INPUT_PERMISSION_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_INPUT_CHANNEL,
@@ -1426,13 +1425,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
     };
     const humanInput = (_event: unknown, rawSignal?: unknown): void => {
-      if (!isPreviewInputSignal(rawSignal)) return;
-      browserHost.noteHumanInput(wc);
       runFork(handleHumanInput(rawSignal));
-    };
-    const humanInputPermission = (event: Electron.IpcMainEvent, kind?: unknown): void => {
-      event.returnValue =
-        (kind === "pointer" || kind === "key") && browserHost.canReportHumanInput(wc, kind);
     };
     const mouseNavigate = (_event: unknown, payload?: unknown): void => {
       const direction =
@@ -1538,7 +1531,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
-        wc.ipc.off(HUMAN_INPUT_PERMISSION_CHANNEL, humanInputPermission);
         wc.ipc.off(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         detachPasskeys();
@@ -1558,7 +1550,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-fail-load", failed as never);
         wc.on("audio-state-changed", audioStateChanged);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
-        wc.ipc.on(HUMAN_INPUT_PERMISSION_CHANNEL, humanInputPermission);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         detachPasskeys = passkeys.attachGuest(wc);
@@ -3670,7 +3661,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     downloadSessions.add(session);
     session.on("will-download", (_event, item, source) => {
       // Decided before the server's path is set: placing it consumes the guid.
-      const human = browserHost.pendingDownloadWasHuman(source);
+      const human = browserHost.humanStartedDownload(source);
       if (!browserHost.placeDownload(source, item) || !human) return;
       item.once("done", (_doneEvent, state) => {
         if (state !== "completed") return;
