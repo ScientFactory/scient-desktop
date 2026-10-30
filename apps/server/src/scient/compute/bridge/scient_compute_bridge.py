@@ -84,8 +84,8 @@ MAX_SOURCE_PATH = 4096
 MAX_SOURCE_NAME = 256
 MAX_SOURCE_HASH = 256
 
-# Python and Julia report an interrupt as an error with these names; R replies "abort".
-INTERRUPT_ERROR_NAMES = {"KeyboardInterrupt", "InterruptException"}
+# Kernels name an interrupt as the error, or (IJulia) wrap it and lead the value with its name.
+INTERRUPT_ERROR_NAMES = ("KeyboardInterrupt", "InterruptException")
 
 SERVER_MESSAGE_TYPES = {
     "hello",
@@ -611,7 +611,11 @@ class ExecuteMapping:
             return "succeeded"
         if status == "abort":
             return "cancelled"
-        if self.interrupt_requested and reply.get("ename") in INTERRUPT_ERROR_NAMES:
+        evalue = reply.get("evalue")
+        if self.interrupt_requested and (
+            reply.get("ename") in INTERRUPT_ERROR_NAMES
+            or (isinstance(evalue, str) and evalue.startswith(INTERRUPT_ERROR_NAMES))
+        ):
             return "cancelled"
         return "failed"
 

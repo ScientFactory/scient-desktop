@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 import { ComputeLanguageId } from "@scientfactory/compute";
 
-import type { KernelLanguage } from "./KernelComputeRuntime.ts";
+import { KERNEL_PROBE_MARKER, type KernelLanguage } from "./KernelComputeRuntime.ts";
 
 export const JULIA_LANGUAGE_ID = ComputeLanguageId.make("julia");
 
@@ -11,8 +11,8 @@ const JULIA_FLAGS = ["--startup-file=no", "--history-file=no"];
 
 const PROBE = [
   'let p = Base.find_package("IJulia")',
-  "  println(VERSION); println(Sys.ARCH); println(Sys.BINDIR)",
-  '  println(p === nothing ? "" : get(Base.TOML.parsefile(joinpath(dirname(dirname(p)), "Project.toml")), "version", "unknown"))',
+  '  kernel = p === nothing ? "" : get(Base.TOML.parsefile(joinpath(dirname(dirname(p)), "Project.toml")), "version", "unknown")',
+  `  println(join(["${KERNEL_PROBE_MARKER}", VERSION, Sys.ARCH, Sys.BINDIR, kernel], '\\t'))`,
   "end",
 ].join("\n");
 

@@ -3,7 +3,7 @@ import * as NodePath from "node:path";
 
 import { ComputeLanguageId } from "@scientfactory/compute";
 
-import type { KernelLanguage } from "./KernelComputeRuntime.ts";
+import { KERNEL_PROBE_MARKER, type KernelLanguage } from "./KernelComputeRuntime.ts";
 
 export const R_LANGUAGE_ID = ComputeLanguageId.make("r");
 
@@ -11,13 +11,14 @@ const R_FLAGS = ["--no-echo", "--no-save", "--no-restore"];
 
 const PROBE = [
   "cat(",
+  `  "${KERNEL_PROBE_MARKER}",`,
   '  paste(R.version$major, R.version$minor, sep = "."),',
   "  R.version$arch,",
   '  normalizePath(R.home(), winslash = "/"),',
   '  if (nzchar(system.file(package = "IRkernel"))) as.character(packageVersion("IRkernel")) else "",',
-  '  "",',
-  '  sep = "\\n"',
+  '  sep = "\\t"',
   ")",
+  'cat("\\n")',
 ].join("\n");
 
 // Installs into Scient's library only; packages the user already has are reused, never replaced.

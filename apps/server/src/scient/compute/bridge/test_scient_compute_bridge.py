@@ -310,6 +310,12 @@ class TestExecuteMapping(unittest.TestCase):
         m.interrupt_requested = True
         self.assertEqual(m.outcome(), "cancelled")
 
+    def test_outcome_cancelled_when_a_wrapped_interrupt_leads_the_error_value(self):
+        m = bridge.ExecuteMapping()
+        m.shell_reply = {"status": "error", "ename": "LoadError", "evalue": "InterruptException:"}
+        m.interrupt_requested = True
+        self.assertEqual(m.outcome(), "cancelled")
+
     def test_outcome_failed_when_interrupt_coincided_with_a_real_error(self):
         m = bridge.ExecuteMapping()
         m.shell_reply = {"status": "error", "ename": "ZeroDivisionError"}

@@ -75,7 +75,7 @@ export interface KernelLanguage {
     platform: NodeJS.Platform,
     environment: Readonly<Record<string, string>>,
   ) => ReadonlyArray<string | KernelVersionedPath>;
-  /** Prints version, architecture, home, and its own kernel version or an empty line. */
+  /** Prints the probe marker, version, architecture, home and its own kernel version, tab-separated. */
   readonly probeArgs: ReadonlyArray<string>;
   /** Installs the kernel under `privateDirectory`; the last stdout line is its version. */
   readonly setup: (
@@ -116,11 +116,17 @@ function manageError(message: string, cause?: unknown): ComputeOperationError {
   });
 }
 
+/** The tab-separated line a probe prints after this marker, whatever startup files print. */
+export const KERNEL_PROBE_MARKER = "scient-probe";
+
 export function parseKernelProbe(stdout: string): KernelInstallationProbe {
-  // Startup files may print first; the probe's own four lines come last.
-  const lines = stdout.replace(/\r/g, "").replace(/\n$/u, "").split("\n").slice(-4);
-  const [version, architecture, home, ownKernelVersion] = lines.map((line) => line.trim());
-  if (lines.length !== 4 || !version || !home) throw new Error("The probe output was incomplete.");
+  const line = stdout
+    .split(/\r?\n/u)
+    .findLast((candidate) => candidate.startsWith(`${KERNEL_PROBE_MARKER}\t`));
+  const [, version, architecture, home, ownKernelVersion] = (line ?? "")
+    .split("\t")
+    .map((field) => field.trim());
+  if (!version || !home) throw new Error("The probe output was incomplete.");
   return {
     version,
     architecture: architecture || null,
