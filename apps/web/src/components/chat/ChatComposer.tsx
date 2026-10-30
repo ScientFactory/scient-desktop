@@ -110,6 +110,7 @@ import {
   getAntigravitySendBlockReason,
   readFileAsDataUrl,
   resolveComposerInteractionMode,
+  shouldRefocusComposerOnWindowFocus,
   threadShellHasStarted,
 } from "../ChatView.logic";
 import {
@@ -2287,16 +2288,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const submitComposerStable = useStableCallback(submitComposer);
 
   // SCIENT-FORK:START committed voice dictation outlives the composer.
+  // A transcript lands seconds after recording stops. It takes the caret only if the person has
+  // not moved on to type somewhere else, such as a browser page or a document.
+  const insertVoiceTranscript = (text: string) => {
+    voiceBusyRef.current = false;
+    const active = document.activeElement;
+    const focusEditorAfterReplace =
+      (active !== null && composerFormRef.current?.contains(active) === true) ||
+      shouldRefocusComposerOnWindowFocus(active);
+    return applyVoiceTranscript(promptRef.current, text, (rangeStart, rangeEnd, replacement) =>
+      applyPromptReplacement(rangeStart, rangeEnd, replacement, { focusEditorAfterReplace }),
+    );
+  };
   const voiceDraftAccepted = !isComposerApprovalState && pendingUserInputs.length === 0;
   const voiceDraftOrigin = useScientVoiceDraftOrigin({
     target: composerDraftTarget,
     environmentId,
     title: activeThread?.title ?? null,
     acceptsDraftText: voiceDraftAccepted,
-    insert: (text) => {
-      voiceBusyRef.current = false;
-      return applyVoiceTranscript(promptRef.current, text, applyPromptReplacement);
-    },
+    insert: insertVoiceTranscript,
     sendReady: () =>
       composerMountedRef.current &&
       !noProviderAvailable &&
@@ -3780,10 +3790,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     // ordinary-draft dictation is committed to its origin.
                     draftOrigin={voiceDraftAccepted ? voiceDraftOrigin : null}
                     localFieldKey={voiceAnswerFieldKey}
-                    onTranscript={(text) => {
-                      voiceBusyRef.current = false;
-                      applyVoiceTranscript(promptRef.current, text, applyPromptReplacement);
-                    }}
+                    onTranscript={insertVoiceTranscript}
                     {...(pendingUserInputs.length === 0
                       ? {
                           onRequestSubmit: () => {

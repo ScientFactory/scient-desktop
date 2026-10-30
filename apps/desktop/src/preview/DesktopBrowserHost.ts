@@ -19,13 +19,12 @@ import { sendPageCommand } from "./GuestInput.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
-const decodeCdpCommand = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({ method: Schema.String, params: Schema.optional(Schema.Unknown) }),
-  ),
-);
 const lineEncoder = new TextEncoder();
+const AGENT_INPUT_COMMAND =
+  /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
+/** The same commands as above, by method, for the relay's sends. */
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
+const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
 const FOCUS_IDLE = "5 seconds";
 
 export interface DesktopBrowserTabKey {
@@ -53,14 +52,7 @@ interface AttachedTab {
   }>;
   downloadDirectory: string | null;
   pendingDownloadGuid: string | null;
-  /** Last actor to interact with the page, consumed when CDP starts a download. */
-  lastInputActor: "human" | "agent" | null;
-  /** CDP input dispatches whose trusted DOM events can still reach the preload. */
-  pendingAgentInput: { pointer: number; key: number };
-  /** Prevents a late reply from a released CDP session clearing newer input. */
-  agentInputGeneration: number;
-  /** Actor captured for the download identified by `pendingDownloadGuid`. */
-  pendingDownloadWasHuman: boolean;
+  agentInputAt: number;
   focusEmulated: boolean;
   focusChange: Promise<void> | null;
   focusUses: number;
@@ -95,15 +87,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
-    /** Records trusted input from the person for an attached server tab. */
-    readonly noteHumanInput: (source: Electron.WebContents) => void;
-    /** Lets the preload avoid reporting a CDP-dispatched trusted DOM event as human. */
-    readonly canReportHumanInput: (
-      source: Electron.WebContents,
-      kind: "pointer" | "key",
-    ) => boolean;
-    /** Whether the pending CDP download was preceded by trusted human input. */
-    readonly pendingDownloadWasHuman: (source: Electron.WebContents) => boolean;
+    readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
       readonly key: DesktopBrowserTabKey;
@@ -136,24 +120,6 @@ export const make = Effect.gen(function* () {
   /** Threads whose agent turn runs, by the server's account. */
   const agentTurns = new Set<string>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
-
-  // SCIENT-FORK:START — CDP commands that attribute page input and downloads to the agent.
-  const isAgentActionCommand = (method: string): boolean =>
-    method.startsWith("Input.") ||
-    method === "Page.navigate" ||
-    method === "Runtime.evaluate" ||
-    method === "Runtime.callFunctionOn";
-
-  const agentInputKind = (method: string, params: unknown): "pointer" | "key" | null => {
-    if (typeof params !== "object" || params === null || !("type" in params)) return null;
-    const type = params.type;
-    if (method === "Input.dispatchMouseEvent" && type === "mousePressed") return "pointer";
-    if (method === "Input.dispatchTouchEvent" && type === "touchStart") return "pointer";
-    if (method === "Input.dispatchKeyEvent" && (type === "keyDown" || type === "rawKeyDown"))
-      return "key";
-    return null;
-  };
-  // SCIENT-FORK:END
 
   const nextScreenshot = (tab: AttachedTab) => {
     tab.screenshotTurn = null;
@@ -301,11 +267,6 @@ export const make = Effect.gen(function* () {
 
   const dropRelay = (tab: AttachedTab) => {
     tab.relay = null;
-    // SCIENT-FORK:START — released CDP callbacks cannot retire a replacement input.
-    tab.agentInputGeneration += 1;
-    tab.pendingAgentInput.pointer = 0;
-    tab.pendingAgentInput.key = 0;
-    // SCIENT-FORK:END
     tab.screencasts.clear();
     tab.agentUsed = false;
     dropFocusHolds(tab);
@@ -424,7 +385,6 @@ export const make = Effect.gen(function* () {
     if (!tab?.downloadDirectory || !tab.pendingDownloadGuid) return false;
     item.setSavePath(NodePath.join(tab.downloadDirectory, tab.pendingDownloadGuid));
     tab.pendingDownloadGuid = null;
-    tab.pendingDownloadWasHuman = false;
     return true;
   };
 
@@ -452,10 +412,7 @@ export const make = Effect.gen(function* () {
       waitingScreenshots: [],
       downloadDirectory: null,
       pendingDownloadGuid: null,
-      lastInputActor: null,
-      pendingAgentInput: { pointer: 0, key: 0 },
-      agentInputGeneration: 0,
-      pendingDownloadWasHuman: false,
+      agentInputAt: Number.NEGATIVE_INFINITY,
       focusEmulated: false,
       focusChange: null,
       focusUses: 0,
@@ -468,8 +425,6 @@ export const make = Effect.gen(function* () {
         if (method === "Browser.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
           tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
-          tab.pendingDownloadWasHuman = tab.lastInputActor === "human";
-          tab.lastInputActor = null;
         }
         tab.relay?.event(method, params, sessionId);
       },
@@ -507,38 +462,13 @@ export const make = Effect.gen(function* () {
         dropRelay(tab);
         return;
       }
-      const decoded = decodeCdpCommand(command.value.message);
-      const inputKind = Option.isSome(decoded)
-        ? agentInputKind(decoded.value.method, decoded.value.params)
-        : null;
-      if (Option.isSome(decoded) && isAgentActionCommand(decoded.value.method)) {
-        tab.lastInputActor = "agent";
-      }
-      if (inputKind) tab.pendingAgentInput[inputKind] += 1;
-      const inputGeneration = tab.agentInputGeneration;
-      relayFor(tab).receive(command.value.message, () => {
-        if (inputKind && tab.agentInputGeneration === inputGeneration) {
-          tab.pendingAgentInput[inputKind] = Math.max(0, tab.pendingAgentInput[inputKind] - 1);
-        }
-      });
+      if (AGENT_INPUT_COMMAND.test(command.value.message)) tab.agentInputAt = performance.now();
+      relayFor(tab).receive(command.value.message);
     });
 
-  const noteHumanInput = (source: Electron.WebContents) => {
+  const humanStartedDownload = (source: Electron.WebContents) => {
     const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
-    if (tab) tab.lastInputActor = "human";
-  };
-
-  const canReportHumanInput = (source: Electron.WebContents, kind: "pointer" | "key") => {
-    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
-    // Tabs outside the server-driven CDP host have no agent input to suppress.
-    return tab === undefined || tab.pendingAgentInput[kind] === 0;
-  };
-
-  const pendingDownloadWasHuman = (source: Electron.WebContents) => {
-    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
-    return tab?.pendingDownloadGuid !== null && tab?.pendingDownloadGuid !== undefined
-      ? tab.pendingDownloadWasHuman
-      : false;
+    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_DOWNLOAD_WINDOW_MS;
   };
 
   const announceAll = Effect.suspend(() => {
@@ -569,9 +499,7 @@ export const make = Effect.gen(function* () {
     attach,
     detach,
     placeDownload,
-    noteHumanInput,
-    canReportHumanInput,
-    pendingDownloadWasHuman,
+    humanStartedDownload,
   });
 });
 
