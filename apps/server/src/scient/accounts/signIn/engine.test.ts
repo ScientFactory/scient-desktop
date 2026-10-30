@@ -18,7 +18,6 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { fakeAccounts } from "../agent/AccountsService.testkit.ts";
-import { MAX_SIGN_IN_STEPS } from "./decision.ts";
 import { signIn } from "./engine.ts";
 
 it.effect("handles sequential login steps and bounds retries without returning filled values", () =>
@@ -124,7 +123,8 @@ it.effect("handles sequential login steps and bounds retries without returning f
     stuck = true;
     steps = 0;
     expect((yield* run()).outcome).toBe("failed");
-    expect(steps).toBe(MAX_SIGN_IN_STEPS + 1);
+    // A site that keeps asking for the username is left alone after the second time.
+    expect(steps).toBe(3);
     expect(cleared).toHaveLength(1);
     cleared.length = 0;
     stuck = false;

@@ -109,6 +109,9 @@ export function decideSignInContinuation(
       message:
         "The site did not accept the saved password. Ask the user to check it in Settings → Accounts & secrets.",
     } as const;
+  // Going round in circles looks like an attack to a site, and has got a browser restricted.
+  if (page.username && sameOrigin.filter((entry) => entry.fields.includes("username")).length >= 2)
+    return { type: "failed", message: "The site kept returning to its first step." } as const;
   const codes = sameOrigin.filter((entry) => entry.fields.includes("otp"));
   if (
     page.otp &&

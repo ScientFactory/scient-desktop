@@ -243,6 +243,13 @@ describe("sign-in submission guard", () => {
       ).type,
     ).toBe("continue");
   });
+  it("stops when the site keeps asking for the username", () => {
+    const typed = { origin: page.origin, fields: ["username"] as const, otpPeriod: undefined };
+    const repeat = { ...page, password: null };
+    expect(decideSignInContinuation(repeat, [typed], 1, undefined).type).toBe("continue");
+    expect(decideSignInContinuation(repeat, [typed, typed], 2, undefined).type).toBe("failed");
+  });
+
   it("stops at the step limit", () => {
     expect(decideSignInContinuation(page, [], MAX_SIGN_IN_STEPS, undefined).type).toBe("failed");
   });

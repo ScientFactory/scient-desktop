@@ -41,8 +41,14 @@ it("lists one choice per remembered account, whichever way a site marks its rows
       ),
     ).toEqual(["a@example.com", "b@example.com"]);
     expect(
-      await choices("<ul><li><button>Ada Lovelace a@example.com</button></li><li>Help</li></ul>"),
+      await choices(
+        "<ul><li><button>Ada Lovelace a@example.com</button></li></ul><button>Use another account</button>",
+      ),
     ).toEqual(["a@example.com"]);
+    // A later step shows the chosen account as a chip that goes back to the start.
+    expect(
+      await choices("<button>a@example.com</button><button>Try another way</button>"),
+    ).toBeUndefined();
     expect(await choices("<p>Nothing to choose</p>")).toBeUndefined();
   } finally {
     await browser.close();

@@ -73,20 +73,24 @@ export const signInDetectionScript = String.raw`(() => {
       if (visible(candidate) && /^\d{1,3}$/.test(value)) numbers.add(value);
     }
   }
-  const signInLink = !password && !otp && !username
-    ? Array.from(document.querySelectorAll('a, button, [role="button"], [role="link"]')).find(element => visible(element) && /^(sign in|log in|login|use another account|try another way|enter your password)$/i.test(element.textContent?.trim() ?? ""))
-    : undefined;
-  // "Choose an account" lists remembered accounts before any field appears. A row is the innermost
-  // element, since a click on the list item around it may do nothing.
+  const links = Array.from(document.querySelectorAll('a, button, [role="button"], [role="link"]')).filter(visible);
+  const linkNamed = (name) => links.find(element => name.test(element.textContent?.trim() ?? ""));
+  const useAnother = linkNamed(/^use another account$/i);
+  // "Choose an account" lists remembered accounts before any field appears; later steps show the
+  // chosen account as a chip that goes back to the start. A row is the innermost element, since a
+  // click on the list item around it may do nothing.
   const markedRows = Array.from(document.querySelectorAll("[data-identifier], [data-email]"));
-  const possibleRows = markedRows.length > 0 ? markedRows : Array.from(document.querySelectorAll('a, button, li, [role="link"], [role="button"]'));
+  const possibleRows = markedRows.length > 0 ? markedRows : useAnother ? links.concat(Array.from(document.querySelectorAll("li"))) : [];
   const accountChoices = !password && !otp && !username
-    ? possibleRows.filter(row => !possibleRows.some(other => other !== row && row.contains(other))).flatMap(element => {
+    ? possibleRows.filter(row => row !== useAnother && !possibleRows.some(other => other !== row && row.contains(other))).flatMap(element => {
         const text = element.innerText ?? "";
         const email = element.dataset?.identifier ?? element.dataset?.email ?? (text.length < 120 ? text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/)?.[0] : undefined);
         return email && visible(element) ? [{ email, selector: path(element) }] : [];
       })
     : [];
+  const signInLink = !password && !otp && !username
+    ? linkNamed(/^enter your password$/i) ?? linkNamed(/^try another way$/i) ?? linkNamed(/^(sign in|log in|login)$/i) ?? useAnother
+    : undefined;
   const limited = !password && !otp && new RegExp(${JSON.stringify(SITE_LIMITED_TEXT)}, "i").test(text);
   // Some sign-in pages answer 401, so a status only counts on a page with no form.
   const status = performance.getEntriesByType("navigation")[0]?.responseStatus ?? 0;
