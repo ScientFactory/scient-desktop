@@ -1,5 +1,7 @@
-import { DatabaseIcon, SigmaIcon, type LucideIcon } from "lucide-react";
+import { CodeXmlIcon } from "lucide-react";
 
+import bashLogo from "~/assets/compute/bash.svg";
+import duckdbLogo from "~/assets/compute/duckdb.svg";
 import juliaLogo from "~/assets/compute/julia.svg";
 import matlabLogo from "~/assets/compute/matlab.svg";
 import octaveLogo from "~/assets/compute/octave.svg";
@@ -7,21 +9,26 @@ import pythonLogo from "~/assets/compute/python.svg";
 import rLogo from "~/assets/compute/r.svg";
 import rustLogo from "~/assets/compute/rust.svg";
 import spssLogo from "~/assets/compute/spss.svg";
+import stataLogo from "~/assets/compute/stata.svg";
 import wolframLogo from "~/assets/compute/wolfram.svg";
 import { cn } from "~/lib/utils";
 
-const LANGUAGE_LOGOS: Readonly<Record<string, string>> = {
-  python: pythonLogo,
-  matlab: matlabLogo,
-  julia: juliaLogo,
-  r: rLogo,
-  octave: octaveLogo,
-  rust: rustLogo,
-  spss: spssLogo,
-  "wolfram-language": wolframLogo,
-};
-const LANGUAGE_SYMBOLS: Readonly<Record<string, LucideIcon>> = {
-  sql: DatabaseIcon,
+/**
+ * Every file is trimmed to its artwork, so `size` is the logo's share of the tile. Each is set by
+ * eye: a thin wordmark needs more width than a solid disc to look the same size.
+ */
+const LANGUAGE_LOGOS: Readonly<Record<string, { readonly src: string; readonly size: string }>> = {
+  python: { src: pythonLogo, size: "size-[68%]" },
+  r: { src: rLogo, size: "size-[74%]" },
+  julia: { src: juliaLogo, size: "size-[66%]" },
+  sql: { src: duckdbLogo, size: "size-[66%]" },
+  matlab: { src: matlabLogo, size: "size-[74%]" },
+  octave: { src: octaveLogo, size: "size-[70%]" },
+  rust: { src: rustLogo, size: "size-[70%]" },
+  bash: { src: bashLogo, size: "size-[70%]" },
+  spss: { src: spssLogo, size: "size-[76%]" },
+  stata: { src: stataLogo, size: "size-[84%]" },
+  "wolfram-language": { src: wolframLogo, size: "size-[68%]" },
 };
 
 /** A language's logo in the same framed tile as an extension's. */
@@ -33,19 +40,18 @@ export function ComputeLanguageMark({
   large?: boolean;
 }) {
   const logo = LANGUAGE_LOGOS[languageId];
-  const Symbol = LANGUAGE_SYMBOLS[languageId] ?? SigmaIcon;
   return (
     <span
       aria-hidden
       className={cn(
         "flex shrink-0 items-center justify-center rounded-[25%] border border-border bg-white [color-scheme:light]",
-        large ? "size-16 p-3" : "size-10 p-2",
+        large ? "size-16" : "size-10",
       )}
     >
       {logo ? (
-        <img src={logo} alt="" className="size-full object-contain" />
+        <img src={logo.src} alt="" className={cn(logo.size, "object-contain")} />
       ) : (
-        <Symbol data-language-icon={languageId} className="size-full text-foreground/75" />
+        <CodeXmlIcon data-language-icon={languageId} className="size-[60%] text-foreground/70" />
       )}
     </span>
   );
