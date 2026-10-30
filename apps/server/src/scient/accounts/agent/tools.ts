@@ -66,10 +66,12 @@ const list = metadata(
           name: Schema.String,
           kind: Schema.String,
           sites: Schema.Array(Schema.String),
+          username: Schema.optional(Schema.String),
           access: Schema.String,
           readable: Schema.Boolean,
           usage: Schema.Array(Schema.String),
           status: Schema.String,
+          lastCheck: Schema.optional(Schema.String),
         }),
       ),
       profiles: Schema.Array(

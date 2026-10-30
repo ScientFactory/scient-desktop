@@ -74,10 +74,15 @@ export const accountAgentOperations = {
             name: account.name,
             kind: account.details.kind,
             sites: "sites" in account.details ? account.details.sites : [],
+            // A site can hold several accounts, and only this tells them apart.
+            ...("username" in account.details && account.details.username
+              ? { username: account.details.username }
+              : {}),
             access: account.controls.access,
             readable: account.controls.visibility === "readable",
             status: account.status,
             usage: accountUsage(account),
+            ...(account.lastCheck ? { lastCheck: account.lastCheck.state } : {}),
           }))
         : [],
       profiles: session.agentAccess
