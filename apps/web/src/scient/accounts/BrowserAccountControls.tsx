@@ -1,4 +1,4 @@
-import { useSessionOffer } from "./useSessionOffer";
+import { useSignInRecording } from "./useSignInRecording";
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { CheckIcon, KeyRoundIcon } from "lucide-react";
 import type {
@@ -15,14 +15,8 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem } from "~/components/ui/menu";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
-import { useClientSettings } from "~/hooks/useSettings";
 import { useAccountCommand, useAccounts } from "./useAccounts";
-import {
-  capturedSignInInput,
-  matchingAccounts,
-  profileAccounts,
-  signInLabel,
-} from "./accountsView";
+import { capturedSignInInput, matchingAccounts, signInLabel } from "./accountsView";
 
 import { SaveStores } from "./SaveStores";
 import { autofilledTabs } from "./accountAutofill";
@@ -155,13 +149,11 @@ function DesktopBrowserAccountControls({
   url: string;
 }) {
   const { data, canWrite } = useAccounts(environmentId);
-  const newTabProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
-  const saveSession = useAccountCommand(accountsState.save, environmentId);
   const [pending, setPending] = useState<{
     capture: DesktopCapturedSignIn;
     comparison: AccountMatchSignInResult;
   } | null>(null);
-  const session = useSessionOffer({
+  useSignInRecording({
     environmentId,
     tabId,
     profileId,
@@ -198,7 +190,6 @@ function DesktopBrowserAccountControls({
           profileId: capture.profileId,
         });
         if (generation !== captureGeneration.current || !result.ok) return;
-        session.close();
         setPending(result.value.result === "same" ? null : { capture, comparison: result.value });
       })();
     } catch {
@@ -295,57 +286,6 @@ function DesktopBrowserAccountControls({
           </Menu>
         ) : null}
       </span>
-      {session.offer && !pending ? (
-        <Popover open onOpenChange={(open) => !open && session.close()}>
-          <PopoverPopup anchor={anchor} align="end">
-            <div
-              className="w-72"
-              role="dialog"
-              aria-label={`Save ${new URL(session.offer).hostname} to Accounts?`}
-            >
-              <div className="mb-3 text-sm font-medium">
-                Save {new URL(session.offer).hostname} to Accounts?
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="xs"
-                  disabled={busy}
-                  onClick={async () => {
-                    if (!session.offer || busy) return;
-                    if (
-                      profileAccounts(data.accounts, session.offer, profileId, newTabProfileId)
-                        .length
-                    ) {
-                      session.close();
-                      return;
-                    }
-                    setBusy(true);
-                    const site = new URL(session.offer).origin;
-                    const result = await saveSession({
-                      name: new URL(site).hostname,
-                      details: { kind: "website", sites: [site], profileId },
-                      secrets: {},
-                    });
-                    setBusy(false);
-                    if (result.ok) {
-                      session.close();
-                      toastManager.add({
-                        type: "success",
-                        title: `${new URL(site).hostname} saved to Accounts`,
-                      });
-                    }
-                  }}
-                >
-                  Save
-                </Button>
-                <Button size="xs" variant="ghost" onClick={session.close}>
-                  Not now
-                </Button>
-              </div>
-            </div>
-          </PopoverPopup>
-        </Popover>
-      ) : null}
       {pending ? (
         <SaveSignIn
           key={`${pending.capture.tabId}:${pending.capture.url}:${pending.capture.username}`}

@@ -1,18 +1,21 @@
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import type { AccountSummary, EnvironmentId } from "@t3tools/contracts";
 import { useClientSettings } from "~/hooks/useSettings";
-import {
-  isIdentityProvider,
-  shouldOfferSession,
-  siteHost,
-  type CookieMetadata,
-} from "./sessionDetection";
+import { toastManager } from "~/components/ui/toast";
+import { isIdentityProvider, signedInSite, type CookieMetadata } from "./sessionDetection";
+import { accountsState } from "./accountsState";
 import { profileAccounts } from "./accountsView";
+import { useAccountCommand } from "./useAccounts";
 import { isSigningIn } from "./useAccountBrowser";
 
-const offered = new Set<string>();
+const recorded = new Set<string>();
 
-export function useSessionOffer(input: {
+/**
+ * Records a sign-in through Google, a university or another identity provider as a website
+ * account for this profile, without asking: it holds no password, only the fact that the
+ * profile is signed in there. A toast offers Undo.
+ */
+export function useSignInRecording(input: {
   environmentId: EnvironmentId;
   profileId: string;
   tabId: string;
@@ -20,7 +23,8 @@ export function useSessionOffer(input: {
   accounts: ReadonlyArray<AccountSummary>;
   enabled: boolean;
 }) {
-  const [offer, setOffer] = useState<string | null>(null);
+  const save = useAccountCommand(accountsState.save, input.environmentId);
+  const remove = useAccountCommand(accountsState.remove, input.environmentId);
   const profiles = useClientSettings((settings) => settings.browserProfiles);
   const newTabProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const incognito =
@@ -36,25 +40,37 @@ export function useSessionOffer(input: {
       before: ReadonlyArray<CookieMetadata>,
       after: ReadonlyArray<CookieMetadata>,
     ) => {
-      const id = `${input.environmentId}:${input.profileId}:${siteHost(input.url)}`;
       if (isSigningIn(input.environmentId, input.profileId, input.url)) return false;
-      if (
-        shouldOfferSession({
-          previousUrl,
-          url: input.url,
-          before,
-          after,
-          incognito,
-          hasAccount:
-            profileAccounts(input.accounts, input.url, input.profileId, newTabProfileId).length > 0,
-          offered: offered.has(id),
-        })
-      ) {
-        offered.add(id);
-        setOffer(input.url);
-        return true;
-      }
-      return false;
+      const site = signedInSite({
+        previousUrl,
+        url: input.url,
+        before,
+        after,
+        incognito,
+        hasAccount:
+          profileAccounts(input.accounts, input.url, input.profileId, newTabProfileId).length > 0,
+      });
+      if (site === null) return false;
+      const key = `${input.environmentId}:${input.profileId}:${site}`;
+      if (recorded.has(key)) return true;
+      recorded.add(key);
+      const profileName = profiles.find((profile) => profile.id === input.profileId)?.name;
+      void save({
+        name: site,
+        details: { kind: "website", sites: [site], profileId: input.profileId },
+        secrets: {},
+      }).then((result) => {
+        if (!result.ok) return;
+        toastManager.add({
+          type: "success",
+          title: `${site} saved to Accounts${profileName ? ` for ${profileName}` : ""}`,
+          actionProps: {
+            children: "Undo",
+            onClick: () => void remove({ accountId: result.value.accountId }),
+          },
+        });
+      });
+      return true;
     },
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe native cookie metadata across an IdP return; bound polling to five minutes and cancel on navigation or unmount.
@@ -86,5 +102,4 @@ export function useSessionOffer(input: {
       clearTimeout(timer);
     };
   }, [input.environmentId, input.profileId, input.url, input.enabled, incognito]);
-  return { offer, close: () => setOffer(null) };
 }

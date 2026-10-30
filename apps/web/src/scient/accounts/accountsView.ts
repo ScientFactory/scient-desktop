@@ -450,6 +450,41 @@ export function isSavedPassword(account: AccountSummary) {
   return account.details.kind === "website" && account.secrets.password !== undefined;
 }
 
+/** A website account that is only a profile's session: no password and no username. */
+function isBrowserSignIn(account: AccountSummary) {
+  return (
+    account.details.kind === "website" &&
+    account.secrets.password === undefined &&
+    account.details.username === undefined
+  );
+}
+
+/**
+ * The Accounts list in order, with one entry per site for browser sign-ins: the same site signed
+ * in from several profiles is one group.
+ */
+export function accountListRows(
+  accounts: ReadonlyArray<AccountSummary>,
+): Array<AccountSummary | ReadonlyArray<AccountSummary>> {
+  const groups = new Map<string, Array<AccountSummary>>();
+  const rows: Array<AccountSummary | Array<AccountSummary>> = [];
+  for (const account of accounts) {
+    if (!isBrowserSignIn(account) || !("sites" in account.details)) {
+      rows.push(account);
+      continue;
+    }
+    const site = account.details.sites[0]?.replace(/^https:\/\//, "").toLowerCase() ?? "";
+    const group = groups.get(site);
+    if (group) group.push(account);
+    else {
+      const created = [account];
+      groups.set(site, created);
+      rows.push(created);
+    }
+  }
+  return rows.map((row) => (Array.isArray(row) && row.length === 1 ? row[0]! : row));
+}
+
 /** The source profile a linked profile came from, when its picture, colour or name changed there. */
 export function changedSourceProfile(
   record: BrowserProfileRecord,

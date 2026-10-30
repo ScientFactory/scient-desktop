@@ -11,6 +11,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  accountListRows,
   providerManagedAccounts,
   accountCatalogue,
   catalogueDetails,
@@ -421,4 +422,25 @@ it("recognizes key prefixes without retaining values or guessing unknown keys", 
   expect(recognizeAccountKey("unknown")).toBeUndefined();
   expect(recognizeAccountKey("sk-")).toBeUndefined();
   expect(recognizeAccountKey("sk-synthetic extra")).toBeUndefined();
+});
+
+it("lists one row per site for sign-ins kept only as profile sessions", () => {
+  const signIn = (id: string, site: string, profileId: string) => ({
+    ...website(profileId),
+    accountId: AccountId.make(`acc_${id}`.padEnd(12, "0")),
+    name: site,
+    details: { kind: "website" as const, sites: [site], profileId },
+  });
+  const docs = signIn("docs1", "https://docs.google.com", "yaacov");
+  const password = { ...website(), secrets: { password: { source: { type: "scient" as const } } } };
+  const rows = accountListRows([
+    docs,
+    password,
+    signIn("docs2", "docs.google.com", "work"),
+    signIn("ovl", "overleaf.com", "work"),
+  ]);
+  expect(rows).toHaveLength(3);
+  expect(rows[0]).toHaveLength(2);
+  expect(rows[1]).toBe(password);
+  expect(rows[2]).toMatchObject({ name: "overleaf.com" });
 });

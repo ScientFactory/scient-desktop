@@ -49,14 +49,17 @@ import { accountsState } from "./accountsState";
 import {
   KIND_LABELS,
   accountIconUrl,
+  accountListRows,
   accountManagePage,
   isSavedPassword,
+  mergeProfiles,
   providerManagedAccounts,
 } from "./accountsView";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
 import { BrowserImportDialog, BrowserProfiles } from "./BrowserProfiles";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
+import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useWebsiteSessions } from "./useWebsiteSessions";
@@ -384,6 +387,63 @@ function SavedPasswordsDialog({
   );
 }
 
+/** One site signed in from several browser profiles: the profiles' pictures, opening to each. */
+function SignInGroupRow({
+  accounts,
+  profiles,
+  onOpen,
+}: {
+  accounts: ReadonlyArray<AccountSummary>;
+  profiles: ReturnType<typeof mergeProfiles>;
+  onOpen: () => void;
+}) {
+  const first = accounts[0]!;
+  const site = "sites" in first.details ? first.details.sites[0] : undefined;
+  const iconUrl = accountIconUrl(site ? [site] : [], first.name);
+  const signedIn = accounts.flatMap((account) => {
+    const profileId = account.details.kind === "website" ? account.details.profileId : undefined;
+    const profile = profiles.find((item) => item.id === profileId);
+    return profile ? [profile] : [];
+  });
+  return (
+    <SettingsRow
+      {...clickableAccountRow(onOpen)}
+      aria-label={`Show ${first.name} sign-ins`}
+      title={
+        <span className="flex min-w-0 items-center gap-3">
+          {iconUrl ? (
+            <AccountLogo src={iconUrl} className="size-10 self-center rounded-[25%]" />
+          ) : site ? (
+            <SiteFavicon site={site} />
+          ) : null}
+          <span className="grid min-w-0 gap-1">
+            <span className="truncate text-left">{first.name}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              Browser sign-in · {signedIn.map((profile) => profile.name).join(", ")}
+            </span>
+          </span>
+        </span>
+      }
+      control={
+        <span className="flex items-center gap-2">
+          <span className="flex -space-x-1.5">
+            {signedIn.map((profile) => (
+              <ProfilePicture
+                key={profile.id}
+                size="sm"
+                name={profile.name}
+                picture={profile.record.picture}
+                color={profile.record.color}
+              />
+            ))}
+          </span>
+          <ChevronRightIcon className="size-4 text-muted-foreground" />
+        </span>
+      }
+    />
+  );
+}
+
 function AccountsContent({
   environmentId,
   snapshot,
@@ -395,6 +455,11 @@ function AccountsContent({
 }) {
   const [dialog, setDialog] = useState<"add" | "import" | "1password" | "passwords" | null>(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
+  const [signIns, setSignIns] = useState<ReadonlyArray<AccountSummary> | null>(null);
+  const profiles = mergeProfiles(
+    useClientSettings((settings) => settings.browserProfiles),
+    snapshot.profiles,
+  );
   const [activity, setActivity] = useState<ReadonlyArray<AccountActivityEntry> | null>(null);
   const passwordFileRef = useRef<HTMLInputElement>(null);
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
@@ -485,18 +550,26 @@ function AccountsContent({
             }
           />
         ) : null}
-        {snapshot.accounts
-          .filter((account) => !isSavedPassword(account))
-          .map((account) => (
-            <AccountRow
-              key={account.accountId}
-              account={account}
-              environmentId={environmentId}
-              canWrite={canWrite}
-              onEdit={() => setEditing(account)}
-              onActivity={setActivity}
-            />
-          ))}
+        {accountListRows(snapshot.accounts.filter((account) => !isSavedPassword(account))).map(
+          (row) =>
+            "accountId" in row ? (
+              <AccountRow
+                key={row.accountId}
+                account={row}
+                environmentId={environmentId}
+                canWrite={canWrite}
+                onEdit={() => setEditing(row)}
+                onActivity={setActivity}
+              />
+            ) : (
+              <SignInGroupRow
+                key={row[0]!.accountId}
+                accounts={row}
+                profiles={profiles}
+                onOpen={() => setSignIns(row)}
+              />
+            ),
+        )}
         {savedPasswords.length ? (
           <SettingsRow
             {...clickableAccountRow(() => setDialog("passwords"))}
@@ -576,6 +649,34 @@ function AccountsContent({
           onActivity={setActivity}
           onClose={() => setDialog(null)}
         />
+      ) : null}
+      {signIns ? (
+        <Dialog open onOpenChange={(open) => !open && setSignIns(null)}>
+          <DialogPopup data-accounts-dialog className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{signIns[0]!.name}</DialogTitle>
+            </DialogHeader>
+            <DialogPanel>
+              <div className="rounded-lg border">
+                {signIns.map((account) => {
+                  const current = snapshot.accounts.find(
+                    (item) => item.accountId === account.accountId,
+                  );
+                  return current ? (
+                    <AccountRow
+                      key={current.accountId}
+                      account={current}
+                      environmentId={environmentId}
+                      canWrite={canWrite}
+                      onEdit={() => setEditing(current)}
+                      onActivity={setActivity}
+                    />
+                  ) : null;
+                })}
+              </div>
+            </DialogPanel>
+          </DialogPopup>
+        </Dialog>
       ) : null}
       {dialog === "1password" ? (
         <OnePasswordDialog
