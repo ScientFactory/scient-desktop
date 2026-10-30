@@ -11,6 +11,7 @@ import {
   reduceCommandPaletteUiState,
   isKeyboardBrowseHighlight,
   resolveBrowseEnterAction,
+  resolvePastedBrowsePath,
   shouldOfferProjectPathCreation,
   shouldOpenNewThreadTargetPicker,
   resolveAddProjectEntry,
@@ -126,6 +127,34 @@ describe("isKeyboardBrowseHighlight", () => {
         highlightReason: "none",
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolvePastedBrowsePath", () => {
+  it.each([
+    ["/Users/dana/thesis", "/Users/dana/thesis"],
+    ["/home/dana/thesis/", "/home/dana/thesis/"],
+    ["C:\\Users\\dana\\thesis", "C:\\Users\\dana\\thesis"],
+    ["D:/data", "D:/data"],
+    ["\\\\lab-server\\share\\thesis", "\\\\lab-server\\share\\thesis"],
+    ["~/Documents/thesis", "~/Documents/thesis"],
+    ["  /Users/dana/My Thesis\n", "/Users/dana/My Thesis"],
+  ])("replaces the box with the full path in %j", (pasted, path) => {
+    expect(resolvePastedBrowsePath(pasted)).toBe(path);
+  });
+
+  it.each([
+    "",
+    "   ",
+    "thesis",
+    "Documents/thesis",
+    "Users/dana/thesis",
+    "./thesis",
+    "../thesis",
+    "~",
+    "/Users/dana/one\n/Users/dana/two",
+  ])("pastes %j normally", (pasted) => {
+    expect(resolvePastedBrowsePath(pasted)).toBeNull();
   });
 });
 
