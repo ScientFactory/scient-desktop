@@ -1,61 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Opaque request ids use the operating system CSPRNG.
 import * as NodeCrypto from "node:crypto";
-import type { AccountSummary, PreviewAutomationStatus, PreviewTabId } from "@t3tools/contracts";
+import type { AccountSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
-import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
-import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
-import { codeInMailFeed, mailFeedScript, MAIL_FEED_URL } from "../signIn/mailCodes.ts";
 import { readMessageCode, serviceWords } from "../signIn/messageCodes.ts";
 
-/** The newest code from the sources the user turned on, if one arrived since the sign-in began. */
+/** The newest code in Messages, if the user turned that on and one arrived since sign-in began. */
 const findSignInCode = Effect.fn("AccountsAgent.findSignInCode")(function* (
   sinceMs: number,
-  profileId: string | undefined,
   service: ReadonlyArray<string>,
 ) {
   const sources = (yield* (yield* AccountsService).snapshot).codeSources;
-  if (sources?.messages) {
-    const code = yield* Effect.try(() => readMessageCode(sinceMs, service)).pipe(
-      Effect.orElseSucceed(() => undefined),
-    );
-    if (code !== undefined) return code;
-  }
-  if (!sources?.mail) return undefined;
-  const broker = yield* PreviewAutomationBroker;
-  const scope = yield* AgentInvocationContext;
-  const invoke = <A>(
-    operation: Parameters<typeof broker.invoke>[0]["operation"],
-    input: unknown,
-    tabId?: PreviewTabId,
-  ) =>
-    broker.invoke<A>({
-      scope,
-      operation,
-      input,
-      ...(tabId === undefined ? {} : { tabId }),
-      updateCurrentTab: false,
-    });
-  return yield* Effect.acquireUseRelease(
-    invoke<PreviewAutomationStatus>("open", {
-      url: MAIL_FEED_URL,
-      ...(profileId === undefined ? {} : { profileId }),
-      open: false,
-      reuseExistingTab: false,
-    }),
-    ({ tabId }) =>
-      Effect.gen(function* () {
-        if (!tabId) return undefined;
-        yield* invoke("accountWaitForLoad", {}, tabId);
-        const feed = yield* invoke<unknown>("evaluate", { expression: mailFeedScript }, tabId);
-        return typeof feed === "string" ? codeInMailFeed(feed, sinceMs, service) : undefined;
-      }),
-    ({ tabId }) => (tabId ? invoke("close", {}, tabId).pipe(Effect.ignore) : Effect.void),
-  ).pipe(Effect.orElseSucceed(() => undefined));
+  if (!sources?.messages) return undefined;
+  return yield* Effect.try(() => readMessageCode(sinceMs, service)).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
 });
 
 /**
@@ -67,12 +30,9 @@ export const signInCodes = Effect.fn("AccountsAgent.signInCodes")(function* (
   account: Pick<AccountSummary, "name" | "details">,
 ) {
   const accounts = yield* AccountsService;
-  const broker = yield* PreviewAutomationBroker;
-  const invocation = yield* AgentInvocationContext;
   const orchestrator = yield* Effect.serviceOption(OrchestratorMcpService);
   const caller = yield* Effect.serviceOption(McpInvocationContext);
   const requests = yield* Effect.serviceOption(SecretRequests);
-  const profileId = "profileId" in account.details ? account.details.profileId : undefined;
   const service = serviceWords({
     name: account.name,
     sites: "sites" in account.details ? account.details.sites : [],
@@ -106,10 +66,8 @@ export const signInCodes = Effect.fn("AccountsAgent.signInCodes")(function* (
         );
     },
     findCode: (sinceMs: number): Effect.Effect<string | undefined> =>
-      findSignInCode(sinceMs, profileId, service).pipe(
+      findSignInCode(sinceMs, service).pipe(
         Effect.provideService(AccountsService, accounts),
-        Effect.provideService(PreviewAutomationBroker, broker),
-        Effect.provideService(AgentInvocationContext, invocation),
         Effect.orElseSucceed(() => undefined),
       ),
   };

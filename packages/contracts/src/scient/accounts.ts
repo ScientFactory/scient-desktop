@@ -541,10 +541,9 @@ export const AccountKeyUnlinkInput = Schema.Struct({
   variable: EnvironmentVariableName,
 });
 
-/** Where Scient may look for a sign-in code. Both are off until the user turns them on. */
+/** Where Scient may look for a sign-in code. Off until the user turns it on. */
 export const AccountCodeSources = Schema.Struct({
   messages: Schema.Boolean,
-  mail: Schema.Boolean,
 });
 export type AccountCodeSources = typeof AccountCodeSources.Type;
 

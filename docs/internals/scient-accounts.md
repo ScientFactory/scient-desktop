@@ -448,9 +448,9 @@ When a page wants a code the account can't supply, the hand-off card appears and
 races two other sources (`agent/signInCodes.ts`). `askCode` opens upstream's private card, which
 reaches every device and is pending thread state, so it notifies the phone. It never completes when
 no one can answer. `findCode` runs on each two-second poll, using the sources in
-`AccountsSnapshot.codeSources`, both off by default: `readMessageCode` reads Messages' `chat.db`
-(macOS, Full Disk Access; recent messages keep their text in `attributedBody`), and `codeInMailFeed`
-reads Gmail's unread Atom feed in a hidden tab of the account's profile. Only messages newer than the
+`AccountsSnapshot.codeSources`, off by default: `readMessageCode` reads Messages' `chat.db` (macOS,
+Full Disk Access; recent messages keep their text in `attributedBody`). Gmail's Atom feed is not a
+source: it answers 401 even with the inbox open in the same profile. Only messages newer than the
 hand-off count, and text must mention a code in English or Hebrew. A refused code is reported, never
 retried. The agent's result never contains the code.
 
@@ -489,7 +489,10 @@ always need Touch ID or the Mac password. Nothing else in Accounts depends on th
 - Hidden values stay out of the model's context, not out of reach of a same-user process.
 - An agent signed in to a site can do what that account can do there.
 - CAPTCHAs, push approvals, new-device checks and passkeys need the user.
-- Google refuses sign-in in embedded browsers; import a Chrome profile for Google.
+- Google's sign-in reaches its password step in this browser, with the default user agent; the rest
+  of the sign-in is unproven. Google sessions imported from Chrome don't reliably last: on 2026-10-30,
+  four of five imported profiles were signed out within four days, and the fifth came from a Chrome
+  profile idle for 12 days. Chrome's continued use is the likely cause, not yet proven.
 - Known values are not masked in chat or logs, and commits are not checked. These can get in the way
   of real work, so they follow one at a time.
 - Webhook signing secrets stay in the scheduler's database.

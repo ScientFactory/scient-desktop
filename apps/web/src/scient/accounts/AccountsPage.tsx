@@ -670,20 +670,18 @@ function SignInCodesDialog({
   };
   return (
     <ListDialog title="Sign-in codes" onClose={onClose}>
-      {isMacPlatform(navigator.platform) ? (
-        <SettingsRow
-          title="Codes from Messages"
-          description="Texts forwarded to this Mac. Needs Full Disk Access, which also lets Scient read your other files."
-          control={
-            <Switch
-              aria-label="Codes from Messages"
-              checked={chosen.messages}
-              disabled={!canWrite}
-              onCheckedChange={(messages) => void change({ ...chosen, messages })}
-            />
-          }
-        />
-      ) : null}
+      <SettingsRow
+        title="Codes from Messages"
+        description="Texts forwarded to this Mac. Needs Full Disk Access, which also lets Scient read your other files."
+        control={
+          <Switch
+            aria-label="Codes from Messages"
+            checked={chosen.messages}
+            disabled={!canWrite}
+            onCheckedChange={(messages) => void change({ messages })}
+          />
+        }
+      />
       {needsAccess ? (
         <SettingsRow
           title="macOS hasn't given Scient access"
@@ -702,18 +700,6 @@ function SignInCodesDialog({
           }
         />
       ) : null}
-      <SettingsRow
-        title="Codes from Gmail"
-        description="Unread mail in the browser profile you sign in with. Nothing new to connect."
-        control={
-          <Switch
-            aria-label="Codes from Gmail"
-            checked={chosen.mail}
-            disabled={!canWrite}
-            onCheckedChange={(mail) => void change({ ...chosen, mail })}
-          />
-        }
-      />
     </ListDialog>
   );
 }
@@ -929,16 +915,14 @@ function AccountsContent({
             onOpen={() => setDialog("plain-keys")}
           />
         ) : null}
-        <ListRow
-          icon={<MessageSquareIcon />}
-          title="Sign-in codes"
-          detail={
-            [snapshot.codeSources?.messages && "Messages", snapshot.codeSources?.mail && "Gmail"]
-              .filter(Boolean)
-              .join(", ") || "You type them in"
-          }
-          onOpen={() => setDialog("sign-in-codes")}
-        />
+        {isMacPlatform(navigator.platform) ? (
+          <ListRow
+            icon={<MessageSquareIcon />}
+            title="Sign-in codes"
+            detail={snapshot.codeSources?.messages ? "Messages" : "You type them in"}
+            onOpen={() => setDialog("sign-in-codes")}
+          />
+        ) : null}
         {managedRows.length ? (
           <ListRow
             icon={<LinkIcon />}
@@ -1044,7 +1028,7 @@ function AccountsContent({
       ) : null}
       {dialog === "sign-in-codes" ? (
         <SignInCodesDialog
-          sources={snapshot.codeSources ?? { messages: false, mail: false }}
+          sources={snapshot.codeSources ?? { messages: false }}
           environmentId={environmentId}
           canWrite={canWrite}
           onClose={() => setDialog(null)}

@@ -61,9 +61,8 @@ Imported passwords nobody has used are skipped; **Check sign-in** in a row's men
 
 When a site sends a sign-in code, a private card asks for it on any of your devices, including the
 phone, and the code goes straight into the page. The agent never sees it. Under **Sign-in codes** you
-can let Scient find codes itself: in Messages on a Mac (texts forwarded to it; this needs Full Disk
-Access, which also lets Scient read your other files) or in unread Gmail, using the browser profile
-you sign in with. Both are off until you turn them on.
+can let Scient find codes in Messages on a Mac (texts forwarded to it; this needs Full Disk Access,
+which also lets Scient read your other files). It's off until you turn it on.
 
 The phone also shows approvals to answer and sign-ins waiting for you, with a notification. A CAPTCHA
 or passkey still needs the desktop.
