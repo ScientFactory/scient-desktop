@@ -616,6 +616,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`97e35bcf23e4dcf34c2dcffadd37c08db0e01e52` is recorded in
+[the 2026-10-30 97e35bcf23 receipt](docs/internals/t3-upstream-sync-20261030-97e35bcf23.md).
+Literal merge `fa47084190dd8c156172c23678b2e84bbea8a4a6` has owned base
+`5dc9c2c26725b92751c984263f5f9b70abdb21f3` (#710) and the frozen official target as
+parents, retaining the 27 official commits after `dd14848153`. Stop always completes with
+force stop on top of Scient's queue and admission rules; Scient keeps releasing held queues
+only on Send or Resume. Provider environment secrets arrive behind upstream's off secrets
+flag. Release remains separate.
+
+The previous committed alignment through
 `dd148481531a0a090780a2ade20588566db099a2` is recorded in
 [the 2026-10-30 dd14848153 receipt](docs/internals/t3-upstream-sync-20261030-dd14848153.md).
 Literal merge `e86962f1278340f6fdbdda071ebe1cc0a11aec22` has owned base
