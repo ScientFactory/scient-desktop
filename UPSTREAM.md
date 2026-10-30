@@ -1776,3 +1776,21 @@ When aligning, check:
 - **User docs.** `docs/user/keybindings.md` (these shortcuts) and `docs/user/devices.md`
   (Device under More on the New tab page) carry no markers, like the rest of
   Scient's lines there.
+
+## Browser downloads and composer focus
+
+Browser download attribution is upstream's, unchanged: `DesktopBrowserHost.humanStartedDownload`
+treats a download as the person's unless agent CDP input reached the tab in the last 5 seconds,
+and only then does `Manager.ts` copy it to ~/Downloads. Do not attribute downloads from the guest
+preload's input reports. Chrome's PDF viewer is an out-of-process frame the preload never runs in,
+so its Download button would never count as the person's, and the file would be lost when the tab
+closes (this happened between the 2026-10-09 alignment and 2026-10-30). Keep the preload's input
+reports asynchronous; a synchronous IPC per key or click makes page typing wait on the main process.
+
+Two marked focus seams keep the caret where the person is typing:
+
+- `ChatView.tsx`, the thread-open effect: a new thread, or closing the terminal, focuses the
+  composer as in T3. The same thread re-resolving (a reconnect) focuses it only when
+  `shouldRefocusComposerOnWindowFocus` allows, so a browser page, field or editor keeps the caret.
+- `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
+  takes the caret only if focus is still in the composer or nowhere in particular.
