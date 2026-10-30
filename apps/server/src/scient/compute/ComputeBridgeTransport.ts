@@ -50,6 +50,7 @@ import {
   type BridgeMessage,
   type DisplayPayload,
   type KernelPortsPayload,
+  type TablePayload,
 } from "./BridgeProtocol.ts";
 import { inspectComputeStaticImage } from "./ComputeStaticImage.ts";
 

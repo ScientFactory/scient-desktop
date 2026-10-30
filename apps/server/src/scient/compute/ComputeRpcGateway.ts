@@ -23,6 +23,7 @@ import {
   type ComputeProjectSessionInput,
   type ComputeStartProjectSessionInput,
   type ComputeSubmitProjectExecutionInput,
+  type ComputeTableInput,
   type ComputeVerifyRuntimeInput,
   resolveScientificComputingLanguageSettings,
   type ServerSettings as ServerSettingsValue,
@@ -56,6 +57,7 @@ type ComputeGatewayService = Pick<
   | "restartSession"
   | "stopSession"
   | "inspectVariables"
+  | "readTable"
   | "subscribeSessions"
 >;
 type ComputeGatewaySettings = {
@@ -483,6 +485,13 @@ export function makeComputeRpcGateway(input: {
     return yield* input.compute.inspectVariables({ ...request, projectId: project.projectId });
   });
 
+  const readTable = Effect.fn("ComputeRpcGateway.readTable")(function* (
+    request: ComputeTableInput,
+  ) {
+    const project = yield* projectFor("table", request.cwd);
+    return yield* input.compute.readTable({ ...request, projectId: project.projectId });
+  });
+
   return {
     runtimeInventory,
     inspectRuntimes: inWorkspace("inspect", inspectRuntimes),
@@ -510,6 +519,7 @@ export function makeComputeRpcGateway(input: {
       }),
     ),
     inspectVariables: inWorkspace("variables", inspectVariables),
+    readTable: inWorkspace("table", readTable),
     subscribeSessions: inWorkspace("subscribe", subscribeSessions),
   };
 }

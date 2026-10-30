@@ -12,8 +12,8 @@ const LF = 0x0a;
 const CR = 0x0d;
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const SAMPLE_ROWS = 1000;
-/** Eight bytes of index per row bound memory for the largest files. */
-export const DELIMITED_MAX_ROWS = 10_000_000;
+/** Index, sort and search memory grow with rows; beyond this only the first rows are shown. */
+export const DELIMITED_MAX_ROWS = 5_000_000;
 
 const utf8 = new TextDecoder("utf-8");
 

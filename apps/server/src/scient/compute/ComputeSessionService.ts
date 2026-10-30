@@ -69,6 +69,8 @@ import {
   type ComputeToolkitAssessment,
   type ComputeToolkitDescriptor,
   type ComputeVariableSnapshot,
+  type DataTablePage,
+  type DataTableQuery,
   type ComputeRuntimeProfile,
   type ComputeRuntimeInstallation,
   type ComputeRuntimeVerification,
@@ -405,6 +407,13 @@ export class ComputeSessionService extends Context.Service<
     readonly inspectVariables: (
       input: ComputeSessionCommandInput,
     ) => Effect.Effect<ComputeVariableSnapshot, ComputeOperationError>;
+    /** One page of a table-like variable, read silently from the live namespace. */
+    readonly readTable: (
+      input: ComputeSessionCommandInput & {
+        readonly name: string;
+        readonly query: DataTableQuery;
+      },
+    ) => Effect.Effect<DataTablePage, ComputeOperationError>;
     readonly listSessions: (
       input: ComputeListSessionsInput,
     ) => Effect.Effect<ReadonlyArray<ComputeSessionRecord>, ComputeOperationError>;
@@ -2884,37 +2893,50 @@ const make = Effect.gen(function* () {
     return yield* Ref.get(live.recordRef);
   });
 
-  const inspectVariables = Effect.fn("ComputeSessionService.inspectVariables")(function* (
+  /**
+   * The idle current generation's channel, for a read of the live namespace. A slow read must
+   * never hold the lifecycle lease and prevent Stop; the transport rechecks generation at send.
+   */
+  const idleNamespaceChannel = Effect.fn("ComputeSessionService.idleNamespaceChannel")(function* (
+    operation: "variables" | "table",
     input: ComputeSessionCommandInput,
   ) {
-    const live = yield* requireLiveSession("variables", input.projectId, input.sessionId);
+    const live = yield* requireLiveSession(operation, input.projectId, input.sessionId);
+    const capability = operation === "table" ? "tables" : "variables";
     const generation = yield* live.mutation.withPermits(1)(
       Effect.gen(function* () {
         const record = yield* Ref.get(live.recordRef);
-        yield* requireCurrentGeneration("variables", live, record, input.expectedGeneration);
+        yield* requireCurrentGeneration(operation, live, record, input.expectedGeneration);
         if (record.status !== "ready" || record.activity !== "idle") {
           return yield* computeError(
-            "variables",
+            operation,
             "session-not-running",
             record.activity === "busy"
               ? "Current variables are available after the running code finishes."
               : `This session is ${record.status} and cannot inspect variables.`,
           );
         }
-        if (!(yield* Ref.get(live.capabilitiesRef)).has("variables")) {
+        if (!(yield* Ref.get(live.capabilitiesRef)).has(capability)) {
           return yield* computeError(
-            "variables",
+            operation,
             "capability-missing",
-            `This ${live.adapter.languageId} runtime does not support variable inspection.`,
+            operation === "table"
+              ? `This ${live.adapter.languageId} runtime cannot show variables as tables.`
+              : `This ${live.adapter.languageId} runtime does not support variable inspection.`,
           );
         }
         return record.generation;
       }),
     );
-    // A slow runtime inspection must never hold the lifecycle lease and
-    // prevent Stop. The transport rechecks generation and stopping at send.
     if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
-    return yield* (yield* channelFor(live, "variables"))
+    return { generation, channel: yield* channelFor(live, operation) };
+  });
+
+  const inspectVariables = Effect.fn("ComputeSessionService.inspectVariables")(function* (
+    input: ComputeSessionCommandInput,
+  ) {
+    const { generation, channel } = yield* idleNamespaceChannel("variables", input);
+    return yield* channel
       .inspectVariables({
         requestId: ComputeRequestId.make(NodeCrypto.randomUUID()),
         expectedGeneration: generation,
@@ -2923,6 +2945,25 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           computeError("variables", "operation-failed", cause.message, cause),
         ),
+      );
+  });
+
+  const readTable = Effect.fn("ComputeSessionService.readTable")(function* (
+    input: ComputeSessionCommandInput & {
+      readonly name: string;
+      readonly query: DataTableQuery;
+    },
+  ) {
+    const { generation, channel } = yield* idleNamespaceChannel("table", input);
+    return yield* channel
+      .inspectTable({
+        requestId: ComputeRequestId.make(NodeCrypto.randomUUID()),
+        expectedGeneration: generation,
+        name: input.name,
+        query: input.query,
+      })
+      .pipe(
+        Effect.mapError((cause) => computeError("table", "operation-failed", cause.message, cause)),
       );
   });
 
@@ -3389,6 +3430,7 @@ const make = Effect.gen(function* () {
     cancelExecution: guarded("cancel", cancelExecution),
     interruptSession: guarded("interrupt", interruptSession),
     inspectVariables: guarded("variables", inspectVariables),
+    readTable: guarded("table", readTable),
     restartSession: guarded("restart", restartSession),
     stopSession: guarded("stop", stopSession),
     listSessions: scopedList,

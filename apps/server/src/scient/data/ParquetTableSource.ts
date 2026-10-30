@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- formats decoded file values outside any Effect.
 import {
   dataTableCellText,
   type DataTableColumn,
@@ -17,7 +18,7 @@ import { formatDate, formatValue } from "./cellText.ts";
 import type { TableSource } from "./TableView.ts";
 
 /** Decoded column chunks kept per open file; reading a row decodes its whole row group. */
-const CHUNK_CACHE_BYTES = 192 * 1024 * 1024;
+const CHUNK_CACHE_BYTES = 128 * 1024 * 1024;
 
 function columnKind(node: SchemaTree): Pick<DataTableColumn, "type" | "label"> {
   const element: SchemaElement = node.element;
@@ -27,7 +28,7 @@ function columnKind(node: SchemaTree): Pick<DataTableColumn, "type" | "label"> {
   }
   const logical = element.logical_type;
   const typed = (type: DataTableColumnType, label: string) => ({ type, label });
-  switch (logical?.type) {
+  if (logical) switch (logical.type) {
     case "STRING":
     case "ENUM":
     case "JSON":
@@ -43,8 +44,6 @@ function columnKind(node: SchemaTree): Pick<DataTableColumn, "type" | "label"> {
       return typed("integer", `${logical.isSigned ? "int" : "uint"}${logical.bitWidth}`);
     case "FLOAT16":
       return typed("number", "float16");
-    case undefined:
-      break;
     default:
       return typed("other", logical.type.toLowerCase());
   }

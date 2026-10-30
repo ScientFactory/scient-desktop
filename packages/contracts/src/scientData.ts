@@ -1,5 +1,14 @@
-import { DataTablePage, DataTableQuery } from "@scientfactory/compute";
+import {
+  dataTablePageRows,
+  DataTableColumn,
+  DataTableColumnType,
+  DataTablePage,
+  DataTableQuery,
+  DataTableSort,
+} from "@scientfactory/compute";
 import * as Schema from "effect/Schema";
+
+import { ComputeProjectSessionCommandInput } from "./scientCompute.ts";
 
 const DataFilePath = Schema.NonEmptyString.check(Schema.isMaxLength(4096));
 
@@ -41,3 +50,20 @@ export class DataFileTableError extends Schema.TaggedError<DataFileTableError>()
     }
   }
 }
+
+/** One page of a table-like value in a live compute session, read without entering history. */
+export const ComputeTableInput = Schema.Struct({
+  ...ComputeProjectSessionCommandInput.fields,
+  name: Schema.NonEmptyString.check(Schema.isMaxLength(256)),
+  query: DataTableQuery,
+});
+export type ComputeTableInput = typeof ComputeTableInput.Type;
+
+export {
+  dataTablePageRows,
+  DataTableColumn,
+  DataTableColumnType,
+  DataTablePage,
+  DataTableQuery,
+  DataTableSort,
+};

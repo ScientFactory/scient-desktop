@@ -72,7 +72,7 @@ export class TableViewCache {
       entry = created;
     }
     this.entries.set(key, entry);
-    while (this.entries.size > 6) this.entries.delete(this.entries.keys().next().value!);
+    while (this.entries.size > 4) this.entries.delete(this.entries.keys().next().value!);
     const joined = entry;
     joined.waiters++;
     return new Promise((resolve, reject) => {

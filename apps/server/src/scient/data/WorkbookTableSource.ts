@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- formats decoded file values outside any Effect.
 import { dataTableCellText, type DataTableColumn } from "@scientfactory/compute";
 import { SaxesParser, type SaxesTagPlain } from "saxes";
 import * as Yauzl from "yauzl";
