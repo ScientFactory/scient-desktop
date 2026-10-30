@@ -950,7 +950,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     // selection determines whether a detected connection is independent.
     const hasIndependentRuntime =
       readyRuntime !== null &&
-      (props.language.languageId === "python"
+      (props.language.languageId === "python" || props.language.languageId === "sql"
         ? readyRuntime.profile.source !== "managed"
         : managedRuntime.status?.selection === "existing");
     // A live session takes precedence over discovery of a replacement runtime.

@@ -371,16 +371,28 @@ export class ComputeTransportError extends Schema.TaggedError<ComputeTransportEr
   },
 ) {}
 
+/** A Jupyter kernel the bridge host starts instead of ipykernel in its own interpreter. */
+export interface ComputeKernelSpec {
+  /** Kernel command line; Jupyter substitutes `{connection_file}`. */
+  readonly argv: ReadonlyArray<string>;
+  /** The `language_info.name` the kernel reports. */
+  readonly language: string;
+  readonly interruptMode: "signal" | "message";
+  /** A kernel expression whose text/plain value is the variables JSON; absent means unsupported. */
+  readonly variablesExpression: string | null;
+}
+
 /**
  * The launched process may be a bridge host rather than the scientific runtime. Do not infer
- * runtime identity from this executable; qualify a typed transport-specific extension with the
- * first real second-language adapter.
+ * runtime identity from this executable.
  */
 export interface ComputeLaunchPlan {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
+  /** Absent means ipykernel in the bridge host's own interpreter. */
+  readonly kernel?: ComputeKernelSpec;
 }
 
 export interface ComputeTransportOpenRequest {

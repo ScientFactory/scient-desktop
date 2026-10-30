@@ -4,15 +4,15 @@
   "recipes": [
     {
       "purpose": "python",
-      "revision": 1,
-      "toolkitRevision": "scientific-python-2026-09-17.2",
+      "revision": 1793346542,
+      "toolkitRevision": "scientific-python-2026-10-30.1793346542",
       "contract": 1,
       "pythonVersion": "3.14.7",
       "uvVersion": "0.12.15",
       "sourceCommit": null,
-      "projectSha256": "b7c6b99e2200e510c27ec6c9944d8bc2cd949fdcf37137080cab5f050d7cae2e",
-      "lockSha256": "b1470dc4f8d0ee92106504bc98f970c97f781d022686b3c90ae65cd28d121577",
-      "capabilitySha256": "5d398bd45ae7d1b067506a3fdfa5f0b463f413be1d03e9a76b607dedb176c795",
+      "projectSha256": "e0c5c263ecdff6cbb78356a2e9f4585df90d8b1761a4303b1e82529cec05bba5",
+      "lockSha256": "260a5c82ecc0b9bbe89af7a0d36e815ccd234c1384db1ba983936670d382a69e",
+      "capabilitySha256": "7bb1c5b5a6bb184b9828b1ad8363b547ed8918459ec2b282f1949abe01cc7309",
       "targets": ["darwin-arm64", "linux-x64"],
       "summary": "Qualified Scientific Python and optional Toolkits."
     },

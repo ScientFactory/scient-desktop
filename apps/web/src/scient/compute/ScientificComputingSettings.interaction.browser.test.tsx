@@ -153,7 +153,6 @@ vi.mock("~/state/use-atom-command", () => ({
             : vi.fn(async () => ({ _tag: "Success", value: null })),
 }));
 import { ScientificComputingSettings } from "./ScientificComputingSettings";
-import octaveLogo from "~/assets/compute/octave.svg";
 
 const managedPath = "/scient/python";
 const systemPath = "/system/python";
@@ -768,58 +767,57 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.calls).toEqual([]);
   });
 
-  it("shows only Coming soon for preview languages without changing runtime settings", async () => {
+  it("sets up a private kernel for R and offers its download when R is missing", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
+    const kernel: ComputeManagedRuntimeStatus = {
+      displayName: "IRkernel",
+      installed: false,
+      selection: "managed",
+      updateAvailable: false,
+      runtimeVersion: null,
+      toolkitRevision: null,
+      operation: null,
+      failureMessage: null,
+    };
+    const r = (installations: ComputeLanguageRuntimeInventory["installations"]) => ({
+      ...python(),
+      descriptor: {
+        ...python().descriptor,
+        languageId: ComputeLanguageId.make("r"),
+        displayName: "R",
+        sourceExtensions: [".r"],
+      },
+      managedRuntime: kernel,
+      installations,
+    });
+    mocks.preferences = { r: { enabled: true, executable: "" } };
+    mocks.statuses = { r: kernel };
+    mocks.languages = [
+      python(),
+      r([{ executable: "/opt/homebrew/bin/R", source: "path", version: "4.6.2", problem: null }]),
+    ];
+    window.localStorage.setItem("scient:scientific-computing:selected-language:v1", '"r"');
     await render(_fixture);
-    // regression: 66514950e8 fix(compute): distinguish upcoming language icons
-    for (const [id, logo] of [
-      ["julia", "brand"],
-      ["sql", "symbol"],
-      ["octave", octaveLogo],
-    ] as const) {
-      const trigger = _fixture.container.querySelector<HTMLButtonElement>(
-        `#scientific-computing-${id}-trigger`,
-      )!;
-      expect(trigger.textContent).toContain("Coming soon");
-      if (logo === "symbol") {
-        expect(trigger.querySelector("img")).toBeNull();
-        expect(trigger.querySelector(`[data-language-icon='${id}']`)).not.toBeNull();
-      } else {
-        const image = trigger.querySelector("img");
-        expect(image).not.toBeNull();
-        if (logo !== "brand") expect(image?.getAttribute("src")).toBe(logo);
-      }
-    }
-    // Every preview language opens the same inert panel.
-    await act(() =>
-      _fixture.container
-        .querySelector<HTMLButtonElement>("#scientific-computing-julia-trigger")!
-        .click(),
+    const row = _fixture.container.querySelector<HTMLElement>("#r-managed-runtime")!;
+    expect(row.textContent).toContain("IRkernel");
+    expect(row.textContent).toContain("Not installed");
+    await click(_fixture, "Set up", row);
+    expect(mocks.manage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ languageId: "r", action: "install" }),
+      }),
     );
-    const panel = _fixture.container.querySelector<HTMLElement>("#scientific-computing-julia")!;
-    expect(panel.hidden).toBe(false);
-    expect(panel.textContent).toBe("Coming soon");
-    expect(panel.querySelector("button, input, select")).toBeNull();
-    expect(_fixture.container.querySelector("[data-compute-summary]")).toBeNull();
-    await act(() =>
-      _fixture.container
-        .querySelector<HTMLButtonElement>("#scientific-computing-julia-trigger")!
-        .click(),
-    );
-    expect(panel.hidden).toBe(true);
-    expect(mocks.calls).toEqual([]);
-    expect(mocks.verify).not.toHaveBeenCalled();
-    expect(mocks.manage).not.toHaveBeenCalled();
-    expect(mocks.update).not.toHaveBeenCalled();
-    await act(() =>
-      _fixture.container
-        .querySelector<HTMLButtonElement>("#scientific-computing-python-trigger")!
-        .click(),
-    );
-    expect(_fixture.container.querySelector("[data-compute-summary='python']")).not.toBeNull();
+
+    mocks.languages = [python(), r([])];
+    notify();
+    await render(_fixture);
+    expect(_fixture.container.querySelector("#r-managed-runtime")).toBeNull();
+    expect(
+      _fixture.container.querySelector("#r-installation-missing a")?.getAttribute("href"),
+    ).toBe("https://cloud.r-project.org/");
   });
 
   it("renders Python Toolkits in a separate card that follows the language disclosure", async () => {
