@@ -174,6 +174,8 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       if (action.type === "signed-in" || action.type === "needs-user") clearFilled = false;
       if (action.type === "signed-in") return { outcome: "signed-in" as const, tabId: target };
       if (action.type === "needs-user") {
+        if (page.limited)
+          return { outcome: "limited" as const, message: action.message, tabId: target };
         if (session.unattended || action.kind === undefined)
           return { outcome: "needs-user" as const, message: action.message, tabId: target };
         const handoffId = NodeCrypto.randomUUID();

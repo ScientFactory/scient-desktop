@@ -1,4 +1,8 @@
-import { FORGET_SIGN_IN_LABEL, REMEMBER_SIGN_IN_LABEL } from "@t3tools/shared/scientSignInPage";
+import {
+  FORGET_SIGN_IN_LABEL,
+  REMEMBER_SIGN_IN_LABEL,
+  SITE_LIMITED_TEXT,
+} from "@t3tools/shared/scientSignInPage";
 import * as Schema from "effect/Schema";
 
 export const SignInDetection = Schema.Struct({
@@ -12,6 +16,7 @@ export const SignInDetection = Schema.Struct({
   remember: Schema.optional(Schema.String),
   stay: Schema.optional(Schema.String),
   signInLink: Schema.optional(Schema.String),
+  limited: Schema.optional(Schema.Boolean),
   signedIn: Schema.Boolean,
 });
 export type SignInDetection = typeof SignInDetection.Type;
@@ -67,7 +72,9 @@ export const signInDetectionScript = String.raw`(() => {
   const signInLink = !password && !otp && !username
     ? Array.from(document.querySelectorAll('a, button, [role="button"]')).find(element => visible(element) && /^(sign in|log in|login)$/i.test(element.textContent?.trim() ?? ""))
     : undefined;
+  const limited = !password && !otp && new RegExp(${JSON.stringify(SITE_LIMITED_TEXT)}, "i").test(text);
   return {
+    ...(limited ? { limited: true } : {}),
     ...(signInLink ? { signInLink: path(signInLink) } : {}),
     ...(push && numbers.size === 1 ? { number: [...numbers][0] } : {}),
     ...(remember ? { remember: path(remember) } : {}),

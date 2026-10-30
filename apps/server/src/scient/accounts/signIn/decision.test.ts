@@ -15,6 +15,26 @@ const page: SignInDetection = {
 };
 const available = { username: true, password: true, otp: true };
 describe("account sign-in decisions", () => {
+  it("stops at a page that says the site is limiting automation", () => {
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, limited: true, challenge: "captcha" },
+        ["example.com"],
+        available,
+      ),
+    ).toMatchObject({ type: "needs-user", kind: undefined });
+  });
+
+  it("follows a home page's sign-in link", () => {
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, submit: null, signInLink: "#sign-in" },
+        ["example.com"],
+        available,
+      ),
+    ).toEqual({ type: "fill", fields: [], submit: "#sign-in" });
+  });
+
   it('answers "Stay signed in?" with its Yes button', () => {
     expect(
       decideSignIn(

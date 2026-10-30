@@ -84,6 +84,31 @@ export const outcomeCheckState = (
     ? "signed-in"
     : outcome === "needs-user"
       ? "needs-you"
-      : outcome === "failed"
-        ? "unknown"
-        : "rejected";
+      : outcome === "limited"
+        ? "limited"
+        : outcome === "failed"
+          ? "unknown"
+          : "rejected";
+
+const LIMITED_PAUSE_MS = 60 * 60 * 1000;
+const RETRY_PAUSE_MS = 15 * 60 * 1000;
+
+export const siteLimiting = (account: Pick<AccountSummary, "lastCheck">, nowMs: number) =>
+  account.lastCheck?.state === "limited" &&
+  nowMs - Date.parse(account.lastCheck.at) < LIMITED_PAUSE_MS;
+
+/**
+ * True while Scient must not try this sign-in by itself. A refused one can lock the account, a
+ * site limiting automation stays limited for longer when pushed, and one that just needed the user
+ * will need them again.
+ */
+export const signInOnHold = (
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck">,
+  nowMs: number,
+) =>
+  account.lastSignInOutcome === "password-rejected" ||
+  account.lastSignInOutcome === "code-rejected" ||
+  account.lastCheck?.state === "rejected" ||
+  siteLimiting(account, nowMs) ||
+  (account.lastCheck?.state === "needs-you" &&
+    nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS);

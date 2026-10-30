@@ -259,6 +259,7 @@ export const AccountSignInOutcome = Schema.Literals([
   "needs-user",
   "password-rejected",
   "code-rejected",
+  "limited",
   "failed",
 ]);
 
@@ -267,6 +268,7 @@ export const AccountCheckState = Schema.Literals([
   "signed-out",
   "needs-you",
   "rejected",
+  "limited",
   "unknown",
 ]);
 export type AccountCheckState = typeof AccountCheckState.Type;

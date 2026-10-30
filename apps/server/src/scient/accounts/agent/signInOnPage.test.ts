@@ -121,7 +121,7 @@ it.effect("says so when the site rejects the saved sign-in", () =>
 it.effect("never retries a sign-in the site already rejected", () =>
   Effect.gen(function* () {
     const { result, uses } = yield* run([{ ...account, lastSignInOutcome: "password-rejected" }]);
-    expect(result?.note).toContain("rejected Fixture's saved sign-in");
+    expect(result?.note).toContain("won't retry it by itself");
     expect(uses).toEqual([]);
   }),
 );

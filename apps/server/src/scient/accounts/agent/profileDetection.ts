@@ -1,3 +1,4 @@
+import { SITE_LIMITED_TEXT } from "@t3tools/shared/scientSignInPage";
 import * as Schema from "effect/Schema";
 
 export const ProfileDetection = Schema.Struct({
@@ -7,6 +8,7 @@ export const ProfileDetection = Schema.Struct({
   deniedText: Schema.Boolean,
   signOutLink: Schema.optional(Schema.Boolean),
   signInLink: Schema.optional(Schema.Boolean),
+  limited: Schema.optional(Schema.Boolean),
 });
 export type ProfileDetection = typeof ProfileDetection.Type;
 
@@ -17,6 +19,7 @@ export const profileDetectionScript = String.raw`(() => {
   };
   const controls = Array.from(document.querySelectorAll('a, button, [role="button"], [role="menuitem"]')).filter(visible).map(element => element.textContent?.trim() ?? "");
   return {
+    limited: new RegExp(${JSON.stringify(SITE_LIMITED_TEXT)}, "i").test(document.body?.innerText ?? ""),
     signOutLink: controls.some(text => /^(sign out|log out|logout|sign off)$/i.test(text)),
     signInLink: controls.some(text => /^(sign in|log in|login|sign up)$/i.test(text)),
     finalUrl: location.href,

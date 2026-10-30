@@ -1,10 +1,11 @@
 import type { AccountSummary, PreviewAutomationStatus, PreviewTabId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AccountsError } from "@t3tools/contracts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
-import { authorizationDecision } from "../AccountDecisions.ts";
+import { authorizationDecision, signInOnHold } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { signIn } from "../signIn/engine.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
@@ -17,11 +18,6 @@ const savedSignIn = (account: AccountSummary, url: string) =>
   (account.details.kind === "website" || account.details.kind === "library") &&
   account.secrets.password !== undefined &&
   matchesAccountOrigin(url, account.details.sites);
-
-/** A rejected password stays rejected, and retrying can lock the account, until the user changes it. */
-const rejected = (account: AccountSummary) =>
-  account.lastSignInOutcome === "password-rejected" ||
-  account.lastSignInOutcome === "code-rejected";
 
 /**
  * Signs in on a login page with the saved sign-in for this page or the page the agent asked for,
@@ -52,9 +48,9 @@ export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
         }
       : undefined;
   }
-  if (rejected(allowed))
+  if (signInOnHold(allowed, yield* Clock.currentTimeMillis))
     return {
-      note: `This page needs a sign-in, and the site rejected ${allowed.name}'s saved sign-in last time. Ask the user to update it in Settings → Accounts & secrets.`,
+      note: `This page needs a sign-in, and ${allowed.name}'s last attempt did not go through (${allowed.lastCheck?.message ?? allowed.lastSignInOutcome ?? "see Accounts"}). Scient won't retry it by itself; tell the user.`,
     };
   const result = yield* withAccountUse(
     scope,

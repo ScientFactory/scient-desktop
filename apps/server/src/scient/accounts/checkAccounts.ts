@@ -10,12 +10,14 @@ import {
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
+import { outcomeCheckState, signInOnHold } from "./AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "./AccountsService.ts";
 import { AccountCookies } from "./agent/cookies.ts";
 import { classifyProfilePage } from "./agent/profileClassification.ts";
@@ -78,6 +80,7 @@ export function sessionState(
   hasSessionCookie: boolean,
 ): AccountCheckState {
   const { details } = account;
+  if (page.limited) return "limited";
   if (details.kind === "library") {
     if (page.deniedText) return "unknown";
     return page.passwordField || matchesAccountOrigin(page.finalUrl, details.sites)
@@ -151,12 +154,15 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (account: AccountSumma
       page,
       cookies.some((cookie) => cookie.httpOnly),
     );
-    const rejected = account.lastCheck?.state === "rejected";
-    if (state !== "signed-out" || account.secrets.password === undefined || rejected) {
-      if (rejected && state === "signed-out") return;
+    const onHold = signInOnHold(account, yield* Clock.currentTimeMillis);
+    if (state !== "signed-out" || account.secrets.password === undefined || onHold) {
+      if (onHold && state === "signed-out") return;
       return yield* accounts.recordCheck(account.accountId, {
         state,
         ...(state === "unknown" ? { message: "Couldn't tell from the site's page." } : {}),
+        ...(state === "limited"
+          ? { message: "The site is limiting access from this network." }
+          : {}),
       });
     }
     const values = yield* accounts.resolveSecrets(account.accountId, ["password", "totp"]);
@@ -171,12 +177,7 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (account: AccountSumma
     });
     if (result.outcome !== "signed-in" && "message" in result && result.message)
       yield* accounts.recordCheck(account.accountId, {
-        state:
-          result.outcome === "needs-user"
-            ? "needs-you"
-            : result.outcome === "failed"
-              ? "unknown"
-              : "rejected",
+        state: outcomeCheckState(result.outcome),
         message: result.message,
       });
   }).pipe(

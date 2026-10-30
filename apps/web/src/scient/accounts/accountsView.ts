@@ -685,6 +685,7 @@ export function accountStatusLabel(
   if (check.state === "signed-out") return "Signed out";
   if (check.state === "needs-you") return "Needs you";
   if (check.state === "rejected") return "Sign-in rejected";
+  if (check.state === "limited") return "Site is limiting access";
   return "Couldn't check";
 }
 
@@ -702,6 +703,7 @@ const SIGN_IN_OUTCOME_LABELS: Readonly<
   "needs-user": "Needed you",
   "password-rejected": "Password rejected",
   "code-rejected": "Code rejected",
+  limited: "Site limited access",
   failed: "Sign-in failed",
 };
 

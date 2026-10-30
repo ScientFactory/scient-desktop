@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { it } from "@effect/vitest";
 import { describe, expect, it as plain } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
@@ -54,6 +55,7 @@ describe("account session state", () => {
     expect(sessionState(account, url, page, true)).toBe("signed-in");
     expect(sessionState(account, url, page, false)).toBe("unknown");
     expect(sessionState(account, url, { ...page, deniedText: true }, true)).toBe("unknown");
+    expect(sessionState(account, url, { ...page, limited: true }, true)).toBe("limited");
   });
 
   plain("a library session shows by leaving the university's sign-in pages", () => {
@@ -146,6 +148,16 @@ it.effect("never repeats a sign-in the site rejected", () =>
     const { uses, checks } = yield* run([rejected]);
     expect(uses).toEqual([]);
     expect(checks).toEqual([]);
+  }),
+);
+
+it.effect("leaves alone a site that is limiting automation, or just needed the user", () =>
+  Effect.gen(function* () {
+    const at = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
+    for (const state of ["limited", "needs-you"] as const) {
+      const { uses } = yield* run([{ ...account, lastCheck: { state, at } }]);
+      expect(uses).toEqual([]);
+    }
   }),
 );
 

@@ -13,6 +13,12 @@ export function decideSignIn(
       message: "Continue sign-in on an allowed site.",
     } as const;
   if (page.signedIn) return { type: "signed-in" } as const;
+  if (page.limited)
+    return {
+      type: "needs-user",
+      kind: undefined,
+      message: "The site is limiting access from this network. Try again later.",
+    } as const;
   if (page.challenge)
     return {
       type: "needs-user",
@@ -31,6 +37,9 @@ export function decideSignIn(
   ];
   // "Stay signed in?" has no fields; its Yes button is the whole step.
   if (fields.length === 0 && page.stay) return { type: "fill", fields, submit: page.stay } as const;
+  // A site's home page often has only a link to its sign-in page.
+  if (fields.length === 0 && page.signInLink)
+    return { type: "fill", fields, submit: page.signInLink } as const;
   if (fields.length === 0)
     return {
       type: "needs-user",
