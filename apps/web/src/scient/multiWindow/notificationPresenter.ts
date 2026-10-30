@@ -1,8 +1,8 @@
 import { useSyncExternalStore } from "react";
 
-import { browserWindowLocks, type WindowLocks } from "./windowLocks";
+import { desktopWindowLocks, type WindowLocks } from "./windowLocks";
 
-export const NOTIFICATION_PRESENTER_LOCK = "scient-thread-notifications-presenter";
+const NOTIFICATION_PRESENTER_LOCK = "scient-thread-notifications-presenter";
 
 export interface NotificationPresenter {
   readonly isPresenter: () => boolean;
@@ -15,12 +15,6 @@ interface PresenterOptions {
   readonly focusTarget: Pick<EventTarget, "addEventListener" | "removeEventListener">;
   readonly hasFocus: () => boolean;
   readonly onChange?: () => void;
-}
-
-function windowLocks() {
-  return typeof window === "undefined" || window.desktopBridge === undefined
-    ? null
-    : browserWindowLocks();
 }
 
 /**
@@ -93,7 +87,7 @@ let shared: { readonly presenter: NotificationPresenter; users: number } | null 
 export function acquireNotificationPresenter(): NotificationPresenter {
   shared ??= {
     presenter: electNotificationPresenter({
-      locks: windowLocks(),
+      locks: desktopWindowLocks(),
       name: NOTIFICATION_PRESENTER_LOCK,
       focusTarget: window,
       hasFocus: () => document.hasFocus(),
@@ -129,7 +123,7 @@ function subscribePresenter(listener: () => void) {
 }
 
 function isWindowPresenter() {
-  return shared === null ? windowLocks() === null : shared.presenter.isPresenter();
+  return shared === null ? desktopWindowLocks() === null : shared.presenter.isPresenter();
 }
 
 export function useIsNotificationPresenter(): boolean {

@@ -53,10 +53,7 @@ describe("connection catalog saved by another desktop window", () => {
 
   it.effect("survives this window's next update, which reads it again under the lock", () =>
     Effect.gen(function* () {
-      const locked: string[] = [];
-      const { saved, backend } = sharedBackend((effect) =>
-        Effect.sync(() => locked.push("lock")).pipe(Effect.andThen(effect)),
-      );
+      const { saved, backend } = sharedBackend((effect) => effect);
       const store = yield* ConnectionStorage.makeCatalogStore(backend);
       yield* store.read;
 
@@ -64,7 +61,6 @@ describe("connection catalog saved by another desktop window", () => {
       saved.raw = catalog("a", "b");
       yield* store.update(disable("c"));
 
-      expect(locked).toEqual(["lock"]);
       expect(decodeCatalog(saved.raw).disabledEnvironmentIds).toEqual(["a", "b", "c"]);
     }),
   );

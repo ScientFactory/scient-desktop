@@ -20,7 +20,7 @@ export function canOpenNewWindow(): boolean {
 }
 
 /** The app route that shows a thread; new windows load it through the hash router. */
-export function threadWindowRoute(threadRef: ScopedThreadRef): string {
+function threadWindowRoute(threadRef: ScopedThreadRef): string {
   return `/${encodeURIComponent(threadRef.environmentId)}/${encodeURIComponent(threadRef.threadId)}`;
 }
 

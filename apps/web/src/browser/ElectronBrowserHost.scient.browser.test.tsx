@@ -46,9 +46,9 @@ vi.mock(import("~/components/preview/previewBridge"), async (original) => ({
 }));
 
 // Web Locks coordinate app windows only inside the desktop shell, which a browser test lacks.
-vi.mock(import("../scient/multiWindow/previewTabPresence"), async (original) => ({
+vi.mock(import("../scient/multiWindow/windowLocks"), async (original) => ({
   ...(await original()),
-  previewWindowLocks: () => navigator.locks,
+  desktopWindowLocks: () => navigator.locks,
 }));
 
 vi.mock(import("~/components/preview/usePreviewBridge"), async (original) => ({
@@ -65,7 +65,10 @@ import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { acquireBrowserSurface } from "./browserSurfaceStore";
 import { withDesktopTab } from "./desktopTabLifetime";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
-import { createPreviewHostClaim } from "../scient/multiWindow/previewHostOwnership";
+import {
+  createPreviewHostClaim,
+  takeOverPreviewTabWhenShown,
+} from "../scient/multiWindow/previewHostOwnership";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 const threadRef = scopeThreadRef(
@@ -165,6 +168,25 @@ describe("ElectronBrowserHost with several app windows", () => {
     expect(screen.container.querySelector("webview")).toBeNull();
 
     await page.getByRole("button", { name: "Show here" }).click();
+
+    await vi.waitFor(() => expect(screen.container.querySelector("webview")).not.toBeNull());
+    await vi.waitFor(() => expect(other.role()).toBe("elsewhere"));
+    expect(page.getByText(PLACEHOLDER).query()).toBeNull();
+  });
+
+  it("takes the tab from a window that shows it when this window was opened for the tab", async () => {
+    using _state = setup();
+    using otherWindow = new DisposableStack();
+    const runtimeTabId = openTab("tab_3");
+    const other = createPreviewHostClaim(runtimeTabId, openOtherWindow(otherWindow));
+    otherWindow.defer(other.start());
+    await other.setDisplayed(true);
+    await vi.waitFor(() => expect(other.role()).toBe("host"));
+    takeOverPreviewTabWhenShown("tab_3");
+
+    await using screen = await renderHost();
+    using surfaces = new DisposableStack();
+    await showTab(surfaces, runtimeTabId);
 
     await vi.waitFor(() => expect(screen.container.querySelector("webview")).not.toBeNull());
     await vi.waitFor(() => expect(other.role()).toBe("elsewhere"));

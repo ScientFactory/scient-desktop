@@ -2,6 +2,7 @@ import type { StoreApi } from "zustand";
 
 import type { ComposerThreadDraftState } from "../../composerDraftStore";
 import { resolveStorage, type StateStorage } from "../../lib/storage";
+import { onStorageKey, parseStoredState, sameJson } from "./crossWindowMerge";
 
 const KEYED_SECTIONS = [
   "draftsByThreadKey",
@@ -26,16 +27,13 @@ interface ComposerDraftMemorySections extends ComposerDraftPersistedSections {
 }
 
 type ComposerDraftSyncStore<S> = StoreApi<S> & {
-  readonly persist: { onFinishHydration: (listener: (state: S) => void) => () => void };
+  readonly persist: {
+    readonly onFinishHydration: (listener: (state: S) => void) => () => void;
+    readonly getOptions: () => {
+      readonly merge?: ((persisted: unknown, current: S) => S) | undefined;
+    };
+  };
 };
-
-interface ComposerDraftSyncAttachment<S, P> {
-  readonly store: ComposerDraftSyncStore<S>;
-  readonly partialize: (state: S) => P;
-  /** The store's persist `merge`: turns persisted state into memory state. */
-  readonly hydrate: (persisted: unknown, current: S) => S;
-  readonly eventTarget?: Pick<EventTarget, "addEventListener" | "removeEventListener"> | undefined;
-}
 
 type Entries = Readonly<Record<string, unknown>>;
 
@@ -45,27 +43,12 @@ function entriesOf(value: unknown): Entries {
     : {};
 }
 
-const jsonByObject = new WeakMap<object, string>();
-function toJson(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null) return JSON.stringify(value);
-  let json = jsonByObject.get(value);
-  if (json === undefined) {
-    json = JSON.stringify(value);
-    jsonByObject.set(value, json);
-  }
-  return json;
-}
-
-function sameJson(left: unknown, right: unknown): boolean {
-  return left === right || toJson(left) === toJson(right);
-}
-
 function revokeBlobUrl(url: string): void {
   if (url.startsWith("blob:") && typeof URL !== "undefined") URL.revokeObjectURL(url);
 }
 
 /** Keeps this window's in-memory attachment objects for entries another window still has. */
-export function reconcileRemoteComposerDraft(
+function reconcileRemoteComposerDraft(
   previous: ComposerThreadDraftState | undefined,
   next: ComposerThreadDraftState | undefined,
 ): ComposerThreadDraftState | undefined {
@@ -137,15 +120,7 @@ export function createComposerDraftCrossWindowSync<
     }
     if (typeof raw !== "string") return null;
     if (lastSeen?.raw === raw) return lastSeen.state;
-    let state: P | null = null;
-    try {
-      const parsed = JSON.parse(raw) as { version?: unknown; state?: unknown } | null;
-      if (parsed?.version === options.version && typeof parsed.state === "object" && parsed.state) {
-        state = parsed.state as P;
-      }
-    } catch {
-      state = null;
-    }
+    const state = parseStoredState(raw, options.version) as P | null;
     lastSeen = { raw, state };
     return state;
   }
@@ -268,15 +243,17 @@ export function createComposerDraftCrossWindowSync<
   };
 
   function attach<S extends ComposerDraftMemorySections>(
-    input: ComposerDraftSyncAttachment<S, P>,
-  ): () => void {
-    const { store } = input;
+    store: ComposerDraftSyncStore<S>,
+    partialize: (state: S) => P,
+  ): void {
+    const hydrate = (persisted: unknown, current: S): S =>
+      store.persist.getOptions().merge?.(persisted, current) ?? current;
     let applyingRemote = false;
 
     const pullFromStorage = (): void => {
       const stored = readStored();
       if (!stored) return;
-      const before = input.partialize(store.getState());
+      const before = partialize(store.getState());
       for (const section of KEYED_SECTIONS) {
         for (const key of locallyChangedKeys(before, section)) dirty[section].add(key);
       }
@@ -306,7 +283,7 @@ export function createComposerDraftCrossWindowSync<
 
       const current = store.getState();
       const remoteDrafts = entriesOf(stored.draftsByThreadKey);
-      const hydrated = input.hydrate(
+      const hydrated = hydrate(
         {
           ...stored,
           draftsByThreadKey: Object.fromEntries(
@@ -341,7 +318,7 @@ export function createComposerDraftCrossWindowSync<
       } finally {
         applyingRemote = false;
       }
-      lastOurs = input.partialize(store.getState());
+      lastOurs = partialize(store.getState());
       for (const section of KEYED_SECTIONS) {
         const remote = entriesOf(stored[section]);
         for (const key of changed[section]) {
@@ -363,7 +340,8 @@ export function createComposerDraftCrossWindowSync<
       }
     };
 
-    const unsubscribe = store.subscribe((next, previous) => {
+    // Drafts track changes by identity; stringifying image data URLs per change costs too much.
+    store.subscribe((next, previous) => {
       if (applyingRemote) return;
       markChangedKeys(next.draftsByThreadKey, previous.draftsByThreadKey, markThreadKey);
       markChangedKeys(
@@ -386,23 +364,10 @@ export function createComposerDraftCrossWindowSync<
         if (next[section] !== previous[section]) dirtyWhole.add(section);
       }
     });
-    const unsubscribeHydration = store.persist.onFinishHydration((state) =>
-      takeBaseline(input.partialize(state)),
-    );
-    const onStorage = (event: Event): void => {
-      const key = (event as Partial<StorageEvent>).key;
-      if (key === options.key) pullFromStorage();
-    };
-    input.eventTarget?.addEventListener("storage", onStorage);
-    takeBaseline(input.partialize(store.getState()));
+    store.persist.onFinishHydration((state) => takeBaseline(partialize(state)));
+    onStorageKey(options.key, pullFromStorage);
+    takeBaseline(partialize(store.getState()));
     attached = true;
-
-    return () => {
-      attached = false;
-      unsubscribe();
-      unsubscribeHydration();
-      input.eventTarget?.removeEventListener("storage", onStorage);
-    };
   }
 
   return { storage, mergeForWrite, attach };

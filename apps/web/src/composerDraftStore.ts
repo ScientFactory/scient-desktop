@@ -4358,16 +4358,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 export const useComposerDraftStore = composerDraftStore;
 
 // SCIENT-FORK:START — apply other app windows' draft writes.
-composerCrossWindowSync.attach({
-  store: composerDraftStore,
-  partialize: partializeComposerDraftStoreState,
-  hydrate: (persisted, current) =>
-    composerDraftStore.persist.getOptions().merge?.(persisted, current) ?? current,
-  eventTarget:
-    typeof window !== "undefined" && typeof window.addEventListener === "function"
-      ? window
-      : undefined,
-});
+composerCrossWindowSync.attach(composerDraftStore, partializeComposerDraftStoreState);
 // SCIENT-FORK:END
 
 /** Flush a deliberately staged composer draft before a cross-thread action. */

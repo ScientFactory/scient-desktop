@@ -1,34 +1,23 @@
-import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import {
+  openAppWindow,
+  sharedLocalStorage,
+  type SharedLocalStorage,
+} from "../../../test/scientAppWindows";
 import { PERSISTED_STATE_KEY, type PersistedUiState } from "../../uiStateStore";
 
-function sharedLocalStorage() {
-  const values = new Map<string, string>();
+async function openUiStateWindow(storage: SharedLocalStorage) {
+  const appWindow = await openAppWindow(storage, () => import("../../uiStateStore"));
   return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-    removeItem: (key: string) => void values.delete(key),
+    store: appWindow.module.useUiStateStore,
+    save: appWindow.unload,
+    receiveStorageEvent: () => appWindow.receiveStorageEvent(PERSISTED_STATE_KEY),
+    [Symbol.dispose]: appWindow[Symbol.dispose],
   };
 }
 
-async function openAppWindow(storage: ReturnType<typeof sharedLocalStorage>) {
-  const appWindow = Object.assign(new EventTarget(), { localStorage: storage });
-  vi.resetModules();
-  vi.stubGlobal("localStorage", storage);
-  vi.stubGlobal("window", appWindow);
-  const { useUiStateStore } = await import("../../uiStateStore");
-  onTestFinished(() => {
-    vi.unstubAllGlobals();
-  });
-  return {
-    store: useUiStateStore,
-    save: () => appWindow.dispatchEvent(new Event("beforeunload")),
-    receiveStorageEvent: () =>
-      appWindow.dispatchEvent(Object.assign(new Event("storage"), { key: PERSISTED_STATE_KEY })),
-  };
-}
-
-function stored(storage: ReturnType<typeof sharedLocalStorage>): PersistedUiState {
+function stored(storage: SharedLocalStorage): PersistedUiState {
   return JSON.parse(storage.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState;
 }
 
@@ -36,8 +25,8 @@ describe("UI state across app windows", () => {
   it("keeps another window's sidebar order when a stale window saves, then adopts it", async () => {
     const storage = sharedLocalStorage();
     storage.setItem(PERSISTED_STATE_KEY, JSON.stringify({ projectOrder: ["a", "b", "c"] }));
-    const first = await openAppWindow(storage);
-    const second = await openAppWindow(storage);
+    using first = await openUiStateWindow(storage);
+    using second = await openUiStateWindow(storage);
 
     first.store.getState().reorderProjects(["a", "b", "c"], ["c"], ["a"]);
     first.save();
@@ -54,8 +43,8 @@ describe("UI state across app windows", () => {
 
   it("adopts another window's save except a field this window has not saved yet", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
-    const second = await openAppWindow(storage);
+    using first = await openUiStateWindow(storage);
+    using second = await openUiStateWindow(storage);
 
     second.store.getState().setSidebarProjectScopeKeys(["unsaved-here"]);
     first.store.getState().setSidebarProjectScopeKeys(["from-first"]);
@@ -83,8 +72,8 @@ describe("UI state across app windows", () => {
         },
       }),
     );
-    const first = await openAppWindow(storage);
-    const second = await openAppWindow(storage);
+    using first = await openUiStateWindow(storage);
+    using second = await openUiStateWindow(storage);
 
     first.store.getState().markThreadVisited("visited", "2026-10-30T12:00:00.000Z");
     first.store.getState().markThreadVisited("unread", "2026-10-30T13:00:00.000Z");
@@ -96,6 +85,26 @@ describe("UI state across app windows", () => {
     expect(stored(storage).threadLastVisitedAtById).toEqual({
       visited: "2026-10-30T12:00:00.000Z",
       unread: "2026-10-30T10:59:59.999Z",
+    });
+  });
+
+  it("saves a change on the next write after a failed one", async () => {
+    const storage = sharedLocalStorage();
+    storage.setItem(PERSISTED_STATE_KEY, JSON.stringify({ projectOrder: ["a", "b", "c"] }));
+    using appWindow = await openUiStateWindow(storage);
+
+    appWindow.store.getState().reorderProjects(["a", "b", "c"], ["c"], ["a"]);
+    vi.spyOn(storage, "setItem").mockImplementationOnce(() => {
+      throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+    });
+    appWindow.save();
+    expect(stored(storage).projectOrder).toEqual(["a", "b", "c"]);
+
+    appWindow.store.getState().setPullRequestMergeMethod("squash");
+    appWindow.save();
+    expect(stored(storage)).toMatchObject({
+      projectOrder: ["c", "a", "b"],
+      pullRequestMergeMethod: "squash",
     });
   });
 });

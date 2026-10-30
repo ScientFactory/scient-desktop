@@ -95,10 +95,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { ScientPreviewExportActions } from "~/scient/pdf/ScientPreviewExportActions";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — a browser tab can open in a new window from its menu.
-import {
-  PanelTabNewWindowItem,
-  usePanelTabNewWindow,
-} from "~/scient/multiWindow/PanelTabNewWindowItem";
+import { PanelTabNewWindowItem } from "~/scient/multiWindow/PanelTabNewWindowItem";
 // SCIENT-FORK:END
 import { observeResize } from "~/lib/observeResize";
 // SCIENT-FORK:START — Scient Accounts: browser profile switcher.
@@ -182,9 +179,6 @@ export function PreviewView({
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
-  // SCIENT-FORK:START — a browser tab can open in a new window from its menu.
-  const openInNewWindow = usePanelTabNewWindow();
-  // SCIENT-FORK:END
 
   const tabId = requestedTabId ?? previewState.activeTabId;
   const runtimeTabId = tabId
@@ -935,29 +929,21 @@ export function PreviewView({
             // SCIENT-FORK:START — place Open in new window and PDF export in the preview menu.
             <PreviewMoreMenu
               extraItems={
-                openInNewWindow || (previewBridge && tabId) ? (
+                previewBridge && tabId ? (
                   <>
-                    {openInNewWindow ? (
-                      <PanelTabNewWindowItem
-                        onOpen={openInNewWindow}
-                        label="Open in new Scient window"
-                        plain
-                      />
-                    ) : null}
-                    {previewBridge && tabId ? (
-                      <ScientPreviewExportActions
-                        disabled={
-                          pdfExportOwner === null ||
-                          isUnreachable ||
-                          loading ||
-                          (isServerTab && clientPdfUrl !== null)
-                        }
-                        pageUrl={url}
-                        tabId={tabId}
-                        runtimeTabId={runtimeTabId}
-                        threadRef={threadRef}
-                      />
-                    ) : null}
+                    <PanelTabNewWindowItem label="Open in new Scient window" plain />
+                    <ScientPreviewExportActions
+                      disabled={
+                        pdfExportOwner === null ||
+                        isUnreachable ||
+                        loading ||
+                        (isServerTab && clientPdfUrl !== null)
+                      }
+                      pageUrl={url}
+                      tabId={tabId}
+                      runtimeTabId={runtimeTabId}
+                      threadRef={threadRef}
+                    />
                   </>
                 ) : null
               }

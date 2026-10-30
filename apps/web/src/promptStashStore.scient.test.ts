@@ -1,5 +1,10 @@
-import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
+import {
+  openAppWindow,
+  sharedLocalStorage,
+  type SharedLocalStorage,
+} from "../test/scientAppWindows";
 import { PROMPT_STASH_STORAGE_KEY, type PromptStashEntry } from "./promptStashStore";
 
 function entry(id: string): PromptStashEntry {
@@ -12,38 +17,20 @@ function entry(id: string): PromptStashEntry {
   };
 }
 
-function sharedLocalStorage() {
-  const values = new Map<string, string>();
+async function openStashWindow(storage: SharedLocalStorage) {
+  const appWindow = await openAppWindow(storage, () => import("./promptStashStore"));
   return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-    removeItem: (key: string) => void values.delete(key),
-  };
-}
-
-async function openAppWindow(storage: ReturnType<typeof sharedLocalStorage>) {
-  const eventTarget = new EventTarget();
-  vi.resetModules();
-  vi.stubGlobal("localStorage", storage);
-  vi.stubGlobal("window", eventTarget);
-  const { usePromptStashStore } = await import("./promptStashStore");
-  onTestFinished(() => {
-    vi.unstubAllGlobals();
-  });
-  return {
-    store: usePromptStashStore,
-    receiveStorageEvent: () =>
-      eventTarget.dispatchEvent(
-        Object.assign(new Event("storage"), { key: PROMPT_STASH_STORAGE_KEY }),
-      ),
+    store: appWindow.module.usePromptStashStore,
+    receiveStorageEvent: () => appWindow.receiveStorageEvent(PROMPT_STASH_STORAGE_KEY),
+    [Symbol.dispose]: appWindow[Symbol.dispose],
   };
 }
 
 describe("prompt stash across app windows", () => {
   it("keeps an entry another window stashed when this window stashes or takes", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
-    const second = await openAppWindow(storage);
+    using first = await openStashWindow(storage);
+    using second = await openStashWindow(storage);
 
     first.store.getState().stashEntry(entry("from-first"));
     second.receiveStorageEvent();

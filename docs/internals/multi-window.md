@@ -26,9 +26,10 @@ in development.
 (`CmdOrCtrl+Alt+Shift+N`; the renderer already uses Mod+N, Mod+Shift+N and
 Mod+Alt+N), **New Window** in the macOS Dock icon's menu
 (`ElectronMenu.setDockMenu`), and the bridge method behind every **Open in new
-window**. With no window open, the new window takes the saved main window
-bounds. With `atCursor` the window opens under the pointer instead of
-cascading, kept inside that display's work area (`windowBoundsAtPoint`).
+window** (`scient/multiWindow/ipc.ts` and `preloadBridge.ts`). With no window
+open, the new window takes the saved main window bounds. With `atCursor` the
+window opens under the pointer instead of cascading, kept inside that display's
+work area (`windowBoundsAtPoint`).
 It accepts only an in-app path (`parseAppWindowRoute`); anything else opens the
 default route. It refuses while the app quits, and while the backend is not yet
 confirmed (it reveals the splash instead): a window opened before then can be
@@ -39,25 +40,28 @@ window (`appWindowForSender`) and act on the sender's own window: window
 controls, zoom, full screen, SnapShot, spelling, accounts and the unread badge.
 Browser previews and other guest renderers are still refused. Each window's
 renderer reports when it is ready (`ReadyRenderers`). App activation requests go
-to the most recently focused ready window. Opened links wait for the main window
-to be ready, as they did with one window. Development launch control needs any
-ready window.
+to the most recently focused ready window (`activationRenderers.ts`). Opened
+links wait for the main window to be ready, as they did with one window
+(`webLinkRenderers.ts`). Development launch control needs any ready window.
 
 The main process persists client settings and the connection catalog. After a
-window writes either, it sends a change notice to every other window, which then
-reads the value again. Each window saves its own bounds as it moves, to the same
-setting, so a relaunch opens one window at the bounds saved last.
+window writes either, it sends a change notice to every other app window
+(`notifyOtherWindows.ts`), which then reads the value again. Each window saves
+its own bounds as it moves, to the same setting, so a relaunch opens one window
+at the bounds saved last.
 
 The preview manager accepts browser preview guests from any app window. It
-records each tab's host window when its guest registers. Closing a window ends
-picture-in-picture and recordings only for the tabs it hosted; closing the last
-window keeps upstream's shutdown behavior.
+records each tab's host window when its guest registers
+(`previewHostWindows.ts`). Closing a window ends picture-in-picture and
+recordings only for the tabs it hosted; closing the last window keeps upstream's
+shutdown behavior.
 
 ## Persisted renderer state
 
 A zustand store that persists its whole state lets the last window to save erase
 other windows' changes. The stores that matter merge instead
-(`scient/multiWindow/crossWindowMerge.ts`):
+(`scient/multiWindow/crossWindowMerge.ts`). Browser tabs of the web client share
+localStorage the same way, so the merge applies between them too:
 
 - Each window remembers the stored value its memory last matched. Whatever
   differs from it is this window's unsaved change.
@@ -82,8 +86,9 @@ tabs, the proactive diff turn) are shared and merge as above. The view (selected
 tab, open, maximized, and the thread details panel) belongs to the window: a
 save writes this window's view over the other windows' tabs, and adopting
 another window's save keeps this window's view. When the tab a window shows was
-closed elsewhere, it selects the tab at the same index. Storage holds one view,
-the last writer's, so a new or reloaded window starts from that.
+closed elsewhere, it selects the tab at the same index. Adopting saves too, so
+storage holds the view of the window that saved or adopted last, and a new or
+reloaded window starts from that.
 
 Settings writes hold a Web Lock and re-read on the change notice. Connection
 catalog edits run under an exclusive Web Lock and invalidate the cached catalog
@@ -96,7 +101,7 @@ Windows elect one presenter with a Web Lock (`notificationPresenter.ts`).
 Focusing a window makes it the presenter; when the presenter closes, a waiting
 window takes over. Only the presenter plays sounds, shows system notifications
 and sets the app icon badge. On Windows, each window paints the badge on its own
-taskbar button. In-app toasts still appear in every visible window. A presenter
+taskbar button. In-app toasts appear only in the focused window. A presenter
 that has not had a user gesture may be unable to play sound until it gets one.
 
 ## Browser preview tabs
@@ -148,19 +153,21 @@ events during a tab drag. A drag that ends outside the viewport opens the window
   need a jump list task that relaunches the app with an argument the primary
   instance handles in `second-instance`; Linux would need a desktop entry
   action.
-- A `storage` write that lands between a window loading a store and attaching
-  its listener is adopted only at the next write.
 
 ## Verification
 
 Node tests cover the window registry and its focus order, routes, cascading and
-placement under the pointer, opening a window and its refusals, ready renderers,
-preview hosting per window, each store's merge (with negative controls for
-merge-on-save and adoption), each window's own side panel view, the side panel
-tab request from opener to new window, settings and catalog notices, the
-notification election, and preview host ownership. A browser test drags a tab
-out of the window and back in; another opens the shown tab from the PDF reader's
-menu and checks the item is absent when LaTeX hosts that menu. A live check with
+placement under the pointer, an additional window's bounds and the saved bounds
+with no window open, opening a window and its refusals, the bridge's sender
+check, ready renderers and where activation requests and opened links go,
+preview hosting per window (including a host window closing after the tab moved
+away), each store's merge (with negative controls for merge-on-save and
+adoption, and a UI state save after a failed write), each window's own side
+panel view, the side panel tab request from opener to new window, settings and
+catalog notices, the notification election, and preview host ownership. Browser
+tests drag a tab out of the window and back in, move a browser tab to the window
+opened for it, and open the shown tab from the PDF reader's menu except when
+LaTeX hosts that menu. A live check with
 two and three windows covered drafts in different threads, settings and side
 panel tabs updating in the other window, the browser tab placeholder, **Show
 here**, a host window closing, quitting with two windows open, and dragging a

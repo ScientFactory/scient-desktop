@@ -5,6 +5,7 @@ import {
   createCrossWindowStateSync,
   mergeWindowEntries,
   mergeWindowValue,
+  onStorageKey,
 } from "./crossWindowMerge";
 
 const UI_STATE_FIELDS = [
@@ -85,11 +86,17 @@ export function createUiStateWindowSync(options: {
   readonly localOnlyProjectExpansionKeys: ReadonlyArray<string>;
 }) {
   const localOnlyKeys = new Set(options.localOnlyProjectExpansionKeys);
+  const readRaw = (): string | null => {
+    try {
+      return typeof window === "undefined" ? null : window.localStorage.getItem(options.key);
+    } catch {
+      return null;
+    }
+  };
   const sync = createCrossWindowStateSync<UiState>({
     read: () => {
-      if (typeof window === "undefined") return null;
       try {
-        const raw = window.localStorage.getItem(options.key);
+        const raw = readRaw();
         return raw ? options.parse(JSON.parse(raw) as PersistedUiState) : null;
       } catch {
         return null;
@@ -101,17 +108,14 @@ export function createUiStateWindowSync(options: {
   return {
     persist: (state: UiState): void => {
       const local = pickUiState(state);
+      const before = readRaw();
       options.persist(sync.mergeForWrite(local));
-      sync.didWrite(local);
+      // `persist` swallows write errors (a full quota); a failed write leaves storage as it was.
+      if (readRaw() !== before) sync.didWrite(local);
     },
-    attach: <S extends UiState>(
-      store: StoreApi<S>,
-      eventTarget: Partial<Pick<EventTarget, "addEventListener">> | undefined,
-    ): void => {
+    attach: <S extends UiState>(store: StoreApi<S>): void => {
       sync.setBaseline(pickUiState(store.getState()));
-      if (typeof eventTarget?.addEventListener !== "function") return;
-      eventTarget.addEventListener("storage", (event) => {
-        if ((event as Partial<StorageEvent>).key !== options.key) return;
+      onStorageKey(options.key, () => {
         const local = pickUiState(store.getState());
         const merged = sync.adoptStored(local);
         if (merged === local) return;

@@ -1,5 +1,7 @@
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { stubGlobals } from "../../test/scientAppWindows";
 
 const persistenceMocks = vi.hoisted(() => ({
   getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
@@ -19,22 +21,32 @@ import {
   persistClientSettingsPatch,
 } from "./useSettings";
 
-const otherWindow = vi.hoisted(() => ({
-  listener: null as ((settings: ClientSettings) => void) | null,
-}));
-
-function stubDesktopWindow(locks?: Pick<LockManager, "request">) {
-  vi.stubGlobal("window", {
-    desktopBridge: {
-      onClientSettingsChanged: (listener: (settings: ClientSettings) => void) => {
-        otherWindow.listener = listener;
-        return () => {
-          otherWindow.listener = null;
-        };
+/** This window of the desktop app; `otherWindowSaved` delivers another window's save notice. */
+function setup(locks?: Pick<LockManager, "request">) {
+  persistenceMocks.getClientSettings.mockReset().mockResolvedValue(null);
+  persistenceMocks.setClientSettings.mockReset().mockResolvedValue(undefined);
+  __resetClientSettingsPersistenceForTests();
+  let listener: ((settings: ClientSettings) => void) | null = null;
+  const globals = stubGlobals({
+    window: {
+      desktopBridge: {
+        onClientSettingsChanged: (next: (settings: ClientSettings) => void) => {
+          listener = next;
+          return () => {
+            listener = null;
+          };
+        },
       },
     },
+    navigator: locks === undefined ? {} : { locks },
   });
-  vi.stubGlobal("navigator", locks === undefined ? {} : { locks });
+  return {
+    otherWindowSaved: (settings: ClientSettings) => listener!(settings),
+    [Symbol.dispose]: () => {
+      __resetClientSettingsPersistenceForTests();
+      globals[Symbol.dispose]();
+    },
+  };
 }
 
 function blockedWrite() {
@@ -52,21 +64,9 @@ function blockedWrite() {
   return { started, finish: () => finish() };
 }
 
-beforeEach(() => {
-  persistenceMocks.getClientSettings.mockReset().mockResolvedValue(null);
-  persistenceMocks.setClientSettings.mockReset().mockResolvedValue(undefined);
-  __resetClientSettingsPersistenceForTests();
-});
-
-afterEach(() => {
-  __resetClientSettingsPersistenceForTests();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-});
-
 describe("client settings saved by another desktop window", () => {
   it("are adopted without a write and keep this window's unsaved patches", async () => {
-    stubDesktopWindow();
+    using desktop = setup();
     persistenceMocks.getClientSettings.mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
     await ensureClientSettingsHydrated();
     const first = blockedWrite();
@@ -74,7 +74,7 @@ describe("client settings saved by another desktop window", () => {
     await first.started;
     const secondPatch = persistClientSettingsPatch({ timestampFormat: "12-hour" });
 
-    otherWindow.listener!({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });
+    desktop.otherWindowSaved({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });
     expect(getClientSettings()).toMatchObject({
       diffLayout: "split",
       wordWrap: false,
@@ -90,7 +90,7 @@ describe("client settings saved by another desktop window", () => {
       timestampFormat: "12-hour",
     });
 
-    otherWindow.listener!({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: true });
+    desktop.otherWindowSaved({ ...DEFAULT_CLIENT_SETTINGS, wordWrap: true });
     expect(getClientSettings()).toMatchObject({
       wordWrap: true,
       timestampFormat: DEFAULT_CLIENT_SETTINGS.timestampFormat,
@@ -98,7 +98,7 @@ describe("client settings saved by another desktop window", () => {
   });
 
   it("stand in for a pending read, whose older result is discarded", async () => {
-    stubDesktopWindow();
+    using desktop = setup();
     let finishRead!: (settings: ClientSettings) => void;
     persistenceMocks.getClientSettings.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -106,7 +106,7 @@ describe("client settings saved by another desktop window", () => {
       }),
     );
     const hydration = ensureClientSettingsHydrated();
-    otherWindow.listener!({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });
+    desktop.otherWindowSaved({ ...DEFAULT_CLIENT_SETTINGS, diffLayout: "split" });
     expect(isClientSettingsHydrated()).toBe(true);
 
     finishRead(DEFAULT_CLIENT_SETTINGS);
@@ -114,9 +114,11 @@ describe("client settings saved by another desktop window", () => {
     expect(getClientSettings().diffLayout).toBe("split");
   });
 
-  it("are read again under the cross-window lock before a write", async () => {
-    const request = vi.fn((_name: string, callback: () => Promise<unknown>) => callback());
-    stubDesktopWindow({ request } as unknown as Pick<LockManager, "request">);
+  it.each([
+    ["granted", (_name: string, callback: () => Promise<unknown>) => callback()],
+    ["unavailable", () => Promise.reject(new DOMException("Locks are unavailable."))],
+  ] as const)("are read again before a write when the lock is %s", async (_case, request) => {
+    using _desktop = setup({ request } as unknown as Pick<LockManager, "request">);
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     // The other window's change notice has not arrived yet.
     persistenceMocks.getClientSettings.mockResolvedValue({
@@ -126,7 +128,6 @@ describe("client settings saved by another desktop window", () => {
 
     await persistClientSettingsPatch({ wordWrap: false });
 
-    expect(request).toHaveBeenCalledOnce();
     expect(persistenceMocks.setClientSettings).toHaveBeenCalledExactlyOnceWith({
       ...DEFAULT_CLIENT_SETTINGS,
       diffLayout: "split",

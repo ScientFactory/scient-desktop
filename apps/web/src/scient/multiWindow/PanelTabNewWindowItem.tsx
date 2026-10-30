@@ -1,16 +1,12 @@
 import { AppWindowIcon } from "lucide-react";
 import { createContext, useContext, type ReactNode } from "react";
 
-import { MenuItem } from "~/components/ui/menu";
+import { MenuItem, MenuSeparator } from "~/components/ui/menu";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { RightPanelSurface } from "~/rightPanelStore";
 
 /** Opens the side panel tab a page shows in a new window; null outside a tab and where no window can open. */
 const PanelTabNewWindowContext = createContext<(() => void) | null>(null);
-
-export function usePanelTabNewWindow() {
-  return useContext(PanelTabNewWindowContext);
-}
 
 export function PanelTabNewWindowProvider(props: {
   readonly surface: RightPanelSurface | null;
@@ -28,19 +24,28 @@ export function PanelTabNewWindowProvider(props: {
   );
 }
 
-/** "Open in new window" in a page's own menu, for the tab that shows the page. */
+/**
+ * "Open in new window" in a page's own menu, for the tab that shows the page. Renders nothing
+ * outside a tab and where no window can open.
+ */
 export function PanelTabNewWindowItem(props: {
-  readonly onOpen: () => void;
   /** For a menu that offers other windows, such as the browser's. */
   readonly label?: string;
   /** For a menu whose items have no icons. */
   readonly plain?: boolean;
   readonly iconClassName?: string;
+  /** Puts the item in a group of its own at the end of the menu. */
+  readonly separated?: boolean;
 }) {
+  const open = useContext(PanelTabNewWindowContext);
+  if (!open) return null;
   return (
-    <MenuItem onClick={props.onOpen}>
-      {props.plain ? null : <AppWindowIcon className={props.iconClassName} />}
-      {props.label ?? "Open in new window"}
-    </MenuItem>
+    <>
+      {props.separated ? <MenuSeparator /> : null}
+      <MenuItem onClick={open}>
+        {props.plain ? null : <AppWindowIcon className={props.iconClassName} />}
+        {props.label ?? "Open in new window"}
+      </MenuItem>
+    </>
   );
 }

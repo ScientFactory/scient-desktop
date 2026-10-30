@@ -120,10 +120,7 @@ import {
   type DockGroup,
 } from "../../writing/dockChrome";
 import { ScientFindBar } from "../../writing/ScientFindBar";
-import {
-  PanelTabNewWindowItem,
-  usePanelTabNewWindow,
-} from "../../multiWindow/PanelTabNewWindowItem";
+import { PanelTabNewWindowItem } from "../../multiWindow/PanelTabNewWindowItem";
 import { ScientWikiLinkPicker } from "./ScientWikiLinkPicker";
 
 const ignoreWikiLinkSelection = () => undefined;
@@ -1221,7 +1218,6 @@ export function ScientMarkdownControls({
   const redoShortcut = scientMarkdownShortcut("redo");
   const [linkEditorHandle] = useState(createLinkEditorHandle);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const openInNewWindow = usePanelTabNewWindow();
   const dockLinkEditorTriggerId = `scient-markdown-link-dock-${useId()}`;
   const openLinkEditor = () => linkEditorHandle.open(dockLinkEditorTriggerId);
   const mathMenuAnchor = useRef<HTMLSpanElement>(null);
@@ -1401,7 +1397,7 @@ export function ScientMarkdownControls({
               <Keyboard />
               <span>Keyboard shortcuts</span>
             </MenuItem>
-            {openInNewWindow ? <PanelTabNewWindowItem onOpen={openInNewWindow} /> : null}
+            <PanelTabNewWindowItem separated />
           </>
         }
       />

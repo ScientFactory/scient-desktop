@@ -7,6 +7,9 @@ import {
   PersistedComposerImageAttachment,
 } from "./composerDraftStore";
 import { createMemoryStorage, type StateStorage } from "./lib/storage";
+// SCIENT-FORK:START — app windows share the stash; act on the entries other windows wrote.
+import { onStorageKey } from "./scient/multiWindow/crossWindowMerge";
+// SCIENT-FORK:END
 
 export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v2";
 const LEGACY_PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v1";
@@ -201,13 +204,10 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
 }
 
 // SCIENT-FORK:START — app windows share the stash; act on the entries other windows wrote.
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-  window.addEventListener("storage", (event) => {
-    if (event.key !== PROMPT_STASH_STORAGE_KEY) return;
-    const entries = readPersistedEntries(false);
-    if (entries) usePromptStashStore.setState({ entries });
-  });
-}
+onStorageKey(PROMPT_STASH_STORAGE_KEY, () => {
+  const entries = readPersistedEntries(false);
+  if (entries) usePromptStashStore.setState({ entries });
+});
 // SCIENT-FORK:END
 
 export function writePromptStashStorageForTest(raw: string): void {

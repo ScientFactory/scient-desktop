@@ -477,7 +477,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
 // SCIENT-FORK:START — adopt what other app windows save.
-uiStateWindowSync.attach(useUiStateStore, typeof window === "undefined" ? undefined : window);
+uiStateWindowSync.attach(useUiStateStore);
 // SCIENT-FORK:END
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {

@@ -40,7 +40,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
 // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
-import { browserWindowLocks, withWindowLock } from "../scient/multiWindow/windowLocks";
+import { catalogWriteLock } from "../scient/multiWindow/windowLocks";
 // SCIENT-FORK:END
 
 const DATABASE_NAME = "t3code:connection-runtime";
@@ -51,9 +51,6 @@ const THREAD_STORE_NAME = "thread";
 const SERVER_CONFIG_STORE_NAME = "server-config";
 const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
-// SCIENT-FORK:START — several desktop windows share the saved connection catalog.
-const CATALOG_WRITE_LOCK = "scient-connection-catalog-write";
-// SCIENT-FORK:END
 const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
@@ -420,9 +417,7 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
           ),
         ),
       // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
-      ...(bridge.onConnectionCatalogChanged === undefined
-        ? {}
-        : { exclusive: withWindowLock(browserWindowLocks(), CATALOG_WRITE_LOCK) }),
+      ...(bridge.onConnectionCatalogChanged === undefined ? {} : { exclusive: catalogWriteLock() }),
       // SCIENT-FORK:END
     };
   }
@@ -455,7 +450,6 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   const lock = yield* Semaphore.make(1);
   // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
   let stale = false;
-  const exclusive = backend.exclusive ?? ((effect) => effect);
   // SCIENT-FORK:END
 
   const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
@@ -505,17 +499,11 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
-        // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
-        exclusive(
-          Effect.gen(function* () {
-            // The change notice from the window that held the lock last can still be in flight.
-            if (backend.exclusive !== undefined) stale = true;
-            const next = transform(yield* loadUnlocked());
-            yield* backend.write(yield* encodeCatalog(next));
-            yield* Ref.set(state, Option.some(next));
-          }),
-        ),
-        // SCIENT-FORK:END
+        Effect.gen(function* () {
+          const next = transform(yield* loadUnlocked());
+          yield* backend.write(yield* encodeCatalog(next));
+          yield* Ref.set(state, Option.some(next));
+        }),
       );
     },
   );
@@ -524,7 +512,16 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   const invalidate = () => {
     stale = true;
   };
-  return { read, update, invalidate } satisfies CatalogStore;
+  const { exclusive } = backend;
+  return {
+    read,
+    // The change notice from the window that held the lock last can still be in flight.
+    update:
+      exclusive === undefined
+        ? update
+        : (transform) => exclusive(Effect.sync(invalidate).pipe(Effect.andThen(update(transform)))),
+    invalidate,
+  } satisfies CatalogStore;
   // SCIENT-FORK:END
 });
 

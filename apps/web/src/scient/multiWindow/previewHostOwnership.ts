@@ -1,4 +1,4 @@
-import { holdLock, type LockHold } from "./previewTabPresence";
+import { holdLock, type LockHold } from "./windowLocks";
 
 /** `pending` until this window learns whether it or another app window hosts the tab. */
 type PreviewHostRole = "pending" | "host" | "elsewhere";

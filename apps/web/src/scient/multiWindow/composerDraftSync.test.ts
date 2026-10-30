@@ -1,72 +1,81 @@
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
+  openAppWindow,
+  sharedLocalStorage,
+  type SharedLocalStorage,
+} from "../../../test/scientAppWindows";
+import {
   COMPOSER_DRAFT_STORAGE_KEY,
-  createEmptyThreadDraft,
+  DraftId,
   type ComposerFileAttachment,
 } from "../../composerDraftStore";
-import { reconcileRemoteComposerDraft } from "./composerDraftSync";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 
-function sharedLocalStorage() {
-  const values = new Map<string, string>();
+async function openDraftWindow(storage: SharedLocalStorage) {
+  const appWindow = await openAppWindow(storage, () => import("../../composerDraftStore"));
+  const store = appWindow.module.useComposerDraftStore;
   return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-    removeItem: (key: string) => void values.delete(key),
+    store,
+    setPrompt: (thread: string, prompt: string) =>
+      store.getState().setPrompt(threadRef(thread), prompt),
+    prompt: (thread: string) => store.getState().draftsByThreadKey[threadKey(thread)]?.prompt,
+    flush: appWindow.module.flushComposerDraftPersistence,
+    receiveStorageEvent: () => appWindow.receiveStorageEvent(COMPOSER_DRAFT_STORAGE_KEY),
+    [Symbol.dispose]: appWindow[Symbol.dispose],
   };
 }
 
-type SharedStorage = ReturnType<typeof sharedLocalStorage>;
-
-async function openAppWindow(storage: SharedStorage) {
-  const eventTarget = new EventTarget();
-  vi.resetModules();
-  vi.stubGlobal("localStorage", storage);
-  vi.stubGlobal("window", eventTarget);
-  const module = await import("../../composerDraftStore");
-  onTestFinished(() => {
-    vi.unstubAllGlobals();
-  });
-  return {
-    setPrompt: (thread: string, prompt: string) =>
-      module.useComposerDraftStore
-        .getState()
-        .setPrompt(scopeThreadRef(ENVIRONMENT_ID, ThreadId.make(thread)), prompt),
-    prompt: (thread: string) =>
-      module.useComposerDraftStore.getState().draftsByThreadKey[threadKey(thread)]?.prompt,
-    flush: module.flushComposerDraftPersistence,
-    receiveStorageEvent: () =>
-      eventTarget.dispatchEvent(
-        Object.assign(new Event("storage"), { key: COMPOSER_DRAFT_STORAGE_KEY }),
-      ),
-  };
+function threadRef(thread: string) {
+  return scopeThreadRef(ENVIRONMENT_ID, ThreadId.make(thread));
 }
 
 function threadKey(thread: string): string {
-  return scopedThreadKey(scopeThreadRef(ENVIRONMENT_ID, ThreadId.make(thread)));
+  return scopedThreadKey(threadRef(thread));
 }
 
-function storedPrompts(storage: SharedStorage): Record<string, string> {
-  const raw = storage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
-  const drafts = (
-    JSON.parse(raw ?? "{}") as {
-      state?: { draftsByThreadKey?: Record<string, { prompt: string }> };
-    }
-  ).state?.draftsByThreadKey;
+interface StoredDrafts {
+  state: {
+    draftsByThreadKey: Record<string, { prompt: string }>;
+    draftThreadsByThreadKey: Record<string, { projectId: string | null; branch: string | null }>;
+    logicalProjectDraftThreadKeyByLogicalProjectKey: Record<string, string>;
+    stickyActiveProvider?: string | null;
+  };
+  version: number;
+}
+
+function readStored(storage: SharedLocalStorage): StoredDrafts {
+  return JSON.parse(storage.getItem(COMPOSER_DRAFT_STORAGE_KEY) ?? "null") as StoredDrafts;
+}
+
+function editStored(storage: SharedLocalStorage, edit: (stored: StoredDrafts) => void): void {
+  const stored = readStored(storage);
+  edit(stored);
+  storage.setItem(COMPOSER_DRAFT_STORAGE_KEY, JSON.stringify(stored));
+}
+
+function storedPrompts(storage: SharedLocalStorage): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(drafts ?? {}).map(([key, draft]) => [key, draft.prompt]),
+    Object.entries(readStored(storage)?.state.draftsByThreadKey ?? {}).map(([key, draft]) => [
+      key,
+      draft.prompt,
+    ]),
   );
 }
 
 describe("composer drafts across app windows", () => {
   it("keeps drafts another window wrote, including when this window deletes its own", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
-    const second = await openAppWindow(storage);
+    using first = await openDraftWindow(storage);
+    using second = await openDraftWindow(storage);
 
     first.setPrompt("thread-a", "written in the first window");
     first.flush();
@@ -86,8 +95,8 @@ describe("composer drafts across app windows", () => {
 
   it("applies another window's drafts except one this window has not yet saved", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
-    const second = await openAppWindow(storage);
+    using first = await openDraftWindow(storage);
+    using second = await openDraftWindow(storage);
 
     second.setPrompt("shared", "unsaved in the second window");
     first.setPrompt("other", "from the first window");
@@ -105,10 +114,11 @@ describe("composer drafts across app windows", () => {
       [threadKey("shared")]: "unsaved in the second window",
     });
   });
-});
 
-describe("reconcileRemoteComposerDraft", () => {
-  it("keeps this window's file bytes for an attachment another window persisted without them", () => {
+  it("keeps this window's file bytes when another window edits the same draft", async () => {
+    const storage = sharedLocalStorage();
+    using first = await openDraftWindow(storage);
+    using second = await openDraftWindow(storage);
     const bytes = new File(["data"], "notes.txt", { type: "text/plain" });
     const attachment: ComposerFileAttachment = {
       type: "file",
@@ -118,15 +128,87 @@ describe("reconcileRemoteComposerDraft", () => {
       sizeBytes: 4,
       file: bytes,
     };
-    const merged = reconcileRemoteComposerDraft(
-      { ...createEmptyThreadDraft(), files: [attachment] },
-      {
-        ...createEmptyThreadDraft(),
-        prompt: "edited elsewhere",
-        files: [{ ...attachment, file: null }],
-      },
-    );
-    expect(merged?.prompt).toBe("edited elsewhere");
-    expect(merged?.files[0]?.file).toBe(bytes);
+
+    first.setPrompt("shared", "with a file");
+    first.store.getState().addFiles(threadRef("shared"), [attachment]);
+    first.flush();
+    second.receiveStorageEvent();
+    second.setPrompt("shared", "edited in the second window");
+    second.flush();
+    first.receiveStorageEvent();
+
+    const draft = first.store.getState().draftsByThreadKey[threadKey("shared")];
+    expect(draft?.prompt).toMatch(/^edited in the second window/);
+    expect(draft?.files[0]?.file).toBe(bytes);
   });
+
+  it("keeps sticky model choices another window saved while this one writes drafts", async () => {
+    const storage = sharedLocalStorage();
+    using first = await openDraftWindow(storage);
+    using second = await openDraftWindow(storage);
+    const instanceId = ProviderInstanceId.make("codex");
+
+    first.store.getState().setStickyModelSelection(createModelSelection(instanceId, "gpt-5"));
+    first.flush();
+    second.setPrompt("thread-b", "written in the second window");
+    second.flush();
+    expect(readStored(storage).state.stickyActiveProvider).toBe(instanceId);
+
+    second.receiveStorageEvent();
+    expect(second.store.getState().stickyActiveProvider).toBe(instanceId);
+  });
+
+  it("writes every draft this window holds when storage was cleared", async () => {
+    const storage = sharedLocalStorage();
+    using appWindow = await openDraftWindow(storage);
+
+    appWindow.setPrompt("thread-a", "saved before the clear");
+    appWindow.flush();
+    storage.removeItem(COMPOSER_DRAFT_STORAGE_KEY);
+    appWindow.setPrompt("thread-b", "written after the clear");
+    appWindow.flush();
+
+    expect(storedPrompts(storage)).toEqual({
+      [threadKey("thread-a")]: "saved before the clear",
+      [threadKey("thread-b")]: "written after the clear",
+    });
+  });
+
+  it.each([
+    { editedElsewhere: false, expected: undefined },
+    { editedElsewhere: true, expected: "feature" },
+  ])(
+    "deletes a draft session hydration dropped unless another window edits it first (edited elsewhere: $editedElsewhere)",
+    async ({ editedElsewhere, expected }) => {
+      const storage = sharedLocalStorage();
+      const draftId = DraftId.make("draft-without-project");
+      {
+        using writer = await openDraftWindow(storage);
+        writer.store
+          .getState()
+          .setProjectDraftThreadId(
+            scopeProjectRef(ENVIRONMENT_ID, ProjectId.make("project-1")),
+            draftId,
+          );
+        writer.flush();
+      }
+      editStored(storage, (stored) => {
+        stored.state.draftThreadsByThreadKey[draftId]!.projectId = null;
+        stored.state.logicalProjectDraftThreadKeyByLogicalProjectKey = {};
+      });
+      using appWindow = await openDraftWindow(storage);
+      expect(appWindow.store.getState().draftThreadsByThreadKey[draftId]).toBeUndefined();
+
+      if (editedElsewhere) {
+        editStored(storage, (stored) => {
+          stored.state.draftThreadsByThreadKey[draftId]!.branch = "feature";
+        });
+        appWindow.receiveStorageEvent();
+      }
+      appWindow.setPrompt("thread-b", "written in this window");
+      appWindow.flush();
+
+      expect(readStored(storage).state.draftThreadsByThreadKey[draftId]?.branch).toBe(expected);
+    },
+  );
 });

@@ -8,7 +8,7 @@ import { Button } from "~/components/ui/button";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { acquireDesktopTab } from "~/browser/desktopTabLifetime";
 import { consumePreviewTakeover, createPreviewHostClaim } from "./previewHostOwnership";
-import { previewWindowLocks } from "./previewTabPresence";
+import { desktopWindowLocks } from "./windowLocks";
 
 interface PreviewWindowTab {
   readonly threadRef: ScopedThreadRef;
@@ -19,7 +19,7 @@ interface PreviewWindowTab {
 
 /** Renders `children` (the tab's webview) only in the app window that hosts the tab. */
 export function PreviewWindowHost(props: PreviewWindowTab & { readonly children: ReactNode }) {
-  const locks = previewWindowLocks();
+  const locks = desktopWindowLocks();
   if (!locks) return props.children;
   return <CoordinatedPreviewWindowHost {...props} locks={locks} />;
 }

@@ -1,56 +1,44 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
+import {
+  openAppWindow,
+  sharedLocalStorage,
+  type SharedLocalStorage,
+} from "../../../test/scientAppWindows";
 import type { ThreadRightPanelState } from "../../rightPanelStore";
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const threadA = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-A"));
 const threadB = scopeThreadRef("env-1" as EnvironmentId, ThreadId.make("thread-B"));
 
-function sharedLocalStorage() {
-  const values = new Map<string, string>();
-  return {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
-    removeItem: (key: string) => void values.delete(key),
-  };
-}
-
-async function openAppWindow(storage: ReturnType<typeof sharedLocalStorage>) {
-  const appWindow = Object.assign(new EventTarget(), { localStorage: storage });
-  vi.resetModules();
-  vi.stubGlobal("localStorage", storage);
-  vi.stubGlobal("window", appWindow);
-  const { useRightPanelStore } = await import("../../rightPanelStore");
-  onTestFinished(() => {
-    vi.unstubAllGlobals();
-  });
+async function openPanelWindow(storage: SharedLocalStorage) {
+  const appWindow = await openAppWindow(storage, () => import("../../rightPanelStore"));
+  const { useRightPanelStore } = appWindow.module;
   return {
     store: useRightPanelStore,
     surfaceIds: (ref: typeof threadA) =>
       useRightPanelStore
         .getState()
         .byThreadKey[scopedThreadKey(ref)]?.surfaces.map((surface) => surface.id) ?? [],
-    receiveStorageEvent: () =>
-      appWindow.dispatchEvent(
-        Object.assign(new Event("storage"), { key: RIGHT_PANEL_STORAGE_KEY }),
-      ),
+    receiveStorageEvent: () => appWindow.receiveStorageEvent(RIGHT_PANEL_STORAGE_KEY),
+    [Symbol.dispose]: appWindow[Symbol.dispose],
   };
 }
 
-function storedState(storage: ReturnType<typeof sharedLocalStorage>) {
+function storedState(storage: SharedLocalStorage) {
   const persisted = JSON.parse(storage.getItem(RIGHT_PANEL_STORAGE_KEY) ?? "{}") as {
     state?: { byThreadKey?: Record<string, ThreadRightPanelState> };
   };
   return persisted.state?.byThreadKey ?? {};
 }
 
-function storedThreadKeys(storage: ReturnType<typeof sharedLocalStorage>) {
+function storedThreadKeys(storage: SharedLocalStorage) {
   return Object.keys(storedState(storage)).toSorted();
 }
 
-function panelView(window: Awaited<ReturnType<typeof openAppWindow>>, ref: typeof threadA) {
+function panelView(window: Awaited<ReturnType<typeof openPanelWindow>>, ref: typeof threadA) {
   const state = window.store.getState().byThreadKey[scopedThreadKey(ref)];
   return {
     isOpen: state?.isOpen,
@@ -62,8 +50,8 @@ function panelView(window: Awaited<ReturnType<typeof openAppWindow>>, ref: typeo
 describe("side panel state across app windows", () => {
   it("keeps another window's thread when a stale window saves, then shows its tabs", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
-    const second = await openAppWindow(storage);
+    using first = await openPanelWindow(storage);
+    using second = await openPanelWindow(storage);
 
     first.store.getState().openBrowser(threadA, "tab-1");
     second.store.getState().open(threadB, "diff");
@@ -79,10 +67,10 @@ describe("side panel state across app windows", () => {
 
   it("adopts a tab closed in another window but keeps its own thread details panel", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
+    using first = await openPanelWindow(storage);
     first.store.getState().open(threadA, "diff");
     first.store.getState().open(threadA, "files");
-    const second = await openAppWindow(storage);
+    using second = await openPanelWindow(storage);
 
     first.store.getState().closeSurface(threadA, "diff");
     first.store.getState().setThreadPanelOpen(threadA, "inline", false);
@@ -96,10 +84,10 @@ describe("side panel state across app windows", () => {
 
   it("keeps each window's selected tab, open panel and maximized panel", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
+    using first = await openPanelWindow(storage);
     first.store.getState().open(threadA, "diff");
     first.store.getState().open(threadA, "files");
-    const second = await openAppWindow(storage);
+    using second = await openPanelWindow(storage);
 
     second.store.getState().activateSurface(threadA, "diff");
     second.store.getState().setMaximized(threadA, true);
@@ -124,11 +112,11 @@ describe("side panel state across app windows", () => {
 
   it("shows the neighbouring tab when another window closes the one this window shows", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
+    using first = await openPanelWindow(storage);
     first.store.getState().open(threadA, "diff");
     first.store.getState().open(threadA, "files");
     first.store.getState().open(threadA, "pull-requests");
-    const second = await openAppWindow(storage);
+    using second = await openPanelWindow(storage);
     second.store.getState().activateSurface(threadA, "files");
     first.store.getState().activateSurface(threadA, "diff");
 
@@ -141,10 +129,10 @@ describe("side panel state across app windows", () => {
 
   it("keeps a tab another window added when a window that only switched tabs saves", async () => {
     const storage = sharedLocalStorage();
-    const first = await openAppWindow(storage);
+    using first = await openPanelWindow(storage);
     first.store.getState().open(threadA, "diff");
     first.store.getState().open(threadA, "files");
-    const second = await openAppWindow(storage);
+    using second = await openPanelWindow(storage);
 
     first.store.getState().open(threadA, "pull-requests");
     second.store.getState().activateSurface(threadA, "diff");

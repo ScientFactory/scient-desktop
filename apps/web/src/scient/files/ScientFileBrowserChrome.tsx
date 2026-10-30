@@ -26,7 +26,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
-import { PanelTabNewWindowItem, usePanelTabNewWindow } from "../multiWindow/PanelTabNewWindowItem";
+import { PanelTabNewWindowItem } from "../multiWindow/PanelTabNewWindowItem";
 
 import type { LazyWorkspaceTreeSnapshot } from "./LazyWorkspaceTreeController";
 
@@ -65,7 +65,6 @@ export function WorkspaceFilesMenu(props: {
   /** Opens or closes every loaded folder; absent where that would walk too much. */
   folders?: { readonly allExpanded: boolean; readonly onToggle: () => void } | undefined;
 }) {
-  const openInNewWindow = usePanelTabNewWindow();
   return (
     <Menu>
       <Tooltip>
@@ -104,13 +103,7 @@ export function WorkspaceFilesMenu(props: {
             {props.folders.allExpanded ? "Collapse all folders" : "Expand all folders"}
           </MenuItem>
         ) : null}
-        {openInNewWindow ? (
-          <PanelTabNewWindowItem
-            onOpen={openInNewWindow}
-            iconClassName="size-4 text-muted-foreground"
-          />
-        ) : null}
-        {props.refresh || props.folders || openInNewWindow ? <MenuSeparator /> : null}
+        {props.refresh || props.folders ? <MenuSeparator /> : null}
         <MenuGroup>
           <MenuGroupLabel>File visibility</MenuGroupLabel>
           <MenuRadioGroup
@@ -124,6 +117,7 @@ export function WorkspaceFilesMenu(props: {
             ))}
           </MenuRadioGroup>
         </MenuGroup>
+        <PanelTabNewWindowItem separated />
       </MenuPopup>
     </Menu>
   );

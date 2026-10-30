@@ -1323,7 +1323,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
   ),
 );
 // SCIENT-FORK:START — adopt what other app windows save.
-rightPanelWindowSync.attach(useRightPanelStore, typeof window === "undefined" ? undefined : window);
+rightPanelWindowSync.attach(useRightPanelStore);
 // SCIENT-FORK:END
 
 useRightPanelStore.subscribe((next, previous) => {

@@ -2,7 +2,14 @@ import type { StoreApi } from "zustand";
 
 import type { StateStorage } from "../../lib/storage";
 import type { ThreadPanelVisibility, ThreadRightPanelState } from "../../rightPanelStore";
-import { createCrossWindowStateSync, mergeWindowEntries } from "./crossWindowMerge";
+import {
+  createCrossWindowStateSync,
+  createMergingStorage,
+  mergeWindowEntries,
+  onStorageKey,
+  readStoredState,
+  stableJson,
+} from "./crossWindowMerge";
 
 type Entries<V> = Readonly<Record<string, V>>;
 type ThreadPanel = ThreadRightPanelState;
@@ -21,16 +28,6 @@ type PersistedStore<S> = StoreApi<S> & {
   readonly persist: { readonly getOptions: () => { readonly partialize?: (state: S) => unknown } };
 };
 
-// Key order differs between windows, so entries compare with sorted keys.
-const sortedJson = (value: unknown) =>
-  JSON.stringify(value, (_key, nested: unknown) =>
-    nested !== null && typeof nested === "object" && !Array.isArray(nested)
-      ? Object.fromEntries(
-          Object.entries(nested).toSorted(([left], [right]) => (left < right ? -1 : 1)),
-        )
-      : nested,
-  );
-
 const NO_ENTRY: ThreadPanel = { isOpen: false, activeSurfaceId: null, surfaces: [] };
 
 /** Each window's view of a thread's tabs; the rest of the entry is shared. */
@@ -39,11 +36,11 @@ function splitView(entry: ThreadPanel | undefined) {
   return { view: { isOpen, activeSurfaceId, maximized }, tabs };
 }
 
-const tabsKey = (entry: ThreadPanel | undefined) => sortedJson(splitView(entry).tabs);
+const tabsKey = (entry: ThreadPanel | undefined) => stableJson(splitView(entry).tabs);
 const NO_TABS = tabsKey(undefined);
 
 const entryKey = (entry: ThreadPanel | undefined) =>
-  entry === undefined ? "" : sortedJson(splitView(entry));
+  entry === undefined ? "" : stableJson(splitView(entry));
 
 /** `theirs`'s tabs as `own` showed them; a tab closed elsewhere gives way to its neighbour. */
 function withOwnView(
@@ -159,21 +156,17 @@ export function createRightPanelWindowSync(options: {
   readonly storage: StateStorage;
 }) {
   const read = (): PersistedRightPanelState | null => {
-    try {
-      const raw = options.storage.getItem(options.key);
-      if (typeof raw !== "string") return null;
-      const parsed = JSON.parse(raw) as {
-        state?: Partial<PersistedRightPanelState>;
-        version?: unknown;
-      } | null;
-      if (parsed?.version !== options.version || !parsed.state) return null;
-      return {
-        byThreadKey: parsed.state.byThreadKey ?? {},
-        threadPanelVisibilityByThreadKey: parsed.state.threadPanelVisibilityByThreadKey ?? {},
-      };
-    } catch {
-      return null;
-    }
+    const state: Partial<PersistedRightPanelState> | null = readStoredState(
+      options.storage,
+      options.key,
+      options.version,
+    );
+    return state === null
+      ? null
+      : {
+          byThreadKey: state.byThreadKey ?? {},
+          threadPanelVisibilityByThreadKey: state.threadPanelVisibilityByThreadKey ?? {},
+        };
   };
   const sync = createCrossWindowStateSync<PersistedRightPanelState>({
     read,
@@ -181,37 +174,15 @@ export function createRightPanelWindowSync(options: {
     adopt: (local, synced, stored) => mergeRightPanelState(local, synced, stored, true),
   });
 
-  const storage: StateStorage = {
-    getItem: (name) => options.storage.getItem(name),
-    removeItem: (name) => options.storage.removeItem(name),
-    setItem: (name, value) => {
-      if (name !== options.key) return options.storage.setItem(name, value);
-      const persisted = JSON.parse(value) as { state: PersistedRightPanelState; version: number };
-      const local = persisted.state;
-      const merged = sync.mergeForWrite(local);
-      const result = options.storage.setItem(
-        name,
-        merged === local ? value : JSON.stringify({ ...persisted, state: merged }),
-      );
-      sync.didWrite(local);
-      return result;
-    },
-  };
-
   return {
-    storage,
-    attach: <S extends RightPanelMemory>(
-      store: PersistedStore<S>,
-      eventTarget: Partial<Pick<EventTarget, "addEventListener">> | undefined,
-    ): void => {
+    storage: createMergingStorage(options.storage, options.key, sync),
+    attach: <S extends RightPanelMemory>(store: PersistedStore<S>): void => {
       const toPersisted = (state: S) => {
         const partialize = store.persist.getOptions().partialize;
         return (partialize ? partialize(state) : state) as PersistedRightPanelState;
       };
       sync.setBaseline(read() ?? toPersisted(store.getState()));
-      if (typeof eventTarget?.addEventListener !== "function") return;
-      eventTarget.addEventListener("storage", (event) => {
-        if ((event as Partial<StorageEvent>).key !== options.key) return;
+      onStorageKey(options.key, () => {
         const state = store.getState();
         const local = toPersisted(state);
         const merged = sync.adoptStored(local);

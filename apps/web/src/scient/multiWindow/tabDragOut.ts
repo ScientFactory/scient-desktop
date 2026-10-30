@@ -1,6 +1,8 @@
 import type { DragEndEvent } from "@dnd-kit/core";
 import { useEffect, useRef } from "react";
 
+import type { RightPanelSurface } from "~/rightPanelStore";
+
 interface Point {
   readonly x: number;
   readonly y: number;
@@ -31,10 +33,16 @@ function trackPointer(): TrackedDrag {
 }
 
 /**
- * Notices a tab drag that ends outside the app window. dnd-kit reports only the movement its
- * modifiers allow, which stays in the tab strip, so the pointer is followed here.
+ * Opens a tab dragged out of the app window in a window of its own, where it was dropped.
+ * dnd-kit reports only the movement its modifiers allow, which stays in the tab strip, so the
+ * pointer is followed here.
  */
-export function useTabDragOut(onDropOutsideWindow: ((surfaceId: string) => void) | undefined) {
+export function useTabDragOut(
+  surfaces: readonly RightPanelSurface[],
+  onOpen:
+    | ((surface: RightPanelSurface, options: { readonly atCursor: boolean }) => void)
+    | undefined,
+) {
   const drag = useRef<TrackedDrag | null>(null);
   const finish = () => {
     const current = drag.current;
@@ -53,19 +61,24 @@ export function useTabDragOut(onDropOutsideWindow: ((surfaceId: string) => void)
   );
 
   return {
-    onDragStart: () => {
-      finish();
-      if (onDropOutsideWindow) drag.current = trackPointer();
-    },
-    onDragCancel: () => {
-      finish();
-    },
-    /** Opens a tab dropped outside the window elsewhere; true when the strip should not reorder. */
-    droppedOutside: (event: DragEndEvent): boolean => {
-      const point = finish();
-      if (!onDropOutsideWindow || point === null || !outsideWindow(point)) return false;
-      onDropOutsideWindow(String(event.active.id));
-      return true;
-    },
+    /** The tab strip's drag handlers; a tab dropped inside the window goes to `onDragEnd`. */
+    handlers: (onDragEnd: (event: DragEndEvent) => void) => ({
+      onDragStart: () => {
+        finish();
+        if (onOpen) drag.current = trackPointer();
+      },
+      onDragCancel: () => {
+        finish();
+      },
+      onDragEnd: (event: DragEndEvent) => {
+        const point = finish();
+        const surface =
+          onOpen && point !== null && outsideWindow(point)
+            ? surfaces.find((entry) => entry.id === String(event.active.id))
+            : undefined;
+        if (surface) onOpen?.(surface, { atCursor: true });
+        else onDragEnd(event);
+      },
+    }),
   };
 }

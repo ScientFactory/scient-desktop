@@ -966,7 +966,7 @@ function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
   onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
   // SCIENT-FORK:START — a tab dropped outside the app window opens in a window of its own
-  onDropOutsideWindow?: ((surfaceId: string) => void) | undefined;
+  onOpenInNewWindow: RightPanelTabsProps["onOpenSurfaceInNewWindow"];
   // SCIENT-FORK:END
   children: ReactNode;
 }) {
@@ -974,7 +974,7 @@ function SortableTabList(props: {
   const surfaceIds = props.surfaces.map((surface) => surface.id);
   const { onMove, surfaces } = props;
   // SCIENT-FORK:START
-  const dragOut = useTabDragOut(props.onDropOutsideWindow);
+  const dragOut = useTabDragOut(surfaces, props.onOpenInNewWindow);
   // SCIENT-FORK:END
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
@@ -986,12 +986,8 @@ function SortableTabList(props: {
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={TAB_DRAG_MODIFIERS}
-      // SCIENT-FORK:START
-      onDragStart={dragOut.onDragStart}
-      onDragCancel={dragOut.onDragCancel}
-      onDragEnd={(event) => {
-        if (!dragOut.droppedOutside(event)) handleDragEnd(event);
-      }}
+      // SCIENT-FORK:START — the tab strip's drag handlers also open a tab dropped outside the window
+      {...dragOut.handlers(handleDragEnd)}
       // SCIENT-FORK:END
     >
       <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
@@ -1492,12 +1488,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       void handleTabContextMenu(event, surface);
     },
   );
-  // SCIENT-FORK:START
-  const onDropTabOutsideWindow = useStableCallback((surfaceId: string) => {
-    const surface = props.surfaces.find((entry) => entry.id === surfaceId);
-    if (surface) props.onOpenSurfaceInNewWindow?.(surface, { atCursor: true });
-  });
-  // SCIENT-FORK:END
   const onStartRenameTab = useStableCallback((surfaceId: string) => setRenamingDevice(surfaceId));
   const onFinishRenameTab = useStableCallback((surfaceId: string, title: string) => {
     props.onRenameDevice?.(surfaceId, title);
@@ -1607,9 +1597,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             <SortableTabList
               surfaces={props.surfaces}
               onMove={props.onMoveSurface}
-              onDropOutsideWindow={
-                props.onOpenSurfaceInNewWindow ? onDropTabOutsideWindow : undefined
-              }
+              onOpenInNewWindow={props.onOpenSurfaceInNewWindow}
             >
               {/* SCIENT-FORK:END */}
               {props.surfaces.map((surface) => {

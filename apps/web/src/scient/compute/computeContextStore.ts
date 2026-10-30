@@ -12,9 +12,15 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { randomUUID } from "~/lib/utils";
-import { resolveStorage, type StateStorage } from "~/lib/storage";
+import { resolveStorage } from "~/lib/storage";
 
-import { createCrossWindowStateSync, mergeWindowEntries } from "../multiWindow/crossWindowMerge";
+import {
+  createCrossWindowStateSync,
+  createMergingStorage,
+  mergeWindowEntries,
+  onStorageKey,
+  readStoredState,
+} from "../multiWindow/crossWindowMerge";
 
 const MAX_COMPUTE_CONTEXT_PATH_LENGTH = 32 * 1024;
 export const MAX_COMPUTE_CONTEXT_ID_LENGTH = 32 * 1024;
@@ -250,46 +256,29 @@ const computeContextBaseStorage = resolveStorage(
 );
 
 function readStoredComputeContextBindings(): ComputeContextBindings | null {
-  try {
-    const raw = computeContextBaseStorage.getItem(COMPUTE_CONTEXT_STORAGE_KEY);
-    if (typeof raw !== "string") return null;
-    const parsed = JSON.parse(raw) as { state?: unknown; version?: unknown } | null;
-    if (parsed?.version !== COMPUTE_CONTEXT_STORAGE_VERSION) return null;
-    return migratePersistedComputeContextState(parsed.state).bindings;
-  } catch {
-    return null;
-  }
+  const state = readStoredState(
+    computeContextBaseStorage,
+    COMPUTE_CONTEXT_STORAGE_KEY,
+    COMPUTE_CONTEXT_STORAGE_VERSION,
+  );
+  return state === null ? null : migratePersistedComputeContextState(state).bindings;
 }
 
 const computeContextWindowSync = createCrossWindowStateSync<ComputeContextBindings>({
   read: readStoredComputeContextBindings,
-  merge: (local, synced, stored) => mergeWindowEntries(local, synced, stored),
+  merge: mergeWindowEntries,
 });
 
 // App windows share the bindings key; a stale window must not drop another window's bindings.
-const computeContextStorage: StateStorage = {
-  getItem: (name) => computeContextBaseStorage.getItem(name),
-  removeItem: (name) => computeContextBaseStorage.removeItem(name),
-  setItem: (name, value) => {
-    if (name !== COMPUTE_CONTEXT_STORAGE_KEY) return computeContextBaseStorage.setItem(name, value);
-    const persisted = JSON.parse(value) as {
-      state: { bindings: ComputeContextBindings };
-      version: number;
-    };
-    const local = persisted.state.bindings;
-    const merged = computeContextWindowSync.mergeForWrite(local);
-    computeContextBaseStorage.setItem(
-      name,
-      merged === local
-        ? value
-        : JSON.stringify({
-            ...persisted,
-            state: { ...persisted.state, bindings: pruneTerminalBindings(merged) },
-          }),
-    );
-    computeContextWindowSync.didWrite(local);
+const computeContextStorage = createMergingStorage(
+  computeContextBaseStorage,
+  COMPUTE_CONTEXT_STORAGE_KEY,
+  computeContextWindowSync,
+  {
+    get: (state: { readonly bindings: ComputeContextBindings }) => state.bindings,
+    set: (state, bindings) => ({ ...state, bindings: pruneTerminalBindings(bindings) }),
   },
-};
+);
 
 function updateBinding(
   state: ComputeContextStoreState,
@@ -572,14 +561,11 @@ export const useComputeContextStore = create<ComputeContextStoreState>()(
 );
 
 computeContextWindowSync.setBaseline(readStoredComputeContextBindings() ?? {});
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-  window.addEventListener("storage", (event) => {
-    if (event.key !== COMPUTE_CONTEXT_STORAGE_KEY) return;
-    const local = useComputeContextStore.getState().bindings;
-    const bindings = computeContextWindowSync.adoptStored(local);
-    if (bindings !== local) useComputeContextStore.setState({ bindings });
-  });
-}
+onStorageKey(COMPUTE_CONTEXT_STORAGE_KEY, () => {
+  const local = useComputeContextStore.getState().bindings;
+  const bindings = computeContextWindowSync.adoptStored(local);
+  if (bindings !== local) useComputeContextStore.setState({ bindings });
+});
 
 export function getComputeContext(contextId: ComputeContextId): ComputeContextBinding | null {
   return useComputeContextStore.getState().bindings[contextId] ?? null;

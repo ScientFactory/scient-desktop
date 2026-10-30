@@ -71,16 +71,8 @@ import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
 import { DockCommandItem } from "../writing/dockChrome";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "~/components/ui/menu";
-import {
-  PanelTabNewWindowItem,
-  usePanelTabNewWindow,
-} from "~/scient/multiWindow/PanelTabNewWindowItem";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/components/ui/menu";
+import { PanelTabNewWindowItem } from "~/scient/multiWindow/PanelTabNewWindowItem";
 import { ReaderButton, IfRowHidden, ReaderRowContext } from "../writing/DocumentReaderControls";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
 import type { DocumentDownloadActions } from "../documentExport/DocumentDownloadMenu";
@@ -597,14 +589,6 @@ function bindLatexSource(
 
 export const ScientLatexSurface = memo(function ScientLatexSurface(props: ScientLatexSurfaceProps) {
   const savePdfCopy = usePdfSaveCopy(props.environmentId);
-  const openInNewWindow = usePanelTabNewWindow();
-  const newWindowItem = (plain: boolean) =>
-    openInNewWindow ? (
-      <>
-        <DropdownMenuSeparator />
-        <PanelTabNewWindowItem onOpen={openInNewWindow} plain={plain} />
-      </>
-    ) : null;
   const [exportingPdf, setExportingPdf] = useState(false);
   const visualDraftKey = `${props.environmentId}\0${props.cwd}\0${props.relativePath}`;
   const [manualRootSelection, setManualRootSelection] = useState<{
@@ -1902,9 +1886,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     />
   );
   const exportItems = exportMenu(false);
-  const documentMenuItems = (withExport = true) => (
+  const documentMenuItems = (withDocumentCommands = true) => (
     <>
-      {withExport ? <LatexCompilerMenu {...compilerControlProps} /> : null}
+      {withDocumentCommands ? <LatexCompilerMenu {...compilerControlProps} /> : null}
       {mode === "split" ? (
         // Here only while the row has no room for its PDF/Visual switch.
         <IfRowHidden selector=".scient-latex-split-modes">
@@ -1923,9 +1907,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           </DockCommandItem>
         </IfRowHidden>
       ) : null}
-      {withExport ? exportItems : null}
-      {withExport ? props.templateActions : null}
-      {withExport ? newWindowItem(false) : null}
+      {withDocumentCommands ? exportItems : null}
+      {withDocumentCommands ? props.templateActions : null}
+      {withDocumentCommands ? <PanelTabNewWindowItem separated /> : null}
     </>
   );
   // The view switch and the build status. With reader controls in the row they
@@ -2129,7 +2113,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               <LatexCompilerMenu {...compilerControlProps} plain />
               {exportMenu(true)}
               {props.templateActions}
-              {newWindowItem(true)}
+              <PanelTabNewWindowItem plain separated />
             </>
           ),
         }
