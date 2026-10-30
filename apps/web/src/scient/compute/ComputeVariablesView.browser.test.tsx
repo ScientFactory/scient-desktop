@@ -1,7 +1,7 @@
 import { render } from "../../../test/render";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { ComputeSessionGeneration } from "@t3tools/contracts";
-import { ComputeVariablesView } from "./ComputePanel";
+import { ComputeVariablesView } from "./ComputeVariablesView";
 
 describe("Compute variable presentation", () => {
   it("keeps every value column available through the shared scroll area", async () => {

@@ -67,7 +67,6 @@ describe("dependency recovery presentation", () => {
     expect(markup).toContain("Original traceback retained");
     expect(markup).toContain("Choose Python environment…");
     expect(markup).toContain('data-environment="remote-scient-host"');
-    expect(markup).toContain("Changing the default does not switch an existing session.");
     expect(markup).not.toContain("reports pandas installed");
   });
   it.each([

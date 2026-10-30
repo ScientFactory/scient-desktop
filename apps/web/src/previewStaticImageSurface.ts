@@ -1,7 +1,13 @@
 import { AssetResource, type AssetResource as AssetResourceType } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-export type PreviewStaticImageMediaType = "image/png" | "image/svg+xml";
+const PREVIEW_STATIC_IMAGE_MEDIA_TYPES = [
+  "image/png",
+  "image/svg+xml",
+  "image/jpeg",
+  "image/gif",
+] as const;
+export type PreviewStaticImageMediaType = (typeof PREVIEW_STATIC_IMAGE_MEDIA_TYPES)[number];
 
 /** Durable identity for a directly rendered image; signed URLs remain ephemeral renderer state. */
 export interface PreviewStaticImageSurfaceDescriptor {
@@ -110,7 +116,7 @@ export function isPreviewStaticImageSurfaceDescriptor(
     candidate.label.length > 0 &&
     typeof candidate.fileName === "string" &&
     candidate.fileName.length > 0 &&
-    (candidate.mediaType === "image/png" || candidate.mediaType === "image/svg+xml") &&
+    PREVIEW_STATIC_IMAGE_MEDIA_TYPES.some((mediaType) => mediaType === candidate.mediaType) &&
     typeof candidate.sourcePath === "string" &&
     candidate.sourcePath.length > 0 &&
     (candidate.contentKey === undefined ||

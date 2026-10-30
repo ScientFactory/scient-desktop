@@ -7,8 +7,8 @@ import type {
   ComputeSessionGeneration,
   ComputeSessionId,
 } from "@t3tools/contracts";
+import { computeDisplayedStaticImage } from "./computeRichRepresentation";
 import {
-  computeProjectedStaticImage,
   projectComputeFigureOutputs,
   type ComputeStaticImageOutput,
 } from "./computeResultPresentation";
@@ -288,14 +288,14 @@ export function computeExecutionMayUpdateFigure(
 export function matchComputeFigureOutput(
   reference: ComputeFigureReference,
   outputs: ReadonlyArray<ComputeOutput>,
-): ComputeImageOutput | null {
+): ComputeStaticImageOutput | null {
   let runtimeDisplayOrdinal = 0;
   for (const projected of projectComputeFigureOutputs(outputs)) {
     const output: ComputeStaticImageOutput | null =
       projected._tag === "image"
         ? projected
         : projected._tag === "representation"
-          ? computeProjectedStaticImage(projected)
+          ? computeDisplayedStaticImage(projected)
           : null;
     if (output === null) continue;
     if (reference._tag === "snapshot") {

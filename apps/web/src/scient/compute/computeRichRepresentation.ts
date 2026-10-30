@@ -1,7 +1,10 @@
-import type { ComputeProjectedOutput } from "@t3tools/contracts";
+import type { ComputeProjectedOutput, ComputeRepresentation } from "@t3tools/contracts";
+
+import { computeProjectedStaticImage, type ComputeStaticImageOutput } from "./computeResultPresentation";
 
 const COMPUTE_TABLE_MEDIA_TYPE = "application/vnd.dataresource+json";
 const COMPUTE_PLOTLY_MEDIA_TYPE = "application/vnd.plotly.v1+json";
+const COMPUTE_VEGA_LITE_MEDIA_TYPE = /^application\/vnd\.vegalite\.v[3-6]\+json$/u;
 const MAX_COMPUTE_TABLE_ROWS = 100;
 const MAX_COMPUTE_TABLE_COLUMNS = 24;
 const MAX_CELL_TEXT = 512;
@@ -66,28 +69,82 @@ export function parseComputeTable(source: string): ComputeTablePreview | null {
   return { columns, rows, truncated };
 }
 
-export type ComputeRichRepresentation =
+export type ComputeDisplay =
+  | { readonly kind: "plotly"; readonly source: string }
+  | { readonly kind: "vega-lite"; readonly source: string }
+  | { readonly kind: "html"; readonly html: string }
+  | { readonly kind: "markdown"; readonly text: string }
+  | { readonly kind: "latex"; readonly text: string }
+  | { readonly kind: "image"; readonly image: ComputeStaticImageOutput }
   | { readonly kind: "table"; readonly table: ComputeTablePreview }
-  | { readonly kind: "plotly"; readonly source: string };
+  | { readonly kind: "json"; readonly json: string }
+  | { readonly kind: "text"; readonly text: string };
 
-/** Only inline, bounded data is eligible. Resource-backed output keeps its existing fallback. */
-export function computeRichRepresentation(
+function inline(representation: ComputeRepresentation | undefined): string | null {
+  if (representation === undefined) return null;
+  const { data } = representation;
+  const value = data._tag === "text" ? data.text : data._tag === "json" ? data.json : null;
+  return value === null || value.length > MAX_RICH_SOURCE ? null : value;
+}
+
+/**
+ * Renderers for one rich result in Jupyter's preference order; a renderer that cannot show its
+ * representation falls through to the next. Only inline, bounded data is eligible, except images,
+ * which are retained resources.
+ */
+export function computeDisplays(output: RepresentationOutput): ReadonlyArray<ComputeDisplay> {
+  const byType = new Map(output.bundle.representations.map((item) => [item.mediaType, item]));
+  const text = (mediaType: string) => inline(byType.get(mediaType));
+  const displays: ComputeDisplay[] = [];
+  const plotly = byType.get(COMPUTE_PLOTLY_MEDIA_TYPE);
+  // PlotlyChartCard owns Plotly validation, resource policy, limits and recoverable errors.
+  if (plotly?.data._tag === "json" && plotly.data.json.length <= MAX_RICH_SOURCE)
+    displays.push({ kind: "plotly", source: plotly.data.json });
+  const vegaLite = output.bundle.representations.find((item) =>
+    COMPUTE_VEGA_LITE_MEDIA_TYPE.test(item.mediaType),
+  );
+  if (vegaLite?.data._tag === "json" && vegaLite.data.json.length <= MAX_RICH_SOURCE)
+    displays.push({ kind: "vega-lite", source: vegaLite.data.json });
+  const html = text("text/html");
+  if (html !== null) displays.push({ kind: "html", html });
+  const markdown = text("text/markdown");
+  if (markdown !== null) displays.push({ kind: "markdown", text: markdown });
+  const latex = text("text/latex");
+  if (latex !== null) displays.push({ kind: "latex", text: latex });
+  const image = computeProjectedStaticImage(output);
+  if (image !== null) displays.push({ kind: "image", image });
+  const table = text(COMPUTE_TABLE_MEDIA_TYPE);
+  const parsedTable = table === null ? null : parseComputeTable(table);
+  if (parsedTable !== null) displays.push({ kind: "table", table: parsedTable });
+  const json = byType.get("application/json");
+  if (json?.data._tag === "json" && json.data.json.length <= MAX_RICH_SOURCE)
+    displays.push({ kind: "json", json: json.data.json });
+  const plain = text("text/plain");
+  if (plain !== null) displays.push({ kind: "text", text: plain });
+  return displays;
+}
+
+/** The figure a result shows, when its preferred renderer is an image. */
+export function computeDisplayedStaticImage(
   output: RepresentationOutput,
-): ComputeRichRepresentation | null {
-  for (const mediaType of [COMPUTE_TABLE_MEDIA_TYPE, COMPUTE_PLOTLY_MEDIA_TYPE]) {
-    const representation = output.bundle.representations.find(
-      (item) => item.mediaType === mediaType,
-    );
-    if (representation?.data._tag !== "json") continue;
-    const source = representation.data.json;
-    if (source.length > MAX_RICH_SOURCE) continue;
-    if (mediaType === COMPUTE_TABLE_MEDIA_TYPE) {
-      const table = parseComputeTable(source);
-      if (table !== null) return { kind: "table", table };
-    } else {
-      // PlotlyChartCard owns Plotly validation, resource policy, limits and recoverable errors.
-      return { kind: "plotly", source };
-    }
+): ComputeStaticImageOutput | null {
+  const display = computeDisplays(output)[0];
+  return display?.kind === "image" ? display.image : null;
+}
+
+/** Strips one pair of math delimiters; mixed prose and math stays Markdown. */
+export function computeLatexMath(source: string): string | null {
+  const trimmed = source.trim();
+  for (const [open, close] of [
+    ["$$", "$$"],
+    ["\\[", "\\]"],
+    ["\\(", "\\)"],
+    ["$", "$"],
+  ] as const) {
+    if (trimmed.length <= open.length + close.length) continue;
+    if (!trimmed.startsWith(open) || !trimmed.endsWith(close)) continue;
+    const inner = trimmed.slice(open.length, -close.length);
+    return /(?<!\\)\$/u.test(inner) ? null : inner.trim();
   }
-  return null;
+  return /(?<!\\)\$/u.test(trimmed) ? null : trimmed;
 }

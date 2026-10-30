@@ -1,0 +1,81 @@
+/* Rendered HTML results (sanitized: no class or style attributes survive), and the table
+   preview, share one restrained table style in the spirit of Jupyter's DataFrame output. */
+
+.scient-compute-html {
+  font-size: 0.75rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+}
+
+.scient-compute-html > * + * {
+  margin-top: 0.5rem;
+}
+
+.scient-compute-html :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.scient-compute-html h1 {
+  font-size: 1.125rem;
+}
+
+.scient-compute-html h2 {
+  font-size: 1rem;
+}
+
+.scient-compute-html :is(ul, ol) {
+  padding-inline-start: 1.25rem;
+}
+
+.scient-compute-html ul {
+  list-style: disc;
+}
+
+.scient-compute-html ol {
+  list-style: decimal;
+}
+
+.scient-compute-html :is(pre, code) {
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.scient-compute-html img {
+  max-width: 100%;
+  height: auto;
+}
+
+.scient-compute-table,
+.scient-compute-html table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.scient-compute-table :is(th, td),
+.scient-compute-html :is(th, td) {
+  padding: 0.25rem 0.625rem;
+  text-align: right;
+  vertical-align: top;
+}
+
+.scient-compute-table thead,
+.scient-compute-html thead {
+  border-bottom: 1px solid var(--border);
+}
+
+.scient-compute-table :is(thead th, tbody th),
+.scient-compute-html :is(thead th, tbody th) {
+  font-weight: 600;
+}
+
+.scient-compute-table tbody tr:nth-child(odd),
+.scient-compute-html tbody tr:nth-child(odd) {
+  background: color-mix(in srgb, var(--muted-foreground) 7%, transparent);
+}
+
+.scient-compute-table tbody tr:hover,
+.scient-compute-html tbody tr:hover {
+  background: color-mix(in srgb, var(--muted-foreground) 14%, transparent);
+}

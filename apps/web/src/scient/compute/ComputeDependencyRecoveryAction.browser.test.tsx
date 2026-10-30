@@ -201,7 +201,7 @@ describe("confirmed managed-Python recovery action", () => {
 
     await render(_fixture);
     await click(_fixture, "Start a new session with managed Python…");
-    expect(_fixture.container.textContent).toContain("clears its in-memory variables");
+    expect(_fixture.container.textContent).toContain("clears its variables");
     expect(_fixture.container.textContent).toContain("Run history is kept");
     expect(_fixture.container.textContent).toContain("No code is rerun");
     expect(_fixture.container.textContent).toContain("default Python environment stays unchanged");

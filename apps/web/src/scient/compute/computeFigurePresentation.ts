@@ -1,7 +1,6 @@
 import type {
   ComputeExecutionId,
   ComputeExecutionRecord,
-  ComputeOutput,
   ComputeSessionRecord,
 } from "@t3tools/contracts";
 
@@ -14,7 +13,6 @@ import {
 } from "./computeFigureReference";
 import type { ComputeFigureResource, ComputeStaticImageOutput } from "./computeResultPresentation";
 
-type ComputeImageOutput = Extract<ComputeOutput, { readonly _tag: "image" }>;
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
 export interface ComputeFigurePresentation {
@@ -35,8 +33,15 @@ export interface ComputeFigureNativeDownload {
   readonly byteLength: ComputeFigureResource["byteLength"];
 }
 
-function figureNames(output: ComputeImageOutput, runtimeDisplayOrdinal: number) {
-  const extension = output.mediaType === "image/png" ? "png" : "svg";
+const FIGURE_EXTENSIONS = {
+  "image/png": "png",
+  "image/svg+xml": "svg",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+} as const satisfies Record<ComputeStaticImageOutput["mediaType"], string>;
+
+function figureNames(output: ComputeStaticImageOutput, runtimeDisplayOrdinal: number) {
+  const extension = FIGURE_EXTENSIONS[output.mediaType];
   const projectPath = output.origin?._tag === "project-file" ? output.origin.path : null;
   const fileName = projectPath?.split("/").at(-1) ?? `figure-${runtimeDisplayOrdinal}.${extension}`;
   return {
@@ -49,7 +54,7 @@ function figureNames(output: ComputeImageOutput, runtimeDisplayOrdinal: number) 
 function computeOutputResource(input: {
   readonly session: Pick<ComputeSessionRecord, "projectId" | "sessionId">;
   readonly executionId: ComputeExecutionId | null;
-  readonly output: ComputeImageOutput;
+  readonly output: ComputeStaticImageOutput;
 }) {
   return {
     _tag: "compute-output" as const,
@@ -65,7 +70,7 @@ export function computeFigureDescriptorForRevision(input: {
   readonly reference: ComputeFigureReference;
   readonly session: Pick<ComputeSessionRecord, "projectId" | "sessionId">;
   readonly executionId: ComputeExecutionId | null;
-  readonly output: ComputeImageOutput;
+  readonly output: ComputeStaticImageOutput;
   readonly displayOrdinal?: number;
 }): PreviewStaticImageSurfaceDescriptor {
   const ordinal =

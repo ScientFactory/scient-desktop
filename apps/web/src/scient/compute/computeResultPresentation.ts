@@ -18,11 +18,27 @@ export type ComputeFigureResource = {
   readonly byteLength: number;
 };
 
+const COMPUTE_STATIC_IMAGE_MEDIA_TYPES = [
+  "image/svg+xml",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+] as const;
+export type ComputeStaticImageMediaType = (typeof COMPUTE_STATIC_IMAGE_MEDIA_TYPES)[number];
+
 /** Local presentation metadata; the retained output contract stays unchanged. */
-export type ComputeStaticImageOutput = Extract<ComputeOutput, { readonly _tag: "image" }> & {
+export type ComputeStaticImageOutput = Omit<
+  Extract<ComputeOutput, { readonly _tag: "image" }>,
+  "mediaType"
+> & {
+  readonly mediaType: ComputeStaticImageMediaType;
   readonly displayId?: string;
   readonly nativeFigure?: ComputeFigureResource;
 };
+
+function isStaticImageMediaType(mediaType: string): mediaType is ComputeStaticImageMediaType {
+  return (COMPUTE_STATIC_IMAGE_MEDIA_TYPES as ReadonlyArray<string>).includes(mediaType);
+}
 
 /** A standalone image update is itself a complete retained figure snapshot. */
 export function projectComputeFigureOutputs(
@@ -37,9 +53,7 @@ export function projectComputeFigureOutputs(
         output._tag === "display-update" &&
         !displays.has(output.displayId) &&
         output.bundle.representations.some(
-          (item) =>
-            (item.mediaType === "image/png" || item.mediaType === "image/svg+xml") &&
-            item.data._tag === "resource",
+          (item) => isStaticImageMediaType(item.mediaType) && item.data._tag === "resource",
         )
       ) {
         displays.add(output.displayId);
@@ -64,7 +78,7 @@ export function computeProjectedStaticImage(
     native.data.byteLength <= MAX_COMPUTE_NATIVE_FIGURE_BYTES
       ? native.data
       : null;
-  for (const mediaType of ["image/svg+xml", "image/png"] as const) {
+  for (const mediaType of COMPUTE_STATIC_IMAGE_MEDIA_TYPES) {
     const representation = output.bundle.representations.find(
       (candidate) => candidate.mediaType === mediaType && candidate.data._tag === "resource",
     );
@@ -302,4 +316,19 @@ export function computeExecutionStatusLabel(
 
 export function computeSystemEventLabel(event: ComputeSystemEvent): string {
   return SYSTEM_EVENT_LABELS[event];
+}
+
+export function computeRunDurationLabel(
+  result: Pick<NonNullable<ComputeExecutionRecord["result"]>, "startedAt" | "finishedAt"> | null,
+): string | null {
+  if (result?.startedAt == null || result.finishedAt == null) return null;
+  const ms = Date.parse(result.finishedAt) - Date.parse(result.startedAt);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 10) return `${seconds.toFixed(1)} s`;
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${Math.floor(seconds % 60)}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }

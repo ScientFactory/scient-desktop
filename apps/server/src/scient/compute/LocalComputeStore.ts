@@ -215,8 +215,16 @@ async function sha256File(filePath: string): Promise<string> {
   return `sha256:${hash.digest("hex")}`;
 }
 
-function resourceFileExtension(mediaType: string): ".png" | ".svg" | ".bin" {
-  return mediaType === "image/png" ? ".png" : mediaType === "image/svg+xml" ? ".svg" : ".bin";
+const RESOURCE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  "image/png": ".png",
+  "image/svg+xml": ".svg",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+};
+
+// The served Content-Type follows this extension.
+function resourceFileExtension(mediaType: string): string {
+  return RESOURCE_FILE_EXTENSIONS[mediaType] ?? ".bin";
 }
 
 async function directoryByteLength(directory: string): Promise<number> {

@@ -94,8 +94,7 @@ export function ComputeDependencyRecoveryAction(props: {
         toastManager.add({
           type: "success",
           title: "Managed Python session ready",
-          description:
-            "The namespace is empty. Run your file when ready; past runs remain in history.",
+          description: "Variables are cleared.",
         });
       } else if (result.kind === "failed") {
         toastManager.add({
@@ -135,7 +134,7 @@ export function ComputeDependencyRecoveryAction(props: {
         onOpenChange={setConfirming}
         anchor={anchor}
         title="Start a new managed Python session?"
-        description="This stops this tab’s current session and clears its in-memory variables. Run history is kept. No code is rerun, and your default Python environment stays unchanged."
+        description="Stops the current session and clears its variables."
         confirmLabel="Start new session"
         onConfirm={() => void recover()}
         busy={busy}
