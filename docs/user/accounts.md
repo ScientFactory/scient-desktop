@@ -106,8 +106,8 @@ fails, Scient keeps the password and reports the failed store. A 1Password vault
 write is hidden from the choices until you reconnect 1Password; no setup step is needed.
 Removing an account leaves its external keychain and 1Password copies in place.
 
-CAPTCHAs, push approvals and passkeys need you. Google blocks embedded sign-in; import
-its browser session instead. Hidden values stay out of agent conversations, but Accounts
+CAPTCHAs, push approvals and passkeys need you. A Google sign-in copied from Chrome can stop
+working while you keep using Chrome, so sign in to Google once inside Scient. Hidden values stay out of agent conversations, but Accounts
 does not protect them from a malicious process running as you. On Windows and Linux,
 other programs running as you can read system keychain items. A host without a usable
 keychain keeps Scient's encryption key in an owner-only file.

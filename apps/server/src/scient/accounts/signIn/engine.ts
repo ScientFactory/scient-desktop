@@ -132,6 +132,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       password: password !== undefined,
       otp: totp !== undefined,
       ...(details.username === undefined ? {} : { accountName: details.username }),
+      passwordSent: submissions.some(({ fields }) => fields.includes("password")),
     });
   // Only the last submission's fields: earlier pages are gone, and after a hand-off the user
   // continues with what is on screen.

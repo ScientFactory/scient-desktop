@@ -8,7 +8,13 @@ export const SIGN_IN_TOO_LONG = `Sign-in did not finish after ${MAX_SIGN_IN_STEP
 export function decideSignIn(
   page: SignInDetection,
   sites: ReadonlyArray<string>,
-  available: { username: boolean; password: boolean; otp: boolean; accountName?: string },
+  available: {
+    username: boolean;
+    password: boolean;
+    otp: boolean;
+    accountName?: string;
+    passwordSent?: boolean;
+  },
 ) {
   if (page.broken && !page.signedIn)
     return {
@@ -58,6 +64,10 @@ export function decideSignIn(
   // A site's home page often has only a link to its sign-in page.
   if (fields.length === 0 && page.signInLink)
     return { type: "fill", fields, submit: page.signInLink } as const;
+  // "Try another way" leads to the password. After it, the same link belongs to the user's two-step
+  // check, and pressing it would use up their attempts.
+  if (fields.length === 0 && page.anotherWay && available.password && !available.passwordSent)
+    return { type: "fill", fields, submit: page.anotherWay } as const;
   if (fields.length === 0)
     return {
       type: "needs-user",
@@ -84,6 +94,7 @@ export function pageOffersNoSignIn(page: SignInDetection, sites: ReadonlyArray<s
     page.otp ||
     page.stay ||
     page.signInLink ||
+    page.anotherWay ||
     page.accountChoices?.length
   );
 }

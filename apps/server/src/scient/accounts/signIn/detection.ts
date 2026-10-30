@@ -16,6 +16,7 @@ export const SignInDetection = Schema.Struct({
   remember: Schema.optional(Schema.String),
   stay: Schema.optional(Schema.String),
   signInLink: Schema.optional(Schema.String),
+  anotherWay: Schema.optional(Schema.String),
   limited: Schema.optional(Schema.Boolean),
   broken: Schema.optional(Schema.Boolean),
   accountChoices: Schema.optional(
@@ -89,8 +90,9 @@ export const signInDetectionScript = String.raw`(() => {
       })
     : [];
   const signInLink = !password && !otp && !username
-    ? linkNamed(/^enter your password$/i) ?? linkNamed(/^try another way$/i) ?? linkNamed(/^(sign in|log in|login)$/i) ?? useAnother
+    ? linkNamed(/^enter your password$/i) ?? linkNamed(/^(sign in|log in|login)$/i) ?? useAnother
     : undefined;
+  const anotherWay = !password && !otp && !username ? linkNamed(/^try another way$/i) : undefined;
   const limited = !password && !otp && new RegExp(${JSON.stringify(SITE_LIMITED_TEXT)}, "i").test(text);
   // Some sign-in pages answer 401, so a status only counts on a page with no form.
   const status = performance.getEntriesByType("navigation")[0]?.responseStatus ?? 0;
@@ -100,6 +102,7 @@ export const signInDetectionScript = String.raw`(() => {
     ...(broken ? { broken: true } : {}),
     ...(accountChoices.length > 0 ? { accountChoices } : {}),
     ...(signInLink ? { signInLink: path(signInLink) } : {}),
+    ...(anotherWay ? { anotherWay: path(anotherWay) } : {}),
     ...(push && numbers.size === 1 ? { number: [...numbers][0] } : {}),
     ...(remember ? { remember: path(remember) } : {}),
     ...(stay ? { stay: path(stay) } : {}),

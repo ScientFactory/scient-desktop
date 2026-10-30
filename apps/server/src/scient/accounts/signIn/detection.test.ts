@@ -26,6 +26,19 @@ it("calls a failed page broken, but not a sign-in form that answers with an erro
   }
 });
 
+it("treats Google's failed-attempts page as a limit, not a step to finish", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await (await browser.newContext()).newPage();
+    await page.setContent(
+      "<h1>Account recovery</h1><h2>Too many failed attempts</h2><button>Try another way to sign in</button>",
+    );
+    expect(decodeDetection(await page.evaluate(signInDetectionScript)).limited).toBe(true);
+  } finally {
+    await browser.close();
+  }
+});
+
 it("lists one choice per remembered account, whichever way a site marks its rows", async () => {
   const browser = await chromium.launch({ headless: true });
   try {

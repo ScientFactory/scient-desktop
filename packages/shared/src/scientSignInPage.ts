@@ -6,7 +6,7 @@ export const REMEMBER_SIGN_IN_LABEL = String.raw`remember|keep me|stay (signed|l
 export const FORGET_SIGN_IN_LABEL = String.raw`(don.?t|do not|never) remember|public|shared (computer|device)`;
 
 /** Pages sites answer automation with, as source for page scripts. Retrying prolongs the block. */
-export const SITE_LIMITED_TEXT = String.raw`access is temporarily restricted|unusual activity from your|too many (requests|attempts|sign.?in)|rate limit(ed)? exceeded|you have been (temporarily )?(blocked|rate.?limited)`;
+export const SITE_LIMITED_TEXT = String.raw`access is temporarily restricted|unusual activity from your|too many (failed )?(requests|attempts|sign.?in)|rate limit(ed)? exceeded|you have been (temporarily )?(blocked|rate.?limited)`;
 
 /** What the user has to do to finish a sign-in that is waiting for them. */
 export function accountHandoffInstruction(kind: AccountHandoff["kind"]) {

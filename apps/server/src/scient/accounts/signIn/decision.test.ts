@@ -243,6 +243,17 @@ describe("sign-in submission guard", () => {
       ).type,
     ).toBe("continue");
   });
+  it("leaves the two-step check's other options to the user", () => {
+    const options = { ...page, username: null, password: null, submit: null, anotherWay: "#other" };
+    expect(decideSignIn(options, ["example.com"], available)).toMatchObject({
+      type: "fill",
+      submit: "#other",
+    });
+    expect(
+      decideSignIn(options, ["example.com"], { ...available, passwordSent: true }),
+    ).toMatchObject({ type: "needs-user", kind: "other" });
+  });
+
   it("stops when the site keeps asking for the username", () => {
     const typed = { origin: page.origin, fields: ["username"] as const, otpPeriod: undefined };
     const repeat = { ...page, password: null };
