@@ -278,6 +278,11 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/server/src/provider/ScientAgentCopy.ts",
+      "anchor": "scient_account_add",
+      "purpose": "Agents look in Accounts first and keep a new key there; one-time secrets stay with request_secret."
+    },
+    {
       "path": "apps/server/src/scient/extensions/PluginKeySessionCache.ts",
       "anchor": "bindingRevision",
       "purpose": "Keep Redacted plugin keys in memory per credential, invalidate through the lock-free Accounts epoch and changes feed, and throttle allowed audit only."
