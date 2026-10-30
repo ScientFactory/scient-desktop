@@ -1,9 +1,12 @@
+import * as Schema from "effect/Schema";
 import { McpSchema } from "effect/ai";
 
 interface ToolImage {
   readonly mediaType: string;
   readonly data: string;
 }
+
+const isCallToolResult = Schema.is(McpSchema.CallToolResult);
 
 const isToolImage = (value: unknown): value is ToolImage =>
   typeof value === "object" &&
@@ -15,7 +18,8 @@ const isToolImage = (value: unknown): value is ToolImage =>
  * A Scient tool may return figures in a top-level `images` field. Models only look at
  * MCP image content, so the figures move there and leave the JSON text small.
  */
-export function liftScientToolImages(result: McpSchema.CallToolResult): McpSchema.CallToolResult {
+export function liftScientToolImages<A>(result: A): A | McpSchema.CallToolResult {
+  if (!isCallToolResult(result)) return result;
   const structured = result.structuredContent;
   if (result.isError === true || typeof structured !== "object" || structured === null)
     return result;

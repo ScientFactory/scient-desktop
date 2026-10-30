@@ -126,6 +126,7 @@ export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>
       "outputs",
       "variables",
       "subscribe",
+      "save",
     ]),
     reason: Schema.Literals([
       "project-not-initialized",
@@ -240,6 +241,20 @@ export const ComputeListProjectOutputsInput = Schema.Struct({
   executionId: Schema.NullOr(ComputeExecutionId),
 });
 export type ComputeListProjectOutputsInput = typeof ComputeListProjectOutputsInput.Type;
+
+/** Copies a stored figure or resource into the project; an existing file is never replaced. */
+export const ComputeSaveProjectOutputInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  executionId: Schema.NullOr(ComputeExecutionId),
+  contentHash: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  kind: Schema.Literals(["image", "resource"]),
+  relativePath: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(1024)),
+});
+export type ComputeSaveProjectOutputInput = typeof ComputeSaveProjectOutputInput.Type;
+
+export const ComputeSaveProjectOutputResult = Schema.Struct({ relativePath: Schema.String });
+export type ComputeSaveProjectOutputResult = typeof ComputeSaveProjectOutputResult.Type;
 
 export const ComputeListProjectSessionsResult = Schema.Array(ComputeSessionRecord);
 export const ComputeGetProjectSessionResult = Schema.NullOr(ComputeSessionRecord);

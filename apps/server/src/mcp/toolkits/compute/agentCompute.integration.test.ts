@@ -2,7 +2,13 @@
 import * as NodeProcess from "node:process";
 
 import { initializeScientProject } from "@scientfactory/project-init";
-import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  ComputeExecutionId,
+  ComputeSessionId,
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -98,7 +104,7 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
               threadId: ThreadId.make("thread-agent-compute"),
               providerSessionId: "provider-session-agent-compute",
               providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-              capabilities: new Set(["compute"]),
+              capabilities: new Set(["compute"] as const),
               issuedAt: 1,
               workspace,
             }),
@@ -125,6 +131,17 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
         );
         expect(figure.run.figures).toBe(1);
         expect(figure.images?.[0]?.mediaType).toBe("image/png");
+        // Shown figures also carry a PDF, so they can be saved as vector graphics.
+        const { outputs } = yield* gateway.listOutputs({
+          cwd: projectRoot,
+          sessionId: ComputeSessionId.make(figure.session.session),
+          executionId: ComputeExecutionId.make(figure.run.run),
+        });
+        expect(
+          outputs.flatMap((output) =>
+            "bundle" in output ? output.bundle.representations.map((entry) => entry.mediaType) : [],
+          ),
+        ).toContain("application/pdf");
 
         const progress = yield* provide(
           runScientCompute({
