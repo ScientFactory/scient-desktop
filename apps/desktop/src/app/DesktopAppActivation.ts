@@ -22,14 +22,14 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import type * as Electron from "electron";
+// SCIENT-FORK:START — requests go to the most recently focused ready app window.
+import { makeActivationRenderers } from "../scient/multiWindow/activationRenderers.ts";
+import { appWindowForSender } from "../scient/multiWindow/appWindows.ts";
+// SCIENT-FORK:END
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
-// SCIENT-FORK:START — any ready app window can take activation requests; main is preferred.
-import { appWindowForSender, ReadyRenderers } from "../scient/multiWindow/appWindows.ts";
-// SCIENT-FORK:END
 import { DesktopAppActivationBroker } from "./DesktopAppActivationBroker.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -290,8 +290,11 @@ export class DesktopAppActivation extends Context.Service<
   DesktopAppActivation,
   {
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
-    // SCIENT-FORK:START — any ready app window can take activation requests; main is preferred.
-    readonly setRendererReady: (ready: boolean, senderId?: number) => Effect.Effect<void>;
+    // SCIENT-FORK:START — each app window reports its own readiness.
+    readonly setRendererReady: (
+      ready: boolean,
+      senderId: number | undefined,
+    ) => Effect.Effect<void>;
     // SCIENT-FORK:END
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
   }
@@ -314,10 +317,7 @@ export const make = Effect.gen(function* () {
     userId,
     joinPath: path.join,
   });
-  // SCIENT-FORK:START — any ready app window can take activation requests; main is preferred.
-  let dispatchTarget: Electron.BrowserWindow | null = null;
-  // SCIENT-FORK:END
-
+  // SCIENT-FORK:START — requests go to the most recently focused ready app window.
   const broker = new DesktopAppActivationBroker({
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
     activate: () => {
@@ -329,24 +329,9 @@ export const make = Effect.gen(function* () {
     },
   });
 
-  // SCIENT-FORK:START — any ready app window can take activation requests; main is preferred.
-  const runSync = Effect.runSyncWith(yield* Effect.context<never>());
-  const registerReadyRenderers = () => {
-    broker.registerRenderer((request) => {
-      const target = readyRenderers.pick(runSync(electronWindow.appWindows));
-      if (Option.isNone(target)) throw new Error("No Scient window is ready.");
-      dispatchTarget = target.value;
-      target.value.webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
-    });
-  };
-  const readyRenderers = new ReadyRenderers((window) => {
-    // Fails the request the departed window was handling; queued requests wait for another.
-    if (window === dispatchTarget || readyRenderers.size === 0) {
-      dispatchTarget = null;
-      broker.clearRenderer();
-    }
-    if (readyRenderers.size > 0) registerReadyRenderers();
-  });
+  const setWindowReady = makeActivationRenderers(broker, electronWindow, (window, request) =>
+    window.webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request),
+  );
   // SCIENT-FORK:END
 
   return DesktopAppActivation.of({
@@ -373,21 +358,11 @@ export const make = Effect.gen(function* () {
           Effect.ensuring(Effect.sync(() => broker.close())),
         ),
     ).pipe(Effect.asVoid),
-    // SCIENT-FORK:START — any ready app window can take activation requests; main is preferred.
+    // SCIENT-FORK:START — each app window reports its own readiness.
     setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(
       function* (ready, senderId) {
-        const sender =
-          senderId === undefined
-            ? yield* electronWindow.main
-            : yield* appWindowForSender(electronWindow, senderId);
-        if (!ready) {
-          if (Option.isSome(sender)) readyRenderers.delete(sender.value);
-          else if (senderId === undefined) readyRenderers.clear();
-          return;
-        }
-        if (Option.isNone(sender) || sender.value.webContents.isDestroyed()) return;
-        readyRenderers.add(sender.value);
-        registerReadyRenderers();
+        const window = yield* appWindowForSender(electronWindow, senderId);
+        if (Option.isSome(window)) setWindowReady(window.value, ready);
       },
     ),
     // SCIENT-FORK:END

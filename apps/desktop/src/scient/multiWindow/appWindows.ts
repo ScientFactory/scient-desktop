@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import type * as Electron from "electron";
+import * as Electron from "electron";
 
 import type * as ElectronWindow from "../../electron/ElectronWindow.ts";
 
@@ -24,7 +24,7 @@ const workAreaAt = (point: Point, workAreas: readonly Bounds[]): Bounds | undefi
 
 /** The app window whose renderer sent an IPC message; guest webviews and other windows have none. */
 export const appWindowForSender = (
-  electronWindow: ElectronWindow.ElectronWindow["Service"],
+  electronWindow: Pick<ElectronWindow.ElectronWindow["Service"], "appWindows">,
   senderId: number | undefined,
 ): Effect.Effect<Option.Option<Electron.BrowserWindow>> =>
   senderId === undefined
@@ -53,6 +53,35 @@ export function appWindowUrl(applicationUrl: string, route: Option.Option<string
   const url = new URL(applicationUrl);
   url.hash = route.value;
   return url.href;
+}
+
+export interface AppWindowOptions {
+  readonly route?: Option.Option<string>;
+  /** An additional window opens beside this one and leaves saved bounds alone until moved. */
+  readonly cascadeFrom?: Electron.BrowserWindow | undefined;
+  /** Puts an additional window under the pointer instead, where a dragged tab was dropped. */
+  readonly atCursor?: boolean;
+}
+
+const cursorScreenPoint = (): Point | null => {
+  try {
+    return Electron.screen.getCursorScreenPoint();
+  } catch {
+    return null;
+  }
+};
+
+/** Where an additional window opens; `undefined` without a live window to open beside. */
+export function additionalWindowBounds(
+  { cascadeFrom, atCursor }: AppWindowOptions,
+  workAreas: readonly Bounds[],
+): Bounds | undefined {
+  if (cascadeFrom === undefined || cascadeFrom.isDestroyed()) return undefined;
+  const source = cascadeFrom.isNormal() ? cascadeFrom.getBounds() : cascadeFrom.getNormalBounds();
+  const cursor = atCursor === true ? cursorScreenPoint() : null;
+  return cursor === null
+    ? cascadeWindowBounds(source, workAreas)
+    : windowBoundsAtPoint(source, cursor, workAreas);
 }
 
 /** Offsets a new window from the one it opens beside, wrapping to the work area's corner at its edge. */

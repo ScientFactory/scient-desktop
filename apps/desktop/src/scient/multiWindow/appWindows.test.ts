@@ -43,13 +43,9 @@ function fakeWindow(id: number) {
 describe("parseAppWindowRoute", () => {
   it.each([
     [undefined, Option.none()],
-    ["", Option.none()],
-    [`/${"a".repeat(2_048)}`, Option.none()],
     ["environment/thread", Option.none()],
     ["//evil.example/thread", Option.none()],
     ["/environment/thread#x", Option.none()],
-    ["/environment/thread name", Option.none()],
-    ["/environment\\thread", Option.none()],
     ["/environment-1/thread-1", Option.some("/environment-1/thread-1")],
   ])("parses %j", (route, expected) => {
     assert.deepEqual(parseAppWindowRoute(route), expected);

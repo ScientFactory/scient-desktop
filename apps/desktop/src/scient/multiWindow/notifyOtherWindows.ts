@@ -1,6 +1,6 @@
-import * as Electron from "electron";
 import * as Effect from "effect/Effect";
 
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import type { DesktopIpcInvokeEvent } from "../../ipc/DesktopIpc.ts";
 
 /**
@@ -12,23 +12,16 @@ export const notifyOtherWindows = Effect.fn("scient.multiWindow.notifyOtherWindo
   channel: string,
   ...args: ReadonlyArray<unknown>
 ) {
-  const windows = yield* Effect.sync(() => Electron.BrowserWindow.getAllWindows());
-  for (const window of windows) {
-    const failure = yield* Effect.sync(() => {
-      try {
-        if (!window.isDestroyed() && window.webContents.id !== sender?.sender.id) {
-          window.webContents.send(channel, ...args);
-        }
-        return null;
-      } catch (cause) {
-        return { cause };
-      }
-    });
-    if (failure !== null) {
-      yield* Effect.logWarning(
-        "Could not notify an app window of a shared change",
-        failure.cause,
-      ).pipe(Effect.annotateLogs({ channel }));
-    }
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  for (const window of yield* electronWindow.appWindows) {
+    yield* Effect.try(() => {
+      if (window.webContents.id !== sender?.sender.id) window.webContents.send(channel, ...args);
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not notify an app window of a shared change", error.cause).pipe(
+          Effect.annotateLogs({ channel }),
+        ),
+      ),
+    );
   }
 });

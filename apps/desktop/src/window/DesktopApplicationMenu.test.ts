@@ -94,7 +94,7 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
       Deferred.succeed(selectedAction, `main-${command}`).pipe(Effect.asVoid),
     syncAppearance: Effect.void,
     // SCIENT-FORK:START — several app windows share one desktop process.
-    openNewWindow: () => Deferred.succeed(selectedAction, "new-window"),
+    openNewWindow: () => Effect.succeed(false),
     // SCIENT-FORK:END
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 

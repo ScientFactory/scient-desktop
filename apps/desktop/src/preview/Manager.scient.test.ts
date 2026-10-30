@@ -317,4 +317,46 @@ describe("PreviewManager with several app windows", () => {
         }),
       ),
   );
+  effectIt.effect(
+    "keeps captures of a tab that moved to another window when its first host closes",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const first = makeAppWindow(7);
+          const second = makeAppWindow(8);
+          const stayingGuest = makeGuest(41, first.webContents);
+          const movedGuest = makeGuest(51, second.webContents);
+          const guests = new Map([
+            [41, stayingGuest.guest],
+            [42, makeGuest(42, first.webContents).guest],
+            [51, movedGuest.guest],
+          ]);
+          fromId.mockImplementation((id) => (id === undefined ? null : (guests.get(id) ?? null)));
+          const movedPictureInPicture = makePictureInPictureWindow();
+          const stayingPictureInPicture = makePictureInPictureWindow();
+          const nextPictureInPicture = [movedPictureInPicture, stayingPictureInPicture].values();
+          browserWindowConstructor.mockImplementation(function () {
+            return nextPictureInPicture.next().value?.window;
+          });
+
+          yield* manager.setMainWindow(first.window);
+          yield* manager.setMainWindow(second.window);
+          yield* manager.createTab("tab_moved");
+          yield* manager.createTab("tab_staying");
+          yield* manager.registerWebview("tab_moved", 42);
+          yield* manager.registerWebview("tab_moved", 51);
+          yield* manager.registerWebview("tab_staying", 41);
+          yield* manager.startRecording("tab_moved");
+          second.webContents.grantPendingRecording();
+          yield* manager.openPictureInPicture("tab_moved");
+          yield* manager.openPictureInPicture("tab_staying");
+
+          first.close();
+          yield* Effect.promise(() => stayingPictureInPicture.closed);
+          expect(movedPictureInPicture.window.isDestroyed()).toBe(false);
+          expect(movedGuest.guest.setBackgroundThrottling).not.toHaveBeenCalledWith(true);
+          yield* manager.startRecording("tab_moved");
+        }),
+      ),
+  );
 });

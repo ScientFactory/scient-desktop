@@ -6,7 +6,7 @@ import * as Option from "effect/Option";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
-import { appWindowForSender, ReadyRenderers } from "../scient/multiWindow/appWindows.ts";
+import { makeWebLinkRenderers } from "../scient/multiWindow/webLinkRenderers.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — compatible routing is dormant until browser activation is authorized.
 export const desktopWebLinksEnabled = false;
@@ -40,31 +40,15 @@ const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const pending: Array<string> = [];
   // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
-  const listening = new ReadyRenderers();
-  const senderWindow = (senderId: number | undefined) =>
-    senderId === undefined
-      ? electronWindow.currentMainOrFirst
-      : appWindowForSender(electronWindow, senderId);
+  const webLinkRenderers = makeWebLinkRenderers(electronWindow);
 
   const flush = Effect.gen(function* () {
-    if (listening.size === 0 || pending.length === 0) return;
-    const window = listening.pick(Option.toArray(yield* electronWindow.currentMainOrFirst));
+    if (pending.length === 0) return;
+    const window = yield* webLinkRenderers.target;
     if (Option.isNone(window)) return;
-    for (const url of pending.splice(0)) window.value.webContents.send(WEB_LINK_OPEN_CHANNEL, url);
+    const listening = window.value.webContents;
+    for (const url of pending.splice(0)) listening.send(WEB_LINK_OPEN_CHANNEL, url);
     yield* electronWindow.reveal(window.value);
-  });
-
-  const setListening = Effect.fn("DesktopWebLinks.setListening")(function* (
-    ready: boolean,
-    senderId: number | undefined,
-  ) {
-    const window = yield* senderWindow(senderId);
-    if (Option.isNone(window)) {
-      if (!ready && senderId === undefined) listening.clear();
-      return;
-    }
-    if (ready) listening.add(window.value);
-    else listening.delete(window.value);
   });
   // SCIENT-FORK:END
 
@@ -77,7 +61,7 @@ const make = Effect.gen(function* () {
     }),
     // SCIENT-FORK:START — OS links open in the most recently focused app window once it listens.
     setRendererReady: Effect.fn("DesktopWebLinks.setRendererReady")(function (ready, senderId) {
-      return setListening(ready, senderId);
+      return webLinkRenderers.setReady(ready, senderId);
     }, Effect.andThen(flush)),
     // SCIENT-FORK:END
   });

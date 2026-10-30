@@ -56,12 +56,13 @@ const decodeCapture = Schema.decodeUnknownOption(Capture);
 
 type AccountsInvokeEvent = DesktopIpcInvokeEvent & { readonly senderFrame?: unknown };
 
-const mainSender = Effect.fn("DesktopAccounts.mainSender")(function* (event?: AccountsInvokeEvent) {
+const appWindowSender = Effect.fn("DesktopAccounts.appWindowSender")(function* (
+  event?: AccountsInvokeEvent,
+) {
   const sender = yield* appWindowForSender(yield* ElectronWindow, event?.sender.id);
   return (
     event !== undefined &&
     Option.isSome(sender) &&
-    !sender.value.isDestroyed() &&
     "senderFrame" in event &&
     event.senderFrame === sender.value.webContents.mainFrame
   );
@@ -73,7 +74,7 @@ export const fill = Effect.fn("DesktopAccounts.fill")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
-  if (!(yield* mainSender(event))) return false;
+  if (!(yield* appWindowSender(event))) return false;
   const input = decodeFill(raw);
   if (Option.isNone(input)) return false;
   const manager = yield* PreviewManager;
@@ -102,7 +103,7 @@ export const signedInSites = Effect.fn("DesktopAccounts.signedInSites")(function
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
-  if (!(yield* mainSender(event))) return [];
+  if (!(yield* appWindowSender(event))) return [];
   const input = decodeSites(raw);
   if (Option.isNone(input)) return [];
   const manager = yield* PreviewManager;
@@ -129,7 +130,7 @@ export const cookieMetadata = Effect.fn("DesktopAccounts.cookieMetadata")(functi
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
-  if (!(yield* mainSender(event))) return null;
+  if (!(yield* appWindowSender(event))) return null;
   const input = decodeSites(raw);
   if (Option.isNone(input)) return null;
   const manager = yield* PreviewManager;
@@ -162,7 +163,7 @@ const signOutSite = Effect.fn("DesktopAccounts.signOutSite")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
-  if (!(yield* mainSender(event))) return false;
+  if (!(yield* appWindowSender(event))) return false;
   const input = decodeSignOut(raw);
   if (Option.isNone(input)) return false;
   const manager = yield* PreviewManager;
@@ -190,7 +191,7 @@ const sourceProfiles = Effect.fn("DesktopAccounts.discoverProfiles")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
-  if (!(yield* mainSender(event)) || raw !== undefined) return [];
+  if (!(yield* appWindowSender(event)) || raw !== undefined) return [];
   return yield* discoverSourceProfiles();
 });
 
@@ -205,7 +206,7 @@ const readBrowserPasswordsCsv = Effect.fn("DesktopAccounts.readBrowserPasswordsC
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
-  if (!(yield* mainSender(event))) return null;
+  if (!(yield* appWindowSender(event))) return null;
   const decoded = decodePasswordSource(raw);
   if (Option.isNone(decoded)) return yield* unavailable();
   return yield* readBrowserPasswords(decoded.value.sourceId, decoded.value.directory);
@@ -228,7 +229,7 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
       event?: AccountsInvokeEvent,
     ) {
       const site = decodeSite(raw);
-      if (!(yield* mainSender(event)) || Option.isNone(site)) return null;
+      if (!(yield* appWindowSender(event)) || Option.isNone(site)) return null;
       return yield* siteIcons(site.value);
     }),
   });
@@ -295,13 +296,13 @@ export const forwardCapturedSignIn = Effect.fn("DesktopAccounts.forwardCapturedS
   const manager = yield* PreviewManager;
   const windows = yield* ElectronWindow;
   const tabId = yield* manager.accountsTabIdForWebContents(event.sender.id);
-  const main = yield* appWindowForSender(windows, event.sender.hostWebContents?.id);
-  if (tabId === null || Option.isNone(main)) return;
+  const hostWindow = yield* appWindowForSender(windows, event.sender.hostWebContents?.id);
+  if (tabId === null || Option.isNone(hostWindow)) return;
   const contents = yield* manager.accountsWebContents(tabId);
   if (contents !== event.sender || !isCaptureGuest(event)) return;
   const origin = safeHttpOrigin(contents.getURL());
   if (origin === null || decoded.value.url !== origin) return;
-  main.value.webContents.send(Channels.CAPTURED, {
+  hostWindow.value.webContents.send(Channels.CAPTURED, {
     ...decoded.value,
     url: origin,
     tabId,
@@ -336,7 +337,7 @@ const inspectLoginForm = Effect.fn("DesktopAccounts.inspectLoginForm")(function*
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
-  if (!(yield* mainSender(event))) return null;
+  if (!(yield* appWindowSender(event))) return null;
   const input = decodeTabInput(raw);
   if (Option.isNone(input)) return null;
   return yield* readLoginForm(input.value.tabId).pipe(Effect.orElseSucceed(() => null));
@@ -348,10 +349,10 @@ const forwardLoginForm = Effect.fn("DesktopAccounts.forwardLoginForm")(function*
   const manager = yield* PreviewManager;
   const windows = yield* ElectronWindow;
   const tabId = yield* manager.accountsTabIdForWebContents(event.sender.id);
-  const main = yield* appWindowForSender(windows, event.sender.hostWebContents?.id);
-  if (tabId === null || Option.isNone(main)) return;
+  const hostWindow = yield* appWindowForSender(windows, event.sender.hostWebContents?.id);
+  if (tabId === null || Option.isNone(hostWindow)) return;
   if ((yield* manager.accountsWebContents(tabId)) !== event.sender) return;
   const form = yield* readLoginForm(tabId);
   if (form && isCaptureGuest(event))
-    main.value.webContents.send(Channels.LOGIN_FORM_DETECTED, form);
+    hostWindow.value.webContents.send(Channels.LOGIN_FORM_DETECTED, form);
 });

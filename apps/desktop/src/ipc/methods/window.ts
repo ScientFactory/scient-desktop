@@ -32,7 +32,6 @@ import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 // SCIENT-FORK:START — several app windows share one desktop process.
-import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { appWindowForSender } from "../../scient/multiWindow/appWindows.ts";
 // SCIENT-FORK:END
 import * as ElectronApp from "../../electron/ElectronApp.ts";
@@ -480,28 +479,6 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
     yield* electronWindow.reveal(window.value);
   }),
 });
-
-// SCIENT-FORK:START — several app windows share one desktop process.
-export const openNewWindow = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.OPEN_NEW_WINDOW_CHANNEL,
-  payload: Schema.UndefinedOr(
-    Schema.Struct({
-      route: Schema.optionalKey(Schema.String),
-      atCursor: Schema.optionalKey(Schema.Boolean),
-    }),
-  ),
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.openNewWindow")(function* (input, event) {
-    const electronWindow = yield* ElectronWindow.ElectronWindow;
-    if (Option.isNone(yield* appWindowForSender(electronWindow, event?.sender.id))) return false;
-    const desktopWindow = yield* DesktopWindow.DesktopWindow;
-    return yield* desktopWindow.openNewWindow(
-      input?.route,
-      input?.atCursor === true ? { atCursor: true } : undefined,
-    );
-  }),
-});
-// SCIENT-FORK:END
 
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
 

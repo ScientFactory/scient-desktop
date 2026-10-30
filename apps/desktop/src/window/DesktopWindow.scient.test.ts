@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 
 import type * as Electron from "electron";
 import { vi } from "vite-plus/test";
@@ -42,6 +43,7 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import * as DesktopWindow from "./DesktopWindow.ts";
 
 const MAIN_BOUNDS = { x: 100, y: 80, width: 1280, height: 840 };
+const TITLEBAR_HEIGHT = 40;
 
 function makeFakeWindow() {
   const webContents = {
@@ -75,7 +77,20 @@ function makeFakeWindow() {
     show: vi.fn(),
     webContents,
   };
-  return { window: window as unknown as Electron.BrowserWindow, loadURL: window.loadURL };
+  const listener = (event: string) => {
+    const call = [...window.on.mock.calls, ...window.once.mock.calls].find(
+      ([name]) => name === event,
+    );
+    if (call === undefined) throw new Error(`no ${event} listener`);
+    return call[1] as () => void;
+  };
+  return {
+    window: window as unknown as Electron.BrowserWindow,
+    loadURL: window.loadURL,
+    getBounds: window.getBounds,
+    maximize: window.maximize,
+    listener,
+  };
 }
 
 const layerDesktopEnvironment = DesktopEnvironment.layer({
@@ -100,7 +115,9 @@ const layerDesktopEnvironment = DesktopEnvironment.layer({
   ),
 );
 
-const makeHarness = Effect.gen(function* () {
+const makeHarness = Effect.fnUntraced(function* (
+  settings: DesktopAppSettings.DesktopSettings = DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+) {
   const fakes = [makeFakeWindow(), makeFakeWindow()] as const;
   const createdOptions = yield* Ref.make<Electron.BrowserWindowConstructorOptions[]>([]);
   const mainWindow = yield* Ref.make(Option.none<Electron.BrowserWindow>());
@@ -126,6 +143,7 @@ const makeHarness = Effect.gen(function* () {
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindow["Service"];
 
+  const settingsLayer = DesktopAppSettings.layerTest(settings);
   const layer = DesktopWindow.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -143,7 +161,7 @@ const makeHarness = Effect.gen(function* () {
           shutdown: Effect.void,
         }),
         layerDesktopEnvironment,
-        DesktopAppSettings.layerTest(),
+        settingsLayer,
         Layer.mock(DesktopClientSettings.DesktopClientSettings)({ get: Effect.succeedNone }),
         DesktopState.layer,
         Layer.mock(ElectronApp.ElectronApp)({ quit: Effect.void }),
@@ -163,7 +181,7 @@ const makeHarness = Effect.gen(function* () {
         }),
       ),
     ),
-    Layer.merge(DesktopState.layer),
+    Layer.merge(Layer.mergeAll(DesktopState.layer, settingsLayer)),
   );
 
   return { fakes, createdOptions, mainWindow, revealed, layer } as const;
@@ -172,7 +190,7 @@ const makeHarness = Effect.gen(function* () {
 describe("DesktopWindow.openNewWindow", () => {
   it.effect("opens the route in a new main window cascaded from the current main window", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness;
+      const harness = yield* makeHarness();
       const [main, added] = harness.fakes;
 
       yield* Effect.gen(function* () {
@@ -198,7 +216,7 @@ describe("DesktopWindow.openNewWindow", () => {
 
   it.effect("opens the window under the pointer when asked to", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness;
+      const harness = yield* makeHarness();
 
       yield* Effect.gen(function* () {
         const windows = yield* DesktopWindow.DesktopWindow;
@@ -206,15 +224,82 @@ describe("DesktopWindow.openNewWindow", () => {
 
         assert.isTrue(yield* windows.openNewWindow("/settings/general", { atCursor: true }));
 
-        const created = yield* Ref.get(harness.createdOptions);
-        assert.deepInclude(created[1], { x: 180, y: 80, width: 1280, height: 840 });
+        const opened = (yield* Ref.get(harness.createdOptions))[1];
+        const pointer = { x: 300, y: 100 };
+        assert.deepInclude(opened, { width: MAIN_BOUNDS.width, height: MAIN_BOUNDS.height });
+        assert.isTrue(opened?.x !== undefined && opened.x < pointer.x);
+        assert.isTrue(opened?.y !== undefined && opened.y < pointer.y);
+        assert.isTrue(pointer.y - (opened?.y ?? 0) < TITLEBAR_HEIGHT);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("an additional window neither maximizes nor saves bounds until the user moves it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        mainWindowBounds: MAIN_BOUNDS,
+        mainWindowMaximized: true,
+      });
+      const [main, added] = harness.fakes;
+      added.getBounds.mockReturnValue({ ...MAIN_BOUNDS, x: 128, y: 108 });
+
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        assert.isTrue(yield* windows.openNewWindow());
+        main.listener("ready-to-show")();
+        added.listener("ready-to-show")();
+        assert.equal(main.maximize.mock.calls.length, 1);
+        assert.equal(added.maximize.mock.calls.length, 0);
+
+        added.listener("resize")();
+        yield* TestClock.adjust(500);
+        yield* Effect.promise(() => Promise.resolve());
+        assert.deepInclude(yield* settings.get, {
+          mainWindowBounds: MAIN_BOUNDS,
+          mainWindowMaximized: true,
+        });
+
+        added.getBounds.mockReturnValue({ ...MAIN_BOUNDS, x: 400, y: 300 });
+        added.listener("move")();
+        yield* TestClock.adjust(500);
+        yield* Effect.promise(() => Promise.resolve());
+        assert.deepInclude(yield* settings.get, {
+          mainWindowBounds: { ...MAIN_BOUNDS, x: 400, y: 300 },
+          mainWindowMaximized: false,
+        });
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("opens at the saved bounds when no app window is open", () =>
+    Effect.gen(function* () {
+      const saved = { x: 300, y: 200, width: 1200, height: 800 };
+      const harness = yield* makeHarness({
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        mainWindowBounds: saved,
+      });
+      const [main] = harness.fakes;
+
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        main.listener("closed")();
+        yield* Effect.promise(() => Promise.resolve());
+        assert.isTrue(Option.isNone(yield* Ref.get(harness.mainWindow)));
+
+        assert.isTrue(yield* windows.openNewWindow());
+
+        assert.deepInclude((yield* Ref.get(harness.createdOptions))[1], saved);
       }).pipe(Effect.provide(harness.layer));
     }),
   );
 
   it.effect("opens nothing and leaves the splash hidden once quitting has started", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness;
+      const harness = yield* makeHarness();
 
       yield* Effect.gen(function* () {
         const windows = yield* DesktopWindow.DesktopWindow;
@@ -232,7 +317,7 @@ describe("DesktopWindow.openNewWindow", () => {
 
   it.effect("reveals the splash instead of opening a window before the backend is ready", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness;
+      const harness = yield* makeHarness();
       const [splash] = harness.fakes;
 
       yield* Effect.gen(function* () {

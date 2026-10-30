@@ -12,6 +12,9 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 // SCIENT-FORK:START — Scient Accounts: expose the desktop accounts bridge.
 import { makeDesktopAccountsBridge } from "./scient/accounts/preloadBridge.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+import { makeMultiWindowBridge } from "./scient/multiWindow/preloadBridge.ts";
+// SCIENT-FORK:END
 import * as IpcChannels from "./ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./scient/voice/preloadBridge.ts";
 import { installSpellingSampler, type SampleOutcome } from "./scient/spelling/preloadSampler.ts";
@@ -484,25 +487,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   accounts: makeDesktopAccountsBridge(ipcRenderer),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — several app windows share one desktop process.
-  openNewWindow: (route, options) =>
-    ipcRenderer.invoke(IpcChannels.OPEN_NEW_WINDOW_CHANNEL, {
-      ...(route === undefined ? {} : { route }),
-      ...(options?.atCursor === true ? { atCursor: true } : {}),
-    }),
-  onClientSettingsChanged: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, settings: unknown) => {
-      if (typeof settings !== "object" || settings === null) return;
-      listener(settings as Parameters<typeof listener>[0]);
-    };
-    ipcRenderer.on(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL, wrappedListener);
-    return () =>
-      ipcRenderer.removeListener(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL, wrappedListener);
-  },
-  onConnectionCatalogChanged: (listener) => {
-    const wrappedListener = () => listener();
-    ipcRenderer.on(IpcChannels.CONNECTION_CATALOG_CHANGED_CHANNEL, wrappedListener);
-    return () =>
-      ipcRenderer.removeListener(IpcChannels.CONNECTION_CATALOG_CHANGED_CHANNEL, wrappedListener);
-  },
+  ...makeMultiWindowBridge(ipcRenderer),
   // SCIENT-FORK:END
 } satisfies DesktopBridge);

@@ -1,6 +1,9 @@
 // SCIENT-FORK:START — Scient Accounts: remember the identity of browser sessions.
 import { rememberAccountsSession } from "../scient/accounts/sessionIdentity.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
+import { PreviewHostWindows } from "../scient/multiWindow/previewHostWindows.ts";
+// SCIENT-FORK:END
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewRecordingInputSchema,
@@ -540,12 +543,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let forwardedShortcuts: ReadonlyArray<PreviewForwardedShortcut> = [];
   const annotationThemeRef = yield* Ref.make(DEFAULT_ANNOTATION_THEME);
   const annotationSendEnabled = new Map<string, boolean>();
-  // SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
-  const appWindows = new Set<BrowserWindow>();
-  // Recorded at registration because guests can be destroyed before their window's `closed` fires.
-  const tabHostWindows = new Map<string, BrowserWindow>();
-  let appWindowRegistered = false;
-  // SCIENT-FORK:END
+  const mainWindowRef = yield* Ref.make<Option.Option<BrowserWindow>>(Option.none());
   const tabsRef = yield* SynchronizedRef.make<ReadonlyMap<string, PreviewTabState>>(new Map());
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
   const listenersRef = yield* Ref.make<ReadonlySet<Listener>>(new Set());
@@ -574,7 +572,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
-  // SCIENT-FORK:START — Multi-window: `appWindows` replaces the single current main window.
+  // SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
+  const hostWindows = new PreviewHostWindows();
   // SCIENT-FORK:END
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
@@ -681,18 +680,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
     // SCIENT-FORK:START — Multi-window: capture keeps every app window unthrottled.
     yield* Effect.forEach(
-      [...appWindows],
+      hostWindows.windows,
       (window) => setWindowBackgroundThrottling(window, enabled),
       { discard: true },
     );
     // SCIENT-FORK:END
   });
-  // SCIENT-FORK:START — Multi-window: capture requires the tab's host window to remain open.
-  const isTabHostWindowOpen = (tabId: string) => {
-    const hostWindow = tabHostWindows.get(tabId);
-    return frameCaptureWindowOpen && (hostWindow === undefined || appWindows.has(hostWindow));
-  };
-  // SCIENT-FORK:END
   const setFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     wc: Electron.WebContents,
     enabled: boolean,
@@ -1616,28 +1609,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         // Cleanup or lock acquisition can outlive the replacement window.
         if (window.isDestroyed()) return [undefined, sessions] as const;
         // SCIENT-FORK:START — Multi-window: registering a window adds it beside the others.
-        if (appWindows.has(window)) return [undefined, sessions] as const;
+        if (hostWindows.has(window)) return [undefined, sessions] as const;
         // SCIENT-FORK:END
         if (sessions.size > 0) {
           yield* setWindowBackgroundThrottling(window, false);
         }
-        // SCIENT-FORK:START — Multi-window: a closing window releases only its own tabs' captures.
-        appWindows.add(window);
-        appWindowRegistered = true;
+        yield* Ref.set(mainWindowRef, Option.some(window));
+        // SCIENT-FORK:START — Multi-window: registering a window adds it beside the others.
+        hostWindows.add(window);
+        // SCIENT-FORK:END
         frameCaptureWindowOpen = true;
         window.once("closed", () => {
-          if (!appWindows.delete(window)) return;
-          if ([...appWindows].some((other) => !other.isDestroyed())) {
-            const hostedTabIds = new Set<string>();
-            for (const [tabId, hostWindow] of tabHostWindows) {
-              if (hostWindow === window) hostedTabIds.add(tabId);
-            }
-            if (hostedTabIds.size > 0) {
-              runFork(releaseTabCaptures(hostedTabIds).pipe(Effect.ignore));
-            }
+          // SCIENT-FORK:START — Multi-window: a closing window releases only its own tabs' captures.
+          const closed = hostWindows.close(window);
+          if (closed === undefined) return;
+          if (closed !== "last") {
+            if (closed.size > 0) runFork(releaseTabCaptures(closed).pipe(Effect.ignore));
             return;
           }
-          appWindows.clear();
+          // SCIENT-FORK:END
           frameCaptureWindowOpen = false;
           mainWindowCleanupFiber = runFork(
             Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
@@ -1646,7 +1636,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }).pipe(Effect.ignore),
           );
         });
-        // SCIENT-FORK:END
         return [undefined, sessions] as const;
       }),
     ).pipe(Effect.uninterruptible);
@@ -1735,7 +1724,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     clearPendingRecording(tabId);
     annotationSendEnabled.delete(tabId);
     // SCIENT-FORK:START — Multi-window: forget the closed tab's host window.
-    tabHostWindows.delete(tabId);
+    hostWindows.forgetTab(tabId);
     // SCIENT-FORK:END
     yield* Effect.all(
       [
@@ -1820,23 +1809,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       return yield* new PreviewTabNotFoundError({ tabId });
     }
     const wc = webContents.fromId(webContentsId);
+    const mainWindow = yield* Ref.get(mainWindowRef);
     // SCIENT-FORK:START — Multi-window: accept guests hosted by any live app window.
-    const hostWindow =
-      wc && !wc.isDestroyed()
-        ? [...appWindows].find(
-            (window) => !window.isDestroyed() && wc.hostWebContents === window.webContents,
-          )
-        : undefined;
+    const hostWindow = hostWindows.hostOf(wc);
     if (
       !wc ||
       wc.isDestroyed() ||
       wc.getType() !== "webview" ||
-      (appWindowRegistered && hostWindow === undefined)
+      (Option.isSome(mainWindow) && hostWindow === undefined)
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
-    if (hostWindow === undefined) tabHostWindows.delete(tabId);
-    else tabHostWindows.set(tabId, hostWindow);
+    hostWindows.setTabHost(tabId, hostWindow);
     // SCIENT-FORK:END
     yield* rendererHistory.register(wc, { surface: "preview", tabId });
     const attached = yield* Ref.get(attachedRef);
@@ -2700,7 +2684,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       (sessions) => {
         return Effect.gen(function* () {
           // SCIENT-FORK:START — Multi-window: gate on the tab's own host window.
-          if (!isTabHostWindowOpen(tabId)) {
+          if (!frameCaptureWindowOpen || hostWindows.isTabHostClosed(tabId)) {
             // SCIENT-FORK:END
             return yield* new PreviewMainWindowClosedError({ tabId });
           }
@@ -3190,7 +3174,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           });
         }
         // SCIENT-FORK:START — Multi-window: gate on the tab's own host window.
-        if (!isTabHostWindowOpen(tabId) || requestWebContents.isDestroyed()) {
+        if (
+          !frameCaptureWindowOpen ||
+          hostWindows.isTabHostClosed(tabId) ||
+          requestWebContents.isDestroyed()
+        ) {
           // SCIENT-FORK:END
           return yield* new PreviewMainWindowClosedError({ tabId });
         }

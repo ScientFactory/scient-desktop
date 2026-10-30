@@ -43,11 +43,12 @@ export {
 } from "./scientMainWindowSizing.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — several app windows share one desktop process.
+import * as Semaphore from "effect/Semaphore";
 import {
+  type AppWindowOptions,
+  additionalWindowBounds,
   appWindowUrl,
-  cascadeWindowBounds,
   parseAppWindowRoute,
-  windowBoundsAtPoint,
 } from "../scient/multiWindow/appWindows.ts";
 // SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
@@ -137,21 +138,11 @@ export class DesktopWindow extends Context.Service<
      */
     readonly openNewWindow: (
       route?: string,
-      options?: { readonly atCursor?: boolean },
+      options?: { readonly atCursor?: boolean | undefined },
     ) => Effect.Effect<boolean, DesktopWindowError>;
     // SCIENT-FORK:END
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
-
-// SCIENT-FORK:START — several app windows share one desktop process.
-interface AppWindowOptions {
-  readonly route?: Option.Option<string>;
-  /** Additional windows cascade from this window and leave saved bounds alone until moved. */
-  readonly cascadeFrom?: Electron.BrowserWindow;
-  /** Puts an additional window under the pointer instead, where a dragged tab was dropped. */
-  readonly atCursor?: boolean;
-}
-// SCIENT-FORK:END
 
 const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
   makeComponentLogger("desktop-window");
@@ -355,6 +346,9 @@ export const make = Effect.gen(function* () {
   // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
   const flushWindowBounds = new Map<Electron.BrowserWindow, Effect.Effect<void>>();
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — New Window waits for a main window being created and opens beside it.
+  const windowCreation = yield* Semaphore.make(1);
+  // SCIENT-FORK:END
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -434,48 +428,36 @@ export const make = Effect.gen(function* () {
       );
     }
     // SCIENT-FORK:END
-    const persistedBounds = persistedSettings.mainWindowBounds;
-    // SCIENT-FORK:START — additional windows cascade from the window they open beside, or open
-    // under the pointer.
-    const workAreas =
-      displayBoundsResult._tag === "Success"
-        ? displayBoundsResult.displays.map((display) => display.workArea)
-        : [];
-    const source =
-      options.cascadeFrom !== undefined && !options.cascadeFrom.isDestroyed()
-        ? options.cascadeFrom.isNormal()
-          ? options.cascadeFrom.getBounds()
-          : options.cascadeFrom.getNormalBounds()
-        : undefined;
-    const cursor =
-      options.atCursor === true
-        ? yield* Effect.sync(() => {
-            try {
-              return Electron.screen.getCursorScreenPoint();
-            } catch {
-              return null;
-            }
-          })
-        : null;
-    const initialBounds =
-      source === undefined
-        ? resolveInitialMainWindowBounds(
-            persistedBounds,
-            displayBounds,
-            displayBoundsResult._tag === "Success"
-              ? displayBoundsResult.primaryDisplay.workArea
-              : undefined,
-          )
-        : cursor === null
-          ? cascadeWindowBounds(source, workAreas)
-          : windowBoundsAtPoint(source, cursor, workAreas);
-    // SCIENT-FORK:END
-    const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
-    // SCIENT-FORK:START — an additional window never restores saved bounds.
-    if (!additionalWindow && persistedBounds !== null && !restoredPersistedBounds) {
-      yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
+    // SCIENT-FORK:START — an additional window neither restores nor maximizes to the saved state.
+    if (additionalWindow) {
+      persistedSettings = {
+        ...persistedSettings,
+        mainWindowBounds: null,
+        mainWindowMaximized: false,
+      };
     }
     // SCIENT-FORK:END
+    const persistedBounds = persistedSettings.mainWindowBounds;
+    // SCIENT-FORK:START — an additional window opens beside its source or under the pointer.
+    const initialBounds =
+      additionalWindowBounds(
+        options,
+        displayBoundsResult._tag === "Success"
+          ? displayBoundsResult.displays.map((display) => display.workArea)
+          : [],
+      ) ??
+      resolveInitialMainWindowBounds(
+        persistedBounds,
+        displayBounds,
+        displayBoundsResult._tag === "Success"
+          ? displayBoundsResult.primaryDisplay.workArea
+          : undefined,
+      );
+    // SCIENT-FORK:END
+    const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
+    if (persistedBounds !== null && !restoredPersistedBounds) {
+      yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
+    }
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
     const window = yield* electronWindow.create({
       ...initialBounds,
@@ -531,9 +513,7 @@ export const make = Effect.gen(function* () {
       });
     };
     const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
-    // SCIENT-FORK:START — an additional window saves bounds only once the user moves it.
-    const fallbackWindowMaximized = !additionalWindow && persistedSettings.mainWindowMaximized;
-    // SCIENT-FORK:END
+    const fallbackWindowMaximized = persistedSettings.mainWindowMaximized;
     const persistCurrentBounds = (): Fiber.Fiber<void, never> | undefined => {
       if (!boundsPersistenceEnabled) {
         return pendingBoundsPersistFiber;
@@ -945,11 +925,9 @@ export const make = Effect.gen(function* () {
       if (!window.isDestroyed()) {
         window.webContents.setBackgroundThrottling(true);
       }
-      // SCIENT-FORK:START — additional windows cascade instead of restoring the saved state.
-      if (!additionalWindow && persistedSettings.mainWindowMaximized) {
+      if (persistedSettings.mainWindowMaximized) {
         window.maximize();
       }
-      // SCIENT-FORK:END
       void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
     });
 
@@ -979,7 +957,9 @@ export const make = Effect.gen(function* () {
       yield* logWindowInfo("main window created");
     }
     return window;
-  }).pipe(Effect.withSpan("desktop.window.createMain"));
+    // SCIENT-FORK:START — New Window waits for a main window being created and opens beside it.
+  }).pipe(windowCreation.withPermits(1), Effect.withSpan("desktop.window.createMain"));
+  // SCIENT-FORK:END
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
@@ -1190,16 +1170,20 @@ export const make = Effect.gen(function* () {
         if (Option.isSome(splash)) yield* electronWindow.reveal(splash.value);
         return false;
       }
-      const source = yield* electronWindow.main;
-      const window = yield* createWindow({
-        route: parseAppWindowRoute(route),
-        ...(Option.isSome(source) ? { cascadeFrom: source.value } : {}),
-        ...(options?.atCursor === true ? { atCursor: true } : {}),
-      });
-      if (Option.isNone(window)) return false;
-      yield* electronWindow.setMain(window.value);
-      yield* logWindowInfo("app window created", { additional: Option.isSome(source) });
-      return true;
+      return yield* windowCreation.withPermits(1)(
+        Effect.gen(function* () {
+          const source = yield* electronWindow.main;
+          const window = yield* createWindow({
+            route: parseAppWindowRoute(route),
+            cascadeFrom: Option.getOrUndefined(source),
+            atCursor: options?.atCursor === true,
+          });
+          if (Option.isNone(window)) return false;
+          yield* electronWindow.setMain(window.value);
+          yield* logWindowInfo("app window created", { additional: Option.isSome(source) });
+          return true;
+        }),
+      );
     }),
     // SCIENT-FORK:END
   });

@@ -4,9 +4,9 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
-import * as Electron from "electron";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
 
 /**
@@ -122,29 +122,29 @@ export async function startDevLaunchControlServer(input: {
   };
 }
 
-const readyRendererIds = new Set<number | undefined>();
+const readyRendererIds = new Set<number>();
 
 /** Called beside DesktopAppActivation.setRendererReady for each app window. */
-export function noteDevLaunchRendererReady(ready: boolean, senderId?: number): void {
+export function noteDevLaunchRendererReady(ready: boolean, senderId: number | undefined): void {
+  if (senderId === undefined) return;
   if (ready) readyRendererIds.add(senderId);
   else readyRendererIds.delete(senderId);
 }
-
-const isRendererReady = () => {
-  for (const id of readyRendererIds) {
-    const contents = id === undefined ? undefined : Electron.webContents.fromId(id);
-    if (id === undefined || (contents !== undefined && !contents.isDestroyed())) return true;
-    readyRendererIds.delete(id);
-  }
-  return false;
-};
 
 export const start = Effect.gen(function* () {
   const config = readDevLaunchControlConfig(process.env);
   if (config === null) return;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const electronApp = yield* ElectronApp.ElectronApp;
-  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const context = yield* Effect.context<never>();
+  const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
+  // A closed window's renderer never reports not ready; only live app windows count.
+  const isRendererReady = () =>
+    runSync(electronWindow.appWindows).some((window) =>
+      readyRendererIds.has(window.webContents.id),
+    );
   yield* Effect.acquireRelease(
     Effect.tryPromise(() =>
       startDevLaunchControlServer({
