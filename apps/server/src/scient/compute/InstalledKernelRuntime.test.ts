@@ -1,12 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ComputeLanguageId, ComputeRuntimeError } from "@scientfactory/compute";
+import {
+  ComputeLanguageId,
+  ComputeRuntimeError,
+  computeLanguageIdFromName,
+} from "@scientfactory/compute";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import {
-  installedKernelLanguages,
   jupyterKernelDirectories,
-  kernelLanguageId,
+  kernelLanguages,
+  kernelLaunch,
   makeInstalledKernelBinding,
 } from "./InstalledKernelRuntime.ts";
 import { RuntimeDiscoveryHostReference } from "./RuntimeDiscovery.ts";
@@ -68,7 +72,7 @@ const binding = (hostReady = true) =>
 
 describe("installed Jupyter kernels", () => {
   it("names languages stably", () => {
-    expect(["C++", "Rust", "C#", "TypeScript", "  "].map(kernelLanguageId)).toEqual([
+    expect(["C++", "Rust", "C#", "TypeScript", "  "].map(computeLanguageIdFromName)).toEqual([
       "cpp",
       "rust",
       "csharp",
@@ -105,11 +109,83 @@ describe("installed Jupyter kernels", () => {
 
   it.effect("offers each new language once, skipping curated and unreadable kernels", () =>
     Effect.gen(function* () {
-      expect(yield* installedKernelLanguages()).toEqual([
-        { languageId: "rust", displayName: "Rust", sourceExtensions: [".rs"] },
+      const languages = yield* kernelLanguages();
+      expect(languages.map((language) => language.languageId)).toEqual([
+        "octave",
+        "rust",
+        "spss",
+        "stata",
+        "wolfram-language",
       ]);
     }).pipe(onHost),
   );
+
+  it.effect("keeps its setup languages listed when no kernel can be read", () =>
+    Effect.gen(function* () {
+      const languages = yield* kernelLanguages().pipe(
+        Effect.provideService(RuntimeDiscoveryHostReference, fakeDiscoveryHost({})),
+      );
+      expect(languages.map((language) => language.displayName)).toEqual([
+        "GNU Octave",
+        "Rust",
+        "SPSS",
+        "Stata",
+        "Wolfram Language",
+      ]);
+      expect(languages.find((language) => language.languageId === "spss")?.setup?.url).toBe(
+        undefined,
+      );
+      expect(languages.find((language) => language.languageId === "rust")?.setup?.url).toContain(
+        "evcxr",
+      );
+    }).pipe(onHost),
+  );
+
+  it("runs a bare python kernel with the Python it was installed for", () => {
+    const spec = {
+      name: "octave",
+      resourceDir: "/env/share/jupyter/kernels/octave",
+      displayName: "Octave",
+      language: "octave",
+      argv: ["python", "-m", "octave_kernel", "-f", "{connection_file}"],
+      interruptMode: "signal" as const,
+      env: { LANG: "C" },
+    };
+    const inEnvironment = fakeDiscoveryContext(
+      "linux",
+      fakeDiscoveryHost({ files: ["/env/bin/python3", "/usr/bin/python3"] }),
+      { PATH: "/usr/bin" },
+    );
+    expect(kernelLaunch(inEnvironment, spec)).toEqual({
+      argv: ["/env/bin/python3", "-m", "octave_kernel", "-f", "{connection_file}"],
+      env: { LANG: "C", PATH: "/env/bin:/usr/bin" },
+    });
+    const onPath = fakeDiscoveryContext(
+      "linux",
+      fakeDiscoveryHost({ files: ["/usr/bin/python3"] }),
+      { PATH: "/usr/bin" },
+    );
+    expect(kernelLaunch(onPath, { ...spec, resourceDir: "/u/.jupyter/kernels/octave" })).toEqual({
+      argv: ["/usr/bin/python3", "-m", "octave_kernel", "-f", "{connection_file}"],
+      env: { LANG: "C" },
+    });
+    const windows = fakeDiscoveryContext(
+      "win32",
+      fakeDiscoveryHost({ files: ["C:\\env\\python.exe"] }),
+      { PATH: "C:\\Windows" },
+    );
+    expect(
+      kernelLaunch(windows, {
+        ...spec,
+        resourceDir: "C:\\env\\share\\jupyter\\kernels\\octave",
+      }),
+    ).toEqual({
+      argv: ["C:\\env\\python.exe", "-m", "octave_kernel", "-f", "{connection_file}"],
+      env: { LANG: "C", PATH: "C:\\env;C:\\Windows" },
+    });
+    const absolute = { ...spec, argv: ["/opt/evcxr", "{connection_file}"] };
+    expect(kernelLaunch(inEnvironment, absolute)).toBe(absolute);
+  });
 
   it.effect("launches an installed kernel exactly as its spec says, without variables", () =>
     Effect.gen(function* () {

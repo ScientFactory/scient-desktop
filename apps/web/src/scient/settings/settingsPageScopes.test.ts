@@ -24,7 +24,7 @@ describe("settings page scopes", () => {
   it("has Providers and Documents choose one environment", () => {
     expect(settingsPageChoosesOneEnvironment("/settings/providers")).toBe(true);
     expect(settingsPageChoosesOneEnvironment("/settings/documents")).toBe(true);
-    expect(settingsPageChoosesOneEnvironment("/settings/scientific-computing")).toBe(false);
+    expect(settingsPageChoosesOneEnvironment("/settings/scientific-computing")).toBe(true);
   });
 
   it("keeps Documents' device preferences reachable while its environment is offline", () => {

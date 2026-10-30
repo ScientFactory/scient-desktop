@@ -81,8 +81,8 @@ export const makeScientificRpcHandlers = ({
       observeRpcEffect(WS_METHODS.computeInspectRuntimes, computeGateway.inspectRuntimes(input), {
         "rpc.aggregate": "compute",
       }),
-    [WS_METHODS.computeRuntimeInventory]: () =>
-      observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(), {
+    [WS_METHODS.computeRuntimeInventory]: (input) =>
+      observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(input), {
         "rpc.aggregate": "compute",
       }),
     [WS_METHODS.computeVerifyRuntime]: (input) =>

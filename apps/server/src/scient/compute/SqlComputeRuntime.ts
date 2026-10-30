@@ -64,6 +64,9 @@ export function sqlKernelSpec(python: string, bridgePath: string): ComputeKernel
   };
 }
 
+/** A system Python rarely has DuckDB, so it counts only when it was chosen for SQL. */
+const mayHaveDuckdb = (source: string) => source !== "path" && source !== "conventional";
+
 /** SQL is DuckDB in a small Python kernel, so its runtimes are Pythons that have DuckDB. */
 export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBinding {
   const python = host.managedPythonAdapter;
@@ -95,9 +98,9 @@ export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBin
     function* (request) {
       const profiles: ComputeRuntimeProfile[] = [];
       // Scient-managed Python carries DuckDB, so it leads unless a Python was chosen for SQL.
-      const pythons = [...(yield* python.discover(request))].sort(
-        (a, b) => Number(b.source === "configured") - Number(a.source === "configured"),
-      );
+      const pythons = (yield* python.discover(request))
+        .filter((profile) => mayHaveDuckdb(profile.source))
+        .toSorted((a, b) => Number(b.source === "configured") - Number(a.source === "configured"));
       for (const profile of pythons) {
         // A configured choice keeps its own failure rather than silently falling back.
         const verification = yield* verifyPython(profile);
@@ -121,7 +124,17 @@ export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBin
       transportKind: python.transportKind,
       ...(python.listInstallations === undefined
         ? {}
-        : { listInstallations: python.listInstallations }),
+        : {
+            listInstallations: (request) =>
+              python.listInstallations!(request).pipe(
+                Effect.map((installations) =>
+                  installations.filter(
+                    (installation) =>
+                      installation.configured === true || mayHaveDuckdb(installation.source),
+                  ),
+                ),
+              ),
+          }),
       discover,
       verify,
       prepareLaunch: (request) =>

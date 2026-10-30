@@ -4,6 +4,8 @@ import {
   type ComputeSessionRecord,
 } from "@t3tools/contracts";
 
+import { computeScientPart } from "./computeInstallationSettingsModel";
+
 type ComputeRuntimeProfile = ComputeLanguageRuntimeInspection["runtimes"][number]["profile"];
 
 export const SCIENTIFIC_PYTHON_TOOLKIT_ID = "python-data-and-figures";
@@ -356,6 +358,15 @@ export function resolveComputeRuntimeToolbarState(input: {
           : `${languageName} unavailable`,
       canRun: false,
       note: input.runtimeBlocker.problem,
+    };
+  }
+  // Scient can set up its own part, but a language that brings its own kernel has to be installed.
+  if (computeScientPart(languageId) === null) {
+    return {
+      kind: "status",
+      label: "Not installed",
+      canRun: false,
+      note: `${languageName} is not installed`,
     };
   }
   return {

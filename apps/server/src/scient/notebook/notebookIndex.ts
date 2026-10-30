@@ -1,3 +1,5 @@
+import { computeLanguageIdFromName } from "@scientfactory/compute";
+
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
 const OPEN_BRACE = 0x7b;
@@ -179,7 +181,7 @@ function notebookLanguage(metadata: unknown): string {
     (typeof languageInfo.name === "string" && languageInfo.name) ||
     (typeof kernelspec.language === "string" && kernelspec.language) ||
     "python";
-  return language.toLowerCase();
+  return computeLanguageIdFromName(language);
 }
 
 function indexCell(buffer: Buffer, range: Range, ids: CellIds): NotebookCellRecord {

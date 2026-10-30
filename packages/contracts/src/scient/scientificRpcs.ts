@@ -227,7 +227,7 @@ const WsComputeInspectRuntimesRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.comput
 const WsComputeRuntimeInventoryRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.computeRuntimeInventory,
   {
-    payload: Schema.Struct({}),
+    payload: Schema.Struct({ versions: Schema.optionalKey(Schema.Boolean) }),
     success: ComputeRuntimeInventory,
     error: ComputeRpcError,
   },

@@ -180,6 +180,8 @@ export const PROBE_SCRIPT = [
  * Parses the JSON output of the probe script.
  * @throws on malformed JSON or missing fields.
  */
+const VERSION_PROBE_BUDGET = "3 seconds";
+
 export function parseProbeOutput(stdout: string): ProbeResult {
   const json = stdout.trim().split("\n").pop();
   if (json === undefined) throw new Error("Probe produced no output.");
@@ -605,6 +607,13 @@ export function makePythonRuntimeAdapter(
     listInstallations: Effect.fn("PythonRuntimeAdapter.listInstallations")(function* (request) {
       const context = yield* discoveryContext;
       const { managed, found, candidates } = yield* candidatesFor(request);
+      // A slow Python is skipped this time rather than waited for.
+      if (request.probeVersions === true)
+        yield* Effect.forEach(
+          candidates.filter((candidate) => candidate.problem === null),
+          (candidate) => readProbe(candidate.executable).pipe(Effect.ignore),
+          { concurrency: 4, discard: true },
+        ).pipe(Effect.timeoutOption(VERSION_PROBE_BUDGET));
       const now = yield* Clock.currentTimeMillis;
       const configured = request.configuredExecutable?.trim() || null;
       const configuredFound =

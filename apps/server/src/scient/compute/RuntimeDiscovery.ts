@@ -231,7 +231,7 @@ function dedupeRuntimes(
   runtimes: ReadonlyArray<DiscoveredRuntime>,
   isEnvironment: (executable: string) => boolean = () => false,
 ): ReadonlyArray<DiscoveredRuntime> {
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
   const result: DiscoveredRuntime[] = [];
   for (const runtime of runtimes) {
     const key = identity(
@@ -239,8 +239,14 @@ function dedupeRuntimes(
       runtime.executable,
       runtime.problem !== null || isEnvironment(runtime.executable),
     );
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const first = seen.get(key);
+    if (first !== undefined) {
+      // PATH finds a runtime first; a later source may know where it came from.
+      if (result[first]!.origin === null)
+        result[first] = { ...result[first]!, origin: runtime.origin };
+      continue;
+    }
+    seen.set(key, result.length);
     result.push(runtime);
     if (result.length >= MAX_DISCOVERED_RUNTIMES) break;
   }
@@ -346,7 +352,10 @@ function windowsAliasProblem(context: DiscoveryContext, executable: string): str
     : WINDOWS_STORE_ALIAS;
 }
 
-/** macOS `/usr/bin/python3` asks to install developer tools when they are absent. */
+/**
+ * macOS `/usr/bin/python3` is a launcher: it runs the developer tools' Python, which is listed
+ * under its own name, or asks to install them.
+ */
 const MACOS_PYTHON_SHIM = "/usr/bin/python3";
 const MACOS_DEVELOPER_PYTHON = "/Library/Developer/CommandLineTools/usr/bin/python3";
 
@@ -570,13 +579,11 @@ export function enumeratePythonRuntimes(
           `conda: ${path.basename(env.CONDA_PREFIX)}`,
         ),
   ].filter((runtime): runtime is DiscoveredRuntime => runtime !== null);
-  const shimOnly =
-    context.platform === "darwin" && !context.host.isExecutable(MACOS_DEVELOPER_PYTHON);
   const onPath = pathMatches(
     context,
     context.platform === "win32" ? ["python.exe", "python3.exe"] : ["python3", "python"],
   )
-    .filter((executable) => !shimOnly || executable !== MACOS_PYTHON_SHIM)
+    .filter((executable) => context.platform !== "darwin" || executable !== MACOS_PYTHON_SHIM)
     .map((executable) => ({
       executable,
       source: "path" as const,

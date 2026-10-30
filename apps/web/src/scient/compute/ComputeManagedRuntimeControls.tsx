@@ -27,6 +27,7 @@ import { ContextualConfirmation } from "~/components/ui/contextual-confirmation"
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { computeScientPart } from "./computeInstallationSettingsModel";
 
 export interface ComputeManagedRuntimeFailureView {
   readonly summary: string;
@@ -144,8 +145,9 @@ export function useComputeManagedRuntime(input: {
   });
   // First-time file setup has no inventory status yet. Subscribe anyway so
   // Set up Python / Connect MATLAB can show progress on the file, not only in Settings.
+  const hasManagedPart = computeScientPart(input.languageId) !== null;
   const queried = useEnvironmentQuery(
-    input.environmentId
+    input.environmentId && hasManagedPart
       ? computeEnvironment.managedRuntime({
           environmentId: input.environmentId,
           input: { languageId: input.languageId },
@@ -194,7 +196,8 @@ export function useComputeManagedRuntime(input: {
     ? JSON.stringify([scopeKey, status.operation.operationId])
     : null;
   const cancelling = operationKey !== null && cancellationKey === operationKey;
-  const unresolved = querySnapshot === undefined && queried.error === null && status === null;
+  const unresolved =
+    hasManagedPart && querySnapshot === undefined && queried.error === null && status === null;
   const act = async (
     action: ComputeManagedRuntimeAction,
     options?: ComputeManagedRuntimeProvisionOptions,

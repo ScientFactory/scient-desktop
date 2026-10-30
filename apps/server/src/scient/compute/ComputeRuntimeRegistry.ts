@@ -7,7 +7,7 @@ import {
   layerWithRuntimeBindings,
 } from "./ComputeSessionService.ts";
 import { JULIA_KERNEL_LANGUAGE } from "./JuliaComputeRuntime.ts";
-import { installedKernelLanguages, makeInstalledKernelBinding } from "./InstalledKernelRuntime.ts";
+import { kernelLanguages, makeInstalledKernelBinding } from "./InstalledKernelRuntime.ts";
 import { makeKernelRuntimeBinding } from "./KernelComputeRuntime.ts";
 import { matlabRuntimeBinding } from "./MatlabComputeRuntime.ts";
 import { pythonRuntimeBinding } from "./PythonComputeRuntime.ts";
@@ -52,15 +52,12 @@ const pythonAndKernelBindings = Effect.gen(function* () {
       configuredExecutable,
     }),
   );
-  // Other installed Jupyter kernels, each language once; a new language appears after restart.
-  const installed = yield* installedKernelLanguages().pipe(
+  // Each language once; a language outside Scient's list appears after a restart.
+  const installed = yield* kernelLanguages().pipe(
     Effect.flatMap((languages) =>
       Effect.forEach(languages, (language) =>
         makeInstalledKernelBinding(language, { host, configuredExecutable }),
       ),
-    ),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("installed Jupyter kernels are unavailable", { cause }).pipe(Effect.as([])),
     ),
   );
   return [...python, ...kernels, makeSqlRuntimeBinding(host), ...installed];

@@ -396,6 +396,7 @@ export function NotebookCell(props: {
       )}
       <div className="min-w-0">
         <div
+          data-notebook-cell-box=""
           className={cn(
             "rounded-md border bg-background",
             selected

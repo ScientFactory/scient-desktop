@@ -7,6 +7,9 @@ import {
 import {
   automaticComputeRuntimeLabel,
   computeCurrentRuntimeSummary,
+  computeLanguageAbsent,
+  computeLanguageListDetail,
+  computeLanguagePrimaryAction,
   computeManagedPrimaryAction,
   computeRuntimePickerLabel,
   defaultComputeInstallation,
@@ -60,7 +63,7 @@ describe("installation selection", () => {
       "3.12.13 · Scient-managed",
     );
     expect(computeRuntimePickerLabel(inventory.installations[1]!, "Python")).toBe(
-      "Python · System installation",
+      "Python · System",
     );
     expect(computeRuntimePickerLabel(inventory.installations[0]!, "Python")).not.toContain(
       "/managed/python",
@@ -74,10 +77,10 @@ describe("installation selection", () => {
     };
     const installations = [inventory.installations[1]!, duplicate];
     expect(computeRuntimePickerLabel(installations[0]!, "Python", installations)).toBe(
-      "Python · System installation · system/python",
+      "Python · System · system/python",
     );
     expect(computeRuntimePickerLabel(duplicate, "Python", installations)).toBe(
-      "Python · System installation · bin/python",
+      "Python · System · bin/python",
     );
   });
 
@@ -94,12 +97,9 @@ describe("installation selection", () => {
       installations.map((installation) =>
         computeRuntimePickerLabel(installation, "Python", installations),
       ),
-    ).toEqual([
-      "Python · System installation · a/bin/python",
-      "Python · System installation · b/bin/python",
-    ]);
+    ).toEqual(["Python · System · a/bin/python", "Python · System · b/bin/python"]);
     expect(computeRuntimePickerLabel({ ...installations[0]! }, "Python", [installations[0]!])).toBe(
-      "Python · System installation",
+      "Python · System",
     );
   });
 
@@ -438,5 +438,127 @@ describe("current runtime summary", () => {
       title: "MATLAB connection failed",
       detail: "ENOENT: uv.lock",
     });
+  });
+});
+
+describe("what a language shows", () => {
+  const language = (
+    languageId: string,
+    installations: ComputeLanguageRuntimeInventory["installations"],
+    managedRuntime: ComputeManagedRuntimeStatus | null = null,
+  ): ComputeLanguageRuntimeInventory => ({
+    ...inventory,
+    descriptor: {
+      ...inventory.descriptor,
+      languageId: ComputeLanguageId.make(languageId),
+      displayName: languageId === "r" ? "R" : languageId,
+    },
+    configuredExecutable: null,
+    managedRuntime,
+    installations,
+  });
+  const found = {
+    executable: "/usr/bin/R",
+    source: "path" as const,
+    version: "4.6.2",
+    problem: null,
+  };
+  const preference = { enabled: true, executable: "" };
+  const detail = (item: ComputeLanguageRuntimeInventory, enabled = true) =>
+    computeLanguageListDetail(
+      item,
+      computeCurrentRuntimeSummary({
+        language: item,
+        preference: { ...preference, enabled },
+        managed: item.managedRuntime,
+      }),
+    );
+
+  it("names where a runtime came from, not just that it is on the system", () => {
+    expect(
+      computeRuntimePickerLabel(
+        {
+          executable: "/a",
+          source: "conventional",
+          version: "3.13.5",
+          problem: null,
+          origin: "uv",
+        },
+        "Python",
+      ),
+    ).toBe("3.13.5 · uv");
+    expect(
+      automaticComputeRuntimeLabel({
+        executable: "/a",
+        source: "path",
+        version: null,
+        problem: null,
+        origin: "Homebrew",
+      }),
+    ).toBe("Automatic · Homebrew");
+    expect(
+      computeRuntimePickerLabel(
+        { executable: "/k", source: "conventional", version: null, problem: null, origin: "Rust" },
+        "Rust",
+      ),
+    ).toBe("Rust");
+  });
+
+  it("says Scient can always set up Python and SQL, and others need their language", () => {
+    expect(computeLanguageAbsent(language("python", []))).toBe(false);
+    expect(computeLanguageAbsent(language("sql", []))).toBe(false);
+    expect(computeLanguageAbsent(language("r", []))).toBe(true);
+    expect(computeLanguageAbsent(language("matlab", []))).toBe(true);
+    expect(computeLanguageAbsent(language("rust", []))).toBe(true);
+    expect(computeLanguageAbsent(language("r", [found]))).toBe(false);
+  });
+
+  it("shows the state in the list, never just the switch", () => {
+    const kernel = { ...status, selection: "existing" as const };
+    expect(detail(language("r", [found], kernel))).toBe("4.6.2");
+    expect(detail(language("r", [found], kernel), false)).toBe("Off");
+    expect(detail(language("r", [found], { ...status, installed: false }))).toBe("Set up");
+    expect(detail(language("rust", [{ ...found, version: null }]))).toBe("Found");
+    expect(
+      detail(language("r", [{ ...found, problem: "The selected R executable was not found." }])),
+    ).toBe("Problem");
+    expect(
+      detail(
+        language("sql", [{ ...found, source: "managed" as const, version: "3.14.7" }], status),
+      ),
+    ).toBe("Ready");
+    expect(detail(language("matlab", [found], { ...status, installed: false }))).toBe("Connect");
+  });
+
+  it("offers one action, the most urgent", () => {
+    const action = (item: ComputeLanguageRuntimeInventory) => {
+      const managed = item.managedRuntime;
+      const summary = computeCurrentRuntimeSummary({ language: item, preference, managed });
+      return computeLanguagePrimaryAction({
+        language: item,
+        summary,
+        managed,
+        selected: defaultComputeInstallation(item, preference, managed),
+        failureRetry: null,
+      })?.label;
+    };
+    const absent = { ...status, installed: false };
+    expect(action(language("python", [], absent))).toBe("Set up");
+    expect(action(language("r", [found], absent))).toBe("Set up");
+    expect(action(language("matlab", [found], absent))).toBe("Connect MATLAB");
+    const managed = { ...found, source: "managed" as const };
+    expect(action(language("python", [managed], { ...status, updateAvailable: true }))).toBe(
+      "Update",
+    );
+    expect(action(language("rust", [found]))).toBeUndefined();
+    expect(
+      action(
+        language(
+          "python",
+          [{ executable: "/m", source: "managed" as const, version: "3.14", problem: "Damaged" }],
+          status,
+        ),
+      ),
+    ).toBe("Repair");
   });
 });

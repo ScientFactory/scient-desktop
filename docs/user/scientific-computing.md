@@ -41,10 +41,10 @@ selection unchanged; the managed environment becomes another explicit runtime ch
 The managed environment is optional. To use Python you already maintain instead:
 
 1. Open **Settings → Scientific Computing** for the server environment you want to use.
-2. Select **Python** in the language strip.
-3. Enable Python if it is off.
-4. Choose **Automatic** or an installation under **Default runtime**. To enter a path, expand
-   **Custom executable** and choose **Use path**. Typing, collapsing, or cancelling does not save it.
+2. Select **Python** in the language list.
+3. Turn on **Use Python in Scient** if it is off.
+4. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
+   **Found on this computer**, fill in **Custom path** and choose **Use**.
 
 A ready Python needs CPython 3.10 or newer, `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or
 newer. Install missing requirements with your own environment tooling, then use the page refresh
@@ -53,12 +53,14 @@ control. Prefer a project `.venv` or another virtual environment you control. Sc
 with `pip --user`; do not force packages into a Homebrew- or system-managed Python merely to make
 runtime discovery succeed.
 
-Settings → Scientific Computing has a compact language selector and shows one language at a time.
-Select the open language again to collapse its panel. This only hides the settings; it does not
-disable the language, cancel setup, or stop a session. Each optional Toolkit has its own **Download**
+Settings → Scientific Computing lists the languages that run on this computer or that Scient can
+set up, and shows one at a time. Under each name is its state: its version when ready, or what it
+needs: **Set up**, **Connect**, **Problem** or **Off**. **Found** means a language's own kernel was
+found and has not been started yet. Languages that are not on this computer are under
+**More languages**, each with what it needs. Each optional Toolkit has its own **Download**
 action; installed Toolkits have a small menu with **Remove**. There is no separate Apply step.
-Setup is required before optional downloads. Toolkit operations continue when the panel is collapsed
-or another language is selected; status reflects the server's verified installation, not the click.
+Toolkits appear once Scient-managed Python is installed. Toolkit operations continue when another
+language is selected; status reflects the server's verified installation, not the click.
 You can request more Toolkits while another is installing. Each row shows its own progress,
 queue, cancellation, or retry action. Pending requests are combined into the next verified
 environment build; they do not run competing installers against the working environment.
@@ -67,14 +69,18 @@ and survives navigation, but not a server restart. A failed request can be retri
 Cancel immediately shows **Cancelling…** and prevents repeated clicks while the request is pending.
 For an active build, feedback remains while shutdown and cleanup finish; a failed cancellation
 restores the control so you can try again.
-Supported languages use the same rows for Enable and Default runtime. Installations follow as
-ordinary rows with their known version and a quiet **Default** marker for new sessions. An unknown
-version says **Version not checked**; opening Settings does not execute Python to fill it in.
-**Test** in an installation’s menu starts and closes a test session without selecting it,
-and any observed version is shared with this view’s picker until refresh. **Testing…** shows an inline spinner.
-A green check and **Test passed** clear after four seconds; the observed version remains. **Test failed**
-stays available with error details and a retry action. **Copy path** copies that
-installation’s path. **Forget path** clears only a saved custom reference, never its files.
+Every language has the same panel. **Runtime** shows what new sessions use, with the one action it
+needs, if any. Next comes what Scient itself adds, if anything: Scient-managed Python, a private
+IRkernel or IJulia, or the MATLAB connection helper, with its maintenance menu. **Found on this
+computer** opens the full list, each with its version, where it came from (such as Homebrew, uv or
+a conda environment), its path and **Test**. The last row turns the language on or off for you and
+for agents; turning it off changes nothing on your computer.
+
+Settings runs each Python briefly to read its version, a moment after the page opens, and gives up
+on one that takes too long. **Test** starts and closes a real session without selecting that
+runtime. **Testing…** shows an inline spinner. A green check and **Test passed** clear after four
+seconds. **Test failed** stays available with error details and a retry action. **Copy path** copies
+an installation's path. **Forget path** clears only a saved custom reference, never its files.
 System and project installations have no install, update, or remove actions. Scient-managed Python
 has its own setup and maintenance actions; Toolkits explicitly target that private environment.
 The MATLAB connection helper remains separate from the actual MATLAB installation. Runtime labels
@@ -97,7 +103,7 @@ checks its size between provisioning stages and clears it when it exceeds 2 GiB;
 may exceed that retention limit. Cache cleanup cannot remove packages from an installed generation.
 First-time downloads and verification still take time; the inline status reports the current stage.
 
-**Default runtime** changes only which runtime new sessions prefer. **Automatic** restores discovery instead
+**Runtime** changes only which runtime new sessions prefer. **Automatic** restores discovery instead
 of pinning an installation. Choosing an existing Python also
 releases Scient-managed precedence; it does not copy or modify packages. **Repair** builds and
 verifies a fresh managed generation before activating it; an existing generation remains available
@@ -200,10 +206,28 @@ Python selected for Python.
   last for the session and appear under Variables; **Restart** starts with an empty database.
   Results show the first 100 rows of each statement.
 
+## Other languages
+
+Any installed Jupyter kernel works in notebooks and for agents. Scient finds kernels in Jupyter's
+usual folders and in every Python environment it can see. Rust, GNU Octave, Stata and Wolfram
+Language are always listed, with what each needs, and are found by the refresh control as soon as
+they are installed. Another language appears after restarting Scient. These languages have no
+Variables pane, and Scient has no private part in them.
+
+| Language         | Needs                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| Rust             | [evcxr](https://github.com/evcxr/evcxr/tree/main/evcxr_jupyter)                                              |
+| GNU Octave       | GNU Octave and [octave_kernel](https://github.com/Calysto/octave_kernel)                                     |
+| Stata            | Stata 17 or later and [nbstata](https://hugetim.github.io/nbstata/)                                          |
+| Wolfram Language | Wolfram Engine and [WolframLanguageForJupyter](https://github.com/WolframResearch/WolframLanguageForJupyter) |
+
+SPSS is listed but cannot run yet, because it has no Jupyter kernel. A notebook in a language that
+is not installed opens normally and shows **Not installed**.
+
 ## Connect your MATLAB installation
 
 Open a `.m` file and select its MATLAB status to open **Scientific Computing** for that server.
-Enable MATLAB there and choose **Connect MATLAB** when a connection helper is needed.
+Turn MATLAB on there and choose **Connect MATLAB** when a connection helper is needed.
 Opening the file does not start Scientific Python or provision its Toolkit. When the file needs the
 failed helper, its failure appears as a short header status with copy and details;
 setup and recovery remain available in Settings. Scient does not
@@ -215,10 +239,10 @@ The same executable preference is used by live Compute sessions and fresh-proces
 MATLAB runs. Existing preferences are respected; saving a new choice or clearing it
 does not reintroduce an older path.
 
-Opening Settings and its refresh control only look for installations and read their metadata; they do not
-import MATLAB Engine or start Python/MATLAB. Recent status stays visible while being rechecked.
+Opening Settings and its refresh control only look for MATLAB installations and read their metadata;
+they do not import MATLAB Engine or start MATLAB. Recent status stays visible while being rechecked.
 Choosing an installation does not promise that the Engine works or a license is available. Run the
-file, or use **Test** in the installation menu, to prove the Engine host. A license/startup failure
+file, or use **Test**, to prove the Engine host. A license/startup failure
 stays visible with recovery guidance.
 
 If an Engine host is missing, **Connect MATLAB** on the file opens Scientific Computing settings.

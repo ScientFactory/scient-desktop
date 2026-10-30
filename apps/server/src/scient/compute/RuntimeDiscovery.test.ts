@@ -29,8 +29,8 @@ describe("Python discovery on macOS and Linux", () => {
       { projectRoot: null, windowsRegistrations: [] },
     );
     expect(summary(runtimes)).toEqual([
-      ["/usr/local/bin/python3", "path", null, null],
-      ["/opt/homebrew/bin/python3", "path", null, null],
+      ["/usr/local/bin/python3", "path", "Homebrew", null],
+      ["/opt/homebrew/bin/python3", "path", "Homebrew", null],
       ["/home/ada/.pyenv/versions/3.11.9/bin/python", "conventional", "pyenv", null],
       [
         "/home/ada/.local/share/uv/python/cpython-3.13.1-macos-aarch64-none/bin/python3",
@@ -66,7 +66,7 @@ describe("Python discovery on macOS and Linux", () => {
         "Its base Python at /old/python/bin is gone. Recreate the environment.",
       ],
       ["/p/.pixi/envs/default/bin/python", "project", "pixi: default", null],
-      ["/usr/bin/python3", "path", null, null],
+      ["/usr/bin/python3", "path", "System", null],
     ]);
   });
 
@@ -89,7 +89,7 @@ describe("Python discovery on macOS and Linux", () => {
     ]);
   });
 
-  it("skips the macOS python3 shim unless developer tools are installed", () => {
+  it("lists the developer tools' Python, never macOS's python3 launcher", () => {
     const shim = fakeDiscoveryHost({ files: ["/usr/bin/python3"] });
     const context = (host: ReturnType<typeof fakeDiscoveryHost>) =>
       fakeDiscoveryContext("darwin", host, { PATH: "/usr/bin" });
@@ -103,7 +103,7 @@ describe("Python discovery on macOS and Linux", () => {
       enumeratePythonRuntimes(context(tools), { projectRoot: null, windowsRegistrations: [] }).map(
         (runtime) => runtime.executable,
       ),
-    ).toEqual(["/usr/bin/python3", "/Library/Developer/CommandLineTools/usr/bin/python3"]);
+    ).toEqual(["/Library/Developer/CommandLineTools/usr/bin/python3"]);
   });
 
   it("finds Pythons when the GUI launch lost the shell PATH", () => {
@@ -174,7 +174,7 @@ describe("Python discovery on Windows", () => {
     );
     expect(summary(runtimes)).toEqual([
       [`${windowsApps}\\python.exe`, "path", null, null],
-      ["C:\\Python312\\python.exe", "path", null, null],
+      ["C:\\Python312\\python.exe", "path", "Python launcher", null],
     ]);
   });
 

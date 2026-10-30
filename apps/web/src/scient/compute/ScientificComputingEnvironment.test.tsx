@@ -55,7 +55,14 @@ vi.mock("~/state/query", () => ({
                 configuredExecutable: null,
                 managedRuntime: null,
                 toolkits: [],
-                installations: [],
+                installations: [
+                  {
+                    executable: "/matlab",
+                    source: "conventional",
+                    version: "R2026a",
+                    problem: null,
+                  },
+                ],
                 failureMessage: null,
               },
             ],
@@ -123,10 +130,9 @@ describe("Scientific Computing environment ownership", () => {
   });
 
   it("reads, edits, and inspects the requested remote server, not the primary", () => {
-    const markup = renderToStaticMarkup(
+    renderToStaticMarkup(
       <ScientificComputingSettings environmentId={EnvironmentId.make("remote-server")} />,
     );
-    expect(markup).toContain("remote-server");
     expect(mocks.readSettings).toHaveBeenCalledWith("remote-server");
     mocks.toggle?.(true);
     expect(mocks.updateSettings).toHaveBeenCalledWith({
@@ -150,8 +156,7 @@ describe("Scientific Computing environment ownership", () => {
   it("uses the primary environment only when none was requested", () => {
     const markup = renderToStaticMarkup(<ScientificComputingSettings />);
     expect(mocks.readSettings).toHaveBeenCalledWith("local-server");
-    expect(markup).not.toContain("More scientific tools are coming soon");
-    expect(markup).toContain("Default runtime");
+    expect(markup).toContain("Runtime");
   });
 
   it("renders truthful language cards while the inventory is loading", () => {

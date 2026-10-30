@@ -41,6 +41,10 @@ describe("Scient file surface seams", () => {
       new URL("../compute/ComputeOutputView.tsx", import.meta.url),
       "utf8",
     );
+    const controls = NodeFS.readFileSync(
+      new URL("../compute/ComputeSessionControls.tsx", import.meta.url),
+      "utf8",
+    );
     const artifactActions = NodeFS.readFileSync(
       new URL("../artifacts/staticArtifactViewerActions.ts", import.meta.url),
       "utf8",
@@ -55,13 +59,11 @@ describe("Scient file surface seams", () => {
     expect(surface).toContain("ComputePanel");
     expect(results).not.toMatch(/<Textarea|Run code in this session/gu);
     expect(results).not.toMatch(/Code that ran|request\.code|revision\.slice/gu);
-    expect(results).toContain("mergeComputeOutputs");
-    expect(results).toContain("Interrupt running code and keep session state");
-    expect(results).toContain("Restart session");
-    expect(results).toContain("Stop session");
+    expect(controls).toContain("Interrupt running code and keep session state");
+    expect(controls).toContain("Restart session");
+    expect(controls).toContain("Stop session");
     expect(results).not.toContain("<Pause");
-    expect(results).toContain('aria-label="Compute session history"');
-    expect(results).toContain("MenuRadioGroup");
+    expect(results).toContain('aria-label="All sessions"');
     expect(results).toContain('role="tablist"');
     expect(results).toContain('aria-label="Compute view"');
     expect(results).not.toContain("setVariablesOpen");

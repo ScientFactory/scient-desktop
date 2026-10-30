@@ -254,7 +254,9 @@ export function makeComputeRpcGateway(input: {
     >;
   });
 
-  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* () {
+  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* (
+    request: { readonly versions?: boolean } = {},
+  ) {
     const settings = yield* readSettings("inspect");
     const hostKey =
       input.serverSettings.hostKey === undefined ? null : yield* input.serverSettings.hostKey;
@@ -271,9 +273,7 @@ export function makeComputeRpcGateway(input: {
       configuredExecutables: Object.fromEntries(
         Object.entries(preferences).map(([id, preference]) => [id, preference.executable || null]),
       ),
-      enabledLanguageIds: new Set(
-        Object.entries(preferences).flatMap(([id, preference]) => (preference.enabled ? [id] : [])),
-      ),
+      ...(request.versions === true ? { probeVersions: true } : {}),
     });
     return {
       languages: languages.map((language) => ({

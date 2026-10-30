@@ -1,7 +1,9 @@
 // @effect-diagnostics preferSchemaOverJson:off -- test data uses JSON for probe simulation.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
@@ -132,6 +134,34 @@ describe("Python filesystem inventory", () => {
     }).pipe(onHost(fakeDiscoveryHost({ files: ["/managed/python"] }))),
   );
 
+  it.effect("reports versions only when asked, and never waits on a Python that hangs", () =>
+    Effect.gen(function* () {
+      const adapter = makePythonRuntimeAdapter(
+        (executable) =>
+          executable === "/opt/homebrew/bin/python3"
+            ? Effect.succeed(validProbeOutput)
+            : Effect.never,
+        "/bridge.py",
+      );
+      const request = { projectRoot: null, configuredExecutable: null };
+      const listed = yield* adapter.listInstallations!(request);
+      expect(listed.map((row) => row.version)).toEqual([null, null]);
+      const fiber = yield* adapter.listInstallations!({ ...request, probeVersions: true }).pipe(
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("3 seconds");
+      const versions = yield* Fiber.join(fiber);
+      expect(versions.map((row) => row.version)).toEqual(["3.12.0", null]);
+    }).pipe(
+      onHost(
+        fakeDiscoveryHost({ files: ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"] }),
+        {
+          PATH: "/opt/homebrew/bin:/usr/local/bin",
+        },
+      ),
+    ),
+  );
+
   it.effect("preserves managed selection and venv identity without spawning a probe", () =>
     Effect.gen(function* () {
       let available = true;
@@ -191,7 +221,13 @@ describe("Python filesystem inventory", () => {
           version: null,
           problem: expect.stringContaining("not found"),
         },
-        { executable: "/usr/local/bin/python3", source: "path", version: null, problem: null },
+        {
+          executable: "/usr/local/bin/python3",
+          origin: "Homebrew",
+          source: "path",
+          version: null,
+          problem: null,
+        },
       ]);
     }).pipe(
       onHost(fakeDiscoveryHost({ files: ["/usr/local/bin/python3"] }), { PATH: "/usr/local/bin" }),

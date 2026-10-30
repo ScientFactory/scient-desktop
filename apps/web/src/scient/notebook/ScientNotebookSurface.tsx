@@ -384,13 +384,6 @@ export default function ScientNotebookSurface(props: {
   if (status === "failed") {
     return <p className="p-6 text-sm text-muted-foreground">This notebook could not be read.</p>;
   }
-  if (language === null) {
-    return (
-      <p className="p-6 text-sm text-muted-foreground">
-        This notebook's language is not set up in Scient.
-      </p>
-    );
-  }
 
   const selectedIndex = (() => {
     const { selected } = controller.store.getState();

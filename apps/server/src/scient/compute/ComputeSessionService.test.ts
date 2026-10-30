@@ -1105,10 +1105,7 @@ describe("compute runtime inspection", () => {
       yield* test.use(
         Effect.gen(function* () {
           const service = yield* ComputeSessionService;
-          const input = {
-            configuredExecutables: { [PYTHON]: "/chosen/python" },
-            enabledLanguageIds: new Set([PYTHON]),
-          };
+          const input = { configuredExecutables: { [PYTHON]: "/chosen/python" } };
           const results = yield* Effect.forEach(
             Array.from({ length: 100 }),
             () => service.runtimeInventory(input),
@@ -1117,11 +1114,6 @@ describe("compute runtime inspection", () => {
           expect(reads).toBe(100);
           expect(results.every((result) => result[0]?.installations.length === 1)).toBe(true);
           expect(results[0]?.[0]).not.toHaveProperty("runtimes");
-          const disabled = yield* service.runtimeInventory({
-            ...input,
-            enabledLanguageIds: new Set(),
-          });
-          expect(disabled[0]?.installations).toEqual([]);
           expect(reads).toBe(100);
           expect(test.opened()).toEqual([]);
           expect(test.submitted()).toEqual([]);

@@ -279,13 +279,11 @@ describe("compute RPC gateway", () => {
   );
   it.effect("discovers default-enabled Python without inspecting or verifying runtimes", () =>
     Effect.gen(function* () {
-      let enabled: ReadonlySet<unknown> = new Set();
       const gateway = makeComputeRpcGateway({
         workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
-          runtimeInventory: (input) => {
-            enabled = input.enabledLanguageIds;
-            return Effect.succeed([
+          runtimeInventory: () =>
+            Effect.succeed([
               {
                 descriptor: DESCRIPTOR,
                 managedRuntime: null,
@@ -293,8 +291,7 @@ describe("compute RPC gateway", () => {
                 installations: [],
                 failureMessage: null,
               },
-            ]);
-          },
+            ]),
           inspectRuntimes: () => Effect.die("Settings must not inspect runtimes"),
           verifyRuntime: () => Effect.die("Settings must not verify runtimes"),
         }),
@@ -306,7 +303,6 @@ describe("compute RPC gateway", () => {
         configuredExecutable: null,
         installations: [],
       });
-      expect(enabled).toEqual(new Set([PYTHON]));
     }),
   );
   it.effect("does not inspect or start a language the user left disabled", () =>

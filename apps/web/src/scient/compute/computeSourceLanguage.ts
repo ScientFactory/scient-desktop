@@ -61,6 +61,17 @@ export function computeSourceLanguageForPath(path: string): ComputeSourceLanguag
   );
 }
 
-export function computeSourceLanguageForId(languageId: string): ComputeSourceLanguage | null {
-  return COMPUTE_SOURCES.find((source) => source.languageId === languageId) ?? null;
+/** A notebook runs in any language; one Scient has no source file type for is named from its id. */
+export function computeSourceLanguageForId(languageId: string): ComputeSourceLanguage {
+  return (
+    COMPUTE_SOURCES.find((source) => source.languageId === languageId) ?? {
+      languageId: ComputeLanguageId.make(languageId),
+      displayName: languageId
+        .split("-")
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(" "),
+      extensions: [],
+      cellMarker: HASH_CELL_MARKER,
+    }
+  );
 }

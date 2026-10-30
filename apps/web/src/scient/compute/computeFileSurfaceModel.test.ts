@@ -367,6 +367,25 @@ describe("python compute surface model", () => {
     ).toEqual({ kind: "status", label: "Python", canRun: true });
   });
 
+  it("says a language with its own kernel is not installed, rather than offering setup", () => {
+    expect(
+      resolveComputeRuntimeToolbarState({
+        languageId: "wolfram-language",
+        languageName: "Wolfram Language",
+        liveSession: null,
+        runtimeInspectionPending: false,
+        readyRuntimeAvailable: false,
+        preferredRuntimeExecutable: null,
+        scientificPackagesMissing: false,
+      }),
+    ).toEqual({
+      kind: "status",
+      label: "Not installed",
+      canRun: false,
+      note: "Wolfram Language is not installed",
+    });
+  });
+
   it("uses the active session as authority for Python run availability", () => {
     expect(
       resolveComputeRuntimeToolbarState({

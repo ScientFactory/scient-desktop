@@ -4,10 +4,19 @@ import {
   MATLAB_COMPUTE_SOURCE,
   PYTHON_COMPUTE_SOURCE,
   SQL_COMPUTE_SOURCE,
+  computeSourceLanguageForId,
   computeSourceLanguageForPath,
 } from "./computeSourceLanguage";
 
 describe("compute source languages", () => {
+  it("gives a notebook in any language a runnable source language", () => {
+    expect(computeSourceLanguageForId("python")).toBe(PYTHON_COMPUTE_SOURCE);
+    expect(computeSourceLanguageForId("wolfram-language")).toMatchObject({
+      languageId: "wolfram-language",
+      extensions: [],
+    });
+  });
+
   it("maps supported source files without leaking language logic into the inherited viewer", () => {
     expect(computeSourceLanguageForPath("models/analysis.py")).toBe(PYTHON_COMPUTE_SOURCE);
     expect(computeSourceLanguageForPath("models/ANALYSIS.M")).toBe(MATLAB_COMPUTE_SOURCE);

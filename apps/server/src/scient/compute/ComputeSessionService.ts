@@ -185,6 +185,7 @@ export interface ComputeRuntimeDescriptor {
   readonly displayName: string;
   readonly sourceExtensions: ReadonlyArray<string>;
   readonly capabilities: ReadonlyArray<ComputeCapability>;
+  readonly setup?: { readonly needs: string; readonly url?: string };
 }
 
 export interface ComputeRuntimeInspectionRequest {
@@ -381,7 +382,9 @@ export class ComputeSessionService extends Context.Service<
   {
     readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
     readonly runtimeInventory: (
-      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables" | "enabledLanguageIds">,
+      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables"> & {
+        readonly probeVersions?: boolean;
+      },
     ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInventoryResult>, ComputeOperationError>;
     readonly inspectRuntimes: (
       input: ComputeRuntimeInspectionRequest,
@@ -540,7 +543,9 @@ const make = Effect.gen(function* () {
     });
 
   const runtimeInventory = Effect.fn("ComputeSessionService.runtimeInventory")(function* (
-    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables" | "enabledLanguageIds">,
+    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables"> & {
+      readonly probeVersions?: boolean;
+    },
   ) {
     return yield* Effect.forEach(
       bindings,
@@ -557,7 +562,6 @@ const make = Effect.gen(function* () {
                   }),
                 );
           const installations =
-            !input.enabledLanguageIds.has(binding.adapter.languageId) ||
             binding.adapter.listInstallations === undefined
               ? []
               : yield* binding.adapter
@@ -566,6 +570,7 @@ const make = Effect.gen(function* () {
                     configuredExecutable:
                       input.configuredExecutables[binding.adapter.languageId] ?? null,
                     refresh: true,
+                    ...(input.probeVersions === true ? { probeVersions: true } : {}),
                   })
                   .pipe(
                     Effect.catch((cause) => {

@@ -409,6 +409,7 @@ export function createComputeEnvironmentAtoms<R, E>(
       ) {
         const query = runtimeInventory({ environmentId, input: {} });
         registry.refresh(query);
+        registry.refresh(runtimeInventory({ environmentId, input: { versions: true } }));
         return yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
       }),
     }),

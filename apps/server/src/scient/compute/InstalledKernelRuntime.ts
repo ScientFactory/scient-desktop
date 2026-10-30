@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import {
   ComputeLanguageId,
   ComputeRuntimeError,
+  computeLanguageIdFromName,
   REQUIRED_COMPUTE_CAPABILITIES,
   type ComputeLanguageAdapter,
   type ComputeRuntimeInstallation,
@@ -48,9 +49,14 @@ export interface InstalledKernelSpec {
   readonly env: Readonly<Record<string, string>>;
 }
 
-const LANGUAGE_NAMES: Readonly<
-  Record<string, { readonly name: string; readonly extension?: string }>
-> = {
+interface KernelLanguage {
+  readonly name: string;
+  readonly extension?: string;
+  /** Present on the languages Scient always lists, installed or not. */
+  readonly setup?: { readonly needs: string; readonly url?: string };
+}
+
+const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
   bash: { name: "Bash", extension: ".sh" },
   clojure: { name: "Clojure", extension: ".clj" },
   cpp: { name: "C++", extension: ".cpp" },
@@ -64,27 +70,44 @@ const LANGUAGE_NAMES: Readonly<
   lean: { name: "Lean", extension: ".lean" },
   lua: { name: "Lua", extension: ".lua" },
   ocaml: { name: "OCaml", extension: ".ml" },
-  octave: { name: "Octave" },
+  octave: {
+    name: "GNU Octave",
+    setup: {
+      needs: "GNU Octave and octave_kernel",
+      url: "https://github.com/Calysto/octave_kernel",
+    },
+  },
   powershell: { name: "PowerShell", extension: ".ps1" },
   ruby: { name: "Ruby", extension: ".rb" },
-  rust: { name: "Rust", extension: ".rs" },
+  rust: {
+    name: "Rust",
+    extension: ".rs",
+    setup: {
+      needs: "The evcxr kernel: cargo install --locked evcxr_jupyter, then evcxr_jupyter --install",
+      url: "https://github.com/evcxr/evcxr/tree/main/evcxr_jupyter",
+    },
+  },
   scala: { name: "Scala", extension: ".scala" },
+  spss: {
+    name: "SPSS",
+    extension: ".sps",
+    setup: { needs: "Not supported yet: SPSS has no Jupyter kernel" },
+  },
+  stata: {
+    name: "Stata",
+    extension: ".do",
+    setup: { needs: "Stata 17 or later and nbstata", url: "https://hugetim.github.io/nbstata/" },
+  },
   typescript: { name: "TypeScript", extension: ".ts" },
+  "wolfram-language": {
+    name: "Wolfram Language",
+    extension: ".wl",
+    setup: {
+      needs: "Wolfram Engine and WolframLanguageForJupyter",
+      url: "https://github.com/WolframResearch/WolframLanguageForJupyter",
+    },
+  },
 };
-
-/** "C++" → "cpp", "Rust" → "rust": a stable language id from a kernelspec's language name. */
-export function kernelLanguageId(language: string): string {
-  return (
-    language
-      .trim()
-      .toLowerCase()
-      .replace(/\+\+/gu, "pp")
-      .replace(/#/gu, "sharp")
-      .replace(/[^a-z0-9]+/gu, "-")
-      .replace(/^-+|-+$/gu, "")
-      .slice(0, 64) || "kernel"
-  );
-}
 
 /** Jupyter's search order: JUPYTER_PATH, the user's data directory, environment prefixes, system. */
 export function jupyterKernelDirectories(
@@ -175,22 +198,36 @@ const installedSpecs = Effect.fn("InstalledKernelRuntime.installedSpecs")(functi
   };
 });
 
-/** The kernel languages installed now, other than the curated ones. */
-export const installedKernelLanguages = Effect.fn("InstalledKernelRuntime.languages")(function* () {
-  const { specs } = yield* installedSpecs(null);
-  const languages = new Map<string, string>();
+/**
+ * The languages with a setup entry, then any other kernel language installed now. The first group
+ * is bound whether or not it is installed, so its kernel is found without a restart.
+ */
+export const kernelLanguages = Effect.fn("InstalledKernelRuntime.languages")(function* () {
+  const specs = yield* installedSpecs(null).pipe(
+    Effect.map((installed) => installed.specs),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("installed Jupyter kernels are unavailable", { cause }).pipe(Effect.as([])),
+    ),
+  );
+  const languages = new Map(
+    Object.entries(KERNEL_LANGUAGES).flatMap(([languageId, known]) =>
+      known.setup === undefined ? [] : [[languageId, known.name] as const],
+    ),
+  );
   for (const spec of specs) {
-    const languageId = kernelLanguageId(spec.language);
+    const languageId = computeLanguageIdFromName(spec.language);
     if (!CURATED_LANGUAGES.has(languageId) && !languages.has(languageId))
       languages.set(languageId, spec.language);
   }
-  return [...languages].map(([languageId, language]) => ({
-    languageId: ComputeLanguageId.make(languageId),
-    displayName: LANGUAGE_NAMES[languageId]?.name ?? language,
-    sourceExtensions: LANGUAGE_NAMES[languageId]?.extension
-      ? [LANGUAGE_NAMES[languageId].extension]
-      : [],
-  }));
+  return [...languages].map(([languageId, language]) => {
+    const known = KERNEL_LANGUAGES[languageId];
+    return {
+      languageId: ComputeLanguageId.make(languageId),
+      displayName: known?.name ?? language,
+      sourceExtensions: known?.extension ? [known.extension] : [],
+      ...(known?.setup ? { setup: known.setup } : {}),
+    };
+  });
 });
 
 function runtimeError(
@@ -201,10 +238,45 @@ function runtimeError(
   return new ComputeRuntimeError({ operation, message, ...(cause === undefined ? {} : { cause }) });
 }
 
+/**
+ * A bare `python` in a kernelspec means the Python the kernel was installed for, but Jupyter would
+ * put its own in its place, and the bridge's Python does not have the kernel's package.
+ */
+export function kernelLaunch(
+  context: DiscoveryContext,
+  spec: InstalledKernelSpec,
+): Pick<InstalledKernelSpec, "argv" | "env"> {
+  const [program, ...rest] = spec.argv;
+  if (program !== "python" && program !== "python3") return spec;
+  const path = pathModule(context.platform);
+  const windows = context.platform === "win32";
+  const prefix = path.resolve(spec.resourceDir, "..", "..", "..", "..");
+  const local = (
+    windows
+      ? [path.join(prefix, "python.exe"), path.join(prefix, "Scripts", "python.exe")]
+      : [path.join(prefix, "bin", "python3"), path.join(prefix, "bin", "python")]
+  ).find((candidate) => context.host.isExecutable(candidate));
+  if (local !== undefined) {
+    const currentPath = context.environment.PATH ?? context.environment.Path;
+    return {
+      argv: [local, ...rest],
+      env: {
+        ...spec.env,
+        PATH: [path.dirname(local), ...(currentPath ? [currentPath] : [])].join(path.delimiter),
+      },
+    };
+  }
+  const onPath = pathMatches(context, windows ? ["python.exe"] : ["python3", "python"])[0];
+  return onPath === undefined ? spec : { argv: [onPath, ...rest], env: spec.env };
+}
+
 /** Whether a kernel's own program is present, without running it. */
 function kernelProgramPresent(context: DiscoveryContext, spec: InstalledKernelSpec): boolean {
   const path = pathModule(context.platform);
-  const program = spec.argv[0]!.replaceAll("{resource_dir}", spec.resourceDir);
+  const program = kernelLaunch(context, spec).argv[0]!.replaceAll(
+    "{resource_dir}",
+    spec.resourceDir,
+  );
   if (path.isAbsolute(program)) return context.host.isExecutable(program);
   const names =
     context.platform === "win32" && path.extname(program) === ""
@@ -223,6 +295,7 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
       readonly languageId: ComputeLanguageId;
       readonly displayName: string;
       readonly sourceExtensions: ReadonlyArray<string>;
+      readonly setup?: KernelLanguage["setup"];
     },
     input: {
       readonly host: Pick<KernelBridgeHost, "bridgePath" | "transport" | "executable">;
@@ -235,7 +308,9 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
       projectRoot: string | null,
     ) {
       const { context, specs } = yield* installedSpecs(projectRoot);
-      const mine = specs.filter((spec) => kernelLanguageId(spec.language) === language.languageId);
+      const mine = specs.filter(
+        (spec) => computeLanguageIdFromName(spec.language) === language.languageId,
+      );
       for (const spec of mine) known.set(spec.resourceDir, spec);
       return { context, specs: mine };
     });
@@ -321,6 +396,7 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
       if (spec === undefined)
         return yield* runtimeError("prepare", "This kernel is no longer installed.");
       const host = yield* input.host.executable(yield* input.configuredExecutable("python"));
+      const launch = kernelLaunch(yield* discoveryContext, spec);
       const plan = yield* Effect.try({
         try: () =>
           buildLaunchPlan(
@@ -336,11 +412,11 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
       return {
         ...plan,
         kernel: {
-          argv: spec.argv,
+          argv: launch.argv,
           language: spec.language,
           interruptMode: spec.interruptMode,
           variablesExpression: null,
-          env: spec.env,
+          env: launch.env,
           resourceDir: spec.resourceDir,
         },
       };
@@ -401,6 +477,7 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
         displayName: language.displayName,
         sourceExtensions: language.sourceExtensions,
         capabilities: [...REQUIRED_COMPUTE_CAPABILITIES],
+        ...(language.setup ? { setup: language.setup } : {}),
       },
     };
   },

@@ -85,7 +85,7 @@ describe("Scient split seams", () => {
   it("wires the Python stacked layout through the shared split behavior", () => {
     const python = readSource("../compute/ScientComputeFileSurface.tsx");
 
-    expect(python).toContain('splitLayout === "stacked" ? "y" : "x"');
+    expect(python).toContain('effectiveSplitLayout === "stacked" ? "y" : "x"');
     expect(python).toContain('isStacked ? "flex-col" : "flex-row"');
     expect(python).toContain('orientation={isStacked ? "horizontal" : "vertical"}');
     expect(python).toContain('isStacked ? "border-t border-border" : "border-l border-border"');

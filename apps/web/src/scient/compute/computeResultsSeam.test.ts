@@ -55,6 +55,10 @@ const settingsSource = NodeFS.readFileSync(
   NodePath.join(here, "ScientificComputingSettings.tsx"),
   "utf8",
 );
+const languagePanelSource = NodeFS.readFileSync(
+  NodePath.join(here, "ComputeLanguagePanel.tsx"),
+  "utf8",
+);
 
 describe("compute result surface seam", () => {
   // regression: e28be01e7d fix(compute): tighten runtime truth and authority
@@ -138,7 +142,7 @@ describe("compute result surface seam", () => {
     );
     expect(pythonSurfaceSource).toContain('setPanelView(props.contextId, "results")');
     expect(pythonActionsSource).toContain("onRunRequested();");
-    expect(pythonActionsSource).toContain("Switch {props.language.displayName} environment…");
+    expect(pythonActionsSource).toContain("Switch {languageName} environment…");
   });
 
   // regression: 9d11c5ad39 feat(compute): selectively adopt runtime UX improvements
@@ -208,14 +212,14 @@ it("keeps default selection separate from installation actions using shared sett
   expect(settingsSource).toContain("SettingsSourcePanel");
   expect(settingsSource).not.toContain("Python & MATLAB");
   expect(settingsSource).not.toContain("Advanced");
-  expect(settingsSource).toContain('title="Default runtime"');
-  expect(settingsSource).toContain("SelectTrigger");
-  expect(settingsSource).toContain("computeRuntimePickerLabel");
-  expect(settingsSource).not.toContain("<select");
-  expect(settingsSource).not.toContain("break-all");
-  expect(settingsSource).toContain("ManagedRuntimeMaintenanceMenu");
-  expect(settingsSource).toContain("ComputeInstallationRow");
-  expect(settingsSource).not.toContain("More scientific tools are coming soon");
+  expect(languagePanelSource).toContain('title="Runtime"');
+  expect(languagePanelSource).toContain("SelectTrigger");
+  expect(languagePanelSource).toContain("computeRuntimePickerLabel");
+  expect(languagePanelSource).not.toContain("<select");
+  expect(languagePanelSource).not.toContain("break-all");
+  expect(languagePanelSource).toContain("ManagedRuntimeMaintenanceMenu");
+  expect(languagePanelSource).toContain("ComputeInstallationRow");
+  expect(settingsSource).not.toContain("coming soon");
   expect(settingsSource).toContain('title="Scientific Computing"');
   expect(pythonActionsSource).toContain("runtimeVersion:");
 });

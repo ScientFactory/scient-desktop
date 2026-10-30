@@ -84,6 +84,7 @@ import {
   type ComputeContextId,
 } from "./computeContextStore";
 
+import { computeScientPart } from "./computeInstallationSettingsModel";
 import type { ComputeSourceLanguage } from "./computeSourceLanguage";
 
 type ComputeRunKind = "selection" | "cell" | "file";
@@ -243,6 +244,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       runtimes.data?.languages.find(
         (language) => language.descriptor.languageId === props.language.languageId,
       ) ?? null;
+    const languageName = languageInspection?.descriptor.displayName ?? props.language.displayName;
     const languagePreference = resolveScientificComputingLanguageSettings(
       scientificComputing,
       props.language.languageId,
@@ -363,7 +365,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         : managedRuntimeOperationLabel(managedRuntime.status, props.language.languageId);
     const runtimeToolbar = resolveComputeRuntimeToolbarState({
       languageId: props.language.languageId,
-      languageName: props.language.displayName,
+      languageName: languageName,
       runtimeVersion:
         liveSession?.runtime?.languageVersion ?? readyRuntime?.profile.languageVersion ?? null,
       liveSession,
@@ -374,7 +376,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       runtimeCheckFailure: runtimes.isPending
         ? null
         : (runtimes.error ??
-          (runtimes.data !== undefined && languageInspection === null
+          (runtimes.data !== undefined &&
+          languageInspection === null &&
+          computeScientPart(props.language.languageId) !== null
             ? ""
             : (languageInspection?.failure ?? null))),
       runtimeBlocker: computeRuntimeBlocker(languageInspection),
@@ -394,7 +398,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           environmentId: props.environmentId,
           contextId: props.contextId,
           executable: readyRuntime.profile.executable,
-          label: computeRuntimeDisplayLabel(readyRuntime.profile, props.language.displayName),
+          label: computeRuntimeDisplayLabel(readyRuntime.profile, languageName),
           session: liveSession,
         });
       }
@@ -458,7 +462,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       setRefreshing(false);
       if (result._tag !== "Success") {
         if (!isAtomCommandInterrupted(result))
-          reportFailure(`Unable to refresh ${props.language.displayName}`, result);
+          reportFailure(`Unable to refresh ${languageName}`, result);
         return;
       }
       refreshSessions();
@@ -542,7 +546,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       // a disabled toolbar must not be bypassed through an imperative handle.
       if (!runtimeToolbar.canRun) {
         setRunBlocked(true);
-        toastManager.add({ type: "info", title: runtimeToolbar.label });
+        toastManager.add({
+          type: "info",
+          title: ("note" in runtimeToolbar && runtimeToolbar.note) || runtimeToolbar.label,
+        });
         return;
       }
       if (kind === "file" && matlabFileCapability?.runnableAsFile === false) {
@@ -625,8 +632,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: `${props.language.displayName} is not ready`,
-            description: `Use ${computeRuntimeSetupActionLabel(props.language.languageId, props.language.displayName)} on this file, or choose another runtime in Scientific Computing settings.`,
+            title: `${languageName} is not ready`,
+            description: `Use ${computeRuntimeSetupActionLabel(props.language.languageId, languageName)} on this file, or choose another runtime in Scientific Computing settings.`,
           }),
         );
         setOperation(null);
@@ -687,7 +694,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             void confirmFailedStart(sessionId, requestedGeneration);
           }
           if (!isAtomCommandInterrupted(started))
-            reportFailure(`Unable to start ${props.language.displayName}`, started);
+            reportFailure(`Unable to start ${languageName}`, started);
           refreshSessions();
           refreshRuntimeInspection();
           return;
@@ -728,7 +735,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       }
 
       const report = (failure: Parameters<typeof reportFailure>[1]) => {
-        reportFailure(`Unable to run ${props.language.displayName}`, failure);
+        reportFailure(`Unable to run ${languageName}`, failure);
         refreshSessions();
       };
       if (slice.cells !== undefined) {
@@ -790,7 +797,8 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const cellRun = useRef<Promise<void> | null>(null);
     const runCells = (cells: ReadonlyArray<ComputeNotebookCell>): Promise<void> => {
       waitingCells.current.push(...cells);
-      cellRun.current ??= (async () => {
+      if (cellRun.current !== null) return cellRun.current;
+      const drained = (async () => {
         while (waitingCells.current.length > 0) {
           const batch = waitingCells.current.splice(0);
           await stableRun("cell", {
@@ -799,9 +807,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             cells: batch,
           });
         }
+      })().finally(() => {
         cellRun.current = null;
-      })();
-      return cellRun.current;
+      });
+      cellRun.current = drained;
+      return drained;
     };
 
     const runWithChosenRuntime = (executable: string) => {
@@ -1177,7 +1187,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 variant="ghost-muted"
                 className="min-w-0 max-w-full"
                 title={runtimeNote}
-                aria-label={`Switch ${props.language.displayName} environment`}
+                aria-label={`Switch ${languageName} environment`}
                 disabled={switching || props.contextId === undefined}
                 onClick={requestRuntimeSwitch}
               >
@@ -1249,7 +1259,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     variant="outline"
                     shape="group-end"
                     disabled={runMenuDisabled}
-                    aria-label={`Choose ${props.language.displayName} code to run`}
+                    aria-label={`Choose ${languageName} code to run`}
                   />
                 }
               >
@@ -1303,7 +1313,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   <>
                     <MenuSeparator />
                     <MenuItem onClick={requestRuntimeSwitch}>
-                      Switch {props.language.displayName} environment…
+                      Switch {languageName} environment…
                     </MenuItem>
                   </>
                 ) : null}
@@ -1333,7 +1343,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             }}
             anchor={primaryRunAnchor}
             title="Use Scient-managed Python?"
-            description={`${computeRuntimeDisplayLabel(preRunRuntimeChoice.current.profile, props.language.displayName)} is missing scientific packages.`}
+            description={`${computeRuntimeDisplayLabel(preRunRuntimeChoice.current.profile, languageName)} is missing scientific packages.`}
             confirmLabel="Use managed"
             secondaryAction={{
               label: "Use current",
@@ -1370,7 +1380,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         >
           <AlertDialogPopup>
             <AlertDialogHeader>
-              <AlertDialogTitle>Switch {props.language.displayName} environment?</AlertDialogTitle>
+              <AlertDialogTitle>Switch {languageName} environment?</AlertDialogTitle>
               <AlertDialogDescription>
                 Use {switchTarget?.label}? Current variables will be cleared. Run history is kept;
                 no code is rerun.

@@ -52,8 +52,11 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
   synced profile never applies another computer's paths. An unscoped `executable` from older
   settings is migrated into this machine's slot at startup.
 - **Installed Jupyter kernels** (`InstalledKernelRuntime`) add one language per uncurated
-  kernelspec language found at startup, launched through the bridge exactly as the spec says,
-  without variables or tables.
+  kernelspec language found at startup, launched through the bridge as the spec says, without
+  Variables. A bare `python` in a spec means the Python it was installed for (`kernelLaunch`), not
+  the bridge's. Rust, Octave, Stata, Wolfram Language and SPSS are always bound, with a `setup` on
+  their descriptor saying what they need, so `listInstallations` finds a new kernel on the next
+  refresh and agents and Settings read the same requirement.
 - A copied managed Python is detected from its `pyvenv.cfg` home or launcher link pointing outside
   this profile's compute directory; status names the old location and offers Repair.
 

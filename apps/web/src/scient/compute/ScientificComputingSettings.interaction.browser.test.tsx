@@ -210,6 +210,21 @@ const pythonToolkits = () =>
     },
   ] as ComputeLanguageRuntimeInventory["toolkits"];
 
+/** Another language on this computer, to move away from Python and back. */
+const matlabHere = (): ComputeLanguageRuntimeInventory => ({
+  ...python(),
+  descriptor: {
+    ...python().descriptor,
+    languageId: ComputeLanguageId.make("matlab"),
+    displayName: "MATLAB",
+  },
+  managedRuntime: null,
+  toolkits: [],
+  installations: [
+    { executable: "/MATLAB/bin/matlab", source: "conventional", version: "R2026a", problem: null },
+  ],
+});
+
 describe("Scientific Computing settings interactions", () => {
   async function _setupFixture0(_fixture: _Fixture) {
     mocks.preferences = { python: { enabled: true, executable: "" } };
@@ -310,15 +325,6 @@ describe("Scientific Computing settings interactions", () => {
     return match!;
   };
   const click = async (_fixture: _Fixture, label: string, scope?: ParentNode) => {
-    if (label === "Test") {
-      await act(() =>
-        _fixture.container
-          .querySelector<HTMLButtonElement>('[aria-label="More Python runtime actions"]')!
-          .click(),
-      );
-      await act(() => menuItem("Test").click());
-      return;
-    }
     await act(async () => {
       button(_fixture, label, scope).click();
       await Promise.resolve();
@@ -349,6 +355,51 @@ describe("Scientific Computing settings interactions", () => {
     expect(control, executable).toBeDefined();
     return control!.closest<HTMLElement>("[data-slot=settings-row]")!;
   };
+  const openFound = async (_fixture: _Fixture, languageId = "python") => {
+    const toggle = _fixture.container.querySelector<HTMLButtonElement>(
+      `#${languageId}-found [aria-controls="${languageId}-found-list"]`,
+    );
+    expect(toggle, `${languageId} found on this computer`).toBeDefined();
+    if (toggle!.getAttribute("aria-expanded") !== "true") await act(() => toggle!.click());
+  };
+  const closeFound = async (_fixture: _Fixture, languageId = "python") => {
+    const toggle = _fixture.container.querySelector<HTMLButtonElement>(
+      `#${languageId}-found [aria-controls="${languageId}-found-list"]`,
+    )!;
+    if (toggle.getAttribute("aria-expanded") === "true") await act(() => toggle.click());
+  };
+  /** The Runtime row's Test, shown once the language is ready. */
+  const testRuntime = async (_fixture: _Fixture, languageName = "Python") => {
+    const test = _fixture.container.querySelector<HTMLButtonElement>(
+      `[aria-label="Test ${languageName}"]`,
+    );
+    expect(test, `Test ${languageName}`).toBeDefined();
+    await act(async () => {
+      test!.click();
+      await Promise.resolve();
+    });
+  };
+  /** A found installation's own Test. */
+  const testInstallation = async (_fixture: _Fixture, executable: string) => {
+    const test = installationRow(_fixture, executable).querySelector<HTMLButtonElement>(
+      'button[aria-label^="Test "]',
+    );
+    expect(test, `Test ${executable}`).toBeDefined();
+    await act(async () => {
+      test!.click();
+      await Promise.resolve();
+    });
+  };
+  const typePath = async (_fixture: _Fixture, value: string, languageName = "Python") => {
+    const input = _fixture.container.querySelector<HTMLInputElement>(
+      `input[aria-label="${languageName} executable path"]`,
+    )!;
+    await act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    return input;
+  };
   const openInstallation = async (_fixture: _Fixture, executable: string) => {
     await act(() =>
       installationRow(_fixture, executable)
@@ -378,16 +429,22 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render(_fixture);
+    expect(_fixture.container.querySelector("#python-installation-0")).toBeNull();
+    expect(
+      _fixture.container.querySelector('[aria-label="3 found on this computer"]'),
+    ).not.toBeNull();
+    await openFound(_fixture);
+    // Scient's own Python plus every runtime found on this computer.
     expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(4);
-    expect(installationRow(_fixture, systemPath).textContent).toContain("System installation");
-    expect(installationRow(_fixture, systemPath).textContent).not.toContain("Default");
-    expect(installationRow(_fixture, managedPath).textContent).toContain("Default");
-    expect(installationRow(_fixture, managedPath).textContent).not.toContain("not selected");
+    expect(installationRow(_fixture, systemPath).textContent).toContain("System");
+    expect(installationRow(_fixture, systemPath).textContent).toContain(systemPath);
+    expect(installationRow(_fixture, systemPath).textContent).not.toContain("In use");
+    expect(runtimeValue(_fixture)).toBe(managedPath);
     await act(() => runtimeSelect(_fixture).click());
     expect(document.querySelectorAll("[data-slot=select-item]")).toHaveLength(5);
     expect(
       [...document.querySelectorAll("[data-slot=select-item]")].some((item) =>
-        item.textContent?.includes("Custom executable"),
+        item.textContent?.includes("Custom path"),
       ),
     ).toBe(false);
     expect(mocks.verify).not.toHaveBeenCalled();
@@ -407,15 +464,18 @@ describe("Scientific Computing settings interactions", () => {
       },
     }));
     await render(_fixture);
-    expect(installationRow(_fixture, systemPath).textContent).toContain("Version not checked");
+    await openFound(_fixture);
+    expect(installationRow(_fixture, systemPath).textContent).not.toContain("3.14.6");
     await openInstallation(_fixture, systemPath);
-    expect(menuItem("Copy path")).toBeDefined();
     expect(
       [...document.querySelectorAll("[data-slot=menu-item]")].map((item) =>
         item.textContent?.trim(),
       ),
-    ).toEqual(["Test", "Copy path"]);
-    await clickMenuItem("Test");
+    ).toEqual(["Copy path"]);
+    await act(() =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    await testInstallation(_fixture, systemPath);
     expect(mocks.verify).toHaveBeenCalledWith({
       environmentId: "remote",
       input: { cwd: null, languageId: "python", executable: systemPath },
@@ -442,6 +502,7 @@ describe("Scientific Computing settings interactions", () => {
     const spy = vi.spyOn(navigator.clipboard, "writeText").mockImplementation(writeText);
     try {
       await render(_fixture);
+      await openFound(_fixture);
       await openInstallation(_fixture, systemPath);
       await clickMenuItem("Copy path");
       expect(writeText).toHaveBeenCalledWith(systemPath);
@@ -478,7 +539,9 @@ describe("Scientific Computing settings interactions", () => {
     ];
     await render(_fixture);
     expect(runtimeValue(_fixture)).toBe(path);
+    await openFound(_fixture);
     expect(installationRow(_fixture, path).textContent).toContain("Executable not found");
+    expect(installationRow(_fixture, path).querySelector('button[aria-label^="Test "]')).toBeNull();
     await openInstallation(_fixture, path);
     await clickMenuItem("Forget path");
     expect(mocks.preferences.python?.executable).toBe("");
@@ -517,6 +580,8 @@ describe("Scientific Computing settings interactions", () => {
     ];
     await render(_fixture);
     expect(runtimeValue(_fixture)).toBe(path);
+    await openFound(_fixture);
+    expect(installationRow(_fixture, path).textContent).toContain("In use");
     await openInstallation(_fixture, path);
     await clickMenuItem("Forget path");
     expect(mocks.preferences.python).toEqual({
@@ -533,30 +598,20 @@ describe("Scientific Computing settings interactions", () => {
 
     mocks.saveFails = true;
     await render(_fixture);
-    await click(_fixture, "Custom executable");
-    const input = _fixture.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Python executable path"]',
-    )!;
-    await act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-        input,
-        "/new/python",
-      );
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    await click(_fixture, "Custom executable");
-    await click(_fixture, "Custom executable");
+    await openFound(_fixture);
+    await typePath(_fixture, "/new/python");
+    await closeFound(_fixture);
+    expect(
+      _fixture.container.querySelector('input[aria-label="Python executable path"]'),
+    ).toBeNull();
+    await openFound(_fixture);
     expect(
       _fixture.container.querySelector<HTMLInputElement>(
         'input[aria-label="Python executable path"]',
       )!.value,
     ).toBe("/new/python");
     expect(mocks.update).not.toHaveBeenCalled();
-    await act(() =>
-      _fixture.container
-        .querySelector("form")!
-        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
-    );
+    await click(_fixture, "Use", _fixture.container.querySelector("#python-custom-executable")!);
     expect(
       _fixture.container.querySelector<HTMLInputElement>(
         'input[aria-label="Python executable path"]',
@@ -575,9 +630,12 @@ describe("Scientific Computing settings interactions", () => {
     mocks.statuses.python = { ...status(), selection: "existing" };
     await render(_fixture);
     expect(runtimeSelect(_fixture).textContent).toContain("Automatic · System");
-    expect(installationRow(_fixture, systemPath).textContent).toContain("Default");
-    expect(installationRow(_fixture, managedPath).textContent).not.toContain("Default");
-    expect(_fixture.container.querySelector("#python-runtime")!.textContent).not.toContain("Test");
+    await openFound(_fixture);
+    expect(installationRow(_fixture, systemPath).textContent).toContain("In use");
+    expect(installationRow(_fixture, managedPath).textContent).not.toContain("In use");
+    expect(
+      _fixture.container.querySelectorAll("#python-found-list [data-compute-installation]"),
+    ).toHaveLength(1);
   });
 
   it("does not turn a MATLAB installation test into a helper retarget or a default change", async () => {
@@ -617,8 +675,8 @@ describe("Scientific Computing settings interactions", () => {
       value: { readiness: "ready", connection: "verified" },
     });
     await render(_fixture);
-    await openInstallation(_fixture, other);
-    await clickMenuItem("Test");
+    await openFound(_fixture, "matlab");
+    await testInstallation(_fixture, other);
     expect(mocks.verify).toHaveBeenCalledWith({
       environmentId: "remote",
       input: { cwd: null, languageId: "matlab", executable: other },
@@ -626,11 +684,13 @@ describe("Scientific Computing settings interactions", () => {
     expect(runtimeValue(_fixture, "MATLAB")).toBe(selected);
     expect(mocks.manage).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
+    expect(installationRow(_fixture, selected).textContent).toContain("In use");
+    expect(installationRow(_fixture, other).textContent).not.toContain("In use");
     expect(_fixture.container.querySelector("#matlab-managed-runtime")!.textContent).toContain(
       "MATLAB connection",
     );
     expect(_fixture.container.querySelector("#matlab-managed-runtime")!.textContent).not.toContain(
-      "Default",
+      "In use",
     );
   });
 
@@ -647,8 +707,8 @@ describe("Scientific Computing settings interactions", () => {
         }),
     );
     await render(_fixture);
-    await openInstallation(_fixture, systemPath);
-    await clickMenuItem("Test");
+    await openFound(_fixture);
+    await testInstallation(_fixture, systemPath);
     await act(() =>
       _fixture.container
         .querySelector<HTMLButtonElement>('[aria-label="Refresh scientific runtimes"]')!
@@ -664,7 +724,7 @@ describe("Scientific Computing settings interactions", () => {
         },
       }),
     );
-    expect(installationRow(_fixture, systemPath).textContent).toContain("Version not checked");
+    expect(installationRow(_fixture, systemPath).textContent).toContain("Python · System");
     expect(installationRow(_fixture, systemPath).textContent).not.toContain("Test passed");
     expect(_fixture.container.textContent).not.toContain("3.14.6");
   });
@@ -676,11 +736,13 @@ describe("Scientific Computing settings interactions", () => {
 
     mocks.inventoryPending = true;
     await render(_fixture);
-    expect(_fixture.container.querySelector("h3")?.textContent).toContain("Python");
+    expect(
+      _fixture.container.querySelector("#scientific-computing-python-trigger")?.textContent,
+    ).toContain("Python");
     expect(_fixture.container.textContent).toContain("Checking");
     expect(
       [..._fixture.container.querySelectorAll("button")].some(
-        (node) => node.textContent?.trim() === "Set up Python" && !node.disabled,
+        (node) => node.textContent?.trim() === "Set up" && !node.disabled,
       ),
     ).toBe(false);
     await act(() => {
@@ -717,11 +779,10 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render(_fixture);
-    const imageToolkit = _fixture.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Download Image analysis"]',
-    );
-    expect(imageToolkit?.disabled).toBe(true);
-    await click(_fixture, "Set up");
+    // Toolkits belong to Scient-managed Python, so they wait until it is set up.
+    expect(_fixture.container.querySelector("#scientific-computing-toolkits")).toBeNull();
+    expect(_fixture.container.querySelector('[aria-label="Download Image analysis"]')).toBeNull();
+    await click(_fixture, "Set up", _fixture.container.querySelector("#python-runtime")!);
     expect(mocks.manage).toHaveBeenLastCalledWith({
       environmentId: "remote",
       input: {
@@ -765,6 +826,7 @@ describe("Scientific Computing settings interactions", () => {
     ];
     await render(_fixture);
     const panel = _fixture.container.querySelector<HTMLElement>("#scientific-computing-python")!;
+    await openFound(_fixture);
     expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(2);
     expect(_fixture.container.querySelector("#python-managed-runtime")?.textContent).toContain(
       "3.12.13",
@@ -784,11 +846,12 @@ describe("Scientific Computing settings interactions", () => {
     expect(matlabTrigger.getAttribute("aria-expanded")).toBe("false");
     expect(pythonTrigger.tabIndex).toBe(0);
     expect(matlabTrigger.tabIndex).toBe(0);
+    // The selected language stays open: clicking it again does not collapse it.
     await act(() => pythonTrigger.click());
-    expect(pythonTrigger.getAttribute("aria-expanded")).toBe("false");
+    expect(pythonTrigger.getAttribute("aria-expanded")).toBe("true");
     expect(
       _fixture.container.querySelector<HTMLElement>("#scientific-computing-python")?.hidden,
-    ).toBe(true);
+    ).toBe(false);
     expect(mocks.calls).toEqual([]);
     await act(() =>
       _fixture.container
@@ -803,6 +866,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(
       _fixture.container.querySelector<HTMLElement>("#scientific-computing-matlab")?.hidden,
     ).toBe(false);
+    await openFound(_fixture, "matlab");
     expect(_fixture.container.querySelector("#matlab-installation-0")?.textContent).toContain(
       "R2026a",
     );
@@ -843,9 +907,13 @@ describe("Scientific Computing settings interactions", () => {
     ];
     window.localStorage.setItem("scient:scientific-computing:selected-language:v1", '"r"');
     await render(_fixture);
-    const row = _fixture.container.querySelector<HTMLElement>("#r-managed-runtime")!;
-    expect(row.textContent).toContain("IRkernel");
-    expect(row.textContent).toContain("Not installed");
+    // Scient's kernel row appears once it is installed; until then the Runtime row sets it up.
+    expect(_fixture.container.querySelector("#r-managed-runtime")).toBeNull();
+    const row = _fixture.container.querySelector<HTMLElement>("#r-runtime")!;
+    expect(row.querySelector("[data-compute-summary='r']")?.textContent).toBe("Not set up");
+    expect(
+      _fixture.container.querySelector("#scientific-computing-r-trigger")?.textContent,
+    ).toContain("Set up");
     await click(_fixture, "Set up", row);
     expect(mocks.manage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -857,8 +925,11 @@ describe("Scientific Computing settings interactions", () => {
     notify();
     await render(_fixture);
     expect(_fixture.container.querySelector("#r-managed-runtime")).toBeNull();
+    expect(_fixture.container.querySelector("#scientific-computing-r-trigger")).toBeNull();
     expect(
-      _fixture.container.querySelector("#r-installation-missing a")?.getAttribute("href"),
+      _fixture.container
+        .querySelector("#scientific-computing-more #r-installation-missing a")
+        ?.getAttribute("href"),
     ).toBe("https://cloud.r-project.org/");
   });
 
@@ -870,7 +941,7 @@ describe("Scientific Computing settings interactions", () => {
     const installed = status();
     const toolkits = pythonToolkits();
     mocks.statuses.python = installed;
-    mocks.languages = [{ ...python(), managedRuntime: installed, toolkits }];
+    mocks.languages = [{ ...python(), managedRuntime: installed, toolkits }, matlabHere()];
     await render(_fixture);
 
     const runtimePanel = _fixture.container.querySelector<HTMLElement>(
@@ -885,15 +956,24 @@ describe("Scientific Computing settings interactions", () => {
     expect(toolkitSection.querySelector("h2")?.textContent).toBe("Toolkits");
     expect(toolkitCard.querySelectorAll("[data-slot=settings-row]")).toHaveLength(toolkits.length);
 
-    const pythonTrigger = _fixture.container.querySelector<HTMLButtonElement>(
-      "#scientific-computing-python-trigger",
-    )!;
-    await act(() => pythonTrigger.click());
-    expect(runtimePanel.hidden).toBe(true);
-    expect(toolkitSection.hidden).toBe(true);
-    await act(() => pythonTrigger.click());
-    expect(runtimePanel.hidden).toBe(false);
-    expect(toolkitSection.hidden).toBe(false);
+    await act(() =>
+      _fixture.container
+        .querySelector<HTMLButtonElement>("#scientific-computing-matlab-trigger")!
+        .click(),
+    );
+    expect(_fixture.container.querySelector("#scientific-computing-python")).toBeNull();
+    expect(_fixture.container.querySelector("#scientific-computing-toolkits")).toBeNull();
+    await act(() =>
+      _fixture.container
+        .querySelector<HTMLButtonElement>("#scientific-computing-python-trigger")!
+        .click(),
+    );
+    expect(_fixture.container.querySelector("#scientific-computing-python")).not.toBeNull();
+    expect(
+      _fixture.container
+        .querySelector("#scientific-computing-toolkits [data-source-panel]")
+        ?.querySelectorAll("[data-slot=settings-row]"),
+    ).toHaveLength(toolkits.length);
   });
 
   it("downloads each Toolkit immediately without changing runtime selection", async () => {
@@ -1006,17 +1086,7 @@ describe("Scientific Computing settings interactions", () => {
       mocks.statuses.python = installed;
       mocks.languages = [
         { ...python(), managedRuntime: installed, toolkits: pythonToolkits() },
-        {
-          ...python(),
-          descriptor: {
-            ...python().descriptor,
-            languageId: ComputeLanguageId.make("matlab"),
-            displayName: "MATLAB",
-          },
-          managedRuntime: null,
-          toolkits: [],
-          installations: [],
-        },
+        matlabHere(),
       ];
       mocks.manage.mockImplementation(async () => {
         mocks.statuses.python = {
@@ -1294,7 +1364,7 @@ describe("Scientific Computing settings interactions", () => {
     ).toEqual([kits[1]!.toolkitId, second.toolkitId]);
   });
 
-  it("observes setup completion while collapsed and reopens without repeating setup", async () => {
+  it("observes setup completion while another language is shown and returns without repeating setup", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -1310,19 +1380,19 @@ describe("Scientific Computing settings interactions", () => {
         totalBytes: null,
       },
     };
+    mocks.languages = [python(), matlabHere()];
     await render(_fixture);
-    const trigger = _fixture.container.querySelector<HTMLButtonElement>(
-      "#scientific-computing-python-trigger",
-    )!;
-    await act(() => trigger.click());
+    const trigger = (languageId: string) =>
+      _fixture.container.querySelector<HTMLButtonElement>(
+        `#scientific-computing-${languageId}-trigger`,
+      )!;
+    await act(() => trigger("matlab").click());
     await act(() => {
       mocks.statuses.python = { ...status(), runtimeVersion: "3.12.14", generationId: "g2" };
       notify();
     });
-    expect(
-      _fixture.container.querySelector<HTMLElement>("#scientific-computing-python")?.hidden,
-    ).toBe(true);
-    await act(() => trigger.click());
+    expect(_fixture.container.querySelector("#scientific-computing-python")).toBeNull();
+    await act(() => trigger("python").click());
     expect(_fixture.container.textContent).toContain("3.12.14");
     expect(mocks.manage).not.toHaveBeenCalled();
     expect(mocks.update).not.toHaveBeenCalled();
@@ -1342,8 +1412,8 @@ describe("Scientific Computing settings interactions", () => {
     );
     await render(_fixture);
     _fixture.stack.use(_fixtureFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
-    await openInstallation(_fixture, systemPath);
-    await clickMenuItem("Test");
+    await openFound(_fixture);
+    await testInstallation(_fixture, systemPath);
     const row = installationRow(_fixture, systemPath);
     expect(row.querySelector('[role="status"]')?.textContent).toBe("Testing…");
     await act(async () =>
@@ -1382,17 +1452,23 @@ describe("Scientific Computing settings interactions", () => {
     });
     await render(_fixture);
     _fixture.stack.use(_fixtureFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
-    await click(_fixture, "Test");
+    await testRuntime(_fixture);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3_000);
-    });
-    await click(_fixture, "Test");
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
     });
     expect(_fixture.container.textContent).toContain("Test passed");
     await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(_fixture.container.textContent).not.toContain("Test passed");
+    // The retest's feedback runs its own full duration, not what was left of the first.
+    await testRuntime(_fixture);
+    await act(async () => {
       await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(_fixture.container.textContent).toContain("Test passed");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
     });
     expect(_fixture.container.textContent).not.toContain("Test passed");
     expect(mocks.verify).toHaveBeenCalledTimes(2);
@@ -1403,10 +1479,11 @@ describe("Scientific Computing settings interactions", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    mocks.verify.mockRejectedValueOnce(new Error("Connection lost"));
+    // Commands settle a lost connection into a Failure result; they never reject.
+    mocks.verify.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("Connection lost") });
     await render(_fixture);
     _fixture.stack.use(_fixtureFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
-    await click(_fixture, "Test");
+    await testRuntime(_fixture);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10_000);
     });
@@ -1449,7 +1526,7 @@ describe("Scientific Computing settings interactions", () => {
       };
     });
     await render(_fixture);
-    await click(_fixture, "Test");
+    await testRuntime(_fixture);
     expect(mocks.calls).toEqual(["verify"]);
     expect(_fixture.container.querySelector('[role="status"]')?.textContent).toBe("Test passed");
     expect(mocks.manage).not.toHaveBeenCalled();
@@ -1470,7 +1547,7 @@ describe("Scientific Computing settings interactions", () => {
       )!,
     ).toBeDefined();
     expect(mocks.verify).toHaveBeenCalledOnce();
-    await click(_fixture, "Test");
+    await testRuntime(_fixture);
     expect(_fixture.container.querySelector('[role="status"]')?.textContent).toBe("Test passed");
     await act(() => {
       mocks.statuses.python = { ...status(), generationId: "replacement-helper" };
@@ -1497,7 +1574,7 @@ describe("Scientific Computing settings interactions", () => {
         }),
     );
     await render(_fixture);
-    await click(_fixture, "Test");
+    await testRuntime(_fixture);
     await act(() => {
       mocks.statuses.python = { ...status(), generationId: "replacement" };
       notify();
@@ -1522,9 +1599,10 @@ describe("Scientific Computing settings interactions", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    mocks.verify.mockRejectedValueOnce(new Error("Connection lost"));
+    // Commands settle a lost connection into a Failure result; they never reject.
+    mocks.verify.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("Connection lost") });
     await render(_fixture);
-    await click(_fixture, "Test");
+    await testRuntime(_fixture);
     expect(button(_fixture, "Test failed").getAttribute("aria-label")).toContain("Connection lost");
     expect(button(_fixture, "Test failed").disabled).toBe(false);
   });
@@ -1552,10 +1630,10 @@ describe("Scientific Computing settings interactions", () => {
       },
     }));
     await render(_fixture);
-    await click(_fixture, "Test");
+    await testRuntime(_fixture);
     expect(_fixture.container.textContent).not.toContain("Test passed");
     expect(button(_fixture, "Test failed").getAttribute("aria-label")).toContain(
-      "did not start a test session",
+      "The connection could not be verified",
     );
     expect(mocks.manage).not.toHaveBeenCalled();
   });
@@ -1670,6 +1748,7 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render(_fixture);
+    await openFound(_fixture, "matlab");
     expect(_fixture.container.querySelector("#matlab-installation-0")?.textContent).toContain(
       "R2026a",
     );
@@ -1720,17 +1799,18 @@ describe("Scientific Computing settings interactions", () => {
       expect(
         _fixture.container.textContent?.match(/(?:Preparing|Removing) MATLAB connection/gu),
       ).toHaveLength(1);
-      const managedRow = _fixture.container.querySelector("#matlab-managed-runtime")!;
+      // Progress lives inline on the Runtime row, beside its single action.
+      const runtimeRow = _fixture.container.querySelector("#matlab-runtime")!;
       expect(
-        managedRow.querySelectorAll('[data-compute-notice="toolbar"] [role="status"]'),
+        runtimeRow.querySelectorAll('[data-compute-notice="toolbar"] [role="status"]'),
       ).toHaveLength(1);
-      expect(managedRow.querySelector('[data-compute-notice="block"]')).toBeNull();
+      expect(_fixture.container.querySelector('[data-compute-notice="block"]')).toBeNull();
       expect(_fixture.container.textContent).not.toContain("Installing private Python");
-      expect(
-        _fixture.container
-          .querySelector('[aria-label="Enable MATLAB"]')
-          ?.closest("[data-compute-recovery]"),
-      ).toBeNull();
+      const enable = _fixture.container.querySelector<HTMLElement>(
+        '[aria-label="Use MATLAB in Scient"]',
+      )!;
+      expect(enable.closest("[data-compute-recovery]")).toBeNull();
+      expect(enable.hasAttribute("data-disabled")).toBe(false);
     },
   );
 
@@ -1780,8 +1860,8 @@ describe("Scientific Computing settings interactions", () => {
     mocks.languages = [{ ...python(), managedRuntime: mocks.statuses.python }];
     await render(_fixture);
     expect(
-      _fixture.container.querySelector("[data-compute-summary='python']")?.textContent,
-    ).toContain("Toolkit update available");
+      _fixture.container.querySelector("#scientific-computing-python-trigger")?.textContent,
+    ).toContain("3.12.13");
     expect(
       [..._fixture.container.querySelectorAll("button")].filter(
         (candidate) => candidate.textContent?.trim() === "Update",
@@ -1797,7 +1877,7 @@ describe("Scientific Computing settings interactions", () => {
     ["python", "existing", false],
     ["matlab", "existing", true],
   ] as const)(
-    "keeps %s updates on the managed row (%s, enabled=%s)",
+    "keeps %s updates on the Runtime row, out of the maintenance menu (%s, enabled=%s)",
     async (languageId, selection, enabled) => {
       await using _fixture = _createFixture();
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -1842,7 +1922,15 @@ describe("Scientific Computing settings interactions", () => {
         },
       ];
       await render(_fixture);
-      const row = () => _fixture.container.querySelector(`#${languageId}-managed-runtime`)!;
+      // The single primary action and its progress live on the Runtime row.
+      const row = () => _fixture.container.querySelector(`#${languageId}-runtime`)!;
+      expect(
+        [
+          ..._fixture.container
+            .querySelector(`#${languageId}-managed-runtime`)!
+            .querySelectorAll("button"),
+        ].some((node) => node.textContent?.trim() === "Update"),
+      ).toBe(false);
       await openMaintenance(
         _fixture,
         languageId === "matlab" ? "MATLAB connection" : "Python runtime",
@@ -1987,14 +2075,14 @@ describe("Scientific Computing settings interactions", () => {
     mocks.languages = [{ ...python(), managedRuntime: mocks.statuses.python }];
     await render(_fixture);
     const toggle = _fixture.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Enable Python"]',
+      '[aria-label="Use Python in Scient"]',
     )!;
     expect(toggle.hasAttribute("data-disabled")).toBe(false);
     await chooseRuntime(_fixture, systemPath);
     expect(mocks.calls).toEqual(["save", "use-existing"]);
     expect(runtimeValue(_fixture)).toBe(systemPath);
     await act(() =>
-      _fixture.container.querySelector<HTMLElement>('[aria-label="Enable Python"]')!.click(),
+      _fixture.container.querySelector<HTMLElement>('[aria-label="Use Python in Scient"]')!.click(),
     );
     expect(mocks.preferences.python?.enabled).toBe(false);
   });
@@ -2041,43 +2129,26 @@ describe("Scientific Computing settings interactions", () => {
     expect(runtimeValue(_fixture)).toBe(systemPath);
   });
 
-  it("does not save a custom path on blur or Cancel; saves only on explicit submission", async () => {
+  it("does not save a custom path on blur or closing the list; saves only on explicit submission", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     await render(_fixture);
-    await click(_fixture, "Custom executable");
-    const input = _fixture.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Python executable path"]',
-    )!;
+    await openFound(_fixture);
+    const input = await typePath(_fixture, "/custom/python");
     await act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-        input,
-        "/custom/python",
-      );
-      input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
       input.blur();
     });
     expect(mocks.update).not.toHaveBeenCalled();
-    await click(_fixture, "Cancel");
+    // Closing the list is the way out now; it must not save either.
+    await closeFound(_fixture);
     expect(mocks.update).not.toHaveBeenCalled();
-    await click(_fixture, "Custom executable");
-    const next = _fixture.container.querySelector<HTMLInputElement>(
-      'input[aria-label="Python executable path"]',
-    )!;
-    await act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-        next,
-        "/custom/python",
-      );
-      next.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+    await openFound(_fixture);
+    const next = await typePath(_fixture, "/custom/python");
     await act(() =>
-      _fixture.container
-        .querySelector("form")!
-        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+      next.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
     );
     expect(mocks.preferences.python?.executable).toBe("/custom/python");
     expect(mocks.calls).toEqual(["save", "use-existing"]);
@@ -2223,8 +2294,13 @@ describe("Scientific Computing settings interactions", () => {
       },
     ];
     await render(_fixture);
-    expect(_fixture.container.textContent).toContain("Connection needs update");
-    await click(_fixture, "Set up connection");
+    const runtimeRow = _fixture.container.querySelector<HTMLElement>("#matlab-runtime")!;
+    expect(
+      [...runtimeRow.querySelectorAll("button")].filter(
+        (node) => node.textContent?.trim() === "Set up connection",
+      ),
+    ).toHaveLength(1);
+    await click(_fixture, "Set up connection", runtimeRow);
     expect(mocks.calls).toEqual(["repair"]);
   });
 

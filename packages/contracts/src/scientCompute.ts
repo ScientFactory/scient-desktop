@@ -50,6 +50,13 @@ const ComputeExecutable = Schema.String.check(Schema.isMaxLength(4096));
 const ComputeCode = Schema.String.check(Schema.isMaxLength(1024 * 1024));
 const ComputeHistoryLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }));
 
+/** What a language needs on this computer before Scient can run it. */
+export const ComputeLanguageSetup = Schema.Struct({
+  needs: Schema.String.check(Schema.isMaxLength(256)),
+  url: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(512))),
+});
+export type ComputeLanguageSetup = typeof ComputeLanguageSetup.Type;
+
 export const ComputeLanguageDescriptor = Schema.Struct({
   languageId: ComputeLanguageId,
   displayName: Schema.String.check(Schema.isMaxLength(128)),
@@ -57,6 +64,7 @@ export const ComputeLanguageDescriptor = Schema.Struct({
     Schema.isMaxLength(32),
   ),
   capabilities: Schema.Array(ComputeCapability).check(Schema.isMaxLength(32)),
+  setup: Schema.optionalKey(ComputeLanguageSetup),
 });
 export type ComputeLanguageDescriptor = typeof ComputeLanguageDescriptor.Type;
 

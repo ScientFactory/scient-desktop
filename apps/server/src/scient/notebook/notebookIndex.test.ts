@@ -36,6 +36,10 @@ describe("indexNotebook", () => {
     const bytes = Buffer.from(`${JSON.stringify(notebook, null, 1)}\n`);
     const index = indexNotebook(bytes);
     expect(index.language).toBe("r");
+    const wolfram = Buffer.from(
+      JSON.stringify({ ...notebook, metadata: { language_info: { name: "Wolfram Language" } } }),
+    );
+    expect(indexNotebook(wolfram).language).toBe("wolfram-language");
     expect(index.cells.map((cell) => cell.id)).toEqual(["text", "code"]);
     expect(notebookText(index.cells[0]?.fields.source)).toBe('# Title "quoted"\nmore \\ text');
     expect(index.cells[1]?.outputIndex.map((output) => output.outputType)).toEqual([

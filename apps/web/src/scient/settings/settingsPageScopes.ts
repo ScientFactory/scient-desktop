@@ -12,6 +12,8 @@ const SINGLE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   // SCIENT-FORK:END
   "/settings/extensions": true,
   "/settings/synced-folders": true,
+  // Runtimes are what one computer has. A project's runtime is chosen on its files.
+  "/settings/scientific-computing": true,
   // Upstream: secret providers are configured on one server.
   "/settings/secrets": true,
 };
@@ -23,6 +25,7 @@ const SERVER_ONLY_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   // SCIENT-FORK:END
   "/settings/extensions": true,
   "/settings/synced-folders": true,
+  "/settings/scientific-computing": true,
 };
 
 const OFFLINE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {

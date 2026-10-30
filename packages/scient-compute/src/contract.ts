@@ -44,6 +44,20 @@ export type ComputeRequestId = typeof ComputeRequestId.Type;
 export const ComputeLanguageId = Slug.pipe(Schema.brand("ComputeLanguageId"));
 export type ComputeLanguageId = typeof ComputeLanguageId.Type;
 
+/** "C++" → "cpp", "Wolfram Language" → "wolfram-language": a stable id from a language name. */
+export function computeLanguageIdFromName(language: string): string {
+  return (
+    language
+      .trim()
+      .toLowerCase()
+      .replace(/\+\+/gu, "pp")
+      .replace(/#/gu, "sharp")
+      .replace(/[^a-z0-9]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .slice(0, 64) || "kernel"
+  );
+}
+
 export const ComputeTransportKind = Slug.pipe(Schema.brand("ComputeTransportKind"));
 export type ComputeTransportKind = typeof ComputeTransportKind.Type;
 
@@ -700,6 +714,8 @@ export interface ComputeDiscoveryRequest {
   readonly configuredExecutable: string | null;
   /** Explicit user refresh bypasses the adapter's short probe cache. */
   readonly refresh?: boolean;
+  /** Listing never runs anything unless a page asks for versions, within a short budget. */
+  readonly probeVersions?: boolean;
 }
 
 export interface ComputeLaunchRequest {

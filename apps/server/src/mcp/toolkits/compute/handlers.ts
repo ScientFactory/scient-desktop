@@ -412,7 +412,7 @@ export const listScientComputeInventory = Effect.fn("ScientComputeToolkit.invent
   }
   const gateway = yield* ComputeMcpGateway;
   return yield* gateway
-    .runtimeInventory()
+    .runtimeInventory({ versions: true })
     .pipe(
       Effect.mapError(() =>
         toolError("compute-failed", "The Scient Compute runtime inventory could not be read."),
