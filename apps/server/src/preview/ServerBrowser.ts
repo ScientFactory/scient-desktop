@@ -388,6 +388,9 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
 const AGENT_TAB_LIMIT = 8;
 const SERVER_TAB_LIMIT = 32;
 const AGENT_TAB_IDLE_MS = 30 * 60 * 1000;
+// SCIENT-FORK:START — desktop connections released at the server limit have been idle this long.
+const RELEASE_IDLE_MS = 2 * 60 * 1000;
+// SCIENT-FORK:END
 const IDLE_SWEEP_INTERVAL = "1 minute";
 
 const DOWNLOAD_LIMIT = 20;
@@ -1428,7 +1431,12 @@ const make = Effect.gen(function* () {
     while (tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT) {
       const oldest = [...tabs.values()]
         .filter(
-          (tab) => tab.desktop !== null && tab.threadId !== threadId && tab.viewers.size === 0,
+          (tab) =>
+            tab.desktop !== null &&
+            tab.threadId !== threadId &&
+            tab.viewers.size === 0 &&
+            // Never one an agent is using right now.
+            tab.usedAt < Date.now() - RELEASE_IDLE_MS,
         )
         .sort((left, right) => left.usedAt - right.usedAt)[0];
       if (!oldest) return;
