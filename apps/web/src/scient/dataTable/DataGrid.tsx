@@ -43,6 +43,11 @@ import {
 const MAX_CACHED_PAGES = 64;
 const MAX_LOADING_PAGES = 2;
 const FIRST_PAGE_LIMIT = 200;
+/** The inline subheader is sized for bare icons; the search box and its border need 32px. */
+const TOOLBAR_CLASS = cn(
+  FILE_SURFACE_SUBHEADER_CLASS,
+  "in-data-[preview-panel-mode=inline]:h-8 in-data-[preview-panel-mode=inline]:min-h-8",
+);
 
 type TableShape = Omit<DataTablePage, "offset" | "rows">;
 
@@ -371,9 +376,9 @@ export function DataGrid(props: DataGridProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className={FILE_SURFACE_SUBHEADER_CLASS}>
+      <div className={TOOLBAR_CLASS}>
         {props.toolbarStart}
-        <div className="w-56 min-w-0 shrink [--control-radius:9999px]">
+        <div className="w-56 min-w-24 shrink [--control-radius:9999px]">
           <InputGroup>
             <InputGroupAddon>
               <Search aria-hidden="true" />

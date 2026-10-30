@@ -11,7 +11,6 @@ import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } fr
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { Button } from "~/components/ui/button";
 import { useStableCallback } from "~/hooks/useStableCallback";
-import { cn } from "~/lib/utils";
 import { computeEnvironment } from "~/state/compute";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -116,7 +115,7 @@ function CellEditor(props: {
   return (
     <div
       ref={parent}
-      className="min-w-0 px-1 py-1 text-[13px]"
+      className="min-w-0 px-1 py-1 text-[13px] [&_.cm-focused]:outline-none"
       onKeyDownCapture={(event) => {
         if (event.key !== "Enter" || !(event.shiftKey || event.metaKey || event.ctrlKey)) return;
         event.preventDefault();
@@ -286,14 +285,11 @@ export default function ScientNotebookSurface(props: {
             return (
               <section
                 key={cell.id}
-                className={cn(
-                  "group relative flex gap-2 py-1 pr-3 pl-1",
-                  active === cell.id && "bg-muted/30",
-                )}
+                className="group flex gap-2 pr-3 pl-1"
                 onFocusCapture={() => setActive(cell.id)}
                 onClick={() => setActive(cell.id)}
               >
-                <div className="w-10 shrink-0 pt-2 text-right font-mono text-[11px] text-muted-foreground/70 tabular-nums">
+                <div className="w-10 shrink-0 pt-8 text-right font-mono text-[11px] text-muted-foreground/70 tabular-nums">
                   {cell.cellType === "code"
                     ? run !== undefined
                       ? "*"
@@ -303,6 +299,44 @@ export default function ScientNotebookSurface(props: {
                     : ""}
                 </div>
                 <div className="min-w-0 flex-1">
+                  <div className="flex h-6 items-center justify-end gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                    {cell.cellType === "code" ? (
+                      <CellAction label="Run" onClick={() => runCell(cell.id)}>
+                        <Play />
+                      </CellAction>
+                    ) : null}
+                    {cell.cellType === "code" && cell.outputs.length > 0 ? (
+                      <CellAction
+                        label="Ask in chat"
+                        onClick={() =>
+                          askInChatAboutCompute({
+                            threadRef: props.threadRef,
+                            what: `Cell ${document.cells.indexOf(cell) + 1} of ${props.relativePath}`,
+                          })
+                        }
+                      >
+                        <MessageSquarePlus />
+                      </CellAction>
+                    ) : null}
+                    <CellAction
+                      label="Move up"
+                      onClick={() => commit((current) => moveNotebookCell(current, cell.id, -1))}
+                    >
+                      <ArrowUp />
+                    </CellAction>
+                    <CellAction
+                      label="Move down"
+                      onClick={() => commit((current) => moveNotebookCell(current, cell.id, 1))}
+                    >
+                      <ArrowDown />
+                    </CellAction>
+                    <CellAction
+                      label="Delete"
+                      onClick={() => commit((current) => removeNotebookCell(current, cell.id))}
+                    >
+                      <Trash2 />
+                    </CellAction>
+                  </div>
                   {cell.cellType === "markdown" && editingMarkdown !== cell.id ? (
                     <div
                       className="min-h-8 cursor-text px-3 py-1"
@@ -318,7 +352,7 @@ export default function ScientNotebookSurface(props: {
                       ) : null}
                     </div>
                   ) : (
-                    <div className="rounded-md border border-border/60 bg-background">
+                    <div className="rounded-md border border-border/60 bg-background focus-within:border-ring">
                       <CellEditor
                         cell={cell}
                         language={cell.cellType === "code" ? language.languageId : "markdown"}
@@ -352,44 +386,6 @@ export default function ScientNotebookSurface(props: {
                       <NotebookOutputs outputs={cell.outputs} label={`Cell ${cell.id}`} />
                     )
                   ) : null}
-                </div>
-                <div className="absolute top-1 right-2 flex gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                  {cell.cellType === "code" ? (
-                    <CellAction label="Run" onClick={() => runCell(cell.id)}>
-                      <Play />
-                    </CellAction>
-                  ) : null}
-                  {cell.cellType === "code" && cell.outputs.length > 0 ? (
-                    <CellAction
-                      label="Ask in chat"
-                      onClick={() =>
-                        askInChatAboutCompute({
-                          threadRef: props.threadRef,
-                          what: `Cell ${document.cells.indexOf(cell) + 1} of ${props.relativePath}`,
-                        })
-                      }
-                    >
-                      <MessageSquarePlus />
-                    </CellAction>
-                  ) : null}
-                  <CellAction
-                    label="Move up"
-                    onClick={() => commit((current) => moveNotebookCell(current, cell.id, -1))}
-                  >
-                    <ArrowUp />
-                  </CellAction>
-                  <CellAction
-                    label="Move down"
-                    onClick={() => commit((current) => moveNotebookCell(current, cell.id, 1))}
-                  >
-                    <ArrowDown />
-                  </CellAction>
-                  <CellAction
-                    label="Delete"
-                    onClick={() => commit((current) => removeNotebookCell(current, cell.id))}
-                  >
-                    <Trash2 />
-                  </CellAction>
                 </div>
               </section>
             );

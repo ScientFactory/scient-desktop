@@ -6,6 +6,8 @@ export const HEADER_HEIGHT = 40;
 const MAX_TRACK_HEIGHT = 8_000_000;
 const MIN_COLUMN_WIDTH = 56;
 const MAX_COLUMN_WIDTH = 360;
+/** Numbers grow past the first page's sample, so a numeric column starts wide enough for them. */
+const MIN_NUMERIC_CHARS = 10;
 /** Rows copied at once; a larger selection copies its first rows. */
 export const MAX_COPY_ROWS = 10_000;
 
@@ -18,7 +20,11 @@ export function initialColumnWidth(
 ): number {
   const longest = cells.reduce(
     (max, cell) => Math.max(max, cell === null ? 0 : Math.min(cell.length, 60)),
-    Math.max(column.name.length, column.label.length + 2),
+    Math.max(
+      column.name.length,
+      column.label.length + 2,
+      isNumericType(column.type) ? MIN_NUMERIC_CHARS : 0,
+    ),
   );
   return Math.round(Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, longest * 7 + 28)));
 }

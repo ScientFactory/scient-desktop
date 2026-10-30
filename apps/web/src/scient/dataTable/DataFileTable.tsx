@@ -43,7 +43,7 @@ export function DataFileTable(props: {
       toolbarStart={
         sheets.length > 1 ? (
           <Select value={sheet} onValueChange={(value) => setSheet(value ?? 0)}>
-            <SelectTrigger size="xs" className="w-fit min-w-0 max-w-48" aria-label="Sheet">
+            <SelectTrigger size="xs" className="w-fit max-w-40 shrink-0" aria-label="Sheet">
               <SelectValue>{sheets[sheet]}</SelectValue>
             </SelectTrigger>
             <SelectPopup alignItemWithTrigger={false}>

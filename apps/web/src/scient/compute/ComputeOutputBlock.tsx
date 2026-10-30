@@ -43,6 +43,7 @@ export function ComputeOutputBlock(props: {
       <div
         className={cn(
           "min-w-0",
+          props.copy !== null && "pe-7",
           clipped && "flex max-h-80 flex-col overflow-hidden",
           clipped &&
             (props.tail
