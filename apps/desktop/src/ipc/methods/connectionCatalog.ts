@@ -3,6 +3,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopConnectionCatalogStore from "../../app/DesktopConnectionCatalogStore.ts";
+// SCIENT-FORK:START — several app windows share one desktop process.
+import { notifyOtherWindows } from "../../scient/multiWindow/notifyOtherWindows.ts";
+// SCIENT-FORK:END
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 
@@ -20,8 +23,13 @@ export const setConnectionCatalog = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_CONNECTION_CATALOG_CHANNEL,
   payload: Schema.String,
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.connectionCatalog.set")(function* (catalog) {
+  // SCIENT-FORK:START — other windows drop their cached catalog; it holds credentials, so
+  // the message carries none.
+  handler: Effect.fn("desktop.ipc.connectionCatalog.set")(function* (catalog, event) {
     const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-    return yield* store.set(catalog);
+    const stored = yield* store.set(catalog);
+    if (stored) yield* notifyOtherWindows(event, IpcChannels.CONNECTION_CATALOG_CHANGED_CHANNEL);
+    return stored;
   }),
+  // SCIENT-FORK:END
 });

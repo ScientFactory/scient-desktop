@@ -93,6 +93,9 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     runMainContentsCommand: (command) =>
       Deferred.succeed(selectedAction, `main-${command}`).pipe(Effect.asVoid),
     syncAppearance: Effect.void,
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    openNewWindow: () => Deferred.succeed(selectedAction, "new-window"),
+    // SCIENT-FORK:END
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 
 const layerElectronMenu = (

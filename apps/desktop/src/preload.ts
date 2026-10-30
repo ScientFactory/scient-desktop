@@ -483,4 +483,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   // SCIENT-FORK:START — Scient Accounts: mount the desktop accounts bridge.
   accounts: makeDesktopAccountsBridge(ipcRenderer),
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  openNewWindow: (route) => ipcRenderer.invoke(IpcChannels.OPEN_NEW_WINDOW_CHANNEL, route),
+  onClientSettingsChanged: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, settings: unknown) => {
+      if (typeof settings !== "object" || settings === null) return;
+      listener(settings as Parameters<typeof listener>[0]);
+    };
+    ipcRenderer.on(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL, wrappedListener);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL, wrappedListener);
+  },
+  onConnectionCatalogChanged: (listener) => {
+    const wrappedListener = () => listener();
+    ipcRenderer.on(IpcChannels.CONNECTION_CATALOG_CHANGED_CHANNEL, wrappedListener);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.CONNECTION_CATALOG_CHANGED_CHANNEL, wrappedListener);
+  },
+  // SCIENT-FORK:END
 } satisfies DesktopBridge);

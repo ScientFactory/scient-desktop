@@ -333,6 +333,9 @@ function layerTest(input: {
         Effect.as(input.window),
       ),
     main: Ref.get(input.mainWindow),
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    appWindows: Ref.get(input.mainWindow).pipe(Effect.map(Option.toArray)),
+    // SCIENT-FORK:END
     currentMainOrFirst: Ref.get(input.mainWindow),
     focusedMainOrFirst:
       input.focusedWindow === undefined
@@ -470,6 +473,9 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           return outcome;
         }),
       main: Ref.get(mainWindow),
+      // SCIENT-FORK:START — several app windows share one desktop process.
+      appWindows: Ref.get(mainWindow).pipe(Effect.map(Option.toArray)),
+      // SCIENT-FORK:END
       currentMainOrFirst,
       focusedMainOrFirst: currentMainOrFirst,
       setMain: (window) => Ref.set(mainWindow, Option.some(window)),

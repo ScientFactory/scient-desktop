@@ -31,6 +31,9 @@ import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import { rendersServerTabNatively } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
+// SCIENT-FORK:START — one app window hosts each desktop preview tab's webview.
+import { PreviewWindowHost } from "../scient/multiWindow/PreviewWindowHost";
+// SCIENT-FORK:END
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
 function hostedBrowserSessions(
@@ -169,7 +172,18 @@ function AuthorizedBrowserWebview(props: ComponentProps<typeof HostedBrowserWebv
     AuthPreviewOperateScope,
   );
   const profileId = useTabProfileId(props.profileId);
-  return canOperatePreview ? <HostedBrowserWebview {...props} profileId={profileId} /> : null;
+  // SCIENT-FORK:START — one app window hosts each desktop preview tab's webview.
+  return canOperatePreview ? (
+    <PreviewWindowHost
+      threadRef={props.threadRef}
+      tabId={props.tabId}
+      runtimeTabId={props.runtimeTabId}
+      serverDriven={props.serverDriven === true}
+    >
+      <HostedBrowserWebview {...props} profileId={profileId} />
+    </PreviewWindowHost>
+  ) : null;
+  // SCIENT-FORK:END
 }
 
 // Latch after hydration: Electron fixes the partition when the guest attaches.

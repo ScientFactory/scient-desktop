@@ -65,6 +65,13 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
+// SCIENT-FORK:START — several app windows share one desktop process.
+const openNewWindow = Effect.gen(function* () {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.openNewWindow();
+}).pipe(Effect.withSpan("desktop.menu.openNewWindow"));
+// SCIENT-FORK:END
+
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -143,6 +150,11 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    const newWindowClick = () => {
+      runMenuEffect("new-window", openNewWindow);
+    };
+    // SCIENT-FORK:END
     // SCIENT-FORK:START — the renderer opens its file picker for a .scic.
     const importConversationClick = () => {
       runMenuEffect("import-conversation", dispatchMenuAction("import-conversation"));
@@ -196,6 +208,10 @@ export const make = Effect.gen(function* () {
       {
         label: "File",
         submenu: [
+          // SCIENT-FORK:START — several app windows share one desktop process.
+          { label: "New Window", accelerator: "CmdOrCtrl+Alt+Shift+N", click: newWindowClick },
+          { type: "separator" as const },
+          // SCIENT-FORK:END
           // SCIENT-FORK:START
           { label: "Import Conversation...", click: importConversationClick },
           { type: "separator" as const },

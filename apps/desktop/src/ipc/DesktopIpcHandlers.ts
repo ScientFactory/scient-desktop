@@ -74,6 +74,9 @@ import {
   pickThemeFiles,
   setTheme,
   showContextMenu,
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  openNewWindow,
+  // SCIENT-FORK:END
 } from "./methods/window.ts";
 import {
   acknowledgeSnapShot,
@@ -183,6 +186,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(reloadMainWindow);
   yield* ipc.handle(revealWindow);
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  yield* ipc.handle(openNewWindow);
+  // SCIENT-FORK:END
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

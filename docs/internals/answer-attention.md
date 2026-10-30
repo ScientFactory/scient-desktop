@@ -56,8 +56,10 @@ without writing the app icon, and keeps the rest of upstream's handler: when a
 window gains focus, when a notification arrives while a window has focus, and on
 quit, renderers are told to dismiss their pending notifications
 (`onNotificationBadgeClear`). On the web, upstream's count still badges the
-favicon. The unread-badge IPC accepts only the main renderer and validates the
-count and image.
+favicon. The unread-badge IPC accepts only app window renderers, not browser
+previews, and validates the count and image. With several app windows, only the
+notification presenter window sends the count
+([Multiple app windows](./multi-window.md#notifications)).
 
 - **macOS:** `app.setBadgeCount` on the Dock. macOS hides the Dock badge of an
   app without notification permission (electron/electron#22715), and Electron
@@ -65,8 +67,8 @@ count and image.
   notification presenter. The handler calls `Notification.isSupported()`, which
   creates it, once there is a count to show, so the system asks once.
 - **Windows:** there is no badge API. The renderer paints the count ("9+" above
-  nine) as a PNG, and the main window shows it as a taskbar overlay with an
-  accessible description.
+  nine) as a PNG, and each app window shows it as an overlay on its own taskbar
+  button, with an accessible description.
 - **Linux:** `app.setBadgeCount`, on docks that support the LauncherEntry API.
 
 Neither Electron nor the OS reports whether the badge is displayed, so the

@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { DesktopIpc, type DesktopIpcInvokeEvent } from "../../ipc/DesktopIpc.ts";
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
+import { appWindowForSender } from "../multiWindow/appWindows.ts";
 import { PreviewManager } from "../../preview/Manager.ts";
 import { safeHttpOrigin } from "../../preview/FaviconCapture.ts";
 import { resolvePartitionScope } from "../../ipc/methods/preview.ts";
@@ -56,14 +57,13 @@ const decodeCapture = Schema.decodeUnknownOption(Capture);
 type AccountsInvokeEvent = DesktopIpcInvokeEvent & { readonly senderFrame?: unknown };
 
 const mainSender = Effect.fn("DesktopAccounts.mainSender")(function* (event?: AccountsInvokeEvent) {
-  const windows = yield* ElectronWindow;
-  const main = yield* windows.main;
+  const sender = yield* appWindowForSender(yield* ElectronWindow, event?.sender.id);
   return (
-    Option.isSome(main) &&
-    !main.value.isDestroyed() &&
-    main.value.webContents.id === event?.sender.id &&
+    event !== undefined &&
+    Option.isSome(sender) &&
+    !sender.value.isDestroyed() &&
     "senderFrame" in event &&
-    event.senderFrame === main.value.webContents.mainFrame
+    event.senderFrame === sender.value.webContents.mainFrame
   );
 });
 
@@ -295,13 +295,8 @@ export const forwardCapturedSignIn = Effect.fn("DesktopAccounts.forwardCapturedS
   const manager = yield* PreviewManager;
   const windows = yield* ElectronWindow;
   const tabId = yield* manager.accountsTabIdForWebContents(event.sender.id);
-  const main = yield* windows.main;
-  if (
-    tabId === null ||
-    Option.isNone(main) ||
-    event.sender.hostWebContents !== main.value.webContents
-  )
-    return;
+  const main = yield* appWindowForSender(windows, event.sender.hostWebContents?.id);
+  if (tabId === null || Option.isNone(main)) return;
   const contents = yield* manager.accountsWebContents(tabId);
   if (contents !== event.sender || !isCaptureGuest(event)) return;
   const origin = safeHttpOrigin(contents.getURL());
@@ -353,13 +348,8 @@ const forwardLoginForm = Effect.fn("DesktopAccounts.forwardLoginForm")(function*
   const manager = yield* PreviewManager;
   const windows = yield* ElectronWindow;
   const tabId = yield* manager.accountsTabIdForWebContents(event.sender.id);
-  const main = yield* windows.main;
-  if (
-    tabId === null ||
-    Option.isNone(main) ||
-    event.sender.hostWebContents !== main.value.webContents
-  )
-    return;
+  const main = yield* appWindowForSender(windows, event.sender.hostWebContents?.id);
+  if (tabId === null || Option.isNone(main)) return;
   if ((yield* manager.accountsWebContents(tabId)) !== event.sender) return;
   const form = yield* readLoginForm(tabId);
   if (form && isCaptureGuest(event))

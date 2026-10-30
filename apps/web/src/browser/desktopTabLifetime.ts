@@ -2,6 +2,12 @@ import { previewBridge } from "~/components/preview/previewBridge";
 
 import { browserDefaultTabState, resolveBrowserDefaults } from "./browserDefaults";
 import { stopBrowserRecording } from "./browserRecording";
+// SCIENT-FORK:START — several app windows can show the same desktop tab.
+import {
+  closeUnlessUsedElsewhere,
+  retainPreviewTabPresence,
+} from "../scient/multiWindow/previewTabPresence";
+// SCIENT-FORK:END
 
 interface DesktopTabLease {
   references: number;
@@ -51,12 +57,15 @@ export function acquireDesktopTab(
       references: 0,
       closeTimer: null,
       // Include defaults at creation to avoid painting a frame at 100%/system.
-      ready: enqueueDesktopTabOperation(tabId, async () =>
-        previewBridge?.createTab(tabId, {
+      // SCIENT-FORK:START — creation waits out another app window closing this desktop tab.
+      ready: enqueueDesktopTabOperation(tabId, async () => {
+        await retainPreviewTabPresence(tabId);
+        return previewBridge?.createTab(tabId, {
           ...browserDefaultTabState(await resolveBrowserDefaults()),
           ...(serverTab === undefined ? {} : { serverTab }),
-        }),
-      ),
+        });
+      }),
+      // SCIENT-FORK:END
     } satisfies DesktopTabLease);
   if (current.closeTimer !== null) window.clearTimeout(current.closeTimer);
   current.references += 1;
@@ -75,8 +84,12 @@ export function acquireDesktopTab(
         if (!latest || latest.references > 0) return;
         leases.delete(tabId);
         void enqueueDesktopTabOperation(tabId, async () => {
-          await stopBrowserRecording(tabId).catch(() => null);
-          await previewBridge?.closeTab(tabId);
+          // SCIENT-FORK:START — another app window may still show this desktop tab.
+          await closeUnlessUsedElsewhere(tabId, async () => {
+            await stopBrowserRecording(tabId).catch(() => null);
+            await previewBridge?.closeTab(tabId);
+          });
+          // SCIENT-FORK:END
         }).catch(() => undefined);
       }, 0);
     },

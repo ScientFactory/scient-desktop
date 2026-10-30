@@ -140,6 +140,11 @@ export const CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL =
   "scient:conversation-import:cancel-upload-opened";
 export const RELEASE_OPENED_CONVERSATION_FILE_CHANNEL = "scient:conversation-import:release-opened";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+export const OPEN_NEW_WINDOW_CHANNEL = "scient:window:open-new";
+export const CLIENT_SETTINGS_CHANGED_CHANNEL = "scient:client-settings:changed";
+export const CONNECTION_CATALOG_CHANGED_CHANNEL = "scient:connection-catalog:changed";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 export const NOTE_SPELLING_SAMPLE_CHANNEL = "scient:spelling:note-sample";
 export const SPELLING_DICTIONARY_READY_CHANNEL = "scient:spelling:dictionary-ready";

@@ -21,6 +21,9 @@ import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+// SCIENT-FORK:START — several app windows share one desktop process.
+import { appWindowForSender } from "../../scient/multiWindow/appWindows.ts";
+// SCIENT-FORK:END
 
 class SnapShotIpcUnauthorizedSenderError extends Schema.TaggedError<SnapShotIpcUnauthorizedSenderError>()(
   "SnapShotIpcUnauthorizedSenderError",
@@ -33,7 +36,9 @@ class SnapShotIpcUnauthorizedSenderError extends Schema.TaggedError<SnapShotIpcU
 
 const ensureTrustedSnapShotSender = Effect.fn("desktop.ipc.snapShot.ensureTrustedSender")(
   function* (event: DesktopIpc.DesktopIpcInvokeEvent | undefined) {
-    const main = yield* (yield* ElectronWindow.ElectronWindow).main;
+    // SCIENT-FORK:START — any app window may request snapshots for itself.
+    const main = yield* appWindowForSender(yield* ElectronWindow.ElectronWindow, event?.sender.id);
+    // SCIENT-FORK:END
     if (
       event === undefined ||
       Option.isNone(main) ||

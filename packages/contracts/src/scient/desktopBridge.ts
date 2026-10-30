@@ -18,6 +18,7 @@ import type {
   DesktopDocumentPageRenderInput,
   DesktopDocumentPageRenderOutcome,
 } from "../scientDocumentExport.ts";
+import type { ClientSettings } from "../settings.ts";
 import type { DesktopAccountsBridge } from "./desktopAccountsBridge.ts";
 import type { DesktopVoiceBridge } from "./desktopVoiceBridge.ts";
 
@@ -78,4 +79,13 @@ export interface ScientDesktopBridge {
   voice?: DesktopVoiceBridge;
   /** Scient Accounts: browser profile details, sign-in capture and fill. Desktop only. */
   accounts?: DesktopAccountsBridge;
+  /**
+   * Scient: opens another full app window. `route` is an app path such as
+   * `/<environmentId>/<threadId>`. Resolves whether a window opened.
+   */
+  openNewWindow?: (route?: string) => Promise<boolean>;
+  /** Scient: another app window saved client settings. */
+  onClientSettingsChanged?: (listener: (settings: ClientSettings) => void) => () => void;
+  /** Scient: another app window saved the connection catalog; read it again before writing. */
+  onConnectionCatalogChanged?: (listener: () => void) => () => void;
 }

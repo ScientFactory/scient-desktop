@@ -4,6 +4,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -145,6 +146,30 @@ describe("ElectronWindow", () => {
       assert.equal(error.message, 'Failed to create Electron BrowserWindow "Scient" (1100x780).');
       assert.notInclude(error.message, cause.message);
       assert.deepEqual(browserWindowMock.mock.calls, [[options]]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("treats the most recently focused live app window as main", () =>
+    Effect.gen(function* () {
+      const destroyed = new Set<number>();
+      const appWindow = (id: number) =>
+        ({ id, isDestroyed: () => destroyed.has(id) }) as unknown as Electron.BrowserWindow;
+      const [first, second, third] = [appWindow(1), appWindow(2), appWindow(3)];
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+
+      yield* electronWindow.setMain(first);
+      yield* electronWindow.setMain(second);
+      yield* electronWindow.setMain(third);
+      yield* electronWindow.setMain(first);
+      assert.deepEqual(yield* electronWindow.appWindows, [first, third, second]);
+      assert.deepEqual(yield* electronWindow.main, Option.some(first));
+
+      destroyed.add(1);
+      assert.deepEqual(yield* electronWindow.main, Option.some(third));
+      yield* electronWindow.clearMain(Option.some(third));
+      assert.deepEqual(yield* electronWindow.appWindows, [second]);
+      yield* electronWindow.clearMain(Option.none());
+      assert.deepEqual(yield* electronWindow.appWindows, []);
     }).pipe(Effect.provide(layerTest)),
   );
 });

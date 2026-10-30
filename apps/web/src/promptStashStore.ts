@@ -111,18 +111,21 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
   }
 }
 
-function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
+// SCIENT-FORK:START — another app window may still be encoding an entry's images.
+function readPersistedEntries(clearPendingImages = true): ReadonlyArray<PromptStashEntry> | null {
   try {
     const raw = baseStashStorage.getItem(PROMPT_STASH_STORAGE_KEY);
     if (typeof raw !== "string" || raw.length === 0) return null;
     const parsed: unknown = JSON.parse(raw);
     const state = (parsed as { state?: unknown } | null)?.state;
     if (!state) return null;
-    return clearOrphanedPendingImages(decodePersistedPromptStashState(state).entries);
+    const entries = decodePersistedPromptStashState(state).entries;
+    return clearPendingImages ? clearOrphanedPendingImages(entries) : entries;
   } catch {
     return null;
   }
 }
+// SCIENT-FORK:END
 
 interface PromptStashStoreState {
   entries: ReadonlyArray<PromptStashEntry>;
@@ -196,6 +199,16 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     usePromptStashStore.setState({ entries: persisted });
   }
 }
+
+// SCIENT-FORK:START — app windows share the stash; act on the entries other windows wrote.
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== PROMPT_STASH_STORAGE_KEY) return;
+    const entries = readPersistedEntries(false);
+    if (entries) usePromptStashStore.setState({ entries });
+  });
+}
+// SCIENT-FORK:END
 
 export function writePromptStashStorageForTest(raw: string): void {
   baseStashStorage.setItem(PROMPT_STASH_STORAGE_KEY, raw);

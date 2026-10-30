@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 
 import { ElectronWindow } from "../../electron/ElectronWindow.ts";
 import { makeIpcMethod } from "../../ipc/DesktopIpc.ts";
+import { appWindowForSender } from "../multiWindow/appWindows.ts";
 import {
   NOTE_SPELLING_SAMPLE_CHANNEL,
   SPELLING_DICTIONARY_READY_CHANNEL,
@@ -45,10 +46,9 @@ export const noteSpellingSample = makeIpcMethod({
   payload: Schema.String.check(Schema.isMaxLength(4_000)),
   result: Schema.Literals(["added", "unchanged", "failed"]),
   handler: Effect.fn("scient.spelling.noteSample")(function* (sample, event) {
-    const windows = yield* ElectronWindow;
-    const main = yield* windows.main;
-    // Only the app's own window describes what the user is writing.
-    if (Option.isNone(main) || main.value.webContents.id !== event?.sender.id) return "unchanged";
+    // Only the app's own windows describe what the user is writing.
+    const sender = yield* appWindowForSender(yield* ElectronWindow, event?.sender.id);
+    if (Option.isNone(sender)) return "unchanged";
     // A failure is reported so that the window sends the same text again later.
     return yield* orLogged(
       "Could not enable a document's spelling language",

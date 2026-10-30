@@ -31,6 +31,10 @@ import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
+// SCIENT-FORK:START — several app windows share one desktop process.
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
+import { appWindowForSender } from "../../scient/multiWindow/appWindows.ts";
+// SCIENT-FORK:END
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
@@ -55,7 +59,9 @@ export const reloadMainWindow = DesktopIpc.makeIpcMethod({
   result: Schema.Boolean,
   handler: Effect.fn("desktop.ipc.window.reloadMainWindow")(function* (ignoreCache, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const main = yield* electronWindow.main;
+    // SCIENT-FORK:START — any app window may reload itself.
+    const main = yield* appWindowForSender(electronWindow, event?.sender.id);
+    // SCIENT-FORK:END
     if (
       Option.isNone(main) ||
       main.value.isDestroyed() ||
@@ -159,9 +165,14 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
 export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL,
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.getWindowFullscreenState")(function* () {
+  // SCIENT-FORK:START — each app window reports its own fullscreen state.
+  handler: Effect.fn("desktop.ipc.window.getWindowFullscreenState")(function* (event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.currentMainOrFirst;
+    const senderWindow = yield* appWindowForSender(electronWindow, event?.sender?.id);
+    const window = Option.isSome(senderWindow)
+      ? senderWindow
+      : yield* electronWindow.currentMainOrFirst;
+    // SCIENT-FORK:END
     return Option.isSome(window) && window.value.isFullScreen();
   }),
 });
@@ -354,10 +365,15 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,
   result: Schema.NullOr(Schema.String),
-  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input) {
+  // SCIENT-FORK:START — the menu opens over the app window that asked for it.
+  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input, event) {
     const electronMenu = yield* ElectronMenu.ElectronMenu;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.focusedMainOrFirst;
+    const senderWindow = yield* appWindowForSender(electronWindow, event?.sender.id);
+    const window = Option.isSome(senderWindow)
+      ? senderWindow
+      : yield* electronWindow.focusedMainOrFirst;
+    // SCIENT-FORK:END
     if (Option.isNone(window)) {
       return null;
     }
@@ -423,7 +439,9 @@ export const pasteAsText = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.pasteAsText")(function* (_input, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.main;
+    // SCIENT-FORK:START — any app window may paste into itself.
+    const window = yield* appWindowForSender(electronWindow, event?.sender.id);
+    // SCIENT-FORK:END
     if (
       event === undefined ||
       Option.isNone(window) ||
@@ -449,7 +467,9 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.revealWindow")(function* (_input, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.main;
+    // SCIENT-FORK:START — any app window may reveal itself.
+    const window = yield* appWindowForSender(electronWindow, event?.sender.id);
+    // SCIENT-FORK:END
     if (
       event === undefined ||
       Option.isNone(window) ||
@@ -460,6 +480,20 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
     yield* electronWindow.reveal(window.value);
   }),
 });
+
+// SCIENT-FORK:START — several app windows share one desktop process.
+export const openNewWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_NEW_WINDOW_CHANNEL,
+  payload: Schema.UndefinedOr(Schema.String),
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.openNewWindow")(function* (route, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    if (Option.isNone(yield* appWindowForSender(electronWindow, event?.sender.id))) return false;
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    return yield* desktopWindow.openNewWindow(route);
+  }),
+});
+// SCIENT-FORK:END
 
 const PICKED_THEME_FILE_MAX_BYTES = 256 * 1024;
 

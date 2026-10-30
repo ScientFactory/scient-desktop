@@ -2,6 +2,9 @@ import { Debouncer } from "@tanstack/react-pacer";
 import type { PullRequestMergeMethod } from "@t3tools/contracts";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
+// SCIENT-FORK:START — app windows share the persisted UI state.
+import { createUiStateWindowSync } from "./scient/multiWindow/uiStateSync";
+// SCIENT-FORK:END
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
@@ -247,7 +250,15 @@ export function persistState(state: UiState): void {
   } catch {}
 }
 
-const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
+// SCIENT-FORK:START — app windows share the persisted UI state; saves merge other windows' saves.
+const uiStateWindowSync = createUiStateWindowSync({
+  key: PERSISTED_STATE_KEY,
+  parse: parsePersistedState,
+  persist: persistState,
+  localOnlyProjectExpansionKeys: [LEGACY_PROJECT_EXPANSION_DEFAULT_KEY],
+});
+const debouncedPersistState = new Debouncer(uiStateWindowSync.persist, { wait: 500 });
+// SCIENT-FORK:END
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
   const visitedAtMs = Date.parse(visitedAt);
@@ -465,6 +476,9 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+// SCIENT-FORK:START — adopt what other app windows save.
+uiStateWindowSync.attach(useUiStateStore, typeof window === "undefined" ? undefined : window);
+// SCIENT-FORK:END
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {

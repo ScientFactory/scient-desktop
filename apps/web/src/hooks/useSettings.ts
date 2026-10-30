@@ -61,6 +61,9 @@ import {
 } from "~/state/session";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+// SCIENT-FORK:START — several desktop windows share the saved client settings.
+import { browserWindowLocks } from "~/scient/multiWindow/windowLocks";
+// SCIENT-FORK:END
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -75,6 +78,53 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+// SCIENT-FORK:START — several desktop windows share the saved client settings.
+const CLIENT_SETTINGS_WRITE_LOCK = "scient-client-settings-write";
+// Patches applied to this window's snapshot that are not yet saved, oldest first.
+const unsavedClientSettingsPatches = new Set<{ readonly patch: ClientSettingsPatch }>();
+let stopClientSettingsChangeListener: (() => void) | null = null;
+
+/** Whether other windows can save these settings, as in the multi-window desktop app. */
+function listenForClientSettingsChanges(): boolean {
+  if (stopClientSettingsChangeListener === null && typeof window !== "undefined") {
+    stopClientSettingsChangeListener =
+      window.desktopBridge?.onClientSettingsChanged?.(applySavedClientSettings) ?? null;
+  }
+  return stopClientSettingsChangeListener !== null;
+}
+
+/** Adopts settings another window saved, keeping this window's unsaved patches on top. */
+export function applySavedClientSettings(settings: ClientSettings): void {
+  if (clientSettingsHydrationStatus !== "ready") {
+    // They are what the pending read would return, or newer; that read is discarded.
+    clientSettingsHydrationGeneration += 1;
+    replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...settings });
+    setClientSettingsHydrationStatus("ready");
+    return;
+  }
+  const next: ClientSettings = { ...DEFAULT_CLIENT_SETTINGS, ...settings };
+  for (const { patch } of unsavedClientSettingsPatches) Object.assign(next, patch);
+  if (!Equal.equals(next, clientSettingsSnapshot)) replaceClientSettingsSnapshot(next);
+}
+
+/**
+ * Each write saves a whole snapshot, so desktop windows take turns and read the saved settings
+ * first; a stale snapshot would otherwise revert another window's change.
+ */
+function runClientSettingsWrite<A>(work: () => Promise<A>): Promise<A> {
+  const locks = listenForClientSettingsChanges() ? browserWindowLocks() : null;
+  if (locks === null) return work();
+  return locks.request(CLIENT_SETTINGS_WRITE_LOCK, async () => {
+    if (clientSettingsHydrationStatus === "ready") {
+      const saved = await ensureLocalApi()
+        .persistence.getClientSettings()
+        .catch(() => null);
+      if (saved) applySavedClientSettings(saved);
+    }
+    return work();
+  });
+}
+// SCIENT-FORK:END
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -130,6 +180,9 @@ export function subscribeClientSettingsHydration(listener: () => void): () => vo
 }
 
 async function hydrateClientSettings(): Promise<void> {
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  listenForClientSettingsChanges();
+  // SCIENT-FORK:END
   if (clientSettingsHydrationStatus === "ready") {
     return;
   }
@@ -179,7 +232,9 @@ const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<voi
   ensureLocalApi().persistence.setClientSettings(settings);
 
 function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A> {
-  const result = clientSettingsPersistenceQueue.then(work);
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  const result = clientSettingsPersistenceQueue.then(() => runClientSettingsWrite(work));
+  // SCIENT-FORK:END
   clientSettingsPersistenceQueue = result.then(
     () => undefined,
     () => undefined,
@@ -187,6 +242,7 @@ function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A>
   return result;
 }
 
+// SCIENT-FORK:START — settings another window saves meanwhile must keep unsaved patches.
 export function persistClientSettingsPatch(
   patch: ClientSettingsPatch,
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
@@ -194,23 +250,30 @@ export function persistClientSettingsPatch(
   // Patches queued before hydration must publish before newer optimistic patches.
   const deferPatch =
     clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
+  const unsaved = { patch };
   if (deferPatch) {
     deferredClientSettingsPatchCount += 1;
   } else {
     replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
+    unsavedClientSettingsPatches.add(unsaved);
   }
   return enqueueClientSettingsPersistence(async () => {
-    if (deferPatch) {
-      try {
-        if (clientSettingsHydrationStatus !== "ready") {
-          await hydrateClientSettings();
+    try {
+      if (deferPatch) {
+        try {
+          if (clientSettingsHydrationStatus !== "ready") {
+            await hydrateClientSettings();
+          }
+          replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
+          unsavedClientSettingsPatches.add(unsaved);
+        } finally {
+          deferredClientSettingsPatchCount -= 1;
         }
-        replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
-      } finally {
-        deferredClientSettingsPatchCount -= 1;
       }
+      await persist(getClientSettingsSnapshot());
+    } finally {
+      unsavedClientSettingsPatches.delete(unsaved);
     }
-    await persist(getClientSettingsSnapshot());
   }).catch((error) => {
     console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, {
       operation: "persist",
@@ -218,6 +281,7 @@ export function persistClientSettingsPatch(
     });
   });
 }
+// SCIENT-FORK:END
 
 /** Reapply to newer snapshots after pending writes to avoid losing concurrent changes. */
 export async function persistClientSettingsUpdate(
@@ -738,6 +802,11 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  unsavedClientSettingsPatches.clear();
+  stopClientSettingsChangeListener?.();
+  stopClientSettingsChangeListener = null;
+  // SCIENT-FORK:END
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }

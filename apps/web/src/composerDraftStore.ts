@@ -103,6 +103,9 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import { resolveAntigravityDraftSelection } from "./scient/providerConnection/antigravityDraftSelection";
+// SCIENT-FORK:START — app windows share this localStorage key; writes merge per draft entry.
+import { createComposerDraftCrossWindowSync } from "./scient/multiWindow/composerDraftSync";
+// SCIENT-FORK:END
 
 const isElementContextDetails = Schema.is(ElementContextDetails);
 import { ReviewCommentContextSchema, type ReviewCommentContext } from "./reviewCommentContext";
@@ -128,18 +131,28 @@ type ComposerPersistState =
   | { capturedState: ComposerDraftStoreState }
   | PersistedComposerDraftStoreState;
 
+// SCIENT-FORK:START — merge with other app windows' draft writes.
+const composerCrossWindowSync =
+  createComposerDraftCrossWindowSync<PersistedComposerDraftStoreState>({
+    storage: typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
+    key: COMPOSER_DRAFT_STORAGE_KEY,
+    version: COMPOSER_DRAFT_STORAGE_VERSION,
+  });
 const composerDebouncedStorage = createDeferredStorage<StorageValue<ComposerPersistState>>(
-  typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
+  composerCrossWindowSync.storage,
   (value) =>
     JSON.stringify({
       state:
         "capturedState" in value.state
-          ? partializeComposerDraftStoreState(value.state.capturedState)
+          ? composerCrossWindowSync.mergeForWrite(
+              partializeComposerDraftStoreState(value.state.capturedState),
+            )
           : value.state,
       version: value.version,
     }),
   COMPOSER_PERSIST_DEBOUNCE_MS,
 );
+// SCIENT-FORK:END
 
 const composerPersistStorage: PersistStorage<ComposerPersistState> = {
   getItem: (name) => {
@@ -4343,6 +4356,19 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 );
 
 export const useComposerDraftStore = composerDraftStore;
+
+// SCIENT-FORK:START — apply other app windows' draft writes.
+composerCrossWindowSync.attach({
+  store: composerDraftStore,
+  partialize: partializeComposerDraftStoreState,
+  hydrate: (persisted, current) =>
+    composerDraftStore.persist.getOptions().merge?.(persisted, current) ?? current,
+  eventTarget:
+    typeof window !== "undefined" && typeof window.addEventListener === "function"
+      ? window
+      : undefined,
+});
+// SCIENT-FORK:END
 
 /** Flush a deliberately staged composer draft before a cross-thread action. */
 export function flushComposerDraftPersistence(): void {

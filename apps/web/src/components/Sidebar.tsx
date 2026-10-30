@@ -265,6 +265,10 @@ import {
   useSidebarNewThreadRowActions,
 } from "../scient/sidebar/SidebarNewThreadRow";
 import { handleConversationExportMenuAction } from "../scient/conversationExport/menu";
+import {
+  handleOpenInNewWindowMenuAction,
+  openInNewWindowMenuItem,
+} from "../scient/multiWindow/openInNewWindow";
 // SCIENT-FORK:END
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -2756,6 +2760,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               snoozePresets,
               // SCIENT-FORK:START
               sectionMenu: sectionMenuFor([thread]),
+              openInNewWindow: openInNewWindowMenuItem(),
               // SCIENT-FORK:END
             }),
             position,
@@ -2768,6 +2773,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         // SCIENT-FORK:START
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
+        if (handleOpenInNewWindowMenuAction(clicked.value, threadRef)) return;
         // SCIENT-FORK:END
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {

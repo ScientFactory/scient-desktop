@@ -69,6 +69,9 @@ function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
   return Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected window creation"),
     main: Effect.die("unexpected main window read"),
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    appWindows: Effect.die("unexpected app window read"),
+    // SCIENT-FORK:END
     currentMainOrFirst: Effect.die("unexpected current window read"),
     focusedMainOrFirst: Effect.die("unexpected focused window read"),
     setMain: () => Effect.void,
@@ -103,6 +106,9 @@ function layerDesktopWindow(
     zoomMain: () => Effect.void,
     runMainContentsCommand: () => Effect.void,
     syncAppearance: Effect.void,
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    openNewWindow: () => Effect.die("unexpected window creation"),
+    // SCIENT-FORK:END
   });
 }
 

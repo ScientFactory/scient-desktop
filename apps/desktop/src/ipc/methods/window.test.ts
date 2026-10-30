@@ -247,7 +247,10 @@ describe("reloadMainWindow", () => {
       assert.equal(contents.listenerCount("will-prevent-unload"), 0);
     }).pipe(
       Effect.provide(
-        Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) }),
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          main: Effect.succeedSome(window),
+          appWindows: Effect.succeed([window]),
+        }),
       ),
     );
   });
@@ -379,7 +382,9 @@ describe("getWindowFullscreenState", () => {
 describe("revealWindow", () => {
   // regression: bb86c24139 fix(desktop): raise the window when a thread notification is clicked … (#12567)
   it.effect("reveals the main window only when it asks", () => {
-    const window = { webContents: { id: 42 } } as unknown as Electron.BrowserWindow;
+    const window = {
+      webContents: { id: 42, isDestroyed: () => false },
+    } as unknown as Electron.BrowserWindow;
     const reveal = vi.fn(() => Effect.void);
     return Effect.gen(function* () {
       yield* revealWindow.handler(undefined, { sender: { id: 99 } });
@@ -390,6 +395,7 @@ describe("revealWindow", () => {
       Effect.provide(
         Layer.mock(ElectronWindow.ElectronWindow)({
           main: Effect.succeedSome(window),
+          appWindows: Effect.succeed([window]),
           reveal,
         }),
       ),
@@ -407,7 +413,7 @@ describe("pasteAsText", () => {
       const paste = vi.fn();
       const mainPaste = vi.fn();
       const window = {
-        webContents: { id: 42, paste: mainPaste },
+        webContents: { id: 42, paste: mainPaste, isDestroyed: () => false },
         isDestroyed: () => false,
       } as unknown as Electron.BrowserWindow;
       focusedWebContents.mockReturnValue({ paste, isDestroyed: () => false });
@@ -437,6 +443,7 @@ describe("pasteAsText", () => {
         Effect.provide(
           Layer.mock(ElectronWindow.ElectronWindow)({
             main: Effect.succeedSome(window),
+            appWindows: Effect.succeed([window]),
           }),
         ),
       );

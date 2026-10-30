@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";
+import * as Electron from "electron";
 
 import * as ElectronApp from "../../electron/ElectronApp.ts";
 import * as DesktopWindow from "../../window/DesktopWindow.ts";
@@ -121,12 +122,22 @@ export async function startDevLaunchControlServer(input: {
   };
 }
 
-let rendererReady = false;
+const readyRendererIds = new Set<number | undefined>();
 
-/** Called beside DesktopAppActivation.setRendererReady for the main window. */
-export function noteDevLaunchRendererReady(ready: boolean): void {
-  rendererReady = ready;
+/** Called beside DesktopAppActivation.setRendererReady for each app window. */
+export function noteDevLaunchRendererReady(ready: boolean, senderId?: number): void {
+  if (ready) readyRendererIds.add(senderId);
+  else readyRendererIds.delete(senderId);
 }
+
+const isRendererReady = () => {
+  for (const id of readyRendererIds) {
+    const contents = id === undefined ? undefined : Electron.webContents.fromId(id);
+    if (id === undefined || (contents !== undefined && !contents.isDestroyed())) return true;
+    readyRendererIds.delete(id);
+  }
+  return false;
+};
 
 export const start = Effect.gen(function* () {
   const config = readDevLaunchControlConfig(process.env);
@@ -138,7 +149,7 @@ export const start = Effect.gen(function* () {
     Effect.tryPromise(() =>
       startDevLaunchControlServer({
         config,
-        isReady: () => rendererReady,
+        isReady: isRendererReady,
         activate: () => void runPromise(desktopWindow.activate.pipe(Effect.ignoreCause)),
         quit: () => void runPromise(electronApp.quit),
       }),

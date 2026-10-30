@@ -11,7 +11,7 @@ const native = vi.hoisted(() => ({
   listeners: new Map<string, () => void>(),
   getFocusedWindow: vi.fn(() => null as object | null),
   window: {
-    webContents: { id: 7, send: vi.fn() },
+    webContents: { id: 7, send: vi.fn(), isDestroyed: () => false },
     isDestroyed: vi.fn(() => false),
     setOverlayIcon: vi.fn(),
   },
@@ -108,6 +108,7 @@ const installed = (
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(ElectronWindow, {
         main: Effect.succeedSome(window),
+        appWindows: Effect.succeed([window]),
       } as unknown as ElectronWindow["Service"]),
       Effect.provide([
         ElectronApp.layer,

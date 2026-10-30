@@ -13,11 +13,13 @@ export const setReady = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL,
   payload: Schema.Boolean,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.appActivation.setReady")(function* (ready) {
+  // SCIENT-FORK:START — each app window reports its own readiness.
+  handler: Effect.fn("desktop.ipc.appActivation.setReady")(function* (ready, event) {
     const activation = yield* DesktopAppActivation.DesktopAppActivation;
-    yield* activation.setRendererReady(ready);
+    yield* activation.setRendererReady(ready, event?.sender.id);
+    // SCIENT-FORK:END
     // SCIENT-FORK:START — readiness for the standing dev app's controller.
-    noteDevLaunchRendererReady(ready);
+    noteDevLaunchRendererReady(ready, event?.sender.id);
     // SCIENT-FORK:END
   }),
 });

@@ -50,6 +50,10 @@ import { canTurnThreadIntoProject, useThreadActions } from "./useThreadActions";
 import type { SectionCreateAnchor } from "../scient/sections/NewSectionPopover";
 import { useThreadSectionMenu } from "../scient/sections/useThreadSectionMenu";
 import { handleConversationExportMenuAction } from "../scient/conversationExport/menu";
+import {
+  handleOpenInNewWindowMenuAction,
+  openInNewWindowMenuItem,
+} from "../scient/multiWindow/openInNewWindow";
 // SCIENT-FORK:END
 
 function failureToast(title: string, error: unknown) {
@@ -167,11 +171,15 @@ export function useThreadActionMenu(input: {
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         // SCIENT-FORK:START
         sectionMenu: sectionMenuFor([thread]),
+        openInNewWindow: openInNewWindowMenuItem(),
         // SCIENT-FORK:END
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
       const action: ThreadActionMenuId = clicked.value;
+      // SCIENT-FORK:START
+      if (handleOpenInNewWindowMenuAction(action, threadRef)) return;
+      // SCIENT-FORK:END
       if (
         threadActionRequiresOperate(action) &&
         !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
