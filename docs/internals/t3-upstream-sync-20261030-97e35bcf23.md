@@ -42,6 +42,10 @@ Branch `codex/t3-sync-97e35bcf23-20261030`; the `upstream` push URL remains
   messages stay held. Scient's fence treats that release as a real one, because it is the
   only release without a command. Scient adds one rule: a message that was queued before a
   Stop stays held until Send or Resume, because a Stop should not undo itself.
+- **Stop state on drafts.** Upstream's run-stop read subscribes to the active thread, which
+  for a draft is a reserved id the server does not know. The 404 marks that id deleted, and
+  Scient's route check would then bounce the new thread home on its first send, so the read
+  waits for the shell to list the thread (`useActiveRunStop`).
 - **Stop (#27252, #27141, #27222).** Stop always completes and an agent that ignores it
   can be force-stopped. Scient keeps provider-work admission, held-queue Stop, its
   outcome shapes and the held-Droid-input interrupt; upstream's unresponsive outcome
@@ -92,6 +96,15 @@ Tests:
   5,812 pass; the three that fail need a local SyncTeX helper, hit the known macOS pipe
   truncation in `NativeFilePublication.test.ts`, or read this session's Claude settings,
   and fail the same way on main.
+
+Stress: three rounds under full CPU load pass 1,109 server, 286 web unit and 98 browser tests
+across queue, Stop, restart, session, settings and timeline suites. Removing the Stop rule, the
+fence change or the draft gate fails a test.
+
+Live, in a dev app with Claude Haiku on isolated state: new threads open (the run found the
+draft bug above), Stop ends a running command in 1.3 to 2.7 s, a queued message stays held
+after Stop, Resume reruns the stopped work and then answers the queued message, and an
+image-only message shows the image.
 
 Exact-head hosted CI qualifies the repository-wide test aggregate; owner visual
 acceptance and release remain separate steps.
