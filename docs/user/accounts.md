@@ -47,8 +47,10 @@ Scient tells the agent to use `scient_account_find_profile` with the URL.
 Saved sign-ins fill automatically as a login form appears, in every tab, yours or an agent's,
 without submitting or replacing what you typed. Exact-site matches come first, then your most
 recently used sign-in. Use the small toolbar chip to choose another, or the key button to fill
-again. Incognito never autofills. An agent can't act on a tab filled with a sign-in it may not use
-until that page changes.
+again. Incognito never autofills. A tab an agent controls gets only sign-ins that agent may use, and
+an agent can't act on your tab filled with a sign-in it may not use until that page changes.
+Turning an account Off stops agents using its password; a profile you allow still lets agents use
+the sites that profile is signed in to.
 
 After you submit a login form, Scient offers to save a new sign-in or update a changed password.
 An unchanged password produces no prompt. Capture requires a `<form>` element.

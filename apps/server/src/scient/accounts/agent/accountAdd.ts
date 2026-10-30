@@ -20,17 +20,22 @@ const MAX_VALUE = 65_536;
 const fail = (message: string) => new AccountsError({ reason: "unavailable", message });
 const host = (site: string) => site.replace(/^https:\/\//, "").replace(/:\d+$/, "");
 
-/** An API key the agent may already use or the user turned off, so a card is never a duplicate. */
-const existingKey = (accounts: ReadonlyArray<AccountSummary>, input: Input) =>
-  accounts.find((account) => {
-    if (account.details.kind !== "api-key") return false;
-    const details = account.details;
-    return (
-      account.name.toLowerCase() === input.name.toLowerCase() ||
-      (input.envName !== undefined && details.envName === input.envName) ||
-      (input.sites ?? []).some((site) => details.sites.some((own) => host(own) === host(site)))
-    );
-  });
+/**
+ * An API key the agent may already use or the user turned off, so a card is never a duplicate.
+ * The same name wins over the same variable, then over a shared site.
+ */
+const existingKey = (accounts: ReadonlyArray<AccountSummary>, input: Input) => {
+  const keys = accounts.flatMap((account) =>
+    account.details.kind === "api-key" ? [{ account, details: account.details }] : [],
+  );
+  return (
+    keys.find(({ account }) => account.name.toLowerCase() === input.name.toLowerCase()) ??
+    keys.find(({ details }) => input.envName !== undefined && details.envName === input.envName) ??
+    keys.find(({ details }) =>
+      (input.sites ?? []).some((site) => details.sites.some((own) => host(own) === host(site))),
+    )
+  )?.account;
+};
 
 /**
  * Asks for a key in upstream's private secret card and keeps the answer as an API-key account.
@@ -88,6 +93,13 @@ export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
   if (!("secretRef" in asked)) return yield* fail("The key could not be read.");
 
   const notKept = "The key was not kept. Ask the user to enter it again.";
+  // Access may have changed while the card waited.
+  const current = yield* accounts.forSession(scope);
+  const target = replacing
+    ? current.accounts.find((account) => account.accountId === replacing.accountId)
+    : undefined;
+  if (!current.agentAccess || (replacing && (!target || target.controls.access === "off")))
+    return yield* fail(`${notKept} Its access changed in Settings → Accounts meanwhile.`);
   const value = (yield* (yield* SecretRequests)
     .consume({ ref: asked.secretRef, projectId: scope.projectId })
     .pipe(Effect.mapError(() => fail(notKept)))).trim();

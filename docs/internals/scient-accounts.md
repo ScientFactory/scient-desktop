@@ -24,11 +24,17 @@ controls:
   them.
 - **Visibility**: `hidden` or `readable`. A readable value may be written to a per-session file for
   the agent's own scripts. Websites and libraries start hidden; API keys, databases and
-  command-line logins start readable because agents run them in scripts.
+  command-line logins start readable because agents run them in scripts. Hidden means the value
+  is never exported; a sign-in on a page an agent controls still puts the password into that page,
+  where the agent's scripts can read it. That is why agent tabs autofill only sign-ins the agent
+  may use.
 - **Scope**: `GrantScope`, shared with Extensions. A session gets all-projects grants plus those
   listing its project, checked again on every use. Subagents, forks and scheduled runs in the
   project get the same grants.
 
+Account controls govern stored credentials; profile controls govern the sessions in a browser
+profile. A website account turned Off stops agents using its password, but an Allowed profile still
+opens pages where that profile is already signed in, and its script sign-ins export those cookies.
 The global agent-access switch turns every account and profile off for agents without changing
 their settings. Grants and controls come only from the user's client, never from an agent or a
 project file.
@@ -382,8 +388,9 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 - **Autofill**: the persistent desktop guest reports a visible login form after load. One watcher
   per environment (`accountAutofill.ts`, mounted with the account notifications) fills every
   desktop tab, shown or hidden, the user's or an agent's, once per document, without submitting,
-  only when fields remain empty and nobody typed. Agent access does not gate it (owner,
-  2026-10-30). Exact-origin accounts rank before bare-domain matches, then most recently used.
+  only when fields remain empty and nobody typed. In the user's tabs agent access does not gate it
+  (owner, 2026-10-30); in a tab an agent controls (`automationOwner`) only sign-ins that agent may
+  use fill, since its scripts can read the page. Exact-origin accounts rank before bare-domain matches, then most recently used.
   `fillValues` records the filled page per thread and tab in memory; `authorizePreviewTab`
   refuses agent actions on that page while it is unchanged and the session may not use the
   account, so a filled password is never readable by such an agent. Incognito never

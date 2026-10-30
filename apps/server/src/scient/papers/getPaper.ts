@@ -107,7 +107,9 @@ export const getPaper = Effect.fn("Papers.get")(function* (input: {
           (item) => item.details.kind === "library" && item.controls.access !== "off",
         )
       : undefined;
-  let note: { status: "needs-sign-in" | "no-access" | "limit"; message: string } | undefined;
+  let note:
+    | { status: "needs-sign-in" | "no-access" | "limit"; message: string; openUrl?: string }
+    | undefined;
   if (account) {
     const day = DateTime.formatIsoDate(yield* DateTime.now);
     const used = fetchesByDay.get(day) ?? 0;
@@ -133,7 +135,7 @@ export const getPaper = Effect.fn("Papers.get")(function* (input: {
         }).pipe(library.withPermits(1)),
       );
       if (result?.status === "saved") return yield* saved(result.bytes, "library", true);
-      if (result) note = { status: result.status, message: result.message };
+      if (result) note = result;
     }
   }
   const other = yield* firstPdf(paper.openAccess.filter((copy) => !copy.published));
@@ -145,6 +147,6 @@ export const getPaper = Effect.fn("Papers.get")(function* (input: {
         ? "No free copy, and the library did not reach the PDF."
         : "No free copy. Add the user's library in Settings ▸ Accounts to get it through their institution.",
     }),
-    landingUrl: paper.landingUrl,
+    landingUrl: note?.openUrl ?? paper.landingUrl,
   };
 }, Effect.provide(FetchHttpClient.layer));

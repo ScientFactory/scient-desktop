@@ -237,7 +237,8 @@ export const accountCatalogue = [
   {
     name: "HUJI library",
     kind: "library",
-    site: "openathens.net",
+    // OpenAthens hands HUJI sign-ins to the university's own page, idp.cc.huji.ac.il.
+    site: "huji.ac.il",
     proxyUrl: "https://go.openathens.net/redirector/huji.ac.il?url={url}",
   },
   { name: "HUJI", kind: "website", site: "huji.ac.il" },

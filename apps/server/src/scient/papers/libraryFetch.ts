@@ -60,7 +60,11 @@ const downloadScript = `(async () => {
 
 export type LibraryResult =
   | { readonly status: "saved"; readonly bytes: Uint8Array }
-  | { readonly status: "needs-sign-in" | "no-access"; readonly message: string };
+  | {
+      readonly status: "needs-sign-in" | "no-access";
+      readonly message: string;
+      readonly openUrl?: string;
+    };
 
 /**
  * Opens the article through the library's link in the library's browser profile, signs in with
@@ -132,11 +136,15 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
       const page = decodePage(yield* invoke<unknown>("evaluate", { expression: pageScript }, tab));
       if (page._tag === "None") break;
       const { url, pdf, pdfUrl, login } = page.value;
-      if (login) {
-        if (signedIn || !matchesAccountOrigin(url, details.sites))
+      const libraryPage = matchesAccountOrigin(url, details.sites);
+      // A sign-in page without a password field (a code sent to the phone, a CAPTCHA) is the
+      // user's to complete; Scient never starts one.
+      if ((libraryPage && !pdfUrl) || login) {
+        if (signedIn || !login || !libraryPage)
           return {
             status: "needs-sign-in" as const,
-            message: `Sign in on ${new URL(url).hostname} in this profile, then ask again.`,
+            message: `The library asks to sign in on ${new URL(url).hostname}. Open the link in the same browser profile for the user to sign in once, then ask again.`,
+            openUrl: open.url,
           };
         const values = yield* accounts.resolveSecrets(library.accountId, ["password", "totp"]);
         const result = yield* signIn(session, library, values, tab);
