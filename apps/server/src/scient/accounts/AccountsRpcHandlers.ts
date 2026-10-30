@@ -7,6 +7,7 @@ import {
 import { Clock, Effect, Option, Stream } from "effect";
 import { websiteSessionStatus } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
+import { messagesReadable } from "./signIn/messageCodes.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
@@ -79,6 +80,18 @@ export const makeAccountsRpcHandlers = ({
             outcome: "ok",
           })
           .pipe(Effect.as({})),
+        attributes,
+      ),
+    [WS_METHODS.accountsSetCodeSources]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSetCodeSources,
+        accounts.setCodeSources(input).pipe(
+          Effect.andThen(
+            Effect.sync(() => ({
+              messagesNeedAccess: input.messages && !messagesReadable(),
+            })),
+          ),
+        ),
         attributes,
       ),
     [WS_METHODS.accountsSetControls]: (input) =>
@@ -213,6 +226,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         remove: unavailable,
         test: unavailable,
         recordCheck: unavailable,
+        setCodeSources: unavailable,
         setControls: unavailable,
         setAgentAccess: unavailable,
         updateProfile: unavailable,

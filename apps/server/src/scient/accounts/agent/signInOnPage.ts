@@ -9,6 +9,7 @@ import { AccountsService, type AccountSessionScope } from "../AccountsService.ts
 import { signIn } from "../signIn/engine.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
 import { withAccountUse } from "./accountUse.ts";
+import { signInCodes } from "./signInCodes.ts";
 
 const isAccountsError = Schema.is(AccountsError);
 
@@ -61,7 +62,7 @@ export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
     "sign-in",
     Effect.gen(function* () {
       const values = yield* accounts.resolveSecrets(allowed.accountId, ["password", "totp"]);
-      return yield* signIn(scope, allowed, values, input.tabId);
+      return yield* signIn(scope, allowed, values, input.tabId, yield* signInCodes(scope, allowed));
     }).pipe(
       Effect.catch((error) =>
         Effect.succeed({

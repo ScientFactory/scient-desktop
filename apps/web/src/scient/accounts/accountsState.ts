@@ -77,6 +77,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsSignInSeen,
     ...lane,
   }),
+  setCodeSources: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:setCodeSources",
+    tag: WS_METHODS.accountsSetCodeSources,
+    ...lane,
+  }),
   setControls: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:setControls",
     tag: WS_METHODS.accountsSetControls,

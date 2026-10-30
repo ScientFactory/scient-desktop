@@ -484,12 +484,25 @@ export const BrowserProfileChoiceInput = Schema.Union([
 ]);
 export type BrowserProfileChoiceInput = typeof BrowserProfileChoiceInput.Type;
 
+/** Where Scient may look for a sign-in code. Both are off until the user turns them on. */
+export const AccountCodeSources = Schema.Struct({
+  messages: Schema.Boolean,
+  mail: Schema.Boolean,
+});
+export type AccountCodeSources = typeof AccountCodeSources.Type;
+
+export const AccountCodeSourcesResult = Schema.Struct({
+  /** macOS refused to open Messages; Scient needs Full Disk Access. */
+  messagesNeedAccess: Schema.Boolean,
+});
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
   accounts: Schema.Array(AccountSummary),
   profiles: Schema.Array(BrowserProfileRecord),
   profileChoices: Schema.optional(BrowserProfileChoices),
+  codeSources: Schema.optional(AccountCodeSources),
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
   handoffs: Schema.optional(Schema.Array(AccountHandoff)),

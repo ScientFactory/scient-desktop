@@ -120,6 +120,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.accountsTest]: AuthSettingsWriteScope,
   [WS_METHODS.accountsCheck]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSignInSeen]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSetCodeSources]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileUpdate]: AuthSettingsWriteScope,

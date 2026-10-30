@@ -86,6 +86,7 @@ export function fakeAccounts(
     updateProfile: () => unavailable,
     removeProfile: () => unavailable,
     chooseProfile: () => unavailable,
+    setCodeSources: () => unavailable,
     respondApproval: () => unavailable,
     activity: () => Effect.succeed([]),
     keychainCandidates: () => unavailable,

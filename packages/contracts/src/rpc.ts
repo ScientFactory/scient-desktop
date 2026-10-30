@@ -511,6 +511,7 @@ import {
   WsAccountsTestRpc,
   WsAccountsCheckRpc,
   WsAccountsSignInSeenRpc,
+  WsAccountsSetCodeSourcesRpc,
 } from "./scient/accountRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
@@ -2581,6 +2582,7 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsTestRpc,
   WsAccountsCheckRpc,
   WsAccountsSignInSeenRpc,
+  WsAccountsSetCodeSourcesRpc,
 );
 // SCIENT-FORK:END
 

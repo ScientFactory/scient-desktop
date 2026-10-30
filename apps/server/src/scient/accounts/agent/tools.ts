@@ -102,6 +102,12 @@ const credentials = metadata(
 const signIn = metadata(
   Tool.make("scient_account_sign_in", {
     ...common,
+    dependencies: [
+      ...common.dependencies,
+      McpInvocationContext,
+      OrchestratorMcpService,
+      SecretRequests,
+    ],
     description:
       "Sign in with a website or library account on your browser tab, with stored two-factor codes. Returns signed-in, password-rejected or code-rejected (never retried), needs-user, or failed. Waits up to 3 minutes while the user does a CAPTCHA, passkey or approval in the browser.",
     parameters: Schema.Struct({ accountId: AccountId, tabId: Schema.optional(PreviewTabId) }),

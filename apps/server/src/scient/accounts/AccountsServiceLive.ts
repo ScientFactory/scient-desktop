@@ -178,6 +178,7 @@ export const layer = Layer.effect(
         accounts: state.accounts.map((account) => account.summary),
         profiles: state.profiles,
         ...(state.profileChoices ? { profileChoices: state.profileChoices } : {}),
+        ...(state.codeSources ? { codeSources: state.codeSources } : {}),
         stores: {
           scient: { protection },
           keychain: { available: protection === "keychain", platform: sources.platform },
@@ -849,6 +850,9 @@ export const layer = Layer.effect(
             }),
           ),
         ),
+      ),
+      setCodeSources: Effect.fn("AccountsService.setCodeSources")((codeSources) =>
+        locked(commit({ ...state, codeSources }, true)),
       ),
       chooseProfile: Effect.fn("AccountsService.chooseProfile")((input) =>
         locked(

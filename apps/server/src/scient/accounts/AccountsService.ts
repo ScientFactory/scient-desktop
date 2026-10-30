@@ -5,6 +5,7 @@
  */
 import type {
   AccountCheck,
+  AccountCodeSources,
   BrowserProfileChoiceInput,
   BrowserProfileChoices,
   AccountHandoff,
@@ -108,6 +109,7 @@ export interface AccountsServiceShape {
   readonly removeProfile: (profileId: BrowserProfileId) => Effect.Effect<void, AccountsError>;
   /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
   readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;
+  readonly setCodeSources: (sources: AccountCodeSources) => Effect.Effect<void, AccountsError>;
   readonly respondApproval: (
     approvalId: string,
     decision: AccountApprovalDecision,

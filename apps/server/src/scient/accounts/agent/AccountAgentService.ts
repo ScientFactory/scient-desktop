@@ -26,6 +26,7 @@ import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
 import { getPaper } from "../../papers/getPaper.ts";
+import { signInCodes } from "./signInCodes.ts";
 
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const encodeCookies = Schema.encodeEffect(Schema.fromJsonString(AccountCookies));
@@ -151,7 +152,7 @@ export const accountAgentOperations = {
         const accounts = yield* AccountsService;
         const account = yield* getAccount(scope, accountId);
         const values = yield* accounts.resolveSecrets(accountId, ["password", "totp"]);
-        return yield* signIn(scope, account, values, tabId);
+        return yield* signIn(scope, account, values, tabId, yield* signInCodes(scope, account));
       }).pipe(
         Effect.catch((error) =>
           Effect.succeed({

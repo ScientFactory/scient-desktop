@@ -28,8 +28,14 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   account: AccountSummary,
   secrets: Readonly<Record<string, Redacted.Redacted<string>>>,
   tabId?: PreviewTabId,
-  /** The user's own check: their profile's agent access doesn't apply. */
-  options: { readonly userRun?: boolean } = {},
+  options: {
+    /** The user's own check: their profile's agent access doesn't apply. */
+    readonly userRun?: boolean;
+    /** Waits for a code the user types into a private card, on any of their devices. */
+    readonly askCode?: (site: string) => Effect.Effect<string, never, never>;
+    /** Looks once for a code in the sources the user turned on. */
+    readonly findCode?: (sinceMs: number) => Effect.Effect<string | undefined, never, never>;
+  } = {},
 ) {
   if (account.details.kind !== "website" && account.details.kind !== "library")
     return yield* new AccountsError({
@@ -172,6 +178,29 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           return { outcome: "needs-user" as const, message: action.message, tabId: target };
         const handoffId = NodeCrypto.randomUUID();
         const startedAt = timestamp;
+        const enterCode = Effect.fn("accounts.signIn.enterCode")(function* (code: string) {
+          const field = yield* inspect(step);
+          if (!field.page.otp) return "continue" as const;
+          yield* invoke(
+            "accountType",
+            { origin: field.page.origin, selector: field.page.otp, text: code, clear: true },
+            target,
+          );
+          submissions.push({
+            origin: field.page.origin,
+            fields: ["otp"],
+            otpPeriod: undefined,
+          });
+          if (field.page.submit) yield* invoke("click", { selector: field.page.submit }, target);
+          else yield* invoke("press", { key: "Enter" }, target);
+          yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
+          ({ page, timestamp, otpPeriod, continuation } = yield* inspect(step));
+          return "continue" as const;
+        });
+        const answered =
+          action.kind === "code" && options.askCode
+            ? options.askCode(new URL(page.origin).host).pipe(Effect.flatMap(enterCode))
+            : Effect.never;
         const wait = Effect.gen(function* () {
           let published = "";
           const update = Effect.fn("accounts.signIn.updateHandoff")(function* () {
@@ -223,10 +252,17 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
               return "continue" as const;
             if (timestamp - startedAt >= 180_000) break;
             yield* update();
+            const found =
+              action.kind === "code" && options.findCode
+                ? yield* options.findCode(startedAt)
+                : undefined;
+            if (found !== undefined) return yield* enterCode(found);
           }
           return "timeout" as const;
-        }).pipe(Effect.ensuring(accounts.removeHandoff(handoffId)));
-        const result = yield* wait;
+        });
+        const result = yield* Effect.raceFirst(wait, answered).pipe(
+          Effect.ensuring(accounts.removeHandoff(handoffId)),
+        );
         if (result !== "continue")
           return {
             outcome: "needs-user" as const,
@@ -242,10 +278,10 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           otp: totp !== undefined,
         });
         if (action.type === "signed-in") return { outcome: "signed-in" as const, tabId: target };
-        if (action.type === "needs-user")
-          return { outcome: "needs-user" as const, message: action.message, tabId: target };
         if (continuation.type !== "continue")
           return { outcome: continuation.type, message: continuation.message, tabId: target };
+        if (action.type === "needs-user")
+          return { outcome: "needs-user" as const, message: action.message, tabId: target };
       }
       clearFilled = true;
       filled = [];

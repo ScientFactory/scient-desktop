@@ -4,6 +4,7 @@ import {
   ThreadId,
   resolveBrowserProfiles,
   type AccountActivityEntry,
+  type AccountCodeSources,
   type AccountSummary,
   type AccountsSnapshot,
   type ConnectorSummary,
@@ -11,7 +12,14 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ChevronRightIcon, GlobeIcon, KeyRoundIcon, LinkIcon, PlusIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  GlobeIcon,
+  KeyRoundIcon,
+  LinkIcon,
+  MessageSquareIcon,
+  PlusIcon,
+} from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import {
@@ -34,6 +42,7 @@ import { Switch } from "~/components/ui/switch";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useClientSettings } from "~/hooks/useSettings";
+import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { ExtensionIcon } from "~/scient/extensions/ExtensionRow";
 import { extensionsInventory } from "~/scient/extensions/extensionsState";
@@ -522,6 +531,77 @@ function ListDialog({
   );
 }
 
+const FULL_DISK_ACCESS_URL =
+  "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles";
+
+/** Where Scient may find sign-in codes. Off until the user turns a source on. */
+function SignInCodesDialog({
+  sources,
+  environmentId,
+  canWrite,
+  onClose,
+}: {
+  sources: AccountCodeSources;
+  environmentId: EnvironmentId;
+  canWrite: boolean;
+  onClose: () => void;
+}) {
+  const set = useAccountCommand(accountsState.setCodeSources, environmentId);
+  const [needsAccess, setNeedsAccess] = useState(false);
+  const change = async (next: AccountCodeSources) => {
+    const result = await set(next);
+    if (result.ok) setNeedsAccess(result.value.messagesNeedAccess);
+  };
+  return (
+    <ListDialog title="Sign-in codes" onClose={onClose}>
+      {isMacPlatform(navigator.platform) ? (
+        <SettingsRow
+          title="Codes from Messages"
+          description="Texts forwarded to this Mac. Needs Full Disk Access, which also lets Scient read your other files."
+          control={
+            <Switch
+              aria-label="Codes from Messages"
+              checked={sources.messages}
+              disabled={!canWrite}
+              onCheckedChange={(messages) => void change({ ...sources, messages })}
+            />
+          }
+        />
+      ) : null}
+      {needsAccess ? (
+        <SettingsRow
+          title="macOS hasn't given Scient access"
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() =>
+                void readLocalApi()
+                  ?.shell.openExternal(FULL_DISK_ACCESS_URL)
+                  .catch(() => undefined)
+              }
+            >
+              Open Full Disk Access
+            </Button>
+          }
+        />
+      ) : null}
+      <SettingsRow
+        title="Codes from Gmail"
+        description="Unread mail in the browser profile you sign in with. Nothing new to connect."
+        control={
+          <Switch
+            aria-label="Codes from Gmail"
+            checked={sources.mail}
+            disabled={!canWrite}
+            onCheckedChange={(mail) => void change({ ...sources, mail })}
+          />
+        }
+      />
+    </ListDialog>
+  );
+}
+
 function AccountsContent({
   environmentId,
   snapshot,
@@ -532,7 +612,14 @@ function AccountsContent({
   canWrite: boolean;
 }) {
   const [dialog, setDialog] = useState<
-    "add" | "import" | "1password" | "passwords" | "browser-sign-ins" | "other-sign-ins" | null
+    | "add"
+    | "import"
+    | "1password"
+    | "passwords"
+    | "browser-sign-ins"
+    | "other-sign-ins"
+    | "sign-in-codes"
+    | null
   >(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [signIns, setSignIns] = useState<ReadonlyArray<AccountSummary> | null>(null);
@@ -683,6 +770,16 @@ function AccountsContent({
             onOpen={() => setDialog("browser-sign-ins")}
           />
         ) : null}
+        <ListRow
+          icon={<MessageSquareIcon />}
+          title="Sign-in codes"
+          detail={
+            [snapshot.codeSources?.messages && "Messages", snapshot.codeSources?.mail && "Gmail"]
+              .filter(Boolean)
+              .join(", ") || "You type them in"
+          }
+          onOpen={() => setDialog("sign-in-codes")}
+        />
         {managedRows.length ? (
           <ListRow
             icon={<LinkIcon />}
@@ -762,6 +859,14 @@ function AccountsContent({
             ),
           )}
         </ListDialog>
+      ) : null}
+      {dialog === "sign-in-codes" ? (
+        <SignInCodesDialog
+          sources={snapshot.codeSources ?? { messages: false, mail: false }}
+          environmentId={environmentId}
+          canWrite={canWrite}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {dialog === "other-sign-ins" ? (
         <ListDialog title="Other sign-ins" onClose={() => setDialog(null)}>
