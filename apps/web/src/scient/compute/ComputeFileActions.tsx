@@ -448,7 +448,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       setRefreshing(true);
       const result = await refreshRuntimes({
         environmentId: props.environmentId,
-        input: { cwd: props.cwd, refresh: true },
+        input: { cwd: props.cwd, refresh: true, languageIds: [props.language.languageId] },
       });
       setRefreshing(false);
       if (result._tag !== "Success") {
