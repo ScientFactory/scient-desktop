@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { emptyNotebookCell, notebookCodeHash, type NotebookCell } from "./notebookDocument";
-import { definedNames, staleNotebookCells } from "./notebookStaleness";
+import type { NotebookCellView } from "@t3tools/contracts";
 
-const ran = (id: string, source: string, at: string, ranSource = source): NotebookCell => ({
-  ...emptyNotebookCell("code"),
+import { definedNames, notebookCodeHash, staleNotebookCells } from "./notebookStaleness";
+
+const emptyCell: NotebookCellView = {
+  id: "",
+  cellType: "code",
+  source: "",
+  executionCount: null,
+  run: null,
+  pendingExecution: null,
+  outputs: [],
+};
+
+const ran = (id: string, source: string, at: string, ranSource = source): NotebookCellView => ({
+  ...emptyCell,
   id,
   source,
   run: { execution: `run-${id}`, code: notebookCodeHash(ranSource), at, ms: 10 },
@@ -57,7 +68,7 @@ describe("staleNotebookCells", () => {
   });
 
   it("ignores cells Scient has no run record for", () => {
-    const foreign: NotebookCell = { ...emptyNotebookCell("code"), id: "1", source: "a = 1" };
+    const foreign: NotebookCellView = { ...emptyCell, id: "1", source: "a = 1" };
     expect(staleNotebookCells([foreign, ran("2", "a", "2026-10-30T10:00:00Z")]).size).toBe(0);
   });
 });

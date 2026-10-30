@@ -839,6 +839,7 @@ export function makeComputeBridgeTransport(
             }
             const payload = message.payload as {
               outcome: "succeeded" | "failed" | "cancelled";
+              executionCount?: number | null;
             };
             yield* emit({
               _tag: "completed",
@@ -847,6 +848,9 @@ export function makeComputeBridgeTransport(
               requestId: message.requestId!,
               generation: message.generation,
               outcome: payload.outcome,
+              ...(typeof payload.executionCount === "number"
+                ? { executionCount: payload.executionCount }
+                : {}),
             });
             MutableRef.set(activeRequestId, null);
             break;

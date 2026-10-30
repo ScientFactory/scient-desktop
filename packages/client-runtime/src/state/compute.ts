@@ -541,9 +541,25 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.computeSaveOutput,
       scheduler: executionScheduler,
     }),
-    notebookOutputs: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:compute:notebook-outputs",
-      tag: WS_METHODS.computeNotebookOutputs,
+    notebookRead: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:read",
+      tag: WS_METHODS.notebookRead,
+    }),
+    notebookReadOutput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:read-output",
+      tag: WS_METHODS.notebookReadOutput,
+    }),
+    notebookEdit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:edit",
+      tag: WS_METHODS.notebookEdit,
+    }),
+    notebookRecordRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:record-run",
+      tag: WS_METHODS.notebookRecordRun,
+    }),
+    submitCells: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:submit-cells",
+      tag: WS_METHODS.computeSubmitCells,
       scheduler: executionScheduler,
     }),
     submitExecution: createEnvironmentRpcCommand(runtime, {

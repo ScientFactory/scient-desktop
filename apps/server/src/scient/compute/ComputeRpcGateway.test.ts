@@ -155,6 +155,7 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
         truncated: false,
       }),
     readTable: () => Effect.die(new Error("unused readTable")),
+    submitExecutions: () => Effect.die("not used"),
     submitExecution: () => Effect.die(new Error("unused submitExecution")),
     cancelExecution: () => Effect.die(new Error("unused cancelExecution")),
     interruptSession: () => Effect.die(new Error("unused interruptSession")),
@@ -529,7 +530,7 @@ describe("compute RPC gateway", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("rejects an ordinary folder before any compute operation runs", () =>
+  it.effect("runs an ordinary folder under its workspace binding", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-compute-ordinary-" });
@@ -545,9 +546,8 @@ describe("compute RPC gateway", () => {
         serverSettings: { getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS) },
         workspaceFileSystem: workspace(),
       });
-      const error = yield* Effect.flip(gateway.listSessions({ cwd: root }));
-      expect(error.reason).toBe("project-not-initialized");
-      expect(listCalls).toBe(0);
+      expect(yield* gateway.listSessions({ cwd: root })).toEqual([]);
+      expect(listCalls).toBe(1);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 

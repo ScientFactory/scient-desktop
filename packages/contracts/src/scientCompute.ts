@@ -187,6 +187,20 @@ export const ComputeStartProjectSessionInput = Schema.Struct({
 });
 export type ComputeStartProjectSessionInput = typeof ComputeStartProjectSessionInput.Type;
 
+const ComputeCellText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096));
+
+/** A notebook's cells, queued together so a failure stops every later cell. */
+export const ComputeSubmitProjectCellsInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  expectedGeneration: ComputeSessionGeneration,
+  path: ComputeCellText,
+  cells: Schema.Array(
+    Schema.Struct({ cellId: ComputeCellText, executionId: ComputeExecutionId, code: ComputeCode }),
+  ).check(Schema.isMaxLength(512)),
+});
+export type ComputeSubmitProjectCellsInput = typeof ComputeSubmitProjectCellsInput.Type;
+
 export const ComputeProjectInput = Schema.Struct({ cwd: ComputeCwd });
 export type ComputeProjectInput = typeof ComputeProjectInput.Type;
 

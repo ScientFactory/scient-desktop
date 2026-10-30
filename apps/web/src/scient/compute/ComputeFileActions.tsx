@@ -97,7 +97,7 @@ export interface ComputeFileActionsHandle {
   readonly runFile: () => void;
   readonly runPrimary: (selection?: ComputeTextRange | null) => void;
   readonly runCellAtLine: (line: number) => void;
-  /** Queues notebook cells in order, each recorded against its cell; settles once submitted. */
+  /** Queues notebook cells in order, each recorded against its cell. */
   readonly runCells: (cells: ReadonlyArray<ComputeNotebookCell>) => Promise<void>;
 }
 
@@ -134,6 +134,10 @@ interface ComputeFileActionsProps {
   readonly runMenu?: ReactNode;
   /** Controls placed just before the Run button. */
   readonly leadingActions?: ReactNode;
+  /** Runs submitted for notebook cells, by cell. */
+  readonly onCellsSubmitted?: (
+    runs: ReadonlyArray<{ readonly cellId: string; readonly execution: string }>,
+  ) => void;
 }
 
 function reportFailure(
@@ -218,6 +222,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const submitExecution = useAtomCommand(computeEnvironment.submitExecution, {
       reportFailure: false,
     });
+    const submitCells = useAtomCommand(computeEnvironment.submitCells, { reportFailure: false });
     const refreshRuntimes = useAtomCommand(computeEnvironment.refreshRuntimes, {
       reportFailure: false,
     });
@@ -712,38 +717,62 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         return;
       }
 
-      for (const part of slice.cells ?? [{ id: undefined, code: slice.code }]) {
-        const executionId = ComputeExecutionId.make(randomUUID());
-        const submitted = await submitExecution({
+      const report = (failure: Parameters<typeof reportFailure>[1]) => {
+        reportFailure(`Unable to run ${props.language.displayName}`, failure);
+        refreshSessions();
+      };
+      if (slice.cells !== undefined) {
+        const cells = slice.cells.map((cell) => ({
+          cellId: cell.id,
+          executionId: ComputeExecutionId.make(randomUUID()),
+          code: cell.code,
+        }));
+        const submitted = await submitCells({
           environmentId: props.environmentId,
           input: {
             cwd: props.cwd,
             sessionId: session.sessionId,
-            executionId,
             expectedGeneration: session.generation,
-            code: part.code,
-            source: {
-              _tag: "document",
-              origin: kind,
-              path: props.relativePath,
-              bufferState: props.sourcePending ? "dirty" : "saved",
-              revision: props.sourceRevision,
-              range: part.id === undefined ? slice.range : null,
-              ...(part.id === undefined ? {} : { cell: part.id }),
-            },
+            path: props.relativePath,
+            cells,
           },
         });
+        setOperation(null);
         if (submitted._tag === "Success") {
-          onExecutionSubmitted(session.sessionId, executionId);
-          continue;
+          for (const cell of cells) onExecutionSubmitted(session.sessionId, cell.executionId);
+          props.onCellsSubmitted?.(
+            cells.map((cell) => ({ cellId: cell.cellId, execution: cell.executionId })),
+          );
+        } else if (!isAtomCommandInterrupted(submitted)) {
+          report(submitted);
         }
-        if (!isAtomCommandInterrupted(submitted)) {
-          reportFailure(`Unable to run ${props.language.displayName}`, submitted);
-          refreshSessions();
-        }
-        break;
+        return;
       }
+      const executionId = ComputeExecutionId.make(randomUUID());
+      const submitted = await submitExecution({
+        environmentId: props.environmentId,
+        input: {
+          cwd: props.cwd,
+          sessionId: session.sessionId,
+          executionId,
+          expectedGeneration: session.generation,
+          code: slice.code,
+          source: {
+            _tag: "document",
+            origin: kind,
+            path: props.relativePath,
+            bufferState: props.sourcePending ? "dirty" : "saved",
+            revision: props.sourceRevision,
+            range: slice.range,
+          },
+        },
+      });
       setOperation(null);
+      if (submitted._tag === "Success") {
+        onExecutionSubmitted(session.sessionId, executionId);
+      } else if (!isAtomCommandInterrupted(submitted)) {
+        report(submitted);
+      }
     };
 
     const stableRun = useStableCallback(run);

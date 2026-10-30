@@ -115,6 +115,7 @@ import * as ServerSettings from "./serverSettings.ts";
 // SCIENT-FORK:START — config subscriptions must not call unrelated Scient capabilities.
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as DataTables from "./scient/data/DataTables.ts";
+import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
@@ -491,6 +492,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AnalysisService.AnalysisService)({}),
   Layer.mock(ComputeSessionService.ComputeSessionService)({ runtimeDescriptors: [] }),
   Layer.mock(DataTables.DataTables)({}),
+  Layer.mock(NotebookStore.NotebookStore)({}),
   Layer.mock(ScientificRuntimePreferences)({}),
   Layer.mock(ConversationExportService)({}),
   Layer.mock(ConversationForkService)({}),

@@ -1,3 +1,4 @@
+import type { NotebookCellType, NotebookCellView } from "@t3tools/contracts";
 import {
   ArrowDown,
   ArrowUp,
@@ -8,7 +9,8 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, type ReactElement, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react";
+import { useStore } from "zustand";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { Button } from "~/components/ui/button";
@@ -16,15 +18,33 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
 import {
   createScientNestedCodeEditor,
+  highlightedCodeSpans,
+  type HighlightedCodeSpan,
   type ScientNestedCodeEditor,
 } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
-import type { NotebookCell as Cell, NotebookCellType } from "./notebookDocument";
-import { NOTEBOOK_MARKDOWN_PLUGINS } from "./NotebookOutputs";
+import type { NotebookCellActivity, NotebookController } from "./notebookController";
+import { NOTEBOOK_MARKDOWN_PLUGINS, NotebookCellOutputs } from "./NotebookOutputs";
 import type { NotebookStaleness } from "./notebookStaleness";
 
-export type NotebookCellActivity = "queued" | "running" | null;
+type Cell = NotebookCellView;
 export type NotebookCellEdge = "start" | "end";
+
+/** One stable set of actions for every cell, so a cell re-renders only when it changes. */
+export interface NotebookCellHandlers {
+  readonly run: (cellId: string, advance: boolean) => void;
+  readonly stop: () => void;
+  readonly escape: (cellId: string) => void;
+  readonly leave: (cellId: string, edge: NotebookCellEdge) => void;
+  readonly insert: (cellId: string, cellType: NotebookCellType) => void;
+  readonly ask: (cellId: string) => void;
+  readonly delete: (cellId: string) => void;
+  /** Opens the cell's editor, with the caret at `offset` when the click gave one. */
+  readonly edit: (cellId: string, offset: number | "end") => void;
+  readonly registerEditor: (cellId: string, editor: ScientNestedCodeEditor | null) => void;
+  /** Calls back once when the cell comes near the visible area. */
+  readonly observeNear: (node: Element, onNear: () => void) => () => void;
+}
 
 function CellEditor(props: {
   readonly cell: Cell;
@@ -75,7 +95,7 @@ function CellEditor(props: {
   return (
     <div
       ref={parent}
-      className="min-w-0 px-1 py-1 text-[13px] [&_.cm-focused]:outline-none"
+      className="min-w-0 px-1 py-1 text-[13px] [&_.cm-scroller]:font-mono [&_.cm-scroller]:leading-[1.4]"
       onKeyDownCapture={(event) => {
         if (event.key === "Enter" && (event.shiftKey || event.metaKey || event.ctrlKey)) {
           event.preventDefault();
@@ -145,7 +165,7 @@ function CellGutter(props: {
   readonly onStop: () => void;
 }) {
   const { cell, activity, stale } = props;
-  const failed = cell.outputs.some((output) => output.output_type === "error");
+  const failed = cell.outputs.some((output) => output.outputType === "error");
   return (
     <div className="sticky top-0 flex h-8 items-center justify-center self-start">
       <span className="flex items-center justify-center group-focus-within/cell:hidden group-hover/cell:hidden">
@@ -227,56 +247,113 @@ function CellRow(props: {
   );
 }
 
-export function NotebookCell(props: {
-  readonly cell: Cell;
-  readonly index: number;
+/** Where a click landed in the code, so the editor opens with the caret there. */
+function textOffsetAt(root: HTMLElement, x: number, y: number): number | "end" {
+  const point = root.ownerDocument.caretRangeFromPoint(x, y);
+  if (point === null || !root.contains(point.startContainer)) return "end";
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  while (walker.nextNode()) {
+    if (walker.currentNode === point.startContainer) return offset + point.startOffset;
+    offset += walker.currentNode.textContent?.length ?? 0;
+  }
+  return "end";
+}
+
+/** A cell's code without an editor. It lays out exactly like one, so opening never moves it. */
+function StaticCode(props: {
+  readonly source: string;
   readonly language: string;
-  readonly selected: boolean;
-  readonly editingText: boolean;
-  readonly activity: NotebookCellActivity;
-  readonly stale: NotebookStaleness | null;
-  readonly output: ReactNode;
-  readonly onSelect: () => void;
-  readonly onEditText: () => void;
-  readonly onChange: (source: string) => void;
-  readonly onRun: (advance: boolean) => void;
-  readonly onStop: () => void;
-  readonly onEscape: () => void;
-  readonly onLeave: (edge: NotebookCellEdge) => void;
-  readonly onInsert: (type: NotebookCellType) => void;
-  readonly onAsk: () => void;
-  readonly onMove: (offset: -1 | 1) => void;
-  readonly onDelete: () => void;
-  readonly registerEditor: (editor: ScientNestedCodeEditor | null) => void;
+  readonly near: boolean;
+  readonly onEdit: (offset: number | "end") => void;
 }) {
-  const { cell } = props;
+  const { source, language, near } = props;
+  const [spans, setSpans] = useState<ReadonlyArray<HighlightedCodeSpan> | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- colors arrive once the language parser has loaded.
+  useEffect(() => {
+    if (!near) return;
+    let cancelled = false;
+    void highlightedCodeSpans(source, language).then((next) => {
+      if (!cancelled) setSpans(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [language, near, source]);
+  return (
+    <pre
+      className="min-h-[calc(1.4em+1rem)] min-w-0 cursor-text px-2.5 py-2 font-mono text-[13px] leading-[1.4] wrap-anywhere whitespace-pre-wrap"
+      onClick={(event) =>
+        props.onEdit(textOffsetAt(event.currentTarget, event.clientX, event.clientY))
+      }
+    >
+      {spans === null
+        ? source
+        : spans.map((span, index) =>
+            span.className === "" ? (
+              span.text
+            ) : (
+              // oxlint-disable-next-line react/no-array-index-key -- spans are the text in order and have no identity.
+              <span key={index} className={span.className}>
+                {span.text}
+              </span>
+            ),
+          )}
+      {source.endsWith("\n") ? "\n" : null}
+    </pre>
+  );
+}
+
+export function NotebookCell(props: {
+  readonly controller: NotebookController;
+  readonly cellId: string;
+  readonly language: string;
+  readonly handlers: NotebookCellHandlers;
+}) {
+  const { controller, cellId, handlers } = props;
+  const cell = useStore(controller.store, (state) => state.cells[cellId]);
+  const selected = useStore(controller.store, (state) => state.selected === cellId);
+  const editing = useStore(controller.store, (state) => state.editing === cellId);
+  const activity = useStore(controller.store, (state) => state.activity[cellId] ?? null);
+  const stale = useStore(controller.store, (state) => state.stale.get(cellId) ?? null);
+  const section = useRef<HTMLElement>(null);
+  const [near, setNear] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a cell mounts its editor and outputs only when it scrolls near the view.
+  useEffect(() => {
+    if (section.current === null) return;
+    return handlers.observeNear(section.current, () => setNear(true));
+  }, [handlers]);
+  if (cell === undefined) return null;
   const isCode = cell.cellType === "code";
-  const rendered = cell.cellType === "markdown" && !props.editingText && cell.source.trim() !== "";
+  const rendered = cell.cellType === "markdown" && !editing && cell.source.trim() !== "";
+  const live = near || selected;
+  const language = isCode ? props.language : "markdown";
   return (
     // `application` keeps command-mode keys here instead of the chat's type-to-focus.
     <section
-      data-notebook-cell={cell.id}
+      ref={section}
+      data-notebook-cell={cellId}
       role="application"
-      aria-label={`Cell ${props.index + 1}`}
+      aria-label={isCode ? "Code cell" : "Text cell"}
       tabIndex={-1}
-      className="group/cell grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-1 pr-3 pl-1 outline-none"
-      onFocusCapture={props.onSelect}
-      onClick={props.onSelect}
+      className="group/cell grid grid-cols-[1.75rem_minmax(0,1fr)] gap-x-1 pr-3 pl-1 outline-none [content-visibility:auto] [contain-intrinsic-size:auto_6rem]"
+      onFocusCapture={() => controller.select(cellId)}
+      onClick={() => controller.select(cellId)}
     >
       <CellRow
         canAsk={isCode && cell.outputs.length > 0}
-        onInsert={props.onInsert}
-        onAsk={props.onAsk}
-        onMove={props.onMove}
-        onDelete={props.onDelete}
+        onInsert={(type) => handlers.insert(cellId, type)}
+        onAsk={() => handlers.ask(cellId)}
+        onMove={(offset) => controller.move(cellId, offset)}
+        onDelete={() => handlers.delete(cellId)}
       />
       {isCode ? (
         <CellGutter
           cell={cell}
-          activity={props.activity}
-          stale={props.stale}
-          onRun={() => props.onRun(false)}
-          onStop={props.onStop}
+          activity={activity}
+          stale={stale}
+          onRun={() => handlers.run(cellId, false)}
+          onStop={handlers.stop}
         />
       ) : (
         <span />
@@ -285,33 +362,51 @@ export function NotebookCell(props: {
         <div
           className={cn(
             "rounded-md border bg-background",
-            props.selected ? "border-ring" : rendered ? "border-transparent" : "border-border/60",
+            selected
+              ? "border-foreground/25"
+              : rendered
+                ? "border-transparent"
+                : "border-border/60",
           )}
         >
           {rendered ? (
-            <div className="min-h-8 cursor-text px-3 py-1" onDoubleClick={props.onEditText}>
-              <ChatMarkdown
-                text={cell.source}
-                cwd={undefined}
-                parseRawHtml={false}
-                extraRemarkPlugins={NOTEBOOK_MARKDOWN_PLUGINS}
-              />
+            <div
+              className="min-h-8 cursor-text px-3 py-1"
+              onDoubleClick={() => handlers.edit(cellId, "end")}
+            >
+              {live ? (
+                <ChatMarkdown
+                  text={cell.source}
+                  cwd={undefined}
+                  parseRawHtml={false}
+                  extraRemarkPlugins={NOTEBOOK_MARKDOWN_PLUGINS}
+                />
+              ) : (
+                <p className="text-sm whitespace-pre-wrap">{cell.source}</p>
+              )}
             </div>
-          ) : (
+          ) : editing ? (
             <CellEditor
               cell={cell}
-              language={props.language}
-              onChange={props.onChange}
-              onRun={props.onRun}
-              onEscape={props.onEscape}
-              onLeave={props.onLeave}
-              register={props.registerEditor}
+              language={language}
+              onChange={(source) => controller.setSource(cellId, source)}
+              onRun={(advance) => handlers.run(cellId, advance)}
+              onEscape={() => handlers.escape(cellId)}
+              onLeave={(edge) => handlers.leave(cellId, edge)}
+              register={(editor) => handlers.registerEditor(cellId, editor)}
+            />
+          ) : (
+            <StaticCode
+              source={cell.source}
+              language={language}
+              near={live}
+              onEdit={(offset) => handlers.edit(cellId, offset)}
             />
           )}
         </div>
-        {isCode && props.output !== null ? (
-          <div className={cn("min-w-0 transition-opacity", props.stale !== null && "opacity-55")}>
-            {props.output}
+        {isCode ? (
+          <div className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}>
+            <NotebookCellOutputs controller={controller} cell={cell} near={live} />
           </div>
         ) : null}
       </div>

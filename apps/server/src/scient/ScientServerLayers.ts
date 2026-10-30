@@ -19,6 +19,7 @@ import * as ManagedRuntimeCatalogReconciler from "./providerLifecycle/ManagedRun
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
 import * as DataTables from "./data/DataTables.ts";
+import * as NotebookStore from "./notebook/NotebookStore.ts";
 import * as AnalysisRunIndex from "./analysis/AnalysisRunIndex.ts";
 import * as LocalDuplexProcess from "./execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "./execution/LocalExecutionProcess.ts";
@@ -186,6 +187,7 @@ export function makeScientRouteServices<
       Layer.provide(ComputeMcpGatewayLive),
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(DataTables.layer),
+      Layer.provide(NotebookStore.layer),
       Layer.provide(ScientificRuntimePreferencesLive),
       Layer.provide(ScientLatexServicesLive),
       Layer.provide(OverleafSyncLive),

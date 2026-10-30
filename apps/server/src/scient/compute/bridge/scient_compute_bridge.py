@@ -795,6 +795,11 @@ class ExecuteMapping:
         """
         return self.shell_reply is not None and self.iopub_idle
 
+    def execution_count(self) -> Optional[int]:
+        """The kernel's own number for this run, also for runs that return nothing."""
+        count = (self.shell_reply or {}).get("execution_count")
+        return count if isinstance(count, int) and count >= 0 else None
+
     def outcome(self) -> str:
         """What the kernel's own reply says happened.
 
@@ -1801,7 +1806,14 @@ class ScientBridge:
                         return
                 await asyncio.sleep(IDLE_POLL_INTERVAL)
 
-            self._send("execution-complete", {"outcome": self._mapping.outcome()}, request_id)
+            self._send(
+                "execution-complete",
+                {
+                    "outcome": self._mapping.outcome(),
+                    "executionCount": self._mapping.execution_count(),
+                },
+                request_id,
+            )
             self._mapping.reset()
             self._execution_task = None
             await self._flush()

@@ -179,6 +179,8 @@ export const ComputeExecutionResultRecord = Schema.Struct({
   outputBytes: ByteLength,
   truncated: Schema.Boolean,
   failureReason: Schema.NullOr(ShortText),
+  /** The kernel's number for this run, for kernels that report one. */
+  executionCount: Schema.optional(Count),
 });
 export type ComputeExecutionResultRecord = typeof ComputeExecutionResultRecord.Type;
 

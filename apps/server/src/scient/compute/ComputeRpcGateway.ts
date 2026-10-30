@@ -22,6 +22,7 @@ import {
   type ComputeStopProjectSessionInput,
   type ComputeProjectSessionInput,
   type ComputeStartProjectSessionInput,
+  type ComputeSubmitProjectCellsInput,
   type ComputeSubmitProjectExecutionInput,
   type ComputeTableInput,
   type ComputeVerifyRuntimeInput,
@@ -52,6 +53,7 @@ type ComputeGatewayService = Pick<
   | "listExecutions"
   | "listOutputs"
   | "submitExecution"
+  | "submitExecutions"
   | "cancelExecution"
   | "interruptSession"
   | "restartSession"
@@ -162,7 +164,15 @@ export function makeComputeRpcGateway(input: {
     const project = yield* Effect.tryPromise({
       try: async () => {
         const inspection = await inspectScientProject(admission?.scope.workspaceRoot ?? cwd);
-        if (inspection.state !== "initialized") return null;
+        if (inspection.state !== "initialized") {
+          // Any registered folder can run code; history then belongs to its workspace binding.
+          return admission === null || admission === undefined
+            ? null
+            : {
+                root: admission.scope.workspaceRoot,
+                projectId: ComputeProjectId.make(admission.scope.bindingId),
+              };
+        }
         if (admission && inspection.root !== admission.scope.workspaceRoot) return null;
         const identity = await readScientProjectIdentity(inspection.root);
         return { root: inspection.root, projectId: ComputeProjectId.make(identity.projectId) };
@@ -454,6 +464,37 @@ export function makeComputeRpcGateway(input: {
     });
   });
 
+  const submitCells = Effect.fn("ComputeRpcGateway.submitCells")(function* (
+    request: ComputeSubmitProjectCellsInput,
+  ) {
+    const project = yield* projectFor("submit", request.cwd);
+    const session = yield* input.compute.getSession({
+      projectId: project.projectId,
+      sessionId: request.sessionId,
+    });
+    if (session !== null) yield* requireEnabledLanguage("submit", session.languageId);
+    return yield* input.compute.submitExecutions({
+      projectId: project.projectId,
+      sessionId: request.sessionId,
+      submissions: request.cells.map((cell) => ({
+        projectId: project.projectId,
+        sessionId: request.sessionId,
+        executionId: cell.executionId,
+        expectedGeneration: request.expectedGeneration,
+        code: cell.code,
+        source: {
+          _tag: "document" as const,
+          origin: "cell" as const,
+          path: request.path,
+          bufferState: "saved" as const,
+          revision: null,
+          range: null,
+          cell: cell.cellId,
+        },
+      })),
+    });
+  });
+
   const cancelExecution = Effect.fn("ComputeRpcGateway.cancelExecution")(function* (
     request: ComputeProjectExecutionCommandInput,
   ) {
@@ -506,6 +547,7 @@ export function makeComputeRpcGateway(input: {
     listExecutions: inWorkspace("list", listExecutions),
     listOutputs: inWorkspace("outputs", listOutputs),
     submitExecution: inWorkspace("submit", submitExecution),
+    submitCells: inWorkspace("submit", submitCells),
     cancelExecution: inWorkspace("cancel", cancelExecution),
     interruptSession: inWorkspace(
       "interrupt",

@@ -391,6 +391,11 @@ export class ComputeSessionService extends Context.Service<
     readonly startSession: (
       input: ComputeStartSessionInput,
     ) => Effect.Effect<ComputeSessionRecord, ComputeOperationError>;
+    readonly submitExecutions: (input: {
+      readonly projectId: ComputeProjectId;
+      readonly sessionId: ComputeSessionId;
+      readonly submissions: ReadonlyArray<ComputeSubmitExecutionInput>;
+    }) => Effect.Effect<ReadonlyArray<ComputeExecutionRecord>, ComputeOperationError>;
     readonly submitExecution: (
       input: ComputeSubmitExecutionInput,
     ) => Effect.Effect<ComputeExecutionRecord, ComputeOperationError>;
@@ -2000,7 +2005,11 @@ const make = Effect.gen(function* () {
         const executionId = ComputeExecutionId.make(event.requestId);
         yield* collectProjectOutputs(live, event);
         const finished = (yield* Ref.get(live.pendingRef)).get(executionId);
-        yield* setExecutionStatus("submit", live, executionId, event.outcome);
+        yield* setExecutionStatus("submit", live, executionId, event.outcome, (result) =>
+          event.executionCount === undefined
+            ? result
+            : { ...result, executionCount: event.executionCount },
+        );
         yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
         yield* appendJournal("submit", live, "execution-finished", event.outcome, executionId);
         if (event.outcome !== "succeeded" && finished !== undefined) {
@@ -2755,6 +2764,22 @@ const make = Effect.gen(function* () {
     return admitted.execution;
   });
 
+  /** One admission: no cell can finish and stop the run while later cells are still arriving. */
+  const submitExecutions = Effect.fn("ComputeSessionService.submitExecutions")(function* (input: {
+    readonly projectId: ComputeProjectId;
+    readonly sessionId: ComputeSessionId;
+    readonly submissions: ReadonlyArray<ComputeSubmitExecutionInput>;
+  }) {
+    const live = yield* requireLiveSession("submit", input.projectId, input.sessionId);
+    const admitted = yield* live.mutation
+      .withPermits(1)(
+        Effect.forEach(input.submissions, (submission) => admitSubmission(live, submission)),
+      )
+      .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
+    yield* Effect.forEach(admitted, (entry) => dispatch(live, entry.dispatch), { discard: true });
+    return admitted.map((entry) => entry.execution);
+  });
+
   const loadStoredExecution = (
     operation: ComputeOperation,
     live: LiveComputeSession,
@@ -3459,6 +3484,7 @@ const make = Effect.gen(function* () {
     cancelManagedRuntime,
     startSession: scopedStart,
     submitExecution: guarded("submit", submitExecution),
+    submitExecutions: guarded("submit", submitExecutions),
     cancelExecution: guarded("cancel", cancelExecution),
     interruptSession: guarded("interrupt", interruptSession),
     inspectVariables: guarded("variables", inspectVariables),

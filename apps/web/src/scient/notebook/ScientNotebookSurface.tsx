@@ -2,17 +2,12 @@ import {
   TERMINAL_COMPUTE_EXECUTION_STATUSES,
   type ComputeExecutionRecord,
   type EnvironmentId,
+  type NotebookCellType,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Plus, Square, Variable } from "lucide-react";
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type KeyboardEvent,
-} from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useStore } from "zustand";
 
 import { Button } from "~/components/ui/button";
 import { MenuItem, MenuSeparator } from "~/components/ui/menu";
@@ -24,7 +19,6 @@ import {
   ComputeFileActions,
   type ComputeFileActionsHandle,
 } from "~/scient/compute/ComputeFileActions";
-import { ComputeOutputView } from "~/scient/compute/ComputeOutputView";
 import { ComputePanel } from "~/scient/compute/ComputePanel";
 import { askInChatAboutCompute } from "~/scient/compute/computeAskInChat";
 import { computeFileContextId, useComputeContextStore } from "~/scient/compute/computeContextStore";
@@ -32,53 +26,53 @@ import type { ComputePanelView } from "~/scient/compute/computeFilePresentationS
 import { computeSourceLanguageForId } from "~/scient/compute/computeSourceLanguage";
 import { useComputePanelSessions } from "~/scient/compute/useComputePanelSessions";
 import type { ScientNestedCodeEditor } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
-import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
-import { NotebookCell, type NotebookCellActivity, type NotebookCellEdge } from "./NotebookCell";
+import { NotebookCell, type NotebookCellEdge, type NotebookCellHandlers } from "./NotebookCell";
 import { notebookCommand, type NotebookCommand, type NotebookKeyPress } from "./notebookCommands";
-import { NotebookOutputs } from "./NotebookOutputs";
-import {
-  clearNotebookOutputs,
-  convertNotebookCell,
-  emptyNotebookCell,
-  insertNotebookCell,
-  moveNotebookCell,
-  notebookCodeHash,
-  parseNotebook,
-  removeNotebookCell,
-  serializeNotebook,
-  updateNotebookCell,
-  type NotebookCell as Cell,
-  type NotebookCellType,
-  type NotebookDocument,
-} from "./notebookDocument";
-import { staleNotebookCells } from "./notebookStaleness";
-
-interface SettledCellRun {
-  readonly cellId: string;
-  readonly execution: ComputeExecutionRecord;
-}
+import { createNotebookController, type NotebookController } from "./notebookController";
+import { NotebookContext } from "./NotebookOutputs";
 
 /** Where focus goes next: the cell itself (command mode) or its editor. */
-type NotebookFocus = { readonly cellId: string; readonly target: "cell" | NotebookCellEdge };
+type NotebookFocus = {
+  readonly cellId: string;
+  readonly target: "cell" | number | NotebookCellEdge;
+};
 
-/** The notebook's code cells as one `%%` script, for the shared Run control's runtime checks. */
-function notebookScript(document: NotebookDocument, marker: string): string {
-  return document.cells
-    .filter((cell) => cell.cellType === "code")
-    .map((cell) => `${marker}\n${cell.source.replace(/\n$/, "")}`)
-    .join("\n");
-}
+/** Cells mount their editors and outputs this far ahead of the visible area. */
+const NEAR_MARGIN = "1200px 0px";
 
-/** Without a returned value the kernel reports no count, so number the run after the latest. */
-function nextExecutionCount(document: NotebookDocument): number {
-  return Math.max(0, ...document.cells.map((cell) => cell.executionCount ?? 0)) + 1;
-}
-
-function cellMarkerFor(languageId: string): string {
-  if (languageId === "matlab") return "%%";
-  if (languageId === "sql") return "-- %%";
-  return "# %%";
+/** Tells each cell once when it comes near the view, whatever the scroll container becomes. */
+function createNearWatcher() {
+  let observer: IntersectionObserver | null = null;
+  const watched = new Map<Element, () => void>();
+  return {
+    setRoot: (root: HTMLDivElement | null) => {
+      observer?.disconnect();
+      observer =
+        root === null
+          ? null
+          : new IntersectionObserver(
+              (entries) => {
+                for (const entry of entries) {
+                  if (!entry.isIntersecting) continue;
+                  observer?.unobserve(entry.target);
+                  watched.get(entry.target)?.();
+                  watched.delete(entry.target);
+                }
+              },
+              { root, rootMargin: NEAR_MARGIN },
+            );
+      for (const node of watched.keys()) observer?.observe(node);
+    },
+    watch: (node: Element, onNear: () => void) => {
+      watched.set(node, onNear);
+      observer?.observe(node);
+      return () => {
+        watched.delete(node);
+        observer?.unobserve(node);
+      };
+    },
+  };
 }
 
 /** The latest run of each cell, from the session's durable history. */
@@ -98,25 +92,43 @@ function latestCellRuns(
   return latest;
 }
 
-function isSettled(execution: ComputeExecutionRecord): boolean {
-  return (
-    execution.result !== null && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status)
+function useNotebookController(props: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly relativePath: string;
+}): NotebookController {
+  const read = useAtomCommand(computeEnvironment.notebookRead, { reportFailure: false });
+  const readOutput = useAtomCommand(computeEnvironment.notebookReadOutput, {
+    reportFailure: false,
+  });
+  const edit = useAtomCommand(computeEnvironment.notebookEdit, { reportFailure: false });
+  const recordRun = useAtomCommand(computeEnvironment.notebookRecordRun, { reportFailure: false });
+  const { environmentId, cwd, relativePath: path } = props;
+  const [controller] = useState(() =>
+    createNotebookController({
+      read: async (knownRevision) => {
+        const result = await read({
+          environmentId,
+          input: { cwd, path, ...(knownRevision === undefined ? {} : { knownRevision }) },
+        });
+        return result._tag === "Success" ? result.value : "failed";
+      },
+      readOutput: async (cellId, index) => {
+        const result = await readOutput({ environmentId, input: { cwd, path, cellId, index } });
+        return result._tag === "Success" ? result.value : null;
+      },
+      edit: async (edits) => {
+        const result = await edit({ environmentId, input: { cwd, path, edits } });
+        return result._tag === "Success" ? result.value : null;
+      },
+      recordRun: async (input) => {
+        const result = await recordRun({ environmentId, input: { cwd, path, ...input } });
+        return result._tag === "Success" ? result.value : null;
+      },
+      onError: (title) => toastManager.add({ type: "error", title }),
+    }),
   );
-}
-
-function activityOf(execution: ComputeExecutionRecord | undefined): NotebookCellActivity {
-  if (execution === undefined || isSettled(execution)) return null;
-  const status = execution.result?.status;
-  return status === undefined || status === "queued" || status === "submitting"
-    ? "queued"
-    : "running";
-}
-
-function runDuration(execution: ComputeExecutionRecord): number | null {
-  const startedAt = execution.result?.startedAt;
-  const finishedAt = execution.result?.finishedAt;
-  if (!startedAt || !finishedAt) return null;
-  return Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
+  return controller;
 }
 
 export default function ScientNotebookSurface(props: {
@@ -124,32 +136,29 @@ export default function ScientNotebookSurface(props: {
   readonly cwd: string;
   readonly relativePath: string;
   readonly threadRef: ScopedThreadRef;
-  readonly persistence: MarkdownPersistenceLease;
+  /** Changes when the file changes on disk. */
+  readonly fileRevision: string;
 }) {
-  const { persistence } = props;
-  const snapshot = useSyncExternalStore(persistence.subscribe, persistence.getSnapshot);
-  const document = parseNotebook(snapshot.draftSource);
-  const language = computeSourceLanguageForId(document?.language ?? "python");
+  const controller = useNotebookController(props);
+  const status = useStore(controller.store, (state) => state.status);
+  const languageId = useStore(controller.store, (state) => state.language);
+  const order = useStore(controller.store, (state) => state.order);
+  const changed = useStore(controller.store, (state) => [...state.stale.keys()].join("\n"));
+  const language = computeSourceLanguageForId(languageId);
   const contextId = computeFileContextId({
     environmentId: props.environmentId,
     threadId: props.threadRef.threadId,
     cwd: props.cwd,
     relativePath: props.relativePath,
   });
-  const script =
-    document === null || language === null
-      ? null
-      : notebookScript(document, cellMarkerFor(language.languageId));
   const actions = useRef<ComputeFileActionsHandle>(null);
   const list = useRef<HTMLDivElement>(null);
   const editors = useRef(new Map<string, ScientNestedCodeEditor>());
-  const deleted = useRef<Array<{ readonly cell: Cell; readonly after: string | null }>>([]);
+  const deleted = useRef<Array<{ readonly cellId: string; readonly after: string | null }>>([]);
   const lastKey = useRef<NotebookKeyPress | null>(null);
-  const finishing = useRef(new Set<string>());
   const restartedTo = useRef<number | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [{ setRoot: setScroller, watch: watchNear }] = useState(createNearWatcher);
   const [focus, setFocus] = useState<NotebookFocus | null>(null);
-  const [editingText, setEditingText] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<ReadonlySet<string>>(new Set());
   const [panelView, setPanelView] = useState<ComputePanelView | null>(null);
   const model = useComputePanelSessions({
@@ -158,9 +167,6 @@ export default function ScientNotebookSurface(props: {
     contextId,
   });
   const liveSession = model.liveSession;
-  const readNotebookOutputs = useAtomCommand(computeEnvironment.notebookOutputs, {
-    reportFailure: false,
-  });
   const interruptSession = useAtomCommand(computeEnvironment.interruptSession, {
     reportFailure: false,
   });
@@ -168,44 +174,48 @@ export default function ScientNotebookSurface(props: {
     reportFailure: false,
   });
   const cellRuns = latestCellRuns(model.executions, props.relativePath);
-  const stale = staleNotebookCells(document?.cells ?? []);
 
-  const commit = useStableCallback((update: (document: NotebookDocument) => NotebookDocument) => {
-    const current = persistence.getSnapshot();
-    const parsed = parseNotebook(current.draftSource);
-    if (parsed === null) return;
-    persistence.change(serializeNotebook(update(parsed)), current.editVersion);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the notebook on open and whenever the file changes on disk.
+  useEffect(() => {
+    controller.fileChanged(props.fileRevision);
+  }, [controller, props.fileRevision]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- text typed just before leaving still reaches the server.
+  useEffect(() => () => controller.dispose(), [controller]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- follows the session's runs: cell state, and settled results the file has not recorded.
+  useEffect(() => {
+    controller.observeRuns(
+      cellRuns,
+      TERMINAL_COMPUTE_EXECUTION_STATUSES as ReadonlySet<string> as Set<string>,
+    );
   });
 
   const runCells = useStableCallback((cellIds: ReadonlyArray<string>) => {
-    const current = parseNotebook(persistence.getSnapshot().draftSource);
-    if (current === null) return;
-    // A run is tied to its cell by id, so an older notebook's ids must reach the file first.
-    if (current.cells.some((cell) => cell.raw.id !== cell.id)) commit((same) => same);
-    const cells = cellIds.flatMap((id) => {
-      const cell = current.cells.find((candidate) => candidate.id === id);
+    const { cells } = controller.store.getState();
+    const runnable = cellIds.flatMap((id) => {
+      const cell = cells[id];
       return cell?.cellType === "code" && cell.source.trim() !== ""
         ? [{ id, code: cell.source }]
         : [];
     });
-    if (cells.length === 0) return;
-    const ids = cells.map((cell) => cell.id);
+    if (runnable.length === 0) return;
+    const ids = runnable.map((cell) => cell.id);
     setSubmitting((waiting) => new Set([...waiting, ...ids]));
-    void actions.current?.runCells(cells).finally(() =>
-      setSubmitting((waiting) => {
-        const next = new Set(waiting);
-        for (const id of ids) next.delete(id);
-        return next;
-      }),
-    );
+    void controller
+      .flush()
+      .then(() => actions.current?.runCells(runnable))
+      .finally(() =>
+        setSubmitting((waiting) => {
+          const next = new Set(waiting);
+          for (const id of ids) next.delete(id);
+          return next;
+        }),
+      );
   });
-  const runAllCells = useStableCallback(() => {
-    runCells(
-      parseNotebook(persistence.getSnapshot().draftSource)
-        ?.cells.filter((cell) => cell.cellType === "code")
-        .map((cell) => cell.id) ?? [],
-    );
-  });
+  const codeCellIds = (from = 0, to?: number) => {
+    const { order: ids, cells } = controller.store.getState();
+    return ids.slice(from, to).filter((id) => cells[id]?.cellType === "code");
+  };
+  const runAllCells = useStableCallback(() => runCells(codeCellIds()));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the cell or editor a command just asked for.
   useLayoutEffect(() => {
@@ -216,57 +226,8 @@ export default function ScientNotebookSurface(props: {
     section?.scrollIntoView({ block: "nearest" });
     const editor = editors.current.get(focus.cellId);
     if (focus.target === "cell" || editor === undefined) section?.focus({ preventScroll: true });
-    else editor.focusEdge(focus.target);
+    else editor.focusAt(focus.target);
   }, [focus]);
-
-  // A run belongs to its cell on the server, so outputs reach the file however long the notebook
-  // was closed: a settled run the cell has not recorded yet is written here, once, in run order.
-  const writeSettledRuns = useStableCallback(async (settled: ReadonlyArray<SettledCellRun>) => {
-    for (const { cellId, execution } of settled) {
-      const { executionId, sessionId, code } = execution.request;
-      const outputs = await readNotebookOutputs({
-        environmentId: props.environmentId,
-        input: { cwd: props.cwd, sessionId, executionId },
-      });
-      if (outputs._tag !== "Success") {
-        finishing.current.delete(executionId);
-        toastManager.add({ type: "error", title: "This cell's output could not be saved" });
-        continue;
-      }
-      commit((current) =>
-        updateNotebookCell(current, cellId, (entry) => ({
-          ...entry,
-          outputs: outputs.value.outputs,
-          executionCount: outputs.value.executionCount ?? nextExecutionCount(current),
-          run: {
-            execution: executionId,
-            code: notebookCodeHash(code),
-            at: execution.result?.finishedAt ?? execution.request.submittedAt,
-            ms: runDuration(execution),
-          },
-        })),
-      );
-    }
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- copies settled runs from the session's history into the notebook file.
-  useEffect(() => {
-    const settled: SettledCellRun[] = [];
-    for (const cell of document?.cells ?? []) {
-      const execution = cellRuns.get(cell.id);
-      if (execution === undefined || cell.cellType !== "code" || !isSettled(execution)) continue;
-      const { executionId } = execution.request;
-      if (cell.run?.execution === executionId || execution.result?.startedAt == null) continue;
-      if (finishing.current.has(executionId)) continue;
-      finishing.current.add(executionId);
-      settled.push({ cellId: cell.id, execution });
-    }
-    if (settled.length === 0) return;
-    void writeSettledRuns(
-      settled.toSorted((left, right) =>
-        left.execution.request.submittedAt.localeCompare(right.execution.request.submittedAt),
-      ),
-    );
-  }, [cellRuns, document, writeSettledRuns]);
 
   // The Run control must see the restarted session before it can submit into it.
   const runAfterRestart = useStableCallback(() => {
@@ -277,17 +238,7 @@ export default function ScientNotebookSurface(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the queued run when the session's new generation arrives.
   useEffect(() => runAfterRestart());
 
-  if (document === null || language === null || script === null) {
-    return (
-      <p className="p-6 text-sm text-muted-foreground">
-        {document === null
-          ? "This notebook could not be read."
-          : "This notebook's language is not set up in Scient."}
-      </p>
-    );
-  }
-
-  const stop = () => {
+  const stop = useStableCallback(() => {
     if (liveSession === null) return;
     void interruptSession({
       environmentId: props.environmentId,
@@ -297,7 +248,7 @@ export default function ScientNotebookSurface(props: {
         expectedGeneration: liveSession.generation,
       },
     });
-  };
+  });
   const restartAndRunAll = async () => {
     if (liveSession === null) {
       runAllCells();
@@ -324,83 +275,76 @@ export default function ScientNotebookSurface(props: {
     runAfterRestart();
   };
 
-  const addCell = (index: number, cellType: NotebookCellType) => {
-    const cell = emptyNotebookCell(cellType);
-    const after = document.cells[index - 1]?.id ?? null;
-    commit((current) => insertNotebookCell(current, after, cell));
-    if (cellType === "markdown") setEditingText(cell.id);
-    setSelected(cell.id);
-    setFocus({ cellId: cell.id, target: "start" });
+  const focusCell = (cellId: string | undefined, target: NotebookFocus["target"]) => {
+    if (cellId === undefined) return;
+    controller.select(cellId);
+    controller.edit(target === "cell" ? null : cellId);
+    setFocus({ cellId, target });
+  };
+  const positionOf = (cellId: string) => controller.store.getState().order.indexOf(cellId);
+  const cellAt = (index: number) => controller.store.getState().order[index];
+  const addCell = (position: number, cellType: NotebookCellType) => {
+    focusCell(controller.insert(position, cellType), "start");
   };
   const undoDelete = () => {
     const entry = deleted.current.pop();
     if (entry === undefined) return;
-    commit((current) => insertNotebookCell(current, entry.after, entry.cell));
-    setSelected(entry.cell.id);
-    setFocus({ cellId: entry.cell.id, target: "cell" });
+    controller.restore(entry.cellId, entry.after);
+    focusCell(entry.cellId, "cell");
   };
-  const deleteCell = (index: number) => {
-    const cell = document.cells[index];
-    if (cell === undefined) return;
-    deleted.current.push({ cell, after: document.cells[index - 1]?.id ?? null });
-    commit((current) => removeNotebookCell(current, cell.id));
-    const next = document.cells[index + 1] ?? document.cells[index - 1];
-    if (next !== undefined) {
-      setSelected(next.id);
-      setFocus({ cellId: next.id, target: "cell" });
-    }
+  const deleteCell = (cellId: string) => {
+    const index = positionOf(cellId);
+    const next = cellAt(index + 1) ?? cellAt(index - 1);
+    const removed = controller.remove(cellId);
+    if (removed === null) return;
+    deleted.current.push({ cellId, after: removed.after });
+    focusCell(next, "cell");
     toastManager.add({
       type: "info",
       title: "Cell deleted",
       actionProps: { children: "Undo", onClick: undoDelete },
     });
   };
-  const moveSelection = (index: number, target: NotebookFocus["target"]) => {
-    const cell = document.cells[index];
+  const runAndAdvance = (cellId: string, advance: boolean) => {
+    const cell = controller.store.getState().cells[cellId];
     if (cell === undefined) return;
-    setSelected(cell.id);
-    setFocus({ cellId: cell.id, target });
-  };
-  const runAndAdvance = (index: number, advance: boolean) => {
-    const cell = document.cells[index];
-    if (cell === undefined) return;
-    if (cell.cellType === "code") runCells([cell.id]);
-    else setEditingText(null);
+    if (cell.cellType === "code") runCells([cellId]);
+    const index = positionOf(cellId);
     if (!advance) {
-      if (cell.cellType !== "code") setFocus({ cellId: cell.id, target: "cell" });
+      if (cell.cellType !== "code") focusCell(cellId, "cell");
       return;
     }
-    if (document.cells[index + 1] === undefined) addCell(index + 1, "code");
-    else moveSelection(index + 1, "start");
+    if (cellAt(index + 1) === undefined) addCell(index + 1, "code");
+    else focusCell(cellAt(index + 1), "start");
   };
 
-  const runCommand = (command: NotebookCommand, index: number) => {
-    const cell = document.cells[index];
+  const runCommand = (command: NotebookCommand, cellId: string) => {
+    const index = positionOf(cellId);
+    const cell = controller.store.getState().cells[cellId];
     if (cell === undefined) return;
     switch (command) {
       case "edit":
-        if (cell.cellType !== "code") setEditingText(cell.id);
-        return moveSelection(index, "end");
+        return focusCell(cellId, "end");
       case "previous":
-        return moveSelection(index - 1, "cell");
+        return focusCell(cellAt(index - 1), "cell");
       case "next":
-        return moveSelection(index + 1, "cell");
+        return focusCell(cellAt(index + 1), "cell");
       case "insert-above":
         return addCell(index, "code");
       case "insert-below":
         return addCell(index + 1, "code");
       case "delete":
-        return deleteCell(index);
+        return deleteCell(cellId);
       case "undo-delete":
         return undoDelete();
       case "to-text":
-        return commit((current) => convertNotebookCell(current, cell.id, "markdown"));
+        return controller.convert(cellId, "markdown");
       case "to-code":
-        return commit((current) => convertNotebookCell(current, cell.id, "code"));
+        return controller.convert(cellId, "code");
       case "run":
-        return runAndAdvance(index, false);
+        return runAndAdvance(cellId, false);
       case "run-and-next":
-        return runAndAdvance(index, true);
+        return runAndAdvance(cellId, true);
       case "interrupt":
         return stop();
     }
@@ -413,211 +357,176 @@ export default function ScientNotebookSurface(props: {
     lastKey.current = { key: event.key, at: event.timeStamp };
     if (command === null) return;
     event.preventDefault();
-    runCommand(
-      command,
-      document.cells.findIndex((cell) => cell.id === cellId),
-    );
+    runCommand(command, cellId);
   };
 
-  const selectedIndex = document.cells.findIndex((cell) => cell.id === selected);
-  const codeCellIds = (from: number, to: number) =>
-    document.cells
-      .slice(from, to)
-      .filter((cell) => cell.cellType === "code")
-      .map((cell) => cell.id);
-  const changed = [...stale.keys()];
+  const handlers: NotebookCellHandlers = {
+    run: useStableCallback(runAndAdvance),
+    stop,
+    escape: useStableCallback((cellId: string) => focusCell(cellId, "cell")),
+    leave: useStableCallback((cellId: string, edge: NotebookCellEdge) => {
+      const index = positionOf(cellId);
+      focusCell(cellAt(index + (edge === "start" ? -1 : 1)), edge === "start" ? "end" : "start");
+    }),
+    insert: useStableCallback((cellId: string, cellType: NotebookCellType) =>
+      addCell(positionOf(cellId), cellType),
+    ),
+    ask: useStableCallback((cellId: string) =>
+      askInChatAboutCompute({
+        threadRef: props.threadRef,
+        what: `Cell ${positionOf(cellId) + 1} of ${props.relativePath}`,
+      }),
+    ),
+    delete: useStableCallback(deleteCell),
+    edit: useStableCallback(focusCell),
+    registerEditor: useStableCallback((cellId: string, editor: ScientNestedCodeEditor | null) => {
+      if (editor === null) editors.current.delete(cellId);
+      else editors.current.set(cellId, editor);
+    }),
+    observeNear: watchNear,
+  };
+
+  if (status === "failed") {
+    return <p className="p-6 text-sm text-muted-foreground">This notebook could not be read.</p>;
+  }
+  if (language === null) {
+    return (
+      <p className="p-6 text-sm text-muted-foreground">
+        This notebook's language is not set up in Scient.
+      </p>
+    );
+  }
+
+  const selectedIndex = (() => {
+    const { selected } = controller.store.getState();
+    return selected === null ? -1 : positionOf(selected);
+  })();
+  const outOfDate = changed === "" ? [] : changed.split("\n");
   const busy =
     submitting.size > 0 ||
-    [...cellRuns.values()].some((execution) => activityOf(execution) !== null);
+    [...cellRuns.values()].some(
+      (execution) =>
+        execution.result === null ||
+        !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status),
+    );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/20 px-2 py-1">
-        <div className="min-w-22 flex-1">
-          <ComputeFileActions
-            ref={actions}
-            language={language}
-            environmentId={props.environmentId}
-            cwd={props.cwd}
-            relativePath={props.relativePath}
-            contents={script}
-            sourceRevision={snapshot.baselineRevision}
-            sourcePending
-            selection={null}
-            editorSelection={null}
-            contextId={contextId}
-            onRunRequested={() => undefined}
-            onShowMatlabOneShot={() => undefined}
-            onExecutionSubmitted={() => model.refreshExecutions()}
-            runAll={runAllCells}
-            runMenu={
-              <>
-                <MenuItem disabled={changed.length === 0} onClick={() => runCells(changed)}>
-                  Run out-of-date cells
-                </MenuItem>
-                <MenuItem
-                  disabled={selectedIndex <= 0}
-                  onClick={() => runCells(codeCellIds(0, selectedIndex))}
-                >
-                  Run cells above
-                </MenuItem>
-                <MenuItem
-                  disabled={selectedIndex < 0}
-                  onClick={() => runCells(codeCellIds(selectedIndex, document.cells.length))}
-                >
-                  Run from this cell
-                </MenuItem>
-                <MenuSeparator />
-                <MenuItem disabled={busy} onClick={() => void restartAndRunAll()}>
-                  Restart and run all
-                </MenuItem>
-                <MenuItem disabled={busy} onClick={() => commit(clearNotebookOutputs)}>
-                  Clear all outputs
-                </MenuItem>
-              </>
-            }
-            leadingActions={
-              <>
-                {busy ? (
-                  <ScientTooltip content="Stop">
-                    <Button size="icon-xs" variant="outline" aria-label="Stop" onClick={stop}>
-                      <Square />
+    <NotebookContext.Provider
+      value={{
+        environmentId: props.environmentId,
+        cwd: props.cwd,
+        threadRef: props.threadRef,
+      }}
+    >
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/20 px-2 py-1">
+          <div className="min-w-22 flex-1">
+            <ComputeFileActions
+              ref={actions}
+              language={language}
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+              relativePath={props.relativePath}
+              contents=""
+              sourceRevision="notebook"
+              sourcePending
+              selection={null}
+              editorSelection={null}
+              contextId={contextId}
+              onRunRequested={() => undefined}
+              onShowMatlabOneShot={() => undefined}
+              onExecutionSubmitted={() => model.refreshExecutions()}
+              onCellsSubmitted={controller.expectRuns}
+              runAll={runAllCells}
+              runMenu={
+                <>
+                  <MenuItem disabled={outOfDate.length === 0} onClick={() => runCells(outOfDate)}>
+                    Run out-of-date cells
+                  </MenuItem>
+                  <MenuItem
+                    disabled={selectedIndex <= 0}
+                    onClick={() => runCells(codeCellIds(0, selectedIndex))}
+                  >
+                    Run cells above
+                  </MenuItem>
+                  <MenuItem
+                    disabled={selectedIndex < 0}
+                    onClick={() => runCells(codeCellIds(selectedIndex))}
+                  >
+                    Run from this cell
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuItem disabled={busy} onClick={() => void restartAndRunAll()}>
+                    Restart and run all
+                  </MenuItem>
+                  <MenuItem disabled={busy} onClick={controller.clearOutputs}>
+                    Clear all outputs
+                  </MenuItem>
+                </>
+              }
+              leadingActions={
+                <>
+                  {busy ? (
+                    <ScientTooltip content="Stop">
+                      <Button size="icon-xs" variant="outline" aria-label="Stop" onClick={stop}>
+                        <Square />
+                      </Button>
+                    </ScientTooltip>
+                  ) : null}
+                  <ScientTooltip content="Variables">
+                    <Button
+                      size="icon-xs"
+                      variant={panelView === null ? "ghost-muted" : "secondary"}
+                      aria-label="Variables"
+                      aria-pressed={panelView !== null}
+                      onClick={() => setPanelView(panelView === null ? "variables" : null)}
+                    >
+                      <Variable />
                     </Button>
                   </ScientTooltip>
-                ) : null}
-                <ScientTooltip content="Variables">
-                  <Button
-                    size="icon-xs"
-                    variant={panelView === null ? "ghost-muted" : "secondary"}
-                    aria-label="Variables"
-                    aria-pressed={panelView !== null}
-                    onClick={() => setPanelView(panelView === null ? "variables" : null)}
-                  >
-                    <Variable />
-                  </Button>
-                </ScientTooltip>
-              </>
-            }
-          />
-        </div>
-      </div>
-      <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
-        <div ref={list} className="mx-auto max-w-4xl pb-4" onKeyDown={onCommandKey}>
-          {document.cells.map((cell, index) => {
-            const execution = cellRuns.get(cell.id);
-            const activity = submitting.has(cell.id) ? "queued" : activityOf(execution);
-            const session =
-              execution === undefined
-                ? undefined
-                : model.events.data?.sessions.get(execution.request.sessionId);
-            const live =
-              execution === undefined
-                ? undefined
-                : model.events.data?.outputs.get(
-                    `${execution.request.sessionId}/${execution.request.executionId}`,
-                  );
-            const showsRun =
-              execution !== undefined &&
-              session !== undefined &&
-              live !== undefined &&
-              (activityOf(execution) !== null ||
-                (cell.run?.execution === execution.request.executionId && cell.outputs.length > 0));
-            return (
-              <NotebookCell
-                key={cell.id}
-                cell={cell}
-                index={index}
-                language={cell.cellType === "code" ? language.languageId : "markdown"}
-                selected={selected === cell.id}
-                editingText={editingText === cell.id}
-                activity={activity}
-                stale={stale.get(cell.id) ?? null}
-                output={
-                  showsRun ? (
-                    <div className="px-3 py-2">
-                      <ComputeOutputView
-                        cwd={props.cwd}
-                        environmentId={props.environmentId}
-                        session={session}
-                        executionId={execution.request.executionId}
-                        outputs={live.outputs}
-                        threadRef={props.threadRef}
-                      />
-                    </div>
-                  ) : (
-                    <NotebookOutputs outputs={cell.outputs} label={`Cell ${index + 1}`} />
-                  )
-                }
-                onSelect={() => setSelected(cell.id)}
-                onEditText={() => {
-                  setEditingText(cell.id);
-                  setFocus({ cellId: cell.id, target: "end" });
-                }}
-                onChange={(source) =>
-                  commit((current) =>
-                    updateNotebookCell(current, cell.id, (entry) => ({ ...entry, source })),
-                  )
-                }
-                onRun={(advance) => runAndAdvance(index, advance)}
-                onStop={stop}
-                onEscape={() => {
-                  setEditingText(null);
-                  setFocus({ cellId: cell.id, target: "cell" });
-                }}
-                onLeave={(edge) =>
-                  moveSelection(
-                    index + (edge === "start" ? -1 : 1),
-                    edge === "start" ? "end" : "start",
-                  )
-                }
-                onInsert={(type) => addCell(index, type)}
-                onAsk={() =>
-                  askInChatAboutCompute({
-                    threadRef: props.threadRef,
-                    what: `Cell ${index + 1} of ${props.relativePath}`,
-                  })
-                }
-                onMove={(offset) => commit((current) => moveNotebookCell(current, cell.id, offset))}
-                onDelete={() => deleteCell(index)}
-                registerEditor={(editor) => {
-                  if (editor === null) editors.current.delete(cell.id);
-                  else editors.current.set(cell.id, editor);
-                }}
-              />
-            );
-          })}
-          <div className="flex gap-1 pt-3 pl-9">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => addCell(document.cells.length, "code")}
-            >
-              <Plus className="size-3.5" /> Code
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => addCell(document.cells.length, "markdown")}
-            >
-              <Plus className="size-3.5" /> Text
-            </Button>
+                </>
+              }
+            />
           </div>
         </div>
-      </div>
-      {panelView === null ? null : (
-        <div className="flex h-2/5 min-h-44 shrink-0 flex-col border-t border-border/60">
-          <ComputePanel
-            environmentId={props.environmentId}
-            cwd={props.cwd}
-            threadRef={props.threadRef}
-            sourcePath={props.relativePath}
-            contextId={contextId}
-            panelView={panelView}
-            onPanelViewChange={setPanelView}
-            embedded
-          />
+        <div ref={setScroller} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
+          <div ref={list} className="mx-auto max-w-4xl pb-4" onKeyDown={onCommandKey}>
+            {order.map((cellId) => (
+              <NotebookCell
+                key={cellId}
+                controller={controller}
+                cellId={cellId}
+                language={language.languageId}
+                handlers={handlers}
+              />
+            ))}
+            {status === "ready" ? (
+              <div className="flex gap-1 pt-3 pl-9">
+                <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "code")}>
+                  <Plus className="size-3.5" /> Code
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "markdown")}>
+                  <Plus className="size-3.5" /> Text
+                </Button>
+              </div>
+            ) : null}
+          </div>
         </div>
-      )}
-    </div>
+        {panelView === null ? null : (
+          <div className="flex h-2/5 min-h-44 shrink-0 flex-col border-t border-border/60">
+            <ComputePanel
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+              threadRef={props.threadRef}
+              sourcePath={props.relativePath}
+              contextId={contextId}
+              panelView={panelView}
+              onPanelViewChange={setPanelView}
+              embedded
+            />
+          </div>
+        )}
+      </div>
+    </NotebookContext.Provider>
   );
 }

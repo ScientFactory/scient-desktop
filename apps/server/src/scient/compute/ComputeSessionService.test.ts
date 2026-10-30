@@ -3412,6 +3412,44 @@ describe("compute session execution", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("stops every later cell of a run submitted together", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const cell = (id: string, code: string) => ({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        executionId: ComputeExecutionId.make(id),
+        expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+        code,
+        source: {
+          _tag: "document" as const,
+          origin: "cell" as const,
+          path: "a.ipynb",
+          bufferState: "saved" as const,
+          revision: null,
+          range: null,
+          cell: id,
+        },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          const records = yield* service.submitExecutions({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            submissions: [cell("one", "boom"), cell("two", "print(1)"), cell("three", "print(1)")],
+          });
+          expect(records).toHaveLength(3);
+          yield* waitForExecution(ComputeExecutionId.make("one"), "failed");
+          yield* waitForExecution(ComputeExecutionId.make("two"), "cancelled");
+          yield* waitForExecution(ComputeExecutionId.make("three"), "cancelled");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("returns the same execution for a repeated submission", () =>
     Effect.gen(function* () {
       const test = yield* harness();

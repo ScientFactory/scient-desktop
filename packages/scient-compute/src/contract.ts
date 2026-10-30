@@ -344,6 +344,8 @@ export const ComputeTransportEvent = Schema.Union([
     requestId: ComputeRequestId,
     generation: ComputeSessionGeneration,
     outcome: ComputeExecutionOutcome,
+    /** The kernel's number for this run, for kernels that report one. */
+    executionCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   }),
   Schema.TaggedStruct("restarted", {
     generation: ComputeSessionGeneration,

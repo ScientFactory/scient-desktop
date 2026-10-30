@@ -4,11 +4,12 @@ import {
   HighlightStyle,
   LanguageDescription,
   syntaxHighlighting,
+  type LanguageSupport,
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
 import { drawSelection, EditorView, highlightSpecialChars, keymap } from "@codemirror/view";
-import { tags } from "@lezer/highlight";
+import { highlightCode, tags } from "@lezer/highlight";
 import pierreDark from "@pierre/theme/pierre-dark";
 import pierreLight from "@pierre/theme/pierre-light";
 
@@ -106,11 +107,63 @@ function pierreHighlightStyle(
 
 const lightHighlightStyle = pierreHighlightStyle(pierreLight, "light");
 const darkHighlightStyle = pierreHighlightStyle(pierreDark, "dark");
-const lightEditorTheme = EditorView.theme({});
-const darkEditorTheme = EditorView.theme({}, { dark: true });
+// A nested editor sits in a box that shows focus; CodeMirror's own outline would be a second cue.
+const nestedEditorTheme = { "&.cm-focused": { outline: "none" } };
+const lightEditorTheme = EditorView.theme(nestedEditorTheme);
+const darkEditorTheme = EditorView.theme(nestedEditorTheme, { dark: true });
 
 function editorThemeFor(root: HTMLElement) {
   return root.classList.contains("dark") ? darkEditorTheme : lightEditorTheme;
+}
+
+export interface HighlightedCodeSpan {
+  readonly text: string;
+  readonly className: string;
+}
+
+const staticLanguages = new Map<string, Promise<LanguageSupport | null>>();
+function staticLanguage(language: string): Promise<LanguageSupport | null> {
+  let loading = staticLanguages.get(language);
+  if (loading === undefined) {
+    const description = LanguageDescription.matchLanguageName(languages, language, true);
+    loading = description === null ? Promise.resolve(null) : description.load().catch(() => null);
+    staticLanguages.set(language, loading);
+  }
+  return loading;
+}
+
+let staticStyles: EditorView | null = null;
+/** The highlight classes exist once a view mounts them; static code may come first. */
+function mountStaticStyles() {
+  staticStyles ??= new EditorView({
+    parent: document.createElement("div"),
+    extensions: [syntaxHighlighting(lightHighlightStyle), syntaxHighlighting(darkHighlightStyle)],
+  });
+}
+
+/**
+ * Code as spans in the editor's own colors. Live editors each measure the page on every
+ * scroll, so a long notebook shows this and mounts one editor where the user is working.
+ */
+export async function highlightedCodeSpans(
+  code: string,
+  language: string,
+): Promise<ReadonlyArray<HighlightedCodeSpan>> {
+  const support = await staticLanguage(language);
+  if (support === null) return [{ text: code, className: "" }];
+  mountStaticStyles();
+  const style = document.documentElement.classList.contains("dark")
+    ? darkHighlightStyle
+    : lightHighlightStyle;
+  const spans: HighlightedCodeSpan[] = [];
+  highlightCode(
+    code,
+    support.language.parser.parse(code),
+    style,
+    (text, className) => spans.push({ text, className }),
+    () => spans.push({ text: "\n", className: "" }),
+  );
+  return spans;
 }
 
 export interface ScientCodeChange {
@@ -121,8 +174,8 @@ export interface ScientCodeChange {
 
 export interface ScientNestedCodeEditor {
   readonly focus: () => void;
-  /** Focuses with the caret at one end of the code. */
-  readonly focusEdge: (edge: "start" | "end") => void;
+  /** Focuses with the caret at an offset, or at one end of the code. */
+  readonly focusAt: (position: number | "start" | "end") => void;
   /** Whether the caret sits on the first or last visual line. */
   readonly caretAtEdge: (edge: "start" | "end") => boolean;
   readonly refreshAppearance: () => void;
@@ -273,8 +326,11 @@ export function createScientNestedCodeEditor(input: {
 
   return {
     focus: () => view.focus(),
-    focusEdge: (edge) => {
-      view.dispatch({ selection: { anchor: edge === "start" ? 0 : view.state.doc.length } });
+    focusAt: (position) => {
+      const { length } = view.state.doc;
+      const anchor =
+        position === "start" ? 0 : position === "end" ? length : Math.min(position, length);
+      view.dispatch({ selection: { anchor } });
       view.focus();
     },
     caretAtEdge: (edge) => {

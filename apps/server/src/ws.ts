@@ -314,6 +314,7 @@ import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
 import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
+import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
 import {
   makeAnalysisRuntimeInspectionHandlers,
   makeScientificRpcHandlers,
@@ -3825,6 +3826,7 @@ export const layerWsRpc = (
           computeGateway,
           dataTables,
           saveComputeOutput,
+          notebooks: yield* NotebookStore.NotebookStore,
           computeNotebookOutputs,
         }),
       });

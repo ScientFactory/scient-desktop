@@ -1,4 +1,14 @@
-import { notebookCodeHash, type NotebookCell } from "./notebookDocument";
+import type { NotebookCellView } from "@t3tools/contracts";
+
+/** A short hash, so a cell can tell whether its outputs came from the code it shows now. */
+export function notebookCodeHash(code: string): string {
+  let hash = 0x811c9dc5;
+  const text = code.trimEnd();
+  for (let index = 0; index < text.length; index += 1) {
+    hash = Math.imul(hash ^ text.charCodeAt(index), 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
 
 /** Why a cell's outputs may no longer match: its own code, or something it reads. */
 export type NotebookStaleness = "edited" | "upstream";
@@ -64,7 +74,7 @@ function usedNames(source: string): ReadonlySet<string> {
  * staleness down the notebook. A cell Scient never ran has no record, so it is never flagged.
  */
 export function staleNotebookCells(
-  cells: ReadonlyArray<NotebookCell>,
+  cells: ReadonlyArray<NotebookCellView>,
 ): ReadonlyMap<string, NotebookStaleness> {
   const stale = new Map<string, NotebookStaleness>();
   const earlier: Array<{
