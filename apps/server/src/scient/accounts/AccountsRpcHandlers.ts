@@ -5,6 +5,8 @@ import {
   type AccountKeyLink,
   type AccountPaperForSourceInput,
   type AccountPaperForSourceResult,
+  type AccountPlainKey,
+  type AccountPlainKeyInput,
   type AccountsCheckInput,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -27,6 +29,7 @@ export const makeAccountsRpcHandlers = ({
   check,
   linkKey,
   paperForSource,
+  plainKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
   readonly check: (input: AccountsCheckInput) => Effect.Effect<number, AccountsError>;
@@ -34,6 +37,15 @@ export const makeAccountsRpcHandlers = ({
   readonly paperForSource: (
     input: AccountPaperForSourceInput,
   ) => Effect.Effect<typeof AccountPaperForSourceResult.Type, AccountsError>;
+  readonly plainKeys: {
+    readonly find: (
+      roots: ReadonlyArray<string>,
+    ) => Effect.Effect<ReadonlyArray<AccountPlainKey>, AccountsError>;
+    readonly keep: (
+      input: AccountPlainKeyInput,
+      roots: ReadonlyArray<string>,
+    ) => Effect.Effect<void, AccountsError>;
+  };
 }) => {
   const observedSessions = new Set<string>();
   const attributes = { "rpc.aggregate": "accounts" };
@@ -109,6 +121,14 @@ export const makeAccountsRpcHandlers = ({
       ),
     [WS_METHODS.accountsPaperForSource]: (input) =>
       observeRpcEffect(WS_METHODS.accountsPaperForSource, paperForSource(input), attributes),
+    [WS_METHODS.accountsPlainKeys]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsPlainKeys, plainKeys.find(input.roots), attributes),
+    [WS_METHODS.accountsKeepPlainKey]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsKeepPlainKey,
+        plainKeys.keep(input, input.roots).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsLinkKey]: (input) =>
       observeRpcEffect(WS_METHODS.accountsLinkKey, linkKey(input).pipe(Effect.as({})), attributes),
     [WS_METHODS.accountsUnlinkKey]: (input) =>

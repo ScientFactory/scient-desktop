@@ -25,6 +25,7 @@ it.effect(
         check: () => Effect.succeed(0),
         linkKey: () => Effect.void,
         paperForSource: () => Effect.die("not reached"),
+        plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
       });
       const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
       const layer = group.toLayer(handlers);

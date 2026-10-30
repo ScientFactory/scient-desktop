@@ -496,6 +496,15 @@ describe("account status", () => {
       "Needs you",
     );
     expect(accountStatusLabel({}, relative)).toBeNull();
+    expect(
+      accountStatusLabel(
+        {
+          details: { kind: "api-key", sites: [], auth: { type: "bearer" } },
+          lastCheck: { state: "rejected", at },
+        },
+        relative,
+      ),
+    ).toBe("Key refused");
   });
 
   it("reads activity as what happened and where", () => {

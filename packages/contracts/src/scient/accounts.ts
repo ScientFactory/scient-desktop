@@ -507,6 +507,25 @@ export const AccountPaperForSourceResult = Schema.Union([
   }),
 ]);
 
+/** A secret sitting in a plain file: by name only, never its value. */
+export const AccountPlainKey = Schema.Struct({
+  file: Schema.String.check(Schema.isMaxLength(4096)),
+  name: EnvironmentVariableName,
+  kept: Schema.Boolean,
+});
+export type AccountPlainKey = typeof AccountPlainKey.Type;
+
+export const AccountPlainKeysInput = Schema.Struct({
+  roots: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(Schema.isMaxLength(200)),
+});
+
+export const AccountPlainKeyInput = Schema.Struct({
+  ...AccountPlainKeysInput.fields,
+  file: AccountPlainKey.fields.file,
+  name: AccountPlainKey.fields.name,
+});
+export type AccountPlainKeyInput = typeof AccountPlainKeyInput.Type;
+
 /** A provider variable that takes its value from an API-key account, and follows it. */
 export const AccountKeyLink = Schema.Struct({
   accountId: AccountId,

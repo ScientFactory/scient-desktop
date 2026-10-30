@@ -86,6 +86,15 @@ export const accountsState = {
     label: "accounts:paperForSource",
     tag: WS_METHODS.accountsPaperForSource,
   }),
+  plainKeys: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:plainKeys",
+    tag: WS_METHODS.accountsPlainKeys,
+  }),
+  keepPlainKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:keepPlainKey",
+    tag: WS_METHODS.accountsKeepPlainKey,
+    ...lane,
+  }),
   linkKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:linkKey",
     tag: WS_METHODS.accountsLinkKey,

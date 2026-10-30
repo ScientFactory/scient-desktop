@@ -669,9 +669,13 @@ export const CLI_LOGIN_COMMANDS: Readonly<Record<string, string>> = {
 
 /** The account's sign-in state in a few words, or nothing when there is nothing to say. */
 export function accountStatusLabel(
-  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck" | "signedOut">,
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck" | "signedOut"> & {
+    readonly details?: AccountSummary["details"];
+  },
   relativeTime: (iso: string) => string,
 ) {
+  if (account.details?.kind === "api-key")
+    return account.lastCheck?.state === "rejected" ? "Key refused" : null;
   if (account.lastSignInOutcome === "password-rejected") return "Password rejected";
   if (account.lastSignInOutcome === "code-rejected") return "Code rejected";
   if (account.signedOut) return "Signed out";

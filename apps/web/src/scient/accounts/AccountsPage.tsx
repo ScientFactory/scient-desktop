@@ -7,6 +7,7 @@ import {
   resolveBrowserProfiles,
   type AccountActivityEntry,
   type AccountCodeSources,
+  type AccountPlainKey,
   type AccountSummary,
   type AccountsSnapshot,
   type ConnectorSummary,
@@ -16,13 +17,14 @@ import {
 import { Link } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
+  FileKeyIcon,
   GlobeIcon,
   KeyRoundIcon,
   LinkIcon,
   MessageSquareIcon,
   PlusIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import {
   SettingsPageContainer,
@@ -50,6 +52,7 @@ import { ExtensionIcon } from "~/scient/extensions/ExtensionRow";
 import { extensionsInventory } from "~/scient/extensions/extensionsState";
 import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/server";
@@ -601,6 +604,49 @@ function KeysInUseDialog({
   );
 }
 
+/** Keys in plain files. Keeping one copies it into Accounts; the file stays as it is. */
+function PlainKeysDialog({
+  keys,
+  roots,
+  environmentId,
+  canWrite,
+  onKept,
+  onClose,
+}: {
+  keys: ReadonlyArray<AccountPlainKey>;
+  roots: ReadonlyArray<string>;
+  environmentId: EnvironmentId;
+  canWrite: boolean;
+  onKept: (key: AccountPlainKey) => void;
+  onClose: () => void;
+}) {
+  const keep = useAccountCommand(accountsState.keepPlainKey, environmentId);
+  return (
+    <ListDialog title="Keys in plain files" onClose={onClose}>
+      {keys.map((key) => (
+        <SettingsRow
+          key={`${key.file}:${key.name}`}
+          title={<span className="font-mono text-xs">{key.name}</span>}
+          description={key.file}
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canWrite || key.kept}
+              onClick={async () => {
+                const result = await keep({ roots, file: key.file, name: key.name });
+                if (result.ok) onKept(key);
+              }}
+            >
+              {key.kept ? "In Accounts" : "Keep in Accounts"}
+            </Button>
+          }
+        />
+      ))}
+    </ListDialog>
+  );
+}
+
 const FULL_DISK_ACCESS_URL =
   "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles";
 
@@ -690,11 +736,29 @@ function AccountsContent({
     | "other-sign-ins"
     | "sign-in-codes"
     | "keys"
+    | "plain-keys"
     | null
   >(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [signIns, setSignIns] = useState<ReadonlyArray<AccountSummary> | null>(null);
   const [checking, setChecking] = useState(false);
+  const [plainKeys, setPlainKeys] = useState<ReadonlyArray<AccountPlainKey>>([]);
+  const projectRoots = useProjects()
+    .filter((project) => project.environmentId === environmentId)
+    .map((project) => project.workspaceRoot);
+  const findPlainKeys = useAccountCommand(accountsState.plainKeys, environmentId);
+  const scannedRoots = projectRoots.join("\u0000");
+  const scanPlainKeys = useEffectEvent((roots: ReadonlyArray<string>) => findPlainKeys({ roots }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Looks once per set of projects when the page opens; the files aren't watched.
+  useEffect(() => {
+    let live = true;
+    void scanPlainKeys(scannedRoots ? scannedRoots.split("\u0000") : []).then((result) => {
+      if (live && result.ok) setPlainKeys(result.value);
+    });
+    return () => {
+      live = false;
+    };
+  }, [scannedRoots]);
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const keys = keysInUse(
     serverSettings?.providerInstances ?? {},
@@ -855,6 +919,16 @@ function AccountsContent({
             onOpen={() => setDialog("keys")}
           />
         ) : null}
+        {plainKeys.some((key) => !key.kept) ? (
+          <ListRow
+            icon={<FileKeyIcon />}
+            title="Keys in plain files"
+            detail={[...new Set(plainKeys.filter((key) => !key.kept).map((key) => key.name))].join(
+              ", ",
+            )}
+            onOpen={() => setDialog("plain-keys")}
+          />
+        ) : null}
         <ListRow
           icon={<MessageSquareIcon />}
           title="Sign-in codes"
@@ -944,6 +1018,20 @@ function AccountsContent({
             ),
           )}
         </ListDialog>
+      ) : null}
+      {dialog === "plain-keys" ? (
+        <PlainKeysDialog
+          keys={plainKeys}
+          roots={projectRoots}
+          environmentId={environmentId}
+          canWrite={canWrite}
+          onKept={(key) =>
+            setPlainKeys((current) =>
+              current.map((item) => (item.name === key.name ? { ...item, kept: true } : item)),
+            )
+          }
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {dialog === "keys" ? (
         <KeysInUseDialog

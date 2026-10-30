@@ -22,6 +22,9 @@ import {
   AccountCodeSourcesResult,
   AccountKeyLink,
   AccountPaperForSourceInput,
+  AccountPlainKey,
+  AccountPlainKeyInput,
+  AccountPlainKeysInput,
   AccountPaperForSourceResult,
   AccountKeyUnlinkInput,
   AccountSignInSeenInput,
@@ -54,6 +57,8 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSetCodeSources: "accounts.codeSources.set",
   accountsLinkKey: "accounts.keys.link",
   accountsPaperForSource: "accounts.papers.getForSource",
+  accountsPlainKeys: "accounts.plainKeys.find",
+  accountsKeepPlainKey: "accounts.plainKeys.keep",
   accountsUnlinkKey: "accounts.keys.unlink",
   accountsSetControls: "accounts.setControls",
   accountsSetAgentAccess: "accounts.setAgentAccess",
@@ -144,6 +149,18 @@ export const WsAccountsPaperForSourceRpc = Rpc.make(
     error: AccountsRpcError,
   },
 );
+
+export const WsAccountsPlainKeysRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsPlainKeys, {
+  payload: AccountPlainKeysInput,
+  success: Schema.Array(AccountPlainKey),
+  error: AccountsRpcError,
+});
+
+export const WsAccountsKeepPlainKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsKeepPlainKey, {
+  payload: AccountPlainKeyInput,
+  success: Empty,
+  error: AccountsRpcError,
+});
 
 export const WsAccountsLinkKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsLinkKey, {
   payload: AccountKeyLink,

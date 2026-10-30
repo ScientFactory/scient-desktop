@@ -136,6 +136,7 @@ const request = metadata(
       status: Schema.Int,
       body: Schema.optional(Schema.String),
       path: Schema.optional(Schema.String),
+      note: Schema.optional(Schema.String),
     }),
   }),
   "request",

@@ -200,10 +200,26 @@ export const accountAgentOperations = {
               ? cause
               : fail("denied", "The account request could not be completed."),
         });
+        // A refused key is worth saying once and clearing as soon as a key works again.
+        const refused = response.status === 401;
+        if (refused || account.lastCheck?.state === "rejected")
+          yield* accounts.recordCheck(accountId, {
+            state: refused ? "rejected" : "signed-in",
+            ...(refused ? { message: "The service refused this key." } : {}),
+          });
+        const note = refused
+          ? {
+              note: "The service refused this key. Call scient_account_add with this accountId to ask the user for a new one.",
+            }
+          : {};
         if (response.text && response.bytes.byteLength <= 256 * 1024)
-          return { status: response.status, body: new TextDecoder().decode(response.bytes) };
+          return {
+            status: response.status,
+            body: new TextDecoder().decode(response.bytes),
+            ...note,
+          };
         const path = yield* files.write(scope.threadId, `${accountId}-response`, response.bytes);
-        return { status: response.status, path };
+        return { status: response.status, path, ...note };
       }),
     );
   }),
