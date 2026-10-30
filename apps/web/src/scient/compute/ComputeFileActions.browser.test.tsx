@@ -861,10 +861,10 @@ describe("Python file run actions", () => {
     );
     const retry = buttonProps().findLast(
       (button) => button["aria-label"] === "Couldn't check Python. Check again",
-    );
+    )!;
     expect(retry).toBeDefined();
     expect(mocks.markup).not.toContain("Set up Python");
-    retry!.onClick?.({} as Parameters<NonNullable<typeof retry.onClick>>[0]);
+    retry.onClick?.({} as Parameters<NonNullable<typeof retry.onClick>>[0]);
     await vi.waitFor(() =>
       expect(mocks.refresh).toHaveBeenCalledWith(
         expect.objectContaining({ input: expect.objectContaining({ refresh: true }) }),
