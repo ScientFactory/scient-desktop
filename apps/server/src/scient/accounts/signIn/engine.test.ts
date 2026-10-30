@@ -175,3 +175,112 @@ it.effect("handles sequential login steps and bounds retries without returning f
     expect(fills - beforeSlow).toBe(2);
   }),
 );
+
+it.effect(
+  "signs in on the agent's tab on the site, or opens the account's site, never a blank tab",
+  () =>
+    Effect.gen(function* () {
+      const main = BrowserProfileId.make("default");
+      const work = BrowserProfileId.make("work");
+      const scope = {
+        threadId: ThreadId.make("thread-fixture"),
+        projectId: ProjectId.make("project-fixture"),
+        unattended: false,
+      };
+      const account: AccountSummary = {
+        accountId: AccountId.make("acc_fixture2"),
+        name: "Fixture",
+        details: { kind: "website", sites: ["example.com"], profileId: work },
+        secrets: { password: { source: { type: "scient" } } },
+        controls: {
+          access: "allowed",
+          permission: "full",
+          visibility: "hidden",
+          scope: { type: "all-projects" },
+        },
+        status: "ready",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      };
+      let status: PreviewAutomationStatus = {
+        available: true,
+        visible: false,
+        tabId: "tab-main",
+        url: "https://example.com/login",
+        title: null,
+        loading: false,
+        defaultProfileId: main,
+        profiles: [
+          { id: main, name: "Main" },
+          { id: work, name: "Work" },
+        ],
+        tabs: [
+          {
+            tabId: "tab-main",
+            url: "https://example.com/login",
+            profileId: main,
+            ownedByCaller: true,
+          },
+        ],
+      };
+      const opens: unknown[] = [];
+      const broker = PreviewAutomationBroker.of({
+        connect: () => Effect.succeed(Stream.empty),
+        focusHost: () => Effect.void,
+        respond: () => Effect.void,
+        invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+          Effect.sync(() => {
+            if (request.operation === "open") opens.push(request.input);
+            if (request.operation === "evaluate")
+              return {
+                origin: "https://example.com",
+                username: null,
+                password: null,
+                otp: null,
+                submit: null,
+                challenge: null,
+                signedIn: true,
+              } as A;
+            return status as A;
+          }),
+      });
+      const run = (tabId?: string) =>
+        signIn(scope, account, { password: Redacted.make("synthetic-password") }, tabId).pipe(
+          Effect.provideService(
+            AccountsService,
+            fakeAccounts({
+              profiles: [defaultBrowserProfileRecord(main), defaultBrowserProfileRecord(work)],
+            }).service,
+          ),
+          Effect.provideService(PreviewAutomationBroker, broker),
+          Effect.provideService(AgentInvocationContext, {
+            ...scope,
+            environmentId: EnvironmentId.make("env-fixture"),
+            providerSessionId: "session-fixture",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            capabilities: new Set(["preview", "accounts"] as const),
+            issuedAt: 0,
+          }),
+        );
+      yield* run("tab-main");
+      expect(opens[0]).toMatchObject({ reuseExistingTab: true, tabId: "tab-main" });
+      expect(opens[0]).not.toHaveProperty("url");
+      status = {
+        ...status,
+        tabs: [
+          {
+            tabId: "tab-main",
+            url: "https://other.example.org",
+            profileId: main,
+            ownedByCaller: true,
+          },
+        ],
+      };
+      yield* run();
+      expect(opens[1]).toMatchObject({
+        url: "https://example.com",
+        profileId: work,
+        reuseExistingTab: false,
+      });
+    }),
+);
