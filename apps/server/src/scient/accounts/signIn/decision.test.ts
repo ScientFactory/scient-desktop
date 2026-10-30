@@ -58,6 +58,45 @@ describe("account sign-in decisions", () => {
     expect(pageOffersNoSignIn({ ...empty, origin: "https://idp.other.org" }, sites)).toBe(false);
   });
 
+  it("picks the saved account from a list of accounts, and only that one", () => {
+    const chooser = {
+      ...page,
+      username: null,
+      password: null,
+      submit: null,
+      accountChoices: [
+        { email: "other@example.com", selector: "#other" },
+        { email: "Saved@Example.com", selector: "#saved" },
+      ],
+    };
+    expect(
+      decideSignIn(chooser, ["example.com"], { ...available, accountName: "saved@example.com" }),
+    ).toMatchObject({ type: "fill", submit: "#saved" });
+    expect(
+      decideSignIn(chooser, ["example.com"], { ...available, accountName: "new@example.com" }),
+    ).toMatchObject({ type: "needs-user", kind: "other" });
+    expect(pageOffersNoSignIn(chooser, ["example.com"])).toBe(false);
+  });
+
+  it("takes the password route past a passkey when a password is saved", () => {
+    const offer = {
+      ...page,
+      username: null,
+      password: null,
+      submit: null,
+      challenge: "passkey" as const,
+      signInLink: "#password",
+    };
+    expect(decideSignIn(offer, ["example.com"], available)).toMatchObject({
+      type: "fill",
+      submit: "#password",
+    });
+    expect(decideSignIn(offer, ["example.com"], { ...available, password: false })).toMatchObject({
+      type: "needs-user",
+      kind: "passkey",
+    });
+  });
+
   it("follows a home page's sign-in link", () => {
     expect(
       decideSignIn(

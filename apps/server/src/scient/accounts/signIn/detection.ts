@@ -18,6 +18,9 @@ export const SignInDetection = Schema.Struct({
   signInLink: Schema.optional(Schema.String),
   limited: Schema.optional(Schema.Boolean),
   broken: Schema.optional(Schema.Boolean),
+  accountChoices: Schema.optional(
+    Schema.Array(Schema.Struct({ email: Schema.String, selector: Schema.String })),
+  ),
   signedIn: Schema.Boolean,
 });
 export type SignInDetection = typeof SignInDetection.Type;
@@ -71,8 +74,19 @@ export const signInDetectionScript = String.raw`(() => {
     }
   }
   const signInLink = !password && !otp && !username
-    ? Array.from(document.querySelectorAll('a, button, [role="button"]')).find(element => visible(element) && /^(sign in|log in|login)$/i.test(element.textContent?.trim() ?? ""))
+    ? Array.from(document.querySelectorAll('a, button, [role="button"], [role="link"]')).find(element => visible(element) && /^(sign in|log in|login|use another account|try another way|enter your password)$/i.test(element.textContent?.trim() ?? ""))
     : undefined;
+  // "Choose an account" lists remembered accounts before any field appears. A row is the innermost
+  // element, since a click on the list item around it may do nothing.
+  const markedRows = Array.from(document.querySelectorAll("[data-identifier], [data-email]"));
+  const possibleRows = markedRows.length > 0 ? markedRows : Array.from(document.querySelectorAll('a, button, li, [role="link"], [role="button"]'));
+  const accountChoices = !password && !otp && !username
+    ? possibleRows.filter(row => !possibleRows.some(other => other !== row && row.contains(other))).flatMap(element => {
+        const text = element.innerText ?? "";
+        const email = element.dataset?.identifier ?? element.dataset?.email ?? (text.length < 120 ? text.match(/[^\s@]+@[^\s@]+\.[^\s@]+/)?.[0] : undefined);
+        return email && visible(element) ? [{ email, selector: path(element) }] : [];
+      })
+    : [];
   const limited = !password && !otp && new RegExp(${JSON.stringify(SITE_LIMITED_TEXT)}, "i").test(text);
   // Some sign-in pages answer 401, so a status only counts on a page with no form.
   const status = performance.getEntriesByType("navigation")[0]?.responseStatus ?? 0;
@@ -80,6 +94,7 @@ export const signInDetectionScript = String.raw`(() => {
   return {
     ...(limited ? { limited: true } : {}),
     ...(broken ? { broken: true } : {}),
+    ...(accountChoices.length > 0 ? { accountChoices } : {}),
     ...(signInLink ? { signInLink: path(signInLink) } : {}),
     ...(push && numbers.size === 1 ? { number: [...numbers][0] } : {}),
     ...(remember ? { remember: path(remember) } : {}),

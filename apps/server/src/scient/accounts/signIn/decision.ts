@@ -4,7 +4,7 @@ import { matchesAccountOrigin } from "./origin.ts";
 export function decideSignIn(
   page: SignInDetection,
   sites: ReadonlyArray<string>,
-  available: { username: boolean; password: boolean; otp: boolean },
+  available: { username: boolean; password: boolean; otp: boolean; accountName?: string },
 ) {
   if (page.broken && !page.signedIn)
     return {
@@ -25,6 +25,9 @@ export function decideSignIn(
       kind: undefined,
       message: "The site is limiting access from this network. Try again later.",
     } as const;
+  // Passkeys can't be used in this browser yet, and many accounts offer one first.
+  if (page.challenge === "passkey" && page.signInLink && available.password)
+    return { type: "fill", fields: [], submit: page.signInLink } as const;
   if (page.challenge)
     return {
       type: "needs-user",
@@ -41,6 +44,11 @@ export function decideSignIn(
     ...(page.password ? [{ field: "password" as const, selector: page.password }] : []),
     ...(page.otp ? [{ field: "otp" as const, selector: page.otp }] : []),
   ];
+  const listed = page.accountChoices?.find(
+    ({ email }) => email.toLowerCase() === available.accountName?.toLowerCase(),
+  );
+  if (fields.length === 0 && listed)
+    return { type: "fill", fields, submit: listed.selector } as const;
   // "Stay signed in?" has no fields; its Yes button is the whole step.
   if (fields.length === 0 && page.stay) return { type: "fill", fields, submit: page.stay } as const;
   // A site's home page often has only a link to its sign-in page.
@@ -66,7 +74,14 @@ export function pageOffersNoSignIn(page: SignInDetection, sites: ReadonlyArray<s
   if (page.broken) return !page.signedIn;
   if (page.signedIn || page.limited || page.challenge) return false;
   if (!matchesAccountOrigin(page.origin, sites)) return false;
-  return !(page.username || page.password || page.otp || page.stay || page.signInLink);
+  return !(
+    page.username ||
+    page.password ||
+    page.otp ||
+    page.stay ||
+    page.signInLink ||
+    page.accountChoices?.length
+  );
 }
 
 export interface SignInSubmission {

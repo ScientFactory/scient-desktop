@@ -123,6 +123,13 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   const target = opened.tabId;
   const password = secrets.password === undefined ? undefined : Redacted.value(secrets.password);
   const totp = secrets.totp === undefined ? undefined : Redacted.value(secrets.totp);
+  const decide = (page: SignInDetection) =>
+    decideSignIn(page, details.sites, {
+      username: details.username !== undefined,
+      password: password !== undefined,
+      otp: totp !== undefined,
+      ...(details.username === undefined ? {} : { accountName: details.username }),
+    });
   // Only the last submission's fields: earlier pages are gone, and after a hand-off the user
   // continues with what is on screen.
   let filled: Array<{ origin: string; selector: string; expected: string }> = [];
@@ -189,11 +196,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         yield* invoke("accountWaitForLoad", {}, target);
         continue;
       }
-      let action = decideSignIn(page, details.sites, {
-        username: details.username !== undefined,
-        password: password !== undefined,
-        otp: totp !== undefined,
-      });
+      let action = decide(page);
       if (action.type === "signed-in" || action.type === "needs-user") clearFilled = false;
       if (action.type === "signed-in") return { outcome: "signed-in" as const, tabId: target };
       if (action.type === "needs-user") {
@@ -282,11 +285,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
             if (yield* accounts.handoffCancelled(handoffId)) return "cancelled" as const;
             if (looked._tag === "None") continue;
             ({ page, timestamp, otpPeriod, continuation } = looked.value);
-            action = decideSignIn(page, details.sites, {
-              username: details.username !== undefined,
-              password: password !== undefined,
-              otp: totp !== undefined,
-            });
+            action = decide(page);
             if (action.type !== "needs-user" || action.kind === undefined)
               return "continue" as const;
             if (timestamp - startedAt >= 180_000) break;
@@ -312,11 +311,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
                 : "The user did not finish signing in within 3 minutes.",
             tabId: target,
           };
-        action = decideSignIn(page, details.sites, {
-          username: details.username !== undefined,
-          password: password !== undefined,
-          otp: totp !== undefined,
-        });
+        action = decide(page);
         if (action.type === "signed-in") return { outcome: "signed-in" as const, tabId: target };
         if (continuation.type !== "continue")
           return { outcome: continuation.type, message: continuation.message, tabId: target };

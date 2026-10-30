@@ -26,6 +26,29 @@ it("calls a failed page broken, but not a sign-in form that answers with an erro
   }
 });
 
+it("lists one choice per remembered account, whichever way a site marks its rows", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await (await browser.newContext()).newPage();
+    const choices = async (html: string) => {
+      await page.setContent(html);
+      const found = decodeDetection(await page.evaluate(signInDetectionScript)).accountChoices;
+      return found?.map(({ email }) => email);
+    };
+    expect(
+      await choices(
+        '<ul><li><div data-identifier="a@example.com">A</div></li><li><div data-identifier="b@example.com">B</div></li></ul>',
+      ),
+    ).toEqual(["a@example.com", "b@example.com"]);
+    expect(
+      await choices("<ul><li><button>Ada Lovelace a@example.com</button></li><li>Help</li></ul>"),
+    ).toEqual(["a@example.com"]);
+    expect(await choices("<p>Nothing to choose</p>")).toBeUndefined();
+  } finally {
+    await browser.close();
+  }
+});
+
 it("detects static login steps, refuses look-alike fills, and reads only the requested site's HttpOnly cookies over CDP", async () => {
   const browser = await chromium.launch({ headless: true });
   try {
