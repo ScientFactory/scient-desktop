@@ -9,7 +9,15 @@ import {
   Square,
   Trash2,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import { useStore } from "zustand";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -24,10 +32,17 @@ import {
 } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import type { NotebookCaret, NotebookCellActivity, NotebookController } from "./notebookController";
-import { NOTEBOOK_MARKDOWN_PLUGINS, NotebookCellOutputs } from "./NotebookOutputs";
+import {
+  NOTEBOOK_MARKDOWN_PLUGINS,
+  NotebookCellOutputs,
+  type NotebookPlace,
+} from "./NotebookOutputs";
 import type { NotebookStaleness } from "./notebookStaleness";
 
 type Cell = NotebookCellView;
+
+// The document editor is large; a notebook needs it only once a Text cell is edited.
+const NotebookTextEditor = lazy(() => import("./NotebookTextEditor"));
 export type NotebookCellEdge = "start" | "end";
 
 /** One stable set of actions for every cell, so a cell re-renders only when it changes. */
@@ -86,7 +101,7 @@ function CellEditor(props: {
   const { caret, caretRequest } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the editor places its own caret, after the mount above, for each request to edit this cell.
   useLayoutEffect(() => {
-    if (caretRequest > 0) editor.current?.focusAt(caret);
+    if (caretRequest > 0 && typeof caret !== "object") editor.current?.focusAt(caret);
   }, [caret, caretRequest]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps CodeMirror's text in step with outside edits to the cell (another view, an agent).
   useEffect(() => {
@@ -306,8 +321,22 @@ function StaticCode(props: {
   );
 }
 
+function RenderedText(props: { readonly source: string; readonly live: boolean }) {
+  return props.live ? (
+    <ChatMarkdown
+      text={props.source}
+      cwd={undefined}
+      parseRawHtml={false}
+      extraRemarkPlugins={NOTEBOOK_MARKDOWN_PLUGINS}
+    />
+  ) : (
+    <p className="text-sm whitespace-pre-wrap">{props.source}</p>
+  );
+}
+
 export function NotebookCell(props: {
   readonly controller: NotebookController;
+  readonly place: NotebookPlace;
   readonly cellId: string;
   readonly language: string;
   readonly handlers: NotebookCellHandlers;
@@ -331,9 +360,10 @@ export function NotebookCell(props: {
   }, [handlers]);
   if (cell === undefined) return null;
   const isCode = cell.cellType === "code";
-  const rendered = cell.cellType === "markdown" && !editing && cell.source.trim() !== "";
+  const isText = cell.cellType === "markdown";
+  const rendered = isText && !editing && cell.source.trim() !== "";
   const live = near || selected;
-  const language = isCode ? props.language : "markdown";
+  const language = isCode ? props.language : isText ? "markdown" : "text";
   return (
     // `application` keeps command-mode keys here instead of the chat's type-to-focus.
     <section
@@ -378,19 +408,25 @@ export function NotebookCell(props: {
           {rendered ? (
             <div
               className="min-h-8 cursor-text px-3 py-1"
-              onDoubleClick={() => handlers.edit(cellId, "end")}
+              onClick={(event) => handlers.edit(cellId, { x: event.clientX, y: event.clientY })}
             >
-              {live ? (
-                <ChatMarkdown
-                  text={cell.source}
-                  cwd={undefined}
-                  parseRawHtml={false}
-                  extraRemarkPlugins={NOTEBOOK_MARKDOWN_PLUGINS}
-                />
-              ) : (
-                <p className="text-sm whitespace-pre-wrap">{cell.source}</p>
-              )}
+              <RenderedText source={cell.source} live={live} />
             </div>
+          ) : isText && editing ? (
+            <Suspense
+              fallback={
+                <div className="min-h-8 px-3 py-1">
+                  <RenderedText source={cell.source} live />
+                </div>
+              }
+            >
+              <NotebookTextEditor
+                source={cell.source}
+                caret={caret}
+                onChange={(source) => controller.setSource(cellId, source)}
+                onDone={(advance) => handlers.run(cellId, advance)}
+              />
+            </Suspense>
           ) : editing ? (
             <CellEditor
               cell={cell}
@@ -413,7 +449,12 @@ export function NotebookCell(props: {
         </div>
         {isCode ? (
           <div className={cn("min-w-0 transition-opacity", stale !== null && "opacity-55")}>
-            <NotebookCellOutputs controller={controller} cell={cell} near={live} />
+            <NotebookCellOutputs
+              controller={controller}
+              place={props.place}
+              cell={cell}
+              near={live}
+            />
           </div>
         ) : null}
       </div>

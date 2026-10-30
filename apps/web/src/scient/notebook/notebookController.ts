@@ -16,7 +16,8 @@ import { createStore } from "zustand/vanilla";
 import { notebookCodeHash, staleNotebookCells, type NotebookStaleness } from "./notebookStaleness";
 
 export type NotebookCellActivity = "queued" | "running" | null;
-export type NotebookCaret = number | "start" | "end";
+/** An offset in the source, an end of it, or a point on screen (for a rendered Text cell). */
+export type NotebookCaret = number | "start" | "end" | { readonly x: number; readonly y: number };
 
 /** The server calls a controller needs; `null` from any of them means the call failed. */
 export interface NotebookTransport {

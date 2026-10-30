@@ -82,6 +82,7 @@ export type ComputeDisplay =
   | { readonly kind: "image"; readonly image: ComputeStaticImageOutput }
   | { readonly kind: "table"; readonly table: ComputeTablePreview }
   | { readonly kind: "json"; readonly json: string }
+  | { readonly kind: "svg"; readonly source: string }
   | { readonly kind: "text"; readonly text: string };
 
 function inline(representation: ComputeRepresentation | undefined): string | null {
@@ -109,6 +110,8 @@ export function computeDisplays(output: RepresentationOutput): ReadonlyArray<Com
   );
   if (vegaLite?.data._tag === "json" && vegaLite.data.json.length <= MAX_RICH_SOURCE)
     displays.push({ kind: "vega-lite", source: vegaLite.data.json });
+  const svg = text("image/svg+xml");
+  if (svg !== null) displays.push({ kind: "svg", source: svg });
   const table = text(COMPUTE_TABLE_MEDIA_TYPE);
   const parsedTable = table === null ? null : parseComputeTable(table);
   if (parsedTable !== null) displays.push({ kind: "table", table: parsedTable });

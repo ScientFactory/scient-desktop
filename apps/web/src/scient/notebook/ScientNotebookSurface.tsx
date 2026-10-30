@@ -33,7 +33,6 @@ import {
   type NotebookCaret,
   type NotebookController,
 } from "./notebookController";
-import { NotebookContext } from "./NotebookOutputs";
 
 /** Where focus goes next: the cell itself (command mode) or a place in its editor. */
 type NotebookFocusTarget = "cell" | NotebookCaret;
@@ -398,6 +397,11 @@ export default function ScientNotebookSurface(props: {
     return selected === null ? -1 : positionOf(selected);
   })();
   const outOfDate = changed === "" ? [] : changed.split("\n");
+  const place = {
+    environmentId: props.environmentId,
+    cwd: props.cwd,
+    threadRef: props.threadRef,
+  };
   const busy =
     submitting.size > 0 ||
     [...cellRuns.values()].some(
@@ -407,122 +411,115 @@ export default function ScientNotebookSurface(props: {
     );
 
   return (
-    <NotebookContext.Provider
-      value={{
-        environmentId: props.environmentId,
-        cwd: props.cwd,
-        threadRef: props.threadRef,
-      }}
-    >
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/20 px-2 py-1">
-          <div className="min-w-22 flex-1">
-            <ComputeFileActions
-              ref={actions}
-              language={language}
-              environmentId={props.environmentId}
-              cwd={props.cwd}
-              relativePath={props.relativePath}
-              contents=""
-              sourceRevision="notebook"
-              sourcePending
-              selection={null}
-              editorSelection={null}
-              contextId={contextId}
-              onRunRequested={() => undefined}
-              onShowMatlabOneShot={() => undefined}
-              onExecutionSubmitted={() => model.refreshExecutions()}
-              onCellsSubmitted={controller.expectRuns}
-              runAll={runAllCells}
-              runMenu={
-                <>
-                  <MenuItem disabled={outOfDate.length === 0} onClick={() => runCells(outOfDate)}>
-                    Run out-of-date cells
-                  </MenuItem>
-                  <MenuItem
-                    disabled={selectedIndex <= 0}
-                    onClick={() => runCells(codeCellIds(0, selectedIndex))}
-                  >
-                    Run cells above
-                  </MenuItem>
-                  <MenuItem
-                    disabled={selectedIndex < 0}
-                    onClick={() => runCells(codeCellIds(selectedIndex))}
-                  >
-                    Run from this cell
-                  </MenuItem>
-                  <MenuSeparator />
-                  <MenuItem disabled={busy} onClick={() => void restartAndRunAll()}>
-                    Restart and run all
-                  </MenuItem>
-                  <MenuItem disabled={busy} onClick={controller.clearOutputs}>
-                    Clear all outputs
-                  </MenuItem>
-                </>
-              }
-              leadingActions={
-                <>
-                  {busy ? (
-                    <ScientTooltip content="Stop">
-                      <Button size="icon-xs" variant="outline" aria-label="Stop" onClick={stop}>
-                        <Square />
-                      </Button>
-                    </ScientTooltip>
-                  ) : null}
-                  <ScientTooltip content="Variables">
-                    <Button
-                      size="icon-xs"
-                      variant={panelView === null ? "ghost-muted" : "secondary"}
-                      aria-label="Variables"
-                      aria-pressed={panelView !== null}
-                      onClick={() => setPanelView(panelView === null ? "variables" : null)}
-                    >
-                      <Variable />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/20 px-2 py-1">
+        <div className="min-w-22 flex-1">
+          <ComputeFileActions
+            ref={actions}
+            language={language}
+            environmentId={props.environmentId}
+            cwd={props.cwd}
+            relativePath={props.relativePath}
+            contents=""
+            sourceRevision="notebook"
+            sourcePending
+            selection={null}
+            editorSelection={null}
+            contextId={contextId}
+            onRunRequested={() => undefined}
+            onShowMatlabOneShot={() => undefined}
+            onExecutionSubmitted={() => model.refreshExecutions()}
+            onCellsSubmitted={controller.expectRuns}
+            runAll={runAllCells}
+            runMenu={
+              <>
+                <MenuItem disabled={outOfDate.length === 0} onClick={() => runCells(outOfDate)}>
+                  Run out-of-date cells
+                </MenuItem>
+                <MenuItem
+                  disabled={selectedIndex <= 0}
+                  onClick={() => runCells(codeCellIds(0, selectedIndex))}
+                >
+                  Run cells above
+                </MenuItem>
+                <MenuItem
+                  disabled={selectedIndex < 0}
+                  onClick={() => runCells(codeCellIds(selectedIndex))}
+                >
+                  Run from this cell
+                </MenuItem>
+                <MenuSeparator />
+                <MenuItem disabled={busy} onClick={() => void restartAndRunAll()}>
+                  Restart and run all
+                </MenuItem>
+                <MenuItem disabled={busy} onClick={controller.clearOutputs}>
+                  Clear all outputs
+                </MenuItem>
+              </>
+            }
+            leadingActions={
+              <>
+                {busy ? (
+                  <ScientTooltip content="Stop">
+                    <Button size="icon-xs" variant="outline" aria-label="Stop" onClick={stop}>
+                      <Square />
                     </Button>
                   </ScientTooltip>
-                </>
-              }
-            />
-          </div>
+                ) : null}
+                <ScientTooltip content="Variables">
+                  <Button
+                    size="icon-xs"
+                    variant={panelView === null ? "ghost-muted" : "secondary"}
+                    aria-label="Variables"
+                    aria-pressed={panelView !== null}
+                    onClick={() => setPanelView(panelView === null ? "variables" : null)}
+                  >
+                    <Variable />
+                  </Button>
+                </ScientTooltip>
+              </>
+            }
+          />
         </div>
-        <div ref={setScroller} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
-          <div ref={list} className="mx-auto max-w-4xl pb-4" onKeyDown={onCommandKey}>
-            {order.map((cellId) => (
-              <NotebookCell
-                key={cellId}
-                controller={controller}
-                cellId={cellId}
-                language={language.languageId}
-                handlers={handlers}
-              />
-            ))}
-            {status === "ready" ? (
-              <div className="flex gap-1 pt-3 pl-9">
-                <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "code")}>
-                  <Plus className="size-3.5" /> Code
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "markdown")}>
-                  <Plus className="size-3.5" /> Text
-                </Button>
-              </div>
-            ) : null}
-          </div>
-        </div>
-        {panelView === null ? null : (
-          <div className="flex h-2/5 min-h-44 shrink-0 flex-col border-t border-border/60">
-            <ComputePanel
-              environmentId={props.environmentId}
-              cwd={props.cwd}
-              threadRef={props.threadRef}
-              sourcePath={props.relativePath}
-              contextId={contextId}
-              panelView={panelView}
-              onPanelViewChange={setPanelView}
-              embedded
-            />
-          </div>
-        )}
       </div>
-    </NotebookContext.Provider>
+      <div ref={setScroller} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
+        <div ref={list} className="mx-auto max-w-4xl pb-4" onKeyDown={onCommandKey}>
+          {order.map((cellId) => (
+            <NotebookCell
+              key={cellId}
+              controller={controller}
+              place={place}
+              cellId={cellId}
+              language={language.languageId}
+              handlers={handlers}
+            />
+          ))}
+          {status === "ready" ? (
+            <div className="flex gap-1 pt-3 pl-9">
+              <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "code")}>
+                <Plus className="size-3.5" /> Code
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => addCell(order.length, "markdown")}>
+                <Plus className="size-3.5" /> Text
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      {panelView === null ? null : (
+        <div className="flex h-2/5 min-h-44 shrink-0 flex-col border-t border-border/60">
+          <ComputePanel
+            environmentId={props.environmentId}
+            cwd={props.cwd}
+            threadRef={props.threadRef}
+            sourcePath={props.relativePath}
+            contextId={contextId}
+            panelView={panelView}
+            onPanelViewChange={setPanelView}
+            embedded
+          />
+        </div>
+      )}
+    </div>
   );
 }

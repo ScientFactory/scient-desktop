@@ -192,6 +192,24 @@ function documentFromState(state: PlotlyViewState, config: Partial<Config>): Plo
   };
 }
 
+type PlotlyValidationIssue = NonNullable<ReturnType<PlotlyRuntime["validate"]>>[number];
+
+function plotlyIssuePath(issue: PlotlyValidationIssue): string[] {
+  if (Array.isArray(issue.path)) return issue.path.map(String);
+  return typeof issue.path === "string" ? issue.path.split(/[.[\]]+/u).filter(Boolean) : [];
+}
+
+/** Plotly's Python library sends arrays as `{ dtype, bdata }`, which `validate` wrongly flags. */
+function isTypedArrayIssue(figure: PlotlyRuntimeFigure, issue: PlotlyValidationIssue): boolean {
+  if (issue.container !== "data" || issue.trace == null) return false;
+  let value: unknown = figure.data[issue.trace];
+  for (const segment of plotlyIssuePath(issue)) {
+    if (typeof value !== "object" || value === null) return false;
+    value = (value as Record<string, unknown>)[segment];
+  }
+  return typeof value === "object" && value !== null && "bdata" in value;
+}
+
 function normalizedValidationIssues(
   runtime: PlotlyRuntime,
   figure: PlotlyRuntimeFigure,
@@ -201,11 +219,7 @@ function normalizedValidationIssues(
   let issues = runtime.validate(figure.data, figure.layout) ?? [];
   let repairedTitle = false;
   for (const issue of issues) {
-    const path = Array.isArray(issue.path)
-      ? issue.path.map(String)
-      : typeof issue.path === "string"
-        ? issue.path.split(/[.[\]]+/u).filter(Boolean)
-        : [];
+    const path = plotlyIssuePath(issue);
     if (path.at(-1) !== "title" || !issue.msg.includes("must be linked to an object container")) {
       continue;
     }
@@ -230,6 +244,7 @@ function normalizedValidationIssues(
     repairedTitle = true;
   }
   if (repairedTitle) issues = runtime.validate(figure.data, figure.layout) ?? [];
+  issues = issues.filter((issue) => !isTypedArrayIssue(figure, issue));
   return issues;
 }
 

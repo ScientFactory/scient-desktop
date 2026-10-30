@@ -175,6 +175,15 @@ export function ComputeRichOutput(props: { readonly displays: ReadonlyArray<Comp
         </ComputeOutputBlock>
       );
     }
+    case "svg":
+      // As an image, an SVG cannot run scripts or load anything.
+      return (
+        <img
+          src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(display.source)}`}
+          alt=""
+          className="max-h-[32rem] max-w-full object-contain"
+        />
+      );
     case "text": {
       const terminal = renderTerminalText(display.text);
       return (

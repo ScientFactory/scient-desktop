@@ -1,7 +1,7 @@
 /* oxlint-disable react/no-array-index-key -- Notebook outputs keep their saved order and have no identity. */
 import type { EnvironmentId, NotebookCellView, ScopedThreadRef } from "@t3tools/contracts";
 import type { Root, RootContent } from "mdast";
-import { createContext, useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { computeEnvironment } from "~/state/compute";
 import { useEnvironmentQuery } from "~/state/query";
@@ -26,16 +26,11 @@ type ComputeRepresentation = Parameters<
   typeof computeDisplays
 >[0]["bundle"]["representations"][number];
 
-export interface NotebookContextValue {
+/** Where a notebook's runs live. */
+export interface NotebookPlace {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
-}
-export const NotebookContext = createContext<NotebookContextValue | null>(null);
-function useNotebookContext(): NotebookContextValue {
-  const context = useContext(NotebookContext);
-  if (context === null) throw new Error("NotebookContext is missing");
-  return context;
 }
 
 const RASTER_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
@@ -185,6 +180,7 @@ function StoredOutputs(props: {
 
 export function NotebookCellOutputs(props: {
   readonly controller: NotebookController;
+  readonly place: NotebookPlace;
   readonly cell: NotebookCellView;
   readonly near: boolean;
 }) {
@@ -195,7 +191,13 @@ export function NotebookCellOutputs(props: {
     liveRun !== undefined &&
     (running || (cell.run?.execution === liveRun.executionId && cell.outputs.length > 0));
   return showsRun ? (
-    <LiveOutputs controller={controller} cell={cell} near={near} run={liveRun} />
+    <LiveOutputs
+      controller={controller}
+      place={props.place}
+      cell={cell}
+      near={near}
+      run={liveRun}
+    />
   ) : (
     <StoredOutputs controller={controller} cell={cell} near={near} />
   );
@@ -204,11 +206,12 @@ export function NotebookCellOutputs(props: {
 /** A run from this page keeps its full tools; older runs fall back to what the file stores. */
 function LiveOutputs(props: {
   readonly controller: NotebookController;
+  readonly place: NotebookPlace;
   readonly cell: NotebookCellView;
   readonly near: boolean;
   readonly run: { readonly sessionId: string; readonly executionId: string };
 }) {
-  const { environmentId, cwd, threadRef } = useNotebookContext();
+  const { environmentId, cwd, threadRef } = props.place;
   const events = useEnvironmentQuery(computeEnvironment.events({ environmentId, input: { cwd } }));
   const session = events.data?.sessions.get(props.run.sessionId as never);
   const live = events.data?.outputs.get(`${props.run.sessionId}/${props.run.executionId}`);
