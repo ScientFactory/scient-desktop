@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { doiIn, isPdf, paperFileName } from "./paperLookup.ts";
+import { citationPdfUrl, doiIn, isPdf, paperFileName } from "./paperLookup.ts";
 
 describe("paper lookup", () => {
   it("finds a DOI in links and citations, without trailing punctuation", () => {
@@ -27,4 +27,21 @@ describe("paper lookup", () => {
     expect(isPdf(new TextEncoder().encode("%PDF-1.7\n"))).toBe(true);
     expect(isPdf(new TextEncoder().encode("<!doctype html>"))).toBe(false);
   });
+});
+
+it("reads the PDF address an article page declares", () => {
+  const page = "https://journals.example.org/article/1";
+  expect(
+    citationPdfUrl(
+      '<meta name="citation_pdf_url" content="https://journals.example.org/file?id=1&amp;type=printable">',
+      page,
+    ),
+  ).toBe("https://journals.example.org/file?id=1&type=printable");
+  expect(citationPdfUrl("<meta content='/1.pdf' name='citation_pdf_url'>", page)).toBe(
+    "https://journals.example.org/1.pdf",
+  );
+  expect(
+    citationPdfUrl('<meta name="citation_pdf_url" content="http://a.example/1.pdf">', page),
+  ).toBeUndefined();
+  expect(citationPdfUrl("<title>No PDF here</title>", page)).toBeUndefined();
 });

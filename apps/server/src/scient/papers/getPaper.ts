@@ -21,7 +21,7 @@ import { attachSourcePdf } from "../sources/ScientSourcesCoordinator.ts";
 import { withAccountUse } from "../accounts/agent/accountUse.ts";
 import { accountSessionScope } from "../accounts/agent/scope.ts";
 import { fetchThroughLibrary } from "./libraryFetch.ts";
-import { downloadPdf, lookUpPaper, paperFileName, type Paper } from "./paperLookup.ts";
+import { lookUpPaper, openAccessPdf, paperFileName, type Paper } from "./paperLookup.ts";
 
 /**
  * Libraries suspend access that looks like bulk downloading, so library fetches run one at a
@@ -71,7 +71,7 @@ const savePdf = Effect.fn("Papers.save")(
 
 const firstPdf = Effect.fn("Papers.firstPdf")(function* (copies: Paper["openAccess"]) {
   for (const copy of copies) {
-    const bytes = yield* downloadPdf(copy.pdfUrl);
+    const bytes = yield* openAccessPdf(copy);
     if (bytes) return bytes;
   }
   return undefined;

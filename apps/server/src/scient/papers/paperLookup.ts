@@ -41,7 +41,12 @@ export interface Paper {
   readonly firstAuthor?: string;
   readonly landingUrl: string;
   /** Free legal copies, the published version first. */
-  readonly openAccess: ReadonlyArray<{ readonly pdfUrl: string; readonly published: boolean }>;
+  readonly openAccess: ReadonlyArray<{
+    readonly pdfUrl?: string;
+    /** No direct PDF address is known; the article page names it. */
+    readonly pageUrl?: string;
+    readonly published: boolean;
+  }>;
 }
 
 const getText = (http: HttpClient.HttpClient, url: string) =>
@@ -60,11 +65,12 @@ function paperFrom(
   url: string | undefined,
 ): Paper {
   const resolvedDoi = doiIn(work.doi ?? undefined) ?? doi;
-  const copies = (work.locations ?? []).flatMap((location) =>
-    location.is_oa && location.pdf_url
-      ? [{ pdfUrl: location.pdf_url, published: location.version === "publishedVersion" }]
-      : [],
-  );
+  const copies = (work.locations ?? []).flatMap((location): Paper["openAccess"] => {
+    const published = location.version === "publishedVersion";
+    if (!location.is_oa) return [];
+    if (location.pdf_url) return [{ pdfUrl: location.pdf_url, published }];
+    return location.landing_page_url ? [{ pageUrl: location.landing_page_url, published }] : [];
+  });
   return {
     ...(resolvedDoi ? { doi: resolvedDoi } : {}),
     ...(work.title ? { title: work.title } : {}),
@@ -75,7 +81,10 @@ function paperFrom(
       (resolvedDoi
         ? `https://doi.org/${resolvedDoi}`
         : (work.primary_location?.landing_page_url ?? "")),
-    openAccess: copies.toSorted((a, b) => Number(b.published) - Number(a.published)),
+    openAccess: copies.toSorted(
+      (a, b) =>
+        Number(b.published) - Number(a.published) || Number("pdfUrl" in b) - Number("pdfUrl" in a),
+    ),
   };
 }
 
@@ -95,7 +104,11 @@ export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (input: {
     const work = text === undefined ? Option.none() : decodeWork(text);
     return Option.isSome(work)
       ? paperFrom(work.value, doi, input.url)
-      : { doi, landingUrl: input.url ?? `https://doi.org/${doi}`, openAccess: [] };
+      : {
+          doi,
+          landingUrl: input.url ?? `https://doi.org/${doi}`,
+          openAccess: [{ pageUrl: input.url ?? `https://doi.org/${doi}`, published: true }],
+        };
   }
   const arxiv = arxivIn(input.url);
   if (arxiv)
@@ -103,11 +116,13 @@ export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (input: {
       landingUrl: `https://arxiv.org/abs/${arxiv}`,
       openAccess: [{ pdfUrl: `https://arxiv.org/pdf/${arxiv}`, published: false }],
     };
-  return input.url ? { landingUrl: input.url, openAccess: [] } : undefined;
+  return input.url
+    ? { landingUrl: input.url, openAccess: [{ pageUrl: input.url, published: true }] }
+    : undefined;
 });
 
 /** A file's bytes when they are a PDF, read up to the size limit. */
-export const downloadPdf = Effect.fn("Papers.downloadPdf")(
+const downloadPdf = Effect.fn("Papers.downloadPdf")(
   function* (url: string) {
     const http = yield* HttpClient.HttpClient;
     const response = yield* http.execute(
@@ -128,6 +143,36 @@ export const downloadPdf = Effect.fn("Papers.downloadPdf")(
     return size <= MAX_PDF_BYTES && isPdf(bytes) ? bytes : undefined;
   },
   Effect.timeoutOption("90 seconds"),
+  Effect.map(Option.getOrUndefined),
+  Effect.orElseSucceed(() => undefined),
+);
+
+const META_PDF =
+  /<meta[^>]*name=["']citation_pdf_url["'][^>]*content=["']([^"']+)["'][^>]*>|<meta[^>]*content=["']([^"']+)["'][^>]*name=["']citation_pdf_url["'][^>]*>/iu;
+
+/** The PDF address an article page declares for scholarly indexers. */
+export function citationPdfUrl(html: string, pageUrl: string) {
+  const match = META_PDF.exec(html);
+  const found = (match?.[1] ?? match?.[2])?.replaceAll("&amp;", "&");
+  if (!found || !URL.canParse(found, pageUrl)) return undefined;
+  const url = new URL(found, pageUrl);
+  return url.protocol === "https:" ? url.href : undefined;
+}
+
+/** A free copy's PDF, by its direct address or through its article page. */
+export const openAccessPdf = Effect.fn("Papers.openAccessPdf")(
+  function* (copy: Paper["openAccess"][number]) {
+    if (copy.pdfUrl) return yield* downloadPdf(copy.pdfUrl);
+    if (!copy.pageUrl) return undefined;
+    const http = yield* HttpClient.HttpClient;
+    const response = yield* http.execute(
+      HttpClientRequest.get(copy.pageUrl, { headers: { accept: "text/html" } }),
+    );
+    if (response.status !== 200) return undefined;
+    const pdfUrl = citationPdfUrl(yield* response.text, response.request.url);
+    return pdfUrl ? yield* downloadPdf(pdfUrl) : undefined;
+  },
+  Effect.timeoutOption("120 seconds"),
   Effect.map(Option.getOrUndefined),
   Effect.orElseSucceed(() => undefined),
 );
