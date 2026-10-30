@@ -19,7 +19,7 @@ import {
   ComputeConsoleLinks,
   useComputeConsoleRun,
 } from "./ComputeConsole";
-import { useComputeConsoleStore } from "./computeConsoleStore";
+import { computeConsoleHistory, useComputeConsoleStore } from "./computeConsoleStore";
 import type { ComputeContextId } from "./computeContextStore";
 import { computeFeedEntries, type ComputeFeedEntry } from "./computeFeedModel";
 import type { ComputePanelView } from "./computeFilePresentationStore";
@@ -205,10 +205,7 @@ export function ComputePanel(props: {
   const hasWork = selectedSession !== null || entries.length > 0;
   const consoleLanguage =
     selectedSession?.languageId ?? start.selectedRuntime?.language.descriptor.languageId ?? null;
-  const consoleHistory = model.executions
-    .filter((execution) => execution.request.source._tag === "console")
-    .toSorted((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt))
-    .map((execution) => execution.request.code);
+  const consoleHistory = computeConsoleHistory(model.executions);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the tab strip, which has no session query, which language this Console runs
   useEffect(() => {
     if (consoleContext !== undefined && consoleLanguage !== null) {
@@ -488,12 +485,17 @@ export function ComputePanel(props: {
               language={consoleLanguage ?? "python"}
               languageName={start.selectedRuntime?.language.descriptor.displayName ?? "code"}
               history={consoleHistory}
-              disabled={start.starting || liveSession?.status === "starting"}
+              disabled={
+                start.starting ||
+                liveSession?.status === "starting" ||
+                (liveSession === null && start.selectedRuntime === null)
+              }
               onRun={runConsole}
               footer={
                 <ComputeConsoleLanguage
                   start={start}
                   session={selectedSession}
+                  live={liveSession !== null}
                   hasWork={hasWork}
                   cwd={props.cwd}
                   threadRef={props.threadRef}

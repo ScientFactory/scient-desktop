@@ -76,60 +76,70 @@ export function ComputeVariablesView(props: {
               <table className="w-full table-fixed text-left text-xs">
                 <thead className="border-b border-border/60 bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
                   <tr>
-                    <th scope="col" className="w-1/4 px-2 py-1.5 font-medium">
+                    <th scope="col" className="w-[30%] px-2 py-1.5 font-medium @min-[30rem]:w-1/4">
                       Name
                     </th>
-                    <th scope="col" className="w-1/5 px-2 py-1.5 font-medium">
+                    <th scope="col" className="w-[30%] px-2 py-1.5 font-medium @min-[30rem]:w-1/5">
                       Type
-                    </th>
-                    <th scope="col" className="w-1/5 px-2 py-1.5 font-medium">
-                      Shape / size
                     </th>
                     <th
                       scope="col"
-                      className="hidden px-2 py-1.5 font-medium @min-[30rem]:table-cell"
+                      className="hidden w-1/5 px-2 py-1.5 font-medium @min-[30rem]:table-cell"
                     >
+                      Shape / size
+                    </th>
+                    <th scope="col" className="px-2 py-1.5 font-medium">
                       Preview
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {props.snapshot.variables.map((variable) => (
-                    <tr
-                      key={variable.name}
-                      className="border-b border-border/50 align-top last:border-b-0"
-                    >
-                      <th
-                        scope="row"
-                        className="break-words px-2 py-1.5 font-mono font-medium text-foreground"
+                  {props.snapshot.variables.map((variable) => {
+                    const shape =
+                      variable.shape ?? (variable.size === null ? "" : String(variable.size));
+                    return (
+                      <tr
+                        key={variable.name}
+                        className="border-b border-border/50 align-top last:border-b-0"
                       >
-                        {props.onOpenTable && isTableVariable(variable) ? (
-                          <button
-                            type="button"
-                            className="inline-flex max-w-full items-center gap-1 text-left hover:underline"
-                            onClick={() => props.onOpenTable?.(variable.name)}
-                          >
-                            <span className="break-words">{variable.name}</span>
-                            <Table2
-                              className="size-3 shrink-0 text-muted-foreground"
-                              aria-hidden="true"
-                            />
-                          </button>
-                        ) : (
-                          variable.name
-                        )}
-                      </th>
-                      <td className="break-words px-2 py-1.5 text-muted-foreground">
-                        {variable.typeName}
-                      </td>
-                      <td className="break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
-                        {variable.shape ?? (variable.size === null ? "" : String(variable.size))}
-                      </td>
-                      <td className="hidden break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground @min-[30rem]:table-cell">
-                        {variable.preview ?? ""}
-                      </td>
-                    </tr>
-                  ))}
+                        <th
+                          scope="row"
+                          className="break-words px-2 py-1.5 font-mono font-medium text-foreground"
+                        >
+                          {props.onOpenTable && isTableVariable(variable) ? (
+                            <button
+                              type="button"
+                              className="inline-flex max-w-full items-center gap-1 text-left hover:underline"
+                              onClick={() => props.onOpenTable?.(variable.name)}
+                            >
+                              <span className="break-words">{variable.name}</span>
+                              <Table2
+                                className="size-3 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                            </button>
+                          ) : (
+                            variable.name
+                          )}
+                        </th>
+                        <td className="break-words px-2 py-1.5 text-muted-foreground">
+                          {variable.typeName}
+                          {/* A narrow panel keeps the value in view, so the shape moves under the type. */}
+                          <span className="block font-mono text-[11px] @min-[30rem]:hidden">
+                            {shape}
+                          </span>
+                        </td>
+                        <td className="hidden break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground @min-[30rem]:table-cell">
+                          {shape}
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
+                          <div className="line-clamp-3 break-words @min-[30rem]:line-clamp-none">
+                            {variable.preview ?? ""}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </ScrollArea>

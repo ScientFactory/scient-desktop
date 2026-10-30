@@ -234,7 +234,9 @@ available to later runs until you restart or stop.
 **Shift+Enter** or **⌘Enter** runs, **Enter** adds a line, and **↑** and **↓** walk through what you
 ran. The picker in the box lists every language installed on this computer. One Console holds one
 language, so picking another after you have run something opens a second Console beside it. Before
-that, the Console and anything you have typed simply move to the new language.
+that, the Console and anything you have typed simply move to the new language. If the language a
+Console ran on is no longer available, the Console says so and keeps your code. It never runs it in
+another language on its own.
 **Variables** appears once there are variables. **Save as notebook** turns what worked into an
 `.ipynb` in the project and opens it; runs that failed are left out. **Run file…**, **Restart session**
 and **Stop session** are in the **⋯** menu.

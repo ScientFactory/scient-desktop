@@ -1,3 +1,4 @@
+import type { ComputeExecutionRecord } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import { getComputeContext, type ComputeContextId } from "./computeContextStore";
@@ -41,6 +42,16 @@ export const useComputeConsoleStore = create<ComputeConsoleState>()((set) => ({
       runtimes: without(state.runtimes, contextId),
     })),
 }));
+
+/** What was typed at this Console, oldest first, for Up and Down to walk through. */
+export function computeConsoleHistory(
+  executions: ReadonlyArray<ComputeExecutionRecord>,
+): ReadonlyArray<string> {
+  return executions
+    .filter((execution) => execution.request.source._tag === "console")
+    .toSorted((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt))
+    .map((execution) => execution.request.code);
+}
 
 /** Nothing has run here and nothing is typed, so the tab can become whatever opens next. */
 export function computeConsoleIsEmpty(contextId: ComputeContextId): boolean {

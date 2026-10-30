@@ -28,8 +28,10 @@ describe("Compute variable presentation", () => {
     expect(
       [...container.querySelectorAll('th[scope="col"]')].map((node) => node.textContent),
     ).toEqual(["Name", "Type", "Shape / size", "Preview"]);
-    expect(container.querySelector("tbody")?.textContent).toContain("42.5");
-    expect(container.querySelector("tbody .hidden")).toBeNull();
+    const value = [...container.querySelectorAll("tbody td")].find(
+      (cell) => cell.textContent === "42.5",
+    );
+    expect(value?.classList.contains("hidden")).toBe(false);
     expect(
       container.querySelector("table")?.closest('[data-slot="scroll-area-viewport"]'),
     ).not.toBeNull();

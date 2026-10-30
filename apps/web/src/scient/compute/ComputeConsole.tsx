@@ -210,11 +210,13 @@ export function ComputeConsoleInput(props: {
 export function ComputeConsoleLanguage(props: {
   readonly start: ComputeSessionStartModel;
   readonly session: ComputeSessionRecord | null;
+  /** Its session is running, so it needs no runtime picked to go on. */
+  readonly live: boolean;
   readonly hasWork: boolean;
   readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
 }) {
-  const { start, session } = props;
+  const { start, session, live } = props;
   const selected = start.selectedRuntime;
   const choices = start.readyRuntimes.map((runtime) => ({
     languageId: runtime.language.descriptor.languageId,
@@ -236,12 +238,13 @@ export function ComputeConsoleLanguage(props: {
       .openScient(props.threadRef, scientComputeSurface({ cwd: props.cwd, contextId }));
   };
   const languageId = session?.languageId ?? selected?.language.descriptor.languageId ?? null;
-  const current = selected === null ? "" : label(selected);
+  const missing = session === null ? "Choose a language" : `${session.label} isn't available`;
+  const current = selected === null ? (live ? (session?.label ?? "") : missing) : label(selected);
   const mark =
     languageId === null ? null : (
       <ComputeLanguageLogo languageId={languageId} className="size-3.5 shrink-0" />
     );
-  if (start.readyRuntimes.length < 2) {
+  if (start.readyRuntimes.length < 2 && selected !== null) {
     return (
       <span className="flex min-w-0 items-center gap-1.5 px-1 text-xs text-muted-foreground">
         {mark}

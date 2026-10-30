@@ -135,7 +135,10 @@ export interface ComputeReadyRuntime {
   readonly key: string;
 }
 
-/** What a Console runs on: what its session used, or failing that what was picked, or the default. */
+/**
+ * What a Console runs on: what its session used, else what was picked, else the default. Null when
+ * that has gone, because running code on something else is the person's choice to make.
+ */
 export function computeConsoleRuntime(input: {
   readonly ready: ReadonlyArray<ComputeReadyRuntime>;
   readonly session: Pick<ComputeSessionRecord, "languageId" | "runtime"> | null;
@@ -143,18 +146,16 @@ export function computeConsoleRuntime(input: {
   readonly defaultRuntime: ComputeReadyRuntime["candidate"] | null;
 }): ComputeReadyRuntime | null {
   const { ready, session, chosenKey, defaultRuntime } = input;
-  const sameLanguage = ready.filter(
-    (runtime) => runtime.language.descriptor.languageId === session?.languageId,
-  );
-  return (
-    sameLanguage.find(
-      (runtime) => runtime.candidate.profile.executable === session?.runtime?.executable,
-    ) ??
-    sameLanguage[0] ??
-    ready.find((runtime) => runtime.key === chosenKey) ??
-    ready.find((runtime) => runtime.candidate === defaultRuntime) ??
-    null
-  );
+  const match =
+    session !== null
+      ? (runtime: ComputeReadyRuntime) =>
+          runtime.language.descriptor.languageId === session.languageId &&
+          (session.runtime === null ||
+            runtime.candidate.profile.executable === session.runtime.executable)
+      : chosenKey !== ""
+        ? (runtime: ComputeReadyRuntime) => runtime.key === chosenKey
+        : (runtime: ComputeReadyRuntime) => runtime.candidate === defaultRuntime;
+  return ready.find(match) ?? null;
 }
 
 export function computeRuntimeBlocker(

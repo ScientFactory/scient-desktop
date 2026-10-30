@@ -664,9 +664,14 @@ describe("computeConsoleRuntime", () => {
     expect(pick({ session: session("python", "/other/python") })).toBe(otherPython);
   });
 
-  it("falls back when what it ran on has gone", () => {
-    expect(pick({ session: session("python", "/gone/python") })).toBe(python);
-    expect(pick({ session: session("julia", "/bin/julia") })).toBe(python);
-    expect(pick({ chosenKey: "julia:/bin/julia" })).toBe(python);
+  it("never swaps in something else when what it ran on has gone", () => {
+    expect(pick({ session: session("python", "/gone/python") })).toBeNull();
+    expect(pick({ session: session("julia", "/bin/julia") })).toBeNull();
+    expect(pick({ chosenKey: "julia:/bin/julia" })).toBeNull();
+  });
+
+  it("keeps to the language of a session that never recorded its runtime", () => {
+    const unrecorded = { languageId: "r", runtime: null } as never;
+    expect(pick({ session: unrecorded })).toBe(r);
   });
 });
