@@ -9,7 +9,7 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 import { createComputeContextId } from "~/scient/compute/computeContextStore";
-import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
+import type { NewDocumentChoice } from "~/scient/documents/NewDocumentMenuItems";
 import { useCreateNewDocument } from "~/scient/documents/useCreateNewDocument";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
 import { useScientFileOpening } from "~/scient/fileOpening/useScientFileOpening";
@@ -106,7 +106,7 @@ export function useScientRightPanelOpeners(input: {
   };
   // A document started by hand opens in its editor at the project's top folder.
   const createNewDocument = useCreateNewDocument();
-  const addDocumentsSurface = (format: NewDocumentFormat) => {
+  const addDocumentsSurface = (format: NewDocumentChoice) => {
     if (!activeThreadRef || activeWorkspaceRoot === undefined) return;
     createNewDocument({
       format,

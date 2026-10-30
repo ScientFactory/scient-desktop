@@ -3,13 +3,36 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { setProjectFileQueryData } from "~/components/files/projectFilesQueryState";
 import { toastManager } from "~/components/ui/toast";
 
+import type { NewDocumentChoice } from "./NewDocumentMenuItems";
 import { readNewDocumentDefaults } from "./documentPreferences";
-import { createNewDocumentSource, type NewDocumentFormat } from "./documentTemplates";
+import { createNewDocumentSource } from "./documentTemplates";
 import { focusNewDocumentWhenOpen } from "./focusNewDocument";
 import { placeNewDocument, untitledStem } from "./newDocumentPlacement";
 import { newDocuments, pathHasLeftoverDrafts } from "./newDocuments";
 import { useNewDocumentFiles } from "./useNewDocumentFiles";
 import { userTemplates } from "./userTemplates";
+
+/** One empty code cell, the way Jupyter writes a new notebook. */
+const NEW_NOTEBOOK = `${JSON.stringify(
+  {
+    cells: [
+      {
+        cell_type: "code",
+        execution_count: null,
+        id: "first",
+        metadata: {},
+        outputs: [],
+        source: [],
+      },
+    ],
+    metadata: { language_info: { name: "python" } },
+    nbformat: 4,
+    nbformat_minor: 5,
+  },
+  null,
+  1,
+)}\n`;
+const NOTEBOOK_NAME_ATTEMPTS = 50;
 
 /**
  * A document started by hand: `untitled` is created in `base` and opens in its
@@ -19,13 +42,28 @@ import { userTemplates } from "./userTemplates";
 export function useCreateNewDocument() {
   const documentFiles = useNewDocumentFiles();
   return (input: {
-    readonly format: NewDocumentFormat;
+    readonly format: NewDocumentChoice;
     readonly environmentId: EnvironmentId;
     readonly cwd: string;
     readonly base: string;
     readonly open: (relativePath: string) => void;
   }) => {
     const { format, environmentId, cwd } = input;
+    if (format === "notebook") {
+      void (async () => {
+        const commands = documentFiles.commandsFor({ environmentId, cwd });
+        for (let attempt = 1; attempt <= NOTEBOOK_NAME_ATTEMPTS; attempt += 1) {
+          const name = attempt === 1 ? "untitled.ipynb" : `untitled-${attempt}.ipynb`;
+          const created = await commands.create(`${input.base}${name}`, NEW_NOTEBOOK);
+          if (created === "exists") continue;
+          if (created === null) break;
+          input.open(`${input.base}${name}`);
+          return;
+        }
+        toastManager.add({ type: "error", title: "The notebook could not be created." });
+      })();
+      return;
+    }
     void (async () => {
       // A default the person chose from their own templates needs those read.
       await userTemplates.ready();

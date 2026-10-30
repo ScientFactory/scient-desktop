@@ -58,6 +58,7 @@ export interface NotebookState {
 /** Edits to one cell's text are sent together once typing pauses. */
 const SOURCE_SEND_DELAY_MS = 150;
 const STALE_DELAY_MS = 200;
+const SAVE_RETRY_MS = 3000;
 
 let generatedIds = 0;
 function newCellId(): string {
@@ -115,6 +116,8 @@ export function createNotebookController(transport: NotebookTransport) {
   let seenFileRevision: string | undefined;
   let queue: NotebookEdit[] = [];
   let sending: Promise<void> | null = null;
+  let failing = false;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let sourceTimer: ReturnType<typeof setTimeout> | undefined;
   let staleTimer: ReturnType<typeof setTimeout> | undefined;
   const removed = new Map<string, NotebookCellView>();
@@ -140,12 +143,14 @@ export function createNotebookController(transport: NotebookTransport) {
       queue = [];
       const result = await transport.edit(edits);
       if (result === null) {
-        transport.onError("This notebook could not be saved");
-        queue = [];
-        revision = undefined;
-        await load();
+        // What was typed stays on screen and in the queue, and goes out when the server answers.
+        queue = [...edits, ...queue];
+        if (!failing) transport.onError("This notebook could not be saved. Trying again.");
+        failing = true;
+        retryTimer = setTimeout(() => void startSending(), SAVE_RETRY_MS);
         return;
       }
+      failing = false;
       revision = result.revision;
     }
   };
@@ -160,10 +165,12 @@ export function createNotebookController(transport: NotebookTransport) {
     void startSending();
   };
   /** Everything typed so far reaches the server. A run must never miss the last keystroke. */
+  const saveIsFailing = () => failing;
   const flush = async () => {
     clearTimeout(sourceTimer);
-    while (queue.length > 0) await startSending();
-    await sending;
+    clearTimeout(retryTimer);
+    await startSending();
+    while (queue.length > 0 && !saveIsFailing()) await startSending();
   };
 
   const update = (cellId: string, change: (cell: NotebookCellView) => NotebookCellView) => {
