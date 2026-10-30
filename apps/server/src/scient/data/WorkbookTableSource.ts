@@ -155,7 +155,7 @@ function isDateFormat(code: string): boolean {
 function serialDate(serial: number, date1904: boolean, withTime: boolean): string {
   const epoch = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
   const date = new Date(epoch + Math.round(serial * 86_400_000));
-  if (serial < 1 && serial >= 0 && withTime) return formatDate(date, true).slice(11);
+  if (serial < 1 && serial >= 0 && withTime) return formatDate(date, true).slice(11) || "00:00:00";
   return formatDate(date, withTime && serial % 1 !== 0);
 }
 
@@ -273,8 +273,10 @@ async function readXlsx(path: string, sheet: number): Promise<WorkbookSheet> {
         if (value === "") rows.cell(null);
         else if (type === "s") rows.cell(strings[Number(value)] ?? "");
         else if (type === "b") rows.cell(value === "1" ? "true" : "false");
-        else if (type === "n" && dateStyles[style]) rows.cell(serialDate(Number(value), date1904, true));
-        else if (type === "d") rows.cell(value.replace("T", " ").replace(/(?: 00:00:00)?(?:\.000)?Z?$/, ""));
+        else if (type === "n" && dateStyles[style])
+          rows.cell(serialDate(Number(value), date1904, true));
+        else if (type === "d")
+          rows.cell(value.replace("T", " ").replace(/(?: 00:00:00)?(?:\.000)?Z?$/, ""));
         else rows.cell(value);
       }
     });
@@ -318,7 +320,9 @@ async function readOds(path: string, sheet: number): Promise<WorkbookSheet> {
           type === "float" || type === "percentage" || type === "currency"
             ? (attribute("office:value") ?? null)
             : type === "date"
-              ? (attribute("office:date-value")?.replace("T", " ").replace(/ 00:00:00$/, "") ?? null)
+              ? (attribute("office:date-value")
+                  ?.replace("T", " ")
+                  .replace(/ 00:00:00$/, "") ?? null)
               : type === "boolean"
                 ? (attribute("office:boolean-value") ?? null)
                 : null;

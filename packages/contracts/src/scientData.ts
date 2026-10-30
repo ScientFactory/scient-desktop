@@ -4,6 +4,7 @@ import {
   DataTableColumnType,
   DataTablePage,
   DataTableQuery,
+  DataTableRow,
   DataTableSort,
 } from "@scientfactory/compute";
 import * as Schema from "effect/Schema";
@@ -65,5 +66,6 @@ export {
   DataTableColumnType,
   DataTablePage,
   DataTableQuery,
+  DataTableRow,
   DataTableSort,
 };

@@ -31,6 +31,7 @@ import {
   RefreshCw,
   Settings2,
   Square,
+  Table2,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -56,6 +57,10 @@ import {
 } from "~/components/ui/select";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { cn, randomUUID } from "~/lib/utils";
+import {
+  ComputeVariableTableDialog,
+  isTableVariable,
+} from "~/scient/dataTable/ComputeVariableTable";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
@@ -557,6 +562,7 @@ export function ComputeVariablesView(props: {
   readonly selectedIsLive: boolean;
   readonly onShowLive: () => void;
   readonly onRefresh: () => void;
+  readonly onOpenTable?: (name: string) => void;
 }) {
   if (!props.hasLiveSession) {
     return (
@@ -654,7 +660,21 @@ export function ComputeVariablesView(props: {
                         scope="row"
                         className="break-words px-2 py-1.5 font-mono font-medium text-foreground"
                       >
-                        {variable.name}
+                        {props.onOpenTable && isTableVariable(variable) ? (
+                          <button
+                            type="button"
+                            className="inline-flex max-w-full items-center gap-1 text-left hover:underline"
+                            onClick={() => props.onOpenTable?.(variable.name)}
+                          >
+                            <span className="break-words">{variable.name}</span>
+                            <Table2
+                              className="size-3 shrink-0 text-muted-foreground"
+                              aria-hidden="true"
+                            />
+                          </button>
+                        ) : (
+                          variable.name
+                        )}
                       </th>
                       <td className="break-words px-2 py-1.5 text-muted-foreground">
                         {variable.typeName}
@@ -849,6 +869,7 @@ export function ComputePanel(props: {
     props.contextId === undefined
       ? allSessions.find((session) => session.sessionId === selectedSessionId)
       : undefined;
+  const [openTable, setOpenTable] = useState<string | null>(null);
   const liveSession =
     selectedOverviewSession !== undefined &&
     !TERMINAL_COMPUTE_SESSION_STATUSES.has(selectedOverviewSession.status)
@@ -1676,6 +1697,7 @@ export function ComputePanel(props: {
             if (liveSession !== null) setSelectedSessionId(liveSession.sessionId);
           }}
           onRefresh={() => void refreshVariables()}
+          onOpenTable={setOpenTable}
         />
       ) : selectedSession ? (
         <ScrollArea className="min-h-0 flex-1">
@@ -1920,6 +1942,16 @@ export function ComputePanel(props: {
           </div>
         </PopoverPopup>
       </Popover>
+      {liveSession !== null ? (
+        <ComputeVariableTableDialog
+          environmentId={props.environmentId}
+          cwd={props.cwd}
+          sessionId={liveSession.sessionId}
+          generation={liveSession.generation}
+          name={openTable}
+          onClose={() => setOpenTable(null)}
+        />
+      ) : null}
     </section>
   );
 }

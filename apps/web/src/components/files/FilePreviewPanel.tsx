@@ -28,11 +28,13 @@ import {
 } from "~/scient/fileSurfaces/scientDocumentSession";
 import {
   ScientComputeFileSurface,
+  ScientDataFileTable,
   ScientLatexSurface,
   ScientPdfReader,
   ScientSurfaceSuspense,
 } from "~/scient/fileSurfaces/scientLazyFileSurfaces";
 import { useScientFileReadRecovery } from "~/scient/fileSurfaces/scientFileReadRecovery";
+import { isScientDataFile } from "~/scient/dataTable/dataFiles";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
 import { editorCompositions } from "~/scient/editorFlush/editorComposition";
@@ -2640,7 +2642,23 @@ export default function FilePreviewPanel({
                 aria-label="Opening editor"
               />
             )
-          ) : relativePath && absolutePath && renderLargeText ? (
+          ) : // SCIENT-FORK:START — data files open in the paged grid; CSV and TSV keep their text view
+          relativePath &&
+            absolutePath &&
+            attachment === undefined &&
+            isScientDataFile(relativePath) &&
+            (tableDelimiter === null || renderTable) ? (
+            <ScientSurfaceSuspense>
+              <ScientDataFileTable
+                key={`${environmentId}:${absolutePath}`}
+                environmentId={environmentId}
+                absolutePath={absolutePath}
+                name={relativePath.split(/[\\/]/).at(-1) || relativePath}
+                revision={`${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
+              />
+            </ScientSurfaceSuspense>
+          ) : // SCIENT-FORK:END
+          relativePath && absolutePath && renderLargeText ? (
             <WorkspaceLargeTextPreview
               key={`${absolutePath}:${renderTable}:${fileRefreshRevision}`}
               environmentId={environmentId}

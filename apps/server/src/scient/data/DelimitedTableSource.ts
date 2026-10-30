@@ -114,7 +114,7 @@ async function indexRows(
     rowStart = end + 1;
     state = 0;
   };
-  scan: for (let position = rowStart; position < size; ) {
+  scan: for (let position = rowStart; position < size;) {
     signal.throwIfAborted();
     const { bytesRead } = await handle.read(buffer, 0, CHUNK_BYTES, position);
     if (bytesRead === 0) break;
@@ -219,7 +219,7 @@ async function forEachRow(
   visit: (row: number, text: string) => void,
 ) {
   // Record 0 is the header.
-  for (let first = 1; first < index.records; ) {
+  for (let first = 1; first < index.records;) {
     signal.throwIfAborted();
     let end = first + 1;
     while (end < index.records && index.offsets[end + 1]! - index.offsets[first]! <= CHUNK_BYTES)
@@ -271,8 +271,10 @@ export async function openDelimitedSource(
     readRows: (rows, columnLimit, rowSignal) =>
       withFile(path, async (handle) => {
         const cells = Array.from<Array<string | null>>({ length: rows.length });
-        const ordered = rows.map((row, position) => ({ row, position })).sort((a, b) => a.row - b.row);
-        for (let start = 0; start < ordered.length; ) {
+        const ordered = rows
+          .map((row, position) => ({ row, position }))
+          .sort((a, b) => a.row - b.row);
+        for (let start = 0; start < ordered.length;) {
           rowSignal.throwIfAborted();
           let end = start + 1;
           while (end < ordered.length && ordered[end]!.row === ordered[end - 1]!.row + 1) end++;

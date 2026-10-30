@@ -37,7 +37,7 @@ export function formatDate(date: Date, withTime: boolean): string {
   if (Number.isNaN(date.getTime())) return "";
   const day = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
   const milliseconds = date.getUTCMilliseconds();
-  if (!withTime) return day;
+  if (!withTime || date.getTime() % 86_400_000 === 0) return day;
   const time = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
   return `${day} ${time}${milliseconds ? `.${pad(milliseconds, 3)}` : ""}`;
 }

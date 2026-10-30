@@ -24,29 +24,33 @@ function columnKind(node: SchemaTree): Pick<DataTableColumn, "type" | "label"> {
   const element: SchemaElement = node.element;
   if (node.children.length > 0) {
     const logical = element.logical_type?.type ?? element.converted_type;
-    return { type: "other", label: logical === "LIST" ? "list" : logical === "MAP" ? "map" : "struct" };
+    return {
+      type: "other",
+      label: logical === "LIST" ? "list" : logical === "MAP" ? "map" : "struct",
+    };
   }
   const logical = element.logical_type;
   const typed = (type: DataTableColumnType, label: string) => ({ type, label });
-  if (logical) switch (logical.type) {
-    case "STRING":
-    case "ENUM":
-    case "JSON":
-    case "UUID":
-      return typed("text", "string");
-    case "DATE":
-      return typed("date", "date");
-    case "TIMESTAMP":
-      return typed("datetime", "timestamp");
-    case "DECIMAL":
-      return typed("number", "decimal");
-    case "INTEGER":
-      return typed("integer", `${logical.isSigned ? "int" : "uint"}${logical.bitWidth}`);
-    case "FLOAT16":
-      return typed("number", "float16");
-    default:
-      return typed("other", logical.type.toLowerCase());
-  }
+  if (logical)
+    switch (logical.type) {
+      case "STRING":
+      case "ENUM":
+      case "JSON":
+      case "UUID":
+        return typed("text", "string");
+      case "DATE":
+        return typed("date", "date");
+      case "TIMESTAMP":
+        return typed("datetime", "timestamp");
+      case "DECIMAL":
+        return typed("number", "decimal");
+      case "INTEGER":
+        return typed("integer", `${logical.isSigned ? "int" : "uint"}${logical.bitWidth}`);
+      case "FLOAT16":
+        return typed("number", "float16");
+      default:
+        return typed("other", logical.type.toLowerCase());
+    }
   switch (element.converted_type) {
     case "UTF8":
     case "ENUM":
@@ -100,7 +104,8 @@ export async function openParquetSource(path: string): Promise<TableSource> {
     return formatDate(new Date(value), columns[column]!.type === "datetime");
   };
   const groupStarts = [0];
-  for (const group of metadata.row_groups) groupStarts.push(groupStarts.at(-1)! + Number(group.num_rows));
+  for (const group of metadata.row_groups)
+    groupStarts.push(groupStarts.at(-1)! + Number(group.num_rows));
   const rowCount = groupStarts.at(-1)!;
   const groupOf = (row: number) => {
     let low = 0;
@@ -230,7 +235,9 @@ export async function openParquetSource(path: string): Promise<TableSource> {
 /** Numbers and dates (as epoch milliseconds) pack into a typed array; NaN is missing. */
 function compactChunk(values: Array<unknown>, temporal: boolean): Chunk {
   if (temporal)
-    return Float64Array.from(values, (value) => (value instanceof Date ? value.getTime() : Number.NaN));
+    return Float64Array.from(values, (value) =>
+      value instanceof Date ? value.getTime() : Number.NaN,
+    );
   if (!values.every((value) => value == null || typeof value === "number")) return values;
   return Float64Array.from(values, (value) => (typeof value === "number" ? value : Number.NaN));
 }

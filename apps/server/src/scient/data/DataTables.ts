@@ -2,7 +2,11 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { DataFileTableError, type DataFileTable, type DataFileTableInput } from "@t3tools/contracts";
+import {
+  DataFileTableError,
+  type DataFileTable,
+  type DataFileTableInput,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,7 +14,11 @@ import * as Layer from "effect/Layer";
 import { openDelimitedSource } from "./DelimitedTableSource.ts";
 import { openParquetSource } from "./ParquetTableSource.ts";
 import { readTablePage, TableViewCache } from "./TableView.ts";
-import { readWorkbookSheet, WorkbookFormatError, workbookTableSource } from "./WorkbookTableSource.ts";
+import {
+  readWorkbookSheet,
+  WorkbookFormatError,
+  workbookTableSource,
+} from "./WorkbookTableSource.ts";
 
 /** Indexed sources stay open for paging; each can hold a few hundred megabytes. */
 const MAX_OPEN_SOURCES = 3;
@@ -91,7 +99,10 @@ export class DataTables extends Context.Service<
 
 export const make = Effect.sync(() => {
   // A changed file has a new key, so its old index simply ages out.
-  const open = new Map<string, { readonly table: Promise<OpenTable>; readonly abort: () => void }>();
+  const open = new Map<
+    string,
+    { readonly table: Promise<OpenTable>; readonly abort: () => void }
+  >();
 
   const openCached = async (path: string, format: DataFileFormat, sheet: number) => {
     const stat = await NodeFSP.stat(path);
