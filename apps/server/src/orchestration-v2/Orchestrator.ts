@@ -2558,10 +2558,60 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
-  // SCIENT-FORK: upstream releases held agent and scheduled messages when a later run completes.
-  // Scient releases a hold only on an explicit Send or Resume (QueuedRunSend.ts,
-  // TerminalQueueHold.ts), so held messages from agents, the server and scheduled tasks wait
-  // for Resume.
+  // A hold waits for a person to review what they queued. Nobody reviews messages from agents,
+  // the server or scheduled tasks, so a later completed run releases those unless it was stopped.
+  const releaseUnattendedHolds = Effect.fn("Orchestrator.releaseUnattendedHolds")(function* (
+    threadId: ThreadId,
+    completedRunId: RunId,
+  ) {
+    const held = yield* projectionStore.getHeldQueuedRuns(threadId);
+    if (held.length === 0) return;
+    const projection = yield* projectionStore.getThreadRecords(
+      threadId,
+      ["runs", "messages", "turnItems"],
+      {
+        messageIds: held.map((run) => run.userMessageId),
+        turnItemTypes: ["run_interrupt_request"],
+        turnItemRunIds: [completedRunId],
+      },
+    );
+    // Only the newest run completing shows the thread moved past the hold; a late or
+    // bookkeeping update to an older run, overtaken by a failure or Stop, does not.
+    if (
+      latestExecutedRun(projection.runs)?.id !== completedRunId ||
+      projection.turnItems.length > 0 ||
+      worktreeSetupPending(projection)
+    )
+      return;
+    const { messages } = projection;
+    const unattended = new Set(
+      messages
+        .filter((message) => message.createdBy !== "user" || message.scheduledTaskId !== undefined)
+        .map((message) => message.id),
+    );
+    const now = yield* DateTime.now;
+    // SCIENT-FORK:START — Stop means stop: what a Stop held waits for Send or Resume.
+    const stoppedSince = (run: OrchestrationV2Run) =>
+      projection.runs.some(
+        (candidate) =>
+          candidate.status === "interrupted" &&
+          candidate.completedAt !== null &&
+          DateTime.isGreaterThanOrEqualTo(candidate.completedAt, run.requestedAt),
+      );
+    const released = held.filter((run) => unattended.has(run.userMessageId) && !stoppedSince(run));
+    // SCIENT-FORK:END
+    if (released.length === 0) return;
+    yield* writeSystemEvents(
+      released.map((run) => ({
+        type: "run.updated" as const,
+        threadId,
+        runId: run.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: { ...run, queueHeld: false },
+      })),
+    );
+  });
 
   const resumeQueuedRuns = Effect.gen(function* () {
     const threadIds = yield* projectionStore.getRecoveryThreadIds("queued-runs");
@@ -14629,6 +14679,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               // SCIENT-FORK:START terminal-queue-hold
               yield* holdQueueAfterTerminal(stored);
               // SCIENT-FORK:END terminal-queue-hold
+              if (run.status === "completed") yield* releaseUnattendedHolds(threadId, run.id);
               yield* startNextQueuedRun(threadId, { endedRunId: run.id });
             }),
           )

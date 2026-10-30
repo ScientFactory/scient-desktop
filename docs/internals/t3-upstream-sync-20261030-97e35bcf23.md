@@ -27,6 +27,8 @@ Branch `codex/t3-sync-97e35bcf23-20261030`; the `upstream` push URL remains
 
 ## Owner decisions
 
+- **Held queues.** Messages nobody will review continue on their own after a later run
+  completes, as upstream does; a hold from a user's Stop stays until Send or Resume.
 - **Secret providers (#27115).** Provider environment variables that point at a secret
   provider are adopted as upstream wrote them, with upstream's three new
   `secret-provider-*` packages. Their UI stays behind upstream's off
@@ -35,13 +37,11 @@ Branch `codex/t3-sync-97e35bcf23-20261030`; the `upstream` push URL remains
 
 ## Composition
 
-- **Held queues (#27221).** Upstream releases held agent, server and scheduled messages
-  when a later run completes. Scient releases a hold only on an explicit Send or Resume
-  (`QueuedRunSend.ts`, `TerminalQueueHold.ts`), and its fence re-holds any other release,
-  so upstream's release is omitted rather than composed into churn: those messages keep
-  waiting for Resume, as before. Upstream's test for the release is removed and its
-  provider-wake test keeps Scient's expectation. Whether such messages should resume on
-  their own is an open product question.
+- **Held queues (#27221).** Upstream's rule is adopted: when a later run completes, held
+  messages from agents, the server and scheduled tasks are released, and a person's own
+  messages stay held. Scient's fence treats that release as a real one, because it is the
+  only release without a command. Scient adds one rule: a message that was queued before a
+  Stop stays held until Send or Resume, because a Stop should not undo itself.
 - **Stop (#27252, #27141, #27222).** Stop always completes and an agent that ignores it
   can be force-stopped. Scient keeps provider-work admission, held-queue Stop, its
   outcome shapes and the held-Droid-input interrupt; upstream's unresponsive outcome

@@ -5214,7 +5214,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       const end = (
         key: string,
-        status: "completed" | "failed",
+        status: "completed" | "failed" | "interrupted",
         revision = "",
         patch: Partial<OrchestrationV2Run> = {},
       ) =>
@@ -5291,8 +5291,101 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       return { send, runFor, end, startedRunIds, releasedAfter, awaitHeld };
     });
 
-  // SCIENT-FORK: upstream's release of held agent messages on a later completed run is not
-  // adopted; Scient releases a hold only on Send or Resume (see Orchestrator.ts).
+  it.effect("releases held agent messages once a later run completes, not the user's", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-failed-queue-agent-messages");
+      const { send, runFor, end, startedRunIds, releasedAfter, awaitHeld } =
+        yield* queueTestThread(threadId);
+      yield* send("earlier", "agent", true);
+      yield* end("earlier", "completed");
+      yield* send("active", "agent", true);
+      yield* send("issue", "agent", false);
+      yield* send("user", "user", false);
+      yield* end("active", "failed");
+      yield* awaitHeld("issue");
+      assert.isTrue((yield* runFor("issue")).queueHeld);
+      // Delivery bookkeeping rewrites an older completed run; the thread has not moved on.
+      yield* end("earlier", "completed", ":bookkeeping");
+      // A scheduled tick finds the thread idle and starts past the held queue.
+      yield* send("tick", "agent", true);
+      assert.equal((yield* runFor("tick")).status, "starting");
+      yield* end("tick", "completed");
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("issue")).id);
+      yield* releasedAfter("issue", "tick");
+      const user = yield* runFor("user");
+      assert.equal(user.status, "queued");
+      assert.isTrue(user.queueHeld);
+
+      // A run that finishes despite a stop request does not release what the stop held.
+      yield* send("after-stop", "agent", false);
+      assert.isTrue((yield* runFor("after-stop")).queueHeld);
+      const issue = yield* runFor("issue");
+      assert.isNotNull(issue.rootNodeId);
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:issue:interrupt-request`),
+            type: "turn-item.updated",
+            threadId,
+            runId: issue.id,
+            nodeId: issue.rootNodeId,
+            providerInstanceId: issue.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make(`${threadId}:issue:interrupt-request`),
+              type: "run_interrupt_request",
+              threadId,
+              runId: issue.id,
+              nodeId: issue.rootNodeId,
+              providerThreadId: issue.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 2,
+              status: "completed",
+              title: "Interrupt requested",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              message: "Stopped by user",
+            },
+          },
+        ],
+      });
+      yield* end("issue", "completed");
+      // The next completed run releases it, which also shows the listener handled the stopped one.
+      yield* send("probe", "agent", true);
+      assert.equal((yield* runFor("probe")).status, "starting");
+      yield* end("probe", "completed");
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("after-stop")).id);
+      yield* releasedAfter("after-stop", "probe");
+    }),
+  );
+
+  // SCIENT-FORK: Stop means stop, so what a Stop held waits for Send or Resume.
+  it.effect("keeps agent messages a Stop held after a later run completes", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("runtime-layer-stopped-queue-agent-messages");
+      const { send, runFor, end, startedRunIds, awaitHeld } = yield* queueTestThread(threadId);
+      yield* send("active", "agent", true);
+      yield* send("issue", "agent", false);
+      yield* end("active", "interrupted");
+      yield* awaitHeld("issue");
+      yield* send("tick", "agent", true);
+      assert.equal((yield* runFor("tick")).status, "starting");
+      // Queued after the Stop, so the completed run releases it, which shows the run was handled.
+      yield* TestClock.adjust("1 second");
+      yield* send("after-stop", "agent", false);
+      assert.isTrue((yield* runFor("after-stop")).queueHeld);
+      yield* end("tick", "completed");
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("after-stop")).id);
+      const issue = yield* runFor("issue");
+      assert.equal(issue.status, "queued");
+      assert.isTrue(issue.queueHeld);
+    }),
+  );
 
   it.effect("keeps held agent messages while the thread's worktree setup is unresolved", () =>
     Effect.gen(function* () {
@@ -6281,11 +6374,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         after.runs.find((run) => run.id === held.id),
         held,
       );
-      // SCIENT-FORK: the held server message waits for Resume; upstream's release on a completed
-      // run is not adopted (see Orchestrator.ts).
+      // Nobody will resume a server message, so the completed run released it behind the wake.
       assert.deepEqual(
         after.runs.find((run) => run.id === textContinuation.id),
-        textContinuation,
+        { ...textContinuation, queueHeld: false },
       );
     }),
   );

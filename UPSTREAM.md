@@ -240,6 +240,9 @@ Stop turns into a queued message joins the held queue. A stop made so a queued m
 (`scient/orchestration/TerminalQueueHold.ts`). Upstream's release block in `Orchestrator.ts`
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
 `SteeringCompletion.integration.test.ts` assert Scient's rule.
+Upstream's release of unattended messages after a later completed run is composed: the
+terminal fence honours it as the one release without a command, and a message queued before a
+Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
 
 The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
 `queuedRunsControl` slot. Scient's additions live in
@@ -621,8 +624,9 @@ The current committed alignment through
 Literal merge `fa47084190dd8c156172c23678b2e84bbea8a4a6` has owned base
 `5dc9c2c26725b92751c984263f5f9b70abdb21f3` (#710) and the frozen official target as
 parents, retaining the 27 official commits after `dd14848153`. Stop always completes with
-force stop on top of Scient's queue and admission rules; Scient keeps releasing held queues
-only on Send or Resume. Provider environment secrets arrive behind upstream's off secrets
+force stop on top of Scient's queue and admission rules; held agent, server and scheduled
+messages continue after a later completed run, except those a Stop held. Provider environment
+secrets arrive behind upstream's off secrets
 flag. Release remains separate.
 
 The previous committed alignment through
