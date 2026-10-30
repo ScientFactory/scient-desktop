@@ -10,7 +10,7 @@ as part of this released AnalysisRun surface.
 
 ## Decision
 
-Current local continuation: see the [execution consolidation candidate](scient-compute-session-foundation.md#execution-consolidation-candidate-2026-09-15).
+Current architecture: see [Scient Compute](scient-compute.md).
 Native MATLAB batch retains the AnalysisRun transport, records, artifact identity and promotion
 semantics described here. Its former auxiliary file panel/setup form is replaced by the common
 Compute Results location and Scientific Computing preferences. Batch is not Engine-gated.
