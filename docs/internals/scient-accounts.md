@@ -271,8 +271,16 @@ consumer's project. Activity names the plugin, variable and agent.
   legacy plaintext on its first read. Only Custom models uses this port; its rotation, removal and
   process lifetime rules stay with Custom models. An API key account links to a connection
   (`custom-model` source), so the key is stored once.
-- **`request_secret` values** (upstream, one use, 24 hours) and **sensitive provider environment
-  variables** (upstream settings) stay as they are.
+- **`request_secret` values** (upstream, one use, 24 hours) stay one-time secrets.
+  `scient_account_add` reuses upstream's card for keys worth keeping: it calls
+  `OrchestratorMcpService.requestSecret` with a server-written label and a `scient-account:`
+  `clientRequestId`, consumes the answer through `SecretRequests.consume`, and saves an API-key
+  account (or replaces one key, keeping name, details and controls). A matching account in the
+  session returns `exists` or `turned_off` with no card; a linked key returns `linked`. Two marked
+  upstream seams: the card's note and saved label (`client-runtime/src/secretRequest.ts`, via
+  `@t3tools/shared/scientAccountSecretRequest`), and `request_secret` rejecting the reserved
+  prefix. The orchestration sentence on secrets points to Accounts first (`ScientAgentCopy`).
+- **Sensitive provider environment variables** (upstream settings) stay as they are.
 - Server sign-in and session-signing material is never moved.
 
 ## Agent tools
@@ -288,6 +296,8 @@ Family `accounts`, capability `accounts`, granted to every provider session by
 | `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                                                                             |
 | `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts |
 | `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                    |
+| `scient_account_add`             | Upstream's private secret card, saved as an API-key account; returns its id and usage, or the matching account                                                              |
+| `scient_paper_get`               | A paper's PDF by DOI or link into `papers/`: OpenAlex's published free copy, the library account in the browser, then a preprint                                            |
 
 Every call runs `AccountsService.authorize`. Allowed proceeds; Ask shows the user a card ("Allow
 in this conversation", "Always in this project", "Always") and waits up to ten minutes.
@@ -369,11 +379,14 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   reports the origin, username and password once. Server comparison chooses "Save sign-in?",
   "Update password?", or no prompt for an unchanged password, including Scient’s own fills. The
   prompt offers available stores; nothing is kept unless the user saves.
-- **Autofill**: the persistent desktop guest reports a visible login form after load. Exact-origin
-  accounts rank before bare-domain matches, then most recently used. Scient fills once per document
-  without submitting, only when fields remain empty, the user has not typed, and the thread agent
-  may use the account: global access on, in scope, and Allowed or Ask approved for its project.
-  Incognito never
+- **Autofill**: the persistent desktop guest reports a visible login form after load. One watcher
+  per environment (`accountAutofill.ts`, mounted with the account notifications) fills every
+  desktop tab, shown or hidden, the user's or an agent's, once per document, without submitting,
+  only when fields remain empty and nobody typed. Agent access does not gate it (owner,
+  2026-10-30). Exact-origin accounts rank before bare-domain matches, then most recently used.
+  `fillValues` records the filled page per thread and tab in memory; `authorizePreviewTab`
+  refuses agent actions on that page while it is unchanged and the session may not use the
+  account, so a filled password is never readable by such an agent. Incognito never
   autofills. The toolbar chip identifies the filled sign-in and offers other matches; the key button
   remains available for manual filling. The desktop advertises `originBoundFill`; `expectedOrigin`
   and the isolated guest's document nonce reject navigation races, including same-origin reloads.
@@ -462,10 +475,28 @@ provider environment. The existing proxy redacts reflected values in responses.
   password that uses that profile's session. Scient does not guess completion from cookies: many
   sites set session cookies before anyone signs in.
 - **Signing in while browsing**: returning from a known identity provider (Google, Microsoft, Apple,
-  GitHub, ORCID, Okta, Shibboleth) with a new HttpOnly cookie for the site offers "Save <site> to
-  Accounts?" once per site and profile, never in incognito or for a site already saved. Only cookie
-  domain, expiry and HttpOnly flags are read. Remote server browsers and browser-only clients can't
-  read cookie metadata, so they get neither offer.
+  GitHub, ORCID, Okta, Shibboleth) with a new HttpOnly cookie records a website account for that
+  profile without asking, with an Undo toast. The site is the new session cookie's domain; a
+  cookie that also covers the sign-in page is the provider's own session (Google's sign-in, then
+  Docs), so nothing is recorded. Never in incognito or for a site the profile already has. Only
+  cookie domain, expiry and HttpOnly flags are read. Remote server browsers and browser-only
+  clients can't read cookie metadata. The Accounts list shows one row per site for sign-ins from
+  several profiles (`accountListRows`).
+- **Which profile a tab opens in**: `pickBrowserProfile` (`@t3tools/shared/scientBrowserProfileChoice`)
+  serves both the app (three marked hooks where upstream read the default profile) and
+  `authorizePreviewProfile` for agents (allowed profiles only). Order: the user's switch for the
+  page's host in this conversation; the only profile with a website account covering the page
+  (ties: latest switch for the host anywhere, the conversation's, the project's, the default, list
+  order); the conversation's; the project's; the default. Choices live in Accounts state
+  (`profileChoices`: projects, and threads with per-host switches, 500 threads and 50 hosts kept),
+  written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile.
+- **Library access**: a library account's link pattern (`proxyUrl` with `{url}`, e.g. HUJI's
+  OpenAthens redirector) is how `scient_paper_get` reaches paywalled PDFs. Pasting any library
+  link derives the pattern. The tool opens the article through it in the library account's
+  profile, signs in with that account when its sign-in page asks, takes the page's
+  `citation_pdf_url` or PDF link, fetches the PDF inside the page so the session applies, and
+  checks `%PDF`. Library fetches are serialized per server, 10-20 s apart and capped at 100 a
+  day: libraries suspend access that looks like bulk downloading.
 - Browser-sign-in rows name the profile agents use; the usual Signed out / Sign in again applies.
 - **API keys**: Get a key opens the service's key page in the default browser. A pasted key with a
   known prefix picks its catalogue entry and goes straight into the key input, never into search

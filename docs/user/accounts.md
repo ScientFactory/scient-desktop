@@ -16,14 +16,24 @@ or **Off** to deny agents. Scope can limit access to selected projects. The glob
 turns agent access off without changing individual controls. Read-only applies where Scient
 can enforce it; readable values are supplied to agents through private session files.
 
-| Agent tool                       | Use                                                    |
-| -------------------------------- | ------------------------------------------------------ |
-| `scient_accounts_list`           | List available accounts and profiles.                  |
-| `scient_account_sign_in`         | Sign in through the browser, including supported 2FA.  |
-| `scient_account_credentials`     | Create private credential files for readable accounts. |
-| `scient_account_request`         | Make an HTTPS request with a hidden key.               |
-| `scient_account_find_profile`    | Find a browser profile that can open a page.           |
-| `scient_account_browser_session` | Supply a site's browser session to scripts.            |
+| Agent tool                       | Use                                                     |
+| -------------------------------- | ------------------------------------------------------- |
+| `scient_accounts_list`           | List available accounts and profiles.                   |
+| `scient_account_sign_in`         | Sign in through the browser, including supported 2FA.   |
+| `scient_account_credentials`     | Create private credential files for readable accounts.  |
+| `scient_account_request`         | Make an HTTPS request with a hidden key.                |
+| `scient_account_find_profile`    | Find a browser profile that can open a page.            |
+| `scient_account_browser_session` | Supply a site's browser session to scripts.             |
+| `scient_account_add`             | Ask you for a key in a private card and keep it here.   |
+| `scient_paper_get`               | Save a paper's PDF through open access or your library. |
+
+When an agent needs a key you don't have in Accounts, it asks in a private card and saves your
+answer here, so later conversations reuse it. One-time secrets still use the plain card.
+
+A tab you or an agent opens without naming a profile goes, in order, to the profile you switched
+that site to in this conversation, the profile signed in to the site, this conversation's profile,
+the project's profile (**Use … in this project** in the tab's profile menu), then the default.
+Switching a tab's profile is remembered for the conversation and the site.
 
 When an agent opens a new HTTPS page without choosing a profile, Scient checks for sign-in
 or access-denied pages. It tries up to eight other Allowed profiles and opens the page in the
@@ -34,17 +44,26 @@ If none works, the agent receives guidance to ask you to sign in or allow a prof
 Choosing a profile explicitly or navigating an existing tab keeps that profile. If access fails,
 Scient tells the agent to use `scient_account_find_profile` with the URL.
 
-Saved sign-ins fill automatically as a login form appears, without submitting or replacing
-what you typed. Exact-site matches come first, then your most recently used sign-in. Use the
-small toolbar chip to choose another, or the key button to fill again. Incognito never autofills.
+Saved sign-ins fill automatically as a login form appears, in every tab, yours or an agent's,
+without submitting or replacing what you typed. Exact-site matches come first, then your most
+recently used sign-in. Use the small toolbar chip to choose another, or the key button to fill
+again. Incognito never autofills. An agent can't act on a tab filled with a sign-in it may not use
+until that page changes.
 
 After you submit a login form, Scient offers to save a new sign-in or update a changed password.
 An unchanged password produces no prompt. Capture requires a `<form>` element.
 
 In Add an account, **Sign in with the browser** opens the site in Scient's browser. Sign in however
 the site allows, then press **Done** on the notification; the account is saved with that browser
-profile. If you type a password, Scient offers to save it as usual. When you come back to a site from
-Google, your university or another sign-in service, Scient offers to save that site too.
+profile. If you type a password, Scient offers to save it as usual. When you sign in to a site
+through Google, your university or another sign-in service, Scient adds that site for the profile
+and shows Undo. Coming back to the sign-in service's own sites, such as Google Docs after Google's
+sign-in, adds nothing. A site signed in from several profiles is one row with their pictures.
+
+For journals, add your library (the HUJI library is in the list; for another, paste any link your
+library gives). `scient_paper_get` tries a free legal copy first, then your library in the
+browser, one paper at a time with a pause between, at most 100 a day, so the library never sees
+bulk downloading. PDFs are saved in the project's `papers` folder.
 
 Choose several stores when saving. Updates change every existing copy. If an external write
 fails, Scient keeps the password and reports the failed store. A 1Password vault that rejects a
