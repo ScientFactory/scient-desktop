@@ -1618,6 +1618,9 @@ export default function FilePreviewPanel({
   const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
   const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
+  // SCIENT-FORK:START — attachments and files outside the project keep the read-only preview.
+  const isProjectNotebook = !isHostFile && isScientNotebookFile(relativePath);
+  // SCIENT-FORK:END
   // Files whose saving belongs to a document session, not to this panel's
   // generic saver: one owner per file for every view of it.
   const usesDocumentSession =
@@ -1648,8 +1651,8 @@ export default function FilePreviewPanel({
     relativePath,
     // Read every workspace path so a chat link to a directory can be
     // distinguished from a media or PDF file before choosing a preview.
-    // SCIENT-FORK:START — a notebook loads cell by cell from the server, never as text.
-    loadAsText: attachment === undefined && !isScientNotebookFile(relativePath),
+    // SCIENT-FORK:START — a project notebook loads cell by cell from the server, never as text.
+    loadAsText: attachment === undefined && !isProjectNotebook,
     // SCIENT-FORK:END
     sourcePending: effectiveSourcePending,
     surfaceOwnsConflictDetection: usesDocumentSession,
@@ -2664,7 +2667,7 @@ export default function FilePreviewPanel({
             </ScientSurfaceSuspense>
           ) : // SCIENT-FORK:END
           // SCIENT-FORK:START — notebooks live on the server, cell by cell, and never load as text
-          isScientNotebookFile(relativePath) ? (
+          isProjectNotebook ? (
             <ScientSurfaceSuspense>
               <ScientNotebookSurface
                 key={`${environmentId}:${cwd}:${relativePath}`}
