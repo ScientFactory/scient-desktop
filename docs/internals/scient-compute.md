@@ -20,7 +20,8 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
 ## Runtimes
 
 - **Python** runs ipykernel behind `bridge/scient_compute_bridge.py`, a framed-JSON sidecar using
-  `jupyter_client`. **MATLAB** runs through the Engine bridge (`scient_matlab_engine_bridge.py`) and,
+  `jupyter_client`. **R**, **Julia** and **SQL** (a DuckDB wrapper kernel) run behind the same bridge
+  through `KernelComputeRuntime`, each described by a kernel command, discovery and setup. **MATLAB** runs through the Engine bridge (`scient_matlab_engine_bridge.py`) and,
   for `Run MATLAB batch`, the older `analysis` one-shot runner.
 - **Scient-managed Python** is a private, uv-built CPython with reviewed Toolkits, installed as
   immutable generations (`ManagedPythonEnvironment`, `ManagedPythonProvisioner`, recipes in
@@ -49,13 +50,35 @@ The `compute` grant gives every provider session these MCP tools
 | `scient_compute_control`   | Interrupts, restarts or stops a session.                                                                                                                                                                           |
 | `scient_compute_setup`     | Installs Scient-managed Python or adds Toolkits.                                                                                                                                                                   |
 | `scient_compute_inventory` | Lists languages, runtimes and Toolkits.                                                                                                                                                                            |
+| `scient_notebook_read`     | An outline of a notebook, or listed cells in full, with each cell's state and output as text.                                                                                                                      |
+| `scient_notebook_edit`     | Replaces, inserts, deletes or moves cells, or clears outputs.                                                                                                                                                      |
+| `scient_notebook_run`      | Runs cells in the notebook's session, saves results into the file, and returns outputs and figures.                                                                                                                |
 
 Figures return to the model as MCP image content (`scientToolImages.ts`). Agent runs appear in the
 session's history like any other run, marked by their actor.
 
 ## Notebooks
 
-`.ipynb` files open in `apps/web/src/scient/notebook/` on the document persistence lease that also
-saves Markdown and LaTeX. Code cells run in the notebook's file session through the shared Run
-control; a finished run's outputs become nbformat outputs on the server (`compute.notebookOutputs`,
-figures inlined) and are written into the cell. Unedited cells keep their saved form.
+The server owns each open notebook (`apps/server/src/scient/notebook/`). `notebookIndex.ts` reads a
+file's structure without decoding stored figures; base64 holds no quotes, so skipping a figure is
+one native search. `NotebookStore` applies cell edits and run results, saves through the workspace's
+retained write after a short pause, copies unedited cells byte for byte, and replays unsaved edits
+if the file changed underneath them. The app, agents and run results all go through it, so a
+notebook never loads as text in the page.
+
+The page keeps cells outside React (`notebookController.ts`), so typing re-renders one cell. Only
+one CodeMirror exists at a time: each live editor measures the page on every scroll, so other cells
+show static highlighted code laid out identically. Text cells use the document editor. Large
+outputs load when their cell nears the view.
+
+A run belongs to its cell on the server. `compute.submitCells` admits a run's cells under one lock
+with `source.cell` set, a cell that does not succeed cancels later queued cells of that notebook,
+and each cell durably expects its run (`metadata.scient.pending`), so results reach the file after a
+tab switch or reload. Out-of-date cells come from `@t3tools/shared/notebookStaleness`: a code hash
+for edits, and a name-based hint for cells reading from something that changed since.
+
+## Data
+
+`apps/server/src/scient/data/` reads CSV, TSV, Parquet and workbooks in place, a page at a time, for
+the virtual grid in `apps/web/src/scient/dataTable/`. A kernel variable opens in the same grid
+through silent table paging. Nothing needs Python.

@@ -420,18 +420,28 @@ another operation may take the freed slot, in which case the capacity warning re
 
 ## Notebooks
 
-Jupyter notebooks (`.ipynb`) open as editable notebooks. Code cells run in the notebook's session
-with the same runtime controls as scripts: **Run all** runs the code cells in order and stops at an
-error, **Shift+Enter** runs a cell and moves to the next, and **Cmd/Ctrl+Enter** runs it in place.
-Outputs, figures included, are saved into the notebook file, so it opens with its results in Jupyter
-too. Cells can be added, moved and deleted from the cell's hover actions; double-click a text cell
-to edit it. **Ask in chat** on a cell with outputs puts a reference to it in the chat.
+Jupyter notebooks (`.ipynb`) open as editable notebooks, however large the file.
+
+- **Run:** point at a cell's number to run it, or use **Run all**. Cells queue in order and a run
+  stops at the first cell that fails. You can keep working, or leave the notebook, while it runs.
+- **Edit:** click code to edit it where you clicked. Click a Text cell to edit it in the same editor
+  as a Markdown document.
+- **Out of date:** a dot replaces a cell's number when the code changed since it ran, or a cell it
+  reads from changed. Its output dims. **Run out-of-date cells** in the Run menu runs just those.
+- **Keyboard:** Shift+Enter runs and moves on, Cmd/Ctrl+Enter runs. Esc leaves the editor; then
+  `A`/`B` add a cell above or below, `J`/`K` or the arrows move, `D D` deletes, `Z` undoes the delete,
+  `M`/`Y` switch to Text or Code, and `I I` stops the run.
+- **Variables** opens the session's variables below the notebook.
+
+Outputs and figures are saved into the file, so it opens with its results in Jupyter or anywhere
+else. Scient keeps each run's details in the cell's metadata.
 
 ## Working with agents
 
 Agents in a chat can run code in Scient Compute. By default an agent works in its own session for
 that chat, which uses Scient-managed Python when it is installed; asked to, it runs in your
-session, such as an open file or notebook, where its runs appear in Results marked **Agent**. Agents
+session, such as an open file or notebook, where its runs appear in Results marked **Agent**. For
+notebooks they read, edit and run cells directly, and you see the changes in the open notebook. Agents
 see the output and figures of their runs, can read your runs, list a session's variables,
 interrupt or restart a session, and set up Scient-managed Python or its Toolkits. They run with the
 same authority as your own code. **Ask in chat** on a run puts a short reference to it in the chat;
