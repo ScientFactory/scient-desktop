@@ -201,7 +201,7 @@ export function DataGrid(props: DataGridProps) {
       Math.min(24, rowAt(visibleRows.first + index)?.label.length ?? 0),
     ),
   );
-  const rowHeaderWidth = Math.max(44, labelChars * 7 + 20);
+  const rowHeaderWidth = Math.max(44, labelChars * 8 + 20);
   const totalWidth = rowHeaderWidth + offsets.at(-1)!;
   const visibleColumns = columnWindow(
     offsets,

@@ -97,7 +97,7 @@ export class DataTables extends Context.Service<
   }
 >()("t3/scient/data/DataTables") {}
 
-export const make = Effect.sync(() => {
+const make = Effect.sync(() => {
   // A changed file has a new key, so its old index simply ages out.
   const open = new Map<
     string,

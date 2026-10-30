@@ -15,7 +15,10 @@ const DATA_TABLE_MAX_PAGE_CELLS = 16_384;
 export function dataTablePageRows(columns: number): number {
   return Math.max(
     1,
-    Math.min(DATA_TABLE_MAX_PAGE_ROWS, Math.floor(DATA_TABLE_MAX_PAGE_CELLS / Math.max(1, columns))),
+    Math.min(
+      DATA_TABLE_MAX_PAGE_ROWS,
+      Math.floor(DATA_TABLE_MAX_PAGE_CELLS / Math.max(1, columns)),
+    ),
   );
 }
 

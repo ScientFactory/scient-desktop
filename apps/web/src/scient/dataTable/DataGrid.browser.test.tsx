@@ -27,7 +27,12 @@ function syntheticTable(requests: Array<DataTableQuery>) {
       const id = query.search === "" ? row : row * 10;
       rows.push({
         label: String(id + 1),
-        cells: [String(id), (id / 7).toFixed(4), id % 3 === 0 ? null : `sample ${id}`, "2024-01-01"],
+        cells: [
+          String(id),
+          (id / 7).toFixed(4),
+          id % 3 === 0 ? null : `sample ${id}`,
+          "2024-01-01",
+        ],
       });
     }
     return {
@@ -65,8 +70,6 @@ describe("DataGrid", () => {
       if (directory) await page.screenshot({ path: `${directory}/${name}.png`, element: host });
     };
     await screenshot("top");
-    const counts = [...host.querySelectorAll("span")].find((node) => node.textContent?.includes("4 columns"))!;
-    console.log("DBG", JSON.stringify(counts.getBoundingClientRect()), getComputedStyle(counts).color, getComputedStyle(counts.parentElement!).display, counts.parentElement!.getBoundingClientRect().width);
 
     await act(() => {
       grid().scrollTop = grid().scrollHeight;

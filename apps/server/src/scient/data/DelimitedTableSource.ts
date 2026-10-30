@@ -13,12 +13,12 @@ const CR = 0x0d;
 const CHUNK_BYTES = 4 * 1024 * 1024;
 const SAMPLE_ROWS = 1000;
 /** Index, sort and search memory grow with rows; beyond this only the first rows are shown. */
-export const DELIMITED_MAX_ROWS = 5_000_000;
+const DELIMITED_MAX_ROWS = 5_000_000;
 
 const utf8 = new TextDecoder("utf-8");
 
 /** Splits one record, honoring quotes; stops after `limit` cells. */
-export function parseDelimitedRecord(record: string, delimiter: string, limit = Infinity) {
+function parseDelimitedRecord(record: string, delimiter: string, limit = Infinity) {
   let end = record.length;
   if (record.charCodeAt(end - 1) === LF) end--;
   if (record.charCodeAt(end - 1) === CR) end--;
@@ -54,7 +54,7 @@ export function parseDelimitedRecord(record: string, delimiter: string, limit = 
 }
 
 /** The delimiter a `.csv` header line uses: comma unless another clearly leads. */
-export function sniffDelimiter(header: string): string {
+function sniffDelimiter(header: string): string {
   let best = ",";
   let bestCount = 0;
   for (const candidate of [",", ";", "\t", "|"]) {
