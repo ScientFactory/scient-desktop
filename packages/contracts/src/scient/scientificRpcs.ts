@@ -48,6 +48,8 @@ import {
   ComputeRuntimeInspection,
   ComputeRuntimeInventory,
   ComputeRuntimeVerification,
+  ComputeSaveProjectOutputInput,
+  ComputeSaveProjectOutputResult,
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeVariableSnapshot,
@@ -89,6 +91,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeListExecutions: "compute.listExecutions",
   computeListOutputs: "compute.listOutputs",
   computeInspectVariables: "compute.inspectVariables",
+  computeSaveOutput: "compute.saveOutput",
   subscribeComputeSessions: "subscribe.computeSessions",
 } as const;
 
@@ -304,6 +307,12 @@ const WsComputeInspectVariablesRpc = Rpc.make(
   },
 );
 
+const WsComputeSaveOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSaveOutput, {
+  payload: ComputeSaveProjectOutputInput,
+  success: ComputeSaveProjectOutputResult,
+  error: ComputeRpcError,
+});
+
 const WsSubscribeComputeSessionsRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.subscribeComputeSessions,
   {
@@ -343,5 +352,6 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeListExecutionsRpc,
   WsComputeListOutputsRpc,
   WsComputeInspectVariablesRpc,
+  WsComputeSaveOutputRpc,
   WsSubscribeComputeSessionsRpc,
 );

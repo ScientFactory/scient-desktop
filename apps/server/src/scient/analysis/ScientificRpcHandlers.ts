@@ -8,6 +8,7 @@
 import { WS_METHODS, WsRepositoryRpcGroup, WsScientificRpcGroup } from "@t3tools/contracts";
 
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
+import type { makeComputeOutputSave } from "../compute/ComputeOutputSave.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import type * as AnalysisService from "./AnalysisService.ts";
 
@@ -16,9 +17,11 @@ export const makeScientificRpcHandlers = ({
   observeRpcStreamEffect,
   analysis,
   computeGateway,
+  saveComputeOutput,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStreamEffect"> & {
   readonly analysis: AnalysisService.AnalysisService["Service"];
   readonly computeGateway: ComputeRpcGateway;
+  readonly saveComputeOutput: ReturnType<typeof makeComputeOutputSave>;
 }) =>
   WsScientificRpcGroup.of({
     [WS_METHODS.analysisConfigureRuntime]: (input) =>
@@ -135,6 +138,10 @@ export const makeScientificRpcHandlers = ({
       }),
     [WS_METHODS.computeInspectVariables]: (input) =>
       observeRpcEffect(WS_METHODS.computeInspectVariables, computeGateway.inspectVariables(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeSaveOutput]: (input) =>
+      observeRpcEffect(WS_METHODS.computeSaveOutput, saveComputeOutput(input), {
         "rpc.aggregate": "compute",
       }),
     [WS_METHODS.subscribeComputeSessions]: (input) =>

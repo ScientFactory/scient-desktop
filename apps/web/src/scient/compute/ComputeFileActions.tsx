@@ -629,6 +629,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             // Null preserves server-side default resolution. A non-null value
             // is the runtime explicitly chosen immediately before this Run.
             executable: requestedExecutable ?? null,
+            owner: { _tag: "file", path: props.relativePath },
           },
         });
         if (started._tag !== "Success") {
@@ -788,6 +789,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             sessionId,
             languageId: props.language.languageId,
             executable: null,
+            owner: { _tag: "file", path: props.relativePath },
             runOnce: {
               executionId,
               code: fileSlice.code,

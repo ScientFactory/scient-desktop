@@ -71,6 +71,11 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_pdf_build: tool(["Build", "Building", "Built", "a PDF"], "scient-documents"),
   t3_latex_build: tool(["Build", "Building", "Built", "a LaTeX document"], "scient-documents"),
   t3_document_export: tool(["Export", "Exporting", "Exported", "a document"], "scient-documents"),
+  t3_compute_run: tool(["Run", "Running", "Ran", "code"], "scient-compute"),
+  t3_compute_output: tool(["Read", "Reading", "Read", "run output"], "scient-compute"),
+  t3_compute_sessions: tool(["List", "Listing", "Listed", "compute sessions"], "scient-compute"),
+  t3_compute_variables: tool(["Read", "Reading", "Read", "session variables"], "scient-compute"),
+  t3_compute_control: tool(["Control", "Controlling", "Controlled", "a session"], "scient-compute"),
   t3_compute_inventory: tool(
     ["Check", "Checking", "Checked", "compute runtimes"],
     "scient-compute",
@@ -124,6 +129,6 @@ export function scientMcpToolSummaryLabel(
       // One verb for PDF/LaTeX builds and exports alike.
       return phrase("Prepared", "prepare", `documents ${times}`);
     case "scient-compute":
-      return phrase("Checked", "check", `compute runtimes ${times}`);
+      return phrase("Used", "use", `Compute ${times}`);
   }
 }

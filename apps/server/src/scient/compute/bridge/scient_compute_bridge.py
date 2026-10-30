@@ -250,6 +250,9 @@ def _scient_cache(transformed_code, number=0, raw_code=None):
 _scient_shell.compile.cache = _scient_cache
 _scient_shell.events.register("pre_run_cell", _scient_pre_run)
 _scient_shell.events.register("post_run_cell", lambda _result: _scient_restore_source_context())
+
+# Inline figures also carry a PDF, so a shown figure can be saved as vector graphics.
+_scient_shell.config.InlineBackend.figure_formats = {"png", "pdf"}
 """
 
 

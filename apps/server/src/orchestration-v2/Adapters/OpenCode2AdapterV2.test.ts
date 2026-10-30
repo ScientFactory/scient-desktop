@@ -683,11 +683,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   )("$caseTitle", ({ external }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const capabilities = new Set([
-          "documents:build",
-          "skills:read",
-          "compute:inventory",
-        ] as const);
+        const capabilities = new Set(["documents:build", "skills:read", "compute"] as const);
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         yield* mcpSessions.set({
           environmentId: EnvironmentId.make("opencode2-awareness"),

@@ -821,11 +821,7 @@ describe("OpenCodeAdapterV2", () => {
       Effect.gen(function* () {
         const suffix = `awareness-${external}`;
         const threadId = ThreadId.make(`thread-opencode-${suffix}`);
-        const capabilities = new Set([
-          "documents:build",
-          "skills:read",
-          "compute:inventory",
-        ] as const);
+        const capabilities = new Set(["documents:build", "skills:read", "compute"] as const);
         const expectedGuidance = external
           ? "host-guidance-without-capabilities"
           : `host-guidance-with-capabilities:${[...capabilities].sort().join(",")}`;

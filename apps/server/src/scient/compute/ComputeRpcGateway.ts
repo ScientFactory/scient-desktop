@@ -336,6 +336,7 @@ export function makeComputeRpcGateway(input: {
       sessionId: request.sessionId,
       languageId: request.languageId,
       label: descriptor.displayName,
+      ...(request.owner === undefined ? {} : { owner: request.owner }),
       workingDirectory: project.root,
       configuredExecutable: preference.executable.length === 0 ? null : preference.executable,
       ...(request.executable === null ? {} : { requestedExecutable: request.executable }),

@@ -56,12 +56,12 @@ it("projects the explicit read-only Compute inventory grant", () => {
     },
     client: undefined,
     issuedAt: 1,
-    capabilities: new Set(["compute:inventory"]),
+    capabilities: new Set(["compute"]),
   };
 
   const projected = scientInvocationForMcp(source);
 
-  expect(projected.capabilities).toEqual(new Set(["compute:inventory"]));
+  expect(projected.capabilities).toEqual(new Set(["compute"]));
 });
 
 it.effect("reports other missing capabilities with the neutral error", () => {
