@@ -19,7 +19,6 @@ import {
 } from "@scientfactory/compute";
 import type { ExecutionProcessPort } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -36,6 +35,8 @@ import { runOwnedProcess } from "./ManagedPythonProvisioner.ts";
 import type { KernelBridgeHost } from "./PythonComputeRuntime.ts";
 import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
 import { JUPYTER_BRIDGE_TRANSPORT_KIND, buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
+import { discoveryContext, pathMatches, pathModule, versionedEntries } from "./RuntimeDiscovery.ts";
+import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
 
 /** A directory whose newest `prefix*` entry holds the executable at `relative`. */
 export interface KernelVersionedPath {
@@ -93,7 +94,6 @@ export interface KernelLanguage {
 }
 
 const PROBE_TIMEOUT = Duration.seconds(20);
-const PROBE_CACHE_MS = 30_000;
 const MARKER_FILE = "scient-kernel.json";
 const Marker = Schema.Struct({ kernelVersion: Schema.String });
 const decodeMarker = Schema.decodeUnknownSync(Schema.fromJsonString(Marker));
@@ -186,83 +186,72 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       ),
     ),
   );
-  const probeCache = new Map<
-    string,
-    { readonly probe: KernelInstallationProbe; readonly at: number }
-  >();
-
-  const exists = (path: string) => fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
-
-  const expand = Effect.fn("KernelComputeRuntime.expandCandidate")(function* (
-    candidate: string | KernelVersionedPath,
-  ) {
-    if (typeof candidate === "string") return [candidate];
-    const entries = yield* fileSystem
-      .readDirectory(candidate.directory)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-    return entries
-      .filter((entry) => entry.startsWith(candidate.prefix))
-      .sort((a, b) => b.localeCompare(a, "en", { numeric: true }))
-      .map((entry) => NodePath.join(candidate.directory, entry, candidate.relative));
-  });
+  const probes = makeRuntimeProbeCache<KernelInstallationProbe>({ concurrency: 2 });
+  /** Why a discovered installation cannot run, for the verification of its unusable profile. */
+  const problems = new Map<string, string>();
 
   /** Existing installations in precedence order, each named once. */
   const installations = Effect.fn("KernelComputeRuntime.installations")(function* (
     configured: string | null,
   ) {
-    const resolveExecutable = yield* SpawnExecutableResolution;
+    const context = yield* discoveryContext;
+    const path = pathModule(platform);
     const found: Array<Installation & { readonly identity: string }> = [];
-    const add = Effect.fn("KernelComputeRuntime.addInstallation")(function* (
-      name: string,
-      source: ComputeRuntimeSource,
-      configuredInstallation = false,
-    ) {
-      const bare = !NodePath.isAbsolute(name);
-      const executable = bare ? resolveExecutable(name, platform, hostEnvironment) : name;
-      if (executable === undefined || !(yield* exists(executable))) return;
-      const identity = yield* fileSystem
-        .realPath(executable)
-        .pipe(Effect.orElseSucceed(() => executable));
-      if (found.some((installation) => installation.identity === identity)) return;
-      found.push({
-        executable,
-        source: bare ? "path" : source,
-        identity,
-        ...(configuredInstallation ? { configured: true as const } : {}),
-      });
-    });
-    if (configured) yield* add(configured, "configured", true);
+    const add = (name: string, source: ComputeRuntimeSource, configuredInstallation = false) => {
+      const bare = !path.isAbsolute(name);
+      // A bare name is every PATH match, except a configured one, which means what a shell runs.
+      const matches = bare ? pathMatches(context, [name]) : [name];
+      for (const executable of configuredInstallation ? matches.slice(0, 1) : matches) {
+        if (!context.host.isExecutable(executable)) continue;
+        const resolved = context.host.realPath(executable) ?? executable;
+        const identity = platform === "win32" ? resolved.toLowerCase() : resolved;
+        if (found.some((installation) => installation.identity === identity)) continue;
+        found.push({
+          executable,
+          source: bare ? "path" : source,
+          identity,
+          ...(configuredInstallation ? { configured: true as const } : {}),
+        });
+      }
+    };
+    if (configured) add(configured, "configured", true);
     for (const candidate of language.candidates(platform, environment)) {
-      for (const path of yield* expand(candidate)) yield* add(path, "conventional");
+      if (typeof candidate === "string") add(candidate, "conventional");
+      else
+        for (const directory of versionedEntries(context, candidate.directory, candidate.prefix))
+          add(path.join(directory, candidate.relative), "conventional");
     }
     return found;
   });
 
-  const probe = Effect.fn("KernelComputeRuntime.probe")(function* (executable: string) {
-    const now = yield* Clock.currentTimeMillis;
-    const cached = probeCache.get(executable);
-    if (cached !== undefined && now - cached.at < PROBE_CACHE_MS) return cached.probe;
-    const stdout = yield* runOwnedProcess(input.processes, {
-      runId: `scient-${language.languageId}-probe-${NodeCrypto.randomUUID()}`,
+  const probe = (executable: string) =>
+    probes.get(
       executable,
-      args: language.probeArgs,
-      cwd: NodeOS.tmpdir(),
-      environment,
-      stdoutOnly: true,
-    }).pipe(
-      Effect.timeoutOption(PROBE_TIMEOUT),
-      Effect.mapError((cause) => runtimeError("discover", cause.message, cause)),
+      Effect.gen(function* () {
+        const stdout = yield* runOwnedProcess(input.processes, {
+          runId: `scient-${language.languageId}-probe-${NodeCrypto.randomUUID()}`,
+          executable,
+          args: language.probeArgs,
+          cwd: NodeOS.tmpdir(),
+          environment,
+          stdoutOnly: true,
+        }).pipe(
+          Effect.timeoutOption(PROBE_TIMEOUT),
+          Effect.mapError((cause) => runtimeError("discover", cause.message, cause)),
+        );
+        if (stdout._tag === "None")
+          return yield* runtimeError("discover", `${executable} did not answer in time.`);
+        return yield* Effect.try({
+          try: () => parseKernelProbe(stdout.value),
+          catch: (cause) =>
+            runtimeError(
+              "discover",
+              `${executable} is not a usable ${language.displayName}.`,
+              cause,
+            ),
+        });
+      }),
     );
-    if (stdout._tag === "None")
-      return yield* runtimeError("discover", `${executable} did not answer in time.`);
-    const result = yield* Effect.try({
-      try: () => parseKernelProbe(stdout.value),
-      catch: (cause) =>
-        runtimeError("discover", `${executable} is not a usable ${language.displayName}.`, cause),
-    });
-    probeCache.set(executable, { probe: result, at: now });
-    return result;
-  });
 
   const kernelState = Effect.fn("KernelComputeRuntime.kernelState")(function* (executable: string) {
     const installationProbe = yield* probe(executable);
@@ -296,29 +285,56 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     displayName: `${language.displayName} ${installationProbe.version} (${installation.source})`,
   });
 
+  const unusable = (
+    executable: string,
+    source: ComputeRuntimeSource,
+    problem: string,
+  ): ComputeRuntimeProfile => {
+    problems.set(executable, problem);
+    return {
+      languageId: language.languageId,
+      source,
+      executable,
+      languageVersion: "unknown",
+      architecture: null,
+      displayName: `${language.displayName} (${source}, unavailable)`,
+    };
+  };
+
   const discover: ComputeLanguageAdapter["discover"] = Effect.fn("KernelComputeRuntime.discover")(
     function* (request) {
-      if (request.refresh === true) probeCache.clear();
+      if (request.refresh === true) probes.clear();
       const configured = request.configuredExecutable?.trim() || null;
       const found = yield* installations(configured);
-      // The selected installation keeps its own failure instead of silently falling back.
-      const unavailable = (executable: string): ComputeRuntimeProfile => ({
-        languageId: language.languageId,
-        source: "configured",
-        executable,
-        languageVersion: "unknown",
-        architecture: null,
-        displayName: `${language.displayName} (configured, not found)`,
-      });
-      if (configured !== null && !found.some((installation) => installation.configured))
-        return [unavailable(configured)];
-      const profiles: ComputeRuntimeProfile[] = [];
-      for (const installation of found) {
-        const result = yield* Effect.result(probe(installation.executable));
-        if (result._tag === "Success") profiles.push(profileFor(installation, result.success));
-        else if (installation.configured) return [unavailable(installation.executable)];
-      }
-      return profiles;
+      // The selected installation keeps its own failure first; alternatives stay listed after it.
+      const missing =
+        configured !== null && !found.some((installation) => installation.configured)
+          ? [
+              unusable(
+                configured,
+                "configured",
+                `The selected ${language.displayName} executable was not found.`,
+              ),
+            ]
+          : [];
+      const profiles = yield* Effect.forEach(
+        found,
+        (installation) =>
+          probe(installation.executable).pipe(
+            Effect.map((result) => profileFor(installation, result)),
+            Effect.catch((cause) =>
+              Effect.succeed(
+                unusable(
+                  installation.executable,
+                  installation.configured ? "configured" : installation.source,
+                  cause.message,
+                ),
+              ),
+            ),
+          ),
+        { concurrency: 2 },
+      );
+      return [...missing, ...profiles];
     },
   );
 
@@ -328,6 +344,16 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
 
   const verify: ComputeLanguageAdapter["verify"] = Effect.fn("KernelComputeRuntime.verify")(
     function* (request) {
+      const known = problems.get(request.profile.executable);
+      if (request.profile.languageVersion === "unknown" && known !== undefined) {
+        return {
+          profile: request.profile,
+          readiness: "unusable" as const,
+          missingRequirements: [],
+          message: known,
+          packages: [],
+        };
+      }
       const state = yield* Effect.result(kernelState(request.profile.executable));
       if (state._tag === "Failure") {
         return {
@@ -425,12 +451,13 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     "KernelComputeRuntime.listInstallations",
   )(function* (request) {
     const configured = request.configuredExecutable?.trim() || null;
+    const now = yield* Clock.currentTimeMillis;
     const found: ComputeRuntimeInstallation[] = (yield* installations(configured)).map(
       (installation) => ({
         executable: installation.executable,
         source: installation.source,
         ...(installation.configured ? { configured: true } : {}),
-        version: probeCache.get(installation.executable)?.probe.version ?? null,
+        version: probes.peek(installation.executable, now)?.version ?? null,
         problem: null,
       }),
     );
@@ -559,7 +586,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       }),
       Effect.ensuring(
         Effect.sync(() => {
-          probeCache.clear();
+          probes.clear();
           if (operation?.operationId === operationId) operation = null;
         }),
       ),

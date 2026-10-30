@@ -178,7 +178,7 @@ export const discoveryContext = Effect.gen(function* () {
   } satisfies DiscoveryContext;
 });
 
-function pathModule(platform: NodeJS.Platform) {
+export function pathModule(platform: NodeJS.Platform) {
   return platform === "win32" ? NodePath.win32 : NodePath.posix;
 }
 
@@ -201,15 +201,17 @@ export function pathMatches(context: DiscoveryContext, names: ReadonlyArray<stri
   );
 }
 
-/** Newest-first entries of `directory` matching `pattern`, bounded. */
-function versionedEntries(
+/** Newest-first entries of `directory` matching `pattern` or starting with it, bounded. */
+export function versionedEntries(
   context: DiscoveryContext,
   directory: string,
-  pattern: RegExp,
+  pattern: RegExp | string,
 ): ReadonlyArray<string> {
   return context.host
     .readDirectory(directory)
-    .filter((entry) => pattern.test(entry))
+    .filter((entry) =>
+      typeof pattern === "string" ? entry.startsWith(pattern) : pattern.test(entry),
+    )
     .toSorted((a, b) => b.localeCompare(a, "en", { numeric: true }))
     .slice(0, MAX_DIRECTORY_ENTRIES)
     .map((entry) => pathModule(context.platform).join(directory, entry));

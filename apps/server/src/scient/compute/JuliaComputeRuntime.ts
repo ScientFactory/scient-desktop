@@ -74,13 +74,22 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
           ...juliaup,
           "/opt/homebrew/bin/julia",
           "/usr/local/bin/julia",
-          {
-            directory: "/Applications",
+          ...[
+            "/Applications",
+            ...(home === undefined ? [] : [NodePath.join(home, "Applications")]),
+          ].map((directory) => ({
+            directory,
             prefix: "Julia-",
             relative: "Contents/Resources/julia/bin/julia",
-          },
+          })),
         ]
-      : ["julia", ...juliaup, "/usr/local/bin/julia", "/usr/bin/julia"];
+      : [
+          "julia",
+          ...juliaup,
+          "/usr/local/bin/julia",
+          "/usr/bin/julia",
+          { directory: "/opt", prefix: "julia-", relative: "bin/julia" },
+        ];
   },
   probeArgs: [...JULIA_FLAGS, "-e", PROBE],
   setup: (privateDirectory, environment) => ({

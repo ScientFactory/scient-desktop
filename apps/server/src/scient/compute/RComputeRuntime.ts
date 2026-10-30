@@ -46,11 +46,17 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
     platform === "win32"
       ? [
           "R.exe",
-          {
-            directory: NodePath.join(environment.ProgramFiles ?? "C:\\Program Files", "R"),
+          // Machine-wide and per-user installers (and rig) use versioned R-x.y.z folders.
+          ...[
+            environment.ProgramFiles ?? "C:\\Program Files",
+            ...(environment.LOCALAPPDATA === undefined
+              ? []
+              : [NodePath.win32.join(environment.LOCALAPPDATA, "Programs")]),
+          ].map((root) => ({
+            directory: NodePath.win32.join(root, "R"),
             prefix: "R-",
-            relative: NodePath.join("bin", "R.exe"),
-          },
+            relative: NodePath.win32.join("bin", "R.exe"),
+          })),
         ]
       : platform === "darwin"
         ? [
@@ -58,8 +64,19 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
             "/opt/homebrew/bin/R",
             "/usr/local/bin/R",
             "/Library/Frameworks/R.framework/Resources/bin/R",
+            // rig keeps several versions side by side.
+            {
+              directory: "/Library/Frameworks/R.framework/Versions",
+              prefix: "",
+              relative: "Resources/bin/R",
+            },
           ]
-        : ["R", "/usr/local/bin/R", "/usr/bin/R"],
+        : [
+            "R",
+            "/usr/local/bin/R",
+            "/usr/bin/R",
+            { directory: "/opt/R", prefix: "", relative: "bin/R" },
+          ],
   probeArgs: [...R_FLAGS, "-e", PROBE],
   setup: (privateDirectory, environment) => ({
     args: [...R_FLAGS, "-e", SETUP, "--args", NodePath.join(privateDirectory, "library")],
