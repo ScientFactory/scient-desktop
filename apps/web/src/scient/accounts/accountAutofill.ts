@@ -1,12 +1,10 @@
-import {
-  ThreadId,
-  type AccountSummary,
-  type DesktopLoginForm,
-  type EnvironmentId,
-} from "@t3tools/contracts";
+import { ThreadId, type DesktopLoginForm, type EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
+import { readThreadPreviewState } from "~/previewStateStore";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { environmentThreadShells } from "~/state/threads";
 import { accountsState } from "./accountsState";
-import { automaticSignIn, matchingAccounts } from "./accountsView";
+import { agentMayUse, automaticSignIn, matchingAccounts } from "./accountsView";
 
 /** Runtime tab ids are `[environmentId, threadId, serverEpoch, tabId]` (`previewRuntimeTabId`). */
 function runtimeTab(id: string) {
@@ -37,8 +35,8 @@ export const autofilledTabs = {
 /**
  * Fills a saved sign-in into every login form the desktop reports for this environment's tabs,
  * shown or hidden, the user's or an agent's. It never submits, never replaces typed text, and
- * never fills incognito. Agent access doesn't apply: the user's sign-ins are theirs; the server
- * keeps a filled page from agents that may not use that account.
+ * never fills incognito. In the user's tabs every saved sign-in fills, and the server keeps a
+ * filled page from agents that may not use it; in an agent's tab, only sign-ins that agent may use.
  */
 export function watchAccountAutofill(
   registry: AtomRegistry.AtomRegistry,
@@ -47,11 +45,11 @@ export function watchAccountAutofill(
   const bridge = window.desktopBridge?.accounts;
   if (!bridge?.originBoundFill || !bridge.onLoginFormDetected) return () => undefined;
   const attempted = new Set<string>();
-  const accounts = async (): Promise<ReadonlyArray<AccountSummary>> => {
+  const snapshot = async () => {
     const current = registry.get(accountsState.snapshot({ environmentId, input: {} }));
-    if (AsyncResult.isSuccess(current)) return current.value.accounts;
+    if (AsyncResult.isSuccess(current)) return current.value;
     const read = await accountsState.readSnapshot.run(registry, { environmentId, input: {} });
-    return read._tag === "Success" ? read.value.accounts : [];
+    return read._tag === "Success" ? read.value : undefined;
   };
   const fill = async (form: DesktopLoginForm) => {
     const tab = runtimeTab(form.tabId);
@@ -62,7 +60,18 @@ export function watchAccountAutofill(
     )
       return;
     attempted.add(form.documentId);
-    const account = matchingAccounts(await accounts(), form.url, form.profileId)[0];
+    const accounts = await snapshot();
+    if (!accounts) return;
+    // A page an agent controls can read what is filled, so it gets only accounts that agent may use.
+    const threadRef = { environmentId, threadId: ThreadId.make(tab.threadId) };
+    const agentTab =
+      readThreadPreviewState(threadRef).sessions[tab.tabId]?.automationOwner !== undefined;
+    const projectId = appAtomRegistry.get(
+      environmentThreadShells.threadShellAtom(threadRef),
+    )?.projectId;
+    const account = matchingAccounts(accounts.accounts, form.url, form.profileId).find(
+      (match) => !agentTab || agentMayUse(match.controls, accounts.agentAccess, projectId),
+    );
     if (!account) return;
     const pageUrl = form.pageUrl ?? form.url;
     const values = await accountsState.fillValues.run(registry, {

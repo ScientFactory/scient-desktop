@@ -11,6 +11,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  agentMayUse,
   libraryLinkTemplate,
   accountListRows,
   providerManagedAccounts,
@@ -458,4 +459,16 @@ it("turns a link from the library into its pattern", () => {
   expect(libraryLinkTemplate("https://proxy.example.edu/{url}")).toBe(
     "https://proxy.example.edu/{url}",
   );
+});
+
+it("lets an agent's tab fill only sign-ins that agent may use", () => {
+  const project = "project-a" as ProjectId;
+  const controls = defaultAccountControls("website");
+  expect(agentMayUse(controls, true, project)).toBe(true);
+  expect(agentMayUse(controls, false, project)).toBe(false);
+  expect(agentMayUse({ ...controls, access: "off" }, true, project)).toBe(false);
+  expect(agentMayUse({ ...controls, access: "ask" }, true, project)).toBe(false);
+  expect(
+    agentMayUse({ ...controls, access: "ask", allowedProjects: [project] }, true, project),
+  ).toBe(true);
 });

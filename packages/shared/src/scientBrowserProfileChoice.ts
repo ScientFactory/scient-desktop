@@ -21,6 +21,36 @@ export interface ProfileSignIn {
   readonly signedOut?: boolean | undefined;
 }
 
+/**
+ * Sign-ins with evidence of a session in their profile: a recorded browser sign-in (no password,
+ * no username) or a successful Scient sign-in there, unless seen signed out. A saved password
+ * alone says nothing about the profile.
+ */
+export function profileSignIns(
+  accounts: ReadonlyArray<{
+    readonly details: {
+      readonly kind: string;
+      readonly profileId?: string | undefined;
+      readonly sites?: ReadonlyArray<string>;
+      readonly username?: string | undefined;
+    };
+    readonly secrets: Readonly<Record<string, unknown>>;
+    readonly lastSignInOutcome?: string | undefined;
+    readonly signedOut?: boolean | undefined;
+  }>,
+): ReadonlyArray<ProfileSignIn> {
+  return accounts.flatMap(({ details, secrets, lastSignInOutcome, signedOut }) =>
+    details.kind === "website" &&
+    details.profileId &&
+    details.sites &&
+    !signedOut &&
+    (lastSignInOutcome === "signed-in" ||
+      (secrets["password"] === undefined && details.username === undefined))
+      ? [{ profileId: details.profileId, sites: details.sites }]
+      : [],
+  );
+}
+
 export interface ProfilePick {
   readonly profileId: string;
   /** Set when the page's site decided the profile. */

@@ -13,7 +13,7 @@ import {
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { pickBrowserProfile } from "@t3tools/shared/scientBrowserProfileChoice";
+import { pickBrowserProfile, profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
 import { authorizationDecision } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 
@@ -137,11 +137,7 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
                 ? [item.id]
                 : [];
             }),
-            signIns: known.accounts.flatMap((account) =>
-              account.details.kind === "website" && account.details.profileId
-                ? [{ profileId: account.details.profileId, sites: account.details.sites }]
-                : [],
-            ),
+            signIns: profileSignIns(known.accounts),
             choices: known.profileChoices,
             defaultProfileId: status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
           }).profileId

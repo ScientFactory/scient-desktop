@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { pickBrowserProfile } from "./scientBrowserProfileChoice.ts";
+import { pickBrowserProfile, profileSignIns } from "./scientBrowserProfileChoice.ts";
 
 const base = {
   url: "https://portal.huji.ac.il/courses",
@@ -80,5 +80,24 @@ describe("pickBrowserProfile", () => {
     expect(pickBrowserProfile({ ...base, url: "http://example.com" })).toEqual({
       profileId: "main",
     });
+  });
+});
+
+describe("profileSignIns", () => {
+  it("counts recorded sessions and successful sign-ins, never a saved password alone", () => {
+    const site = (patch: object) => ({
+      details: { kind: "website", profileId: "work", sites: ["huji.ac.il"] },
+      secrets: {},
+      ...patch,
+    });
+    const password = { password: { source: { type: "scient" } } };
+    expect(
+      profileSignIns([
+        site({}),
+        site({ secrets: password }),
+        site({ secrets: password, lastSignInOutcome: "signed-in" }),
+        site({ signedOut: true }),
+      ]),
+    ).toHaveLength(2);
   });
 });

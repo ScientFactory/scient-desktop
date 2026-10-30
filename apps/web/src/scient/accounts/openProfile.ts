@@ -1,5 +1,5 @@
 import type { AccountsSnapshot, ScopedThreadRef } from "@t3tools/contracts";
-import { pickBrowserProfile } from "@t3tools/shared/scientBrowserProfileChoice";
+import { pickBrowserProfile, profileSignIns } from "@t3tools/shared/scientBrowserProfileChoice";
 import { AsyncResult } from "effect/reactivity";
 import type { BrowserDefaults } from "~/browser/browserDefaults";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -41,17 +41,7 @@ export async function openProfileId(
     profiles: defaults.profiles
       .filter((profile) => profile.kind !== "incognito")
       .map((profile) => profile.id),
-    signIns: snapshot.accounts.flatMap((account) =>
-      account.details.kind === "website" && account.details.profileId
-        ? [
-            {
-              profileId: account.details.profileId,
-              sites: account.details.sites,
-              signedOut: account.signedOut,
-            },
-          ]
-        : [],
-    ),
+    signIns: profileSignIns(snapshot.accounts),
     choices: snapshot.profileChoices,
     defaultProfileId: defaults.profileId,
   }).profileId;
