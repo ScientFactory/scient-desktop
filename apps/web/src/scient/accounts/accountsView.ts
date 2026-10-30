@@ -216,6 +216,12 @@ export const accountCatalogue = [
   { name: "Anthropic", kind: "api-key", site: "api.anthropic.com", envName: "ANTHROPIC_API_KEY" },
   { name: "Google", kind: "website", site: "accounts.google.com" },
   { name: "OpenAthens library", kind: "library", site: "openathens.net" },
+  {
+    name: "HUJI library",
+    kind: "library",
+    site: "openathens.net",
+    proxyUrl: "https://go.openathens.net/redirector/huji.ac.il?url={url}",
+  },
   { name: "HUJI", kind: "website", site: "huji.ac.il" },
   { name: "Moodle", kind: "website", site: "" },
   { name: "Postgres database", kind: "database", site: "" },
@@ -313,7 +319,11 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
     case "website":
       return { kind: "website", sites: entry.site ? [entry.site] : [] };
     case "library":
-      return { kind: "library", sites: [entry.site], proxyUrl: "" };
+      return {
+        kind: "library",
+        sites: [entry.site],
+        proxyUrl: "proxyUrl" in entry ? entry.proxyUrl : "",
+      };
     case "api-key":
       return {
         kind: "api-key",
@@ -339,6 +349,26 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
         variables: entry.variables.map((name) => ({ name, secret: true })),
       };
   }
+}
+
+/**
+ * A library's link pattern from any link the library gives, such as an OpenAthens redirector or an
+ * EZproxy login link: the article address becomes `{url}`.
+ */
+export function libraryLinkTemplate(text: string) {
+  const value = text.trim();
+  if (value.includes("{url}")) return value;
+  try {
+    const link = new URL(value);
+    for (const key of ["url", "qurl"]) {
+      if (!link.searchParams.has(key)) continue;
+      link.searchParams.delete(key);
+      return `${link.origin}${link.pathname}${link.search ? `${link.search}&` : "?"}${key}={url}`;
+    }
+  } catch {
+    // Not a link yet: keep what was typed.
+  }
+  return value;
 }
 
 export function secretFields(details: AccountDetails): ReadonlyArray<string> {

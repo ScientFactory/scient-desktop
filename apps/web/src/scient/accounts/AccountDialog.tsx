@@ -53,6 +53,7 @@ import {
   accountIconUrl,
   accountManagePage,
   catalogueDetails,
+  libraryLinkTemplate,
   recognizeAccountKey,
   secretFields,
   type CatalogueEntry,
@@ -456,11 +457,13 @@ function MoreOptionsFields({
               </NativeSelect>
             </AccountField>
             {details.kind === "library" ? (
-              <AccountField label="Library proxy">
+              <AccountField label="Library link">
                 <Input
                   value={details.proxyUrl}
-                  onChange={(event) => onChange({ ...details, proxyUrl: event.target.value })}
-                  placeholder="https://…/{url}"
+                  onChange={(event) =>
+                    onChange({ ...details, proxyUrl: libraryLinkTemplate(event.target.value) })
+                  }
+                  placeholder="Paste a link from your library"
                 />
               </AccountField>
             ) : null}

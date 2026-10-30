@@ -11,6 +11,7 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  libraryLinkTemplate,
   accountListRows,
   providerManagedAccounts,
   accountCatalogue,
@@ -443,4 +444,18 @@ it("lists one row per site for sign-ins kept only as profile sessions", () => {
   expect(rows[0]).toHaveLength(2);
   expect(rows[1]).toBe(password);
   expect(rows[2]).toMatchObject({ name: "overleaf.com" });
+});
+
+it("turns a link from the library into its pattern", () => {
+  expect(
+    libraryLinkTemplate(
+      "https://go.openathens.net/redirector/huji.ac.il?url=https%3A%2F%2Fwww.nature.com%2Farticles%2Fx",
+    ),
+  ).toBe("https://go.openathens.net/redirector/huji.ac.il?url={url}");
+  expect(libraryLinkTemplate("https://ezproxy.example.edu/login?url=https://doi.org/10.1/x")).toBe(
+    "https://ezproxy.example.edu/login?url={url}",
+  );
+  expect(libraryLinkTemplate("https://proxy.example.edu/{url}")).toBe(
+    "https://proxy.example.edu/{url}",
+  );
 });
