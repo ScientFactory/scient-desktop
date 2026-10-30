@@ -8,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 import { ArrowDown, ArrowUp, Search } from "lucide-react";
 import {
-  useCallback,
   useEffect,
   useRef,
   useState,
@@ -52,19 +51,24 @@ interface Cell {
   readonly column: number;
 }
 
-/** Rows of one view (source, sort and search); replaced whole when the view changes. */
-interface PageCache {
+/**
+ * One view of the table (source, sort and search). Its rows are replaced whole when the view
+ * changes; the shape stays so the header holds still while the new rows arrive.
+ */
+interface ViewState {
   readonly view: string;
   readonly pages: Map<number, ReadonlyArray<DataTableRow>>;
   readonly loading: Set<number>;
-  live: boolean;
+  readonly shape: TableShape | null;
+  readonly error: string | null;
 }
 
-const pageCache = (view: string): PageCache => ({
+const viewState = (view: string, shape: TableShape | null): ViewState => ({
   view,
   pages: new Map(),
   loading: new Set(),
-  live: true,
+  shape,
+  error: null,
 });
 
 export interface DataGridProps {
@@ -83,16 +87,10 @@ export function DataGrid(props: DataGridProps) {
   const [attempt, setAttempt] = useState(0);
   const view = JSON.stringify([props.revision, sort, search, attempt]);
 
-  const [shape, setShape] = useState<TableShape | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [widths, setWidths] = useState<{ revision: string; values: number[] } | null>(null);
-  const [cache, setCache] = useState(() => pageCache(view));
-  const [, setLoaded] = useState(0);
-  if (cache.view !== view) {
-    cache.live = false;
-    setCache(pageCache(view));
-    setError(null);
-  }
+  const [table, setTable] = useState(() => viewState(view, null));
+  if (table.view !== view) setTable(viewState(view, table.shape));
+  const { shape, error } = table;
 
   const scroller = useRef<HTMLDivElement | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
@@ -101,7 +99,8 @@ export function DataGrid(props: DataGridProps) {
   const [focus, setFocus] = useState<Cell | null>(null);
   const { copyToClipboard } = useCopyToClipboard({ target: "cells" });
 
-  const measureScroller = useCallback((node: HTMLDivElement | null) => {
+  // A new ref callback each render would re-observe, and a resize report renders again.
+  const measureScroller = useStableCallback((node: HTMLDivElement | null) => {
     scroller.current = node;
     if (!node) return;
     const measure = () =>
@@ -112,7 +111,7 @@ export function DataGrid(props: DataGridProps) {
       );
     measure();
     return observeResize(node, measure);
-  }, []);
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- typing settles before the source scans every row.
   useEffect(() => {
@@ -132,7 +131,7 @@ export function DataGrid(props: DataGridProps) {
   const lastPage = Math.floor((visibleRows.first + Math.max(0, visibleRows.count - 1)) / pageRows);
 
   const requestPage = useStableCallback((page: number) => {
-    const requested = cache;
+    const requested = table;
     requested.loading.add(page);
     const revision = props.revision;
     const first = shape === null;
@@ -146,13 +145,14 @@ export function DataGrid(props: DataGridProps) {
       .then(
         ({ rows, offset: _offset, ...nextShape }) => {
           requested.loading.delete(page);
-          if (!requested.live) return;
           requested.pages.set(page, rows);
           for (const old of requested.pages.keys()) {
             if (requested.pages.size <= MAX_CACHED_PAGES) break;
             if (Math.abs(old - page) > MAX_CACHED_PAGES / 2) requested.pages.delete(old);
           }
-          setShape(nextShape);
+          setTable((current) =>
+            current.view === requested.view ? { ...current, shape: nextShape } : current,
+          );
           setWidths((current) =>
             current?.revision === revision && current.values.length === nextShape.columns.length
               ? current
@@ -166,30 +166,31 @@ export function DataGrid(props: DataGridProps) {
                   ),
                 },
           );
-          setLoaded((count) => count + 1);
         },
         (cause: unknown) => {
           requested.loading.delete(page);
-          if (!requested.live) return;
-          setError(cause instanceof Error ? cause.message : "The table could not be read.");
+          setTable((current) =>
+            current.view === requested.view ? { ...current, error: errorMessage(cause) } : current,
+          );
         },
       );
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- rows come from the server page by page as they scroll into view.
   useEffect(() => {
-    if (error !== null || cache.loading.size >= MAX_LOADING_PAGES) return;
-    if (cache.pages.size === 0) {
-      if (!cache.loading.has(0)) requestPage(0);
+    const { pages, loading } = table;
+    if (error !== null || loading.size >= MAX_LOADING_PAGES) return;
+    if (pages.size === 0) {
+      if (!loading.has(0)) requestPage(0);
       return;
     }
     for (let page = firstPage; page <= lastPage; page++) {
-      if (cache.loading.size >= MAX_LOADING_PAGES) break;
-      if (!cache.pages.has(page) && !cache.loading.has(page)) requestPage(page);
+      if (loading.size >= MAX_LOADING_PAGES) break;
+      if (!pages.has(page) && !loading.has(page)) requestPage(page);
     }
   });
 
-  const rowAt = (row: number) => cache.pages.get(Math.floor(row / pageRows))?.[row % pageRows];
+  const rowAt = (row: number) => table.pages.get(Math.floor(row / pageRows))?.[row % pageRows];
 
   const columnWidths = widths?.values ?? [];
   const offsets = [0];
@@ -227,6 +228,7 @@ export function DataGrid(props: DataGridProps) {
     setAnchor(null);
     setFocus(null);
     if (scroller.current) scroller.current.scrollTop = 0;
+    setScroll((current) => ({ ...current, top: 0 }));
   };
 
   const selection =
@@ -261,7 +263,7 @@ export function DataGrid(props: DataGridProps) {
       lines.push(columns.slice(selection.left, selection.right + 1).map((c) => c.name));
     for (let page = Math.floor(selection.top / pageRows); page * pageRows <= bottom; page++) {
       const rows =
-        cache.pages.get(page) ??
+        table.pages.get(page) ??
         (await props.loadPage({ offset: page * pageRows, limit: pageRows, sort, search })).rows;
       for (let index = 0; index < rows.length; index++) {
         const row = page * pageRows + index;
@@ -278,7 +280,7 @@ export function DataGrid(props: DataGridProps) {
     if (mod && event.key.toLowerCase() === "c") {
       event.preventDefault();
       void copySelection().catch((cause: unknown) =>
-        setError(cause instanceof Error ? cause.message : "The table could not be read."),
+        setTable((current) => ({ ...current, error: errorMessage(cause) })),
       );
       return;
     }
@@ -361,7 +363,7 @@ export function DataGrid(props: DataGridProps) {
   const busy = Array.from(
     { length: lastPage - firstPage + 1 },
     (_, index) => firstPage + index,
-  ).some((page) => cache.loading.has(page));
+  ).some((page) => table.loading.has(page));
   const rows = Array.from(
     { length: Math.max(0, visibleRows.count) },
     (_, index) => visibleRows.first + index,
@@ -512,7 +514,7 @@ export function DataGrid(props: DataGridProps) {
                             if (event.buttons === 1 && anchor) setFocus({ row: position, column });
                           }}
                         >
-                          {row ? (value ?? "—") : ""}
+                          {row ? (value ?? "null") : ""}
                         </div>
                       );
                     })}
@@ -548,7 +550,6 @@ function ColumnHeader(props: {
       <button
         type="button"
         tabIndex={-1}
-        title={props.column.name}
         className={cn(
           "flex size-full flex-col justify-center px-2 hover:bg-accent/60",
           numeric ? "items-end" : "items-start",
@@ -575,6 +576,9 @@ function ColumnHeader(props: {
     </div>
   );
 }
+
+const errorMessage = (cause: unknown) =>
+  cause instanceof Error ? cause.message : "The table could not be read.";
 
 function tableCounts(shape: TableShape): string {
   const total = `${shape.rowCount.toLocaleString()}${shape.truncated ? "+" : ""}`;

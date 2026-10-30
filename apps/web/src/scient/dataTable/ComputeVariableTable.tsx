@@ -52,8 +52,8 @@ export function ComputeVariableTableDialog(props: {
     <Dialog open={name !== null} onOpenChange={(open) => (open ? undefined : props.onClose())}>
       <DialogPopup bottomStickOnMobile={false} layout="visual" padding="none" gap="none">
         <DialogHeader layout="visual">
-          <DialogTitle size="compact" className="min-w-0 truncate font-mono">
-            {name}
+          <DialogTitle size="compact" className="min-w-0">
+            <span className="block truncate font-mono">{name}</span>
           </DialogTitle>
         </DialogHeader>
         {name === null ? null : (
