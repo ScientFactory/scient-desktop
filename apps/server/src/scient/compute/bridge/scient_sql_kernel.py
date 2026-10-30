@@ -180,12 +180,11 @@ class ScientSqlKernel(Kernel):
         try:
             results = self._execute(code) if code.strip() else []
         except KeyboardInterrupt:
-            return self._error("KeyboardInterrupt", "Query interrupted", ["Query interrupted"])
+            return self._error("KeyboardInterrupt", "Query interrupted", [])
         except StatementError as error:
-            message = str(error.error)
-            return self._error(type(error.error).__name__, message, [f"line {error.line}", message])
+            return self._error(type(error.error).__name__, str(error.error), [f"line {error.line}"])
         except duckdb.Error as error:
-            return self._error(type(error).__name__, str(error), [str(error)])
+            return self._error(type(error).__name__, str(error), [])
         if not silent:
             for index, bundle in enumerate(results):
                 last = index == len(results) - 1
