@@ -268,6 +268,8 @@ export type ComputeToolNotebookCell = typeof ComputeToolNotebookCell.Type;
 
 const NotebookResult = Schema.Struct({
   language: Schema.String,
+  /** Cells in the notebook, whether or not all are listed here. */
+  total: Schema.Int,
   cells: Schema.Array(ComputeToolNotebookCell),
   images: Schema.optional(Schema.Array(ComputeToolImage)),
 });
@@ -291,7 +293,7 @@ const NotebookEditOperation = Schema.Union([
 
 const ScientNotebookReadTool = Tool.make("scient_notebook_read", {
   description:
-    "Read a Jupyter notebook as cells: source, whether each cell is current, and its output as text. Use this instead of reading the .ipynb file, which is JSON with embedded figures.",
+    "Read a Jupyter notebook as cells: an outline of every cell, or the listed cells in full, with whether each is current and its output as text. Use this instead of reading the .ipynb file, which is JSON with embedded figures.",
   parameters: Schema.Struct({
     path: NotebookPath,
     cells: Schema.optional(Schema.Array(NotebookCellId)),

@@ -25,6 +25,8 @@ const POLL_INTERVAL = Duration.millis(400);
 /** A session lists at most this many recent runs. */
 const RUN_HISTORY_LIMIT = 200;
 const MAXIMUM_CELL_OUTPUT_CHARACTERS = 4000;
+/** A whole-notebook read is an outline; asking for cells by id returns them in full. */
+const OUTLINE_CHARACTERS = 160;
 const MAXIMUM_IMAGES = 6;
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
 const notebookFailed = (error: { readonly message: string }) =>
@@ -91,13 +93,26 @@ function describeCell(
   };
 }
 
+const outlined = (value: string) =>
+  value.length > OUTLINE_CHARACTERS ? `${value.slice(0, OUTLINE_CHARACTERS)}…` : value;
+
+/** Every cell as an outline, or the given cells in full. */
 const describeNotebook = (view: NotebookView, only?: ReadonlySet<string>) => {
   const stale = staleNotebookCells(view.cells);
+  const cells = view.cells
+    .filter((cell) => only === undefined || only.has(cell.id))
+    .map((cell) => describeCell(cell, stale.get(cell.id)));
   return {
     language: view.language,
-    cells: view.cells
-      .filter((cell) => only === undefined || only.has(cell.id))
-      .map((cell) => describeCell(cell, stale.get(cell.id))),
+    total: view.cells.length,
+    cells:
+      only !== undefined
+        ? cells
+        : cells.map((cell) => ({
+            ...cell,
+            source: outlined(cell.source),
+            output: outlined(cell.output),
+          })),
   };
 };
 
@@ -249,13 +264,17 @@ export const editScientNotebook = Effect.fn("ScientComputeToolkit.notebookEdit")
   readonly edits: ReadonlyArray<AgentEdit>;
 }) {
   const scope = yield* agentScope();
+  const edits = input.edits.map(notebookEdit);
   yield* scope.gateway
-    .editNotebook({ cwd: scope.cwd, path: input.path, edits: input.edits.map(notebookEdit) })
+    .editNotebook({ cwd: scope.cwd, path: input.path, edits })
     .pipe(Effect.mapError(notebookFailed));
   yield* scope.gateway
     .flushNotebook({ cwd: scope.cwd, path: input.path })
     .pipe(Effect.mapError(notebookFailed));
-  return describeNotebook(yield* requireNotebook(scope, input.path));
+  return describeNotebook(
+    yield* requireNotebook(scope, input.path),
+    new Set(edits.flatMap((edit) => ("cellId" in edit ? [edit.cellId] : []))),
+  );
 });
 
 export const runScientNotebook = Effect.fn("ScientComputeToolkit.notebookRun")(function* (input: {
