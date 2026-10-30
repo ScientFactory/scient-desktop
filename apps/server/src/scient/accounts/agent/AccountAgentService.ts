@@ -22,8 +22,9 @@ import { accountRequest } from "./request.ts";
 import { accountSessionScope } from "./scope.ts";
 import { authorizePreviewProfile } from "./previewProfileAccess.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
-import { authorize, withAccountUse } from "./accountUse.ts";
+import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
 import { findProfiles } from "./findProfiles.ts";
+import { addAccount } from "./accountAdd.ts";
 
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const encodeCookies = Schema.encodeEffect(Schema.fromJsonString(AccountCookies));
@@ -72,18 +73,7 @@ export const accountAgentOperations = {
             access: account.controls.access,
             readable: account.controls.visibility === "readable",
             status: account.status,
-            usage:
-              account.controls.access === "off"
-                ? []
-                : [
-                    ...(account.controls.visibility === "readable"
-                      ? ["scient_account_credentials"]
-                      : []),
-                    ...(account.details.kind === "api-key" ? ["scient_account_request"] : []),
-                    ...(["website", "library"].includes(account.details.kind)
-                      ? ["scient_account_sign_in", "scient_account_browser_session"]
-                      : []),
-                  ],
+            usage: accountUsage(account),
           }))
         : [],
       profiles: session.agentAccess
@@ -333,6 +323,7 @@ export const accountAgentOperations = {
       ),
     );
   }),
+  scient_account_add: addAccount,
 } satisfies Parameters<typeof ScientAccountsToolkit.toLayer>[0];
 type ToolInput<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.Type<
   (typeof ScientAccountsToolkit.tools)[K]["parametersSchema"]

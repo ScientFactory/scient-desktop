@@ -2,12 +2,19 @@ import { AccountsService } from "../AccountsService.ts";
 import { ProjectionStoreV2 } from "../../../orchestration-v2/ProjectionStore.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AccountSessionFiles } from "./sessionFiles.ts";
+import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
+import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
+import { SecretRequests } from "../../../secrets/SecretRequests.ts";
 import {
   AccountId,
   AccountSignInOutcome,
+  AccountSite,
+  AccountSummary,
   AccountsError,
   BrowserProfileId,
+  EnvironmentVariableName,
   PreviewTabId,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -168,6 +175,57 @@ const findProfile = metadata(
   "find-profile",
   "Find a browser profile for a page",
 );
+const add = metadata(
+  Tool.make("scient_account_add", {
+    failure: AccountsError,
+    dependencies: [
+      ...common.dependencies,
+      McpInvocationContext,
+      OrchestratorMcpService,
+      SecretRequests,
+    ],
+    description:
+      "Ask the user, in a private card, for an API key or token to keep in Accounts, and wait. It stays out of chat. Returns its accountId and how to use it. A matching account is returned instead, or reported as turned off.",
+    parameters: Schema.Struct({
+      name: AccountSummary.fields.name.annotate({ description: "The service, e.g. OpenAI." }),
+      reason: TrimmedNonEmptyString.check(Schema.isMaxLength(500)).annotate({
+        description: "What it is for and where to get it.",
+      }),
+      envName: Schema.optional(EnvironmentVariableName).annotate({
+        description: "Variable for commands, e.g. OPENAI_API_KEY.",
+      }),
+      sites: Schema.optional(Schema.Array(AccountSite).check(Schema.isMaxLength(16))).annotate({
+        description: "API hosts the key may be sent to, e.g. api.openai.com.",
+      }),
+      header: Schema.optional(TrimmedNonEmptyString).annotate({
+        description: "Header name when the API doesn't use Authorization: Bearer.",
+      }),
+      accountId: Schema.optional(AccountId).annotate({
+        description: "Replace this account's key when it is wrong or expired.",
+      }),
+      placeholder: Schema.optional(TrimmedNonEmptyString),
+    }),
+    success: Schema.Union([
+      Schema.Struct({
+        status: Schema.Literals(["saved", "exists"]),
+        accountId: AccountId,
+        usage: Schema.Array(Schema.String),
+      }),
+      Schema.Struct({
+        status: Schema.Literals(["turned_off", "linked"]).annotate({
+          description:
+            "turned_off: the user turned this account off. linked: its key lives in 1Password or Keychain; the user updates it there.",
+        }),
+        accountId: AccountId,
+        name: Schema.String,
+      }),
+      Schema.Struct({ status: Schema.Literals(["declined", "cancelled", "timed_out"]) }),
+      Schema.Struct({ status: Schema.Literal("unavailable"), message: Schema.String }),
+    ]),
+  }),
+  "add",
+  "Add an account key",
+);
 export const ScientAccountsToolkit = Toolkit.make(
   list,
   credentials,
@@ -175,4 +233,5 @@ export const ScientAccountsToolkit = Toolkit.make(
   request,
   browserSession,
   findProfile,
+  add,
 );

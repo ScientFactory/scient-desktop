@@ -1,5 +1,8 @@
 import {
+  AccountId,
   AccountsError,
+  defaultAccountControls,
+  type AccountSaveInput,
   type AccountActivityEntry,
   type AccountHandoff,
   type AccountSummary,
@@ -23,6 +26,8 @@ export function fakeAccounts(
   const cancelled = new Set<string>();
   const uses: Array<Omit<AccountActivityEntry, "at" | "decision">> = [];
   const calls: string[] = [];
+  const accounts = [...(options.accounts ?? [])];
+  const saves: Array<AccountSaveInput> = [];
   const unavailable = Effect.fail(
     new AccountsError({
       reason: "unsupported",
@@ -48,7 +53,26 @@ export function fakeAccounts(
     passwordStore: () => unavailable,
     snapshot: unavailable,
     changes: Stream.empty,
-    save: () => unavailable,
+    save: (input) =>
+      Effect.sync(() => {
+        saves.push(input);
+        const accountId =
+          input.accountId ?? AccountId.make(`acc_saved_${String(saves.length).padStart(4, "0")}`);
+        const index = accounts.findIndex((account) => account.accountId === accountId);
+        const saved: AccountSummary = {
+          accountId,
+          name: input.name,
+          details: input.details,
+          secrets: { token: { source: { type: "scient" } } },
+          controls: accounts[index]?.controls ?? defaultAccountControls(input.details.kind),
+          status: "ready",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        if (index === -1) accounts.push(saved);
+        else accounts[index] = saved;
+        return { accountId };
+      }),
     remove: () => unavailable,
     test: () => unavailable,
     setControls: () => unavailable,
@@ -66,7 +90,7 @@ export function fakeAccounts(
     forSession: () =>
       Effect.succeed({
         agentAccess: options.agentAccess ?? true,
-        accounts: options.accounts ?? [],
+        accounts,
         profiles: options.profiles ?? [],
       }),
     authorize: (_scope, target, action) =>
@@ -94,5 +118,5 @@ export function fakeAccounts(
         uses.push(entry);
       }),
   });
-  return { service, calls, uses, handoffs, cancelled };
+  return { service, calls, uses, handoffs, cancelled, saves };
 }

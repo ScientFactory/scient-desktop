@@ -13,7 +13,8 @@
     "packages/contracts/src/scient/secrets.ts",
     "apps/web/src/routes/_chat.settings.accounts.tsx",
     "packages/contracts/src/clientRpcPermissions.scient.test.ts",
-    "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts"
+    "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts",
+    "packages/shared/src/scientAccountSecretRequest.ts"
   ],
   "accountsDiffSignals": [
     "scient/accounts",
@@ -223,6 +224,16 @@
       "path": "apps/server/src/testUtils/shardWeights.json",
       "anchor": "\"src/assets/AssetAccess.test.ts\":",
       "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
+    {
+      "path": "packages/client-runtime/src/secretRequest.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: an Accounts card keeps the key in Accounts.",
+      "purpose": "Say on scient_account_add cards that the key is kept in Accounts, on web and mobile."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: only scient_account_add may open an Accounts card.",
+      "purpose": "Reserve the Accounts card id prefix so request_secret cannot imitate an Accounts card."
     }
   ],
   "scientMounts": [

@@ -1442,6 +1442,7 @@ export const layerTools = Layer.mergeAll(
   registerScientToolkit(ScientAccountsToolkit).pipe(
     Layer.provide(ScientAccountsToolkitHandlersLive),
     Layer.provide(AccountSessionFilesLive),
+    Layer.provide(OrchestratorMcpService.layer),
   ),
   // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,

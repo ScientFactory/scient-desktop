@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scientAccountSecretRequest": {
+      "types": "./src/scientAccountSecretRequest.ts",
+      "import": "./src/scientAccountSecretRequest.ts"
+    },
     "./scientPublicationArtifact": {
       "types": "./src/scientPublicationArtifact.ts",
       "import": "./src/scientPublicationArtifact.ts"

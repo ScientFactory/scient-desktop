@@ -45,6 +45,7 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Prepare", "Preparing", "Prepared", "a browser session"],
     "scient-accounts",
   ),
+  t3_account_add: tool(["Ask for", "Asking for", "Asked for", "a key"], "scient-accounts"),
   // SCIENT-FORK:END
   t3_skills_list: tool(["Check", "Checking", "Checked", "available skills"], "scient-skills"),
   // A completed load reads "Used Latex Authoring", the wording skill loads already use.
