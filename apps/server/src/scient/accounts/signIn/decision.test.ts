@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   decideSignIn,
   decideSignInContinuation,
+  MAX_SIGN_IN_STEPS,
   pageOffersNoSignIn,
   type SignInSubmission,
 } from "./decision.ts";
@@ -242,8 +243,8 @@ describe("sign-in submission guard", () => {
       ).type,
     ).toBe("continue");
   });
-  it("stops at the six-submission limit", () => {
-    expect(decideSignInContinuation(page, [], 6, undefined).type).toBe("failed");
+  it("stops at the step limit", () => {
+    expect(decideSignInContinuation(page, [], MAX_SIGN_IN_STEPS, undefined).type).toBe("failed");
   });
 });
 

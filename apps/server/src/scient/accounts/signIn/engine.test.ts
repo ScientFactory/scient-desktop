@@ -18,6 +18,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { fakeAccounts } from "../agent/AccountsService.testkit.ts";
+import { MAX_SIGN_IN_STEPS } from "./decision.ts";
 import { signIn } from "./engine.ts";
 
 it.effect("handles sequential login steps and bounds retries without returning filled values", () =>
@@ -123,18 +124,19 @@ it.effect("handles sequential login steps and bounds retries without returning f
     stuck = true;
     steps = 0;
     expect((yield* run()).outcome).toBe("failed");
-    expect(steps).toBe(7);
+    expect(steps).toBe(MAX_SIGN_IN_STEPS + 1);
     expect(cleared).toHaveLength(1);
     cleared.length = 0;
     stuck = false;
     rejected = true;
     steps = 0;
+    settles = 0;
     const before = fills;
     expect((yield* run()).outcome).toBe("password-rejected");
     expect(fills - before).toBe(2);
-    // One inspection, then five more while the page settles.
+    // One inspection, then five more while the page settles; one wait follows the submission.
     expect(steps).toBe(7);
-    expect(settles).toBe(5);
+    expect(settles).toBe(6);
     expect(cleared).toEqual([
       {
         origin: "https://login.example.com",
@@ -170,7 +172,8 @@ it.effect("handles sequential login steps and bounds retries without returning f
     pending = 1;
     const beforeSlow = fills;
     expect((yield* run()).outcome).toBe("signed-in");
-    expect(settles).toBe(1);
+    // A wait after each submission, and one for the answer that arrives late.
+    expect(settles).toBe(3);
     // The password was typed once, not resubmitted while the answer was pending.
     expect(fills - beforeSlow).toBe(2);
   }),

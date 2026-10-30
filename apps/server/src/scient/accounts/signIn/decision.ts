@@ -1,6 +1,10 @@
 import type { SignInDetection } from "./detection.ts";
 import { matchesAccountOrigin } from "./origin.ts";
 
+/** Google alone can take seven: account list, address, passkey, options, password, code, trust. */
+export const MAX_SIGN_IN_STEPS = 10;
+export const SIGN_IN_TOO_LONG = `Sign-in did not finish after ${MAX_SIGN_IN_STEPS} steps.`;
+
 export function decideSignIn(
   page: SignInDetection,
   sites: ReadonlyArray<string>,
@@ -118,7 +122,6 @@ export function decideSignInContinuation(
       message:
         "The site did not accept the sign-in code. Ask the user to check it in Settings → Accounts & secrets.",
     } as const;
-  if (step >= 6)
-    return { type: "failed", message: "Sign-in did not finish after six steps." } as const;
+  if (step >= MAX_SIGN_IN_STEPS) return { type: "failed", message: SIGN_IN_TOO_LONG } as const;
   return { type: "continue" } as const;
 }

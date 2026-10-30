@@ -19,7 +19,9 @@ import { AccountsService, type AccountSessionScope } from "../AccountsService.ts
 import {
   decideSignIn,
   decideSignInContinuation,
+  MAX_SIGN_IN_STEPS,
   pageOffersNoSignIn,
+  SIGN_IN_TOO_LONG,
   type SignInSubmission,
 } from "./decision.ts";
 import { SignInDetection, signInDetectionScript, tickRememberScript } from "./detection.ts";
@@ -28,6 +30,7 @@ import { matchesAccountOrigin } from "./origin.ts";
 
 const decodeDetection = Schema.decodeUnknownEffect(SignInDetection);
 const REJECTION_SETTLE_CHECKS = 5;
+const EMPTY_PAGE_SETTLE_CHECKS = 3;
 
 export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   session: AccountSessionScope,
@@ -168,7 +171,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       const continuation = decideSignInContinuation(page, submissions, step, otpPeriod);
       return { page, timestamp, otpPeriod, continuation };
     });
-    for (let step = 0; step <= 6; step++) {
+    for (let step = 0; step <= MAX_SIGN_IN_STEPS; step++) {
       let { page, timestamp, otpPeriod, continuation } = yield* inspect(step);
       // Script-submitted logins answer after "load"; a field still on screen is only a
       // rejection once the page has had a few seconds to respond.
@@ -177,6 +180,15 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         wait < REJECTION_SETTLE_CHECKS &&
         (continuation.type === "password-rejected" || continuation.type === "code-rejected") &&
         !page.signedIn;
+        wait++
+      ) {
+        yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
+        ({ page, timestamp, otpPeriod, continuation } = yield* inspect(step));
+      }
+      // Sites like Google change step without a page load, so an empty page may not have drawn yet.
+      for (
+        let wait = 0;
+        wait < EMPTY_PAGE_SETTLE_CHECKS && !page.broken && pageOffersNoSignIn(page, details.sites);
         wait++
       ) {
         yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
@@ -353,13 +365,9 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       });
       if (action.submit) yield* invoke("click", { selector: action.submit }, target);
       else yield* invoke("press", { key: "Enter" }, target);
-      yield* invoke("accountWaitForLoad", {}, target);
+      yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
     }
-    return {
-      outcome: "failed" as const,
-      message: "Sign-in did not finish after six steps.",
-      tabId: target,
-    };
+    return { outcome: "failed" as const, message: SIGN_IN_TOO_LONG, tabId: target };
   });
   return yield* run.pipe(
     Effect.orElseSucceed(() => ({
