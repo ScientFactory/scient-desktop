@@ -152,7 +152,6 @@ export default function ScientNotebookSurface(props: {
   const [active, setActive] = useState<string | null>(null);
   const [editingMarkdown, setEditingMarkdown] = useState<string | null>(null);
   const [runs, setRuns] = useState<ReadonlyArray<CellRun>>([]);
-  const lastRuns = useRef(new Map<string, CellRun>());
   // Each submitted cell is known by the exact slice the Run control ran for it.
   const requested = useRef(new WeakMap<ComputeCodeSlice, string>());
   const runAll = useRef<string[]>([]);
@@ -200,7 +199,6 @@ export default function ScientNotebookSurface(props: {
         environmentId: props.environmentId,
         input: { cwd: props.cwd, sessionId: run.sessionId, executionId: run.executionId },
       }).then((result) => {
-        lastRuns.current.set(run.cellId, run);
         if (result._tag === "Success") {
           commit((current) =>
             updateNotebookCell(current, run.cellId, (cell) => ({
@@ -364,14 +362,12 @@ export default function ScientNotebookSurface(props: {
                   {cell.cellType === "code" && cell.outputs.length > 0 ? (
                     <CellAction
                       label="Ask in chat"
-                      onClick={() => {
-                        const run = lastRuns.current.get(cell.id);
+                      onClick={() =>
                         askInChatAboutCompute({
                           threadRef: props.threadRef,
                           what: `Cell ${document.cells.indexOf(cell) + 1} of ${props.relativePath}`,
-                          ...(run === undefined ? {} : { run }),
-                        });
-                      }}
+                        })
+                      }
                     >
                       <MessageSquarePlus />
                     </CellAction>

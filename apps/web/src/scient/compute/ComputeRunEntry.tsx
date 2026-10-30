@@ -151,10 +151,7 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
                   askInChatAboutCompute({
                     threadRef: props.threadRef,
                     what: source._tag === "document" ? `${label} of ${source.path}` : label,
-                    run: {
-                      sessionId: execution.request.sessionId,
-                      executionId: execution.request.executionId,
-                    },
+                    submittedAt: execution.request.submittedAt,
                   })
                 }
               >

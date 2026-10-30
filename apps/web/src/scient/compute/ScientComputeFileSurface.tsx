@@ -12,6 +12,8 @@ import * as Schema from "effect/Schema";
 import { Columns2, Play, Rows2 } from "lucide-react";
 import { useRef, useState } from "react";
 
+import { observeResize } from "~/lib/observeResize";
+
 import { EditableFileSurface } from "~/components/files/FilePreviewPanel";
 import type { DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -63,6 +65,9 @@ import {
   type ComputeFileResultsView,
   type ComputeFileView,
 } from "./computeFileSurfaceModel";
+
+/** Below this panel width, Split stacks code above results. */
+const NARROW_SPLIT_WIDTH = 640;
 
 const SEGMENT_BUTTON_CLASS =
   "flex h-5.5 cursor-pointer items-center justify-center rounded-[5px] text-[11px] leading-[18px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset";
@@ -277,10 +282,17 @@ function ComputeFileSurfaceContent(
     setSplit(next);
     persist(COMPUTE_FILE_SPLIT_STORAGE_KEY, next, Schema.Number);
   };
-  const isStacked = view === "split" && splitLayout === "stacked";
+  // Side by side needs room for both panes; a narrow panel stacks them without changing the choice.
+  const [narrow, setNarrow] = useState(false);
+  const observeWidth = (element: HTMLDivElement | null) => {
+    if (element === null) return;
+    return observeResize(element, () => setNarrow(element.clientWidth < NARROW_SPLIT_WIDTH));
+  };
+  const effectiveSplitLayout = narrow ? "stacked" : splitLayout;
+  const isStacked = view === "split" && effectiveSplitLayout === "stacked";
   const { containerRef, primaryPaneRef, separatorHandlers } = useScientSplit({
     active: view === "split",
-    axis: splitLayout === "stacked" ? "y" : "x",
+    axis: effectiveSplitLayout === "stacked" ? "y" : "x",
     fraction: split,
     minimum: MIN_COMPUTE_FILE_SPLIT,
     fallback: DEFAULT_COMPUTE_FILE_SPLIT,
@@ -311,7 +323,11 @@ function ComputeFileSurfaceContent(
   const showResults = view !== "code";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background" dir="ltr">
+    <div
+      ref={observeWidth}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      dir="ltr"
+    >
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 bg-muted/20 px-2 py-1">
         <div
           className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
@@ -334,7 +350,7 @@ function ComputeFileSurfaceContent(
             </button>
           ))}
         </div>
-        {view === "split" ? (
+        {view === "split" && !narrow ? (
           <div
             className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
             role="group"

@@ -1,24 +1,26 @@
-import type { ComputeExecutionId, ComputeSessionId, ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
 
 /**
- * Puts a short reference to a Compute result in the chat composer. The ids let the agent read
- * the full output and figures with `scient_compute_output`; the user adds the question.
+ * Puts a short, readable reference to a Compute result in the chat composer. The agent finds the
+ * run itself (`scient_compute_sessions`, `scient_compute_output`); the user adds the question.
  */
 export function askInChatAboutCompute(input: {
   readonly threadRef: ScopedThreadRef;
   readonly what: string;
-  readonly run?: { readonly sessionId: ComputeSessionId; readonly executionId: ComputeExecutionId };
+  /** When the run was submitted, to tell repeated runs of the same code apart. */
+  readonly submittedAt?: string;
 }) {
-  const reference =
-    input.run === undefined
-      ? input.what
-      : `${input.what} (Compute session ${input.run.sessionId}, run ${input.run.executionId})`;
+  const time =
+    input.submittedAt === undefined
+      ? ""
+      : `, run at ${new Date(input.submittedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  const reference = `${input.what}${time}: `;
   const store = useComposerDraftStore.getState();
   const current = store.getComposerDraft(input.threadRef)?.prompt ?? "";
   store.setPrompt(
     input.threadRef,
-    current.trim().length > 0 ? `${current}\n\n${reference}: ` : `${reference}: `,
+    current.trim().length > 0 ? `${current}\n\n${reference}` : reference,
   );
 }

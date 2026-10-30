@@ -202,6 +202,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       reportFailure: false,
     });
     const stopSession = useAtomCommand(computeEnvironment.stopSession, { reportFailure: false });
+    const manageRuntime = useAtomCommand(computeEnvironment.manageRuntime, {
+      reportFailure: false,
+    });
     const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
       reportFailure: false,
     });
@@ -1239,7 +1242,14 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               label: "Use current",
               onSelect: () => runWithChosenRuntime(preRunRuntimeChoice.current.profile.executable),
             }}
-            onConfirm={() => runWithChosenRuntime(preRunRuntimeChoice.managed.profile.executable)}
+            onConfirm={() => {
+              runWithChosenRuntime(preRunRuntimeChoice.managed.profile.executable);
+              // The choice holds for new sessions, so the next file does not ask again.
+              void manageRuntime({
+                environmentId: props.environmentId,
+                input: { languageId: props.language.languageId, action: "use-managed" },
+              });
+            }}
           />
         )}
         <ContextualConfirmation
