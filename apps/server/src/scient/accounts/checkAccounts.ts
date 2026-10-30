@@ -74,7 +74,7 @@ export const worthChecking = (account: AccountSummary) =>
     account.lastSignInOutcome !== undefined);
 
 export function sessionState(
-  account: Pick<AccountSummary, "details">,
+  account: Pick<AccountSummary, "details" | "lastSignInOutcome" | "secrets">,
   url: string,
   page: ProfileDetection,
   hasSessionCookie: boolean,
@@ -92,7 +92,10 @@ export function sessionState(
   if (result !== "opens") return "unknown";
   if (page.signOutLink) return "signed-in";
   if (page.signInLink) return "signed-out";
-  return hasSessionCookie ? "signed-in" : "unknown";
+  // Anonymous visitors get protected cookies too, so one proves nothing about a new sign-in.
+  const knownSession =
+    account.lastSignInOutcome === "signed-in" || account.secrets.password === undefined;
+  return hasSessionCookie && knownSession ? "signed-in" : "unknown";
 }
 
 const checkOne = Effect.fn("AccountsCheck.one")(function* (account: AccountSummary, url: string) {

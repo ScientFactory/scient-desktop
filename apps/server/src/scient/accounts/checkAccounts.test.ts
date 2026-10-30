@@ -52,7 +52,10 @@ describe("account session state", () => {
     expect(sessionState(account, url, { ...page, passwordField: true }, true)).toBe("signed-out");
     expect(sessionState(account, url, { ...page, signOutLink: true }, false)).toBe("signed-in");
     expect(sessionState(account, url, { ...page, signInLink: true }, true)).toBe("signed-out");
-    expect(sessionState(account, url, page, true)).toBe("signed-in");
+    expect(sessionState(account, url, page, true)).toBe("unknown");
+    expect(sessionState({ ...account, lastSignInOutcome: "signed-in" }, url, page, true)).toBe(
+      "signed-in",
+    );
     expect(sessionState(account, url, page, false)).toBe("unknown");
     expect(sessionState(account, url, { ...page, deniedText: true }, true)).toBe("unknown");
     expect(sessionState(account, url, { ...page, limited: true }, true)).toBe("limited");

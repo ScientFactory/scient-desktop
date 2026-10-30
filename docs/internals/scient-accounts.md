@@ -434,7 +434,8 @@ it through `accountStatusLabel`, after anything that needs the user.
 one at a time and 1.5 seconds apart, under a reserved thread that is no agent's
 (`userRunInvocation`), so agent access doesn't apply. A tab without a profile is a throwaway session,
 so the profile is always named. A session shows by a sign-out link, a login wall or sign-in link, then
-a protected cookie; a library by leaving the university's pages on a publisher link. A signed-out
+a protected cookie, which only counts for a sign-in known to have worked because anonymous visitors
+get those too; a library by leaving the university's pages on a publisher link. A signed-out
 account with a saved password gets one unattended sign-in, unless the last one was rejected. A whole
 run skips imported passwords with no history and stops at 40 accounts.
 
