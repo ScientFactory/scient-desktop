@@ -220,8 +220,9 @@ function StoredOutputs(props: {
       cancelled = true;
     };
   }, [cell.id, cell.outputs, controller, near]);
+  if (cell.outputs.length === 0) return null;
   if (loaded === null) {
-    return cell.outputs.length === 0 ? null : (
+    return (
       <div
         style={{
           minHeight: cell.outputs.some((output) => output.mediaTypes.length > 0)

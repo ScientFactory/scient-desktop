@@ -20,8 +20,8 @@ const utf8 = new TextDecoder("utf-8");
 /** Splits one record, honoring quotes; stops after `limit` cells. */
 function parseDelimitedRecord(record: string, delimiter: string, limit = Infinity) {
   let end = record.length;
-  if (record.charCodeAt(end - 1) === LF) end--;
-  if (record.charCodeAt(end - 1) === CR) end--;
+  // Skipped blank lines belong to the record before them, so every line ending goes.
+  while (record.charCodeAt(end - 1) === LF || record.charCodeAt(end - 1) === CR) end--;
   const text = record.slice(0, end);
   const cells: string[] = [];
   let index = 0;

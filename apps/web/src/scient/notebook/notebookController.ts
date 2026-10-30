@@ -346,7 +346,15 @@ export function createNotebookController(transport: NotebookTransport) {
           revision = result.revision;
           const cell = result.cell;
           if (cell !== null) {
-            update(cellId, (current) => ({ ...cell, source: current.source }));
+            // Typing and a newer run may have moved on while this result was on its way.
+            update(cellId, (current) => ({
+              ...cell,
+              source: current.source,
+              pendingExecution:
+                current.pendingExecution === executionId
+                  ? cell.pendingExecution
+                  : current.pendingExecution,
+            }));
             scheduleStale();
           }
         }

@@ -90,6 +90,51 @@ describe("indexNotebook", () => {
     expect(() => indexNotebook(Buffer.from('{"a": "unterminated'))).toThrow();
   });
 
+  it("rejects mismatched brackets instead of looping", () => {
+    expect(() => indexNotebook(Buffer.from('{"cells":[}}'))).toThrow();
+    expect(() => indexNotebook(Buffer.from('{"cells":[1 2]}'))).toThrow();
+    expect(() => indexNotebook(Buffer.from('{"cells":[{"a":1,}]}'))).toThrow();
+  });
+
+  it("gives a cell without an id one that no other cell uses", () => {
+    const cells = [
+      { cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: "" },
+      {
+        cell_type: "code",
+        execution_count: null,
+        id: "cell-1",
+        metadata: {},
+        outputs: [],
+        source: "",
+      },
+      {
+        cell_type: "code",
+        execution_count: null,
+        id: "cell-1",
+        metadata: {},
+        outputs: [],
+        source: "",
+      },
+    ];
+    const index = indexNotebook(Buffer.from(JSON.stringify({ ...notebook, cells })));
+    expect(new Set(index.cells.map((cell) => cell.id)).size).toBe(3);
+    expect(index.cells[1]?.id).toBe("cell-1");
+  });
+
+  it("keeps a cell whose text looks like anything the writer might use", () => {
+    const odd = {
+      cell_type: "code",
+      execution_count: null,
+      id: "odd",
+      metadata: {},
+      outputs: [{ name: "stdout", output_type: "stream", text: ["x"] }],
+      source: ["\u0000scient-outputs"],
+    };
+    const index = indexNotebook(Buffer.from(JSON.stringify({ ...notebook, cells: [odd] })));
+    const rewritten = { ...index, cells: index.cells.map((cell) => ({ ...cell, saved: null })) };
+    expect(JSON.parse(notebookBytes(rewritten).toString()).cells[0]).toEqual(odd);
+  });
+
   it("skips long stored figures and keeps escaped quotes inside strings", () => {
     const figure = `${"A".repeat(2_000_000)}\\"end`;
     const big = {

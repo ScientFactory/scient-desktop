@@ -3450,6 +3450,38 @@ describe("compute session execution", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("refuses a whole run that does not fit in the queue", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const cell = (id: string) => ({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        executionId: ComputeExecutionId.make(id),
+        expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+        code: "print(1)",
+        source: { _tag: "console" as const },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("quiet-hold", "held");
+          yield* waitForExecution(ComputeExecutionId.make("held"), "running");
+          const submissions = Array.from(
+            { length: MAXIMUM_PENDING_COMPUTE_EXECUTIONS + 1 },
+            (_, index) => cell(`cell-${index}`),
+          );
+          const error = yield* Effect.flip(
+            service.submitExecutions({ projectId: PROJECT_ID, sessionId: SESSION_ID, submissions }),
+          );
+          expect(error.reason).toBe("queue-full");
+          expect((yield* waitForSession("ready")).pendingCount).toBe(0);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("returns the same execution for a repeated submission", () =>
     Effect.gen(function* () {
       const test = yield* harness();

@@ -16,6 +16,7 @@ import {
   admitComputeExecution,
   classifyMatlabSource,
   cancelComputeExecution,
+  MAXIMUM_PENDING_COMPUTE_EXECUTIONS,
   checkComputeSessionGeneration,
   computeOutputByteLength,
   computeQueueEntries,
@@ -2771,12 +2772,35 @@ const make = Effect.gen(function* () {
     readonly submissions: ReadonlyArray<ComputeSubmitExecutionInput>;
   }) {
     const live = yield* requireLiveSession("submit", input.projectId, input.sessionId);
-    const admitted = yield* live.mutation
+    const ids = new Set(input.submissions.map((submission) => submission.executionId));
+    if (ids.size !== input.submissions.length) {
+      return yield* computeError("submit", "execution-conflict", "A run repeats an execution id.");
+    }
+    const admitted: Array<Effect.Success<ReturnType<typeof admitSubmission>>> = [];
+    const outcome = yield* live.mutation
       .withPermits(1)(
-        Effect.forEach(input.submissions, (submission) => admitSubmission(live, submission)),
+        Effect.gen(function* () {
+          const queue = yield* Ref.get(live.queueRef);
+          const room = MAXIMUM_PENDING_COMPUTE_EXECUTIONS - queue.pending.length;
+          if (input.submissions.length > room) {
+            return yield* computeError(
+              "submit",
+              "queue-full",
+              "This run has more cells than the session can queue.",
+            );
+          }
+          for (const submission of input.submissions) {
+            admitted.push(yield* admitSubmission(live, submission));
+          }
+        }),
       )
-      .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
+      .pipe(
+        Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
+        Effect.exit,
+      );
+    // Whatever was admitted has a queue slot, so it must run even if a later cell was refused.
     yield* Effect.forEach(admitted, (entry) => dispatch(live, entry.dispatch), { discard: true });
+    if (Exit.isFailure(outcome)) return yield* Effect.failCause(outcome.cause);
     return admitted.map((entry) => entry.execution);
   });
 

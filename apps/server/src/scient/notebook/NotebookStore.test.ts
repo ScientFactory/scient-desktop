@@ -211,6 +211,95 @@ describe("NotebookStore", () => {
     ),
   );
 
+  it.effect("gives two windows opening at once the same notebook", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk } = yield* fixture;
+        yield* Effect.all(
+          [
+            store.edit({
+              cwd,
+              path,
+              edits: [{ _tag: "set-source", cellId: "first", source: "from one" }],
+            }),
+            store.edit({
+              cwd,
+              path,
+              edits: [{ _tag: "set-source", cellId: "second", source: "from two" }],
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        yield* store.flush({ cwd, path });
+        const saved = yield* onDisk;
+        expect(saved.cells[1]?.source).toEqual(["from one"]);
+        expect(saved.cells[2]?.source).toEqual(["from two"]);
+      }),
+    ),
+  );
+
+  it.effect("keeps a recorded result when the file changes before it is saved", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk, writeOutside } = yield* fixture;
+        yield* store.recordRun({ ...record, cwd }, () =>
+          Effect.succeed({
+            outputs: [{ output_type: "stream", name: "stdout", text: "kept\n" }],
+            executionCount: null,
+          }),
+        );
+        const outside = structuredClone(notebook);
+        outside.cells[0]!.source = ["# Changed outside"];
+        yield* writeOutside(`${JSON.stringify(outside, null, 1)}\n`);
+        yield* store.flush({ cwd, path });
+        const saved = (yield* onDisk).cells as unknown as ReadonlyArray<Record<string, unknown>>;
+        expect(saved[0]?.source).toEqual(["# Changed outside"]);
+        expect(saved[2]?.outputs).toEqual([
+          { output_type: "stream", name: "stdout", text: "kept\n" },
+        ]);
+      }),
+    ),
+  );
+
+  it.effect("an older result leaves a newer run still expected", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store } = yield* fixture;
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "expect-run", cellId: "second", execution: "run-2" }],
+        });
+        const recorded = yield* store.recordRun({ ...record, cwd }, () =>
+          Effect.succeed({ outputs: [], executionCount: null }),
+        );
+        expect(recorded.cell?.pendingExecution).toBe("run-2");
+      }),
+    ),
+  );
+
+  it.effect("undo still works after other notebooks pushed this one out", () =>
+    scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, store, onDisk } = yield* fixture;
+        yield* store.edit({ cwd, path, edits: [{ _tag: "delete", cellId: "first" }] });
+        yield* store.flush({ cwd, path });
+        for (const other of ["a", "b", "c", "d", "e"]) {
+          yield* fs.writeFileString(`${cwd}/${other}.ipynb`, JSON.stringify(notebook));
+          yield* store.read({ cwd, path: `${other}.ipynb` });
+        }
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "restore", cellId: "first", afterCellId: "title" }],
+        });
+        yield* store.flush({ cwd, path });
+        expect((yield* onDisk).cells[1]).toEqual(notebook.cells[1]);
+      }),
+    ),
+  );
+
   it.effect("keeps a pending run in the file until its result is recorded", () =>
     scoped(
       Effect.gen(function* () {

@@ -43,6 +43,9 @@ function valueEnd(buffer: Buffer, start: number): number {
   const first = buffer[start];
   if (first === undefined) throw new NotebookFormatError("Unexpected end of file");
   if (first === QUOTE) return stringEnd(buffer, start);
+  if (first === COMMA || first === CLOSE_BRACE || first === CLOSE_BRACKET) {
+    throw new NotebookFormatError("Expected a value");
+  }
   if (first !== OPEN_BRACE && first !== OPEN_BRACKET) {
     let cursor = start;
     for (;;) {
@@ -62,7 +65,7 @@ function valueEnd(buffer: Buffer, start: number): number {
       cursor += 1;
     }
   }
-  let depth = 0;
+  const closers: number[] = [];
   let cursor = start;
   for (;;) {
     const byte = buffer[cursor];
@@ -71,13 +74,24 @@ function valueEnd(buffer: Buffer, start: number): number {
       cursor = stringEnd(buffer, cursor);
       continue;
     }
-    if (byte === OPEN_BRACE || byte === OPEN_BRACKET) depth += 1;
+    if (byte === OPEN_BRACE) closers.push(CLOSE_BRACE);
+    else if (byte === OPEN_BRACKET) closers.push(CLOSE_BRACKET);
     else if (byte === CLOSE_BRACE || byte === CLOSE_BRACKET) {
-      depth -= 1;
-      if (depth === 0) return cursor + 1;
+      if (closers.pop() !== byte) throw new NotebookFormatError("Mismatched brackets");
+      if (closers.length === 0) return cursor + 1;
     }
     cursor += 1;
   }
+}
+
+/** The next item after a value: past a comma, or at the closer. */
+function nextItem(buffer: Buffer, afterValue: number, closer: number): number {
+  const cursor = skipSpace(buffer, afterValue);
+  if (buffer[cursor] === closer) return cursor;
+  if (buffer[cursor] !== COMMA) throw new NotebookFormatError("Expected a comma");
+  const next = skipSpace(buffer, cursor + 1);
+  if (buffer[next] === closer) throw new NotebookFormatError("Unexpected trailing comma");
+  return next;
 }
 
 function objectMembers(buffer: Buffer, range: Range): ReadonlyArray<readonly [string, Range]> {
@@ -92,8 +106,7 @@ function objectMembers(buffer: Buffer, range: Range): ReadonlyArray<readonly [st
     const start = skipSpace(buffer, colon + 1);
     const end = valueEnd(buffer, start);
     members.push([key, { start, end }]);
-    cursor = skipSpace(buffer, end);
-    if (buffer[cursor] === COMMA) cursor = skipSpace(buffer, cursor + 1);
+    cursor = nextItem(buffer, end, CLOSE_BRACE);
   }
   return members;
 }
@@ -105,8 +118,7 @@ function arrayItems(buffer: Buffer, range: Range): ReadonlyArray<Range> {
   while (cursor < range.end && buffer[cursor] !== CLOSE_BRACKET) {
     const end = valueEnd(buffer, cursor);
     items.push({ start: cursor, end });
-    cursor = skipSpace(buffer, end);
-    if (buffer[cursor] === COMMA) cursor = skipSpace(buffer, cursor + 1);
+    cursor = nextItem(buffer, end, CLOSE_BRACKET);
   }
   return items;
 }
@@ -170,7 +182,7 @@ function notebookLanguage(metadata: unknown): string {
   return language.toLowerCase();
 }
 
-function indexCell(buffer: Buffer, range: Range, position: number): NotebookCellRecord {
+function indexCell(buffer: Buffer, range: Range, ids: CellIds): NotebookCellRecord {
   const fields: Record<string, unknown> = {};
   let outputs: Buffer | null = null;
   for (const [key, value] of objectMembers(buffer, range)) {
@@ -181,15 +193,40 @@ function indexCell(buffer: Buffer, range: Range, position: number): NotebookCell
       fields[key] = parseRange(buffer, value);
     }
   }
-  const id = typeof fields.id === "string" && fields.id.length > 0 ? fields.id : null;
+  const saved = typeof fields.id === "string" && fields.id.length > 0 ? fields.id : null;
+  const unique = saved !== null && !ids.seen.has(saved);
+  const id = unique ? saved : unusedCellId(ids);
+  ids.seen.add(id);
   return {
-    id: id ?? `cell-${position + 1}`,
+    id,
     fields,
     outputs,
     outputIndex: outputs === null ? [] : indexOutputs(outputs),
-    // A cell without an id must be written once to gain one.
-    saved: id === null ? null : buffer.subarray(range.start, range.end),
+    // A cell without its own id must be written once to gain one.
+    saved: unique ? buffer.subarray(range.start, range.end) : null,
   };
+}
+
+interface CellIds {
+  /** Every id saved in the file, including cells not reached yet. */
+  readonly saved: ReadonlySet<string>;
+  readonly seen: Set<string>;
+}
+
+function unusedCellId(ids: CellIds): string {
+  let number = ids.seen.size + 1;
+  while (ids.saved.has(`cell-${number}`) || ids.seen.has(`cell-${number}`)) number += 1;
+  return `cell-${number}`;
+}
+
+function savedCellIds(buffer: Buffer, ranges: ReadonlyArray<Range>): Set<string> {
+  const ids = new Set<string>();
+  for (const range of ranges) {
+    const id = objectMembers(buffer, range).find(([key]) => key === "id")?.[1];
+    const value = id === undefined ? null : parseRange(buffer, id);
+    if (typeof value === "string" && value.length > 0) ids.add(value);
+  }
+  return ids;
 }
 
 /** Reads a notebook's structure without decoding its stored figures. */
@@ -207,28 +244,30 @@ export function indexNotebook(buffer: Buffer): NotebookIndex {
   const cells = members.find(([key]) => key === "cells")?.[1];
   if (cells === undefined) throw new NotebookFormatError("This file has no cells");
   const metadata = members.find(([key]) => key === "metadata")?.[1];
+  const cellRanges = arrayItems(buffer, cells);
+  const ids: CellIds = { saved: savedCellIds(buffer, cellRanges), seen: new Set() };
   return {
     head: buffer.subarray(0, cells.start + 1),
     tail: buffer.subarray(cells.end - 1),
     language: notebookLanguage(metadata === undefined ? {} : parseRange(buffer, metadata)),
-    cells: arrayItems(buffer, cells).map((range, position) => indexCell(buffer, range, position)),
+    cells: cellRanges.map((range) => indexCell(buffer, range, ids)),
   };
 }
 
-const OUTPUTS_MARKER = "\u0000scient-outputs";
-const OUTPUTS_MARKER_JSON = JSON.stringify(OUTPUTS_MARKER);
-
 function cellBytes(cell: NotebookCellRecord): Buffer {
   if (cell.saved !== null) return cell.saved;
-  const fields = cell.outputs === null ? cell.fields : { ...cell.fields, outputs: OUTPUTS_MARKER };
-  const json = JSON.stringify({ ...fields, id: cell.id }, null, 1).replaceAll("\n", "\n  ");
-  if (cell.outputs === null) return Buffer.from(json);
-  const at = json.indexOf(OUTPUTS_MARKER_JSON);
-  return Buffer.concat([
-    Buffer.from(json.slice(0, at)),
-    cell.outputs,
-    Buffer.from(json.slice(at + OUTPUTS_MARKER_JSON.length)),
-  ]);
+  // Field by field: `outputs` stays as its stored bytes, and any other field can hold any text.
+  const parts: Buffer[] = [Buffer.from("{")];
+  for (const [index, [key, value]] of Object.entries({ ...cell.fields, id: cell.id }).entries()) {
+    parts.push(Buffer.from(`${index === 0 ? "" : ","}\n   ${JSON.stringify(key)}: `));
+    parts.push(
+      key === "outputs" && cell.outputs !== null
+        ? cell.outputs
+        : Buffer.from(JSON.stringify(value, null, 1).replaceAll("\n", "\n   ")),
+    );
+  }
+  parts.push(Buffer.from("\n  }"));
+  return Buffer.concat(parts);
 }
 
 /** The notebook as bytes. Cells nobody edited are copied exactly as they were saved. */

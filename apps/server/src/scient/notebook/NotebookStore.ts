@@ -5,6 +5,7 @@ import {
   NotebookError,
   type ComputeNotebookOutputsInput,
   type ComputeNotebookOutputsResult,
+  type NotebookCellRun,
   type NotebookCellView,
   type NotebookEdit,
   type NotebookEditInput,
@@ -22,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
+import { bytesRevision } from "../workspace/RetainedFileMutation.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import {
   INLINE_OUTPUT_BYTES,
@@ -90,13 +92,50 @@ function cellView(cell: NotebookCellRecord, budget: { left: number }): NotebookC
   };
 }
 
-function withOutputs(
-  cell: NotebookCellRecord,
-  outputs: ReadonlyArray<unknown>,
-  fields: NotebookCellRecord["fields"],
-): NotebookCellRecord {
-  const bytes = Buffer.from(JSON.stringify(outputs, null, 1).replaceAll("\n", "\n   "));
-  return { ...cell, fields, outputs: bytes, outputIndex: indexOutputs(bytes), saved: null };
+/** A run's result. It replays like any edit if the file changes before it is saved. */
+interface RunResult {
+  readonly _tag: "run-result";
+  readonly cellId: string;
+  readonly outputs: ReadonlyArray<unknown>;
+  readonly executionCount: number | null;
+  readonly run: NotebookCellRun;
+}
+type StoreEdit = NotebookEdit | RunResult;
+
+function applyRunResult(index: NotebookIndex, result: RunResult): NotebookIndex {
+  const latest = Math.max(
+    0,
+    ...index.cells.map((cell) =>
+      typeof cell.fields.execution_count === "number" ? cell.fields.execution_count : 0,
+    ),
+  );
+  return {
+    ...index,
+    cells: index.cells.map((cell) => {
+      if (cell.id !== result.cellId) return cell;
+      const metadata = isRecord(cell.fields.metadata) ? cell.fields.metadata : {};
+      // A newer run submitted meanwhile must still be recorded when it ends.
+      const pending = pendingExecution(cell.fields);
+      const scient =
+        pending === null || pending === result.run.execution
+          ? result.run
+          : { ...result.run, pending };
+      const outputs = Buffer.from(
+        JSON.stringify(result.outputs, null, 1).replaceAll("\n", "\n   "),
+      );
+      return {
+        ...cell,
+        fields: {
+          ...cell.fields,
+          metadata: { ...metadata, scient },
+          execution_count: result.executionCount ?? latest + 1,
+        },
+        outputs,
+        outputIndex: indexOutputs(outputs),
+        saved: null,
+      };
+    }),
+  };
 }
 
 function newCell(edit: Extract<NotebookEdit, { _tag: "insert" }>): NotebookCellRecord {
@@ -135,7 +174,7 @@ function withoutRun(fields: NotebookCellRecord["fields"]): NotebookCellRecord["f
 /** Applies one edit. `removed` keeps deleted cells so an undo restores their outputs. */
 function applyEdit(
   index: NotebookIndex,
-  edit: NotebookEdit,
+  edit: StoreEdit,
   removed: Map<string, NotebookCellRecord>,
 ): NotebookIndex {
   const update = (cellId: string, change: (cell: NotebookCellRecord) => NotebookCellRecord) => ({
@@ -143,6 +182,8 @@ function applyEdit(
     cells: index.cells.map((cell) => (cell.id === cellId ? change(cell) : cell)),
   });
   switch (edit._tag) {
+    case "run-result":
+      return applyRunResult(index, edit);
     case "set-source":
       return update(edit.cellId, (cell) => ({
         ...cell,
@@ -229,10 +270,10 @@ interface OpenNotebook {
   version: number;
   mtimeMs: number;
   size: number;
-  /** Edits not yet on disk, replayed if the file changes underneath them. */
-  pending: ReadonlyArray<NotebookEdit>;
-  /** Written by run results; kept in memory until the next save. */
-  outputsPending: boolean;
+  /** The bytes last read or written, whose revision a save must find on disk. */
+  fileBytes: Buffer;
+  /** Edits and run results not yet on disk, replayed if the file changes underneath them. */
+  pending: ReadonlyArray<StoreEdit>;
   timer: Fiber.Fiber<void> | null;
 }
 
@@ -255,6 +296,7 @@ export const makeNotebookStore = Effect.gen(function* () {
   const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const notebooks = new Map<string, OpenNotebook>();
+  const opening = yield* Semaphore.make(1);
   let loads = 0;
 
   const fileState = (absolutePath: string) =>
@@ -262,9 +304,12 @@ export const makeNotebookStore = Effect.gen(function* () {
       try: () => NodeFSP.stat(absolutePath),
       catch: (cause) => fail(`This notebook could not be opened: ${describe(cause)}`),
     });
-  const readIndex = (absolutePath: string) =>
+  const readNotebookFile = (absolutePath: string) =>
     Effect.tryPromise({
-      try: async () => indexNotebook(await NodeFSP.readFile(absolutePath)),
+      try: async () => {
+        const fileBytes = await NodeFSP.readFile(absolutePath);
+        return { fileBytes, index: indexNotebook(fileBytes) };
+      },
       catch: (cause) => fail(`This notebook could not be read: ${describe(cause)}`),
     });
 
@@ -272,9 +317,11 @@ export const makeNotebookStore = Effect.gen(function* () {
   const refresh = Effect.fn("NotebookStore.refresh")(function* (notebook: OpenNotebook) {
     const state = yield* fileState(notebook.absolutePath);
     if (state.mtimeMs === notebook.mtimeMs && state.size === notebook.size) return;
-    let index = yield* readIndex(notebook.absolutePath);
+    const { fileBytes, index: read } = yield* readNotebookFile(notebook.absolutePath);
+    let index = read;
     for (const edit of notebook.pending) index = applyEdit(index, edit, notebook.removed);
     notebook.index = index;
+    notebook.fileBytes = fileBytes;
     notebook.mtimeMs = state.mtimeMs;
     notebook.size = state.size;
     notebook.version += 1;
@@ -294,48 +341,69 @@ export const makeNotebookStore = Effect.gen(function* () {
       yield* existing.lock.withPermits(1)(refresh(existing));
       return existing;
     }
-    const state = yield* fileState(absolutePath);
-    const notebook: OpenNotebook = {
-      cwd: address.cwd,
-      relativePath,
-      absolutePath,
-      lock: yield* Semaphore.make(1),
-      removed: new Map(),
-      loadId: (loads += 1),
-      index: yield* readIndex(absolutePath),
-      version: 0,
-      mtimeMs: state.mtimeMs,
-      size: state.size,
-      pending: [],
-      outputsPending: false,
-      timer: null,
-    };
-    notebooks.set(absolutePath, notebook);
-    for (const [path, candidate] of notebooks) {
-      if (notebooks.size <= MAX_OPEN_NOTEBOOKS) break;
-      if (candidate.pending.length === 0 && !candidate.outputsPending) notebooks.delete(path);
-    }
-    return notebook;
+    return yield* opening.withPermits(1)(
+      Effect.gen(function* () {
+        // Another window may have opened it while this one waited.
+        const opened = notebooks.get(absolutePath);
+        if (opened !== undefined) return opened;
+        const state = yield* fileState(absolutePath);
+        const { fileBytes, index } = yield* readNotebookFile(absolutePath);
+        const notebook: OpenNotebook = {
+          cwd: address.cwd,
+          relativePath,
+          absolutePath,
+          lock: yield* Semaphore.make(1),
+          removed: new Map(),
+          loadId: (loads += 1),
+          index,
+          version: 0,
+          mtimeMs: state.mtimeMs,
+          size: state.size,
+          fileBytes,
+          pending: [],
+          timer: null,
+        };
+        notebooks.set(absolutePath, notebook);
+        for (const [path, candidate] of notebooks) {
+          if (notebooks.size <= MAX_OPEN_NOTEBOOKS) break;
+          // Undo must still find a deleted cell, so those notebooks stay open.
+          if (candidate.pending.length === 0 && candidate.removed.size === 0) {
+            notebooks.delete(path);
+          }
+        }
+        return notebook;
+      }),
+    );
+  });
+
+  const publish = Effect.fn("NotebookStore.publish")(function* (notebook: OpenNotebook) {
+    const bytes = notebookBytes(notebook.index);
+    yield* workspaceFileSystem.writeBinaryFile({
+      cwd: notebook.cwd,
+      relativePath: notebook.relativePath,
+      bytes,
+      // A writer that gets in after the last read is found here, not overwritten.
+      expectedRevision: bytesRevision(notebook.fileBytes),
+    });
+    const state = yield* fileState(notebook.absolutePath);
+    notebook.fileBytes = bytes;
+    notebook.pending = [];
+    notebook.mtimeMs = state.mtimeMs;
+    notebook.size = state.size;
   });
 
   const save = (notebook: OpenNotebook) =>
     notebook.lock.withPermits(1)(
       Effect.gen(function* () {
-        if (notebook.pending.length === 0 && !notebook.outputsPending) return;
+        if (notebook.pending.length === 0) return;
         yield* refresh(notebook);
-        const bytes = notebookBytes(notebook.index);
-        yield* workspaceFileSystem
-          .writeBinaryFile({
-            cwd: notebook.cwd,
-            relativePath: notebook.relativePath,
-            bytes,
-          })
-          .pipe(Effect.mapError((cause) => fail(`This notebook could not be saved: ${cause}`)));
-        const state = yield* fileState(notebook.absolutePath);
-        notebook.pending = [];
-        notebook.outputsPending = false;
-        notebook.mtimeMs = state.mtimeMs;
-        notebook.size = state.size;
+        yield* publish(notebook).pipe(
+          Effect.catchTags({
+            WorkspaceFileTargetChangedError: () =>
+              refresh(notebook).pipe(Effect.andThen(publish(notebook))),
+          }),
+          Effect.mapError((cause) => fail(`This notebook could not be saved: ${describe(cause)}`)),
+        );
       }),
     );
 
@@ -410,30 +478,17 @@ export const makeNotebookStore = Effect.gen(function* () {
     }).pipe(Effect.mapError((cause) => fail(`A run's output could not be read: ${cause.message}`)));
     const recorded = yield* notebook.lock.withPermits(1)(
       Effect.sync(() => {
-        const latest = Math.max(
-          0,
-          ...notebook.index.cells.map((cell) =>
-            typeof cell.fields.execution_count === "number" ? cell.fields.execution_count : 0,
-          ),
-        );
-        let written: NotebookCellRecord | null = null;
-        notebook.index = {
-          ...notebook.index,
-          cells: notebook.index.cells.map((cell) => {
-            if (cell.id !== request.cellId) return cell;
-            const metadata = isRecord(cell.fields.metadata) ? cell.fields.metadata : {};
-            // Replacing `scient` also clears the pending run this result answers.
-            written = withOutputs(cell, result.outputs, {
-              ...cell.fields,
-              metadata: { ...metadata, scient: request.run },
-              execution_count: request.executionCount ?? result.executionCount ?? latest + 1,
-            });
-            return written;
-          }),
+        const edit: RunResult = {
+          _tag: "run-result",
+          cellId: request.cellId,
+          outputs: result.outputs,
+          executionCount: request.executionCount ?? result.executionCount,
+          run: request.run,
         };
-        notebook.outputsPending = true;
+        notebook.index = applyEdit(notebook.index, edit, notebook.removed);
+        notebook.pending = [...notebook.pending, edit];
         notebook.version += 1;
-        return written;
+        return notebook.index.cells.find((cell) => cell.id === request.cellId) ?? null;
       }),
     );
     yield* scheduleSave(notebook);
