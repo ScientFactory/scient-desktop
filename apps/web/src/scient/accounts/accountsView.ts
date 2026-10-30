@@ -317,7 +317,10 @@ export const accountCatalogueGroups = [
       "ORCID",
     ],
   },
-  { name: "Universities & libraries", entries: ["HUJI", "OpenAthens library", "Moodle", "Google"] },
+  {
+    name: "Universities & libraries",
+    entries: ["HUJI", "HUJI library", "OpenAthens library", "Moodle", "Google"],
+  },
   {
     name: "Developer tools",
     entries: [
