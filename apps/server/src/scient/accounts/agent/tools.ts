@@ -57,7 +57,7 @@ const list = metadata(
   Tool.make("scient_accounts_list", {
     ...common,
     description:
-      "List accounts and browser profiles for this session: how each may be used, and which the user turned off (tell the user; they can allow it in Settings → Accounts & secrets). Never returns values. If a page needs sign-in or access, use scient_account_find_profile.",
+      "List accounts and browser profiles for this session: how each may be used, and which the user turned off (tell the user; they can allow it in Settings → Accounts & secrets). Never returns values. preview_open signs in by itself with Allowed saved sign-ins; read its accountsNote.",
     parameters: Tool.EmptyParams,
     success: Schema.Struct({
       accounts: Schema.Array(
