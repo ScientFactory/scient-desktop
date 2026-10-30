@@ -54,8 +54,33 @@ You stay signed in across restarts and updates, including on sites that mark a s
 when the browser closes. Scient also ticks "Remember me" and "Trust this device" beside a saved
 sign-in, so codes come back less often. You can untick them; shared-computer options stay off.
 
+**Check my accounts** opens your browser sign-ins one at a time in their own profiles and shows what
+it found on each row: signed in, signed out, needs you, or rejected. A signed-out account with a
+saved password gets one sign-in attempt; a sign-in the site rejected gets none until you change it.
+Imported passwords nobody has used are skipped; **Check sign-in** in a row's menu checks that one.
+
+When a site sends a sign-in code, a private card asks for it on any of your devices, including the
+phone, and the code goes straight into the page. The agent never sees it. Under **Sign-in codes** you
+can let Scient find codes itself: in Messages on a Mac (texts forwarded to it; this needs Full Disk
+Access, which also lets Scient read your other files) or in unread Gmail, using the browser profile
+you sign in with. Both are off until you turn them on.
+
+The phone also shows approvals to answer and sign-ins waiting for you, with a notification. A CAPTCHA
+or passkey still needs the desktop.
+
+**Keys used by Scient** lists the keys Scient itself runs on, by name, what uses each and where to
+edit it. A provider variable can follow a saved key: replace the key in Accounts and the variable
+follows. **Keys in plain files** lists secrets found in project `.env` files and shell profiles, by
+name. **Keep in Accounts** copies one in and leaves the file as it is.
+
+A key a service refuses shows **Key refused**, and the agent asks you for a new one in a private card.
+
+**Get PDF** on a source with a DOI or link finds the paper the same way an agent does, saves it in
+`papers/` and attaches it to the source.
+
 Saved sign-ins fill automatically as a login form appears, in every tab, yours or an agent's,
-without submitting or replacing what you typed. Exact-site matches come first, then your most
+without replacing what you typed. They submit only to sign you back in: on your own tab, when it's
+the site's one saved sign-in and it has worked there before, once every 10 minutes. Exact-site matches come first, then your most
 recently used sign-in. Use the small toolbar chip to choose another, or the key button to fill
 again. Incognito never autofills. A tab an agent controls gets only sign-ins that agent may use, and
 an agent can't act on your tab filled with a sign-in it may not use until that page changes.

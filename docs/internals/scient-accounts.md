@@ -288,7 +288,13 @@ consumer's project. Activity names the plugin, variable and agent.
   upstream seams: the card's note and saved label (`client-runtime/src/secretRequest.ts`, via
   `@t3tools/shared/scientAccountSecretRequest`), and `request_secret` rejecting the reserved
   prefix. The orchestration sentence on secrets points to Accounts first (`ScientAgentCopy`).
-- **Sensitive provider environment variables** (upstream settings) stay as they are.
+- **Sensitive provider environment variables** (upstream settings) stay in upstream's store. Sealing
+  them would make the server wait on the keychain at startup, and a denied or slow keychain must not
+  stop every provider from starting. `keyLinks.ts` lets one follow an API-key account: providers read
+  variables at start, so the value is copied in and copied again when the account changes.
+  **Keys used by Scient** lists them by name in the client (`keysInUse`); values stay on the server.
+- **Plain files** (`plainKeys.ts`): the page lists secrets in project `.env` files and shell profiles
+  by name. Keeping one copies it into an API-key account and leaves the file alone.
 - Server sign-in and session-signing material is never moved.
 
 ## Agent tools
@@ -416,6 +422,40 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   a later successful sign-in or editing the password or two-factor key clears it.
 - **Approval cards** appear above the composer of the thread that asked, and on the Accounts page.
 
+### Sign-in status and checks
+
+`AccountSummary.lastCheck` keeps what Scient last saw of a sign-in: `signed-in`, `signed-out`,
+`needs-you`, `rejected` or `unknown`, with when and an optional message. Every sign-in outcome
+updates it (`outcomeCheckState`). `accounts.signInSeen` records the user's own sign-in, when a
+submitted saved password leaves no login form six seconds later. A saved secret resets it. Rows show
+it through `accountStatusLabel`, after anything that needs the user.
+
+`accounts.check` (`checkAccounts.ts`) opens each account's site or library link in its own profile,
+one at a time and 1.5 seconds apart, under a reserved thread that is no agent's
+(`userRunInvocation`), so agent access doesn't apply. A tab without a profile is a throwaway session,
+so the profile is always named. A session shows by a sign-out link, a login wall or sign-in link, then
+a protected cookie; a library by leaving the university's pages on a publisher link. A signed-out
+account with a saved password gets one unattended sign-in, unless the last one was rejected. A whole
+run skips imported passwords with no history and stops at 40 accounts.
+
+Autofill submits only on the user's own tab, when the site has one saved sign-in whose
+`lastSignInOutcome` is `signed-in`, at most once per site every 10 minutes, and only a complete form.
+
+### Sign-in codes
+
+When a page wants a code the account can't supply, the hand-off card appears and the engine also
+races two other sources (`agent/signInCodes.ts`). `askCode` opens upstream's private card, which
+reaches every device and is pending thread state, so it notifies the phone. It never completes when
+no one can answer. `findCode` runs on each two-second poll, using the sources in
+`AccountsSnapshot.codeSources`, both off by default: `readMessageCode` reads Messages' `chat.db`
+(macOS, Full Disk Access; recent messages keep their text in `attributedBody`), and `codeInMailFeed`
+reads Gmail's unread Atom feed in a hidden tab of the account's profile. Only messages newer than the
+hand-off count, and text must mention a code in English or Hebrew. A refused code is reported, never
+retried. The agent's result never contains the code.
+
+`ThreadAccountRequests` shows approvals and non-code hand-offs on the phone; `AgentAwarenessRelay`
+marks those threads as waiting for approval so a push goes out (`accountRequestsByThread`).
+
 ## Keeping sessions
 
 Sites mark many sign-ins as session cookies, and Electron does not store those: they are gone on
@@ -449,6 +489,10 @@ always need Touch ID or the Mac password. Nothing else in Accounts depends on th
 - An agent signed in to a site can do what that account can do there.
 - CAPTCHAs, push approvals, new-device checks and passkeys need the user.
 - Google refuses sign-in in embedded browsers; import a Chrome profile for Google.
+- Known values are not masked in chat or logs, and commits are not checked. These can get in the way
+  of real work, so they follow one at a time.
+- Webhook signing secrets stay in the scheduler's database.
+- A CAPTCHA can't be solved from the phone.
 
 ## Alignment
 
