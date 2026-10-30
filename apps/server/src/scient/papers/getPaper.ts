@@ -144,7 +144,7 @@ export const getPaper = Effect.fn("Papers.get")(function* (input: {
       status: "no-access" as const,
       message: account
         ? "No free copy, and the library did not reach the PDF."
-        : "No free copy. Add the user's library in Settings ▸ Accounts to get it through their institution.",
+        : "No free copy. Add the user's library in Settings ▸ Accounts & secrets to get it through their institution.",
     }),
     landingUrl: note?.openUrl ?? paper.landingUrl,
   };

@@ -71,7 +71,7 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
       return {
         ...status,
         accountsNote:
-          "This page needs another account; no allowed browser profile can open it. Ask the user to sign in or to allow a profile in Settings → Accounts.",
+          "This page needs another account; no allowed browser profile can open it. Ask the user to sign in or to allow a profile in Settings → Accounts & secrets.",
       };
     const { tabId: _tabId, ...openInput } = options.input ?? {};
     const opened = yield* withAccountUse(

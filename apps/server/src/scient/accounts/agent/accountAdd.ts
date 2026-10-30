@@ -50,7 +50,8 @@ export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
   if (!session.agentAccess)
     return {
       status: "unavailable" as const,
-      message: "Agent access to Accounts is off. The user can turn it on in Settings → Accounts.",
+      message:
+        "Agent access to Accounts is off. The user can turn it on in Settings → Accounts & secrets.",
     };
   if (scope.unattended || scope.projectId === undefined)
     return {
@@ -99,7 +100,7 @@ export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
     ? current.accounts.find((account) => account.accountId === replacing.accountId)
     : undefined;
   if (!current.agentAccess || (replacing && (!target || target.controls.access === "off")))
-    return yield* fail(`${notKept} Its access changed in Settings → Accounts meanwhile.`);
+    return yield* fail(`${notKept} Its access changed in Settings → Accounts & secrets meanwhile.`);
   const value = (yield* (yield* SecretRequests)
     .consume({ ref: asked.secretRef, projectId: scope.projectId })
     .pipe(Effect.mapError(() => fail(notKept)))).trim();

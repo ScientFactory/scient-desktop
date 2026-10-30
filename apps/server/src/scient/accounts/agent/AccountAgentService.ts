@@ -116,7 +116,7 @@ export const accountAgentOperations = {
         if (account.controls.visibility !== "readable")
           return yield* fail(
             "denied",
-            "This account is hidden. The user can make it readable in Settings → Accounts.",
+            "This account is hidden. The user can make it readable in Settings → Accounts & secrets.",
           );
         const fields = Object.keys(account.secrets);
         const values = yield* accounts.resolveSecrets(accountId, fields);

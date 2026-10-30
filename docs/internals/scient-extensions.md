@@ -799,7 +799,7 @@ recordUse({ scope, target: "<connector>/<tool>", decision, outcome?, correlation
 
 - `VaultSecretRef` lives in `packages/contracts/src/scient/secrets.ts` (owned by
   Accounts). It is distinct from the one-use `SecretRef` of `request_secret`.
-- Connector-owned entries carry a label and appear in Settings → Accounts as
+- Connector-owned entries carry a label and appear in Settings → Accounts & secrets as
   managed connectors; they are removed only by disconnecting.
 - Header-style connectors either own an entered key or bind an API-key account.
   Only the user's settings action can create a binding. The connector's saved URL
@@ -873,7 +873,7 @@ stdio key delivery is unsupported. The
 [plugin-key implementation record](scient-plugin-keys.md) documents provider
 capabilities, security boundaries and the remaining delivery work.
 
-Settings → Accounts also displays connected Claude account connectors and
+Settings → Accounts & secrets also displays connected Claude account connectors and
 accessible Codex apps as read-only rows linking to that agent's Extensions page.
 Installing a plugin or offering a sign-in does not create an Accounts row.
 

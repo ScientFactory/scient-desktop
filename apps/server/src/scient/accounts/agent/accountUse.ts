@@ -20,7 +20,7 @@ export const authorize = Effect.fn("AccountsAgent.authorize")(function* (
   if (decision.decision === "denied")
     return yield* fail(
       "denied",
-      "This account is unavailable to this session. Change its access in Settings → Accounts.",
+      "This account is unavailable to this session. Change its access in Settings → Accounts & secrets.",
     );
 });
 export const withAccountUse = Effect.fn("AccountsAgent.use")(function* <A, E, R>(

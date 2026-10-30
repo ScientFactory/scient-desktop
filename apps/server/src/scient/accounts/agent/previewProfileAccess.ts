@@ -42,7 +42,7 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
     return yield* new AccountsError({
       reason: "denied",
       message:
-        "This browser profile is unavailable to this session. Change its access in Settings → Accounts.",
+        "This browser profile is unavailable to this session. Change its access in Settings → Accounts & secrets.",
     });
   // Autofill fills every tab for the user; a tab holding a sign-in this agent may not use stays
   // closed to it while it shows that site (a page may change its address without clearing the
@@ -155,7 +155,7 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
       return yield* new AccountsError({
         reason: "denied",
         message:
-          "This browser profile is unavailable to this session. Change its access in Settings → Accounts.",
+          "This browser profile is unavailable to this session. Change its access in Settings → Accounts & secrets.",
       });
     const session = yield* accounts.forSession(
       scope,
@@ -167,7 +167,8 @@ export const authorizePreviewProfile = Effect.fn("AccountsAgent.authorizePreview
     if (action === "browser-session" && !record.scriptSignIn)
       return yield* new AccountsError({
         reason: "denied",
-        message: "Script sign-ins are disabled for this browser profile in Settings → Accounts.",
+        message:
+          "Script sign-ins are disabled for this browser profile in Settings → Accounts & secrets.",
       });
     return { profileId, record };
   },

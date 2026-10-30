@@ -503,7 +503,7 @@ export function isSavedPassword(account: AccountSummary) {
 }
 
 /** A website account that is only a profile's session: no password and no username. */
-function isBrowserSignIn(account: AccountSummary) {
+export function isBrowserSignIn(account: AccountSummary) {
   return (
     account.details.kind === "website" &&
     account.secrets.password === undefined &&

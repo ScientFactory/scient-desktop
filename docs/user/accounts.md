@@ -1,12 +1,13 @@
-# Accounts
+# Accounts & secrets
 
-Open **Settings → Accounts** to connect website and library sign-ins, API keys, databases,
+Open **Settings → Accounts & secrets** to connect website and library sign-ins, API keys, databases,
 command-line logins and browser profiles. Choose the environment that will use them.
 
 Use **Add account** to enter details and choose Scient’s encrypted store, a system keychain
 item or a 1Password reference. Connect 1Password under Password stores first. You can also
 import a password export or add browser profiles with their existing sign-ins and saved
-passwords. Saved passwords are grouped under one row you can search. Profiles imported from a
+passwords. Saved passwords, sign-ins recorded while browsing and sign-ins managed elsewhere (Claude,
+Codex, Source Control, Extensions) are each one row that opens their list. Profiles imported from a
 browser show its current picture and name; the refresh button next to **Browser profiles**
 also brings in new sign-ins and passwords (quit that browser first for sign-ins). Connected
 services remain managed in [Extensions](extensions.md).

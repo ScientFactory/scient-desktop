@@ -10,8 +10,8 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ChevronRightIcon, KeyRoundIcon, PlusIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { ChevronRightIcon, GlobeIcon, KeyRoundIcon, LinkIcon, PlusIcon } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
 
 import {
   SettingsPageContainer,
@@ -51,6 +51,7 @@ import {
   accountIconUrl,
   accountListRows,
   accountManagePage,
+  isBrowserSignIn,
   isSavedPassword,
   mergeProfiles,
   providerManagedAccounts,
@@ -444,6 +445,61 @@ function SignInGroupRow({
   );
 }
 
+/** One row standing for a list that grows on its own, opening it in a dialog. */
+function ListRow({
+  icon,
+  title,
+  detail,
+  onOpen,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  onOpen: () => void;
+}) {
+  return (
+    <SettingsRow
+      {...clickableAccountRow(onOpen)}
+      aria-label={`Show ${title.toLowerCase()}`}
+      title={
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted [&_svg]:size-4 [&_svg]:text-muted-foreground">
+            {icon}
+          </span>
+          <span className="grid min-w-0 gap-1">
+            <span className="truncate text-left">{title}</span>
+            <span className="truncate text-xs text-muted-foreground">{detail}</span>
+          </span>
+        </span>
+      }
+      control={<ChevronRightIcon className="size-4 text-muted-foreground" />}
+    />
+  );
+}
+
+function ListDialog({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup data-accounts-dialog className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="max-h-[60vh] overflow-y-auto rounded-lg border">{children}</div>
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 function AccountsContent({
   environmentId,
   snapshot,
@@ -453,7 +509,9 @@ function AccountsContent({
   snapshot: AccountsSnapshot;
   canWrite: boolean;
 }) {
-  const [dialog, setDialog] = useState<"add" | "import" | "1password" | "passwords" | null>(null);
+  const [dialog, setDialog] = useState<
+    "add" | "import" | "1password" | "passwords" | "browser-sign-ins" | "other-sign-ins" | null
+  >(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [signIns, setSignIns] = useState<ReadonlyArray<AccountSummary> | null>(null);
   const profiles = mergeProfiles(
@@ -472,8 +530,10 @@ function AccountsContent({
     enabled: true,
   });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
-  // Saved passwords, often hundreds from a browser, get one row so the page stays short.
+  // Lists that grow on their own (saved passwords, sign-ins recorded while browsing, sign-ins
+  // managed elsewhere) are one row each, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
+  const browserSignIns = accountListRows(snapshot.accounts.filter(isBrowserSignIn));
   const managedRows = [
     ...providerManagedAccounts(providerInventory.providers),
     ...(snapshot.managedElsewhere ??
@@ -550,44 +610,40 @@ function AccountsContent({
             }
           />
         ) : null}
-        {accountListRows(snapshot.accounts.filter((account) => !isSavedPassword(account))).map(
-          (row) =>
-            "accountId" in row ? (
-              <AccountRow
-                key={row.accountId}
-                account={row}
-                environmentId={environmentId}
-                canWrite={canWrite}
-                onEdit={() => setEditing(row)}
-                onActivity={setActivity}
-              />
-            ) : (
-              <SignInGroupRow
-                key={row[0]!.accountId}
-                accounts={row}
-                profiles={profiles}
-                onOpen={() => setSignIns(row)}
-              />
-            ),
-        )}
+        {snapshot.accounts
+          .filter((account) => !isSavedPassword(account) && !isBrowserSignIn(account))
+          .map((account) => (
+            <AccountRow
+              key={account.accountId}
+              account={account}
+              environmentId={environmentId}
+              canWrite={canWrite}
+              onEdit={() => setEditing(account)}
+              onActivity={setActivity}
+            />
+          ))}
         {savedPasswords.length ? (
-          <SettingsRow
-            {...clickableAccountRow(() => setDialog("passwords"))}
-            aria-label="Show saved passwords"
-            title={
-              <span className="flex min-w-0 items-center gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
-                  <KeyRoundIcon className="size-4 text-muted-foreground" />
-                </span>
-                <span className="grid min-w-0 gap-1">
-                  <span className="truncate text-left">Saved passwords</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}
-                  </span>
-                </span>
-              </span>
-            }
-            control={<ChevronRightIcon className="size-4 text-muted-foreground" />}
+          <ListRow
+            icon={<KeyRoundIcon />}
+            title="Saved passwords"
+            detail={savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}
+            onOpen={() => setDialog("passwords")}
+          />
+        ) : null}
+        {browserSignIns.length ? (
+          <ListRow
+            icon={<GlobeIcon />}
+            title="Browser sign-ins"
+            detail={browserSignIns.length === 1 ? "1 site" : `${browserSignIns.length} sites`}
+            onOpen={() => setDialog("browser-sign-ins")}
+          />
+        ) : null}
+        {managedRows.length ? (
+          <ListRow
+            icon={<LinkIcon />}
+            title="Other sign-ins"
+            detail={managedRows.map((row) => row.name).join(", ")}
+            onOpen={() => setDialog("other-sign-ins")}
           />
         ) : null}
       </SettingsSection>
@@ -597,17 +653,6 @@ function AccountsContent({
         canWrite={canWrite}
         onImport={() => setDialog("import")}
       />
-      {managedRows.length ? (
-        <SettingsSection title="Other sign-ins">
-          {managedRows.map((row) => (
-            <ManagedAccountRow
-              key={`${row.kind}:${row.id}`}
-              row={row}
-              environmentId={environmentId}
-            />
-          ))}
-        </SettingsSection>
-      ) : null}
       <PasswordStores
         environmentId={environmentId}
         snapshot={snapshot}
@@ -627,8 +672,8 @@ function AccountsContent({
           canWrite={canWrite}
           onClose={() => {
             setEditing(null);
-            // Editing from Saved passwords returns to that list.
-            if (dialog !== "passwords") setDialog(null);
+            // Editing from a list returns to it.
+            if (dialog !== "passwords" && dialog !== "browser-sign-ins") setDialog(null);
           }}
         />
       ) : null}
@@ -649,6 +694,40 @@ function AccountsContent({
           onActivity={setActivity}
           onClose={() => setDialog(null)}
         />
+      ) : null}
+      {dialog === "browser-sign-ins" ? (
+        <ListDialog title="Browser sign-ins" onClose={() => setDialog(null)}>
+          {browserSignIns.map((row) =>
+            "accountId" in row ? (
+              <AccountRow
+                key={row.accountId}
+                account={row}
+                environmentId={environmentId}
+                canWrite={canWrite}
+                onEdit={() => setEditing(row)}
+                onActivity={setActivity}
+              />
+            ) : (
+              <SignInGroupRow
+                key={row[0]!.accountId}
+                accounts={row}
+                profiles={profiles}
+                onOpen={() => setSignIns(row)}
+              />
+            ),
+          )}
+        </ListDialog>
+      ) : null}
+      {dialog === "other-sign-ins" ? (
+        <ListDialog title="Other sign-ins" onClose={() => setDialog(null)}>
+          {managedRows.map((row) => (
+            <ManagedAccountRow
+              key={`${row.kind}:${row.id}`}
+              row={row}
+              environmentId={environmentId}
+            />
+          ))}
+        </ListDialog>
       ) : null}
       {signIns ? (
         <Dialog open onOpenChange={(open) => !open && setSignIns(null)}>

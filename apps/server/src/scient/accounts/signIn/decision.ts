@@ -63,7 +63,7 @@ export function decideSignInContinuation(
     return {
       type: "password-rejected",
       message:
-        "The site did not accept the saved password. Ask the user to check it in Settings → Accounts.",
+        "The site did not accept the saved password. Ask the user to check it in Settings → Accounts & secrets.",
     } as const;
   const codes = sameOrigin.filter((entry) => entry.fields.includes("otp"));
   if (
@@ -76,7 +76,7 @@ export function decideSignInContinuation(
     return {
       type: "code-rejected",
       message:
-        "The site did not accept the sign-in code. Ask the user to check it in Settings → Accounts.",
+        "The site did not accept the sign-in code. Ask the user to check it in Settings → Accounts & secrets.",
     } as const;
   if (step >= 6)
     return { type: "failed", message: "Sign-in did not finish after six steps." } as const;

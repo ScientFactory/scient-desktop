@@ -3,7 +3,7 @@
 Connect something once, and every agent can use it the way the user allows. Accounts covers website
 sign-ins, library access, API keys, databases, command-line logins and browser profiles. It owns
 Scient's encrypted store and the links to values kept in the system keychain, 1Password, Bitwarden (including Vaultwarden), Proton Pass or Custom
-models. Settings → Accounts is its page ([user guide](../user/accounts.md)); agents use it through `scient_account*` tools.
+models. Settings → Accounts & secrets is its page ([user guide](../user/accounts.md)); agents use it through `scient_account*` tools.
 
 Code: `apps/server/src/scient/accounts`, `apps/web/src/scient/accounts`,
 `apps/desktop/src/scient/accounts`, contracts in `packages/contracts/src/scient/accounts.ts`,
@@ -368,7 +368,10 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 
 ## The user's side
 
-- **Settings → Accounts**: accounts with the global switch, browser profiles, Other sign-ins, then password stores.
+- **Settings → Accounts & secrets**: the global switch and the accounts added on purpose, then one row
+  each for lists that grow on their own (Saved passwords, Browser sign-ins recorded while browsing,
+  Other sign-ins managed in Claude, Codex, Source Control or Extensions), each opening a dialog;
+  then browser profiles and password stores. The route stays `/settings/accounts`.
   Built from the existing settings components; labels say what a thing is and status appears only
   when something is wrong. It sits in the Agents group after Extensions. Profiles moved here from
   the Browser page, which links to Accounts; the rest of the browser settings stay there.
