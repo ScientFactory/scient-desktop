@@ -27,8 +27,10 @@ import {
   scientDocumentSessionFile,
 } from "~/scient/fileSurfaces/scientDocumentSession";
 import {
+  isScientNotebookFile,
   ScientComputeFileSurface,
   ScientLatexSurface,
+  ScientNotebookSurface,
   ScientPdfReader,
   ScientSurfaceSuspense,
 } from "~/scient/fileSurfaces/scientLazyFileSurfaces";
@@ -1585,6 +1587,9 @@ export default function FilePreviewPanel({
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isDocument =
     relativePath !== null &&
+    // SCIENT-FORK:START — notebooks open as editable, runnable documents.
+    !isScientNotebookFile(relativePath) &&
+    // SCIENT-FORK:END
     (binaryPreviewKind({ name: relativePath }) !== null ||
       officePreviewKind({ name: relativePath }) !== null ||
       isWorkspaceFontPreviewPath(relativePath));
@@ -1619,6 +1624,9 @@ export default function FilePreviewPanel({
     !isHostFile &&
     relativePath !== null &&
     (isRichMarkdown ||
+      // SCIENT-FORK:START — a notebook saves through its document session.
+      isScientNotebookFile(relativePath) ||
+      // SCIENT-FORK:END
       (documentSessionIsCurrent &&
         (isLatexPreviewFile(relativePath) || /\.bib$/i.test(relativePath))));
   const {
@@ -2780,7 +2788,20 @@ export default function FilePreviewPanel({
                   onLatexPresentationRequestHandled={onLatexPresentationRequestHandled}
                 />
               </ScientSurfaceSuspense>
-            ) : computeSourceLanguage !== null && !file.data.truncated ? (
+            ) : isScientNotebookFile(relativePath) && markdownLease ? (
+              // SCIENT-FORK:START — notebooks run cell by cell in a Compute session.
+              <ScientSurfaceSuspense>
+                <ScientNotebookSurface
+                  key={documentSurfaceKey}
+                  environmentId={environmentId}
+                  cwd={cwd}
+                  relativePath={relativePath}
+                  threadRef={threadRef}
+                  persistence={markdownLease}
+                />
+              </ScientSurfaceSuspense>
+            ) : // SCIENT-FORK:END
+            computeSourceLanguage !== null && !file.data.truncated ? (
               <ScientSurfaceSuspense>
                 <ScientComputeFileSurface
                   onCite={onCiteFile}

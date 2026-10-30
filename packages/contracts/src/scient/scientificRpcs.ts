@@ -48,6 +48,8 @@ import {
   ComputeRuntimeInspection,
   ComputeRuntimeInventory,
   ComputeRuntimeVerification,
+  ComputeNotebookOutputsInput,
+  ComputeNotebookOutputsResult,
   ComputeSaveProjectOutputInput,
   ComputeSaveProjectOutputResult,
   ComputeSessionRecord,
@@ -92,6 +94,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeListOutputs: "compute.listOutputs",
   computeInspectVariables: "compute.inspectVariables",
   computeSaveOutput: "compute.saveOutput",
+  computeNotebookOutputs: "compute.notebookOutputs",
   subscribeComputeSessions: "subscribe.computeSessions",
 } as const;
 
@@ -313,6 +316,12 @@ const WsComputeSaveOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSave
   error: ComputeRpcError,
 });
 
+const WsComputeNotebookOutputsRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeNotebookOutputs, {
+  payload: ComputeNotebookOutputsInput,
+  success: ComputeNotebookOutputsResult,
+  error: ComputeRpcError,
+});
+
 const WsSubscribeComputeSessionsRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.subscribeComputeSessions,
   {
@@ -353,5 +362,6 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeListOutputsRpc,
   WsComputeInspectVariablesRpc,
   WsComputeSaveOutputRpc,
+  WsComputeNotebookOutputsRpc,
   WsSubscribeComputeSessionsRpc,
 );

@@ -256,6 +256,20 @@ export type ComputeSaveProjectOutputInput = typeof ComputeSaveProjectOutputInput
 export const ComputeSaveProjectOutputResult = Schema.Struct({ relativePath: Schema.String });
 export type ComputeSaveProjectOutputResult = typeof ComputeSaveProjectOutputResult.Type;
 
+/** A finished run as nbformat 4 outputs, figures inlined, for notebook files. */
+export const ComputeNotebookOutputsInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  executionId: ComputeExecutionId,
+});
+export type ComputeNotebookOutputsInput = typeof ComputeNotebookOutputsInput.Type;
+
+export const ComputeNotebookOutputsResult = Schema.Struct({
+  outputs: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+  executionCount: Schema.NullOr(Schema.Int),
+});
+export type ComputeNotebookOutputsResult = typeof ComputeNotebookOutputsResult.Type;
+
 export const ComputeListProjectSessionsResult = Schema.Array(ComputeSessionRecord);
 export const ComputeGetProjectSessionResult = Schema.NullOr(ComputeSessionRecord);
 export const ComputeListProjectExecutionsResult = Schema.Array(ComputeExecutionRecord);

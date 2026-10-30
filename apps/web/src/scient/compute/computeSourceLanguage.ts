@@ -31,3 +31,7 @@ export function computeSourceLanguageForPath(path: string): ComputeSourceLanguag
     ) ?? null
   );
 }
+
+export function computeSourceLanguageForId(languageId: string): ComputeSourceLanguage | null {
+  return COMPUTE_SOURCES.find((source) => source.languageId === languageId) ?? null;
+}
