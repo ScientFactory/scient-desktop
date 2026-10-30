@@ -166,6 +166,9 @@ export const KernelSpecPayload = Schema.Struct({
   language: Label,
   interruptMode: Schema.Literals(["signal", "message"]),
   variablesExpression: Schema.NullOr(Schema.NonEmptyString.check(Schema.isMaxLength(64 * 1024))),
+  startupTimeoutSeconds: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 600 })),
+  ),
 });
 export type KernelSpecPayload = typeof KernelSpecPayload.Type;
 
