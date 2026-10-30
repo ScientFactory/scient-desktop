@@ -17,7 +17,9 @@
     "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts",
     "packages/shared/src/scientAccountSecretRequest.ts",
     "packages/shared/src/scientBrowserProfileChoice.ts",
-    "packages/shared/src/scientSignInPage.ts"
+    "packages/shared/src/scientSignInPage.ts",
+    "apps/mobile/src/state/accounts.ts",
+    "apps/mobile/src/features/threads/ThreadAccountRequests.tsx"
   ],
   "accountsDiffSignals": [
     "scient/accounts",
@@ -57,6 +59,16 @@
       "path": "apps/desktop/src/preview/BrowserSession.ts",
       "anchor": "if (persistent) keepSessionCookies(browserSession);",
       "purpose": "Sign-ins marked as ending with the browser outlive the app."
+    },
+    {
+      "path": "apps/server/src/relay/AgentAwarenessRelay.ts",
+      "anchor": "withAccountRequest(",
+      "purpose": "A sign-in waiting for the user reaches their phone."
+    },
+    {
+      "path": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
+      "anchor": "<ThreadAccountRequests",
+      "purpose": "The phone answers approvals and shows sign-ins waiting for the user."
     },
     {
       "path": "apps/desktop/src/preview/BrowserImport/Sources.ts",
