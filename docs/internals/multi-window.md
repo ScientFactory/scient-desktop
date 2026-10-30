@@ -128,6 +128,13 @@ the new window removes them from the address, selects the tab and maximizes the
 panel. For a browser tab it also takes the host lock once it displays the tab,
 even from a window that shows it, so the page moves to the new window.
 
+`ChatView` gives the page in the active tab a way to open that tab
+(`PanelTabNewWindowItem.tsx`), so pages with their own menu offer **Open in new
+window** as well. The PDF reader's bar leaves it out when LaTeX hosts the bar,
+because the LaTeX surface lists it in its own menus, and Compute results
+embedded in a file's page leave it out. The project file list beside a tab is
+outside the provider.
+
 dnd-kit reports only the movement its modifiers allow, which stays inside the
 tab strip, so `useTabDragOut` (`tabDragOut.ts`) follows the window's pointer
 events during a tab drag. A drag that ends outside the viewport opens the window
@@ -152,12 +159,16 @@ preview hosting per window, each store's merge (with negative controls for
 merge-on-save and adoption), each window's own side panel view, the side panel
 tab request from opener to new window, settings and catalog notices, the
 notification election, and preview host ownership. A browser test drags a tab
-out of the window and back in. A live check with two and three windows covered
-drafts in different threads, settings and side panel tabs updating in the other
-window, the browser tab placeholder, **Show here**, a host window closing,
-quitting with two windows open, and dragging a browser tab out (through
-synthetic DevTools input) so its page moved to a maximized new window. It also
-read the Dock menu and ran its **New Window** item through the main process's
-inspector, with one window open and with none. The native **New Window** menu
-item, choosing the Dock menu item with the pointer, window close button, the
-context menus and a drag with a real pointer need manual review.
+out of the window and back in; another opens the shown tab from the PDF reader's
+menu and checks the item is absent when LaTeX hosts that menu. A live check with
+two and three windows covered drafts in different threads, settings and side
+panel tabs updating in the other window, the browser tab placeholder, **Show
+here**, a host window closing, quitting with two windows open, and dragging a
+browser tab out (through synthetic DevTools input) so its page moved to a
+maximized new window. It also read the Dock menu and ran its **New Window** item
+through the main process's inspector, with one window open and with none.
+**Open in new window** from the Files, PDF, Markdown, LaTeX (Source, PDF and
+Visual) and browser page menus opened that tab maximized in a new window; the
+device, pull request and Compute menus were not reached live. The native **New
+Window** menu item, choosing the Dock menu item with the pointer, window close
+button, the context menus and a drag with a real pointer need manual review.

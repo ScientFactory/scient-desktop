@@ -33,6 +33,12 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { DeviceStreamHandle, DeviceViewControls } from "./DeviceStreamView";
 import type { DeviceControls } from "./useDeviceControls";
+// SCIENT-FORK:START — a device tab can open in a new window from its menu.
+import {
+  PanelTabNewWindowItem,
+  usePanelTabNewWindow,
+} from "~/scient/multiWindow/PanelTabNewWindowItem";
+// SCIENT-FORK:END
 
 export function DeviceControlsRail(props: {
   platform: DevicePlatform;
@@ -54,6 +60,9 @@ export function DeviceControlsRail(props: {
   const settings = controls.detail?.settings;
   const inputDisabled = !handle?.inputConnected;
   const nextAppearance = settings?.appearance === "dark" ? "light" : "dark";
+  // SCIENT-FORK:START — a device tab can open in a new window from its menu.
+  const openInNewWindow = usePanelTabNewWindow();
+  // SCIENT-FORK:END
   return (
     <aside
       aria-label="Device controls"
@@ -222,6 +231,9 @@ export function DeviceControlsRail(props: {
               <PictureInPicture2 />
               Float device over chat
             </MenuItem>
+            {/* SCIENT-FORK:START — a device tab can open in a new window from its menu. */}
+            {openInNewWindow ? <PanelTabNewWindowItem onOpen={openInNewWindow} /> : null}
+            {/* SCIENT-FORK:END */}
             <MenuItem onClick={props.onClose}>
               <X />
               Close device panel

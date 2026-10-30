@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
+import { PanelTabNewWindowItem, usePanelTabNewWindow } from "../multiWindow/PanelTabNewWindowItem";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { formatPdfZoom, parsePdfPageInput, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { ReaderBarHostContext } from "./readerBarHost";
@@ -204,6 +205,9 @@ export function DocumentReaderControls(props: {
     setPageInputEdited(false);
   }
   const host = useContext(ReaderBarHostContext);
+  // A surface that hosts the bar lists this in its own menus, once.
+  const panelTabNewWindow = usePanelTabNewWindow();
+  const openInNewWindow = host ? null : panelTabNewWindow;
   const hostSlot = host?.slot ?? null;
   const onHosted = host?.onHosted;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports this controls bar as hosted to the reader bar host until unmount
@@ -392,6 +396,7 @@ export function DocumentReaderControls(props: {
         <DropdownMenuContent align="end" finalFocus={() => !searchOwnsFocus.current}>
           {/* Only what the row does not show right now, and what has no button. */}
           <ReaderRowContext value={menuRow}>
+            {openInNewWindow ? <PanelTabNewWindowItem onOpen={openInNewWindow} /> : null}
             <IfRowHidden selector=".scient-pdf-action-zoom-step">
               <DropdownMenuItem
                 disabled={!props.ready}

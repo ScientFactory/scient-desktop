@@ -16,7 +16,10 @@ Scient server.
   sidebar, or use the menu in the conversation header) opens that conversation
   in its own window. Right-click a draft in the sidebar for the same command.
 - **Open in new window** in a side panel tab's menu (right-click the tab) opens
-  a window that shows the conversation with that tab filling the window.
+  a window that shows the conversation with that tab filling the window. Pages
+  with a menu of their own list it there too: the browser, device, Files, PDF
+  and LaTeX **⋯** menus, the Markdown editor's **Document** menu, a pull
+  request's actions menu, and Compute's session menu while a session runs.
 - Drag a side panel tab out of the window and let go outside it. A window
   opens where you dropped the tab, showing that tab the same way.
 
