@@ -332,6 +332,8 @@ interface ManagedPythonCandidate {
   readonly selected: boolean;
   readonly available?: boolean;
   readonly version?: string;
+  /** Why an unavailable managed Python cannot run, when known exactly. */
+  readonly problem?: string;
 }
 
 const MANAGED_REPAIR = "Scient-managed Python needs repair.";
@@ -353,7 +355,7 @@ export function pythonCandidates(
             executable: managed.executable,
             source: "managed" as const,
             origin: null,
-            problem: managed.available === false ? MANAGED_REPAIR : null,
+            problem: managed.available === false ? (managed.problem ?? MANAGED_REPAIR) : null,
           },
         ];
   const configured = configuredExecutable?.trim()
@@ -516,7 +518,9 @@ export function makePythonRuntimeAdapter(
           packages: [],
           message:
             launchRequest.profile.source === "managed"
-              ? "Scient-managed Python is unavailable. Repair it in Scientific Computing settings or choose an existing environment."
+              ? problem !== undefined && problem !== MANAGED_REPAIR
+                ? `Scient-managed Python cannot run. ${problem}`
+                : "Scient-managed Python is unavailable. Repair it in Scientific Computing settings or choose an existing environment."
               : launchRequest.profile.source === "project"
                 ? `The project environment cannot run. ${problem ?? ""}`.trim()
                 : problem === undefined

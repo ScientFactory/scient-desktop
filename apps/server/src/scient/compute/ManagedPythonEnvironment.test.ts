@@ -219,6 +219,39 @@ describe("ManagedPythonEnvironment", () => {
     expect(await NodeFSP.readFile(interpreter, "utf8")).toBe("python");
   });
 
+  it("says a copied profile still points to its old location", async () => {
+    const interpreter = NodePath.join(computeDir, "interpreters", "python", "uv-fixture", "python");
+    await NodeFSP.mkdir(NodePath.dirname(interpreter), { recursive: true });
+    await NodeFSP.writeFile(interpreter, "python");
+    const manager = makeManagedPythonEnvironmentManager(
+      computeDir,
+      dependencies({
+        provision: async ({ targetRoot }) => {
+          const executable = await executableAt(targetRoot);
+          await NodeFSP.unlink(executable);
+          await NodeFSP.symlink(interpreter, executable);
+          await NodeFSP.writeFile(
+            NodePath.join(targetRoot, "environment", "pyvenv.cfg"),
+            `home = ${NodePath.dirname(interpreter)}\n`,
+          );
+          return {
+            executableRelativePath: "environment/bin/python",
+            interpreterRelativePath: "uv-fixture/python",
+          };
+        },
+      }),
+    );
+    await manager.install(installInput());
+    const copiedDir = NodePath.join(temporaryRoot, "copied profile", "compute");
+    await NodeFSP.cp(computeDir, copiedDir, { recursive: true, verbatimSymlinks: true });
+    await NodeFSP.rm(computeDir, { recursive: true });
+    const copied = await makeManagedPythonEnvironmentManager(copiedDir, dependencies()).inspect();
+    expect(copied).toMatchObject({
+      available: false,
+      movedFrom: NodePath.dirname(interpreter),
+    });
+  });
+
   it("uses one shared app-owned environment root", () => {
     const paths = managedPythonEnvironmentPaths(computeDir);
     expect(paths.managedRoot).toBe(NodePath.join(computeDir, "environments", "python"));

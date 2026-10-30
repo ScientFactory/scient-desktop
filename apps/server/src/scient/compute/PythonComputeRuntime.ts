@@ -398,6 +398,11 @@ export const pythonRuntimeBinding: Effect.Effect<
                         selected: preferManaged || status.record.selection === "managed",
                         available: status.available,
                         version: status.record.active.pythonVersion,
+                        ...(status.movedFrom === undefined
+                          ? {}
+                          : {
+                              problem: `It was copied from another location and still points to ${status.movedFrom}. Repair rebuilds it here.`,
+                            }),
                       },
                 ),
               ),
