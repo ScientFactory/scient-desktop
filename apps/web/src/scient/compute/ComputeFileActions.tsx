@@ -1016,7 +1016,9 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         binding.sessionId !== target.session.sessionId ||
         binding.generation !== target.session.generation ||
         binding.lifecycle === "closing" ||
-        binding.lifecycle === "close-failed"
+        binding.lifecycle === "close-failed" ||
+        // A session on loan is the Console's to stop.
+        binding.borrowed === true
       )
         return;
       stoppingForFresh.current = true;
@@ -1169,7 +1171,10 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                   <span className="truncate">Stop a session…</span>
                 </MenuTrigger>
                 <MenuPopup align="start" side="bottom" className="min-w-64">
-                  {freshCapacityBlocked && liveSession !== null && props.contextId !== undefined ? (
+                  {freshCapacityBlocked &&
+                  liveSession !== null &&
+                  props.contextId !== undefined &&
+                  contextBinding?.borrowed !== true ? (
                     <MenuItem
                       disabled={switching || operation !== null}
                       onClick={() =>

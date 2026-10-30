@@ -272,9 +272,12 @@ export function ComputePanel(props: {
       : undefined;
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col bg-background" aria-label="Scientific results">
+    <section
+      className="@container flex min-h-0 flex-1 flex-col bg-background"
+      aria-label="Scientific results"
+    >
       {consoleContext !== undefined && !hasWork ? null : (
-        <header className="flex min-h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2">
+        <header className="flex min-h-9 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2">
           {props.resultPicker}
           {consoleContext === undefined ? (
             <ComputePanelTabs value={panelView} onChange={setPanelView} />
@@ -290,11 +293,19 @@ export function ComputePanel(props: {
                   onClick={() => setPanelView(panelView === "variables" ? "results" : "variables")}
                 >
                   Variables {variables.snapshot?.variables.length}
+                  {variables.snapshot?.truncated ? "+" : ""}
                 </Button>
               ) : null}
               {consoleHistory.length > 0 ? (
-                <Button size="xs" variant="ghost-muted" onClick={() => void saveAsNotebook()}>
-                  Save as notebook
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-label="Save as notebook"
+                  onClick={() => void saveAsNotebook()}
+                >
+                  <span>
+                    Save<span className="@max-[24rem]:hidden"> as notebook</span>
+                  </span>
                 </Button>
               ) : null}
             </>
@@ -469,7 +480,7 @@ export function ComputePanel(props: {
             className={
               hasWork
                 ? "shrink-0 px-3 pb-3 pt-2"
-                : "flex min-h-0 flex-1 flex-col justify-center px-5 pb-14"
+                : "flex min-h-0 flex-1 flex-col justify-center px-3 pb-14"
             }
           >
             <ComputeConsoleInput
@@ -482,7 +493,8 @@ export function ComputePanel(props: {
               footer={
                 <ComputeConsoleLanguage
                   start={start}
-                  session={liveSession}
+                  session={selectedSession}
+                  hasWork={hasWork}
                   cwd={props.cwd}
                   threadRef={props.threadRef}
                 />

@@ -612,6 +612,87 @@ describe("Python file run actions", () => {
     },
   );
 
+  it("never lets a borrowed script stop the Console it runs in", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    const sessionId = ComputeSessionId.make("console-session");
+    const generation = ComputeSessionGeneration.make(1);
+    const consoleId = "compute-console-test" as ComputeContextId;
+    ensureComputeContext({
+      contextId: consoleId,
+      environmentId: testEnvironmentId,
+      cwd: "/project",
+      ownerKey: "console",
+    });
+    ensureComputeContext({
+      contextId: testContextId,
+      environmentId: testEnvironmentId,
+      cwd: "/project",
+      ownerKey: "file",
+    });
+    const store = useComputeContextStore.getState();
+    store.reserveSession({ contextId: consoleId, sessionId, generation });
+    store.bindSession({ contextId: consoleId, sessionId, generation });
+    store.borrowSession({ contextId: testContextId, sessionId, generation });
+    mocks.sessions = [
+      {
+        sessionId,
+        generation: 1,
+        languageId: "python",
+        label: "Python",
+        workingDirectory: "/project",
+        status: "ready",
+        activity: "idle",
+        runtime: runtime("managed").profile,
+        updatedAt: "2026-09-15T00:00:00.000Z",
+      },
+    ];
+    mocks.start.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail({ reason: "capacity-reached", message: "One slot in use" }),
+    });
+
+    const container = document.createElement("div");
+    const root = _fixture.stack.use(await _fixtureRender(null, { container: container }));
+    try {
+      await act(
+        async () =>
+          await root.rerender(
+            <ComputeFileActions
+              language={PYTHON_COMPUTE_SOURCE}
+              environmentId={testEnvironmentId}
+              cwd="/project"
+              relativePath="test.py"
+              contents="print(1)"
+              sourceRevision="revision-1"
+              sourcePending={false}
+              selection={null}
+              editorSelection={null}
+              contextId={testContextId}
+              onRunRequested={mocks.runRequested}
+              onShowMatlabOneShot={vi.fn()}
+              onExecutionSubmitted={vi.fn()}
+            />,
+          ),
+      );
+      await page.getByRole("button", { name: "Choose Python code to run" }).last().click();
+      await page.getByRole("menuitem", { name: "Run fresh", exact: true }).click();
+      await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1));
+      await page.getByRole("button", { name: "Choose a compute session to stop" }).click();
+      await expect
+        .element(page.getByRole("menuitem", { name: "No other sessions" }))
+        .toBeInTheDocument();
+      await expect
+        .element(page.getByRole("menuitem", { name: "Stop this session and run fresh…" }))
+        .not.toBeInTheDocument();
+      expect(mocks.stop).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => await root.unmount());
+    }
+  });
+
   it.each([true, false])(
     "keeps Run file literal and respects runtime availability (%s)",
     async (ready) => {

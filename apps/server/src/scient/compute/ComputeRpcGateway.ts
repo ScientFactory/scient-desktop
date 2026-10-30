@@ -434,14 +434,20 @@ export function makeComputeRpcGateway(input: {
     });
   });
 
-  const listExecutions = Effect.fn("ComputeRpcGateway.listExecutions")(function* (
-    request: ComputeListProjectExecutionsInput,
+  const listAllExecutions = Effect.fn("ComputeRpcGateway.listAllExecutions")(function* (
+    request: ComputeProjectSessionInput,
   ) {
     const project = yield* projectFor("list", request.cwd);
-    const executions = yield* input.compute.listExecutions({
+    return yield* input.compute.listExecutions({
       projectId: project.projectId,
       sessionId: request.sessionId,
     });
+  });
+
+  const listExecutions = Effect.fn("ComputeRpcGateway.listExecutions")(function* (
+    request: ComputeListProjectExecutionsInput,
+  ) {
+    const executions = yield* listAllExecutions(request);
     return executions.slice(-request.limit);
   });
 
@@ -599,6 +605,7 @@ export function makeComputeRpcGateway(input: {
     listSessions: inWorkspace("list", listSessions),
     getSession: inWorkspace("get", getSession),
     listExecutions: inWorkspace("list", listExecutions),
+    listAllExecutions: inWorkspace("list", listAllExecutions),
     listOutputs: inWorkspace("outputs", listOutputs),
     submitExecution: inWorkspace("submit", submitExecution),
     submitCells: inWorkspace("submit", submitCells),

@@ -203,10 +203,14 @@ export function ComputeConsoleInput(props: {
   );
 }
 
-/** Which language this Console runs. One Console holds one language, so another opens beside it. */
+/**
+ * Which language this Console runs. Until something has run it can still become another; after
+ * that one Console holds one language, so another opens beside it.
+ */
 export function ComputeConsoleLanguage(props: {
   readonly start: ComputeSessionStartModel;
   readonly session: ComputeSessionRecord | null;
+  readonly hasWork: boolean;
   readonly cwd: string;
   readonly threadRef: ScopedThreadRef;
 }) {
@@ -226,7 +230,7 @@ export function ComputeConsoleLanguage(props: {
     );
   const openConsole = (runtimeKey: string) => {
     const contextId = createComputeContextId();
-    useComputeConsoleStore.getState().presetRuntime(contextId, runtimeKey);
+    useComputeConsoleStore.getState().chooseRuntime(contextId, runtimeKey);
     useRightPanelStore
       .getState()
       .openScient(props.threadRef, scientComputeSurface({ cwd: props.cwd, contextId }));
@@ -249,9 +253,9 @@ export function ComputeConsoleLanguage(props: {
     <Select
       value={selected?.key ?? ""}
       onValueChange={(value) => {
-        if (!value) return;
-        if (session === null) start.selectRuntime(value);
-        else if (value !== selected?.key) openConsole(value);
+        if (!value || value === selected?.key) return;
+        if (props.hasWork) openConsole(value);
+        else start.selectRuntime(value);
       }}
     >
       <SelectTrigger

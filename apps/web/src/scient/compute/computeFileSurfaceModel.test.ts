@@ -20,6 +20,7 @@ import {
   nudgeComputeFileSplit,
   computeFileSplitFromPointer,
   computeRuntimeDisplayLabel,
+  computeConsoleRuntime,
   computeRuntimeChoiceLabel,
   resolveComputeRuntimeToolbarState,
   resolveComputePreRunRuntimeChoice,
@@ -27,6 +28,7 @@ import {
   computeRuntimeBlocker,
   isComputeCapacityReachedError,
   isExactTerminalComputeSession,
+  type ComputeReadyRuntime,
 } from "./computeFileSurfaceModel";
 
 const pythonRuntime = {
@@ -626,5 +628,45 @@ describe("Console language choices", () => {
         [{ languageId: "rust" }],
       ),
     ).toBe("Rust");
+  });
+});
+
+describe("computeConsoleRuntime", () => {
+  const ready = (languageId: string, executable: string) =>
+    ({
+      language: { descriptor: { languageId } },
+      candidate: { profile: { executable } },
+      key: `${languageId}:${executable}`,
+    }) as unknown as ComputeReadyRuntime;
+  const python = ready("python", "/bin/python");
+  const otherPython = ready("python", "/other/python");
+  const r = ready("r", "/bin/R");
+  const all = [python, otherPython, r];
+  const session = (languageId: string, executable: string) =>
+    ({ languageId, runtime: { executable } }) as never;
+  const pick = (input: Partial<Parameters<typeof computeConsoleRuntime>[0]>) =>
+    computeConsoleRuntime({
+      ready: all,
+      session: null,
+      chosenKey: "",
+      defaultRuntime: python.candidate,
+      ...input,
+    });
+
+  it("starts on the default and follows what is picked", () => {
+    expect(pick({})).toBe(python);
+    expect(pick({ chosenKey: r.key })).toBe(r);
+  });
+
+  it("stays on what its session ran on, whatever else is picked or the default", () => {
+    expect(pick({ session: session("r", "/bin/R") })).toBe(r);
+    expect(pick({ session: session("r", "/bin/R"), chosenKey: python.key })).toBe(r);
+    expect(pick({ session: session("python", "/other/python") })).toBe(otherPython);
+  });
+
+  it("falls back when what it ran on has gone", () => {
+    expect(pick({ session: session("python", "/gone/python") })).toBe(python);
+    expect(pick({ session: session("julia", "/bin/julia") })).toBe(python);
+    expect(pick({ chosenKey: "julia:/bin/julia" })).toBe(python);
   });
 });

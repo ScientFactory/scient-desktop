@@ -1,7 +1,6 @@
 import {
   ComputeSessionId,
   TERMINAL_COMPUTE_SESSION_STATUSES,
-  type ComputeLanguageRuntimeInspection,
   type ComputeSessionRecord,
   type EnvironmentId,
 } from "@t3tools/contracts";
@@ -29,15 +28,14 @@ import {
   useComputeContextStore,
   type ComputeContextId,
 } from "./computeContextStore";
-import { defaultComputeRuntime, isComputeCapacityReachedError } from "./computeFileSurfaceModel";
+import {
+  computeConsoleRuntime,
+  defaultComputeRuntime,
+  isComputeCapacityReachedError,
+  type ComputeReadyRuntime,
+} from "./computeFileSurfaceModel";
 import { reportComputeFailure } from "./ComputeSessionControls";
 import type { ComputePanelSessions } from "./useComputePanelSessions";
-
-interface ReadyRuntime {
-  readonly language: ComputeLanguageRuntimeInspection;
-  readonly candidate: ComputeLanguageRuntimeInspection["runtimes"][number];
-  readonly key: string;
-}
 
 /** Starts the session an extra Compute tab owns, including capacity recovery. */
 export function useComputeSessionStart(input: {
@@ -46,11 +44,10 @@ export function useComputeSessionStart(input: {
   readonly contextId: ComputeContextId | undefined;
   readonly model: ComputePanelSessions;
 }) {
-  const { runtimes, contextBinding, allSessions } = input.model;
-  const [runtimeKey, setRuntimeKey] = useState(() =>
-    input.contextId === undefined
-      ? ""
-      : (useComputeConsoleStore.getState().runtimes[input.contextId] ?? ""),
+  const { runtimes, contextBinding, allSessions, selectedSession } = input.model;
+  const { contextId } = input;
+  const runtimeKey = useComputeConsoleStore((state) =>
+    contextId === undefined ? "" : (state.runtimes[contextId] ?? ""),
   );
   const [starting, setStarting] = useState(false);
   const [retryAvailable, setRetryAvailable] = useState(false);
@@ -64,7 +61,7 @@ export function useComputeSessionStart(input: {
   });
 
   const languages = runtimes.data?.languages ?? [];
-  const readyRuntimes: ReadonlyArray<ReadyRuntime> = languages.flatMap((language) =>
+  const readyRuntimes: ReadonlyArray<ComputeReadyRuntime> = languages.flatMap((language) =>
     language.runtimes.flatMap((candidate) =>
       language.enabled && candidate.verification.readiness === "ready"
         ? [
@@ -77,11 +74,12 @@ export function useComputeSessionStart(input: {
         : [],
     ),
   );
-  const defaultRuntime = defaultComputeRuntime(languages);
-  const selectedRuntime =
-    runtimeKey === ""
-      ? (readyRuntimes.find((runtime) => runtime.candidate === defaultRuntime) ?? null)
-      : (readyRuntimes.find((runtime) => runtime.key === runtimeKey) ?? null);
+  const selectedRuntime = computeConsoleRuntime({
+    ready: readyRuntimes,
+    session: selectedSession,
+    chosenKey: runtimeKey,
+    defaultRuntime: defaultComputeRuntime(languages),
+  });
   const canRetry = retryAvailable || (contextBinding?.lifecycle === "starting" && !starting);
   const capacitySessions = allSessions.filter(
     (session) =>
@@ -158,7 +156,10 @@ export function useComputeSessionStart(input: {
         cwd: input.cwd,
         sessionId,
         languageId: selectedRuntime.language.descriptor.languageId,
-        executable: runtimeKey === "" ? null : selectedRuntime.candidate.profile.executable,
+        executable:
+          runtimeKey === "" && selectedSession === null
+            ? null
+            : selectedRuntime.candidate.profile.executable,
       },
     });
     setStarting(false);
@@ -248,7 +249,11 @@ export function useComputeSessionStart(input: {
   return {
     readyRuntimes,
     selectedRuntime,
-    selectRuntime: setRuntimeKey,
+    selectRuntime: (runtimeKey: string) => {
+      if (contextId !== undefined) {
+        useComputeConsoleStore.getState().chooseRuntime(contextId, runtimeKey);
+      }
+    },
     start,
     starting,
     canRetry,

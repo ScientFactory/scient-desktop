@@ -30,7 +30,7 @@ export function useComputeVariables(input: {
   readonly visible: boolean;
   readonly model: ComputePanelSessions;
 }) {
-  const { liveSession, selectedIsLive, events, runtimes } = input.model;
+  const { liveSession, selectedIsLive, executions, runtimes } = input.model;
   const inspectVariables = useAtomCommand(computeEnvironment.inspectVariables, {
     reportFailure: false,
   });
@@ -92,9 +92,8 @@ export function useComputeVariables(input: {
     }));
   });
 
-  const latestTerminal = [
-    ...(events.data?.executions.get(liveSession?.sessionId ?? "")?.values() ?? []),
-  ]
+  // History as well as the live feed: a quick run can finish while the feed reconnects.
+  const latestTerminal = executions
     .filter(
       (execution) =>
         execution.result !== null &&

@@ -78,7 +78,8 @@ export function ComputeSessionControls(props: {
       return;
     }
     setOperation(kind);
-    if (kind === "stop" && props.contextId !== undefined) {
+    // Stopping a tab's session lets a script on loan go, which is closing it, not this.
+    if (kind === "stop" && props.contextId !== undefined && props.binding?.borrowed !== true) {
       await stopComputeContext({ contextId: props.contextId, stopSession, getSession });
       setOperation((current) => (current === kind ? null : current));
       props.onSettled();
@@ -117,7 +118,7 @@ export function ComputeSessionControls(props: {
           onClick={() => void run("interrupt", props.session)}
         >
           {operation === "interrupt" ? <LoaderCircle className="animate-spin" /> : <Square />}
-          Interrupt
+          <span className="@max-[24rem]:hidden">Interrupt</span>
         </Button>
       ) : null}
       <Menu>
@@ -168,7 +169,11 @@ export function ComputeSessionControls(props: {
         }}
         anchor={anchor}
         title={confirmation?.kind === "stop" ? "Stop this session?" : "Restart this session?"}
-        description="Clears variables. Runs stay in Results."
+        description={
+          props.binding?.borrowed === true
+            ? "Shared with the Console, so its variables clear too. Runs stay in Results."
+            : "Clears variables. Runs stay in Results."
+        }
         confirmLabel={confirmation?.kind === "stop" ? "Stop session" : "Restart session"}
         destructive={confirmation?.kind === "stop"}
         onConfirm={() => {

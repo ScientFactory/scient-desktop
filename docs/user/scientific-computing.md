@@ -233,7 +233,8 @@ available to later runs until you restart or stop.
 
 **Shift+Enter** or **⌘Enter** runs, **Enter** adds a line, and **↑** and **↓** walk through what you
 ran. The picker in the box lists every language installed on this computer. One Console holds one
-language, so picking another after you have run something opens a second Console beside it.
+language, so picking another after you have run something opens a second Console beside it. Before
+that, the Console and anything you have typed simply move to the new language.
 **Variables** appears once there are variables. **Save as notebook** turns what worked into an
 `.ipynb` in the project and opens it; runs that failed are left out. **Run file…**, **Restart session**
 and **Stop session** are in the **⋯** menu.
@@ -244,7 +245,8 @@ with anything in it, even a half-typed line, stays where it is and the file open
 **A script shares memory with a Console of its language.** With a Python Console open, running a
 `.py` file that has no session of its own uses the Console's session: the script sees the Console's
 variables, and the Console sees the script's. Results appear in both places, and the Console waits
-while a long file runs. Closing the script leaves the Console running. Without a Console, each file
+while a long file runs. Closing the script leaves the Console running; Restart or Stop from the
+script acts on the shared session, so the Console loses its variables too. Without a Console, each file
 tab has its own session. A notebook always has its own memory, so **Restart and run all** gives the
 same result every time.
 

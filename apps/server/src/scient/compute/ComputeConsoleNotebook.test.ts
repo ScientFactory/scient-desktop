@@ -1,7 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import type { ComputeExecutionRecord } from "@t3tools/contracts";
+import type { ComputeExecutionRecord, ComputeSessionId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 
-import { consoleNotebookDocument, consoleRunsWorthKeeping } from "./ComputeConsoleNotebook.ts";
+import {
+  consoleNotebookDocument,
+  consoleRunsWorthKeeping,
+  makeComputeConsoleNotebook,
+} from "./ComputeConsoleNotebook.ts";
 
 const run = (
   id: string,
@@ -29,6 +34,39 @@ describe("console notebook", () => {
     ]);
     expect(kept.map((execution) => execution.request.code)).toEqual(["first", "second"]);
   });
+
+  it.effect("saves every run, not only the newest the feed shows", () =>
+    Effect.gen(function* () {
+      const history = Array.from({ length: 450 }, (_, index) =>
+        run(`run-${index}`, "console", "succeeded", String(index).padStart(4, "0")),
+      );
+      let written = "";
+      const save = makeComputeConsoleNotebook({
+        gateway: {
+          getSession: () => Effect.succeed({ languageId: "python", label: "Python" }),
+          listAllExecutions: () => Effect.succeed(history),
+        },
+        notebookOutputs: () => Effect.succeed({ outputs: [], executionCount: null }),
+        workspaceFileSystem: {
+          createBinaryFile: ({
+            bytes,
+            relativePath,
+          }: {
+            bytes: Uint8Array;
+            relativePath: string;
+          }) =>
+            Effect.sync(() => {
+              written = new TextDecoder().decode(bytes);
+              return { relativePath };
+            }),
+        },
+      } as unknown as Parameters<typeof makeComputeConsoleNotebook>[0]);
+      yield* save({ cwd: "/project", sessionId: "session" as ComputeSessionId });
+      const cells: ReadonlyArray<{ source: string }> = JSON.parse(written).cells;
+      expect(cells).toHaveLength(450);
+      expect(cells[0]?.source).toBe("run-0");
+    }),
+  );
 
   it("writes a notebook Scient reopens in the same language", () => {
     const document = JSON.parse(

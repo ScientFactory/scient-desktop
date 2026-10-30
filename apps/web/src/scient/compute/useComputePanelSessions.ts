@@ -129,12 +129,16 @@ export function useComputePanelSessions(input: {
   const refresh = useStableCallback(() => {
     sessions.refresh();
     executionsQuery.refresh();
+  });
+  // Only a stale feed reconnects: a reconnect during a run would lose the news that it finished.
+  const reconnect = useStableCallback(() => {
+    refresh();
     events.refresh();
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes session, execution, and event queries when the events subscription reports staleness
   useEffect(() => {
-    if (events.data?.stale) refresh();
-  }, [events.data?.stale, refresh]);
+    if (events.data?.stale) reconnect();
+  }, [events.data?.stale, reconnect]);
 
   const observedTerminalRef = useRef<Set<string> | null>(null);
   const terminalKey = executions

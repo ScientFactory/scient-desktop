@@ -129,6 +129,34 @@ export function defaultComputeRuntime(languages: ReadonlyArray<ComputeLanguageRu
 }
 
 /** Why the runtime the user or project chose cannot run, when that blocks Run. */
+export interface ComputeReadyRuntime {
+  readonly language: ComputeLanguageRuntimeInspection;
+  readonly candidate: ComputeLanguageRuntimeInspection["runtimes"][number];
+  readonly key: string;
+}
+
+/** What a Console runs on: what its session used, or failing that what was picked, or the default. */
+export function computeConsoleRuntime(input: {
+  readonly ready: ReadonlyArray<ComputeReadyRuntime>;
+  readonly session: Pick<ComputeSessionRecord, "languageId" | "runtime"> | null;
+  readonly chosenKey: string;
+  readonly defaultRuntime: ComputeReadyRuntime["candidate"] | null;
+}): ComputeReadyRuntime | null {
+  const { ready, session, chosenKey, defaultRuntime } = input;
+  const sameLanguage = ready.filter(
+    (runtime) => runtime.language.descriptor.languageId === session?.languageId,
+  );
+  return (
+    sameLanguage.find(
+      (runtime) => runtime.candidate.profile.executable === session?.runtime?.executable,
+    ) ??
+    sameLanguage[0] ??
+    ready.find((runtime) => runtime.key === chosenKey) ??
+    ready.find((runtime) => runtime.candidate === defaultRuntime) ??
+    null
+  );
+}
+
 export function computeRuntimeBlocker(
   language: ComputeLanguageRuntimeInspection | null,
 ): { readonly mode: "explicit" | "project"; readonly problem: string } | null {

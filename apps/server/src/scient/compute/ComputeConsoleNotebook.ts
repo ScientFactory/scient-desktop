@@ -13,7 +13,6 @@ import type { makeComputeNotebookOutputs } from "./ComputeNotebookOutputs.ts";
 import type { ComputeRpcGateway } from "./ComputeRpcGateway.ts";
 
 const MAXIMUM_NAME_ATTEMPTS = 100;
-const CONSOLE_HISTORY_LIMIT = 200;
 
 const consoleNotebookError = (message: string, cause?: unknown) =>
   new ComputeGatewayError({
@@ -68,7 +67,7 @@ export function consoleNotebookDocument(input: {
 
 /** Turns what worked in a Console into a notebook in the project. */
 export function makeComputeConsoleNotebook(input: {
-  readonly gateway: Pick<ComputeRpcGateway, "getSession" | "listExecutions">;
+  readonly gateway: Pick<ComputeRpcGateway, "getSession" | "listAllExecutions">;
   readonly notebookOutputs: ReturnType<typeof makeComputeNotebookOutputs>;
   readonly workspaceFileSystem: Pick<
     WorkspaceFileSystem.WorkspaceFileSystem["Service"],
@@ -84,10 +83,10 @@ export function makeComputeConsoleNotebook(input: {
     });
     if (session === null)
       return yield* consoleNotebookError("This compute session is no longer available.");
-    const executions = yield* input.gateway.listExecutions({
+    // Every run, not the feed's newest: a later cell can depend on the first one.
+    const executions = yield* input.gateway.listAllExecutions({
       cwd: request.cwd,
       sessionId: request.sessionId,
-      limit: CONSOLE_HISTORY_LIMIT,
     });
     const runs = consoleRunsWorthKeeping(executions);
     if (runs.length === 0)

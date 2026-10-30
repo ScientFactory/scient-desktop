@@ -7,11 +7,11 @@ interface ComputeConsoleState {
   readonly drafts: Readonly<Record<string, string>>;
   /** The language each Console runs, for its tab. */
   readonly languages: Readonly<Record<string, string>>;
-  /** The runtime a Console opens with, when it was asked for one. */
+  /** The runtime picked for a Console, until it has a session of its own to go by. */
   readonly runtimes: Readonly<Record<string, string>>;
   setDraft: (contextId: ComputeContextId, draft: string) => void;
   setLanguage: (contextId: ComputeContextId, languageId: string) => void;
-  presetRuntime: (contextId: ComputeContextId, runtimeKey: string) => void;
+  chooseRuntime: (contextId: ComputeContextId, runtimeKey: string) => void;
   forget: (contextId: ComputeContextId) => void;
 }
 
@@ -32,7 +32,7 @@ export const useComputeConsoleStore = create<ComputeConsoleState>()((set) => ({
         ? state
         : { languages: { ...state.languages, [contextId]: languageId } },
     ),
-  presetRuntime: (contextId, runtimeKey) =>
+  chooseRuntime: (contextId, runtimeKey) =>
     set((state) => ({ runtimes: { ...state.runtimes, [contextId]: runtimeKey } })),
   forget: (contextId) =>
     set((state) => ({

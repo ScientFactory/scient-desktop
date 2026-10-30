@@ -54,6 +54,13 @@ describe("Console", () => {
     expect(computeConsoleIsEmpty(consoleId)).toBe(false);
   });
 
+  it("remembers the picked runtime until the tab closes", () => {
+    useComputeConsoleStore.getState().chooseRuntime(consoleId, "r:/bin/R");
+    expect(useComputeConsoleStore.getState().runtimes[consoleId]).toBe("r:/bin/R");
+    useComputeConsoleStore.getState().forget(consoleId);
+    expect(useComputeConsoleStore.getState().runtimes[consoleId]).toBeUndefined();
+  });
+
   it("is found for scripts of its language only, in the same project", () => {
     liveConsole();
     const find = (languageId: string, sessions = [session()], where = cwd) =>

@@ -99,6 +99,8 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
   const terminal =
     execution.result !== null && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(execution.result.status);
   const outputs = mergeComputeOutputs(persisted.data?.outputs ?? [], props.live?.outputs ?? []);
+  // The kernel's own error says why, so the run's reason would only repeat it.
+  const explained = outputs.some((output) => output._tag === "diagnostic");
 
   const refreshOutputs = useStableCallback(() => persisted.refresh());
   const terminalRefreshed = useRef(false);
@@ -205,13 +207,13 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
               <Square className="size-3" />
             </Button>
           </>
-        ) : status !== "succeeded" && !outputs.some((output) => output._tag === "diagnostic") ? (
+        ) : status !== "succeeded" && !explained ? (
           <span className={cn("shrink-0", failed && "text-destructive")}>
             {computeExecutionStatusLabel(execution.result)}
           </span>
         ) : null}
       </header>
-      {execution.result?.failureReason ? (
+      {execution.result?.failureReason && !explained ? (
         <p className="mt-1 text-xs text-destructive">{execution.result.failureReason}</p>
       ) : null}
       {outputs.length === 0 && persisted.error ? (
