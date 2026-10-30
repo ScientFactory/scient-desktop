@@ -820,6 +820,32 @@ describe("ManagedPythonRuntimeController", () => {
     }),
   );
 
+  it.live("names a copied installation and its old location instead of a generic repair", () =>
+    Effect.gen(function* () {
+      const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());
+      const controller = makeManagedPythonRuntimeController({ manager, toolkitIds: [TOOLKIT_ID] });
+      yield* controller.manage("install");
+      yield* waitForSettled(controller);
+      const current = yield* Effect.promise(() => manager.inspect());
+      const environment = NodePath.dirname(NodePath.dirname(current!.executable));
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(
+          NodePath.join(environment, "pyvenv.cfg"),
+          "home = /Users/old/Library/Scient/compute/interpreters/python/3.12/bin\n",
+        );
+        await NodeFSP.unlink(current!.executable);
+      });
+      expect((yield* controller.status()).failure).toEqual({
+        reason: "activation-failed",
+        action: "repair",
+        summary: "Scientific Python was copied from another location",
+        detail:
+          "It still points to /Users/old/Library/Scient/compute/interpreters/python/3.12/bin. Repair rebuilds it here.",
+      });
+      controller.dispose();
+    }),
+  );
+
   it.live("keeps a broken selected installation repairable and publishes a new generation", () =>
     Effect.gen(function* () {
       const manager = makeManagedPythonEnvironmentManager(computeDir, dependencies());

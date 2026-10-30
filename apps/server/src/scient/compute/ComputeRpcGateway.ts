@@ -67,6 +67,12 @@ type ComputeGatewaySettings = {
     ServerSettingsValue,
     ServerSettingsError | LocalAnalysisStoreError
   >;
+  readonly hostKey?: Effect.Effect<string | null>;
+  /** This machine's choice for one project, which wins over its host default. */
+  readonly projectExecutable?: (
+    languageId: string,
+    projectId: string,
+  ) => Effect.Effect<string | null, ServerSettingsError>;
 };
 type ComputeGatewayWorkspace = Pick<WorkspaceFileSystem.WorkspaceFileSystem["Service"], "readFile">;
 
@@ -222,8 +228,36 @@ export function makeComputeRpcGateway(input: {
     return { descriptor, preference };
   });
 
+  const projectExecutables = Effect.fn("ComputeRpcGateway.projectExecutables")(function* (
+    operation: GatewayOperation,
+    projectId: string | null,
+    languageIds: ReadonlyArray<string>,
+  ) {
+    const lookup = input.serverSettings.projectExecutable;
+    if (lookup === undefined || projectId === null) return {};
+    const entries = yield* Effect.forEach(languageIds, (languageId) =>
+      lookup(languageId, projectId).pipe(
+        Effect.map((executable) => [languageId, executable] as const),
+        Effect.mapError((cause) =>
+          gatewayError(
+            operation,
+            "settings-failed",
+            "Unable to read the project's runtime.",
+            cause,
+          ),
+        ),
+      ),
+    );
+    return Object.fromEntries(entries.filter(([, executable]) => executable !== null)) as Record<
+      string,
+      string
+    >;
+  });
+
   const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* () {
     const settings = yield* readSettings("inspect");
+    const hostKey =
+      input.serverSettings.hostKey === undefined ? null : yield* input.serverSettings.hostKey;
     const preferences = Object.fromEntries(
       input.compute.runtimeDescriptors.map((descriptor) => [
         descriptor.languageId,
@@ -247,6 +281,7 @@ export function makeComputeRpcGateway(input: {
         enabled: preferences[language.descriptor.languageId]?.enabled ?? false,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),
+      ...(hostKey === null ? {} : { hostKey }),
     };
   });
 
@@ -264,6 +299,13 @@ export function makeComputeRpcGateway(input: {
         ),
       ]),
     );
+    const projectChoices = yield* projectExecutables(
+      "inspect",
+      project?.projectId ?? null,
+      Object.keys(preferences),
+    );
+    for (const [languageId, executable] of Object.entries(projectChoices))
+      preferences[languageId] = { ...preferences[languageId]!, executable };
     const inspected = yield* input.compute.inspectRuntimes({
       projectRoot: project?.root ?? null,
       workingDirectory: project?.root ?? NodeOS.tmpdir(),
@@ -279,6 +321,7 @@ export function makeComputeRpcGateway(input: {
         ),
       ),
       refresh: request.refresh,
+      ...(request.languageIds === undefined ? {} : { languageIds: new Set(request.languageIds) }),
     });
     return {
       contractVersion: 1 as const,
@@ -341,7 +384,17 @@ export function makeComputeRpcGateway(input: {
     request: ComputeStartProjectSessionInput,
   ) {
     const project = yield* projectFor("start", request.cwd);
-    const { descriptor, preference } = yield* requireEnabledLanguage("start", request.languageId);
+    const { descriptor, preference: hostPreference } = yield* requireEnabledLanguage(
+      "start",
+      request.languageId,
+    );
+    const projectChoice = (yield* projectExecutables("start", project.projectId, [
+      request.languageId,
+    ]))[request.languageId];
+    const preference =
+      projectChoice === undefined
+        ? hostPreference
+        : { ...hostPreference, executable: projectChoice };
     if (request.runOnce !== undefined) yield* validateSource(project.root, request.runOnce);
     return yield* input.compute.startSession({
       projectId: project.projectId,

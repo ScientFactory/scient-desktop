@@ -177,6 +177,13 @@ export const KernelSpecPayload = Schema.Struct({
   startupTimeoutSeconds: Schema.optional(
     Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 600 })),
   ),
+  env: Schema.optional(
+    Schema.Record(
+      Schema.String.check(Schema.isMaxLength(256)),
+      Schema.String.check(Schema.isMaxLength(MaxPathLength)),
+    ),
+  ),
+  resourceDir: Schema.optional(Schema.NonEmptyString.check(Schema.isMaxLength(MaxPathLength))),
 });
 export type KernelSpecPayload = typeof KernelSpecPayload.Type;
 

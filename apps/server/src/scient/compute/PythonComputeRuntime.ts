@@ -47,7 +47,9 @@ import {
   PROBE_SCRIPT,
   PYTHON_LANGUAGE_ID,
   makePythonRuntimeAdapter,
+  type ProbeResult,
 } from "./PythonRuntimeAdapter.ts";
+import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
 import { PYTHON_TOOLKIT_CATALOG, assessPythonToolkits } from "./PythonToolkitCatalog.ts";
 
 /**
@@ -377,13 +379,15 @@ export const pythonRuntimeBinding: Effect.Effect<
               cause,
             }),
         });
+  const probeCache = makeRuntimeProbeCache<ProbeResult>();
   const makeAdapter = (preferManaged: boolean) =>
     makePythonRuntimeAdapter(
       (executable) => spawnProbe(executable, retain(executable)),
       bridgePath,
       managedSetup === null
-        ? {}
+        ? { probeCache }
         : {
+            probeCache,
             managedRuntime: () =>
               inspectManaged().pipe(
                 Effect.map((status) =>
@@ -394,6 +398,11 @@ export const pythonRuntimeBinding: Effect.Effect<
                         selected: preferManaged || status.record.selection === "managed",
                         available: status.available,
                         version: status.record.active.pythonVersion,
+                        ...(status.movedFrom === undefined
+                          ? {}
+                          : {
+                              problem: `It was copied from another location and still points to ${status.movedFrom}. Repair rebuilds it here.`,
+                            }),
                       },
                 ),
               ),

@@ -150,10 +150,16 @@ function conventionalCandidates(
   environment: Readonly<Record<string, string>>,
 ): ReadonlyArray<string> {
   if (platform === "darwin") {
-    return directoryNames("/Applications")
-      .filter((name) => /^MATLAB_R\d{4}[ab]\.app$/u.test(name))
-      .toSorted((left, right) => right.localeCompare(left))
-      .map((name) => NodePath.join("/Applications", name, "bin", "matlab"));
+    const roots = [
+      "/Applications",
+      ...(environment.HOME ? [NodePath.join(environment.HOME, "Applications")] : []),
+    ];
+    return roots.flatMap((root) =>
+      directoryNames(root)
+        .filter((name) => /^MATLAB_R\d{4}[ab]\.app$/u.test(name))
+        .toSorted((left, right) => right.localeCompare(left))
+        .map((name) => NodePath.join(root, name, "bin", "matlab")),
+    );
   }
   if (platform === "win32") {
     const roots = [environment.ProgramFiles, environment["ProgramFiles(x86)"]].filter(
@@ -166,9 +172,11 @@ function conventionalCandidates(
         .map((release) => NodePath.join(matlabRoot, release, "bin", "matlab.exe"));
     });
   }
-  return directoryNames("/usr/local/MATLAB")
-    .toSorted((left, right) => right.localeCompare(left))
-    .map((release) => NodePath.join("/usr/local/MATLAB", release, "bin", "matlab"));
+  return ["/usr/local/MATLAB", "/opt/MATLAB"].flatMap((root) =>
+    directoryNames(root)
+      .toSorted((left, right) => right.localeCompare(left))
+      .map((release) => NodePath.join(root, release, "bin", "matlab")),
+  );
 }
 
 export function discoverMatlabCandidates(

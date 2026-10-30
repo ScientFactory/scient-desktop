@@ -1692,3 +1692,31 @@ class TestProcessExit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestKernelSpecValidation(unittest.TestCase):
+    def spec(self, **overrides):
+        value = {
+            "argv": ["evcxr_jupyter", "--control_file", "{connection_file}"],
+            "language": "rust",
+            "interruptMode": "message",
+            "variablesExpression": None,
+        }
+        value.update(overrides)
+        return value
+
+    def test_accepts_connection_file_inside_an_argument(self):
+        spec = self.spec(argv=["deno", "jupyter", "--kernel", "--conn={connection_file}"])
+        self.assertIs(bridge.validate_kernel_spec(spec), spec)
+
+    def test_rejects_a_command_without_the_connection_file(self):
+        with self.assertRaises(bridge.ProtocolViolation):
+            bridge.validate_kernel_spec(self.spec(argv=["evcxr_jupyter"]))
+
+    def test_keeps_the_installed_spec_environment_and_resource_directory(self):
+        spec = self.spec(env={"RUST_LOG": "warn"}, resourceDir="/k/rust")
+        self.assertEqual(bridge.validate_kernel_spec(spec)["env"], {"RUST_LOG": "warn"})
+        with self.assertRaises(bridge.ProtocolViolation):
+            bridge.validate_kernel_spec(self.spec(env={"N": 1}))
+        with self.assertRaises(bridge.ProtocolViolation):
+            bridge.validate_kernel_spec(self.spec(resourceDir=""))

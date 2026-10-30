@@ -387,6 +387,9 @@ export interface ComputeKernelSpec {
   readonly variablesExpression: string | null;
   /** How long the bridge waits for this kernel to answer, for kernels slow to start. */
   readonly startupTimeoutSeconds?: number;
+  /** An installed kernelspec's own environment and directory, as Jupyter would apply them. */
+  readonly env?: Readonly<Record<string, string>>;
+  readonly resourceDir?: string;
 }
 
 /**
@@ -602,6 +605,8 @@ export const ComputeRuntimeProfile = Schema.Struct({
   languageVersion: Label,
   architecture: Schema.NullOr(Label),
   displayName: Label,
+  /** Where discovery found it, as a user knows it: "conda: analysis", "pyenv", "Homebrew". */
+  origin: Schema.optional(Label),
 });
 export type ComputeRuntimeProfile = typeof ComputeRuntimeProfile.Type;
 
@@ -613,6 +618,7 @@ export const ComputeRuntimeInstallation = Schema.Struct({
   configured: Schema.optional(Schema.Boolean),
   version: Schema.NullOr(Label),
   problem: Schema.NullOr(ShortText),
+  origin: Schema.optional(Label),
 });
 export type ComputeRuntimeInstallation = typeof ComputeRuntimeInstallation.Type;
 
@@ -719,6 +725,13 @@ export interface ComputeLanguageAdapter {
   readonly languageId: ComputeLanguageId;
   readonly transportKind: ComputeTransportKind;
   /** Settings discovery must not spawn a runtime or import its execution bridge. */
+  /**
+   * The runtime the user chose for new sessions, if any. Automatic selection may pick any ready
+   * runtime; an explicit choice keeps its own failure. Absent means the configured executable.
+   */
+  readonly selectedExecutable?: (
+    request: ComputeDiscoveryRequest,
+  ) => Effect.Effect<string | null, ComputeRuntimeError>;
   readonly listInstallations?: (
     request: ComputeDiscoveryRequest,
   ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInstallation>, ComputeRuntimeError>;

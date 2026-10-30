@@ -40,6 +40,8 @@ export interface ManagedPythonEnvironmentStatus {
   readonly record: ManagedPythonEnvironmentRecord;
   readonly executable: string;
   readonly available: boolean;
+  /** Set when an unavailable environment still points into another profile's location. */
+  readonly movedFrom?: string;
 }
 
 export type ManagedPythonEnvironmentFailureReason =
@@ -331,6 +333,25 @@ async function readRecord(
   }
 }
 
+/**
+ * A copied profile keeps absolute launcher links and `pyvenv.cfg` homes into the old location. A
+ * managed environment never points outside its own compute directory otherwise.
+ */
+async function movedFrom(computeDir: string, executable: string): Promise<string | null> {
+  const prefix = NodePath.dirname(NodePath.dirname(executable));
+  const config = await NodeFSP.readFile(NodePath.join(prefix, "pyvenv.cfg"), "utf8").catch(
+    () => "",
+  );
+  const home = /^\s*home\s*=\s*(.+?)\s*$/mu.exec(config)?.[1] ?? null;
+  const link = await NodeFSP.readlink(executable).catch(() => null);
+  const target = link === null ? null : NodePath.resolve(NodePath.dirname(executable), link);
+  for (const candidate of [home, target]) {
+    if (candidate !== null && NodePath.isAbsolute(candidate) && !isContained(computeDir, candidate))
+      return candidate;
+  }
+  return null;
+}
+
 async function readStatus(
   paths: ManagedPythonEnvironmentPaths,
   purpose: ManagedPythonPurpose,
@@ -345,10 +366,13 @@ async function readStatus(
   const active = await canonicalGeneration(paths.managedRoot, record.active);
   const previous =
     record.previous === null ? null : await canonicalGeneration(paths.managedRoot, record.previous);
+  const moved =
+    active === null ? await movedFrom(NodePath.dirname(paths.environmentsRoot), executable) : null;
   return {
     record: { ...record, previous: previous?.generation ?? null },
     executable,
     available: active !== null,
+    ...(moved === null ? {} : { movedFrom: moved }),
   };
 }
 

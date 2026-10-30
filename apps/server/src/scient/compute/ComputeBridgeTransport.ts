@@ -1138,7 +1138,8 @@ export function makeComputeBridgeTransport(
               return yield* transportError("handshake", "Kernel protocol version mismatch.");
             }
             const expectedLanguage = request.launch.kernel?.language ?? request.languageId;
-            if (payload.languageId !== expectedLanguage) {
+            // Installed kernels name their language in either case ("Rust", "rust").
+            if (payload.languageId.toLowerCase() !== expectedLanguage.toLowerCase()) {
               return yield* transportError(
                 "handshake",
                 `Expected language '${expectedLanguage}', received '${payload.languageId}'.`,

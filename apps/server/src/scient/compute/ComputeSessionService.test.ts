@@ -1164,6 +1164,90 @@ describe("compute runtime inspection", () => {
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+  it.effect("Automatic inspection and start use the ready runtime, not the first one found", () =>
+    Effect.gen(function* () {
+      const unready: ComputeRuntimeProfile = { ...PROFILE, executable: "/usr/local/bin/python3" };
+      const managed: ComputeRuntimeProfile = {
+        ...PROFILE,
+        source: "managed",
+        executable: "/scient/managed/python",
+      };
+      let discoveries = 0;
+      const test = yield* harness({
+        runtimeProfiles: [unready, managed],
+        adapter: {
+          discover: () => Effect.sync(() => (discoveries += 1)).pipe(Effect.as([unready, managed])),
+          verify: (request) =>
+            Effect.succeed({
+              profile: request.profile,
+              readiness:
+                request.profile.executable === unready.executable
+                  ? ("missing-requirement" as const)
+                  : ("ready" as const),
+              missingRequirements: [],
+              message: null,
+              packages: [],
+            }),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const inspect = (refresh: boolean) =>
+            service.inspectRuntimes({
+              projectRoot: null,
+              workingDirectory: process.cwd(),
+              configuredExecutables: {},
+              enabledLanguageIds: new Set([PYTHON]),
+              refresh,
+              languageIds: new Set([PYTHON]),
+            });
+          const [python] = yield* inspect(true);
+          expect(python?.selection).toEqual({
+            mode: "automatic",
+            executable: managed.executable,
+            problem: null,
+          });
+          expect(python?.runtimes.map((runtime) => runtime.profile.executable)).toEqual([
+            managed.executable,
+            unready.executable,
+          ]);
+          // Reopening is served from the last inspection without discovering again.
+          yield* inspect(false);
+          expect(discoveries).toBe(1);
+          const session = yield* service.startSession(startInput());
+          expect(session.runtime?.executable).toBe(managed.executable);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a failed check as a failure, never as nothing installed", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({
+        adapter: {
+          discover: () =>
+            Effect.fail(
+              new ComputeRuntimeError({ operation: "discover", message: "Probe host crashed." }),
+            ),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const [python] = yield* service.inspectRuntimes({
+            projectRoot: null,
+            workingDirectory: process.cwd(),
+            configuredExecutables: {},
+            enabledLanguageIds: new Set([PYTHON]),
+            refresh: true,
+          });
+          expect(python).toMatchObject({ runtimes: [], failure: "Probe host crashed." });
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps discovery passive and verifies a connection without retaining a session", () =>
     Effect.gen(function* () {
       const test = yield* harness({ connection: "detected" });
@@ -2081,7 +2165,11 @@ describe("compute session startup", () => {
         { requestedExecutable: managed.executable, expected: managed },
       ];
       for (const testCase of cases) {
-        const test = yield* harness({ runtimeProfiles: [managed, configured] });
+        // Scient-managed Python is the user's selection; a one-run choice still overrides it.
+        const test = yield* harness({
+          runtimeProfiles: [managed, configured],
+          adapter: { selectedExecutable: () => Effect.succeed(managed.executable) },
+        });
         yield* test.use(
           Effect.gen(function* () {
             const service = yield* ComputeSessionService;

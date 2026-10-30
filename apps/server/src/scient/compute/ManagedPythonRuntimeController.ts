@@ -184,12 +184,19 @@ export function makeManagedPythonRuntimeController(input: {
             active.provisionerVersion !== MANAGED_PYTHON_PROVISIONER_VERSION);
       const unavailableFailure =
         current !== null && !current.available
-          ? ({
-              reason: "activation-failed",
-              action: "repair",
-              summary: `${displayName} needs repair`,
-              detail: `${displayName} is unavailable. Repair it or choose an existing environment.`,
-            } satisfies ComputeManagedRuntimeFailure)
+          ? current.movedFrom !== undefined
+            ? ({
+                reason: "activation-failed",
+                action: "repair",
+                summary: `${displayName} was copied from another location`,
+                detail: `It still points to ${current.movedFrom}. Repair rebuilds it here.`,
+              } satisfies ComputeManagedRuntimeFailure)
+            : ({
+                reason: "activation-failed",
+                action: "repair",
+                summary: `${displayName} needs repair`,
+                detail: `${displayName} is unavailable. Repair it or choose an existing environment.`,
+              } satisfies ComputeManagedRuntimeFailure)
           : null;
       return {
         ...(input.configuration === undefined

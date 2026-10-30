@@ -30,6 +30,33 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
   Python/Jupyter overrides and the app's own sign-in tokens (`ComputeEnvironmentPolicy`); the user's
   own credentials stay available to their code.
 
+## Finding and choosing runtimes
+
+- **Discovery reads files, never launches.** `RuntimeDiscovery` enumerates Pythons from the
+  project's `.venv`, `.conda` and `.pixi/envs`, an activated environment, every PATH match,
+  pyenv/asdf/mise, uv, conda/mamba roots and `~/.conda/environments.txt`, Homebrew, python.org
+  and, on Windows, PEP 514 registrations (one bounded `reg.exe` read) and conventional folders.
+  Microsoft Store shortcuts and broken virtualenvs carry their cause instead of being probed.
+  R, Julia and MATLAB use the same PATH and versioned-folder helpers. The filesystem is an
+  injected `RuntimeDiscoveryHost`, so Windows and Linux layouts are tested with fakes.
+- **Probes are cached.** `RuntimeProbeCache` shares one probe per executable, bounds concurrency
+  and keeps failures briefly with their reason. Inspection is per language (`languageIds`): each
+  language is served from its last result and refreshed in the background, so opening a Python
+  file never waits on R, Julia or MATLAB. A failed check is reported as `failure`, never as an
+  empty list.
+- **One selection rule** (`RuntimeSelection`) serves inspection and session start. Automatic
+  runs the first ready runtime. An explicit choice and the project's own environment are intent:
+  they run or block with their problem, and are never silently replaced.
+- **Choices belong to one machine.** `scientificComputing.languages[*].selections` is keyed by a
+  hash of host, platform, architecture and home (`<host>`, `<host>/<project>`), so a copied or
+  synced profile never applies another computer's paths. An unscoped `executable` from older
+  settings is migrated into this machine's slot at startup.
+- **Installed Jupyter kernels** (`InstalledKernelRuntime`) add one language per uncurated
+  kernelspec language found at startup, launched through the bridge exactly as the spec says,
+  without variables or tables.
+- A copied managed Python is detected from its `pyvenv.cfg` home or launcher link pointing outside
+  this profile's compute directory; status names the old location and offers Repair.
+
 ## Outputs
 
 Kernels publish MIME bundles. Inline Matplotlib figures carry PNG and PDF, so a shown figure can be

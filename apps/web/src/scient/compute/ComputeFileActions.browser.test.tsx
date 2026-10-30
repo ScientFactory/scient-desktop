@@ -16,6 +16,8 @@ import { page } from "vite-plus/test/browser";
 
 const mocks = vi.hoisted(() => ({
   languages: [] as ComputeLanguageRuntimeInspection[],
+  /** Replaces the inspection a render sets up, e.g. a server that returned no languages. */
+  inspectedLanguages: null as ComputeLanguageRuntimeInspection[] | null,
   managedStatus: null as ComputeManagedRuntimeStatus | null,
   sessions: [] as unknown[],
   markup: "",
@@ -34,7 +36,7 @@ vi.mock("~/state/query", async (original) => ({
   useEnvironmentQuery: (query: string) => ({
     data:
       query === "runtimes"
-        ? { languages: mocks.languages }
+        ? { languages: mocks.inspectedLanguages ?? mocks.languages }
         : query === "sessions"
           ? mocks.sessions
           : query === "managed-status"
@@ -184,6 +186,7 @@ describe("Python file run actions", () => {
     });
     vi.clearAllMocks();
     mocks.managedStatus = null;
+    mocks.inspectedLanguages = null;
     mocks.sessions = [];
     mocks.markup = "";
     mocks.stop.mockReset();
@@ -830,6 +833,45 @@ describe("Python file run actions", () => {
       expect(mocks.markup.includes('data-compute-notice="toolbar"')).toBe(status !== "ready");
     },
   );
+
+  it("shows an empty runtime check as a failed check to retry, not as Set up Python", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    mocks.inspectedLanguages = [];
+    mocks.refresh.mockResolvedValue({ _tag: "Success", value: { languages: [] } });
+    const handle = createRef<ComputeFileActionsHandle>();
+    mocks.markup = await _renderMarkup(
+      _fixture,
+      <ComputeFileActions
+        ref={handle}
+        language={PYTHON_COMPUTE_SOURCE}
+        environmentId={testEnvironmentId}
+        cwd="/project"
+        relativePath="test.py"
+        contents="print(1)"
+        sourceRevision="revision-1"
+        sourcePending={false}
+        selection={null}
+        editorSelection={null}
+        onRunRequested={mocks.runRequested}
+        onShowMatlabOneShot={vi.fn()}
+        onExecutionSubmitted={vi.fn()}
+      />,
+    );
+    const retry = buttonProps().findLast(
+      (button) => button["aria-label"] === "Couldn't check Python. Retry the check",
+    )!;
+    expect(retry).toBeDefined();
+    expect(mocks.markup).not.toContain("Set up Python");
+    retry.onClick?.({} as Parameters<NonNullable<typeof retry.onClick>>[0]);
+    await vi.waitFor(() =>
+      expect(mocks.refresh).toHaveBeenCalledWith(
+        expect.objectContaining({ input: expect.objectContaining({ refresh: true }) }),
+      ),
+    );
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
 
   it("disables ordinary Run when selected managed Python is unusable despite another ready Python", async () => {
     await using _fixture = _createFixture();

@@ -80,6 +80,19 @@ export const ComputeLanguageRuntimeInspection = Schema.Struct({
     .check(Schema.isMaxLength(64))
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   runtimes: Schema.Array(ComputeRuntimeCandidate).check(Schema.isMaxLength(64)),
+  /**
+   * What new sessions use. Automatic picks the best ready runtime; an explicit choice or the
+   * project's environment is used or blocks with its problem. Absent from older servers.
+   */
+  selection: Schema.optional(
+    Schema.Struct({
+      mode: Schema.Literals(["automatic", "explicit", "project"]),
+      executable: Schema.NullOr(ComputeExecutable),
+      problem: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+    }),
+  ),
+  /** The check itself failed; this says nothing about what is installed. */
+  failure: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096)))),
 });
 export type ComputeLanguageRuntimeInspection = typeof ComputeLanguageRuntimeInspection.Type;
 
@@ -104,6 +117,8 @@ export type ComputeLanguageRuntimeInventory = typeof ComputeLanguageRuntimeInven
 
 export const ComputeRuntimeInventory = Schema.Struct({
   languages: Schema.Array(ComputeLanguageRuntimeInventory).check(Schema.isMaxLength(32)),
+  /** This machine's selection key; choices are saved under it. Absent from older servers. */
+  hostKey: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
 });
 export type ComputeRuntimeInventory = typeof ComputeRuntimeInventory.Type;
 
@@ -145,6 +160,8 @@ export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>
 export const ComputeInspectRuntimesInput = Schema.Struct({
   cwd: Schema.NullOr(ComputeCwd),
   refresh: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Only these languages, so opening one file never waits on another language's runtimes. */
+  languageIds: Schema.optional(Schema.Array(ComputeLanguageId).check(Schema.isMaxLength(32))),
 });
 export type ComputeInspectRuntimesInput = typeof ComputeInspectRuntimesInput.Type;
 
