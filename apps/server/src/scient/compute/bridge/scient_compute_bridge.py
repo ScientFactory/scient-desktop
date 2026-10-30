@@ -483,6 +483,9 @@ def validate_kernel_spec(value: Any) -> Optional[dict[str, Any]]:
     expression = value.get("variablesExpression")
     if expression is not None and (not isinstance(expression, str) or not expression):
         raise ProtocolViolation("start-kernel kernel variablesExpression must be a string or null.")
+    timeout = value.get("startupTimeoutSeconds")
+    if timeout is not None and (not isinstance(timeout, int) or not 1 <= timeout <= 600):
+        raise ProtocolViolation("start-kernel kernel startupTimeoutSeconds must be 1-600.")
     return value
 
 
@@ -727,6 +730,7 @@ class ScientBridge:
         self._kernel_client: Any = None
         self._kernel_pid: Optional[int] = None
         self._variables_expression: Optional[str] = VARIABLE_INSPECTION_EXPRESSION
+        self._startup_timeout: int = STARTUP_TIMEOUT
         self._working_directory = os.path.realpath(os.getcwd())
         self._execution_task: Optional[asyncio.Task[None]] = None
         self._kernel_monitor_task: Optional[asyncio.Task[None]] = None
@@ -1082,7 +1086,7 @@ class ScientBridge:
 
     async def _kernel_info(self) -> dict[str, Any]:
         msg_id = self._kernel_client.kernel_info()
-        deadline = time.monotonic() + STARTUP_TIMEOUT
+        deadline = time.monotonic() + self._startup_timeout
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -1125,6 +1129,8 @@ class ScientBridge:
         self._variables_expression = (
             VARIABLE_INSPECTION_EXPRESSION if kernel is None else kernel["variablesExpression"]
         )
+        # Kernels that compile on first start (IJulia) ask for longer than ipykernel needs.
+        self._startup_timeout = (kernel or {}).get("startupTimeoutSeconds") or STARTUP_TIMEOUT
         # ``stdout=DEVNULL`` is the other half of keeping the protocol intact.
         # ``detach_protocol_stream`` already moved the real pipe out of reach, so
         # this only stops the kernel from inheriting whatever now sits on fd 1 --
@@ -1150,7 +1156,7 @@ class ScientBridge:
         self._kernel_pid = self._read_kernel_pid()
         self._kernel_client = self._kernel_manager.client()
         self._kernel_client.start_channels()
-        await self._kernel_client.wait_for_ready(timeout=STARTUP_TIMEOUT)
+        await self._kernel_client.wait_for_ready(timeout=self._startup_timeout)
         info = await self._kernel_info()
         language = info.get("language_info", {})
         if not isinstance(language, dict):
@@ -1293,7 +1299,7 @@ class ScientBridge:
             self._kernel_pid = self._read_kernel_pid()
             self._kernel_client = self._kernel_manager.client()
             self._kernel_client.start_channels()
-            await self._kernel_client.wait_for_ready(timeout=STARTUP_TIMEOUT)
+            await self._kernel_client.wait_for_ready(timeout=self._startup_timeout)
         finally:
             self._kernel_transitioning = False
         # Cancellation is a fact only after replacement succeeded.  If restart

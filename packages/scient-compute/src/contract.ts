@@ -380,6 +380,8 @@ export interface ComputeKernelSpec {
   readonly interruptMode: "signal" | "message";
   /** A kernel expression whose text/plain value is the variables JSON; absent means unsupported. */
   readonly variablesExpression: string | null;
+  /** How long the bridge waits for this kernel to answer, for kernels slow to start. */
+  readonly startupTimeoutSeconds?: number;
 }
 
 /**

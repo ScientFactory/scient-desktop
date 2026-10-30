@@ -151,6 +151,8 @@ function privateKernelDirectory(
 interface Installation {
   readonly executable: string;
   readonly source: ComputeRuntimeSource;
+  /** The installation the user selected, whatever its source label. */
+  readonly configured?: true;
 }
 
 interface KernelState {
@@ -213,6 +215,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     const add = Effect.fn("KernelComputeRuntime.addInstallation")(function* (
       name: string,
       source: ComputeRuntimeSource,
+      configuredInstallation = false,
     ) {
       const bare = !NodePath.isAbsolute(name);
       const executable = bare ? resolveExecutable(name, platform, hostEnvironment) : name;
@@ -221,9 +224,14 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
         .realPath(executable)
         .pipe(Effect.orElseSucceed(() => executable));
       if (found.some((installation) => installation.identity === identity)) return;
-      found.push({ executable, source: bare ? "path" : source, identity });
+      found.push({
+        executable,
+        source: bare ? "path" : source,
+        identity,
+        ...(configuredInstallation ? { configured: true as const } : {}),
+      });
     });
-    if (configured) yield* add(configured, "configured");
+    if (configured) yield* add(configured, "configured", true);
     for (const candidate of language.candidates(platform, environment)) {
       for (const path of yield* expand(candidate)) yield* add(path, "conventional");
     }
@@ -291,10 +299,24 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
   const discover: ComputeLanguageAdapter["discover"] = Effect.fn("KernelComputeRuntime.discover")(
     function* (request) {
       if (request.refresh === true) probeCache.clear();
+      const configured = request.configuredExecutable?.trim() || null;
+      const found = yield* installations(configured);
+      // The selected installation keeps its own failure instead of silently falling back.
+      const unavailable = (executable: string): ComputeRuntimeProfile => ({
+        languageId: language.languageId,
+        source: "configured",
+        executable,
+        languageVersion: "unknown",
+        architecture: null,
+        displayName: `${language.displayName} (configured, not found)`,
+      });
+      if (configured !== null && !found.some((installation) => installation.configured))
+        return [unavailable(configured)];
       const profiles: ComputeRuntimeProfile[] = [];
-      for (const installation of yield* installations(request.configuredExecutable)) {
+      for (const installation of found) {
         const result = yield* Effect.result(probe(installation.executable));
         if (result._tag === "Success") profiles.push(profileFor(installation, result.success));
+        else if (installation.configured) return [unavailable(installation.executable)];
       }
       return profiles;
     },
@@ -373,6 +395,9 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
         language: language.kernelLanguage,
         interruptMode: language.interruptMode(platform),
         variablesExpression: language.variablesExpression,
+        ...(language.startupTimeoutMs === undefined
+          ? {}
+          : { startupTimeoutSeconds: Math.ceil(language.startupTimeoutMs / 1000) }),
       },
     };
   });
@@ -401,11 +426,11 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
   )(function* (request) {
     const configured = request.configuredExecutable?.trim() || null;
     const found: ComputeRuntimeInstallation[] = (yield* installations(configured)).map(
-      ({ executable, source }) => ({
-        executable,
-        source,
-        ...(executable === configured ? { configured: true } : {}),
-        version: probeCache.get(executable)?.probe.version ?? null,
+      (installation) => ({
+        executable: installation.executable,
+        source: installation.source,
+        ...(installation.configured ? { configured: true } : {}),
+        version: probeCache.get(installation.executable)?.probe.version ?? null,
         problem: null,
       }),
     );
@@ -432,6 +457,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
   const target = Effect.fn("KernelComputeRuntime.setupTarget")(function* () {
     const configured = yield* input.configuredExecutable(language.languageId);
     for (const installation of yield* installations(configured)) {
+      if (configured !== null && installation.configured !== true) return null;
       const state = yield* Effect.result(kernelState(installation.executable));
       if (state._tag === "Success") return { installation, state: state.success };
     }
@@ -575,6 +601,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     },
     managedRuntime: {
       isRemoving: () => operation?.action === "remove",
+      rebuildsInPlace: true,
       status: () => status(),
       manage: (action) => manage(action),
       cancel: () => cancel(),
