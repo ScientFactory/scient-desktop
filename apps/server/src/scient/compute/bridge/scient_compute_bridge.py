@@ -374,7 +374,7 @@ MAX_COLUMNS = 1024
 MAX_ROWS = 200
 MAX_CELLS = 16384
 MAX_CELL = 200
-MAX_LABEL = 256
+MAX_LABEL = 255
 
 _short = reprlib.Repr()
 _short.maxstring = MAX_CELL
@@ -427,7 +427,7 @@ class _FrameTable:
                 else "other"
             )
             result.append({
-                "name": _cut(str(self.frame.columns[index]), 4096),
+                "name": _cut(str(self.frame.columns[index]), 4095),
                 "type": kind,
                 "label": _cut(str(dtype), MAX_LABEL),
             })
