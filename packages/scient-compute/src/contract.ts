@@ -385,6 +385,9 @@ export interface ComputeKernelSpec {
   readonly variablesExpression: string | null;
   /** How long the bridge waits for this kernel to answer, for kernels slow to start. */
   readonly startupTimeoutSeconds?: number;
+  /** An installed kernelspec's own environment and directory, as Jupyter would apply them. */
+  readonly env?: Readonly<Record<string, string>>;
+  readonly resourceDir?: string;
 }
 
 /**

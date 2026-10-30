@@ -668,7 +668,8 @@ def validate_kernel_spec(value: Any) -> Optional[dict[str, Any]]:
         not isinstance(argv, list)
         or not argv
         or not all(isinstance(part, str) and part for part in argv)
-        or "{connection_file}" not in argv
+        # Jupyter substitutes inside an argument too, as in --connection-file={connection_file}.
+        or not any("{connection_file}" in part for part in argv)
     ):
         raise ProtocolViolation("start-kernel kernel argv must name {connection_file}.")
     language = value.get("language")
@@ -682,6 +683,15 @@ def validate_kernel_spec(value: Any) -> Optional[dict[str, Any]]:
     timeout = value.get("startupTimeoutSeconds")
     if timeout is not None and (not isinstance(timeout, int) or not 1 <= timeout <= 600):
         raise ProtocolViolation("start-kernel kernel startupTimeoutSeconds must be 1-600.")
+    env = value.get("env")
+    if env is not None and (
+        not isinstance(env, dict)
+        or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
+    ):
+        raise ProtocolViolation("start-kernel kernel env must map strings to strings.")
+    resource_dir = value.get("resourceDir")
+    if resource_dir is not None and (not isinstance(resource_dir, str) or not resource_dir):
+        raise ProtocolViolation("start-kernel kernel resourceDir must be a non-empty string.")
     return value
 
 
@@ -1243,11 +1253,15 @@ class ScientBridge:
                 language="python",
             )
         else:
+            # An installed kernelspec keeps its own environment and resource
+            # directory, so Jupyter substitutes {resource_dir} as it would.
             spec = KernelSpec(
                 argv=list(kernel["argv"]),
                 display_name="Scient " + kernel["language"],
                 language=kernel["language"],
                 interrupt_mode=kernel["interruptMode"],
+                env=dict(kernel.get("env") or {}),
+                resource_dir=kernel.get("resourceDir") or "",
             )
         manager = AsyncKernelManager(
             kernel_name="scient-kernel",
@@ -1367,10 +1381,12 @@ class ScientBridge:
                 "languageId": language.get("name", "python"),
                 "languageVersion": language.get("version", "unknown"),
                 "protocolVersion": PROTOCOL_VERSION,
+                # A kernel without an inspection expression has no variables to offer.
                 "capabilities": [
                     capability
                     for capability in self._capabilities
-                    if capability != "tables" or self._serves_tables
+                    if (capability != "tables" or self._serves_tables)
+                    and (capability != "variables" or self._variables_expression is not None)
                 ],
             },
         )
