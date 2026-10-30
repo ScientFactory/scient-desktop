@@ -68,6 +68,19 @@ export const makeAccountsRpcHandlers = ({
         check(input).pipe(Effect.map((checked) => ({ checked }))),
         attributes,
       ),
+    [WS_METHODS.accountsSignInSeen]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSignInSeen,
+        accounts
+          .recordUse({
+            target: { type: "account", accountId: input.accountId },
+            action: "sign-in",
+            signInOutcome: "signed-in",
+            outcome: "ok",
+          })
+          .pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsSetControls]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSetControls,

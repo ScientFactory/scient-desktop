@@ -26,6 +26,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsRemove]: AuthSettingsWriteScope,
   [WS_METHODS.accountsTest]: AuthSettingsWriteScope,
   [WS_METHODS.accountsCheck]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSignInSeen]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileUpdate]: AuthSettingsWriteScope,

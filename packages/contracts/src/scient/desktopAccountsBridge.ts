@@ -48,6 +48,8 @@ export interface DesktopSignInFill {
   readonly expectedOrigin?: string;
   readonly documentId?: string;
   readonly automatic?: boolean;
+  /** Submit a complete sign-in after filling it. */
+  readonly submit?: boolean;
   readonly username?: string;
   readonly password?: string;
   readonly otp?: string;

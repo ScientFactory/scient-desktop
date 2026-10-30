@@ -33,6 +33,7 @@ const Fill = Schema.Struct({
   otp: Schema.optional(Value),
   documentId: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
   automatic: Schema.optional(Schema.Boolean),
+  submit: Schema.optional(Schema.Boolean),
 });
 const Sites = Schema.Struct({
   profileId: BrowserProfileId,

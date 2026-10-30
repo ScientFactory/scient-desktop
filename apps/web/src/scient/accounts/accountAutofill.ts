@@ -26,6 +26,9 @@ export function filledTabRecord(runtimeTabId: string, url: string) {
   return tab ? { threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, url } : undefined;
 }
 
+/** Signing back in is tried once per site in this long: a wrong password must not repeat. */
+const SIGN_BACK_IN_COOLDOWN_MS = 10 * 60 * 1000;
+
 const filled = new Map<string, { readonly accountId: string; readonly url: string }>();
 const listeners = new Set<() => void>();
 
@@ -39,10 +42,10 @@ export const autofilledTabs = {
 };
 
 /**
- * Fills a saved sign-in into every login form the desktop reports for this environment's tabs,
- * shown or hidden, the user's or an agent's. It never submits, never replaces typed text, and
- * never fills incognito. In the user's tabs every saved sign-in fills, and the server keeps a
- * filled page from agents that may not use it; in an agent's tab, only sign-ins that agent may use.
+ * Fills saved sign-ins into every login form in this environment's tabs, but never over typed text
+ * or in incognito. An agent's tab gets only what that agent may use; the server keeps the user's
+ * filled pages from other agents. It submits only to sign the user back in: their own tab, the
+ * site's one saved sign-in, known to work.
  */
 export function watchAccountAutofill(
   registry: AtomRegistry.AtomRegistry,
@@ -51,6 +54,7 @@ export function watchAccountAutofill(
   const bridge = window.desktopBridge?.accounts;
   if (!bridge?.originBoundFill || !bridge.onLoginFormDetected) return () => undefined;
   const attempted = new Set<string>();
+  const signedBackIn = new Map<string, number>();
   const snapshot = async () => {
     const current = registry.get(accountsState.snapshot({ environmentId, input: {} }));
     if (AsyncResult.isSuccess(current)) return current.value;
@@ -75,10 +79,18 @@ export function watchAccountAutofill(
     const projectId = appAtomRegistry.get(
       environmentThreadShells.threadShellAtom(threadRef),
     )?.projectId;
-    const account = matchingAccounts(accounts.accounts, form.url, form.profileId).find(
+    const matches = matchingAccounts(accounts.accounts, form.url, form.profileId);
+    const account = matches.find(
       (match) => !agentTab || agentMayUse(match.controls, accounts.agentAccess, projectId),
     );
     if (!account) return;
+    const lastSubmitted = signedBackIn.get(form.url) ?? 0;
+    const submit =
+      !agentTab &&
+      matches.length === 1 &&
+      account.lastSignInOutcome === "signed-in" &&
+      Date.now() - lastSubmitted > SIGN_BACK_IN_COOLDOWN_MS;
+    if (submit) signedBackIn.set(form.url, Date.now());
     const pageUrl = form.pageUrl ?? form.url;
     const values = await accountsState.fillValues.run(registry, {
       environmentId,
@@ -96,6 +108,7 @@ export function watchAccountAutofill(
         expectedOrigin: form.url,
         documentId: form.documentId,
         automatic: true,
+        ...(submit ? { submit: true } : {}),
         ...(values.value.username === undefined ? {} : { username: values.value.username }),
         ...(values.value.password === undefined ? {} : { password: values.value.password }),
         ...(values.value.otp === undefined ? {} : { otp: values.value.otp }),

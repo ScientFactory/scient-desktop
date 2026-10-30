@@ -671,6 +671,10 @@ export const AccountMatchSignInResult = Schema.Struct({
 });
 export type AccountMatchSignInResult = typeof AccountMatchSignInResult.Type;
 
+/** The user's own sign-in with this saved password went through. */
+export const AccountSignInSeenInput = Schema.Struct({ accountId: AccountId });
+export type AccountSignInSeenInput = typeof AccountSignInSeenInput.Type;
+
 /** Every browser sign-in, or one. */
 export const AccountsCheckInput = Schema.Struct({ accountId: Schema.optional(AccountId) });
 export type AccountsCheckInput = typeof AccountsCheckInput.Type;

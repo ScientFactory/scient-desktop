@@ -22,6 +22,8 @@ import { SaveStores } from "./SaveStores";
 import { autofilledTabs, filledTabRecord } from "./accountAutofill";
 
 const NEVER_KEY = "scient.accounts.never-save.v1";
+/** A submitted form has had time to reject the password by now. */
+const SIGN_IN_SETTLE_MS = 6_000;
 function neverSaveSites(): ReadonlyArray<string> {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(NEVER_KEY) ?? "[]");
@@ -176,6 +178,7 @@ function DesktopBrowserAccountControls({
   }, [url]);
   const getValues = useAccountCommand(accountsState.fillValues, environmentId);
   const compare = useAccountCommand(accountsState.matchSignIn, environmentId);
+  const signInSeen = useAccountCommand(accountsState.signInSeen, environmentId);
   const onCapture = useEffectEvent((capture: DesktopCapturedSignIn) => {
     if (capture.tabId !== tabId || capture.profileId !== profileId || !capture.password) return;
     try {
@@ -191,6 +194,13 @@ function DesktopBrowserAccountControls({
         });
         if (generation !== captureGeneration.current || !result.ok) return;
         setPending(result.value.result === "same" ? null : { capture, comparison: result.value });
+        // The saved password went in; once the login form is gone, it worked.
+        const { accountId } = result.value;
+        if (result.value.result === "same" && accountId) {
+          await new Promise((settled) => setTimeout(settled, SIGN_IN_SETTLE_MS));
+          const form = await window.desktopBridge?.accounts?.loginForm?.(tabId);
+          if (form === null) void signInSeen({ accountId });
+        }
       })();
     } catch {
       return;

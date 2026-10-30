@@ -69,7 +69,11 @@ function fillLoginForm(
     otp?: string | undefined;
   },
   expectedOrigin: string,
-  options: { documentId?: string | undefined; automatic?: boolean | undefined } = {},
+  options: {
+    documentId?: string | undefined;
+    automatic?: boolean | undefined;
+    submit?: boolean | undefined;
+  } = {},
   labels = { remember: REMEMBER_SIGN_IN_LABEL, forget: FORGET_SIGN_IN_LABEL },
 ) {
   if (location.origin !== expectedOrigin || (options.automatic && !options.documentId))
@@ -117,6 +121,10 @@ function fillLoginForm(
           new RegExp(labels.forget, "i"),
         );
       if (options.automatic && state) state.autoFilled = true;
+      // Only a complete sign-in: a username step still needs the user's page to move on.
+      const form = detected.inputs[detected.password]?.form;
+      if (options.submit && values.username !== undefined && detected.username !== -1)
+        form?.requestSubmit();
       return true;
     }
   }
@@ -130,7 +138,11 @@ export const loginFillScript = (
     otp?: string | undefined;
   },
   origin: string,
-  options: { documentId?: string | undefined; automatic?: boolean | undefined } = {},
+  options: {
+    documentId?: string | undefined;
+    automatic?: boolean | undefined;
+    submit?: boolean | undefined;
+  } = {},
 ) =>
   `(() => { const loginDocumentState = ${loginDocumentState.toString()}; const detectLoginFields = ${detectLoginFields.toString()}; const collectLoginFields = ${collectLoginFields.toString()}; const tickRememberSignIn = ${tickRememberSignIn.toString()}; return (${fillLoginForm.toString()})(${JSON.stringify(values)}, ${JSON.stringify(origin)}, ${JSON.stringify(options)}, ${JSON.stringify({ remember: REMEMBER_SIGN_IN_LABEL, forget: FORGET_SIGN_IN_LABEL })}); })()`;
 

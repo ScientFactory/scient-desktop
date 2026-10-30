@@ -128,6 +128,21 @@ it("automatically fills one untouched document only and rejects typed values or 
   expect(window.eval(loginFillScript(values, location.origin))).toBe(true);
 });
 
+it("submits only a complete sign-in, and only when asked", () => {
+  using f = fixture();
+  const form = document.querySelector("form")!;
+  const submitted = vi.spyOn(form, "requestSubmit").mockImplementation(() => undefined);
+  const username = NodeCrypto.randomBytes(8).toString("hex");
+  const password = NodeCrypto.randomBytes(8).toString("hex");
+  window.eval(loginFillScript({ username, password }, location.origin));
+  expect(submitted).not.toHaveBeenCalled();
+  window.eval(loginFillScript({ password }, location.origin, { submit: true }));
+  expect(submitted).not.toHaveBeenCalled();
+  window.eval(loginFillScript({ username, password }, location.origin, { submit: true }));
+  expect(submitted).toHaveBeenCalledOnce();
+  expect(f.inputs[1]?.value).toBe(password);
+});
+
 it("ticks remember me beside a filled password, but never a shared-computer option", () => {
   using f = fixture();
   const form = document.querySelector("form")!;
