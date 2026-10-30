@@ -19,6 +19,7 @@ import {
   StreamText,
 } from "./primitives.ts";
 import { ComputeDisplayOutput, ComputeMediaType } from "./representation.ts";
+import type { DataTablePage, DataTableQuery } from "./table.ts";
 
 export const ComputeSessionId = EntityId.pipe(Schema.brand("ComputeSessionId"));
 export type ComputeSessionId = typeof ComputeSessionId.Type;
@@ -250,6 +251,7 @@ export const ComputeCapability = Schema.Literals([
   "completion",
   "inspection",
   "variables",
+  "tables",
   "stdin",
 ]);
 export type ComputeCapability = typeof ComputeCapability.Type;
@@ -364,6 +366,7 @@ export class ComputeTransportError extends Schema.TaggedError<ComputeTransportEr
       "restart",
       "shutdown",
       "variables",
+      "table",
       "receive",
     ]),
     message: Schema.NonEmptyString.check(Schema.isMaxLength(4096)),
@@ -436,6 +439,14 @@ export interface ComputeVariablesRequest {
   readonly expectedGeneration: ComputeSessionGeneration;
 }
 
+/** One page of a tabular value in the live namespace, read without entering history. */
+export interface ComputeTableRequest {
+  readonly requestId: ComputeRequestId;
+  readonly expectedGeneration: ComputeSessionGeneration;
+  readonly name: string;
+  readonly query: DataTableQuery;
+}
+
 /**
  * Events decide asynchronous outcomes; interrupt's return only acknowledges signal delivery.
  * Expected generation on every mutation prevents stale clients from executing in or destroying a
@@ -451,6 +462,9 @@ export interface ComputeChannel {
   readonly inspectVariables: (
     request: ComputeVariablesRequest,
   ) => Effect.Effect<ComputeVariableSnapshot, ComputeTransportError>;
+  readonly inspectTable: (
+    request: ComputeTableRequest,
+  ) => Effect.Effect<DataTablePage, ComputeTransportError>;
   readonly shutdown: (
     request: ComputeShutdownRequest,
   ) => Effect.Effect<void, ComputeTransportError>;

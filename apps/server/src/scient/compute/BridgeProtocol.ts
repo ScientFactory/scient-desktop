@@ -16,6 +16,8 @@ import {
   ComputeSessionId,
   ComputeVariable,
   ComputeProtocolError,
+  DataTablePage,
+  DataTableQuery,
   type ComputeProtocolMessage,
 } from "@scientfactory/compute";
 
@@ -62,6 +64,8 @@ export const BridgeMessageType = Schema.Literals([
   "interrupt-result",
   "inspect-variables",
   "variables",
+  "inspect-table",
+  "table",
   "restart",
   "restarted",
   "shutdown",
@@ -76,6 +80,7 @@ export const SERVER_TO_BRIDGE_TYPES: ReadonlySet<BridgeMessageType> = new Set([
   "execute",
   "interrupt",
   "inspect-variables",
+  "inspect-table",
   "restart",
   "shutdown",
 ]);
@@ -91,6 +96,7 @@ export const BRIDGE_TO_SERVER_TYPES: ReadonlySet<BridgeMessageType> = new Set([
   "execution-complete",
   "interrupt-result",
   "variables",
+  "table",
   "restarted",
   "shutdown-complete",
   "fatal",
@@ -114,6 +120,8 @@ const COMMAND_CORRELATED_TYPES: ReadonlySet<BridgeMessageType> = new Set([
   "interrupt-result",
   "inspect-variables",
   "variables",
+  "inspect-table",
+  "table",
 ]);
 
 /**
@@ -348,6 +356,18 @@ export const VariablesPayload = Schema.Struct({
 });
 export type VariablesPayload = typeof VariablesPayload.Type;
 
+export const InspectTablePayload = Schema.Struct({
+  name: Label,
+  query: DataTableQuery,
+});
+export type InspectTablePayload = typeof InspectTablePayload.Type;
+
+export const TablePayload = Schema.Struct({
+  table: Schema.NullOr(DataTablePage),
+  error: Schema.NullOr(ShortText),
+});
+export type TablePayload = typeof TablePayload.Type;
+
 export const RestartPayload = Schema.Struct({
   nextGeneration: ComputeSessionGeneration,
 });
@@ -392,6 +412,8 @@ const PAYLOAD_DECODERS: Readonly<Record<BridgeMessageType, (input: unknown) => u
   "interrupt-result": Schema.decodeUnknownSync(InterruptResultPayload),
   "inspect-variables": Schema.decodeUnknownSync(InspectVariablesPayload),
   variables: Schema.decodeUnknownSync(VariablesPayload),
+  "inspect-table": Schema.decodeUnknownSync(InspectTablePayload),
+  table: Schema.decodeUnknownSync(TablePayload),
   restart: Schema.decodeUnknownSync(RestartPayload),
   restarted: Schema.decodeUnknownSync(RestartedPayload),
   shutdown: Schema.decodeUnknownSync(ShutdownPayload),
