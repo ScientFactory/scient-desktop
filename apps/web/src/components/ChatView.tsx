@@ -402,7 +402,7 @@ import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullReq
 import { useProactivePanels } from "../hooks/useProactivePanels";
 
 import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
-import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
@@ -2759,12 +2759,24 @@ function ChatViewContent(props: ChatViewProps) {
   });
   // SCIENT-FORK:END
 
+  // SCIENT-FORK:START — see the thread-open focus effect below.
+  const composerAutoFocusThreadIdRef = useRef<string | null>(null);
+  // SCIENT-FORK:END
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- schedules a frame to focus the composer DOM element when a thread opens with the terminal closed
   useEffect(() => {
+    // SCIENT-FORK:START — opening a thread or closing its terminal focuses the composer. The
+    // same thread re-resolving (a reconnect) must not pull the caret out of a browser page or a
+    // document the person is typing in.
+    if (terminalUiState.terminalOpen) composerAutoFocusThreadIdRef.current = null;
     if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    const opened = composerAutoFocusThreadIdRef.current !== activeThread.id;
+    composerAutoFocusThreadIdRef.current = activeThread.id;
     const frame = window.requestAnimationFrame(() => {
-      focusComposerStable();
+      if (opened || shouldRefocusComposerOnWindowFocus(document.activeElement)) {
+        focusComposerStable();
+      }
     });
+    // SCIENT-FORK:END
     return () => {
       window.cancelAnimationFrame(frame);
     };
@@ -3340,6 +3352,11 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:END
   const threadFindEnabled = isServerThread && serverConfig?.threadFind === true;
   const isThreadFindActive = useThreadFindOpen(activeThreadRef, threadFindEnabled);
+  const openThreadFindStable = useStableCallback((threadRef: ScopedThreadRef) => {
+    if (threadFindEnabled && scopedThreadKey(threadRef) === activeThreadKey) {
+      openThreadFind(activeThreadKey);
+    }
+  });
 
   // SCIENT-FORK:START — side-panel tab shortcuts and duplicating a tab (scient/rightPanel)
   const panelTabs = usePanelTabShortcuts({
@@ -4043,6 +4060,7 @@ function ChatViewContent(props: ChatViewProps) {
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
               : {})}
+            {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
           />
         </header>
 
@@ -4419,7 +4437,7 @@ function ChatViewContent(props: ChatViewProps) {
                                             : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
-                              bannerItems={composerBannerItems}
+                              bannerItems={isDraftHeroState ? [] : composerBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
                               onToggleKeepFullHistory={toggleKeepFullHistoryStable}
@@ -4584,6 +4602,12 @@ function ChatViewContent(props: ChatViewProps) {
                           )}
                         </div>
                       </div>
+                      {isDraftHeroState && composerBannerItems.length > 0 ? (
+                        // Out of flow, like the headline, so a notice never moves the centered composer.
+                        <div className="absolute inset-x-0 top-full flex flex-col gap-1 pt-4">
+                          <ComposerBannerStack items={composerBannerItems} detached />
+                        </div>
+                      ) : null}
                     </ComposerSurface.Shell>
                     <div
                       aria-hidden

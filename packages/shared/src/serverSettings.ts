@@ -14,7 +14,7 @@ import {
   type ModelSelection,
   type ProjectId,
   type ProjectScopedServerSettingKey,
-  type ProjectSettingsOverrides,
+  ProjectSettingsOverrides,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -226,6 +226,16 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+const knownProjectOverrideKeys = new Set(Object.keys(ProjectSettingsOverrides.fields));
+
+function pickOverrideKeys(entry: ProjectSettingsOverrides | undefined, known: boolean) {
+  return Object.fromEntries(
+    Object.entries<unknown>(entry ?? {}).filter(
+      ([key]) => knownProjectOverrideKeys.has(key) === known,
+    ),
+  );
+}
+
 /**
  * Older clients round-trip project entries without newer keys. Preserve those
  * keys unless the patch explicitly clears them.
@@ -245,7 +255,10 @@ function mergeProjectSettingsOverridesPatch(
     const storedTitleInstructions = current[projectId]?.threadTitleInstructions;
     const { threadTitleInstructions, ...overrides } = entry;
     const merged: ProjectSettingsOverrides = {
-      ...overrides,
+      // Preserve downgraded storage, but reject new unknown writes so clients can detect unsupported settings.
+      ...pickOverrideKeys(current[projectId], false),
+      ...pickOverrideKeys(overrides, true),
+      // SCIENT-FORK:START — an omitted title instruction survives; null clears it.
       ...(threadTitleInstructions === undefined
         ? storedTitleInstructions === undefined
           ? {}
@@ -253,6 +266,7 @@ function mergeProjectSettingsOverridesPatch(
         : threadTitleInstructions === null
           ? {}
           : { threadTitleInstructions }),
+      // SCIENT-FORK:END
       ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
         ? {}
         : { providerInstances: storedProviderInstances }),
@@ -377,6 +391,7 @@ export function applyServerSettingsPatch(
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     usageAccountingSources: usageAccountingSourcesPatch,
+    secretProviders: secretProvidersPatch,
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
@@ -583,6 +598,9 @@ export function applyServerSettingsPatch(
             usageAccountingSourcesPatch,
           ),
         }
+      : {}),
+    ...(secretProvidersPatch !== undefined
+      ? { secretProviders: mergeSettingsEntries(current.secretProviders, secretProvidersPatch) }
       : {}),
     ...(usagePriceOverridesPatch !== undefined
       ? {

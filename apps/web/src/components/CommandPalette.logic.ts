@@ -28,6 +28,9 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
+// SCIENT-FORK:START — pasted browse paths
+import { isHostPath } from "@t3tools/shared/path";
+// SCIENT-FORK:END
 import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
@@ -419,6 +422,18 @@ export function resolveBrowseEnterAction(input: {
   }
   return "activate-highlighted";
 }
+
+// SCIENT-FORK:START — a pasted full path replaces the browse box
+/**
+ * The path a paste should replace the browse box with, or null to paste normally.
+ * Joined to the starting folder, a full path names a folder inside it instead of
+ * the one the person copied, and Add project would create it empty.
+ */
+export function resolvePastedBrowsePath(pastedText: string): string | null {
+  const path = pastedText.trim();
+  return isHostPath(path) && !/[\r\n]/.test(path) ? path : null;
+}
+// SCIENT-FORK:END
 
 export function shouldOfferProjectPathCreation(input: {
   readonly canSubmitBrowsePath: boolean;

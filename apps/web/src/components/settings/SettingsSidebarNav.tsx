@@ -1,7 +1,6 @@
 // SCIENT-FORK:START — Scient Accounts: discover supported Accounts environments.
 import { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { KeyRoundIcon } from "lucide-react";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { accountsAvailability } from "~/scient/accounts/accountsState";
 // SCIENT-FORK:END
@@ -35,6 +34,7 @@ import {
   Mic2Icon,
   PanelsTopLeftIcon,
   KeyboardIcon,
+  KeyRoundIcon,
   Layers3Icon,
   PaletteIcon,
   // SCIENT-FORK:START — Scient Extensions
@@ -149,6 +149,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/worktrees": FolderTreeIcon,
   "/settings/connections": ServerIcon,
   "/settings/access": ShieldCheckIcon,
+  "/settings/secrets": KeyRoundIcon,
   "/settings/maintenance": WrenchIcon,
   "/settings/labs": FlaskConicalIcon,
   "/settings/about": InfoIcon,

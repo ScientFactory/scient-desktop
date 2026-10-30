@@ -6,23 +6,23 @@
   "officialDefaultBranch": "main",
   "updateMode": "thin-fork-merge",
   "candidateStatus": "active-public-desktop",
-  "integrationBase": "6d450a4284852af137b2f3407fddd89eb76e7644",
-  "reviewedThrough": "6d450a4284852af137b2f3407fddd89eb76e7644",
-  "reviewedAt": "2026-10-29",
-  "reviewRecord": "docs/internals/t3-upstream-sync-20261029-6d450a4284.md",
+  "integrationBase": "dd148481531a0a090780a2ade20588566db099a2",
+  "reviewedThrough": "dd148481531a0a090780a2ade20588566db099a2",
+  "reviewedAt": "2026-10-30",
+  "reviewRecord": "docs/internals/t3-upstream-sync-20261030-dd14848153.md",
   "verifiedBaseline": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTipAtBootstrap": "a2ca89aa10f13a2222e08afd98c66285121d5ba2",
   "observedOfficialTagAtBootstrap": "v0.0.32-nightly.20260806.1012",
   "bootstrapBranch": "agent/d4-bootstrap-20260806",
   "bootstrapMerge": "3e8f7bc0e18be4a42c23b021e68bf30e3690bc4d",
   "bootstrapRecord": "docs/internals/scient-next-d4-bootstrap.md",
-  "lastRefreshBase": "abe2e529285a9b1b204e507d5673d2fd3dff5dbd",
-  "lastRefreshPreviousOfficialTip": "9826dbb9904b2591bfbf60d1317486b59132f56b",
-  "lastRefreshOfficialTip": "6d450a4284852af137b2f3407fddd89eb76e7644",
+  "lastRefreshBase": "51505395956e7dc959e00c868b10048a63f89946",
+  "lastRefreshPreviousOfficialTip": "6d450a4284852af137b2f3407fddd89eb76e7644",
+  "lastRefreshOfficialTip": "dd148481531a0a090780a2ade20588566db099a2",
   "lastRefreshOfficialTag": null,
-  "lastRefreshRangeCount": 44,
-  "lastRefreshMerge": "49d0d85dde06de7b398f4d117a098cd41fb862a7",
-  "lastRefreshBranch": "codex/t3-sync-6d450a4284-20261029",
+  "lastRefreshRangeCount": 99,
+  "lastRefreshMerge": "e86962f1278340f6fdbdda071ebe1cc0a11aec22",
+  "lastRefreshBranch": "codex/t3-sync-dd14848153-20261030",
   "historicalExceptions": [
     {
       "id": "t3-pr-5822-projectless-threads",
@@ -43,5 +43,5 @@
       "replacementMerge": null
     }
   ],
-  "lastRefreshVerifiedAt": "2026-10-29T16:00:00Z"
+  "lastRefreshVerifiedAt": "2026-10-30T02:00:00Z"
 }

@@ -38,6 +38,7 @@ for (const previousId of [49, 50, 52, 71] as const) {
               [74, "PeerLinks"],
               [75, "PeerLinkFence"],
               [76, "WaitingLinkRequestIndex"],
+              [77, "ActiveTurnItemIndexes"],
             ]);
             assert.deepStrictEqual(
               yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`,

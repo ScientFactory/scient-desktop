@@ -66,6 +66,7 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
+  readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
   // SCIENT-FORK:START — "New section…" needs a name, which the caller asks for.
   readonly onRequestNewSection: (
@@ -74,7 +75,7 @@ export function useThreadActionMenu(input: {
   ) => void;
   // SCIENT-FORK:END
 }) {
-  const { threadRef, projectCwd, onStartRename, canShareWithGuest } = input;
+  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
   // SCIENT-FORK:START
   const { menuFor: sectionMenuFor, handleMenuAction: handleSectionMenuAction } =
     useThreadSectionMenu(input.onRequestNewSection);
@@ -148,6 +149,7 @@ export function useThreadActionMenu(input: {
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+        canFind: onFind !== undefined,
         branch: thread.branch ?? null,
         // The chat header has no project-scoped thread list behind the
         // menu, so the "Filter by project" affordance is sidebar-only.
@@ -211,6 +213,9 @@ export function useThreadActionMenu(input: {
         }
       };
       switch (action) {
+        case "find":
+          onFind?.(threadRef);
+          return;
         case "project-settings": {
           const project = projects.find(
             (candidate) =>

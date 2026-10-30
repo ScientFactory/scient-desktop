@@ -128,6 +128,9 @@ class WorktreeRecreateNoBaseError extends Schema.TaggedError<WorktreeRecreateNoB
 }
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+const isProviderAdapterOpenSessionError = Schema.is(
+  ProviderAdapter.ProviderAdapterOpenSessionError,
+);
 
 /**
  * Claude refuses these before it reads the prompt: replacing a process running background work,
@@ -880,12 +883,16 @@ export const layer: Layer.Layer<
       }
       // SCIENT-FORK:END provider-enabled-at-open
       if (sessionResult._tag === "Failure") {
+        const failure = sessionResult.failure;
+        const requiresSignIn =
+          "cause" in failure &&
+          isProviderAdapterOpenSessionError(failure.cause) &&
+          failure.cause.requiresSignIn === true;
         // A disposed buffered generation cannot be recreated by retrying session startup.
-        if (
-          input.willRetry === true &&
-          !(providerWork !== undefined && sessionResult.failure._tag === "ProviderTurnStartError")
-        )
-          return yield* sessionResult.failure;
+        const bufferedGenerationLost =
+          providerWork !== undefined && failure._tag === "ProviderTurnStartError";
+        if (input.willRetry === true && !requiresSignIn && !bufferedGenerationLost)
+          return yield* failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",

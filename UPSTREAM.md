@@ -616,6 +616,18 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`dd148481531a0a090780a2ade20588566db099a2` is recorded in
+[the 2026-10-30 dd14848153 receipt](docs/internals/t3-upstream-sync-20261030-dd14848153.md).
+Literal merge `e86962f1278340f6fdbdda071ebe1cc0a11aec22` has owned base
+`51505395956e7dc959e00c868b10048a63f89946` (#707, which carries #694) and the frozen
+official target as parents, retaining the 99 official commits after `6d450a4284`.
+Upstream's server performance work is in; Scient keeps full SQLite durability, its
+counts-free startup heartbeat, and its settings, sidebar-section and fork-history
+additions on upstream's faster shapes. Upstream's migration 073 lands as Scient 077.
+1Password secret providers stay behind upstream's off-by-default flag. Release remains
+separate.
+
+The previous committed alignment through
 `6d450a4284852af137b2f3407fddd89eb76e7644` is recorded in
 [the 2026-10-29 6d450a4284 receipt](docs/internals/t3-upstream-sync-20261029-6d450a4284.md),
 stacked on #694. Literal merge `49d0d85dde06de7b398f4d117a098cd41fb862a7` has owned base
@@ -1764,3 +1776,30 @@ When aligning, check:
 - **User docs.** `docs/user/keybindings.md` (these shortcuts) and `docs/user/devices.md`
   (Device under More on the New tab page) carry no markers, like the rest of
   Scient's lines there.
+
+## Add project paste
+
+The Add project box starts with the home folder (`~/` until the environment resolves it) or the
+configured base folder. Upstream's input only ever joins pasted text to that, so pasting
+`/Users/dana/thesis` gives `/Users/dana//Users/dana/thesis`, a missing folder inside home that
+Add project creates empty. The marked `onPaste` seam in
+`CommandPalette.tsx` replaces the box when `resolvePastedBrowsePath` sees a full path, and leaves
+every other paste and all typing alone. Drop the seam if upstream fixes this in their picker.
+
+## Browser downloads and composer focus
+
+Browser download attribution is upstream's, unchanged: `DesktopBrowserHost.humanStartedDownload`
+treats a download as the person's unless agent CDP input reached the tab in the last 5 seconds,
+and only then does `Manager.ts` copy it to ~/Downloads. Do not attribute downloads from the guest
+preload's input reports. Chrome's PDF viewer is an out-of-process frame the preload never runs in,
+so its Download button would never count as the person's, and the file would be lost when the tab
+closes (this happened between the 2026-10-09 alignment and 2026-10-30). Keep the preload's input
+reports asynchronous; a synchronous IPC per key or click makes page typing wait on the main process.
+
+Two marked focus seams keep the caret where the person is typing:
+
+- `ChatView.tsx`, the thread-open effect: a new thread, or closing the terminal, focuses the
+  composer as in T3. The same thread re-resolving (a reconnect) focuses it only when
+  `shouldRefocusComposerOnWindowFocus` allows, so a browser page, field or editor keeps the caret.
+- `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
+  takes the caret only if focus is still in the composer or nowhere in particular.
