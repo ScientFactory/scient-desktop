@@ -29,6 +29,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsSignInSeen]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetCodeSources]: AuthSettingsWriteScope,
   [WS_METHODS.accountsLinkKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsPaperForSource]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUnlinkKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,

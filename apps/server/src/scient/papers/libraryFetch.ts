@@ -1,4 +1,5 @@
 import {
+  DEFAULT_BROWSER_PROFILE_ID,
   AccountsError,
   type AccountSummary,
   type PreviewAutomationStatus,
@@ -74,6 +75,8 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
   session: AccountSessionScope,
   library: AccountSummary,
   landingUrl: string,
+  /** The user's own request: their profile's agent access doesn't apply. */
+  userRun = false,
 ) {
   if (library.details.kind !== "library") return undefined;
   const details = library.details;
@@ -104,12 +107,20 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
     reuseExistingTab: false,
     open: false,
   };
-  const profile = yield* authorizePreviewProfile(session, status, open);
-  const opened = yield* recordProfileUse(
-    session,
-    profile.profileId,
-    invoke<PreviewAutomationStatus>("open", { ...open, profileId: profile.profileId }),
-  );
+  const opened = userRun
+    ? yield* invoke<PreviewAutomationStatus>("open", {
+        ...open,
+        profileId: details.profileId ?? status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
+      })
+    : yield* authorizePreviewProfile(session, status, open).pipe(
+        Effect.flatMap(({ profileId }) =>
+          recordProfileUse(
+            session,
+            profileId,
+            invoke<PreviewAutomationStatus>("open", { ...open, profileId }),
+          ),
+        ),
+      );
   const tab = opened.tabId;
   if (!tab) return { status: "no-access" as const, message: "No browser tab is available." };
   const known = new Set((opened.downloads ?? []).map((item) => item.path));
@@ -147,7 +158,7 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
             openUrl: open.url,
           };
         const values = yield* accounts.resolveSecrets(library.accountId, ["password", "totp"]);
-        const result = yield* signIn(session, library, values, tab);
+        const result = yield* signIn(session, library, values, tab, { userRun });
         if (result.outcome !== "signed-in")
           return {
             status: "needs-sign-in" as const,

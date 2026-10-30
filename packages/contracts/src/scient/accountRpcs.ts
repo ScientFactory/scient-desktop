@@ -21,6 +21,8 @@ import {
   AccountCodeSources,
   AccountCodeSourcesResult,
   AccountKeyLink,
+  AccountPaperForSourceInput,
+  AccountPaperForSourceResult,
   AccountKeyUnlinkInput,
   AccountSignInSeenInput,
   AccountsCheckInput,
@@ -51,6 +53,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSignInSeen: "accounts.signInSeen",
   accountsSetCodeSources: "accounts.codeSources.set",
   accountsLinkKey: "accounts.keys.link",
+  accountsPaperForSource: "accounts.papers.getForSource",
   accountsUnlinkKey: "accounts.keys.unlink",
   accountsSetControls: "accounts.setControls",
   accountsSetAgentAccess: "accounts.setAgentAccess",
@@ -131,6 +134,15 @@ export const WsAccountsSignInSeenRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
 export const WsAccountsSetCodeSourcesRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsSetCodeSources,
   { payload: AccountCodeSources, success: AccountCodeSourcesResult, error: AccountsRpcError },
+);
+
+export const WsAccountsPaperForSourceRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsPaperForSource,
+  {
+    payload: AccountPaperForSourceInput,
+    success: AccountPaperForSourceResult,
+    error: AccountsRpcError,
+  },
 );
 
 export const WsAccountsLinkKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsLinkKey, {

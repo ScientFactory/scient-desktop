@@ -3,16 +3,22 @@ import {
   WS_METHODS,
   WsAccountsRpcGroup,
   type AccountKeyLink,
+  type AccountPaperForSourceInput,
+  type AccountPaperForSourceResult,
   type AccountsCheckInput,
+  type EnvironmentId,
 } from "@t3tools/contracts";
-import { Clock, Effect, Option, Stream } from "effect";
+import { Clock, Effect, FileSystem, Option, Path, Schema, Stream } from "effect";
 import { websiteSessionStatus } from "./websiteSessions.ts";
 import { checkAccounts } from "./checkAccounts.ts";
+import { getPaperForSource } from "../papers/getPaper.ts";
 import { messagesReadable } from "./signIn/messageCodes.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { ServerEnvironment } from "../../environment/ServerEnvironment.ts";
 import type { ScientRpcObservers } from "../ScientRpcObservers.ts";
 import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
+
+const isAccountsError = Schema.is(AccountsError);
 
 export const makeAccountsRpcHandlers = ({
   accounts,
@@ -20,10 +26,14 @@ export const makeAccountsRpcHandlers = ({
   observeRpcStream,
   check,
   linkKey,
+  paperForSource,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
   readonly check: (input: AccountsCheckInput) => Effect.Effect<number, AccountsError>;
   readonly linkKey: (link: AccountKeyLink) => Effect.Effect<void, AccountsError>;
+  readonly paperForSource: (
+    input: AccountPaperForSourceInput,
+  ) => Effect.Effect<typeof AccountPaperForSourceResult.Type, AccountsError>;
 }) => {
   const observedSessions = new Set<string>();
   const attributes = { "rpc.aggregate": "accounts" };
@@ -97,6 +107,8 @@ export const makeAccountsRpcHandlers = ({
         ),
         attributes,
       ),
+    [WS_METHODS.accountsPaperForSource]: (input) =>
+      observeRpcEffect(WS_METHODS.accountsPaperForSource, paperForSource(input), attributes),
     [WS_METHODS.accountsLinkKey]: (input) =>
       observeRpcEffect(WS_METHODS.accountsLinkKey, linkKey(input).pipe(Effect.as({})), attributes),
     [WS_METHODS.accountsUnlinkKey]: (input) =>
@@ -209,21 +221,48 @@ const unavailable = Effect.fn("AccountsService.unavailable")(function* () {
   return yield* missingService;
 });
 
-/** The user's own account check; it needs the browser, which RPC handlers otherwise don't. */
-export const accountsCheckForRpc = Effect.gen(function* () {
+/** What the user runs themselves through the browser, which RPC handlers otherwise don't need. */
+export const accountsUserRunsForRpc = Effect.gen(function* () {
   const broker = yield* Effect.serviceOption(PreviewAutomationBroker);
   const accounts = yield* accountsForRpc;
   const environment = yield* ServerEnvironment;
-  return (input: AccountsCheckInput) =>
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const run = <
+    A,
+    E,
+    R extends AccountsService | PreviewAutomationBroker | FileSystem.FileSystem | Path.Path,
+  >(
+    effect: (environmentId: EnvironmentId) => Effect.Effect<A, E, R>,
+  ) =>
     Option.isNone(broker)
       ? Effect.fail(
           new AccountsError({ reason: "unavailable", message: "The browser is unavailable." }),
         )
       : environment.getEnvironmentId.pipe(
-          Effect.flatMap((environmentId) => checkAccounts(input, environmentId)),
+          Effect.flatMap(effect),
           Effect.provideService(AccountsService, accounts),
           Effect.provideService(PreviewAutomationBroker, broker.value),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
         );
+  return {
+    check: (input: AccountsCheckInput) =>
+      run((environmentId) => checkAccounts(input, environmentId)),
+    paperForSource: (input: AccountPaperForSourceInput) =>
+      run((environmentId) =>
+        getPaperForSource(input, environmentId).pipe(
+          Effect.mapError((error) =>
+            isAccountsError(error)
+              ? error
+              : new AccountsError({
+                  reason: "unavailable",
+                  message: "The PDF could not be fetched.",
+                }),
+          ),
+        ),
+      ),
+  };
 });
 
 export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(

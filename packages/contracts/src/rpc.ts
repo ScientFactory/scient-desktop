@@ -513,6 +513,7 @@ import {
   WsAccountsSignInSeenRpc,
   WsAccountsSetCodeSourcesRpc,
   WsAccountsLinkKeyRpc,
+  WsAccountsPaperForSourceRpc,
   WsAccountsUnlinkKeyRpc,
 } from "./scient/accountRpcs.ts";
 // SCIENT-FORK:END
@@ -2586,6 +2587,7 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsSignInSeenRpc,
   WsAccountsSetCodeSourcesRpc,
   WsAccountsLinkKeyRpc,
+  WsAccountsPaperForSourceRpc,
   WsAccountsUnlinkKeyRpc,
 );
 // SCIENT-FORK:END

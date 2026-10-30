@@ -41,6 +41,16 @@ const session: AccountSessionScope = {
 
 const run = Semaphore.makeUnsafe(1);
 
+/** The browser identity of something the user asked for, which is no agent's run. */
+export const userRunInvocation = (threadId: ThreadId, environmentId: EnvironmentId) => ({
+  environmentId,
+  threadId,
+  providerSessionId: `user-run:${threadId}`,
+  providerInstanceId: ProviderInstanceId.make("scient"),
+  capabilities: new Set(["preview", "accounts"] as const),
+  issuedAt: 0,
+});
+
 const siteUrl = (site: string) => (site.startsWith("https://") ? site : `https://${site}`);
 
 /** Where the account's session shows. Many sign-in pages stay up for a signed-in user. */
@@ -216,14 +226,7 @@ const runCheck = Effect.fn("AccountsCheck.run")(function* (input: AccountsCheckI
  */
 export const checkAccounts = (input: AccountsCheckInput, environmentId: EnvironmentId) =>
   runCheck(input).pipe(
-    Effect.provideService(AgentInvocationContext, {
-      environmentId,
-      threadId: CHECK_THREAD,
-      providerSessionId: "accounts-check",
-      providerInstanceId: ProviderInstanceId.make("scient"),
-      capabilities: new Set(["preview", "accounts"] as const),
-      issuedAt: 0,
-    }),
+    Effect.provideService(AgentInvocationContext, userRunInvocation(CHECK_THREAD, environmentId)),
     run.withPermitsIfAvailable(1),
     Effect.map(Option.getOrElse(() => 0)),
   );

@@ -24,6 +24,7 @@ it.effect(
         observeRpcStream: (_method, stream) => stream,
         check: () => Effect.succeed(0),
         linkKey: () => Effect.void,
+        paperForSource: () => Effect.die("not reached"),
       });
       const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
       const layer = group.toLayer(handlers);

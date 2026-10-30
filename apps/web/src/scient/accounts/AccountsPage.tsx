@@ -1040,6 +1040,7 @@ function AccountsContent({
 function activityConversation(entry: AccountActivityEntry, environmentId: EnvironmentId) {
   if (!entry.threadId) return undefined;
   if (entry.threadId === ThreadId.make("scient-accounts-check")) return "Check my accounts";
+  if (entry.threadId === ThreadId.make("scient-paper-get")) return "Get PDF";
   return appAtomRegistry.get(
     environmentThreadShells.threadShellAtom({ environmentId, threadId: entry.threadId }),
   )?.title;

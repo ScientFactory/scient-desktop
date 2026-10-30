@@ -484,6 +484,29 @@ export const BrowserProfileChoiceInput = Schema.Union([
 ]);
 export type BrowserProfileChoiceInput = typeof BrowserProfileChoiceInput.Type;
 
+/** Get PDF on a source: fetched like an agent's request, saved in `papers/` and attached. */
+export const AccountPaperForSourceInput = Schema.Struct({
+  root: Schema.String.check(Schema.isMaxLength(4096)),
+  sourceId: TrimmedNonEmptyString,
+  expectedRevision: Schema.Int,
+  doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
+  url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
+});
+export type AccountPaperForSourceInput = typeof AccountPaperForSourceInput.Type;
+
+export const AccountPaperForSourceResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("attached"),
+    /** False for an accepted manuscript or preprint. */
+    published: Schema.Boolean,
+  }),
+  Schema.Struct({
+    status: Schema.Literals(["not-found", "no-access", "needs-sign-in", "limit"]),
+    message: Schema.String,
+    landingUrl: Schema.optional(Schema.String),
+  }),
+]);
+
 /** A provider variable that takes its value from an API-key account, and follows it. */
 export const AccountKeyLink = Schema.Struct({
   accountId: AccountId,
