@@ -647,9 +647,6 @@ function PlainKeysDialog({
   );
 }
 
-const FULL_DISK_ACCESS_URL =
-  "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles";
-
 /** Where Scient may find sign-in codes. Off until the user turns a source on. */
 function SignInCodesDialog({
   sources,
@@ -663,10 +660,13 @@ function SignInCodesDialog({
   onClose: () => void;
 }) {
   const set = useAccountCommand(accountsState.setCodeSources, environmentId);
+  const [chosen, setChosen] = useState(sources);
   const [needsAccess, setNeedsAccess] = useState(false);
   const change = async (next: AccountCodeSources) => {
+    setChosen(next);
     const result = await set(next);
     if (result.ok) setNeedsAccess(result.value.messagesNeedAccess);
+    else setChosen(sources);
   };
   return (
     <ListDialog title="Sign-in codes" onClose={onClose}>
@@ -677,9 +677,9 @@ function SignInCodesDialog({
           control={
             <Switch
               aria-label="Codes from Messages"
-              checked={sources.messages}
+              checked={chosen.messages}
               disabled={!canWrite}
-              onCheckedChange={(messages) => void change({ ...sources, messages })}
+              onCheckedChange={(messages) => void change({ ...chosen, messages })}
             />
           }
         />
@@ -693,7 +693,7 @@ function SignInCodesDialog({
               variant="outline"
               onClick={() =>
                 void readLocalApi()
-                  ?.shell.openExternal(FULL_DISK_ACCESS_URL)
+                  ?.shell.openSystemSettings("full-disk-access")
                   .catch(() => undefined)
               }
             >
@@ -708,9 +708,9 @@ function SignInCodesDialog({
         control={
           <Switch
             aria-label="Codes from Gmail"
-            checked={sources.mail}
+            checked={chosen.mail}
             disabled={!canWrite}
-            onCheckedChange={(mail) => void change({ ...sources, mail })}
+            onCheckedChange={(mail) => void change({ ...chosen, mail })}
           />
         }
       />
