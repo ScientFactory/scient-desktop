@@ -93,6 +93,12 @@ export function defaultComputeInstallation(
     return language.installations.find((installation) => installation.source === "managed");
   }
   const configured = preference.executable.trim();
+  // SQL needs DuckDB, which Scient-managed Python carries, so it leads until a Python is chosen.
+  const managedForSql =
+    language.descriptor.languageId === "sql" && !configured
+      ? language.installations.find((installation) => installation.source === "managed")
+      : undefined;
+  if (managedForSql) return managedForSql;
   if (configured) {
     return language.installations.find(
       (installation) =>

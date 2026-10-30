@@ -1,8 +1,8 @@
 # Scientific computing
 
-Scient can run Python and MATLAB from an initialized project without turning the project into a
-notebook or installing a second copy of its files. Both use the same session, source, results, and
-history controls. Implemented language adapters—currently Python and MATLAB—are enabled by default
+Scient can run Python, R, Julia, SQL, and MATLAB from an initialized project without turning the
+project into a notebook or installing a second copy of its files. All of them use the same session,
+source, results, and history controls. Supported languages are enabled by default
 so Scient can offer a compatible runtime already available on the server. Enablement does not
 download a runtime, install packages, create a managed environment, acquire a license, or start a
 session, and each language can still be disabled individually. MATLAB requires a user-installed,
@@ -67,9 +67,6 @@ and survives navigation, but not a server restart. A failed request can be retri
 Cancel immediately shows **Cancelling…** and prevents repeated clicks while the request is pending.
 For an active build, feedback remains while shutdown and cleanup finish; a failed cancellation
 restores the control so you can try again.
-Julia, R, Rust, SPSS, SQL, GNU Octave, Wolfram Language, and Stata appear as **Coming soon**
-previews only. They do not represent detected runtimes, database connections, or enabled language
-adapters and have no setup, configuration, or execution controls.
 Supported languages use the same rows for Enable and Default runtime. Installations follow as
 ordinary rows with their known version and a quiet **Default** marker for new sessions. An unknown
 version says **Version not checked**; opening Settings does not execute Python to fill it in.
@@ -188,6 +185,24 @@ session with confirmed cleanup, and starts an empty managed session. In-memory v
 run history is kept. It does not change your default environment, install packages, or rerun code.
 History-only and temporary fresh-run views do not replace another tab's session. You can instead
 choose an environment in Settings, then use **Switch Python** for an existing file session.
+
+## R, Julia, and SQL
+
+R, Julia, and SQL run as Jupyter kernels behind the same bridge as Python. `.R` and `.jl` files
+use `# %%` cells and `.sql` files use `-- %%`; Run cell, selection, file, and **Run fresh** work as
+they do for `.py`. The bridge runs in Scient-managed Python when it is installed, otherwise in the
+Python selected for Python.
+
+- **R** uses the R found on PATH or in its usual install locations. An R that already has IRkernel
+  uses it. Otherwise **Set up** on the IRkernel row installs IRkernel from CRAN into a private
+  library in Scient's compute directory; sessions add that library in front of your own, so your
+  packages stay available and your library is unchanged.
+- **Julia** works the same way with IJulia, installed into a private Julia depot and project.
+  Your default environment stays first, so `using` and `Pkg` keep working on your own packages.
+- **SQL** runs DuckDB in Scient-managed Python, which includes it. Paths resolve from the
+  project, so `SELECT * FROM 'data/table.csv'` or a Parquet file works directly. Tables and views
+  last for the session and appear under Variables; **Restart** starts with an empty database.
+  Results show the first 100 rows of each statement.
 
 ## Connect your MATLAB installation
 

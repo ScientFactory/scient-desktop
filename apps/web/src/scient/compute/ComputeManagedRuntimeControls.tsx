@@ -75,13 +75,21 @@ export function reconcileManagedRuntimeCommandSnapshot(input: {
     : input.command;
 }
 
+// SQL runs DuckDB in Scient-managed Python; other kernel languages manage a kernel package.
+const usesManagedPython = (languageId: string) => languageId === "python" || languageId === "sql";
+
 function fallbackManagedRuntimeFailure(
   languageId: string,
   detail: string,
   retryAction: ComputeManagedRuntimeAction | null,
 ): ComputeManagedRuntimeFailureView {
   return {
-    summary: languageId === "matlab" ? "MATLAB connection failed" : "Python setup failed",
+    summary:
+      languageId === "matlab"
+        ? "MATLAB connection failed"
+        : usesManagedPython(languageId)
+          ? "Python setup failed"
+          : "Kernel setup failed",
     detail,
     retryAction,
   };
@@ -97,6 +105,9 @@ export function managedRuntimeOperationLabel(
     return operation.phase === "removing"
       ? "Removing MATLAB connection…"
       : "Preparing MATLAB connection…";
+  }
+  if (languageId !== undefined && !usesManagedPython(languageId)) {
+    return `${operation.phase === "removing" ? "Removing" : "Installing"} ${status.displayName ?? "kernel"}…`;
   }
   switch (operation.phase) {
     case "downloading": {
@@ -316,7 +327,9 @@ export function useComputeManagedRuntime(input: {
           summary:
             input.languageId === "matlab"
               ? "MATLAB status unavailable"
-              : "Python status unavailable",
+              : usesManagedPython(input.languageId)
+                ? "Python status unavailable"
+                : "Kernel status unavailable",
           detail: queried.error,
           retryAction: null,
         };
@@ -503,6 +516,7 @@ export function ManagedRuntimeNotice({
 export function ManagedRuntimeMaintenanceMenu({
   runtime,
   connection = false,
+  kernel,
   canProvision = true,
   disabled = false,
   omitAction = null,
@@ -512,6 +526,8 @@ export function ManagedRuntimeMaintenanceMenu({
 }: {
   runtime: ComputeManagedRuntimeController;
   connection?: boolean;
+  /** A private Jupyter kernel package, such as IRkernel. */
+  kernel?: string;
   canProvision?: boolean;
   disabled?: boolean;
   omitAction?: ComputeManagedRuntimeAction | null;
@@ -523,7 +539,7 @@ export function ManagedRuntimeMaintenanceMenu({
   const menuAnchor = useRef<HTMLButtonElement>(null);
   const status = runtime.status;
   if (!status?.installed) return null;
-  const displayName = connection ? "MATLAB connection helper" : "Scient-managed Python";
+  const displayName = connection ? "MATLAB connection helper" : (kernel ?? "Scient-managed Python");
   const busy = disabled || runtime.busy;
   const connectionAction =
     status.selection === "managed"
@@ -551,7 +567,7 @@ export function ManagedRuntimeMaintenanceMenu({
               size="icon-xs"
               variant="ghost-muted"
               disabled={busy}
-              aria-label={`More ${connection ? "MATLAB connection" : "Python runtime"} actions`}
+              aria-label={`More ${connection ? "MATLAB connection" : (kernel ?? "Python runtime")} actions`}
             />
           }
         >
@@ -570,7 +586,11 @@ export function ManagedRuntimeMaintenanceMenu({
           ) : null}
           {showRepair ? (
             <MenuItem
-              aria-label={connection ? "Rebuild MATLAB connection" : "Rebuild managed Python"}
+              aria-label={
+                connection
+                  ? "Rebuild MATLAB connection"
+                  : `Rebuild ${kernel ?? "managed Python"}`
+              }
               disabled={busy || !canProvision}
               onClick={() => void runtime.act("repair")}
             >
@@ -579,7 +599,9 @@ export function ManagedRuntimeMaintenanceMenu({
           ) : null}
           {hasNonDestructiveAction ? <MenuSeparator /> : null}
           <MenuItem
-            aria-label={connection ? "Remove MATLAB connection helper" : "Remove managed Python"}
+            aria-label={
+              connection ? "Remove MATLAB connection helper" : `Remove ${kernel ?? "managed Python"}`
+            }
             variant="destructive"
             disabled={busy}
             onClick={() => setConfirmRemove(true)}
@@ -596,7 +618,9 @@ export function ManagedRuntimeMaintenanceMenu({
         description={
           connection
             ? "This removes Scient’s connection helper. Your MATLAB installation and license are untouched."
-            : "This removes Scient’s private Python environment. System installations and project environments are untouched."
+            : kernel
+              ? `This removes Scient’s private ${kernel}. Your installation and its packages are untouched.`
+              : "This removes Scient’s private Python environment. System installations and project environments are untouched."
         }
         confirmLabel="Remove"
         destructive

@@ -317,12 +317,7 @@ function LanguageRuntimeSummary({
       );
     if ((usesManagedPython && !runtime.status?.installed) || kernelMissing)
       return (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={disabled || (isKernel && selectedInstallation === undefined)}
-          onClick={setup}
-        >
+        <Button size="xs" variant="outline" disabled={disabled} onClick={setup}>
           Set up
         </Button>
       );
@@ -453,45 +448,47 @@ function LanguageRuntimeSummary({
           }
         />
       ) : null}
-      <ComputeInstallationRow
-        key={`managed:${runtimeFingerprint}`}
-        installation={
-          usesManagedPython
-            ? language.installations.find((installation) => installation.source === "managed")
-            : undefined
-        }
-        environmentId={environmentId}
-        languageId={languageId}
-        isDefault={usesManagedPython && selectedInstallation?.source === "managed"}
-        disabled={disabled || !preference.enabled}
-        id={`${languageId}-managed-runtime`}
-        title={isMatlab ? "MATLAB connection" : isKernel ? kernelName : "Scient-managed Python"}
-        description={
-          connectionNeedsRepair
-            ? null
-            : runtime.status?.updateCheck === "unavailable"
-              ? `${managedDescription} · Update check unavailable`
-              : managedDescription
-        }
-        status={
-          showManagedNotice && !toolkitOwnsNotice && (!inlineManagedProgress || runtime.failure) ? (
-            <ManagedRuntimeNotice runtime={runtime} showProgress={!inlineManagedProgress} />
-          ) : undefined
-        }
-        action={managedAction}
-        renderMenu={(installationActions) => (
-          <ManagedRuntimeMaintenanceMenu
-            installationActions={installationActions}
-            runtime={runtime}
-            connection={isMatlab}
-            {...(isKernel ? { kernel: kernelName } : {})}
-            omitAction={primaryManagedAction}
-            canProvision={selectedInstallation !== undefined}
-            disabled={refreshing || !environmentId}
-            connectionNeedsRetarget={connectionNeedsRetarget}
-          />
-        )}
-      />
+      {isKernel && language.installations.length === 0 ? null : (
+        <ComputeInstallationRow
+          key={`managed:${runtimeFingerprint}`}
+          installation={
+            usesManagedPython
+              ? language.installations.find((installation) => installation.source === "managed")
+              : undefined
+          }
+          environmentId={environmentId}
+          languageId={languageId}
+          isDefault={usesManagedPython && selectedInstallation?.source === "managed"}
+          disabled={disabled || !preference.enabled}
+          id={`${languageId}-managed-runtime`}
+          title={isMatlab ? "MATLAB connection" : isKernel ? kernelName : "Scient-managed Python"}
+          description={
+            connectionNeedsRepair
+              ? null
+              : runtime.status?.updateCheck === "unavailable"
+                ? `${managedDescription} · Update check unavailable`
+                : managedDescription
+          }
+          status={
+            showManagedNotice && !toolkitOwnsNotice && (!inlineManagedProgress || runtime.failure) ? (
+              <ManagedRuntimeNotice runtime={runtime} showProgress={!inlineManagedProgress} />
+            ) : undefined
+          }
+          action={managedAction}
+          renderMenu={(installationActions) => (
+            <ManagedRuntimeMaintenanceMenu
+              installationActions={installationActions}
+              runtime={runtime}
+              connection={isMatlab}
+              {...(isKernel ? { kernel: kernelName } : {})}
+              omitAction={primaryManagedAction}
+              canProvision={selectedInstallation !== undefined}
+              disabled={refreshing || !environmentId}
+              connectionNeedsRetarget={connectionNeedsRetarget}
+            />
+          )}
+        />
+      )}
     </>
   );
 }
@@ -722,20 +719,22 @@ function LanguageRuntimeRecovery({
   );
 }
 
-const PENDING_RUNTIME_DESCRIPTORS: ReadonlyArray<ComputeLanguageDescriptor> = [
+const PENDING_RUNTIME_DESCRIPTORS: ReadonlyArray<ComputeLanguageDescriptor> = (
+  [
+    ["python", "Python", ".py"],
+    ["r", "R", ".r"],
+    ["julia", "Julia", ".jl"],
+    ["sql", "SQL", ".sql"],
+    ["matlab", "MATLAB", ".m"],
+  ] as const
+).map(([languageId, displayName, extension]) =>
   ComputeLanguageDescriptor.make({
-    languageId: ComputeLanguageId.make("python"),
-    displayName: "Python",
-    sourceExtensions: [".py"],
+    languageId: ComputeLanguageId.make(languageId),
+    displayName,
+    sourceExtensions: [extension],
     capabilities: ["execute", "interrupt", "restart", "shutdown"],
   }),
-  ComputeLanguageDescriptor.make({
-    languageId: ComputeLanguageId.make("matlab"),
-    displayName: "MATLAB",
-    sourceExtensions: [".m"],
-    capabilities: ["execute", "interrupt", "restart", "shutdown"],
-  }),
-];
+);
 
 function pendingRuntimeInventory(
   preferences: Readonly<Record<string, ScientificComputingLanguageSettings>>,
@@ -816,32 +815,18 @@ function EnvironmentScientificComputingSettings({
     "python",
     Schema.String,
   );
-  const upcomingLanguages = UPCOMING_LANGUAGES.filter(
-    (preview) =>
-      !displayedLanguages.some((language) => language.descriptor.languageId === preview.id),
-  );
-  const selectedPreview = upcomingLanguages.find((preview) => preview.id === storedLanguageId);
-  const selectedLanguage = selectedPreview
-    ? undefined
-    : (displayedLanguages.find((language) => language.descriptor.languageId === storedLanguageId) ??
-      displayedLanguages[0]);
-  const selectedId = selectedPreview?.id ?? selectedLanguage?.descriptor.languageId;
-  const languageItems = [
-    ...displayedLanguages.map((language) => ({
-      id: language.descriptor.languageId,
-      label: language.descriptor.displayName,
-      detail: resolveScientificComputingLanguageSettings(
-        preferences,
-        language.descriptor.languageId,
-      ).enabled
-        ? "On"
-        : "Off",
-    })),
-    ...upcomingLanguages.map((preview) => ({
-      ...preview,
-      detail: "Coming soon",
-    })),
-  ];
+  const selectedLanguage =
+    displayedLanguages.find((language) => language.descriptor.languageId === storedLanguageId) ??
+    displayedLanguages[0];
+  const selectedId = selectedLanguage?.descriptor.languageId;
+  const languageItems = displayedLanguages.map((language) => ({
+    id: language.descriptor.languageId,
+    label: language.descriptor.displayName,
+    detail: resolveScientificComputingLanguageSettings(preferences, language.descriptor.languageId)
+      .enabled
+      ? "On"
+      : "Off",
+  }));
   const [collapsed, setCollapsed] = useState(false);
   // Keep the pending action when moving between language disclosures.
   const [toolkitChange, setToolkitChange] = useState<ToolkitChange | null>(null);
@@ -964,10 +949,7 @@ function EnvironmentScientificComputingSettings({
                           aria-hidden="true"
                           width={24}
                           height={24}
-                          className={cn(
-                            "size-6 shrink-0 object-contain",
-                            languageId === "rust" && "dark:invert",
-                          )}
+                          className="size-6 shrink-0 object-contain"
                         />
                       ) : (
                         <LanguageSymbol
@@ -989,15 +971,6 @@ function EnvironmentScientificComputingSettings({
                 );
               })}
             </SettingsSourceStrip>
-            {selectedPreview ? (
-              <SettingsSourcePanel
-                id={`scientific-computing-${selectedPreview.id}`}
-                aria-labelledby={`scientific-computing-${selectedPreview.id}-trigger`}
-                hidden={collapsed}
-              >
-                <p className="px-3 py-3 text-sm text-muted-foreground sm:px-4">Coming soon</p>
-              </SettingsSourcePanel>
-            ) : null}
             {selectedLanguage && selectedPreference ? (
               <SelectedLanguageRuntime
                 key={selectedLanguage.descriptor.languageId}

@@ -450,7 +450,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       installed: installed !== null,
       selection: own === null ? ("managed" as const) : ("existing" as const),
       updateAvailable: false,
-      runtimeVersion: kernelVersion === null ? null : `${language.kernelPackage} ${kernelVersion}`,
+      runtimeVersion: kernelVersion,
       toolkitRevision: null,
       toolkitIds: [],
       operation:
