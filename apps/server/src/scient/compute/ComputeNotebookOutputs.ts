@@ -20,6 +20,8 @@ const notebookError = (message: string, cause?: unknown) =>
   });
 
 type NotebookOutput = Record<string, unknown>;
+/** The bridge's private name for submitted code; a notebook calls it the cell. */
+const SUBMITTED_SOURCE = /<scient-compute-source:[0-9a-f]+(?::[0-9]+)?>/g;
 const parseJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
@@ -75,7 +77,9 @@ export function makeComputeNotebookOutputs(input: {
             output_type: "error",
             ename: output.diagnostic.errorName,
             evalue: output.diagnostic.message,
-            traceback: [...output.diagnostic.traceback],
+            traceback: output.diagnostic.traceback.map((line) =>
+              line.replace(SUBMITTED_SOURCE, "cell"),
+            ),
           });
           break;
         case "image": {

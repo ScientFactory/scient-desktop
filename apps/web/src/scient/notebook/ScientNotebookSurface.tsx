@@ -5,7 +5,7 @@ import {
   type EnvironmentId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { ArrowDown, ArrowUp, Play, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, MessageSquarePlus, Play, Plus, Trash2 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -20,6 +20,7 @@ import {
   type ComputeFileActionsHandle,
 } from "~/scient/compute/ComputeFileActions";
 import { ComputeOutputView } from "~/scient/compute/ComputeOutputView";
+import { askInChatAboutCompute } from "~/scient/compute/computeAskInChat";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
 import { computeSourceLanguageForId } from "~/scient/compute/computeSourceLanguage";
 import { createScientNestedCodeEditor } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
@@ -156,6 +157,7 @@ export default function ScientNotebookSurface(props: {
   const [active, setActive] = useState<string | null>(null);
   const [editingMarkdown, setEditingMarkdown] = useState<string | null>(null);
   const [runs, setRuns] = useState<ReadonlyArray<CellRun>>([]);
+  const lastRuns = useRef(new Map<string, CellRun>());
   const requested = useRef<string[]>([]);
   const runAll = useRef<string[]>([]);
   const readNotebookOutputs = useAtomCommand(computeEnvironment.notebookOutputs, {
@@ -193,6 +195,7 @@ export default function ScientNotebookSurface(props: {
         environmentId: props.environmentId,
         input: { cwd: props.cwd, sessionId: run.sessionId, executionId: run.executionId },
       }).then((result) => {
+        lastRuns.current.set(run.cellId, run);
         if (result._tag === "Success") {
           commit((current) =>
             updateNotebookCell(current, run.cellId, (cell) => ({
@@ -355,6 +358,21 @@ export default function ScientNotebookSurface(props: {
                   {cell.cellType === "code" ? (
                     <CellAction label="Run" onClick={() => runCell(cell.id)}>
                       <Play />
+                    </CellAction>
+                  ) : null}
+                  {cell.cellType === "code" && cell.outputs.length > 0 ? (
+                    <CellAction
+                      label="Ask in chat"
+                      onClick={() => {
+                        const run = lastRuns.current.get(cell.id);
+                        askInChatAboutCompute({
+                          threadRef: props.threadRef,
+                          what: `Cell ${document.cells.indexOf(cell) + 1} of ${props.relativePath}`,
+                          ...(run === undefined ? {} : { run }),
+                        });
+                      }}
+                    >
+                      <MessageSquarePlus />
                     </CellAction>
                   ) : null}
                   <CellAction
