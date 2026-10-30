@@ -33,7 +33,10 @@ export interface DesktopCapturedSignIn {
 export interface DesktopLoginForm {
   readonly tabId: string;
   readonly profileId: string;
+  /** The page's origin. */
   readonly url: string;
+  /** The full page address, for the tab Scient filled. */
+  readonly pageUrl?: string;
   readonly documentId: string;
   readonly userEdited: boolean;
   readonly hasValues: boolean;

@@ -18,7 +18,6 @@ import {
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
-  canAutomaticallyFill,
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
@@ -211,26 +210,19 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
       (account) => account.accountId,
     ),
   ).toEqual([exact.accountId, recent.accountId, older.accountId]);
-  const current = { tabId: "tab", profileId: "default", url: "https://example.com/login" };
   const form = {
-    ...current,
+    tabId: "tab",
+    profileId: "default",
     url: "https://example.com",
     documentId: "document",
     userEdited: false,
     hasValues: false,
   };
-  expect(automaticSignIn(form, current, null)).toBe(true);
-  expect(automaticSignIn(form, current, form.documentId)).toBe(false);
-  expect(automaticSignIn({ ...form, userEdited: true }, current, null)).toBe(false);
-  expect(automaticSignIn({ ...form, hasValues: true }, current, null)).toBe(false);
-  expect(
-    automaticSignIn(
-      { ...form, profileId: "incognito" },
-      { ...current, profileId: "incognito" },
-      null,
-    ),
-  ).toBe(false);
-  expect(automaticSignIn(form, { ...current, url: "https://other.example.com" }, null)).toBe(false);
+  expect(automaticSignIn(form)).toBe(true);
+  expect(automaticSignIn({ ...form, userEdited: true })).toBe(false);
+  expect(automaticSignIn({ ...form, hasValues: true })).toBe(false);
+  expect(automaticSignIn({ ...form, profileId: "incognito" })).toBe(false);
+  expect(automaticSignIn({ ...form, url: "http://example.com" })).toBe(false);
 });
 
 it("offers connected vaults until a write rejection marks one read-only", () => {
@@ -356,27 +348,6 @@ describe("toggleScope", () => {
   ] as const)("%s", (_, scope, entry, checked, expected) => {
     expect(toggleScope(scope, [a, b], entry, checked)).toEqual(expected);
   });
-});
-
-it("does not automatically fill accounts the thread agent cannot use, while retaining explicit matches", () => {
-  const project = "project-a" as ProjectId;
-  const other = "project-b" as ProjectId;
-  const controls = defaultAccountControls("website");
-  expect(canAutomaticallyFill(controls, true, project)).toBe(true);
-  expect(canAutomaticallyFill(controls, false, project)).toBe(false);
-  expect(canAutomaticallyFill({ ...controls, access: "off" }, true, project)).toBe(false);
-  expect(canAutomaticallyFill({ ...controls, access: "ask" }, true, project)).toBe(false);
-  const approved = { ...controls, access: "ask" as const, allowedProjects: [project] };
-  expect(canAutomaticallyFill(approved, true, project)).toBe(true);
-  expect(canAutomaticallyFill(approved, true, other)).toBe(false);
-  expect(canAutomaticallyFill(approved, true, undefined)).toBe(false);
-  const scoped = { ...approved, scope: { type: "projects" as const, projectIds: [other] } };
-  expect(canAutomaticallyFill(scoped, true, project)).toBe(false);
-  expect(canAutomaticallyFill({ ...scoped, access: "allowed" }, true, other)).toBe(true);
-  expect(canAutomaticallyFill({ ...scoped, access: "allowed" }, true, undefined)).toBe(false);
-  expect(canAutomaticallyFill(controls, true, undefined)).toBe(true);
-  const account = { ...website(), controls: { ...controls, access: "off" as const } };
-  expect(matchingAccounts([account], "https://example.com", "default")).toEqual([account]);
 });
 
 it("lists only signed-in provider connections, deduplicating apps across plugins", () => {

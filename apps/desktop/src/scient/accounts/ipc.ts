@@ -335,7 +335,7 @@ const readLoginForm = Effect.fn("DesktopAccounts.readLoginForm")(function* (tabI
   });
   const report = decodeFormReport(result);
   if (Option.isNone(report) || report.value.url !== safeHttpOrigin(contents.getURL())) return null;
-  return { ...report.value, tabId, profileId: identity.profileId };
+  return { ...report.value, pageUrl: contents.getURL(), tabId, profileId: identity.profileId };
 });
 const inspectLoginForm = Effect.fn("DesktopAccounts.inspectLoginForm")(function* (
   raw: unknown,

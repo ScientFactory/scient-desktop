@@ -1,5 +1,5 @@
 import { useSessionOffer } from "./useSessionOffer";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import { CheckIcon, KeyRoundIcon } from "lucide-react";
 import type {
   AccountSummary,
@@ -7,11 +7,9 @@ import type {
   AccountStoresStatus,
   AccountMatchSignInResult,
   DesktopCapturedSignIn,
-  DesktopLoginForm,
   EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useQuietThreadShell } from "~/state/entities";
 import { Button } from "~/components/ui/button";
 import { Menu, MenuTrigger, MenuPopup, MenuItem } from "~/components/ui/menu";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
@@ -20,8 +18,6 @@ import { accountsState } from "./accountsState";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import {
-  automaticSignIn,
-  canAutomaticallyFill,
   capturedSignInInput,
   matchingAccounts,
   profileAccounts,
@@ -29,6 +25,7 @@ import {
 } from "./accountsView";
 
 import { SaveStores } from "./SaveStores";
+import { autofilledTabs } from "./accountAutofill";
 
 const NEVER_KEY = "scient.accounts.never-save.v1";
 function neverSaveSites(): ReadonlyArray<string> {
@@ -146,7 +143,6 @@ function SaveSignIn({
 }
 
 function DesktopBrowserAccountControls({
-  threadRef,
   environmentId,
   tabId,
   profileId,
@@ -161,7 +157,6 @@ function DesktopBrowserAccountControls({
   const { data, canWrite } = useAccounts(environmentId);
   const newTabProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const saveSession = useAccountCommand(accountsState.save, environmentId);
-  const thread = useQuietThreadShell(threadRef);
   const [pending, setPending] = useState<{
     capture: DesktopCapturedSignIn;
     comparison: AccountMatchSignInResult;
@@ -177,7 +172,6 @@ function DesktopBrowserAccountControls({
   const [filledAccount, setFilledAccount] = useState<{ accountId: string; url: string } | null>(
     null,
   );
-  const attemptedDocument = useRef<string | null>(null);
   const captureGeneration = useRef(0);
   const [busy, setBusy] = useState(false);
   const currentUrl = useRef(url);
@@ -227,11 +221,15 @@ function DesktopBrowserAccountControls({
       ? matchingAccounts(data.accounts, url, profileId)
       : [];
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
-  const filled =
-    filledAccount?.url === url
-      ? matches.find((account) => account.accountId === filledAccount.accountId)
-      : undefined;
-  const fill = async (account: AccountSummary, form?: DesktopLoginForm) => {
+  const autofilled = useSyncExternalStore(autofilledTabs.subscribe, () =>
+    autofilledTabs.get(tabId),
+  );
+  const shown =
+    filledAccount?.url === url ? filledAccount : autofilled?.url === url ? autofilled : null;
+  const filled = shown
+    ? matches.find((account) => account.accountId === shown.accountId)
+    : undefined;
+  const fill = async (account: AccountSummary) => {
     if (!canWrite || busy || window.desktopBridge?.accounts?.originBoundFill !== true) return;
     const requestedUrl = currentUrl.current;
     setBusy(true);
@@ -244,58 +242,18 @@ function DesktopBrowserAccountControls({
         const filled = await window.desktopBridge?.accounts?.fill({
           tabId,
           expectedOrigin: new URL(requestedUrl).origin,
-          ...(form ? { documentId: form.documentId, automatic: true } : {}),
           ...(result.value.username !== undefined ? { username: result.value.username } : {}),
           ...(result.value.password !== undefined ? { password: result.value.password } : {}),
           ...(result.value.otp !== undefined ? { otp: result.value.otp } : {}),
         });
         if (filled) setFilledAccount({ accountId: account.accountId, url: requestedUrl });
-        else if (!form) toastManager.add({ type: "error", title: "No sign-in form found" });
+        else toastManager.add({ type: "error", title: "No sign-in form found" });
       }
     } catch {
       toastManager.add({ type: "error", title: "Could not fill sign-in" });
     }
     setBusy(false);
   };
-  const onForm = useEffectEvent((form: DesktopLoginForm) => {
-    const account =
-      thread && data
-        ? matches.find((match) =>
-            canAutomaticallyFill(match.controls, data.agentAccess, thread.projectId),
-          )
-        : undefined;
-    if (
-      !canWrite ||
-      !account ||
-      !automaticSignIn(
-        form,
-        { tabId, profileId, url: currentUrl.current },
-        attemptedDocument.current,
-      )
-    )
-      return;
-    attemptedDocument.current = form.documentId;
-    void fill(account, form);
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to login forms the desktop detects in this tab, and ask once for a form already on the page.
-  useEffect(() => {
-    const bridge = window.desktopBridge?.accounts;
-    if (!canWrite || !data || !bridge?.originBoundFill) return;
-    let live = true;
-    const off = bridge.onLoginFormDetected?.((form) => {
-      if (live) onForm(form);
-    });
-    void bridge
-      .loginForm?.(tabId)
-      .then((form) => {
-        if (live && form && url === currentUrl.current) onForm(form);
-      })
-      .catch(() => undefined);
-    return () => {
-      live = false;
-      off?.();
-    };
-  }, [canWrite, data, tabId, url]);
   if (!data || !canWrite) return null;
   return (
     <>

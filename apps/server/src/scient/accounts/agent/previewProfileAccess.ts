@@ -13,6 +13,7 @@ import {
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { authorizationDecision } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 
 const profileIds = (status: PreviewAutomationStatus) => [
@@ -41,6 +42,24 @@ export const authorizePreviewTab = Effect.fn("AccountsAgent.authorizePreviewTab"
       reason: "denied",
       message:
         "This browser profile is unavailable to this session. Change its access in Settings → Accounts.",
+    });
+  // Autofill fills every tab for the user; a page holding a sign-in this agent may not use stays
+  // closed to it until the page changes, so the agent cannot read the filled password.
+  const filled = yield* accounts.filledTab(scope.threadId, tab.tabId);
+  const page = (url: string | null | undefined) => url?.split("#")[0];
+  if (
+    filled &&
+    page(filled.url) === page(tab.url) &&
+    !session.accounts.some(
+      (account) =>
+        account.accountId === filled.accountId &&
+        authorizationDecision(session.agentAccess, account.controls, scope).decision === "allowed",
+    )
+  )
+    return yield* new AccountsError({
+      reason: "denied",
+      message:
+        "The user is signing in on this tab with an account you may not use. Continue after the page changes, or use another tab.",
     });
 });
 

@@ -132,7 +132,7 @@ export const makeAccountsRpcHandlers = ({
     [WS_METHODS.accountsFillValues]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsFillValues,
-        accounts.fillValues(input.accountId, input.origin),
+        accounts.fillValues(input.accountId, input.origin, input.tab),
         attributes,
       ),
   });
@@ -178,6 +178,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         disconnectOnePassword: missingService,
         importPasswords: unavailable,
         fillValues: unavailable,
+        filledTab: Effect.fn("AccountsService.filledTab")(() => Effect.sync(() => undefined)),
         matchSignIn: unavailable,
         forSession: unavailable,
         authorize: unavailable,

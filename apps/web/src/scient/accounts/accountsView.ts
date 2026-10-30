@@ -11,7 +11,6 @@ import {
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
-  type AccountControls,
   type AccountDetails,
   type GrantScope,
   type ProjectId,
@@ -76,22 +75,6 @@ export function matchingAccounts(
         (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") ||
         a.accountId.localeCompare(b.accountId),
     );
-}
-
-export function canAutomaticallyFill(
-  controls: AccountControls,
-  agentAccess: boolean,
-  projectId: ProjectId | null | undefined,
-): boolean {
-  return (
-    agentAccess &&
-    (controls.scope.type === "all-projects" ||
-      (projectId != null && controls.scope.projectIds.includes(projectId))) &&
-    (controls.access === "allowed" ||
-      (controls.access === "ask" &&
-        projectId != null &&
-        controls.allowedProjects?.includes(projectId) === true))
-  );
 }
 
 export function mergeProfiles(
@@ -408,25 +391,14 @@ export function profilePresentation({
   };
 }
 
-export function automaticSignIn(
-  form: DesktopLoginForm,
-  current: { tabId: string; profileId: string; url: string },
-  attemptedDocumentId: string | null,
-) {
-  if (
-    current.profileId === INCOGNITO_BROWSER_PROFILE_ID ||
-    form.profileId !== current.profileId ||
-    form.tabId !== current.tabId ||
-    form.documentId === attemptedDocumentId ||
-    form.userEdited ||
-    form.hasValues
-  )
-    return false;
-  try {
-    return new URL(current.url).origin === form.url && form.url.startsWith("https://");
-  } catch {
-    return false;
-  }
+/** A login form Scient may fill on its own: a fresh, untouched HTTPS form outside incognito. */
+export function automaticSignIn(form: DesktopLoginForm) {
+  return (
+    form.profileId !== INCOGNITO_BROWSER_PROFILE_ID &&
+    !form.userEdited &&
+    !form.hasValues &&
+    form.url.startsWith("https://")
+  );
 }
 
 export function signInLabel(account: AccountSummary) {

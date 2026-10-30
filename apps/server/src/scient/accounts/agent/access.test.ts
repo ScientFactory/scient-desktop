@@ -1,9 +1,12 @@
 import {
+  AccountId,
   BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
   ProjectId,
   ThreadId,
+  defaultAccountControls,
   defaultBrowserProfileRecord,
+  type AccountSummary,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -12,7 +15,11 @@ import { expect } from "vite-plus/test";
 import { AccountsService } from "../AccountsService.ts";
 import { makeHarness } from "../Accounts.testkit.ts";
 import { fakeAccounts } from "./AccountsService.testkit.ts";
-import { authorizePreviewProfile, filterPreviewProfiles } from "./previewProfileAccess.ts";
+import {
+  authorizePreviewProfile,
+  authorizePreviewTab,
+  filterPreviewProfiles,
+} from "./previewProfileAccess.ts";
 
 const scope = {
   threadId: ThreadId.make("thread-fixture"),
@@ -150,4 +157,38 @@ it.effect(
       });
       expect((yield* Effect.flip(open)).reason).toBe("denied");
     }).pipe(Effect.scoped),
+);
+
+it.effect("keeps a page autofill filled from agents that may not use its sign-in", () =>
+  Effect.gen(function* () {
+    const login = "https://example.com/login";
+    const tab = { ...status, tabs: [{ ...status.tabs![0]!, url: `${login}#form` }] };
+    const site: AccountSummary = {
+      accountId: AccountId.make("acc_website01"),
+      name: "Example",
+      details: { kind: "website", sites: ["example.com"] },
+      secrets: { password: { source: { type: "scient" } } },
+      controls: { ...defaultAccountControls("website"), access: "off" },
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const check = (account: AccountSummary, url: string) =>
+      authorizePreviewTab(scope, tab, undefined).pipe(
+        Effect.provideService(
+          AccountsService,
+          fakeAccounts({
+            accounts: [account],
+            profiles: [defaultBrowserProfileRecord(workId)],
+            filledTab: { accountId: account.accountId, url },
+          }).service,
+        ),
+        Effect.exit,
+      );
+    expect((yield* check(site, login))._tag).toBe("Failure");
+    expect(
+      (yield* check({ ...site, controls: defaultAccountControls("website") }, login))._tag,
+    ).toBe("Success");
+    expect((yield* check(site, "https://example.com/other"))._tag).toBe("Success");
+  }),
 );

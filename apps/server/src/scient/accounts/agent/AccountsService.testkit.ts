@@ -20,6 +20,7 @@ export function fakeAccounts(
     agentAccess?: boolean;
     denied?: boolean;
     values?: Readonly<Record<string, string>>;
+    filledTab?: { accountId: AccountId; url: string };
   } = {},
 ) {
   const handoffs = new Map<string, AccountHandoff>();
@@ -86,6 +87,7 @@ export function fakeAccounts(
     disconnectOnePassword: unavailable,
     importPasswords: () => unavailable,
     fillValues: () => unavailable,
+    filledTab: () => Effect.succeed(options.filledTab),
     matchSignIn: () => unavailable,
     forSession: () =>
       Effect.succeed({

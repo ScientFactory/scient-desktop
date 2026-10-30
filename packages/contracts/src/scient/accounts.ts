@@ -9,6 +9,7 @@ import {
 } from "../baseSchemas.ts";
 import { BrowserImportSourceId } from "../browserImport.ts";
 import { BrowserProfileId } from "../browserProfile.ts";
+import { PreviewTabId } from "../preview.ts";
 import { GrantScope } from "./secrets.ts";
 
 /**
@@ -586,9 +587,18 @@ export const PasswordImportResult = Schema.Struct({
 export type PasswordImportResult = typeof PasswordImportResult.Type;
 
 /** The user's own sign-in on a page they are viewing; refused unless `origin` matches the account. */
+export const AccountFilledTab = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  /** The page that was filled; the tab stays closed to agents that may not use it until it changes. */
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+});
+export type AccountFilledTab = typeof AccountFilledTab.Type;
+
 export const AccountFillValuesInput = Schema.Struct({
   accountId: AccountId,
   origin: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  tab: Schema.optional(AccountFilledTab),
 });
 
 export const AccountFillValues = Schema.Struct({

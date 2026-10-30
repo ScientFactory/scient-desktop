@@ -122,6 +122,8 @@ export const layer = Layer.effect(
         target.type === "account" ? target.accountId : target.profileId,
       ]);
     const handoffs = new Map<string, AccountHandoff>();
+    // In memory only: the account autofill put into a tab, keyed by thread and tab.
+    const filledTabs = new Map<string, { accountId: AccountId; url: string }>();
     const handoffReveals = new Map<string, Effect.Effect<void, AccountsError>>();
     const cancelledHandoffs = new Set<string>();
     const pending = new Map<
@@ -1057,7 +1059,10 @@ export const layer = Layer.effect(
           }),
         ),
       ),
-      fillValues: Effect.fn("AccountsService.fillValues")((accountId, origin) =>
+      filledTab: Effect.fn("AccountsService.filledTab")((threadId, tabId) =>
+        Effect.sync(() => filledTabs.get(`${threadId}\u0000${tabId}`)),
+      ),
+      fillValues: Effect.fn("AccountsService.fillValues")((accountId, origin, tab) =>
         locked(
           Effect.gen(function* () {
             const account = findAccount(accountId);
@@ -1098,6 +1103,12 @@ export const layer = Layer.effect(
                 summary: { ...account.summary, lastUsedAt: yield* now },
               }),
             );
+            if (tab) {
+              const key = `${tab.threadId}\u0000${tab.tabId}`;
+              filledTabs.delete(key);
+              filledTabs.set(key, { accountId, url: tab.url });
+              if (filledTabs.size > 200) filledTabs.delete(filledTabs.keys().next().value!);
+            }
             return {
               ...(details.username === undefined ? {} : { username: details.username }),
               ...(values.password ? { password: Redacted.value(values.password) } : {}),

@@ -12,6 +12,7 @@ import type {
   AccountActivityEntry,
   AccountApprovalDecision,
   AccountFillValues,
+  AccountFilledTab,
   AccountId,
   AccountSaveInput,
   AccountSaveResult,
@@ -122,7 +123,15 @@ export interface AccountsServiceShape {
   readonly fillValues: (
     accountId: AccountId,
     origin: string,
+    tab?: AccountFilledTab,
   ) => Effect.Effect<AccountFillValues, AccountsError>;
+  /** The account autofill last put into this tab, while the tab still shows that page. */
+  readonly filledTab: (
+    threadId: ThreadId,
+    tabId: string,
+  ) => Effect.Effect<
+    (Pick<AccountFilledTab, "url"> & { readonly accountId: AccountId }) | undefined
+  >;
 
   readonly matchSignIn: (
     input: AccountMatchSignInInput,
