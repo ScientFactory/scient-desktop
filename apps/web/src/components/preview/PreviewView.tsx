@@ -938,7 +938,11 @@ export function PreviewView({
                 openInNewWindow || (previewBridge && tabId) ? (
                   <>
                     {openInNewWindow ? (
-                      <PanelTabNewWindowItem onOpen={openInNewWindow} plain />
+                      <PanelTabNewWindowItem
+                        onOpen={openInNewWindow}
+                        label="Open in new Scient window"
+                        plain
+                      />
                     ) : null}
                     {previewBridge && tabId ? (
                       <ScientPreviewExportActions

@@ -31,6 +31,8 @@ export function PanelTabNewWindowProvider(props: {
 /** "Open in new window" in a page's own menu, for the tab that shows the page. */
 export function PanelTabNewWindowItem(props: {
   readonly onOpen: () => void;
+  /** For a menu that offers other windows, such as the browser's. */
+  readonly label?: string;
   /** For a menu whose items have no icons. */
   readonly plain?: boolean;
   readonly iconClassName?: string;
@@ -38,7 +40,7 @@ export function PanelTabNewWindowItem(props: {
   return (
     <MenuItem onClick={props.onOpen}>
       {props.plain ? null : <AppWindowIcon className={props.iconClassName} />}
-      Open in new window
+      {props.label ?? "Open in new window"}
     </MenuItem>
   );
 }
