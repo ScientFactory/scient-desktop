@@ -16,7 +16,10 @@ import {
   PreviewTabId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { WorkspaceBindingResolver } from "../../projectScope/WorkspaceBindingResolver.ts";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationMetadata } from "../../../mcp/ScientOperationTool.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
@@ -226,6 +229,42 @@ const add = metadata(
   "add",
   "Add an account key",
 );
+const paperGet = metadata(
+  Tool.make("scient_paper_get", {
+    failure: AccountsError,
+    dependencies: [
+      ...common.dependencies,
+      FileSystem.FileSystem,
+      Path.Path,
+      WorkspaceBindingResolver,
+    ],
+    description:
+      "Get a paper's PDF by DOI or link and save it in the project: a free legal copy first, else through the user's library access in the browser, one paper at a time. Returns its path.",
+    parameters: Schema.Struct({
+      doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
+      url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
+    }),
+    success: Schema.Union([
+      Schema.Struct({
+        status: Schema.Literal("saved"),
+        path: Schema.String,
+        route: Schema.Literals(["open-access", "library"]),
+        published: Schema.Boolean.annotate({
+          description: "False for an accepted manuscript or preprint.",
+        }),
+        title: Schema.optional(Schema.String),
+        doi: Schema.optional(Schema.String),
+      }),
+      Schema.Struct({
+        status: Schema.Literals(["not-found", "no-access", "needs-sign-in", "limit"]),
+        message: Schema.String,
+        landingUrl: Schema.optional(Schema.String),
+      }),
+    ]),
+  }),
+  "paper-get",
+  "Get a paper's PDF",
+);
 export const ScientAccountsToolkit = Toolkit.make(
   list,
   credentials,
@@ -234,4 +273,5 @@ export const ScientAccountsToolkit = Toolkit.make(
   browserSession,
   findProfile,
   add,
+  paperGet,
 );

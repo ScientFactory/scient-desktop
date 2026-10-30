@@ -4,7 +4,8 @@
   "ownedRoots": [
     "apps/server/src/scient/accounts",
     "apps/web/src/scient/accounts",
-    "apps/desktop/src/scient/accounts"
+    "apps/desktop/src/scient/accounts",
+    "apps/server/src/scient/papers"
   ],
   "ownedFiles": [
     "packages/contracts/src/scient/accounts.ts",

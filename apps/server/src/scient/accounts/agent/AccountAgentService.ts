@@ -25,6 +25,7 @@ import { ScientAccountsToolkit } from "./tools.ts";
 import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
+import { getPaper } from "../../papers/getPaper.ts";
 
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const encodeCookies = Schema.encodeEffect(Schema.fromJsonString(AccountCookies));
@@ -324,6 +325,7 @@ export const accountAgentOperations = {
     );
   }),
   scient_account_add: addAccount,
+  scient_paper_get: getPaper,
 } satisfies Parameters<typeof ScientAccountsToolkit.toLayer>[0];
 type ToolInput<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.Type<
   (typeof ScientAccountsToolkit.tools)[K]["parametersSchema"]
