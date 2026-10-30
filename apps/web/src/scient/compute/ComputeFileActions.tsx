@@ -89,6 +89,8 @@ export interface ComputeFileActionsHandle {
   readonly runFile: () => void;
   readonly runPrimary: (selection?: ComputeTextRange | null) => void;
   readonly runCellAtLine: (line: number) => void;
+  /** Runs exact code as one cell; the returned slice comes back with its submission. */
+  readonly runCode: (code: string) => ComputeCodeSlice;
 }
 
 interface ComputeFileActionsProps {
@@ -108,6 +110,7 @@ interface ComputeFileActionsProps {
   readonly onExecutionSubmitted: (
     sessionId: ComputeSessionId,
     executionId: ComputeExecutionId,
+    slice?: ComputeCodeSlice,
   ) => void;
   /** Notebooks run cell by cell: the primary action runs every cell and the file menu goes. */
   readonly runAll?: () => void;
@@ -705,7 +708,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
       });
       setOperation(null);
       if (submitted._tag === "Success") {
-        onExecutionSubmitted(session.sessionId, executionId);
+        onExecutionSubmitted(session.sessionId, executionId, slice);
       } else if (!isAtomCommandInterrupted(submitted)) {
         reportFailure(`Unable to run ${props.language.displayName}`, submitted);
         refreshSessions();
@@ -999,6 +1002,20 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         },
         runCellAtLine: (line) =>
           void run("cell", computeCell(props.contents, line, props.language.cellMarker)),
+        runCode: (code) => {
+          const lines = code.split("\n");
+          const slice: ComputeCodeSlice = {
+            code,
+            range: {
+              startLine: 0,
+              startColumn: 0,
+              endLine: lines.length - 1,
+              endColumn: lines.at(-1)?.length ?? 0,
+            },
+          };
+          void run("cell", slice);
+          return slice;
+        },
       }),
       [props.contents, props.editorSelection, props.selection, props.language.cellMarker, run],
     );

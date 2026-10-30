@@ -95,17 +95,21 @@ function sourceLabel(execution: ComputeExecutionRecord, threadId: string): strin
   return `${who}: ${source.origin}${lines} of ${source.path}${unsaved}`;
 }
 
+/** Runtime operations need a live session; reading history works on stopped ones too. */
 const requireSession = Effect.fn("ScientComputeToolkit.requireSession")(function* (
   scope: AgentScope,
   sessionId: string,
+  need: "live" | "existing" = "live",
 ) {
   const session = yield* scope.gateway
     .getSession({ cwd: scope.cwd, sessionId: ComputeSessionId.make(sessionId) })
     .pipe(Effect.mapError(computeFailed));
-  if (session === null || !isLive(session)) {
+  if (session === null || (need === "live" && !isLive(session))) {
     return yield* toolError(
       "session-not-found",
-      `There is no live session '${sessionId}'. Call scient_compute_sessions to list them.`,
+      need === "live"
+        ? `There is no live session '${sessionId}'. Call scient_compute_sessions to list them.`
+        : `There is no session '${sessionId}' in this project.`,
     );
   }
   return session;
@@ -315,7 +319,7 @@ export const readScientComputeOutput = Effect.fn("ScientComputeToolkit.output")(
   readonly includeImages?: boolean | undefined;
 }) {
   const scope = yield* agentScope();
-  const session = yield* requireSession(scope, input.session);
+  const session = yield* requireSession(scope, input.session, "existing");
   let execution = yield* latestExecution(scope, session, input.run);
   if (!isFinished(execution) && (input.waitSeconds ?? 0) > 0) {
     yield* awaitFinished(scope, session, execution.request.executionId, input.waitSeconds ?? 0);

@@ -62,11 +62,13 @@ export function parseNotebook(text: string): NotebookDocument | null {
   return {
     raw: parsed,
     language: language.toLowerCase(),
-    cells: cells.filter(isRecord).map((cell) => {
+    cells: cells.filter(isRecord).map((cell, index) => {
       const cellType =
         cell.cell_type === "markdown" || cell.cell_type === "raw" ? cell.cell_type : "code";
       return {
-        id: typeof cell.id === "string" && cell.id.length > 0 ? cell.id : newNotebookCellId(),
+        // Older notebooks have no cell ids. Position-based ids stay the same on every read of the
+        // same text until the first save writes them.
+        id: typeof cell.id === "string" && cell.id.length > 0 ? cell.id : `cell-${index + 1}`,
         cellType,
         source: notebookText(cell.source),
         outputs: Array.isArray(cell.outputs) ? cell.outputs.filter(isRecord) : [],

@@ -20,6 +20,8 @@ const notebookError = (message: string, cause?: unknown) =>
   });
 
 type NotebookOutput = Record<string, unknown>;
+const isTextual = (mediaType: string) =>
+  mediaType.startsWith("text/") || /[+/](?:xml|json)$/.test(mediaType);
 /** The bridge's private name for submitted code; a notebook calls it the cell. */
 const SUBMITTED_SOURCE = /<scient-compute-source:[0-9a-f]+(?::[0-9]+)?>/g;
 const parseJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -54,9 +56,14 @@ export function makeComputeNotebookOutputs(input: {
       executionId: request.executionId,
       contentHash,
     });
-    const base64 = (path: string) =>
+    // nbformat keeps text formats (SVG, HTML, JSON…) as text and binary ones as base64.
+    const stored = (path: string, mediaType: string) =>
       input.fileSystem.readFile(path).pipe(
-        Effect.map((bytes) => Buffer.from(bytes).toString("base64")),
+        Effect.map((bytes) =>
+          isTextual(mediaType)
+            ? new TextDecoder().decode(bytes)
+            : Buffer.from(bytes).toString("base64"),
+        ),
         Effect.mapError((cause) => notebookError("A stored figure could not be read.", cause)),
       );
     const notebook: NotebookOutput[] = [];
@@ -87,7 +94,7 @@ export function makeComputeNotebookOutputs(input: {
           if (resolved === null) break;
           notebook.push({
             output_type: "display_data",
-            data: { [output.mediaType]: yield* base64(resolved.path) },
+            data: { [output.mediaType]: yield* stored(resolved.path, output.mediaType) },
             metadata: {},
           });
           break;
@@ -100,7 +107,11 @@ export function makeComputeNotebookOutputs(input: {
             else if (value._tag === "json") data[representation.mediaType] = parseJson(value.json);
             else {
               const resolved = yield* input.compute.resolveOutputResource(ref(value.contentHash));
-              if (resolved !== null) data[representation.mediaType] = yield* base64(resolved.path);
+              if (resolved !== null)
+                data[representation.mediaType] = yield* stored(
+                  resolved.path,
+                  representation.mediaType,
+                );
             }
           }
           const metadata =

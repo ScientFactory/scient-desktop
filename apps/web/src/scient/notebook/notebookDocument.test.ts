@@ -30,4 +30,14 @@ describe("notebookDocument", () => {
     expect(written.cells[0]).toEqual({ ...saved.cells[0], source: ["x = 2\n"] });
     expect(written.cells[1]).toEqual(saved.cells[1]);
   });
+
+  it("gives cells without ids the same ids on every read", () => {
+    const older = JSON.stringify({
+      ...saved,
+      cells: saved.cells.map(({ id: _id, ...cell }) => cell),
+    });
+    expect(parseNotebook(older)?.cells.map((cell) => cell.id)).toEqual(
+      parseNotebook(older)?.cells.map((cell) => cell.id),
+    );
+  });
 });

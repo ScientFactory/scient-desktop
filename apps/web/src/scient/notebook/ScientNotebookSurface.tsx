@@ -19,6 +19,7 @@ import {
   ComputeFileActions,
   type ComputeFileActionsHandle,
 } from "~/scient/compute/ComputeFileActions";
+import type { ComputeCodeSlice } from "~/scient/compute/computeSourceSlices";
 import { ComputeOutputView } from "~/scient/compute/ComputeOutputView";
 import { askInChatAboutCompute } from "~/scient/compute/computeAskInChat";
 import { computeFileContextId } from "~/scient/compute/computeContextStore";
@@ -46,18 +47,12 @@ interface CellRun {
   readonly executionId: ComputeExecutionId;
 }
 
-/** The notebook's code cells as one `%%` script, so the shared Run controls and sessions apply. */
-function notebookScript(document: NotebookDocument, marker: string) {
-  const lines: string[] = [];
-  const cellLines = new Map<string, number>();
-  for (const cell of document.cells) {
-    if (cell.cellType !== "code") continue;
-    lines.push(marker);
-    // One-based line of the cell's first code line, as `runCellAtLine` expects.
-    cellLines.set(cell.id, lines.length + 1);
-    lines.push(...cell.source.replace(/\n$/, "").split("\n"));
-  }
-  return { contents: lines.join("\n"), cellLines };
+/** The notebook's code cells as one `%%` script, for the shared Run control's runtime checks. */
+function notebookScript(document: NotebookDocument, marker: string): string {
+  return document.cells
+    .filter((cell) => cell.cellType === "code")
+    .map((cell) => `${marker}\n${cell.source.replace(/\n$/, "")}`)
+    .join("\n");
 }
 
 /** Without a returned value the kernel reports no count, so number the run after the latest. */
@@ -158,7 +153,8 @@ export default function ScientNotebookSurface(props: {
   const [editingMarkdown, setEditingMarkdown] = useState<string | null>(null);
   const [runs, setRuns] = useState<ReadonlyArray<CellRun>>([]);
   const lastRuns = useRef(new Map<string, CellRun>());
-  const requested = useRef<string[]>([]);
+  // Each submitted cell is known by the exact slice the Run control ran for it.
+  const requested = useRef(new WeakMap<ComputeCodeSlice, string>());
   const runAll = useRef<string[]>([]);
   const readNotebookOutputs = useAtomCommand(computeEnvironment.notebookOutputs, {
     reportFailure: false,
@@ -174,11 +170,20 @@ export default function ScientNotebookSurface(props: {
     persistence.change(serializeNotebook(update(parsed)), current.editVersion);
   };
 
-  const runCell = useStableCallback((cellId: string) => {
-    const line = script?.cellLines.get(cellId);
-    if (line === undefined) return;
-    requested.current.push(cellId);
-    actions.current?.runCellAtLine(line);
+  /** Runs a cell; false when there is nothing to run, so Run all moves on. */
+  const runCell = useStableCallback((cellId: string): boolean => {
+    const cell = parseNotebook(persistence.getSnapshot().draftSource)?.cells.find(
+      (candidate) => candidate.id === cellId,
+    );
+    if (cell === undefined || cell.cellType !== "code" || cell.source.trim() === "") return false;
+    const slice = actions.current?.runCode(cell.source);
+    if (slice !== undefined) requested.current.set(slice, cellId);
+    return true;
+  });
+  const runNext = useStableCallback(() => {
+    while (runAll.current.length > 0) {
+      if (runCell(runAll.current.shift()!)) return;
+    }
   });
 
   // A finished run's outputs are written into the cell, so the notebook keeps its results.
@@ -206,12 +211,11 @@ export default function ScientNotebookSurface(props: {
           );
         }
         setRuns((current) => current.filter((entry) => entry.executionId !== run.executionId));
-        const next = status === "succeeded" ? runAll.current.shift() : undefined;
-        if (next === undefined) runAll.current = [];
-        else runCell(next);
+        if (status === "succeeded") runNext();
+        else runAll.current = [];
       });
     }
-  }, [commit, events.data, props.cwd, props.environmentId, readNotebookOutputs, runCell, runs]);
+  }, [commit, events.data, props.cwd, props.environmentId, readNotebookOutputs, runNext, runs]);
 
   if (document === null || language === null || script === null) {
     return (
@@ -249,7 +253,7 @@ export default function ScientNotebookSurface(props: {
             environmentId={props.environmentId}
             cwd={props.cwd}
             relativePath={props.relativePath}
-            contents={script.contents}
+            contents={script}
             sourceRevision={snapshot.baselineRevision}
             sourcePending
             selection={null}
@@ -258,15 +262,13 @@ export default function ScientNotebookSurface(props: {
             onRunRequested={() => undefined}
             onShowMatlabOneShot={() => undefined}
             runAll={() => {
-              const [first, ...rest] = document.cells
+              runAll.current = document.cells
                 .filter((cell) => cell.cellType === "code")
                 .map((cell) => cell.id);
-              if (first === undefined) return;
-              runAll.current = rest;
-              runCell(first);
+              runNext();
             }}
-            onExecutionSubmitted={(sessionId, executionId) => {
-              const cellId = requested.current.shift();
+            onExecutionSubmitted={(sessionId, executionId, slice) => {
+              const cellId = slice === undefined ? undefined : requested.current.get(slice);
               if (cellId !== undefined)
                 setRuns((current) => [...current, { cellId, sessionId, executionId }]);
             }}

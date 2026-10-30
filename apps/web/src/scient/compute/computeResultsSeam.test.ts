@@ -168,7 +168,9 @@ describe("compute result surface seam", () => {
 
   // regression: 0b6af7cc3c feat(compute): add assisted Python setup and runtime recovery
   it("follows a new run in the session that actually owns it", () => {
-    expect(pythonActionsSource).toContain("onExecutionSubmitted(session.sessionId, executionId)");
+    expect(pythonActionsSource).toContain(
+      "onExecutionSubmitted(session.sessionId, executionId, slice)",
+    );
     expect(pythonSurfaceSource).toContain("focusExecutionId={focusExecution?.executionId ?? null}");
   });
 
