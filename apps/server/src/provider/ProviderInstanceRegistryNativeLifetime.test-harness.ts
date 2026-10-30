@@ -15,6 +15,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import type { ProviderAdapterV2OpenSessionInput } from "@t3tools/provider-core/server/ProviderAdapter";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
@@ -37,7 +38,11 @@ export const configMap = (revision = 1): ProviderInstanceConfigMap => ({
   [first]: { driver: kind, config: { revision } },
   [second]: { driver: kind, config: { revision: 1 } },
 });
-export const TestLayer = Layer.mergeAll(NodeServices.layer, IdAllocator.layer);
+export const TestLayer = Layer.mergeAll(
+  NodeServices.layer,
+  IdAllocator.layer,
+  Layer.mock(SecretResolver.SecretResolver)({}),
+);
 const unused = () =>
   Effect.die("Retained library or snapshot seam must not execute in native lifetime tests");
 

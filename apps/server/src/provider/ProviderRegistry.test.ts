@@ -80,6 +80,7 @@ import type {
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 // SCIENT-FORK: the shared driver error moved with the driver SPI.
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -125,6 +126,10 @@ const withoutLiveInventoryGeneration = ({
   return snapshot;
 };
 // SCIENT-FORK:END
+
+const layerUnusedMutator = Layer.mock(
+  ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+)({});
 
 const layerTestHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -1081,7 +1086,12 @@ it.layer(
                   retainedModels,
                 );
               }).pipe(
-                Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerInstanceRegistry))),
+                Effect.provide(
+                  ProviderRegistry.layer.pipe(
+                    Layer.provide(layerInstanceRegistry),
+                    Layer.provide(layerUnusedMutator),
+                  ),
+                ),
                 Effect.scoped,
               );
             }
@@ -1221,7 +1231,12 @@ it.layer(
                 retainedModels,
               );
             }).pipe(
-              Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerInstanceRegistry))),
+              Effect.provide(
+                ProviderRegistry.layer.pipe(
+                  Layer.provide(layerInstanceRegistry),
+                  Layer.provide(layerUnusedMutator),
+                ),
+              ),
               Effect.scoped,
             );
           }
@@ -1495,6 +1510,7 @@ it.layer(
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
             ProviderRegistry.layer.pipe(
+              Layer.provide(layerUnusedMutator),
               Layer.provideMerge(layerInstanceRegistry),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
@@ -1584,6 +1600,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -1734,7 +1751,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderMaintenanceRunner.layer.pipe(
-            Layer.provideMerge(ProviderRegistry.layer),
+            Layer.provideMerge(ProviderRegistry.layer.pipe(Layer.provide(layerUnusedMutator))),
             Layer.provideMerge(ProviderLifecycleCoordinator.layer),
             Layer.provideMerge(
               Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
@@ -1992,6 +2009,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2227,6 +2245,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2420,6 +2439,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2535,6 +2555,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(instanceRegistryLayer),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2649,6 +2670,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2789,6 +2811,7 @@ it.layer(
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
             ProviderRegistry.layer.pipe(
+              Layer.provide(layerUnusedMutator),
               Layer.provideMerge(layerInstanceRegistry),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
@@ -2894,6 +2917,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -3014,6 +3038,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -3073,7 +3098,7 @@ it.layer(
                     homePath: `/tmp/${missingBinary}_home`,
                   },
                 },
-              } as unknown as ContractServerSettings["providerInstances"],
+              } as unknown as (typeof ServerSettings.Encoded)["providerInstances"],
             }),
           ),
         );
@@ -3193,7 +3218,8 @@ it.layer(
         const mutableServerSettings = yield* makeMutableServerSettingsService(
           decodeServerSettings(
             deepMerge(encodedDefaultServerSettings, {
-              providerInstances,
+              providerInstances:
+                providerInstances as (typeof ServerSettings.Encoded)["providerInstances"],
             }),
           ),
         );
@@ -3349,7 +3375,7 @@ it.layer(
                   enabled: false,
                   config: { arbitrary: "payload" },
                 },
-              } as unknown as ContractServerSettings["providerInstances"],
+              } as unknown as (typeof ServerSettings.Encoded)["providerInstances"],
             }),
           ),
         );
@@ -3582,7 +3608,10 @@ it.layer(
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
-                providerInstances: disabledDefaultSlots("codex", "grok"),
+                providerInstances: disabledDefaultSlots(
+                  "codex",
+                  "grok",
+                ) as (typeof ServerSettings.Encoded)["providerInstances"],
               }),
             ),
           );

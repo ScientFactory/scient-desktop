@@ -61,6 +61,7 @@ import {
 // SCIENT-FORK:END
 import { publishBrowserPdfExport } from "../scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import type { GeneratedDocumentStore } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
+import { AgentScope, agentScopeLauncherScript } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
@@ -498,6 +499,8 @@ const make = Effect.gen(function* () {
     "--base-dir",
     config.baseDir,
   ]);
+  const agentScope = yield* AgentScope;
+  const launchersDir = NodePath.join(config.stateDir, "server-browser", "launchers");
 
   const tabs = new Map<string, ServerTab>();
   const pendingTabs = new Map<string, Promise<ServerTab>>();
@@ -511,6 +514,17 @@ const make = Effect.gen(function* () {
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
     executable: () => runPromise(previewBrowser.executable),
+    // An agent scope keeps Chrome out of the server's memory protection and OOM score.
+    launcher: async (executable) => {
+      const launch = await runPromise(
+        agentScope.wrap({ command: executable, args: [], name: "preview-browser" }),
+      );
+      if (launch.command === executable) return undefined;
+      await NodeFSP.mkdir(launchersDir, { recursive: true });
+      const launcher = NodePath.join(launchersDir, NodeCrypto.randomUUID());
+      await NodeFSP.writeFile(launcher, agentScopeLauncherScript(launch), { mode: 0o700 });
+      return { path: launcher, release: () => NodeFSP.rm(launcher, { force: true }) };
+    },
     // Playwright's launch error drops Chrome's own output; its sandbox note survives.
     diagnose: (executable, cause) =>
       Effect.runPromiseWith(launchServices)(

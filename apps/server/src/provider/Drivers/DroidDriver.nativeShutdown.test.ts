@@ -34,6 +34,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import { HttpClient, HttpServer } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -100,6 +101,7 @@ const mcp = Layer.effect(
 );
 const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "droid-native-shutdown-" }).pipe(
   Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mock(SecretResolver.SecretResolver)({})),
   Layer.provideMerge(ThreadCommandExecutor.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(ProviderContinuationRequests.layer),

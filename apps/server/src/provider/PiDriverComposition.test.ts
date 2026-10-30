@@ -23,6 +23,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ModelManifest from "./ModelManifest.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -192,6 +193,7 @@ const testLayer = Layer.mergeAll(
   ),
   ServerSettings.layerTest(),
   ManagedRuntimeCatalog.layerTest,
+  Layer.mock(SecretResolver.SecretResolver)({}),
   TestProviderHost.layer({
     cwd: "/machine",
     settings: { ...DEFAULT_SERVER_SETTINGS, enableProviderUpdateChecks: false },

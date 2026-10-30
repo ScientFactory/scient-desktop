@@ -71,7 +71,10 @@ export const agentProcessEnvironment = (input: {
   for (const [name, value] of Object.entries(input.baseEnv ?? process.env)) {
     if (value !== undefined && !isScientInternalEnvironmentName(name)) env[name] = value;
   }
-  for (const variable of input.instanceEnvironment ?? []) env[variable.name] = variable.value;
+  for (const variable of input.instanceEnvironment ?? []) {
+    // An unresolved secret reference carries no value; the registry resolves it for the provider.
+    if (typeof variable.value === "string") env[variable.name] = variable.value;
+  }
   exemptLoopbackFromProxy(env, input.platform);
   return env;
 };

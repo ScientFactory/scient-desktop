@@ -181,6 +181,7 @@ function makeHarness(
         Ref.update(reloadedInstancesRef, (instances) => [...instances, instanceId]).pipe(
           Effect.andThen(reloadInstance),
         ),
+      reloadSecretsAndRefresh: () => SubscriptionRef.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, driver) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider: driver, packageName: null }),

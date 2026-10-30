@@ -18,7 +18,6 @@ export function hasUnresolvedProviderCredentials(
     return true;
   }
   return environment.some(
-    (variable) =>
-      variable.sensitive && variable.valueRedacted === true && variable.value.length === 0,
+    (variable) => variable.sensitive && variable.valueRedacted === true && variable.value === "",
   );
 }

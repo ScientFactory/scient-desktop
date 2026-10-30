@@ -2,11 +2,13 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Terminal from "effect/Terminal";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import * as ServiceProtection from "../cloud/serviceProtection.ts";
 import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -67,10 +69,23 @@ function formatServiceChange(
   return `${result.previouslyInstalled ? "Updated" : "Installed"} Scient service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`;
 }
 
+function formatProtection(
+  protection: ServiceProtection.ServiceProtectionState | undefined,
+): ReadonlyArray<string> {
+  if (protection === undefined) return [];
+  return [
+    protection.unprotected === undefined
+      ? `  Memory protection: on${protection.setByProtect ? " (t3 service protect)" : ""}`
+      : `  Memory protection: off, ${protection.unprotected} grants none. Run \`t3 service protect\`.`,
+    ...(protection.oomScoreAdj === undefined ? [] : [`  OOM score: ${protection.oomScoreAdj}`]),
+  ];
+}
+
 export function formatServiceStatus(
   status: BootService.BootServiceStatus,
   cliVersion: string,
   repairCommand?: string,
+  protection?: ServiceProtection.ServiceProtectionState,
 ): string {
   if (!status.supported) {
     return "Scient service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
@@ -92,6 +107,7 @@ export function formatServiceStatus(
       `  Status: installed · t3@${installedVersion} (newer than this t3@${cliVersion} CLI)`,
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
+      ...formatProtection(protection),
       ...problems,
       `  Next: Use a Scient CLI matching t3@${installedVersion} to repair it, or pass \`--allow-downgrade\` explicitly.`,
     ].join("\n");
@@ -101,6 +117,7 @@ export function formatServiceStatus(
     `  Status: ${status.current ? `installed · t3@${installedVersion}` : "needs an update or repair"}`,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
+    ...formatProtection(protection),
     ...problems,
     // SCIENT-FORK:START — never suggest downloading a different installation for a repair.
     ...(status.current
@@ -229,11 +246,120 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
           "--base-dir",
           config.baseDir,
         ]);
+        const path = yield* Path.Path;
+        const status = yield* service.status;
+        const protection =
+          status.installed && (yield* HostProcess.Platform) === "linux"
+            ? yield* ServiceProtection.readProtection(path.dirname(status.unitPath)).pipe(
+                Effect.provide(ProcessRunner.layer),
+              )
+            : undefined;
         yield* Console.log(
-          formatServiceStatus(yield* service.status, packageJson.version, repairCommand),
+          formatServiceStatus(status, packageJson.version, repairCommand, protection),
         );
       }),
     ),
+  ),
+);
+
+const formatDropIns = (dropIns: ReadonlyArray<ServiceProtection.DropIn>) =>
+  dropIns.map(
+    ({ path, contents }) => `  ${path}: ${contents.trimEnd().split("\n").slice(1).join(" ")}`,
+  );
+
+const confirm = (yes: boolean, message: string) =>
+  yes ? Effect.succeed(true) : Prompt.run(Prompt.Confirm({ message, initial: false }));
+
+const serviceProtectCommand = Command.make("protect", {
+  ...projectLocationFlags,
+  undo: Flag.Boolean("undo").pipe(
+    Flag.withDescription("Remove the protection this command set up."),
+    Flag.withDefault(false),
+  ),
+  yes: Flag.Boolean("yes").pipe(
+    Flag.withDescription("Answer yes to every question, including SSH and Tailscale."),
+    Flag.withDefault(false),
+  ),
+}).pipe(
+  Command.withDescription(
+    "Protect the Scient server from agents under memory pressure (Linux with systemd). Asks for sudo.",
+  ),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const unsupported = "Service protection needs Linux with systemd.";
+      if ((yield* HostProcess.Platform) !== "linux") return yield* Console.log(unsupported);
+      // Before resolving config, which creates Scient directories that root would then own.
+      if ((yield* HostProcess.UserId) === 0) {
+        return yield* Console.log(
+          "Run `t3 service protect` as the user that runs Scient, without sudo. It asks for sudo when it needs root.",
+        );
+      }
+      return yield* runServiceCommand(
+        flags,
+        Effect.gen(function* () {
+          const uid = yield* HostProcess.UserId;
+          const remote = yield* ServiceProtection.detectRemoteAccessUnits;
+          const { unitPath } = yield* (yield* BootService.BootService).status;
+          if (uid === undefined || remote === undefined || unitPath === "") {
+            return yield* Console.log(unsupported);
+          }
+          const userUnitDir = (yield* Path.Path).dirname(unitPath);
+
+          if (flags.undo) {
+            const installed = yield* ServiceProtection.installedProtection(
+              ServiceProtection.protectionPlan({
+                uid,
+                userUnitDir,
+                remoteAccessUnits: ServiceProtection.REMOTE_ACCESS_UNITS,
+              }),
+            );
+            if (installed === undefined) {
+              return yield* Console.log("Scient service protection is not set up.");
+            }
+            yield* Console.log(
+              [
+                "Removes:",
+                ...[...installed.system, ...installed.user, installed.managerDefaults].map(
+                  ({ path, shared }) =>
+                    `  ${path}${shared === true ? " (kept while another user is protected)" : ""}`,
+                ),
+              ].join("\n"),
+            );
+            if (!(yield* confirm(flags.yes, "Remove Scient service protection?"))) return;
+            yield* ServiceProtection.removeProtection(installed);
+            return yield* Console.log(
+              "Removed Scient service protection. The server's OOM score returns to normal after `t3 service restart`.",
+            );
+          }
+
+          const names = remote.map((unit) => unit.replace(/\.service$/, "")).join(" and ");
+          const protectRemote =
+            remote.length > 0 &&
+            (yield* confirm(
+              flags.yes,
+              `Also protect ${names} so you can still reach this machine under memory pressure?`,
+            ));
+          const plan = ServiceProtection.protectionPlan({
+            uid,
+            userUnitDir,
+            remoteAccessUnits: protectRemote ? remote : [],
+          });
+          yield* Console.log(
+            [
+              "As root, through sudo:",
+              ...formatDropIns(plan.system),
+              "As you:",
+              ...formatDropIns([plan.managerDefaults, ...plan.user]),
+            ].join("\n"),
+          );
+          if (!(yield* confirm(flags.yes, "Apply these settings?"))) return;
+          yield* ServiceProtection.applyProtection(plan);
+          yield* Console.log(
+            "Protected Scient. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`.",
+          );
+        }).pipe(Effect.provide(ProcessRunner.layer)),
+      );
+    }),
   ),
 );
 
@@ -336,5 +462,6 @@ export const serviceCommand = Command.make("service").pipe(
     serviceUninstallCommand,
     serviceUpdateCommand,
     serviceStatusCommand,
+    serviceProtectCommand,
   ]),
 );
