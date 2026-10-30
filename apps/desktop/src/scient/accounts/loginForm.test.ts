@@ -127,3 +127,18 @@ it("automatically fills one untouched document only and rejects typed values or 
   expect(window.eval(loginFillScript(values, location.origin, options))).toBe(false);
   expect(window.eval(loginFillScript(values, location.origin))).toBe(true);
 });
+
+it("ticks remember me beside a filled password, but never a shared-computer option", () => {
+  using f = fixture();
+  const form = document.querySelector("form")!;
+  form.insertAdjacentHTML(
+    "beforeend",
+    '<label><input type="checkbox" id="shared">Public computer, do not remember me</label>' +
+      '<label><input type="checkbox" id="keep">Keep me signed in</label>',
+  );
+  const password = NodeCrypto.randomBytes(16).toString("hex");
+  expect(window.eval(loginFillScript({ password }, location.origin))).toBe(true);
+  expect(f.inputs[1]?.value).toBe(password);
+  expect(document.querySelector<HTMLInputElement>("#keep")?.checked).toBe(true);
+  expect(document.querySelector<HTMLInputElement>("#shared")?.checked).toBe(false);
+});

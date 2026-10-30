@@ -125,3 +125,39 @@ it("extracts only an unambiguous, visible local push match number", async () => 
     await browser.close();
   }
 });
+
+it("finds remember-me and trust-device boxes, including styled ones, and Stay signed in", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await (await browser.newContext()).newPage();
+    const detect = async (html: string) => {
+      await page.setContent(html);
+      return decodeDetection(await page.evaluate(signInDetectionScript));
+    };
+    const login = '<form><input name="username"><input type="password">';
+    expect(
+      (await detect(`${login}<label><input type="checkbox">Keep me signed in</label></form>`))
+        .remember,
+    ).toBeDefined();
+    expect(
+      (
+        await detect(
+          `${login}<input id="r" type="checkbox" style="position:absolute;width:0;height:0;opacity:0"><label for="r">Trust this device</label></form>`,
+        )
+      ).remember,
+    ).toBeDefined();
+    expect(
+      (await detect(`${login}<label><input type="checkbox">Public computer</label></form>`))
+        .remember,
+    ).toBeUndefined();
+    expect(
+      (await detect(`${login}<label><input type="checkbox" checked>Remember me</label></form>`))
+        .remember,
+    ).toBeUndefined();
+    expect(
+      (await detect("<h1>Stay signed in?</h1><button>No</button><button>Yes</button>")).stay,
+    ).toBeDefined();
+  } finally {
+    await browser.close();
+  }
+});

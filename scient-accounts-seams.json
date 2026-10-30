@@ -16,7 +16,8 @@
     "packages/contracts/src/clientRpcPermissions.scient.test.ts",
     "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts",
     "packages/shared/src/scientAccountSecretRequest.ts",
-    "packages/shared/src/scientBrowserProfileChoice.ts"
+    "packages/shared/src/scientBrowserProfileChoice.ts",
+    "packages/shared/src/scientSignInPage.ts"
   ],
   "accountsDiffSignals": [
     "scient/accounts",

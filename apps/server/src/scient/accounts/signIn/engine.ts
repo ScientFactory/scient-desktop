@@ -16,7 +16,7 @@ import { AgentInvocationContext } from "../../operations/AgentInvocationContext.
 import { authorizePreviewProfile, recordProfileUse } from "../agent/previewProfileAccess.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { decideSignIn, decideSignInContinuation, type SignInSubmission } from "./decision.ts";
-import { SignInDetection, signInDetectionScript } from "./detection.ts";
+import { SignInDetection, signInDetectionScript, tickRememberScript } from "./detection.ts";
 import { accountOtp, parseTotp } from "./totp.ts";
 import { matchesAccountOrigin } from "./origin.ts";
 
@@ -267,6 +267,11 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           target,
         );
       }
+      // Keeps the session and skips codes next time; never worth failing a sign-in over.
+      if (page.remember)
+        yield* invoke("evaluate", { expression: tickRememberScript(page.remember) }, target).pipe(
+          Effect.ignore,
+        );
       submissions.push({
         origin: page.origin,
         fields: action.fields.map(({ field }) => field),

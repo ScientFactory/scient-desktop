@@ -29,6 +29,8 @@ export function decideSignIn(
     ...(page.password ? [{ field: "password" as const, selector: page.password }] : []),
     ...(page.otp ? [{ field: "otp" as const, selector: page.otp }] : []),
   ];
+  // "Stay signed in?" has no fields; its Yes button is the whole step.
+  if (fields.length === 0 && page.stay) return { type: "fill", fields, submit: page.stay } as const;
   if (fields.length === 0)
     return {
       type: "needs-user",

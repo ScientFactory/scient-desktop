@@ -1,3 +1,4 @@
+import { FORGET_SIGN_IN_LABEL, REMEMBER_SIGN_IN_LABEL } from "@t3tools/shared/scientSignInPage";
 import * as Schema from "effect/Schema";
 
 export const SignInDetection = Schema.Struct({
@@ -8,6 +9,8 @@ export const SignInDetection = Schema.Struct({
   submit: Schema.NullOr(Schema.String),
   challenge: Schema.NullOr(Schema.Literals(["captcha", "passkey", "push"])),
   number: Schema.optional(Schema.String),
+  remember: Schema.optional(Schema.String),
+  stay: Schema.optional(Schema.String),
   signedIn: Schema.Boolean,
 });
 export type SignInDetection = typeof SignInDetection.Type;
@@ -40,6 +43,14 @@ export const signInDetectionScript = String.raw`(() => {
   const form = (password ?? otp ?? username)?.form;
   const submit = Array.from((form ?? document).querySelectorAll("button, input[type=submit]")).find(element => visible(element) && !element.hasAttribute("disabled") && (element instanceof HTMLInputElement || element.type === "submit"));
   const text = document.body?.innerText ?? "";
+  const rememberLabel = new RegExp(${JSON.stringify(REMEMBER_SIGN_IN_LABEL)}, "i");
+  const forgetLabel = new RegExp(${JSON.stringify(FORGET_SIGN_IN_LABEL)}, "i");
+  const boxLabel = (box) => [label(box), ...Array.from(box.labels ?? []).map(item => item.textContent)].join(" ");
+  // Styled checkboxes hide the input and show its label.
+  const remember = Array.from((form ?? document).querySelectorAll("input[type=checkbox]")).find(box => !box.checked && !box.disabled && (visible(box) || Array.from(box.labels ?? []).some(visible)) && rememberLabel.test(boxLabel(box)) && !forgetLabel.test(boxLabel(box)));
+  const stay = !password && !otp && /stay signed in\?/i.test(text)
+    ? Array.from(document.querySelectorAll("button, input[type=submit]")).find(element => visible(element) && /^yes$/i.test((element.value || element.textContent || "").trim()))
+    : undefined;
   const captcha = Array.from(document.querySelectorAll('[class*=captcha], [id*=captcha], iframe[src*=captcha]')).some(visible);
   const push = /approve.*(phone|device)|check your (phone|device)|enter the number|number shown|tap the number|matching number|verification code shown|verify with (a )?number/i.test(text);
   const numbers = new Set();
@@ -54,9 +65,15 @@ export const signInDetectionScript = String.raw`(() => {
   }
   return {
     ...(push && numbers.size === 1 ? { number: [...numbers][0] } : {}),
+    ...(remember ? { remember: path(remember) } : {}),
+    ...(stay ? { stay: path(stay) } : {}),
     origin: location.origin,
     username: path(username), password: path(password), otp: path(otp), submit: path(submit),
     challenge: captcha ? "captcha" : /use (a |your )?passkey|touch id|security key/i.test(text) ? "passkey" : push ? "push" : null,
     signedIn: !username && !password && !otp && Array.from(document.querySelectorAll("a, button")).some(element => visible(element) && /^(sign out|log out|logout)$/i.test(element.textContent?.trim() ?? "")),
   };
 })()`;
+
+/** Ticks a detected checkbox with the page's own click, so its form sees the change. */
+export const tickRememberScript = (selector: string) =>
+  `document.querySelector(${JSON.stringify(selector)})?.click()`;

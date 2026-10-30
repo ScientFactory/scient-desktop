@@ -1,3 +1,5 @@
+import { FORGET_SIGN_IN_LABEL, REMEMBER_SIGN_IN_LABEL } from "@t3tools/shared/scientSignInPage";
+
 export interface LoginField {
   readonly type: string;
   readonly autocomplete: string;
@@ -45,6 +47,21 @@ export function collectLoginFields(root: ParentNode) {
   return { inputs, ...detectLoginFields(fields) };
 }
 
+/** Ticks "remember me" or "trust this device" beside a filled sign-in; the user can untick it. */
+function tickRememberSignIn(root: ParentNode, remember: RegExp, forget: RegExp) {
+  for (const box of Array.from(root.querySelectorAll<HTMLInputElement>("input[type=checkbox]"))) {
+    const label = [
+      box.name,
+      box.id,
+      box.getAttribute("aria-label"),
+      ...Array.from(box.labels ?? []).map((item) => item.textContent),
+    ].join(" ");
+    if (box.checked || box.disabled || !remember.test(label) || forget.test(label)) continue;
+    box.click();
+    return;
+  }
+}
+
 function fillLoginForm(
   values: {
     username?: string | undefined;
@@ -53,6 +70,7 @@ function fillLoginForm(
   },
   expectedOrigin: string,
   options: { documentId?: string | undefined; automatic?: boolean | undefined } = {},
+  labels = { remember: REMEMBER_SIGN_IN_LABEL, forget: FORGET_SIGN_IN_LABEL },
 ) {
   if (location.origin !== expectedOrigin || (options.automatic && !options.documentId))
     return false;
@@ -92,6 +110,12 @@ function fillLoginForm(
       filled = true;
     }
     if (filled) {
+      if (values.password !== undefined || values.otp !== undefined)
+        tickRememberSignIn(
+          document,
+          new RegExp(labels.remember, "i"),
+          new RegExp(labels.forget, "i"),
+        );
       if (options.automatic && state) state.autoFilled = true;
       return true;
     }
@@ -108,7 +132,7 @@ export const loginFillScript = (
   origin: string,
   options: { documentId?: string | undefined; automatic?: boolean | undefined } = {},
 ) =>
-  `(() => { const loginDocumentState = ${loginDocumentState.toString()}; const detectLoginFields = ${detectLoginFields.toString()}; const collectLoginFields = ${collectLoginFields.toString()}; return (${fillLoginForm.toString()})(${JSON.stringify(values)}, ${JSON.stringify(origin)}, ${JSON.stringify(options)}); })()`;
+  `(() => { const loginDocumentState = ${loginDocumentState.toString()}; const detectLoginFields = ${detectLoginFields.toString()}; const collectLoginFields = ${collectLoginFields.toString()}; const tickRememberSignIn = ${tickRememberSignIn.toString()}; return (${fillLoginForm.toString()})(${JSON.stringify(values)}, ${JSON.stringify(origin)}, ${JSON.stringify(options)}, ${JSON.stringify({ remember: REMEMBER_SIGN_IN_LABEL, forget: FORGET_SIGN_IN_LABEL })}); })()`;
 
 export interface LoginDocumentState {
   readonly documentId: string;

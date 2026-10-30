@@ -15,6 +15,16 @@ const page: SignInDetection = {
 };
 const available = { username: true, password: true, otp: true };
 describe("account sign-in decisions", () => {
+  it('answers "Stay signed in?" with its Yes button', () => {
+    expect(
+      decideSignIn(
+        { ...page, username: null, password: null, submit: null, stay: "#yes" },
+        ["example.com"],
+        available,
+      ),
+    ).toEqual({ type: "fill", fields: [], submit: "#yes" });
+  });
+
   it("fills visible steps only on a matching origin and stops for challenges, missing fields and uncertain completion", () => {
     expect(decideSignIn(page, ["example.com"], available)).toEqual({
       type: "fill",
