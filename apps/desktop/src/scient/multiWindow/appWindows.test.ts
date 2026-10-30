@@ -12,6 +12,7 @@ import {
   cascadeWindowBounds,
   parseAppWindowRoute,
   ReadyRenderers,
+  windowBoundsAtPoint,
 } from "./appWindows.ts";
 
 // Like Electron, a destroyed window throws on `webContents` before its contents emit `destroyed`.
@@ -89,6 +90,30 @@ describe("cascadeWindowBounds", () => {
       y: 38,
       width: 800,
       height: 600,
+    });
+  });
+});
+
+describe("windowBoundsAtPoint", () => {
+  const primary = { x: 0, y: 25, width: 1_440, height: 875 };
+  const secondary = { x: 1_440, y: 0, width: 1_920, height: 1_080 };
+  const source = { x: 100, y: 100, width: 1_200, height: 800 };
+
+  it("puts the window's top bar under the pointer on the pointer's display", () => {
+    assert.deepEqual(windowBoundsAtPoint(source, { x: 1_700, y: 120 }, [primary, secondary]), {
+      x: 1_580,
+      y: 100,
+      width: 1_200,
+      height: 800,
+    });
+  });
+
+  it("keeps the window inside the work area near its edge", () => {
+    assert.deepEqual(windowBoundsAtPoint(source, { x: 1_400, y: 880 }, [primary, secondary]), {
+      x: 240,
+      y: 100,
+      width: 1_200,
+      height: 800,
     });
   });
 });

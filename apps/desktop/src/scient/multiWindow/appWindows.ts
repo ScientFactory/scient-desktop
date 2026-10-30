@@ -7,8 +7,20 @@ import type * as ElectronWindow from "../../electron/ElectronWindow.ts";
 
 const CASCADE_OFFSET = 28;
 const MAX_ROUTE_LENGTH = 2_048;
+// A window opened under the pointer puts the left end of its top bar there.
+const POINTER_INSET = { x: 120, y: 20 };
 
 type Bounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
+type Point = Pick<Electron.Point, "x" | "y">;
+
+const workAreaAt = (point: Point, workAreas: readonly Bounds[]): Bounds | undefined =>
+  workAreas.find(
+    (candidate) =>
+      point.x >= candidate.x &&
+      point.x < candidate.x + candidate.width &&
+      point.y >= candidate.y &&
+      point.y < candidate.y + candidate.height,
+  ) ?? workAreas[0];
 
 /** The app window whose renderer sent an IPC message; guest webviews and other windows have none. */
 export const appWindowForSender = (
@@ -45,16 +57,10 @@ export function appWindowUrl(applicationUrl: string, route: Option.Option<string
 
 /** Offsets a new window from the one it opens beside, wrapping to the work area's corner at its edge. */
 export function cascadeWindowBounds(source: Bounds, workAreas: readonly Bounds[]): Bounds {
-  const centerX = source.x + source.width / 2;
-  const centerY = source.y + source.height / 2;
-  const area =
-    workAreas.find(
-      (candidate) =>
-        centerX >= candidate.x &&
-        centerX < candidate.x + candidate.width &&
-        centerY >= candidate.y &&
-        centerY < candidate.y + candidate.height,
-    ) ?? workAreas[0];
+  const area = workAreaAt(
+    { x: source.x + source.width / 2, y: source.y + source.height / 2 },
+    workAreas,
+  );
   const next = {
     x: source.x + CASCADE_OFFSET,
     y: source.y + CASCADE_OFFSET,
@@ -70,6 +76,26 @@ export function cascadeWindowBounds(source: Bounds, workAreas: readonly Bounds[]
     next.x + width <= area.x + area.width &&
     next.y + height <= area.y + area.height;
   return fits ? { ...next, width, height } : { x: area.x, y: area.y, width, height };
+}
+
+/** A window of `source`'s size under `point`, kept inside the work area the point is in. */
+export function windowBoundsAtPoint(
+  source: Bounds,
+  point: Point,
+  workAreas: readonly Bounds[],
+): Bounds {
+  const x = point.x - POINTER_INSET.x;
+  const y = point.y - POINTER_INSET.y;
+  const area = workAreaAt(point, workAreas);
+  if (area === undefined) return { x, y, width: source.width, height: source.height };
+  const width = Math.min(source.width, area.width);
+  const height = Math.min(source.height, area.height);
+  return {
+    x: Math.min(Math.max(x, area.x), area.x + area.width - width),
+    y: Math.min(Math.max(y, area.y), area.y + area.height - height),
+    width,
+    height,
+  };
 }
 
 /**

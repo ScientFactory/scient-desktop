@@ -4790,6 +4790,7 @@ function ChatViewContent(props: ChatViewProps) {
           // SCIENT-FORK:START — "+" and its shortcut open the launcher as a tab
           onAddNewTab={addNewTabSurface}
           onDuplicateSurface={panelTabs.duplicateSurface}
+          onOpenSurfaceInNewWindow={panelTabs.openSurfaceInNewWindow}
           // SCIENT-FORK:END
           onAddDocuments={addDocumentsSurface}
           documentsAvailable={activeWorkspaceRoot !== undefined}

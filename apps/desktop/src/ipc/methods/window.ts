@@ -484,13 +484,21 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
 // SCIENT-FORK:START — several app windows share one desktop process.
 export const openNewWindow = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.OPEN_NEW_WINDOW_CHANNEL,
-  payload: Schema.UndefinedOr(Schema.String),
+  payload: Schema.UndefinedOr(
+    Schema.Struct({
+      route: Schema.optionalKey(Schema.String),
+      atCursor: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.openNewWindow")(function* (route, event) {
+  handler: Effect.fn("desktop.ipc.window.openNewWindow")(function* (input, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     if (Option.isNone(yield* appWindowForSender(electronWindow, event?.sender.id))) return false;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
-    return yield* desktopWindow.openNewWindow(route);
+    return yield* desktopWindow.openNewWindow(
+      input?.route,
+      input?.atCursor === true ? { atCursor: true } : undefined,
+    );
   }),
 });
 // SCIENT-FORK:END

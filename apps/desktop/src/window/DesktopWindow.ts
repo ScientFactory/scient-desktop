@@ -47,6 +47,7 @@ import {
   appWindowUrl,
   cascadeWindowBounds,
   parseAppWindowRoute,
+  windowBoundsAtPoint,
 } from "../scient/multiWindow/appWindows.ts";
 // SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
@@ -130,8 +131,14 @@ export class DesktopWindow extends Context.Service<
     ) => Effect.Effect<void, DesktopWindowError>;
     readonly syncAppearance: Effect.Effect<void>;
     // SCIENT-FORK:START — several app windows share one desktop process.
-    /** Opens another app window beside the current one, at `route` when it is an app route. */
-    readonly openNewWindow: (route?: string) => Effect.Effect<boolean, DesktopWindowError>;
+    /**
+     * Opens another app window beside the current one, or under the pointer with `atCursor`,
+     * at `route` when it is an app route.
+     */
+    readonly openNewWindow: (
+      route?: string,
+      options?: { readonly atCursor?: boolean },
+    ) => Effect.Effect<boolean, DesktopWindowError>;
     // SCIENT-FORK:END
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
@@ -141,6 +148,8 @@ interface AppWindowOptions {
   readonly route?: Option.Option<string>;
   /** Additional windows cascade from this window and leave saved bounds alone until moved. */
   readonly cascadeFrom?: Electron.BrowserWindow;
+  /** Puts an additional window under the pointer instead, where a dragged tab was dropped. */
+  readonly atCursor?: boolean;
 }
 // SCIENT-FORK:END
 
@@ -426,24 +435,40 @@ export const make = Effect.gen(function* () {
     }
     // SCIENT-FORK:END
     const persistedBounds = persistedSettings.mainWindowBounds;
-    // SCIENT-FORK:START — additional windows cascade from the window they open beside.
-    const initialBounds =
+    // SCIENT-FORK:START — additional windows cascade from the window they open beside, or open
+    // under the pointer.
+    const workAreas =
+      displayBoundsResult._tag === "Success"
+        ? displayBoundsResult.displays.map((display) => display.workArea)
+        : [];
+    const source =
       options.cascadeFrom !== undefined && !options.cascadeFrom.isDestroyed()
-        ? cascadeWindowBounds(
-            options.cascadeFrom.isNormal()
-              ? options.cascadeFrom.getBounds()
-              : options.cascadeFrom.getNormalBounds(),
-            displayBoundsResult._tag === "Success"
-              ? displayBoundsResult.displays.map((display) => display.workArea)
-              : [],
-          )
-        : resolveInitialMainWindowBounds(
+        ? options.cascadeFrom.isNormal()
+          ? options.cascadeFrom.getBounds()
+          : options.cascadeFrom.getNormalBounds()
+        : undefined;
+    const cursor =
+      options.atCursor === true
+        ? yield* Effect.sync(() => {
+            try {
+              return Electron.screen.getCursorScreenPoint();
+            } catch {
+              return null;
+            }
+          })
+        : null;
+    const initialBounds =
+      source === undefined
+        ? resolveInitialMainWindowBounds(
             persistedBounds,
             displayBounds,
             displayBoundsResult._tag === "Success"
               ? displayBoundsResult.primaryDisplay.workArea
               : undefined,
-          );
+          )
+        : cursor === null
+          ? cascadeWindowBounds(source, workAreas)
+          : windowBoundsAtPoint(source, cursor, workAreas);
     // SCIENT-FORK:END
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     // SCIENT-FORK:START — an additional window never restores saved bounds.
@@ -1157,7 +1182,7 @@ export const make = Effect.gen(function* () {
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
     // SCIENT-FORK:START — several app windows share one desktop process.
-    openNewWindow: Effect.fn("desktop.window.openNewWindow")(function* (route) {
+    openNewWindow: Effect.fn("desktop.window.openNewWindow")(function* (route, options) {
       if (yield* Ref.get(desktopState.quitting)) return false;
       // Opening a window before backend confirmation can strand it on failed auth bootstrap.
       if (yield* waitingForBackend) {
@@ -1169,6 +1194,7 @@ export const make = Effect.gen(function* () {
       const window = yield* createWindow({
         route: parseAppWindowRoute(route),
         ...(Option.isSome(source) ? { cascadeFrom: source.value } : {}),
+        ...(options?.atCursor === true ? { atCursor: true } : {}),
       });
       if (Option.isNone(window)) return false;
       yield* electronWindow.setMain(window.value);

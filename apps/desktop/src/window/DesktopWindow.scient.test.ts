@@ -21,6 +21,7 @@ vi.mock("electron", async (importOriginal) => ({
       bounds: { x: 0, y: 0, width: 1920, height: 1080 },
       workArea: { x: 0, y: 0, width: 1920, height: 1040 },
     })),
+    getCursorScreenPoint: vi.fn(() => ({ x: 300, y: 100 })),
   },
 }));
 
@@ -191,6 +192,22 @@ describe("DesktopWindow.openNewWindow", () => {
           [new URL("#/settings/general", mainUrl).href],
         );
         assert.strictEqual(Option.getOrThrow(yield* Ref.get(harness.mainWindow)), added.window);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("opens the window under the pointer when asked to", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness;
+
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        assert.isTrue(yield* windows.openNewWindow("/settings/general", { atCursor: true }));
+
+        const created = yield* Ref.get(harness.createdOptions);
+        assert.deepInclude(created[1], { x: 180, y: 80, width: 1280, height: 840 });
       }).pipe(Effect.provide(harness.layer));
     }),
   );

@@ -12,11 +12,15 @@ Scient server.
   on Windows and Linux) opens a new window beside the current one.
 - **Open in new window** in a thread's menu (right-click the thread in the
   sidebar, or use the menu in the conversation header) opens that conversation
-  in its own window.
+  in its own window. Right-click a draft in the sidebar for the same command.
+- **Open in new window** in a side panel tab's menu (right-click the tab) opens
+  a window that shows the conversation with that tab filling the window.
+- Drag a side panel tab out of the window and let go outside it. A window
+  opens where you dropped the tab, showing that tab the same way.
 
-A new window opens slightly offset from the window you were using. Move or
-resize it like any other window. Close it with its window controls; the other
-windows stay open.
+A new window opens slightly offset from the window you were using, or under the
+pointer when you drag a tab out. Move or resize it like any other window. Close
+it with its window controls; the other windows stay open.
 
 ## What windows share
 
@@ -24,8 +28,11 @@ windows stay open.
   window that shows that thread.
 - **Drafts.** A draft you type in one window is saved for the others. If you
   edit the same draft in two windows at once, the one you typed in last wins.
-- **Side panel tabs.** Tabs you open or close in a conversation's side panel
-  appear in every window that shows that conversation.
+- **Side panel tabs.** Tabs you open, close or reorder in a conversation's side
+  panel change in every window that shows that conversation. Each window keeps
+  its own view of them: which tab is selected, whether the panel is open, and
+  whether it fills the window. If another window closes the tab you are
+  looking at, the tab next to it takes its place.
 - **Settings and connections.** Changing a setting in one window applies it in
   the others. A newly added saved environment appears in other windows after
   they reload.
@@ -38,11 +45,15 @@ windows stay open.
 A browser tab in the side panel shows its page in one window at a time. If you
 open the same thread's browser tab in a second window, that window shows
 **This browser tab is open in another window** with a **Show here** button.
-Choosing **Show here** moves the page to this window. The page reloads when it
-moves, so scroll position and typed form input are not kept.
+Choosing **Show here** moves the page to this window. Opening a browser tab in
+a new window, from its menu or by dragging it out, moves the page to the new
+window, and the window you came from shows that message. The page reloads when
+it moves, so scroll position and typed form input are not kept.
 
 ## Limits
 
 - When you quit and reopen Scient, one window opens, where you last moved or
   resized a window.
 - Each window's title in the Window menu is the app name.
+- A window that opens a conversation already open in another window, or
+  reloads, starts with the side panel as the last window to change it left it.

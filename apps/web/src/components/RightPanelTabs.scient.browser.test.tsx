@@ -350,3 +350,51 @@ it.each(["touch", "mouse", undefined] as const)(
     } else expect(openDefault).toHaveBeenCalledOnce();
   },
 );
+
+describe("dragging a tab out of the window", () => {
+  const pointer = (target: EventTarget, type: string, x: number, y: number) =>
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        clientX: x,
+        clientY: y,
+        button: 0,
+        isPrimary: true,
+        pointerId: 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+  async function drag(tab: HTMLElement, to: { readonly x: number; readonly y: number }) {
+    const rect = tab.getBoundingClientRect();
+    const from = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    await act(() => pointer(tab, "pointerdown", from.x, from.y));
+    await act(() => pointer(document, "pointermove", from.x - 10, from.y));
+    await act(() => pointer(document, "pointermove", to.x, to.y));
+    await act(() => pointer(document, "pointerup", to.x, to.y));
+  }
+
+  it("opens a tab dropped outside the window in a new window, not one dropped inside", async () => {
+    setup();
+    const onMoveSurface = vi.fn();
+    const onOpenSurfaceInNewWindow = vi.fn();
+    await using screen = await render(
+      tabs(null, favicon(PIXEL_B, "http://24x.xf.local/admin"), undefined, undefined, {
+        onMoveSurface,
+        onOpenSurfaceInNewWindow,
+      }),
+    );
+    const second = screen.container.querySelectorAll<HTMLElement>("[data-active-tab]")[1]!;
+
+    await drag(second, { x: window.innerWidth + 40, y: 10 });
+    await vi.waitFor(() =>
+      expect(onOpenSurfaceInNewWindow).toHaveBeenCalledExactlyOnceWith(secondSurface, {
+        atCursor: true,
+      }),
+    );
+    expect(onMoveSurface).not.toHaveBeenCalled();
+
+    await drag(second, { x: 2, y: 2 });
+    expect(onOpenSurfaceInNewWindow).toHaveBeenCalledOnce();
+  });
+});

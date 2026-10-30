@@ -54,6 +54,8 @@ export function mergeWindowEntries<V>(
 export function createCrossWindowStateSync<T>(options: {
   readonly read: () => T | null;
   readonly merge: (local: T, synced: T, stored: T) => T;
+  /** Merges another window's save into memory; `merge` when absent. */
+  readonly adopt?: (local: T, synced: T, stored: T) => T;
 }) {
   let synced: T | null = null;
   return {
@@ -73,7 +75,7 @@ export function createCrossWindowStateSync<T>(options: {
     adoptStored: (local: T): T => {
       const stored = options.read();
       if (stored === null || synced === null) return local;
-      const merged = options.merge(local, synced, stored);
+      const merged = (options.adopt ?? options.merge)(local, synced, stored);
       synced = stored;
       return merged;
     },

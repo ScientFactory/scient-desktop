@@ -26,6 +26,9 @@ import { isElectron } from "./env";
 // SCIENT-FORK:START desktop-reload-save-coordination
 import { startDesktopReloadHandling } from "./lib/desktopReload";
 // SCIENT-FORK:END desktop-reload-save-coordination
+// SCIENT-FORK:START — a window opened for a side panel tab shows it.
+import { applyPanelTabWindowRequest } from "./scient/multiWindow/panelTabWindow";
+// SCIENT-FORK:END
 import {
   subscribeComposerDraftModelReconciliation,
   subscribeDraftThreadPromotion,
@@ -161,6 +164,9 @@ function startThreadOverlayRetention(router: AppRouter): void {
 export function startAppServices(): AppRouter {
   // Ahead of the history: the provider auth code must leave the address before anything reads it.
   startProviderAuthDelivery();
+  // SCIENT-FORK:START — the panel tab request leaves the address before the router reads it.
+  if (isElectron) applyPanelTabWindowRequest(window);
+  // SCIENT-FORK:END
 
   // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
   const router = getRouter(isElectron ? createHashHistory() : createBrowserHistory());

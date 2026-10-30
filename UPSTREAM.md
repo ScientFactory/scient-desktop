@@ -1815,13 +1815,14 @@ to `apps/web/src` after `web/`.
 | Area                      | T3 files with marked seams                                                                                                                           | What the seam does                                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Window registry           | `electron/ElectronWindow.ts`                                                                                                                         | Keeps app windows in focus order; the head is the main window (`appWindows`)                            |
-| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `ipc/methods/window.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts` | `createWindow({ route, cascadeFrom })`, `openNewWindow`, File > New Window, per-window bounds and focus |
+| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `ipc/methods/window.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts` | `createWindow({ route, cascadeFrom, atCursor })`, `openNewWindow`, New Window, per-window bounds, focus |
 | Sender checks             | `ipc/DesktopIpc.ts`, `ipc/methods/{window,snapShot,appActivation,webLinks}.ts`, `app/DesktopAppActivation.ts`, `app/DesktopWebLinks.ts`              | Accept any app window's renderer and act on its window; deliver to a ready renderer                     |
 | Shared settings           | `ipc/methods/{clientSettings,connectionCatalog}.ts`, `web/hooks/useSettings.ts`, `web/connection/storage.ts`                                         | Change notices to other windows; Web Lock around writes                                                 |
 | Preview hosting           | `preview/Manager.ts`, `web/browser/ElectronBrowserHost.tsx`, `web/browser/desktopTabLifetime.ts`                                                     | Guests from any app window; one window mounts each tab's webview; another window's close waits          |
 | Persisted renderer stores | `web/composerDraftStore.ts`, `web/promptStashStore.ts`, `web/uiStateStore.ts`, `web/rightPanelStore.ts`                                              | Merge on save with what other windows stored; adopt their saves from `storage` events                   |
 | Notifications             | `web/components/ThreadNotificationCoordinator.tsx`                                                                                                   | Only the presenter window plays sounds and shows system notifications                                   |
-| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                         | Thread menu item, shown only when the desktop bridge can open windows                                   |
+| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                         | Thread and draft menu item, shown only when the desktop bridge can open windows                         |
+| Side panel tab windows    | `web/components/RightPanelTabs.tsx`, `web/components/ChatView.tsx`, `web/appInit.tsx`                                                                | Tab menu item, dragging a tab out of the strip, and the new window's request to show that tab           |
 
 Desktop test files that build `ElectronWindow` or `DesktopWindow` fakes carry
 marked `appWindows` and `openNewWindow` members; Scient cases live in
@@ -1840,8 +1841,11 @@ When aligning, check:
   version must keep its sync module's fields in step: `uiStateSync.ts` lists UI
   state fields, `rightPanelSync.ts` reads `byThreadKey` and
   `threadPanelVisibilityByThreadKey`, and `composerDraftSync.ts` lists draft
-  sections. A new T3 store that persists shared state needs the same treatment
-  or a reason it does not.
+  sections. A new field in a thread's side panel entry belongs either in
+  `rightPanelSync.ts`'s shared tab fields (`tabsKey`) or with each window's view
+  (`entryKey` and `withOwnView`); otherwise a window's change to it is lost. A
+  new T3 store that persists shared state needs the same treatment or a reason
+  it does not.
 - **Preview manager.** T3 code that reads a single main window in
   `preview/Manager.ts` must use the tab's host window (`tabHostWindows`) or all
   `appWindows`.

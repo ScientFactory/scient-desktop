@@ -7,7 +7,7 @@ import { Button } from "~/components/ui/button";
 
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { acquireDesktopTab } from "~/browser/desktopTabLifetime";
-import { createPreviewHostClaim } from "./previewHostOwnership";
+import { consumePreviewTakeover, createPreviewHostClaim } from "./previewHostOwnership";
 import { previewWindowLocks } from "./previewTabPresence";
 
 interface PreviewWindowTab {
@@ -29,7 +29,7 @@ function CoordinatedPreviewWindowHost({
   children,
   ...tab
 }: PreviewWindowTab & { readonly locks: LockManager; readonly children: ReactNode }) {
-  const { runtimeTabId } = tab;
+  const { runtimeTabId, tabId } = tab;
   const displayed = useBrowserSurfaceStore((state) => {
     const presentation = state.byTabId[runtimeTabId];
     return presentation?.visible === true && presentation.rect !== null;
@@ -43,8 +43,14 @@ function CoordinatedPreviewWindowHost({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the other app windows through Web Locks whether this window shows the tab
   useEffect(() => {
-    void claim.setDisplayed(displayed).catch(() => undefined);
-  }, [claim, displayed]);
+    void claim.setDisplayed(displayed).then(
+      () => {
+        // A window opened for this tab takes it even from a window that shows it.
+        if (displayed && consumePreviewTakeover(tabId)) claim.showHere();
+      },
+      () => undefined,
+    );
+  }, [claim, displayed, tabId]);
 
   if (role === "host") return children;
   return (

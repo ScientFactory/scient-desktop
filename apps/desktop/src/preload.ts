@@ -484,7 +484,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   accounts: makeDesktopAccountsBridge(ipcRenderer),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — several app windows share one desktop process.
-  openNewWindow: (route) => ipcRenderer.invoke(IpcChannels.OPEN_NEW_WINDOW_CHANNEL, route),
+  openNewWindow: (route, options) =>
+    ipcRenderer.invoke(IpcChannels.OPEN_NEW_WINDOW_CHANNEL, {
+      ...(route === undefined ? {} : { route }),
+      ...(options?.atCursor === true ? { atCursor: true } : {}),
+    }),
   onClientSettingsChanged: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, settings: unknown) => {
       if (typeof settings !== "object" || settings === null) return;

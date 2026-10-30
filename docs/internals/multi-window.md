@@ -22,9 +22,11 @@ history), opens 28px down and right of the window it was opened from (wrapping t
 the work area's corner at the edge), and does not open a second detached DevTools
 in development.
 
-`openNewWindow(route)` serves both **File > New Window**
+`openNewWindow(route, { atCursor })` serves both **File > New Window**
 (`CmdOrCtrl+Alt+Shift+N`; the renderer already uses Mod+N, Mod+Shift+N and
-Mod+Alt+N) and the bridge method behind the thread menu's **Open in new window**.
+Mod+Alt+N) and the bridge method behind every **Open in new window**. With
+`atCursor` the window opens under the pointer instead of cascading, kept inside
+that display's work area (`windowBoundsAtPoint`).
 It accepts only an in-app path (`parseAppWindowRoute`); anything else opens the
 default route. It refuses while the app quits, and while the backend is not yet
 confirmed (it reveals the splash instead): a window opened before then can be
@@ -67,11 +69,19 @@ This applies to composer drafts (per draft), the prompt stash (adopted from
 `storage` events), UI state (`uiStateSync.ts`; a thread visit keeps the later
 timestamp of the two windows, unless this window marked the thread unread),
 compute context bindings, and the side panel's per-thread state
-(`rightPanelSync.ts`), so a thread's tabs match in every window. With one window,
+(`rightPanelSync.ts`). With one window,
 the stored value always equals the window's own, so each store writes exactly
 what it wrote before. Other persisted preferences already follow `storage`
 events or hold state where the last save is harmless. Check a new persisted
 store against this before several windows rely on it.
+
+The side panel splits each thread's entry. Its tabs (surfaces, dismissed device
+tabs, the proactive diff turn) are shared and merge as above. The view (selected
+tab, open, maximized, and the thread details panel) belongs to the window: a
+save writes this window's view over the other windows' tabs, and adopting
+another window's save keeps this window's view. When the tab a window shows was
+closed elsewhere, it selects the tab at the same index. Storage holds one view,
+the last writer's, so a new or reloaded window starts from that.
 
 Settings writes hold a Web Lock and re-read on the change notice. Connection
 catalog edits run under an exclusive Web Lock and invalidate the cached catalog
@@ -107,6 +117,20 @@ loses its scroll position and form input. Windows that do not host the tab keep
 its toolbar current and send commands to the tab, which acts on the host's guest;
 element picking and annotations appear in the host window.
 
+## A side panel tab in its own window
+
+The tab's menu and dragging a tab out of the window both open a window on the
+opener's current route with `panelThread` and `panelTab` search parameters
+(`panelTabWindow.ts`); a pending file save lands first. Before the router starts,
+the new window removes them from the address, selects the tab and maximizes the
+panel. For a browser tab it also takes the host lock once it displays the tab,
+even from a window that shows it, so the page moves to the new window.
+
+dnd-kit reports only the movement its modifiers allow, which stays inside the
+tab strip, so `useTabDragOut` (`tabDragOut.ts`) follows the window's pointer
+events during a tab drag. A drag that ends outside the viewport opens the window
+`atCursor` instead of reordering.
+
 ## Known limits
 
 - Every window's title is the app name, because upstream pins the title.
@@ -116,12 +140,16 @@ element picking and annotations appear in the host window.
 
 ## Verification
 
-Node tests cover the window registry and its focus order, routes, cascading,
-opening a window and its refusals, ready renderers, preview hosting per window,
-each store's merge (with negative controls for merge-on-save and adoption),
-settings and catalog notices, the notification election, and preview host
-ownership. A live check with two and three windows covered drafts in different
-threads, settings and side panel tabs updating in the other window, the browser
-tab placeholder, **Show here**, a host window closing, and quitting with two
-windows open. The native **New Window** menu item, window close button and the
-context menu's appearance need manual review.
+Node tests cover the window registry and its focus order, routes, cascading and
+placement under the pointer, opening a window and its refusals, ready renderers,
+preview hosting per window, each store's merge (with negative controls for
+merge-on-save and adoption), each window's own side panel view, the side panel
+tab request from opener to new window, settings and catalog notices, the
+notification election, and preview host ownership. A browser test drags a tab
+out of the window and back in. A live check with two and three windows covered
+drafts in different threads, settings and side panel tabs updating in the other
+window, the browser tab placeholder, **Show here**, a host window closing,
+quitting with two windows open, and dragging a browser tab out (through
+synthetic DevTools input) so its page moved to a maximized new window. The
+native **New Window** menu item, window close button, the context menus and a
+drag with a real pointer need manual review.

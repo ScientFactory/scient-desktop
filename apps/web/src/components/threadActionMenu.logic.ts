@@ -44,6 +44,9 @@ export type ThreadActionMenuId =
   | "delete";
 
 export type DraftActionMenuId =
+  // SCIENT-FORK:START
+  | OpenInNewWindowMenuId
+  // SCIENT-FORK:END
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -54,8 +57,15 @@ export function buildDraftActionMenuItems(options: {
   readonly hasPath: boolean;
   readonly hasBranch: boolean;
   readonly hasProject: boolean;
+  // SCIENT-FORK:START
+  /** Present only where the app can open another window. */
+  readonly openInNewWindow?: ContextMenuItem<OpenInNewWindowMenuId> | null;
+  // SCIENT-FORK:END
 }): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
   return [
+    // SCIENT-FORK:START
+    ...(options.openInNewWindow ? [options.openInNewWindow] : []),
+    // SCIENT-FORK:END
     {
       id: "copy",
       label: "Copy",

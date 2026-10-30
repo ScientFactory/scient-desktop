@@ -16,6 +16,18 @@ export interface PreviewHostClaim {
   readonly showHere: () => void;
 }
 
+const takeOverOnShow = new Set<string>();
+
+/** The next time this window shows the tab, it takes the page from the window hosting it. */
+export function takeOverPreviewTabWhenShown(tabId: string): void {
+  takeOverOnShow.add(tabId);
+}
+
+/** Whether this window should take the tab now that it shows it; asks once per request. */
+export function consumePreviewTakeover(tabId: string): boolean {
+  return takeOverOnShow.delete(tabId);
+}
+
 const hostLockName = (tabId: string) => `scient-preview-tab-host:${tabId}`;
 const shownLockName = (tabId: string) => `scient-preview-tab-shown:${tabId}`;
 

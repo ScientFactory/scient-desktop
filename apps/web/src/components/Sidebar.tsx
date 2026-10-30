@@ -2654,11 +2654,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasPath: Boolean(workspacePath),
               hasBranch: Boolean(session.branch),
               hasProject: projectGroup != null,
+              // SCIENT-FORK:START
+              openInNewWindow: openInNewWindowMenuItem(),
+              // SCIENT-FORK:END
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        // SCIENT-FORK:START
+        if (handleOpenInNewWindowMenuAction(clicked.value, draftId)) return;
+        // SCIENT-FORK:END
         switch (clicked.value) {
           case "project-settings":
             if (projectGroup)

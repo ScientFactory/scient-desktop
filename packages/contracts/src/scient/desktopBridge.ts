@@ -81,9 +81,10 @@ export interface ScientDesktopBridge {
   accounts?: DesktopAccountsBridge;
   /**
    * Scient: opens another full app window. `route` is an app path such as
-   * `/<environmentId>/<threadId>`. Resolves whether a window opened.
+   * `/<environmentId>/<threadId>`; `atCursor` opens the window under the pointer
+   * instead of beside the current one. Resolves whether a window opened.
    */
-  openNewWindow?: (route?: string) => Promise<boolean>;
+  openNewWindow?: (route?: string, options?: { readonly atCursor?: boolean }) => Promise<boolean>;
   /** Scient: another app window saved client settings. */
   onClientSettingsChanged?: (listener: (settings: ClientSettings) => void) => () => void;
   /** Scient: another app window saved the connection catalog; read it again before writing. */
