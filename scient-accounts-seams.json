@@ -53,6 +53,11 @@
       "purpose": "Resolve registered guest contents and bind sessions to profile identities."
     },
     {
+      "path": "apps/desktop/src/preview/BrowserSession.ts",
+      "anchor": "if (persistent) keepSessionCookies(browserSession);",
+      "purpose": "Sign-ins marked as ending with the browser outlive the app."
+    },
+    {
       "path": "apps/desktop/src/preview/BrowserImport/Sources.ts",
       "anchor": "const counted = (profiles: ReadonlyArray<BrowserImportSourceProfile>) =>",
       "purpose": "Allow metadata discovery without reading browser cookie counts."
