@@ -51,6 +51,12 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
   hash of host, platform, architecture and home (`<host>`, `<host>/<project>`), so a copied or
   synced profile never applies another computer's paths. An unscoped `executable` from older
   settings is migrated into this machine's slot at startup.
+- **Console** is the Compute tab (`ComputeConsole`): it owns a session like a file tab does, starts it
+  on the first run, and tags runs with the `console` source. A script tab with no session of its own
+  borrows a live Console session of its language (`computeConsoleSession`, `borrowSession`). A
+  borrowed binding runs in that session without owning it, so closing the tab only lets go. A
+  notebook never borrows. An empty Console gives way to the first file opened from it
+  (`useConsoleGivesWayToFiles`), and `ComputeConsoleNotebook` writes what succeeded to an `.ipynb`.
 - **Installed Jupyter kernels** (`InstalledKernelRuntime`) add one language per uncurated
   kernelspec language found at startup, launched through the bridge as the spec says, without
   Variables. A bare `python` in a spec means the Python it was installed for (`kernelLaunch`), not

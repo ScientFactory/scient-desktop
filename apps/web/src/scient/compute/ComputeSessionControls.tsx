@@ -4,7 +4,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { LoaderCircle, MoreHorizontal, Power, RotateCcw, Square } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import { ContextualConfirmation } from "~/components/ui/contextual-confirmation";
@@ -46,6 +46,8 @@ export function ComputeSessionControls(props: {
   readonly contextId: ComputeContextId | undefined;
   readonly binding: ComputeContextBinding | null;
   readonly onSettled: () => void;
+  /** Extra actions at the top of the session menu. */
+  readonly menuItems?: ReactNode;
 }) {
   const [operation, setOperation] = useState<SessionCommand | null>(null);
   const [confirmation, setConfirmation] = useState<{
@@ -137,6 +139,7 @@ export function ComputeSessionControls(props: {
           )}
         </MenuTrigger>
         <MenuPopup align="end" side="bottom" className="min-w-44">
+          {props.menuItems}
           <MenuItem
             disabled={
               operation !== null ||

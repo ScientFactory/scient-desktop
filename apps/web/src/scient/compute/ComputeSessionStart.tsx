@@ -9,25 +9,17 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { Link } from "@tanstack/react-router";
-import { LoaderCircle, Play, Settings2 } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
 import { toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
+import { useComputeConsoleStore } from "./computeConsoleStore";
 import { stopComputeContext } from "./computeContextCoordinator";
 import {
   computeSessionOwnerLabel,
@@ -55,7 +47,11 @@ export function useComputeSessionStart(input: {
   readonly model: ComputePanelSessions;
 }) {
   const { runtimes, contextBinding, allSessions } = input.model;
-  const [runtimeKey, setRuntimeKey] = useState("");
+  const [runtimeKey, setRuntimeKey] = useState(() =>
+    input.contextId === undefined
+      ? ""
+      : (useComputeConsoleStore.getState().runtimes[input.contextId] ?? ""),
+  );
   const [starting, setStarting] = useState(false);
   const [retryAvailable, setRetryAvailable] = useState(false);
   const [capacityBlocked, setCapacityBlocked] = useState(false);
@@ -119,8 +115,8 @@ export function useComputeSessionStart(input: {
     }
   };
 
-  const start = async () => {
-    if (selectedRuntime === null) return;
+  const start = async (): Promise<ComputeSessionRecord | null> => {
+    if (selectedRuntime === null) return null;
     const context =
       input.contextId === undefined
         ? null
@@ -137,7 +133,7 @@ export function useComputeSessionStart(input: {
       context?.lifecycle === "closing" ||
       context?.lifecycle === "close-failed"
     ) {
-      return;
+      return null;
     }
     const fresh = context?.lifecycle === "terminal" || context?.sessionId === null;
     const sessionId = fresh
@@ -152,7 +148,7 @@ export function useComputeSessionStart(input: {
         .getState()
         .reserveSession({ contextId: input.contextId, sessionId, generation })
     ) {
-      return;
+      return null;
     }
     setRetryAvailable(false);
     setStarting(true);
@@ -183,11 +179,11 @@ export function useComputeSessionStart(input: {
         ) {
           void stopComputeContext({ contextId: input.contextId, stopSession, getSession });
         }
-        return;
+        return null;
       }
       input.model.chooseSession(result.value.sessionId);
       input.model.sessions.refresh();
-      return;
+      return result.value;
     }
     const capacityRejected = isComputeCapacityReachedError(squashAtomCommandFailure(result));
     setRetryAvailable(!capacityRejected);
@@ -204,6 +200,7 @@ export function useComputeSessionStart(input: {
       runtimes.refresh();
       input.model.sessions.refresh();
     }
+    return null;
   };
 
   const stopUnused = async (session: ComputeSessionRecord) => {
@@ -252,7 +249,7 @@ export function useComputeSessionStart(input: {
     readyRuntimes,
     selectedRuntime,
     selectRuntime: setRuntimeKey,
-    start: () => void start(),
+    start,
     starting,
     canRetry,
     capacityBlocked,
@@ -299,60 +296,5 @@ export function ComputeCapacityMenu(props: {
         )}
       </MenuPopup>
     </Menu>
-  );
-}
-
-/** The empty state of an extra Compute tab. */
-export function ComputeSessionStart(props: {
-  readonly start: ComputeSessionStartModel;
-  readonly environmentId: EnvironmentId;
-  readonly runtimesPending: boolean;
-}) {
-  const { start } = props;
-  return (
-    <div className="flex min-h-0 flex-1 items-start justify-center px-4 pb-6 pt-12">
-      {props.runtimesPending ? (
-        <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
-      ) : start.readyRuntimes.length === 0 ? (
-        <Button
-          size="sm"
-          variant="outline"
-          render={
-            <Link
-              to="/settings/scientific-computing"
-              search={{ environmentId: props.environmentId }}
-            />
-          }
-        >
-          <Settings2 /> Scientific Computing
-        </Button>
-      ) : (
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          {start.readyRuntimes.length > 1 || start.selectedRuntime === null ? (
-            <Select
-              value={start.selectedRuntime?.key ?? ""}
-              onValueChange={(value) => start.selectRuntime(value ?? "")}
-            >
-              <SelectTrigger size="xs" className="w-fit min-w-0 max-w-full" aria-label="Runtime">
-                <SelectValue className="max-w-56">
-                  {start.selectedRuntime?.candidate.profile.displayName ?? "Choose runtime"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup alignItemWithTrigger={false}>
-                {start.readyRuntimes.map((runtime) => (
-                  <SelectItem key={runtime.key} value={runtime.key} hideIndicator size="compact">
-                    {runtime.candidate.profile.displayName}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          ) : null}
-          <Button size="xs" disabled={start.disabled} onClick={start.start}>
-            {start.starting ? <LoaderCircle className="animate-spin" /> : <Play />}
-            {start.canRetry ? "Retry" : "Start session"}
-          </Button>
-        </div>
-      )}
-    </div>
   );
 }

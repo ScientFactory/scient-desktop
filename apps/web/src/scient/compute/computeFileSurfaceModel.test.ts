@@ -20,6 +20,7 @@ import {
   nudgeComputeFileSplit,
   computeFileSplitFromPointer,
   computeRuntimeDisplayLabel,
+  computeRuntimeChoiceLabel,
   resolveComputeRuntimeToolbarState,
   resolveComputePreRunRuntimeChoice,
   defaultComputeRuntime,
@@ -582,5 +583,48 @@ describe("python compute surface model", () => {
       ),
     ).toBe(false);
     expect(isExactTerminalComputeSession({ ...stopped, status: "stopping" }, expected)).toBe(false);
+  });
+});
+
+describe("Console language choices", () => {
+  const profile = {
+    languageVersion: "3.14.7",
+    source: "managed",
+  } as unknown as ComputeLanguageRuntimeInspection["runtimes"][number]["profile"];
+  const python = { languageId: "python", languageName: "Python", profile };
+
+  it("names a language by version, and adds the source only to tell two apart", () => {
+    expect(computeRuntimeChoiceLabel(python, [{ languageId: "python" }])).toBe("Python 3.14.7");
+    expect(
+      computeRuntimeChoiceLabel(python, [{ languageId: "python" }, { languageId: "python" }]),
+    ).toBe("Python 3.14.7 · Scient-managed");
+    expect(
+      computeRuntimeChoiceLabel(
+        {
+          languageId: "python",
+          languageName: "Python",
+          profile: { ...profile, source: "path", origin: "Homebrew" },
+        },
+        [{ languageId: "python" }, { languageId: "python" }],
+      ),
+    ).toBe("Python 3.14.7 · Homebrew");
+  });
+
+  it("does not show DuckDB's version as SQL's, or a version a kernel does not report", () => {
+    expect(
+      computeRuntimeChoiceLabel({ ...python, languageId: "sql", languageName: "SQL" }, [
+        { languageId: "sql" },
+      ]),
+    ).toBe("SQL");
+    expect(
+      computeRuntimeChoiceLabel(
+        {
+          languageId: "rust",
+          languageName: "Rust",
+          profile: { ...profile, languageVersion: "unknown" },
+        },
+        [{ languageId: "rust" }],
+      ),
+    ).toBe("Rust");
   });
 });

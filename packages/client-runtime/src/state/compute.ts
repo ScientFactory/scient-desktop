@@ -542,6 +542,11 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.computeSaveOutput,
       scheduler: executionScheduler,
     }),
+    saveConsoleNotebook: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:save-console-notebook",
+      tag: WS_METHODS.computeSaveConsoleNotebook,
+      scheduler: executionScheduler,
+    }),
     notebookRead: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:notebook:read",
       tag: WS_METHODS.notebookRead,

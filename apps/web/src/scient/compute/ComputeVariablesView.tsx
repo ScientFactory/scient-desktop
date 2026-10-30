@@ -71,9 +71,9 @@ export function ComputeVariablesView(props: {
             No variables yet
           </p>
         ) : (
-          <div className="min-w-0 overflow-hidden rounded-[6px] border border-border/70">
+          <div className="@container min-w-0 overflow-hidden rounded-[6px] border border-border/70">
             <ScrollArea className="h-auto" aria-label="Current variables">
-              <table className="w-full min-w-[32rem] table-fixed text-left text-xs">
+              <table className="w-full table-fixed text-left text-xs">
                 <thead className="border-b border-border/60 bg-muted/30 text-[10px] uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th scope="col" className="w-1/4 px-2 py-1.5 font-medium">
@@ -85,7 +85,10 @@ export function ComputeVariablesView(props: {
                     <th scope="col" className="w-1/5 px-2 py-1.5 font-medium">
                       Shape / size
                     </th>
-                    <th scope="col" className="px-2 py-1.5 font-medium">
+                    <th
+                      scope="col"
+                      className="hidden px-2 py-1.5 font-medium @min-[30rem]:table-cell"
+                    >
                       Preview
                     </th>
                   </tr>
@@ -122,7 +125,7 @@ export function ComputeVariablesView(props: {
                       <td className="break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
                         {variable.shape ?? (variable.size === null ? "" : String(variable.size))}
                       </td>
-                      <td className="break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
+                      <td className="hidden break-words px-2 py-1.5 font-mono text-[11px] text-muted-foreground @min-[30rem]:table-cell">
                         {variable.preview ?? ""}
                       </td>
                     </tr>

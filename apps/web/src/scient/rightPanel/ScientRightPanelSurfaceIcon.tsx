@@ -9,11 +9,26 @@ import {
   Sigma,
 } from "lucide-react";
 
+import { ComputeLanguageLogo } from "../compute/ComputeLanguageMark";
+import { useComputeConsoleStore } from "../compute/computeConsoleStore";
+import type { ComputeContextId } from "../compute/computeContextStore";
 import { OverleafMark } from "../files/ExternalFolderMarks";
 import type { ScientRightPanelSurface } from "./surfaces";
 
 /** The project files sign: the Files tab, the Files card and the Show files button. */
 export const ScientFilesIcon = Folders;
+
+/** A Console shows the logo of the language it runs. */
+function ComputeSurfaceIcon(props: { readonly contextId: ComputeContextId | undefined }) {
+  const languageId = useComputeConsoleStore((state) =>
+    props.contextId === undefined ? undefined : state.languages[props.contextId],
+  );
+  return languageId === undefined ? (
+    <Sigma className="size-3 shrink-0" />
+  ) : (
+    <ComputeLanguageLogo languageId={languageId} className="size-3.5 shrink-0" />
+  );
+}
 
 export function ScientRightPanelSurfaceIcon(props: { readonly surface: ScientRightPanelSurface }) {
   switch (props.surface.module) {
@@ -22,7 +37,7 @@ export function ScientRightPanelSurfaceIcon(props: { readonly surface: ScientRig
     case "new-tab":
       return <LayoutGrid className="size-3 shrink-0" />;
     case "compute":
-      return <Sigma className="size-3 shrink-0" />;
+      return <ComputeSurfaceIcon contextId={props.surface.contextId} />;
     case "source-pdf":
     case "generated-pdf":
       return <FileText className="size-3 shrink-0" />;

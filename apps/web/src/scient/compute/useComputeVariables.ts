@@ -105,6 +105,7 @@ export function useComputeVariables(input: {
   const refreshToken = [
     owner,
     input.visible,
+    available,
     liveSession?.status,
     liveSession?.activity,
     latestTerminal?.request.executionId ?? "",

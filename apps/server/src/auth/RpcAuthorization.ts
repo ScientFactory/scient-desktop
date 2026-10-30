@@ -267,6 +267,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.computeReadTable]: AuthOrchestrationOperateScope,
   [WS_METHODS.dataReadFileTable]: AuthFilesystemReadScope,
   [WS_METHODS.computeSaveOutput]: AuthOrchestrationOperateScope,
+  [WS_METHODS.computeSaveConsoleNotebook]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeSubmitCells]: AuthOrchestrationOperateScope,
   [WS_METHODS.notebookRead]: AuthFilesystemReadScope,
   [WS_METHODS.notebookReadOutput]: AuthFilesystemReadScope,

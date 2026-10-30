@@ -102,7 +102,7 @@ export function ComputeDependencyRecoveryAction(props: {
   };
 
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
       <Button
         size="xs"
         variant="outline"
@@ -116,7 +116,7 @@ export function ComputeDependencyRecoveryAction(props: {
         onClick={() => void recover()}
       >
         {busy ? <LoaderCircle className="animate-spin" /> : null}
-        Switch to Scient-managed Python
+        Use managed Python
       </Button>
       <span className="text-[11px] text-muted-foreground">Variables reset</span>
     </span>

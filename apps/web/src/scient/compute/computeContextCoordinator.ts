@@ -172,6 +172,10 @@ async function stopOwnedComputeContext(
   if (binding === null || binding.sessionId === null) {
     return { closed: true, contextId: input.contextId, error: null };
   }
+  if (binding.borrowed === true) {
+    useComputeContextStore.getState().releaseBorrowedSession(input.contextId);
+    return { closed: true, contextId: input.contextId, error: null };
+  }
 
   useComputeContextStore.getState().markClosing(input.contextId);
   const sessionId = binding.sessionId;

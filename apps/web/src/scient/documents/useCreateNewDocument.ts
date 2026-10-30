@@ -13,25 +13,26 @@ import { useNewDocumentFiles } from "./useNewDocumentFiles";
 import { userTemplates } from "./userTemplates";
 
 /** One empty code cell, the way Jupyter writes a new notebook. */
-const NEW_NOTEBOOK = `${JSON.stringify(
-  {
-    cells: [
-      {
-        cell_type: "code",
-        execution_count: null,
-        id: "first",
-        metadata: {},
-        outputs: [],
-        source: [],
-      },
-    ],
-    metadata: { language_info: { name: "python" } },
-    nbformat: 4,
-    nbformat_minor: 5,
-  },
-  null,
-  1,
-)}\n`;
+const newNotebook = (language: string) =>
+  `${JSON.stringify(
+    {
+      cells: [
+        {
+          cell_type: "code",
+          execution_count: null,
+          id: "first",
+          metadata: {},
+          outputs: [],
+          source: [],
+        },
+      ],
+      metadata: { language_info: { name: language } },
+      nbformat: 4,
+      nbformat_minor: 5,
+    },
+    null,
+    1,
+  )}\n`;
 const NOTEBOOK_NAME_ATTEMPTS = 50;
 
 /**
@@ -47,6 +48,7 @@ export function useCreateNewDocument() {
     readonly cwd: string;
     readonly base: string;
     readonly open: (relativePath: string) => void;
+    readonly notebookLanguage?: string;
   }) => {
     const { format, environmentId, cwd } = input;
     if (format === "notebook") {
@@ -54,7 +56,10 @@ export function useCreateNewDocument() {
         const commands = documentFiles.commandsFor({ environmentId, cwd });
         for (let attempt = 1; attempt <= NOTEBOOK_NAME_ATTEMPTS; attempt += 1) {
           const name = attempt === 1 ? "untitled.ipynb" : `untitled-${attempt}.ipynb`;
-          const created = await commands.create(`${input.base}${name}`, NEW_NOTEBOOK);
+          const created = await commands.create(
+            `${input.base}${name}`,
+            newNotebook(input.notebookLanguage ?? "python"),
+          );
           if (created === "exists") continue;
           if (created === null) break;
           input.open(`${input.base}${name}`);

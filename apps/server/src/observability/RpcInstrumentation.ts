@@ -258,6 +258,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.computeReadTable]: "compute",
   [WS_METHODS.dataReadFileTable]: "filesystem",
   [WS_METHODS.computeSaveOutput]: "compute",
+  [WS_METHODS.computeSaveConsoleNotebook]: "compute",
   [WS_METHODS.computeSubmitCells]: "compute",
   [WS_METHODS.notebookRead]: "filesystem",
   [WS_METHODS.notebookReadOutput]: "filesystem",

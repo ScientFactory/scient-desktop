@@ -76,6 +76,7 @@ import {
 import {
   computeSessionOwnerLabel,
   ensureComputeContext,
+  computeConsoleSession,
   getComputeContext,
   INITIAL_COMPUTE_CONTEXT_GENERATION,
   ownsLiveComputeSession,
@@ -562,8 +563,21 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         });
         return;
       }
+      // A script runs in an open Console of its language. A notebook always keeps its own memory.
+      const sharedConsole =
+        liveSession === null &&
+        props.contextId !== undefined &&
+        !props.relativePath.toLowerCase().endsWith(".ipynb")
+          ? computeConsoleSession({
+              environmentId: props.environmentId,
+              cwd: props.cwd,
+              languageId: props.language.languageId,
+              sessions: sessions.data ?? [],
+            })
+          : null;
       if (
         liveSession === null &&
+        sharedConsole === null &&
         requestedExecutable === undefined &&
         preRunRuntimeChoice !== null
       ) {
@@ -640,6 +654,18 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         return;
       }
       onRunRequested();
+      if (
+        session === null &&
+        sharedConsole !== null &&
+        props.contextId !== undefined &&
+        useComputeContextStore.getState().borrowSession({
+          contextId: props.contextId,
+          sessionId: sharedConsole.sessionId,
+          generation: sharedConsole.generation,
+        })
+      ) {
+        session = sharedConsole;
+      }
       if (session === null) {
         const runtime = readyRuntime;
         if (runtime === null) {

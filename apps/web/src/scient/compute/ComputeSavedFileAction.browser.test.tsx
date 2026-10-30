@@ -83,10 +83,7 @@ const saved = {
 };
 
 async function pickFile(_fixture: _Fixture) {
-  await mount(_fixture, <ComputeSavedFileAction {...props} />);
-  const button = _fixture.host.querySelector<HTMLButtonElement>("button");
-  expect(button).not.toBeNull();
-  await act(() => button!.click());
+  await mount(_fixture, <ComputeSavedFileAction {...props} open onOpenChange={() => undefined} />);
   const picker = [...document.querySelectorAll("button")].find(
     (button) => button.textContent === "Select run.py",
   );

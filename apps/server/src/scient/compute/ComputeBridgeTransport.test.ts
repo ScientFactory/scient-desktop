@@ -908,6 +908,31 @@ describe("jupyter bridge commands", () => {
     ),
   );
 
+  it.effect("runs after a variables read instead of refusing the run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, channel, reader } = yield* harness();
+        yield* reader.next;
+        const read = yield* channel
+          .inspectVariables({
+            requestId: request("variables-2"),
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          })
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* channel.execute({
+          requestId: request("run-after-read"),
+          expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          code: "1 + 1",
+        });
+        yield* Fiber.join(read);
+        expect(bridge.sent().map((command) => command.type)).toEqual(
+          expect.arrayContaining(["inspect-variables", "execute"]),
+        );
+      }),
+    ),
+  );
+
   it.effect("keeps an optional inspection failure out of the event stream", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -1190,51 +1190,58 @@ export function makeComputeBridgeTransport(
        * Keep execute outside commandGate: waiting behind restart only delays an inevitable
        * stale-generation refusal. writeGate still orders it atomically against other executions.
        */
+      const afterInspections: Effect.Effect<void> = Effect.suspend(() =>
+        MutableRef.get(inspectingVariables)
+          ? commandGate.withPermits(1)(Effect.void).pipe(Effect.andThen(afterInspections))
+          : Effect.void,
+      );
       const execute: ComputeChannel["execute"] = (executeRequest) =>
-        Effect.suspend(() => {
-          if (MutableRef.get(transitioning)) {
-            return Effect.fail(transportError("execute", "The runtime is changing generation."));
-          }
-          if (MutableRef.get(activeRequestId) !== null) {
-            return Effect.fail(transportError("execute", "An execution is already active."));
-          }
-          if (MutableRef.get(inspectingVariables)) {
-            return Effect.fail(
-              transportError("execute", "The runtime is inspecting its current variables."),
-            );
-          }
-          if (estimateTextBytes(executeRequest.code) > 1024 * 1024) {
-            return Effect.fail(
-              transportError("execute", "Execution code exceeds the 1048576 byte limit."),
-            );
-          }
-          MutableRef.set(activeRequestId, executeRequest.requestId);
-          return ensureGeneration("execute", executeRequest.expectedGeneration).pipe(
-            Effect.andThen(
-              sendCommand(
-                "execute",
-                "execute",
-                {
-                  code: executeRequest.code,
-                  silent: false,
-                  storeHistory: true,
-                  ...(executeRequest.sourceContext === undefined
-                    ? {}
-                    : {
-                        sourceContext: executeRequest.sourceContext,
-                      }),
-                },
-                executeRequest.expectedGeneration,
-                executeRequest.requestId,
-              ),
-            ),
-            Effect.tapError(() =>
-              Effect.sync(() => {
-                MutableRef.set(activeRequestId, null);
-              }),
-            ),
-          );
-        });
+        // Reading variables is brief, so a run waits for it instead of being refused.
+        afterInspections.pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              if (MutableRef.get(transitioning)) {
+                return Effect.fail(
+                  transportError("execute", "The runtime is changing generation."),
+                );
+              }
+              if (MutableRef.get(activeRequestId) !== null) {
+                return Effect.fail(transportError("execute", "An execution is already active."));
+              }
+              if (estimateTextBytes(executeRequest.code) > 1024 * 1024) {
+                return Effect.fail(
+                  transportError("execute", "Execution code exceeds the 1048576 byte limit."),
+                );
+              }
+              MutableRef.set(activeRequestId, executeRequest.requestId);
+              return ensureGeneration("execute", executeRequest.expectedGeneration).pipe(
+                Effect.andThen(
+                  sendCommand(
+                    "execute",
+                    "execute",
+                    {
+                      code: executeRequest.code,
+                      silent: false,
+                      storeHistory: true,
+                      ...(executeRequest.sourceContext === undefined
+                        ? {}
+                        : {
+                            sourceContext: executeRequest.sourceContext,
+                          }),
+                    },
+                    executeRequest.expectedGeneration,
+                    executeRequest.requestId,
+                  ),
+                ),
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    MutableRef.set(activeRequestId, null);
+                  }),
+                ),
+              );
+            }),
+          ),
+        );
 
       const interrupt: ComputeChannel["interrupt"] = (interruptRequest) =>
         commandGate.withPermits(1)(

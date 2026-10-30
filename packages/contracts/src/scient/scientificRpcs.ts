@@ -48,6 +48,8 @@ import {
   ComputeRuntimeInspection,
   ComputeRuntimeInventory,
   ComputeRuntimeVerification,
+  ComputeSaveConsoleNotebookInput,
+  ComputeSaveConsoleNotebookResult,
   ComputeSaveProjectOutputInput,
   ComputeSaveProjectOutputResult,
   ComputeSessionRecord,
@@ -113,6 +115,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeInspectVariables: "compute.inspectVariables",
   computeReadTable: "compute.readTable",
   computeSaveOutput: "compute.saveOutput",
+  computeSaveConsoleNotebook: "compute.saveConsoleNotebook",
   notebookRead: "notebook.read",
   notebookReadOutput: "notebook.readOutput",
   notebookEdit: "notebook.edit",
@@ -353,6 +356,15 @@ const WsComputeSaveOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSave
   error: ComputeRpcError,
 });
 
+const WsComputeSaveConsoleNotebookRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeSaveConsoleNotebook,
+  {
+    payload: ComputeSaveConsoleNotebookInput,
+    success: ComputeSaveConsoleNotebookResult,
+    error: ComputeRpcError,
+  },
+);
+
 const WsComputeSubmitCellsRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSubmitCells, {
   payload: ComputeSubmitProjectCellsInput,
   success: Schema.Array(ComputeExecutionRecord),
@@ -427,6 +439,7 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeReadTableRpc,
   WsDataReadFileTableRpc,
   WsComputeSaveOutputRpc,
+  WsComputeSaveConsoleNotebookRpc,
   WsComputeSubmitCellsRpc,
   WsNotebookReadRpc,
   WsNotebookReadOutputRpc,

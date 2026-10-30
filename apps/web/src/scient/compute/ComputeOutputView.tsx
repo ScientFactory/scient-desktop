@@ -164,7 +164,7 @@ function ComputeDiagnostic(props: {
       <div className="rounded-md border border-destructive/25 bg-destructive/5 p-2 text-xs">
         <div className="flex items-start gap-2">
           <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="font-medium break-words text-destructive">{summary}</p>
             {recovery !== null ? (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">

@@ -6,6 +6,7 @@ import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
+import { useComputeConsoleStore } from "./computeConsoleStore";
 import { closeComputeContext } from "./computeContextCoordinator";
 import {
   computeFileContextId,
@@ -87,6 +88,7 @@ export function useCloseComputeOwnedSurfaces(input: {
       if (!result.closed) return false;
       useComputeContextStore.getState().removeContext(contextId);
       useComputeFilePresentationStore.getState().remove(contextId);
+      useComputeConsoleStore.getState().forget(contextId);
     }
     return true;
   });

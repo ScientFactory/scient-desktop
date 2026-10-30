@@ -32,6 +32,26 @@ export function computeRuntimeDisplayLabel(
   return `${version.length > 0 && version !== "unknown" ? `${languageName} ${version}` : languageName} · ${computeRuntimeSourceLabel(profile.source)}`;
 }
 
+/** A runtime as the Console's picker names it; where it came from only tells two apart. */
+export function computeRuntimeChoiceLabel(
+  runtime: {
+    readonly languageId: string;
+    readonly languageName: string;
+    readonly profile: ComputeRuntimeProfile;
+  },
+  runtimes: ReadonlyArray<{ readonly languageId: string }>,
+): string {
+  const version = runtime.profile.languageVersion.trim();
+  // SQL's version is DuckDB's, and a kernel may not report one.
+  const name =
+    runtime.languageId === "sql" || version === "" || version === "unknown"
+      ? runtime.languageName
+      : `${runtime.languageName} ${version}`;
+  if (runtimes.filter((other) => other.languageId === runtime.languageId).length < 2) return name;
+  const { source, origin } = runtime.profile;
+  return `${name} · ${source === "managed" ? "Scient-managed" : (origin ?? "System")}`;
+}
+
 /** A stop or read proves shutdown only for the exact session and generation, in a terminal status. */
 export function isExactTerminalComputeSession(
   record: Pick<ComputeSessionRecord, "sessionId" | "generation" | "status">,

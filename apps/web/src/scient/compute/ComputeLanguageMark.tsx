@@ -31,6 +31,22 @@ const LANGUAGE_LOGOS: Readonly<Record<string, { readonly src: string; readonly s
   "wolfram-language": { src: wolframLogo, size: "size-[68%]" },
 };
 
+/** A language's bare logo, for tabs and small labels. */
+export function ComputeLanguageLogo({
+  languageId,
+  className,
+}: {
+  languageId: string;
+  className?: string;
+}) {
+  const logo = LANGUAGE_LOGOS[languageId];
+  return logo ? (
+    <img src={logo.src} alt="" aria-hidden className={cn("object-contain", className)} />
+  ) : (
+    <CodeXmlIcon aria-hidden className={className} />
+  );
+}
+
 /** A language's logo in the same framed tile as an extension's. */
 export function ComputeLanguageMark({
   languageId,

@@ -225,6 +225,29 @@ Variables pane, and Scient has no private part in them.
 SPSS is shown as **Coming soon** because it has no Jupyter kernel yet. A notebook in a language that
 is not installed opens normally and shows **Not installed**.
 
+## Console
+
+**+** → **Scientific computing** opens a Console: a box to type code in, with the answer appearing
+above it. There is nothing to start. The first run starts the language, and values you define stay
+available to later runs until you restart or stop.
+
+**Shift+Enter** or **⌘Enter** runs, **Enter** adds a line, and **↑** and **↓** walk through what you
+ran. The picker in the box lists every language installed on this computer. One Console holds one
+language, so picking another after you have run something opens a second Console beside it.
+**Variables** appears once there are variables. **Save as notebook** turns what worked into an
+`.ipynb` in the project and opens it; runs that failed are left out. **Run file…**, **Restart session**
+and **Stop session** are in the **⋯** menu.
+
+Opening a file from an empty Console replaces it, as an address does in a new browser tab. A Console
+with anything in it, even a half-typed line, stays where it is and the file opens in a new tab.
+
+**A script shares memory with a Console of its language.** With a Python Console open, running a
+`.py` file that has no session of its own uses the Console's session: the script sees the Console's
+variables, and the Console sees the script's. Results appear in both places, and the Console waits
+while a long file runs. Closing the script leaves the Console running. Without a Console, each file
+tab has its own session. A notebook always has its own memory, so **Restart and run all** gives the
+same result every time.
+
 ## Connect your MATLAB installation
 
 Open a `.m` file and select its MATLAB status to open **Scientific Computing** for that server.
@@ -300,8 +323,9 @@ script, so the file action says **Definition** and explains that it must be call
 The server enforces the same rule even if a stale client attempts the submission.
 
 The first run starts this file tab's session when necessary and reveals **Split** by default, or
-**Results** when that was the last results layout you chose. Each Compute tab owns its own session, so
-several Python and MATLAB files can run independently within the server's capacity. Values defined
+**Results** when that was the last results layout you chose. Each file tab owns its own session unless
+a Console of its language is open, so several Python and MATLAB files can run independently within the
+server's capacity. Values defined
 by one successful execution remain available to later executions in that tab until you restart or
 stop its session.
 

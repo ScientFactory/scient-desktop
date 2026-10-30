@@ -209,9 +209,7 @@ describe("confirmed managed-Python recovery action", () => {
             />,
           ),
       );
-      expect(_fixture.container.textContent?.includes("Switch to Scient-managed Python")).toBe(
-        owned,
-      );
+      expect(_fixture.container.textContent?.includes("Use managed Python")).toBe(owned);
       expect(_fixture.container.textContent).toContain("ModuleNotFoundError");
       expect(mocks.start).not.toHaveBeenCalled();
     },
@@ -222,7 +220,7 @@ describe("confirmed managed-Python recovery action", () => {
     await _setupFixture0(_fixture);
 
     await render(_fixture);
-    await click(_fixture, "Switch to Scient-managed Python");
+    await click(_fixture, "Use managed Python");
     expect(mocks.refresh).toHaveBeenCalledExactlyOnceWith({
       environmentId,
       input: { cwd: "/remote/project", refresh: true },
@@ -284,7 +282,7 @@ describe("confirmed managed-Python recovery action", () => {
         });
       }
       await render(_fixture);
-      await click(_fixture, "Switch to Scient-managed Python");
+      await click(_fixture, "Use managed Python");
       expect(mocks.start).not.toHaveBeenCalled();
       expect(mocks.stop).not.toHaveBeenCalled();
       expect(getComputeContext(contextId)).toMatchObject({
@@ -306,7 +304,7 @@ describe("confirmed managed-Python recovery action", () => {
       }),
     );
     await render(_fixture);
-    await click(_fixture, "Switch to Scient-managed Python");
+    await click(_fixture, "Use managed Python");
     expect(_fixture.container.querySelector("button")!.disabled).toBe(true);
     await act(() => {
       resolve({ _tag: "Success", value: inspection() });
@@ -327,7 +325,7 @@ describe("confirmed managed-Python recovery action", () => {
     );
     mocks.get.mockImplementation(async () => ({ _tag: "Success", value: current }));
     await render(_fixture);
-    await click(_fixture, "Switch to Scient-managed Python");
+    await click(_fixture, "Use managed Python");
     expect(mocks.get).not.toHaveBeenCalled();
     current = { ...session, activity: "busy" };
     await act(() => {

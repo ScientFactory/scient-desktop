@@ -6,11 +6,8 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { LoaderCircle, Play } from "lucide-react";
-import { useState } from "react";
 
 import { ProjectFilePickerForTarget } from "~/components/files/ProjectFilePicker";
-import { Button } from "~/components/ui/button";
 import { CommandDialog, CommandDialogPopup } from "~/components/ui/command";
 import { toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
@@ -29,19 +26,17 @@ export function ComputeSavedFileAction(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly cwd: string;
-  readonly disabled: boolean;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
   readonly onSubmitted: (execution: ComputeExecutionRecord) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [reading, setReading] = useState(false);
+  const { open, onOpenChange: setOpen } = props;
   const readFile = useAtomQueryRunner(projectEnvironment.readFile, {
     reportFailure: false,
     refresh: true,
   });
   const submit = useAtomCommand(computeEnvironment.submitExecution, { reportFailure: false });
   const run = async (relativePath: string) => {
-    if (reading || props.disabled) return;
-    setReading(true);
     return await (async () => {
       const file = await readFile({
         environmentId: props.environmentId,
@@ -66,28 +61,16 @@ export function ComputeSavedFileAction(props: {
       });
       if (result._tag !== "Success") throw squashAtomCommandFailure(result);
       props.onSubmitted(result.value);
-    })()
-      .catch(async (error) => {
-        toastManager.add({
-          type: "error",
-          title: "Unable to run saved file",
-          description: error instanceof Error ? error.message : "The file could not be submitted.",
-        });
-      })
-      .finally(() => {
-        setReading(false);
+    })().catch(async (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to run saved file",
+        description: error instanceof Error ? error.message : "The file could not be submitted.",
       });
+    });
   };
   return (
     <>
-      <Button
-        size="xs"
-        variant="ghost-muted"
-        disabled={props.disabled || reading}
-        onClick={() => setOpen(true)}
-      >
-        {reading ? <LoaderCircle className="animate-spin" /> : <Play />} Run file…
-      </Button>
       <CommandDialog open={open} onOpenChange={setOpen}>
         {open ? (
           <CommandDialogPopup

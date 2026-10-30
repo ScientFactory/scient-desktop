@@ -312,6 +312,7 @@ import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
 import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
 import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
+import { makeComputeConsoleNotebook } from "./scient/compute/ComputeConsoleNotebook.ts";
 import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
 import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
 import {
@@ -1901,6 +1902,11 @@ export const layerWsRpc = (
         gateway: computeGateway,
         compute,
         fileSystem: yield* FileSystem.FileSystem,
+      });
+      const saveConsoleNotebook = makeComputeConsoleNotebook({
+        gateway: computeGateway,
+        notebookOutputs: computeNotebookOutputs,
+        workspaceFileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
       const generatedDocuments = yield* GeneratedDocumentStore.GeneratedDocumentStore;
@@ -3829,6 +3835,7 @@ export const layerWsRpc = (
           dataTables,
           saveComputeOutput,
           notebooks: yield* NotebookStore.NotebookStore,
+          saveConsoleNotebook,
           computeNotebookOutputs,
         }),
       });

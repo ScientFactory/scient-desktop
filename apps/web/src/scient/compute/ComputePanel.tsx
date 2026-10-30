@@ -1,13 +1,25 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { CircleAlert, History, LoaderCircle, Play } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { Link } from "@tanstack/react-router";
+import { CircleAlert, FileCode, History, LoaderCircle, Play, Settings2 } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
+import { MenuItem } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { ComputeVariableTableDialog } from "~/scient/dataTable/ComputeVariableTable";
 import { scientComputeSurface } from "~/scient/rightPanel/surfaces";
+import { computeEnvironment } from "~/state/compute";
+import { useAtomCommand } from "~/state/use-atom-command";
 
+import {
+  ComputeConsoleInput,
+  ComputeConsoleLanguage,
+  ComputeConsoleLinks,
+  useComputeConsoleRun,
+} from "./ComputeConsole";
+import { useComputeConsoleStore } from "./computeConsoleStore";
 import type { ComputeContextId } from "./computeContextStore";
 import { computeFeedEntries, type ComputeFeedEntry } from "./computeFeedModel";
 import type { ComputePanelView } from "./computeFilePresentationStore";
@@ -18,14 +30,10 @@ import {
 import { ComputeResultsFeed } from "./ComputeResultsFeed";
 import type { ComputeExecutionSource } from "./ComputeRunEntry";
 import { ComputeSavedFileAction } from "./ComputeSavedFileAction";
-import { ComputeSessionControls } from "./ComputeSessionControls";
+import { ComputeSessionControls, reportComputeFailure } from "./ComputeSessionControls";
 import { ComputeSessionIndicator } from "./ComputeSessionIndicator";
 import { ComputeSessionNotices } from "./ComputeSessionNotices";
-import {
-  ComputeCapacityMenu,
-  ComputeSessionStart,
-  useComputeSessionStart,
-} from "./ComputeSessionStart";
+import { ComputeCapacityMenu, useComputeSessionStart } from "./ComputeSessionStart";
 import { ComputeVariablesView } from "./ComputeVariablesView";
 import { useComputePanelSessions } from "./useComputePanelSessions";
 import { useComputeVariables } from "./useComputeVariables";
@@ -151,7 +159,7 @@ export function ComputePanel(props: {
   const variables = useComputeVariables({
     environmentId: props.environmentId,
     cwd: props.cwd,
-    visible: panelView === "variables",
+    visible: panelView === "variables" || (standalone && props.contextId !== undefined),
     model,
   });
   const start = useComputeSessionStart({
@@ -162,12 +170,63 @@ export function ComputePanel(props: {
   });
   const { contextBinding, selectedSession, liveSession, runtimes, events } = model;
   const [openTable, setOpenTable] = useState<string | null>(null);
+  const [runFileOpen, setRunFileOpen] = useState(false);
+  const [followRun, setFollowRun] = useState<string | null>(null);
+  const consoleContext = standalone ? props.contextId : undefined;
+  const saveNotebook = useAtomCommand(computeEnvironment.saveConsoleNotebook, {
+    reportFailure: false,
+  });
+  const runConsole = useComputeConsoleRun({
+    environmentId: props.environmentId,
+    cwd: props.cwd,
+    start,
+    model,
+    onSubmitted: (executionId) => {
+      setPanelView("results");
+      setFollowRun(executionId);
+    },
+  });
 
-  const entries = computeFeedEntries({
+  const allEntries = computeFeedEntries({
     session: selectedSession,
     executions: model.executions,
     freshSessions: model.freshSessions,
   });
+  // A script sharing a Console's session shows its own runs; the Console shows them all.
+  const entries =
+    contextBinding?.borrowed === true
+      ? allEntries.filter(
+          (entry) =>
+            entry.kind === "run" &&
+            entry.execution.request.source._tag === "document" &&
+            entry.execution.request.source.path === props.sourcePath,
+        )
+      : allEntries;
+  const hasWork = selectedSession !== null || entries.length > 0;
+  const consoleLanguage =
+    selectedSession?.languageId ?? start.selectedRuntime?.language.descriptor.languageId ?? null;
+  const consoleHistory = model.executions
+    .filter((execution) => execution.request.source._tag === "console")
+    .toSorted((left, right) => left.request.submittedAt.localeCompare(right.request.submittedAt))
+    .map((execution) => execution.request.code);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the tab strip, which has no session query, which language this Console runs
+  useEffect(() => {
+    if (consoleContext !== undefined && consoleLanguage !== null) {
+      useComputeConsoleStore.getState().setLanguage(consoleContext, consoleLanguage);
+    }
+  }, [consoleContext, consoleLanguage]);
+  const saveAsNotebook = async () => {
+    if (selectedSession === null) return;
+    const saved = await saveNotebook({
+      environmentId: props.environmentId,
+      input: { cwd: props.cwd, sessionId: selectedSession.sessionId },
+    });
+    if (saved._tag === "Success") {
+      useRightPanelStore.getState().openFile(props.threadRef, saved.value.relativePath);
+    } else if (!isAtomCommandInterrupted(saved)) {
+      reportComputeFailure("Unable to save as notebook", saved);
+    }
+  };
   const emptyResults = (
     <EmptyComputeResults
       state={resolveComputeEmptyResultsState({
@@ -214,73 +273,108 @@ export function ComputePanel(props: {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col bg-background" aria-label="Scientific results">
-      <header className="flex min-h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2">
-        {props.resultPicker}
-        <ComputePanelTabs value={panelView} onChange={setPanelView} />
-        <span className="flex-1" />
-        {standalone && selectedSession !== null ? (
-          <ComputeSessionIndicator
-            sessions={model.contextSessions}
-            selected={selectedSession}
-            environmentId={props.environmentId}
-            cwd={props.cwd}
-            onChoose={model.chooseSession}
-          />
-        ) : null}
-        {standalone ? (
-          <ComputeCapacityMenu start={start} environmentId={props.environmentId} cwd={props.cwd} />
-        ) : null}
-        {standalone && props.contextId !== undefined && model.allSessions.length > 1 ? (
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            aria-label="All sessions"
-            title="All sessions"
-            onClick={() =>
-              useRightPanelStore
-                .getState()
-                .openScient(props.threadRef, scientComputeSurface({ cwd: props.cwd }))
-            }
-          >
-            <History />
-          </Button>
-        ) : null}
-        {liveSession !== null && model.selectedIsLive ? (
-          <>
-            {standalone && props.contextId !== undefined ? (
-              <ComputeSavedFileAction
-                contextId={props.contextId}
-                session={liveSession}
-                environmentId={props.environmentId}
-                threadRef={props.threadRef}
-                cwd={props.cwd}
-                disabled={liveSession.status !== "ready" || contextBinding?.lifecycle !== "live"}
-                onSubmitted={(execution) => {
-                  model.chooseSession(execution.request.sessionId);
-                  setPanelView("results");
-                  model.refresh();
-                }}
-              />
-            ) : null}
-            <ComputeSessionControls
+      {consoleContext !== undefined && !hasWork ? null : (
+        <header className="flex min-h-9 shrink-0 items-center gap-1 border-b border-border/60 px-2">
+          {props.resultPicker}
+          {consoleContext === undefined ? (
+            <ComputePanelTabs value={panelView} onChange={setPanelView} />
+          ) : null}
+          <span className="flex-1" />
+          {consoleContext !== undefined ? (
+            <>
+              {variables.available && (variables.snapshot?.variables.length ?? 0) > 0 ? (
+                <Button
+                  size="xs"
+                  variant="ghost-muted"
+                  aria-pressed={panelView === "variables"}
+                  onClick={() => setPanelView(panelView === "variables" ? "results" : "variables")}
+                >
+                  Variables {variables.snapshot?.variables.length}
+                </Button>
+              ) : null}
+              {consoleHistory.length > 0 ? (
+                <Button size="xs" variant="ghost-muted" onClick={() => void saveAsNotebook()}>
+                  Save as notebook
+                </Button>
+              ) : null}
+            </>
+          ) : null}
+          {standalone && consoleContext === undefined && selectedSession !== null ? (
+            <ComputeSessionIndicator
+              sessions={model.contextSessions}
+              selected={selectedSession}
               environmentId={props.environmentId}
               cwd={props.cwd}
-              session={liveSession}
-              contextId={props.contextId}
-              binding={contextBinding}
-              onSettled={model.refresh}
+              onChoose={model.chooseSession}
             />
-          </>
-        ) : standalone &&
-          props.contextId !== undefined &&
-          model.contextSessions.length > 0 &&
-          start.selectedRuntime !== null ? (
-          <Button size="xs" variant="outline" disabled={start.disabled} onClick={start.start}>
-            {start.starting ? <LoaderCircle className="animate-spin" /> : <Play />}
-            New session
-          </Button>
-        ) : null}
-      </header>
+          ) : null}
+          {standalone ? (
+            <ComputeCapacityMenu
+              start={start}
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+            />
+          ) : null}
+          {standalone && props.contextId !== undefined && model.allSessions.length > 1 ? (
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              aria-label="All sessions"
+              title="All sessions"
+              onClick={() =>
+                useRightPanelStore
+                  .getState()
+                  .openScient(props.threadRef, scientComputeSurface({ cwd: props.cwd }))
+              }
+            >
+              <History />
+            </Button>
+          ) : null}
+          {liveSession !== null && model.selectedIsLive ? (
+            <>
+              {consoleContext !== undefined ? (
+                <ComputeSavedFileAction
+                  contextId={consoleContext}
+                  session={liveSession}
+                  environmentId={props.environmentId}
+                  threadRef={props.threadRef}
+                  cwd={props.cwd}
+                  open={runFileOpen}
+                  onOpenChange={setRunFileOpen}
+                  onSubmitted={(execution) => {
+                    model.chooseSession(execution.request.sessionId);
+                    setPanelView("results");
+                    model.refresh();
+                  }}
+                />
+              ) : null}
+              <ComputeSessionControls
+                environmentId={props.environmentId}
+                cwd={props.cwd}
+                session={liveSession}
+                contextId={props.contextId}
+                binding={contextBinding}
+                onSettled={model.refresh}
+                {...(consoleContext === undefined
+                  ? {}
+                  : {
+                      menuItems: (
+                        <MenuItem
+                          disabled={
+                            liveSession.status !== "ready" || contextBinding?.lifecycle !== "live"
+                          }
+                          onClick={() => setRunFileOpen(true)}
+                        >
+                          <FileCode />
+                          Run file…
+                        </MenuItem>
+                      ),
+                    })}
+              />
+            </>
+          ) : null}
+        </header>
+      )}
 
       {contextBinding?.lifecycle === "close-failed" ? (
         <div className="flex items-center gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
@@ -324,10 +418,11 @@ export function ComputePanel(props: {
           runtimeInspection={runtimes.isSuccess && !runtimes.isPending ? runtimes.data : null}
           dependencyRecoveryFor={dependencyRecoveryFor}
           onRevealSource={revealSource}
-          followRequest={props.focusExecutionId ?? null}
-          {...(props.onFocusConsumed === undefined
-            ? {}
-            : { onFollowRequestConsumed: props.onFocusConsumed })}
+          followRequest={props.focusExecutionId ?? followRun}
+          onFollowRequestConsumed={(request) => {
+            setFollowRun(null);
+            props.onFocusConsumed?.(request);
+          }}
           lead={
             selectedSession !== null &&
             sessionNotices !== undefined &&
@@ -348,13 +443,73 @@ export function ComputePanel(props: {
         emptyResults
       ) : props.contextId === undefined ? (
         <p className="p-6 text-center text-xs text-muted-foreground">No runs yet</p>
-      ) : (
-        <ComputeSessionStart
-          start={start}
-          environmentId={props.environmentId}
-          runtimesPending={runtimes.isPending}
-        />
-      )}
+      ) : null}
+      {consoleContext !== undefined ? (
+        runtimes.isPending && start.readyRuntimes.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center">
+            <LoaderCircle className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : start.readyRuntimes.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center px-4">
+            <Button
+              size="sm"
+              variant="outline"
+              render={
+                <Link
+                  to="/settings/scientific-computing"
+                  search={{ environmentId: props.environmentId }}
+                />
+              }
+            >
+              <Settings2 /> Scientific Computing
+            </Button>
+          </div>
+        ) : (
+          <div
+            className={
+              hasWork
+                ? "shrink-0 px-3 pb-3 pt-2"
+                : "flex min-h-0 flex-1 flex-col justify-center px-5 pb-14"
+            }
+          >
+            <ComputeConsoleInput
+              contextId={consoleContext}
+              language={consoleLanguage ?? "python"}
+              languageName={start.selectedRuntime?.language.descriptor.displayName ?? "code"}
+              history={consoleHistory}
+              disabled={start.starting || liveSession?.status === "starting"}
+              onRun={runConsole}
+              footer={
+                <ComputeConsoleLanguage
+                  start={start}
+                  session={liveSession}
+                  cwd={props.cwd}
+                  threadRef={props.threadRef}
+                />
+              }
+            />
+            {hasWork ? null : (
+              <>
+                <ComputeConsoleLinks
+                  environmentId={props.environmentId}
+                  cwd={props.cwd}
+                  threadRef={props.threadRef}
+                  languageId={consoleLanguage}
+                />
+                {start.capacityBlocked ? (
+                  <div className="mt-3 flex justify-center">
+                    <ComputeCapacityMenu
+                      start={start}
+                      environmentId={props.environmentId}
+                      cwd={props.cwd}
+                    />
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        )
+      ) : null}
       {liveSession !== null ? (
         <ComputeVariableTableDialog
           environmentId={props.environmentId}

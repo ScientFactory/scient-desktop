@@ -43,6 +43,8 @@ export interface ComputeContextBinding {
   readonly generation: ComputeSessionGeneration | null;
   readonly lifecycle: ComputeContextLifecycle;
   readonly closeError: string | null;
+  /** This tab runs in a Console's session: closing the tab leaves that session running. */
+  readonly borrowed?: true | undefined;
 }
 
 interface ComputeContextStoreState {
@@ -70,6 +72,14 @@ interface ComputeContextStoreState {
     readonly sessionId: ComputeSessionId;
     readonly generation: ComputeSessionGeneration;
   }) => boolean;
+  /** Runs this tab in another tab's live session, without taking ownership of it. */
+  borrowSession: (input: {
+    readonly contextId: ComputeContextId;
+    readonly sessionId: ComputeSessionId;
+    readonly generation: ComputeSessionGeneration;
+  }) => boolean;
+  /** Lets go of a borrowed session; its owner keeps it running. */
+  releaseBorrowedSession: (contextId: ComputeContextId) => void;
   bindSession: (input: {
     readonly contextId: ComputeContextId;
     readonly sessionId: ComputeSessionId;
@@ -109,6 +119,7 @@ const ComputeContextBindingFields = {
   relativePath: Schema.NullOr(
     Schema.String.check(Schema.isMaxLength(MAX_COMPUTE_CONTEXT_PATH_LENGTH)),
   ),
+  borrowed: Schema.optional(Schema.Literal(true)),
 };
 const PersistedComputeContextBindingSchema = Schema.Union([
   Schema.Struct({
@@ -336,11 +347,61 @@ export const useComputeContextStore = create<ComputeContextStoreState>()(
                 generation: input.generation ?? INITIAL_GENERATION,
                 lifecycle: "starting",
                 closeError: null,
+                borrowed: undefined,
               },
             },
           };
         });
         return reserved;
+      },
+      borrowSession: (input) => {
+        let borrowed = false;
+        set((state) => {
+          const current = state.bindings[input.contextId];
+          if (
+            current === undefined ||
+            current.parentContextId !== undefined ||
+            current.lifecycle === "starting" ||
+            current.lifecycle === "live" ||
+            current.lifecycle === "closing" ||
+            current.lifecycle === "close-failed"
+          )
+            return state;
+          borrowed = true;
+          return {
+            bindings: {
+              ...state.bindings,
+              [input.contextId]: {
+                ...current,
+                sessionId: input.sessionId,
+                generation: input.generation,
+                lifecycle: "live",
+                closeError: null,
+                borrowed: true,
+              },
+            },
+          };
+        });
+        return borrowed;
+      },
+      releaseBorrowedSession: (contextId) => {
+        set((state) => {
+          const current = state.bindings[contextId];
+          if (current?.borrowed !== true) return state;
+          return {
+            bindings: {
+              ...state.bindings,
+              [contextId]: {
+                ...current,
+                sessionId: null,
+                generation: null,
+                lifecycle: "unbound",
+                closeError: null,
+                borrowed: undefined,
+              },
+            },
+          };
+        });
       },
       releasePendingReservation: (input) => {
         let released = false;
@@ -546,6 +607,37 @@ export function computeSessionOwnerLabel(
         ? "Agent"
         : null);
   return owner === null ? session.label : `${session.label} · ${owner}`;
+}
+
+/** The live session of a Console in this project, which scripts in its language share. */
+export function computeConsoleSession<
+  Session extends Pick<ComputeSessionRecord, "sessionId" | "generation" | "status" | "languageId">,
+>(input: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
+  readonly languageId: string;
+  readonly sessions: ReadonlyArray<Session>;
+}): Session | null {
+  for (const binding of Object.values(useComputeContextStore.getState().bindings)) {
+    if (
+      binding.relativePath !== null ||
+      binding.parentContextId !== undefined ||
+      binding.borrowed === true ||
+      binding.lifecycle !== "live" ||
+      binding.environmentId !== input.environmentId ||
+      binding.cwd !== input.cwd
+    )
+      continue;
+    const session = input.sessions.find(
+      (candidate) =>
+        candidate.sessionId === binding.sessionId &&
+        candidate.generation === binding.generation &&
+        candidate.languageId === input.languageId &&
+        !TERMINAL_COMPUTE_SESSION_STATUSES.has(candidate.status),
+    );
+    if (session !== undefined) return session;
+  }
+  return null;
 }
 
 export function ownsLiveComputeSession(

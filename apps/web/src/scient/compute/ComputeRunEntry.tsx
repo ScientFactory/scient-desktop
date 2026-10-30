@@ -11,7 +11,7 @@ import {
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { LoaderCircle, MessageSquarePlus, Square } from "lucide-react";
 import { askInChatAboutCompute } from "./computeAskInChat";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -52,6 +52,31 @@ export interface ComputeRunEntryProps {
     readonly onSettled: () => void;
   };
   readonly onRevealSource?: (source: Extract<ComputeExecutionSource, { _tag: "document" }>) => void;
+}
+
+const CONSOLE_CODE_LINES = 12;
+
+/** What was typed at the Console; a long paste folds so the results stay in view. */
+function ConsoleCode({ code }: { readonly code: string }) {
+  const [open, setOpen] = useState(false);
+  const lines = code.split("\n");
+  const long = lines.length > CONSOLE_CODE_LINES;
+  return (
+    <div className="min-w-0 flex-1">
+      <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-5 text-muted-foreground">
+        {long && !open ? lines.slice(0, CONSOLE_CODE_LINES).join("\n") : code}
+      </pre>
+      {long ? (
+        <button
+          type="button"
+          className="cursor-pointer text-[11px] text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground"
+          onClick={() => setOpen((current) => !current)}
+        >
+          {open ? "Show less" : `Show all ${lines.length} lines`}
+        </button>
+      ) : null}
+    </div>
+  );
 }
 
 /** One run in a Results feed: what ran, how it went, and everything it printed or displayed. */
@@ -121,25 +146,29 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
     .join(" · ");
   return (
     <article className="group/run min-w-0 px-3 py-2" aria-label={`${label} run`}>
-      <header className="flex min-h-5 items-center gap-1.5 text-[11px] text-muted-foreground">
-        <ScientTooltip content={when}>
-          {reveal === null ? (
-            <span className="min-w-0 truncate">{label}</span>
-          ) : (
-            <button
-              type="button"
-              className="min-w-0 cursor-pointer truncate rounded-[4px] outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-              onClick={reveal}
-            >
-              {label}
-            </button>
-          )}
-        </ScientTooltip>
+      <header className="flex min-h-5 items-start gap-1.5 text-[11px] text-muted-foreground">
+        {source._tag === "console" ? (
+          <ConsoleCode code={execution.request.code} />
+        ) : (
+          <ScientTooltip content={when}>
+            {reveal === null ? (
+              <span className="min-w-0 truncate">{label}</span>
+            ) : (
+              <button
+                type="button"
+                className="min-w-0 cursor-pointer truncate rounded-[4px] outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                onClick={reveal}
+              >
+                {label}
+              </button>
+            )}
+          </ScientTooltip>
+        )}
         {props.fresh ? <span className="shrink-0 text-muted-foreground/70">Fresh</span> : null}
         {execution.request.actor?._tag === "agent" ? (
           <span className="shrink-0 text-muted-foreground/70">Agent</span>
         ) : null}
-        <span className="flex-1" />
+        {source._tag === "console" ? null : <span className="flex-1" />}
         {terminal ? (
           <span className="opacity-0 transition-opacity group-hover/run:opacity-100 focus-within:opacity-100">
             <ScientTooltip content="Ask in chat">
@@ -182,6 +211,9 @@ export function ComputeRunEntry(props: ComputeRunEntryProps) {
           </span>
         ) : null}
       </header>
+      {execution.result?.failureReason ? (
+        <p className="mt-1 text-xs text-destructive">{execution.result.failureReason}</p>
+      ) : null}
       {outputs.length === 0 && persisted.error ? (
         <p className="text-xs text-destructive">Couldn&apos;t load this run&apos;s output</p>
       ) : (

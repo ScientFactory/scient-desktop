@@ -1,4 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useEffect } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
@@ -8,7 +9,14 @@ import {
   type OpenFileOptions,
   useRightPanelStore,
 } from "~/rightPanelStore";
-import { createComputeContextId } from "~/scient/compute/computeContextStore";
+import {
+  computeConsoleIsEmpty,
+  useComputeConsoleStore,
+} from "~/scient/compute/computeConsoleStore";
+import {
+  createComputeContextId,
+  useComputeContextStore,
+} from "~/scient/compute/computeContextStore";
 import type { NewDocumentChoice } from "~/scient/documents/NewDocumentMenuItems";
 import { useCreateNewDocument } from "~/scient/documents/useCreateNewDocument";
 import { shouldOpenInBrowserByDefault } from "~/scient/fileOpening/fileOpeningPolicy";
@@ -23,6 +31,40 @@ import {
 } from "./surfaces";
 
 /**
+ * An empty Console is only a starting point, so the first file opened from it takes its place,
+ * as an address does in a new browser tab. A Console with work in it is never disturbed.
+ */
+function useConsoleGivesWayToFiles(threadRef: ScopedThreadRef | null) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- every way of opening a file ends in this store, so the rule lives on its changes
+  useEffect(() => {
+    if (threadRef === null) return;
+    const key = scopedThreadKey(threadRef);
+    return useRightPanelStore.subscribe((state, previous) => {
+      const before = previous.byThreadKey[key];
+      const after = state.byThreadKey[key];
+      if (!before || !after || before.activeSurfaceId === after.activeSurfaceId) return;
+      const index = before.surfaces.findIndex((surface) => surface.id === before.activeSurfaceId);
+      const left = before.surfaces[index];
+      const opened = after.surfaces.find((surface) => surface.id === after.activeSurfaceId);
+      if (
+        left?.kind !== "scient" ||
+        left.module !== "compute" ||
+        left.contextId === undefined ||
+        opened === undefined ||
+        before.surfaces.some((surface) => surface.id === opened.id) ||
+        !(opened.kind === "file" || (opened.kind === "scient" && opened.module === "file")) ||
+        !computeConsoleIsEmpty(left.contextId)
+      )
+        return;
+      useRightPanelStore.getState().closeSurface(threadRef, left.id);
+      useRightPanelStore.getState().moveSurface(threadRef, opened.id, index);
+      useComputeContextStore.getState().removeContext(left.contextId);
+      useComputeConsoleStore.getState().forget(left.contextId);
+    });
+  }, [threadRef]);
+}
+
+/**
  * Openers for the right-panel surfaces Scient adds: agents, sources, compute,
  * source PDFs and file sources. Each waits for a pending file save first.
  */
@@ -33,6 +75,7 @@ export function useScientRightPanelOpeners(input: {
   readonly runAfterPendingFileSave: ReturnType<typeof useActivePendingSurfaceDeparture>;
 }) {
   const { activeThreadRef, activeProject, activeWorkspaceRoot, runAfterPendingFileSave } = input;
+  useConsoleGivesWayToFiles(activeThreadRef);
   const addAgentsSurface = () => {
     if (!activeThreadRef) return;
     runAfterPendingFileSave("agents", () => {
