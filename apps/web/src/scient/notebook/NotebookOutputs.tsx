@@ -10,7 +10,12 @@ import { ComputeRichOutput, type ComputeRichDisplay } from "~/scient/compute/Com
 import { computeDisplays } from "~/scient/compute/computeRichRepresentation";
 import { renderTerminalText } from "~/scient/compute/computeTerminalText";
 import { ComputeTerminalOutput } from "~/scient/compute/ComputeTerminalOutput";
+import { copyStaticImage, downloadStaticImage } from "~/components/preview/staticImageActions";
 import { ComputeOutputView } from "~/scient/compute/ComputeOutputView";
+import {
+  ScientImageActionMenu,
+  type ScientImageAction,
+} from "~/scient/images/ScientImageActionMenu";
 import { useStore } from "zustand";
 import type { NotebookController } from "./notebookController";
 
@@ -75,17 +80,68 @@ function richDisplays(data: Readonly<Record<string, unknown>>): ReadonlyArray<Co
   }).filter((display): display is ComputeRichDisplay => display.kind !== "image");
 }
 
+const dataUrl = (mediaType: string, value: unknown) =>
+  `data:${mediaType};base64,${notebookText(value).replace(/\s/g, "")}`;
+
+/** A figure stored in the file, with the same ways out as a figure from a live run. */
+function SavedFigure(props: {
+  readonly mediaType: string;
+  readonly data: Readonly<Record<string, unknown>>;
+  readonly label: string;
+}) {
+  const url = dataUrl(props.mediaType, props.data[props.mediaType]);
+  const pdf = props.data["application/pdf"];
+  const extension = props.mediaType.split("/")[1] ?? "png";
+  const [busy, setBusy] = useState(false);
+  const actions: ReadonlyArray<ScientImageAction> = [
+    {
+      id: "copy",
+      label: "Copy image",
+      requiresUserActivation: true,
+      run: () => copyStaticImage(url),
+    },
+    {
+      id: "download",
+      label: "Download image",
+      run: () => downloadStaticImage(url, `${props.label}.${extension}`),
+    },
+    ...(pdf === undefined
+      ? []
+      : [
+          {
+            id: "pdf",
+            label: "Download PDF",
+            run: () => downloadStaticImage(dataUrl("application/pdf", pdf), `${props.label}.pdf`),
+          },
+        ]),
+  ];
+  return (
+    <div className="group/figure relative inline-flex max-w-full">
+      <img
+        src={url}
+        alt={props.label}
+        loading="lazy"
+        decoding="async"
+        className="max-h-[32rem] max-w-full object-contain"
+      />
+      <span className="absolute top-1 right-1 rounded-md bg-background/85 opacity-0 transition-opacity group-focus-within/figure:opacity-100 group-hover/figure:opacity-100 has-[[data-popup-open]]:opacity-100">
+        <ScientImageActionMenu
+          actions={actions}
+          busy={busy}
+          run={(action) => {
+            setBusy(true);
+            void Promise.resolve(action.run()).finally(() => setBusy(false));
+          }}
+        />
+      </span>
+    </div>
+  );
+}
+
 function Data(props: { readonly data: Readonly<Record<string, unknown>>; readonly label: string }) {
   const raster = RASTER_TYPES.find((type) => props.data[type] !== undefined);
   if (raster !== undefined) {
-    return (
-      <img
-        src={`data:${raster};base64,${notebookText(props.data[raster]).replace(/\s/g, "")}`}
-        alt={props.label}
-        loading="lazy"
-        className="max-h-[32rem] max-w-full object-contain"
-      />
-    );
+    return <SavedFigure mediaType={raster} data={props.data} label={props.label} />;
   }
   return <ComputeRichOutput displays={richDisplays(props.data)} />;
 }
@@ -175,7 +231,7 @@ function StoredOutputs(props: {
       />
     );
   }
-  return <SavedOutputs outputs={loaded} label={`Output of ${cell.id}`} />;
+  return <SavedOutputs outputs={loaded} label="figure" />;
 }
 
 export function NotebookCellOutputs(props: {
