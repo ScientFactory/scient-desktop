@@ -332,7 +332,7 @@ describe("python launch plan", () => {
       environment: {
         HOME: "/home/user",
         PYTHONPATH: "/attacker/lib",
-        ANTHROPIC_API_KEY: "secret",
+        CLAUDE_CODE_OAUTH_TOKEN: "secret",
         SCIENT_INTERNAL: "secret",
       },
     };
