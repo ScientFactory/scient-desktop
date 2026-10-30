@@ -25,18 +25,18 @@ import { computeFileContextId, useComputeContextStore } from "~/scient/compute/c
 import type { ComputePanelView } from "~/scient/compute/computeFilePresentationStore";
 import { computeSourceLanguageForId } from "~/scient/compute/computeSourceLanguage";
 import { useComputePanelSessions } from "~/scient/compute/useComputePanelSessions";
-import type { ScientNestedCodeEditor } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { NotebookCell, type NotebookCellEdge, type NotebookCellHandlers } from "./NotebookCell";
 import { notebookCommand, type NotebookCommand, type NotebookKeyPress } from "./notebookCommands";
-import { createNotebookController, type NotebookController } from "./notebookController";
+import {
+  createNotebookController,
+  type NotebookCaret,
+  type NotebookController,
+} from "./notebookController";
 import { NotebookContext } from "./NotebookOutputs";
 
-/** Where focus goes next: the cell itself (command mode) or its editor. */
-type NotebookFocus = {
-  readonly cellId: string;
-  readonly target: "cell" | number | NotebookCellEdge;
-};
+/** Where focus goes next: the cell itself (command mode) or a place in its editor. */
+type NotebookFocusTarget = "cell" | NotebookCaret;
 
 /** Cells mount their editors and outputs this far ahead of the visible area. */
 const NEAR_MARGIN = "1200px 0px";
@@ -153,12 +153,11 @@ export default function ScientNotebookSurface(props: {
   });
   const actions = useRef<ComputeFileActionsHandle>(null);
   const list = useRef<HTMLDivElement>(null);
-  const editors = useRef(new Map<string, ScientNestedCodeEditor>());
   const deleted = useRef<Array<{ readonly cellId: string; readonly after: string | null }>>([]);
   const lastKey = useRef<NotebookKeyPress | null>(null);
   const restartedTo = useRef<number | null>(null);
   const [{ setRoot: setScroller, watch: watchNear }] = useState(createNearWatcher);
-  const [focus, setFocus] = useState<NotebookFocus | null>(null);
+  const [focusedCell, setFocusedCell] = useState<{ readonly cellId: string } | null>(null);
   const [submitting, setSubmitting] = useState<ReadonlySet<string>>(new Set());
   const [panelView, setPanelView] = useState<ComputePanelView | null>(null);
   const model = useComputePanelSessions({
@@ -217,17 +216,17 @@ export default function ScientNotebookSurface(props: {
   };
   const runAllCells = useStableCallback(() => runCells(codeCellIds()));
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the cell or editor a command just asked for.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the cell a command selected; a cell's editor places its own caret.
   useLayoutEffect(() => {
-    if (focus === null) return;
+    if (focusedCell === null) return;
     const section = list.current?.querySelector<HTMLElement>(
-      `[data-notebook-cell="${CSS.escape(focus.cellId)}"]`,
+      `[data-notebook-cell="${CSS.escape(focusedCell.cellId)}"]`,
     );
     section?.scrollIntoView({ block: "nearest" });
-    const editor = editors.current.get(focus.cellId);
-    if (focus.target === "cell" || editor === undefined) section?.focus({ preventScroll: true });
-    else editor.focusAt(focus.target);
-  }, [focus]);
+    if (controller.store.getState().editing !== focusedCell.cellId) {
+      section?.focus({ preventScroll: true });
+    }
+  }, [controller, focusedCell]);
 
   // The Run control must see the restarted session before it can submit into it.
   const runAfterRestart = useStableCallback(() => {
@@ -275,11 +274,12 @@ export default function ScientNotebookSurface(props: {
     runAfterRestart();
   };
 
-  const focusCell = (cellId: string | undefined, target: NotebookFocus["target"]) => {
+  const focusCell = (cellId: string | undefined, target: NotebookFocusTarget) => {
     if (cellId === undefined) return;
     controller.select(cellId);
-    controller.edit(target === "cell" ? null : cellId);
-    setFocus({ cellId, target });
+    if (target === "cell") controller.stopEditing();
+    else controller.edit(cellId, target);
+    setFocusedCell({ cellId });
   };
   const positionOf = (cellId: string) => controller.store.getState().order.indexOf(cellId);
   const cellAt = (index: number) => controller.store.getState().order[index];
@@ -379,10 +379,6 @@ export default function ScientNotebookSurface(props: {
     ),
     delete: useStableCallback(deleteCell),
     edit: useStableCallback(focusCell),
-    registerEditor: useStableCallback((cellId: string, editor: ScientNestedCodeEditor | null) => {
-      if (editor === null) editors.current.delete(cellId);
-      else editors.current.set(cellId, editor);
-    }),
     observeNear: watchNear,
   };
 

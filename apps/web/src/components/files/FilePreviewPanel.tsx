@@ -1647,7 +1647,9 @@ export default function FilePreviewPanel({
     relativePath,
     // Read every workspace path so a chat link to a directory can be
     // distinguished from a media or PDF file before choosing a preview.
-    loadAsText: attachment === undefined,
+    // SCIENT-FORK:START — a notebook loads cell by cell from the server, never as text.
+    loadAsText: attachment === undefined && !isScientNotebookFile(relativePath),
+    // SCIENT-FORK:END
     sourcePending: effectiveSourcePending,
     surfaceOwnsConflictDetection: usesDocumentSession,
     workspaceMutationId,

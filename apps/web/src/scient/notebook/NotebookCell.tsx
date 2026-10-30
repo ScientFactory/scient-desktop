@@ -23,7 +23,7 @@ import {
   type ScientNestedCodeEditor,
 } from "~/scient/markdownEditor/nodes/codeMirrorCodeEditor";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
-import type { NotebookCellActivity, NotebookController } from "./notebookController";
+import type { NotebookCaret, NotebookCellActivity, NotebookController } from "./notebookController";
 import { NOTEBOOK_MARKDOWN_PLUGINS, NotebookCellOutputs } from "./NotebookOutputs";
 import type { NotebookStaleness } from "./notebookStaleness";
 
@@ -39,9 +39,8 @@ export interface NotebookCellHandlers {
   readonly insert: (cellId: string, cellType: NotebookCellType) => void;
   readonly ask: (cellId: string) => void;
   readonly delete: (cellId: string) => void;
-  /** Opens the cell's editor, with the caret at `offset` when the click gave one. */
-  readonly edit: (cellId: string, offset: number | "end") => void;
-  readonly registerEditor: (cellId: string, editor: ScientNestedCodeEditor | null) => void;
+  /** Opens the cell's editor with its caret there. */
+  readonly edit: (cellId: string, caret: NotebookCaret) => void;
   /** Calls back once when the cell comes near the visible area. */
   readonly observeNear: (node: Element, onNear: () => void) => () => void;
 }
@@ -53,7 +52,8 @@ function CellEditor(props: {
   readonly onRun: (advance: boolean) => void;
   readonly onEscape: () => void;
   readonly onLeave: (edge: NotebookCellEdge) => void;
-  readonly register: (editor: ScientNestedCodeEditor | null) => void;
+  readonly caret: NotebookCaret;
+  readonly caretRequest: number;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const editor = useRef<ScientNestedCodeEditor | null>(null);
@@ -64,7 +64,6 @@ function CellEditor(props: {
     props.onChange(code);
   });
   const onEscape = useStableCallback(() => props.onEscape());
-  const register = useStableCallback((next: ScientNestedCodeEditor | null) => props.register(next));
   const initial = useRef({ code: props.cell.source, language: props.language });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the CodeMirror editor into its DOM node for this cell's lifetime.
   useLayoutEffect(() => {
@@ -79,13 +78,16 @@ function CellEditor(props: {
       onEscape,
     });
     editor.current = view;
-    register(view);
     return () => {
-      register(null);
       view.destroy();
       editor.current = null;
     };
-  }, [onChange, onEscape, register]);
+  }, [onChange, onEscape]);
+  const { caret, caretRequest } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the editor places its own caret, after the mount above, for each request to edit this cell.
+  useLayoutEffect(() => {
+    if (caretRequest > 0) editor.current?.focusAt(caret);
+  }, [caret, caretRequest]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps CodeMirror's text in step with outside edits to the cell (another view, an agent).
   useEffect(() => {
     if (props.cell.source === shown.current) return;
@@ -95,7 +97,7 @@ function CellEditor(props: {
   return (
     <div
       ref={parent}
-      className="min-w-0 px-1 py-1 text-[13px] [&_.cm-scroller]:font-mono [&_.cm-scroller]:leading-[1.4]"
+      className="min-w-0 px-1 py-1 text-[13px] [&_.cm-scroller]:font-mono! [&_.cm-scroller]:leading-[1.4]!"
       onKeyDownCapture={(event) => {
         if (event.key === "Enter" && (event.shiftKey || event.metaKey || event.ctrlKey)) {
           event.preventDefault();
@@ -282,7 +284,7 @@ function StaticCode(props: {
   }, [language, near, source]);
   return (
     <pre
-      className="min-h-[calc(1.4em+1rem)] min-w-0 cursor-text px-2.5 py-2 font-mono text-[13px] leading-[1.4] wrap-anywhere whitespace-pre-wrap"
+      className="min-w-0 cursor-text py-[calc(--spacing(1)+4px)] pr-[calc(--spacing(1)+2px)] pl-[calc(--spacing(1)+6px)] font-mono text-[13px] leading-[1.4] wrap-anywhere whitespace-break-spaces"
       onClick={(event) =>
         props.onEdit(textOffsetAt(event.currentTarget, event.clientX, event.clientY))
       }
@@ -299,7 +301,7 @@ function StaticCode(props: {
               </span>
             ),
           )}
-      {source.endsWith("\n") ? "\n" : null}
+      {source === "" || source.endsWith("\n") ? "\n" : null}
     </pre>
   );
 }
@@ -314,6 +316,10 @@ export function NotebookCell(props: {
   const cell = useStore(controller.store, (state) => state.cells[cellId]);
   const selected = useStore(controller.store, (state) => state.selected === cellId);
   const editing = useStore(controller.store, (state) => state.editing === cellId);
+  const caretRequest = useStore(controller.store, (state) =>
+    state.editing === cellId ? state.caretRequest : 0,
+  );
+  const caret = useStore(controller.store, (state) => state.caret);
   const activity = useStore(controller.store, (state) => state.activity[cellId] ?? null);
   const stale = useStore(controller.store, (state) => state.stale.get(cellId) ?? null);
   const section = useRef<HTMLElement>(null);
@@ -393,7 +399,8 @@ export function NotebookCell(props: {
               onRun={(advance) => handlers.run(cellId, advance)}
               onEscape={() => handlers.escape(cellId)}
               onLeave={(edge) => handlers.leave(cellId, edge)}
-              register={(editor) => handlers.registerEditor(cellId, editor)}
+              caret={caret}
+              caretRequest={caretRequest}
             />
           ) : (
             <StaticCode

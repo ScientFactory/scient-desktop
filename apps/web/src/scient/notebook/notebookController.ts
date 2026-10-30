@@ -16,6 +16,7 @@ import { createStore } from "zustand/vanilla";
 import { notebookCodeHash, staleNotebookCells, type NotebookStaleness } from "./notebookStaleness";
 
 export type NotebookCellActivity = "queued" | "running" | null;
+export type NotebookCaret = number | "start" | "end";
 
 /** The server calls a controller needs; `null` from any of them means the call failed. */
 export interface NotebookTransport {
@@ -44,6 +45,9 @@ export interface NotebookState {
   readonly selected: string | null;
   /** The one cell with a live editor; every other cell shows static code. */
   readonly editing: string | null;
+  /** Where that editor puts its caret; `caretRequest` changes for each new request. */
+  readonly caret: NotebookCaret;
+  readonly caretRequest: number;
 }
 
 /** Edits to one cell's text are sent together once typing pauses. */
@@ -99,6 +103,8 @@ export function createNotebookController(transport: NotebookTransport) {
     liveRuns: {},
     selected: null,
     editing: null,
+    caret: "start",
+    caretRequest: 0,
   }));
   let revision: string | undefined;
   let seenFileRevision: string | undefined;
@@ -344,7 +350,13 @@ export function createNotebookController(transport: NotebookTransport) {
     select: (cellId: string | null) => {
       if (store.getState().selected !== cellId) store.setState({ selected: cellId });
     },
-    edit: (cellId: string | null) => store.setState({ editing: cellId }),
+    edit: (cellId: string, caret: NotebookCaret) =>
+      store.setState((state) => ({
+        editing: cellId,
+        caret,
+        caretRequest: state.caretRequest + 1,
+      })),
+    stopEditing: () => store.setState({ editing: null }),
     dispose: () => {
       clearTimeout(staleTimer);
       void flush();
