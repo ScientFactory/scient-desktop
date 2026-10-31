@@ -64,6 +64,8 @@ function Editor(props: {
 const onPostRender = () => {};
 const ORIGINAL = "one = 1\ntwo = 2\nthree = 3\n";
 const textbox = () => page.getByRole("textbox").last();
+/** The shortcut for this differs between Mac and Linux. Pressing past the first line does not. */
+const TOP_OF_FILE = `${"{ArrowUp}".repeat(6)}{Home}`;
 
 describe.each(["script.py", "notes.txt", "data.json"])("an open %s", (name) => {
   /** Paths stay apart because an editor's retained state outlives each test's mount. */
@@ -105,7 +107,7 @@ describe.each(["script.py", "notes.txt", "data.json"])("an open %s", (name) => {
     );
     await expect.poll(rows).toEqual(["one = 1", "two = 2", "three = 3", ""]);
     await userEvent.click(textbox());
-    await userEvent.keyboard("{ControlOrMeta>}{ArrowUp}{/ControlOrMeta}{ArrowDown}{ArrowDown}");
+    await userEvent.keyboard(`${TOP_OF_FILE}{ArrowDown}{ArrowDown}`);
     await screen.rerender(
       <Editor
         relativePath={relativePath}
@@ -131,7 +133,7 @@ describe.each(["script.py", "notes.txt", "data.json"])("an open %s", (name) => {
     );
     await expect.poll(rows).toEqual(["one = 1", "two = 2", "three = 3", ""]);
     await userEvent.click(textbox());
-    await userEvent.keyboard("{ControlOrMeta>}{ArrowUp}{/ControlOrMeta}x");
+    await userEvent.keyboard(`${TOP_OF_FILE}x`);
     await expect.poll(rows).toEqual(["xone = 1", "two = 2", "three = 3", ""]);
     await screen.rerender(
       <Editor
@@ -158,7 +160,7 @@ describe.each(["script.py", "notes.txt", "data.json"])("an open %s", (name) => {
     );
     await expect.poll(rows).toEqual(["one = 1", "two = 2", "three = 3", ""]);
     await userEvent.click(textbox());
-    await userEvent.keyboard("{ControlOrMeta>}{ArrowUp}{/ControlOrMeta}{ArrowRight}x");
+    await userEvent.keyboard(`${TOP_OF_FILE}{ArrowRight}x`);
     await expect.poll(rows).toEqual(["oxne = 1", "two = 2", "three = 3", ""]);
     await screen.rerender(
       <Editor
@@ -213,7 +215,7 @@ describe.each(["script.py", "notes.txt", "data.json"])("an open %s", (name) => {
     );
     await expect.poll(rows).toEqual(["one = 1", "two = 2", "three = 3", ""]);
     await userEvent.click(textbox());
-    await userEvent.keyboard("{ControlOrMeta>}{ArrowUp}{/ControlOrMeta}x");
+    await userEvent.keyboard(`${TOP_OF_FILE}x`);
     await expect.poll(rows).toEqual(["xone = 1", "two = 2", "three = 3", ""]);
     await closed[Symbol.asyncDispose]();
 
@@ -269,7 +271,7 @@ describe.each(["script.py", "notes.txt", "data.json"])("an open %s", (name) => {
     );
     await expect.poll(rows).toEqual(["changed = 1", "two = 2", "three = 3", ""]);
     await userEvent.click(textbox());
-    await userEvent.keyboard("{ControlOrMeta>}{ArrowUp}{/ControlOrMeta}x");
+    await userEvent.keyboard(`${TOP_OF_FILE}x`);
     await expect.poll(rows).toEqual(["xchanged = 1", "two = 2", "three = 3", ""]);
   });
 

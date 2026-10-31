@@ -302,7 +302,8 @@ describe("shared compute runtime transitions", () => {
             h.atoms.refreshRuntimeInventory.run(h.registry, { environmentId: ENV, input: {} }),
           ]),
         );
-        expect(h.inventoryReads()).toBe(before + 1);
+        // One scan and one read of what it found, however many asked at once.
+        expect(h.inventoryReads()).toBe(before + 2);
         unmount();
       } finally {
         h.registry.dispose();
