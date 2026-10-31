@@ -204,7 +204,10 @@ function DesktopBrowserAccountControls({
         if (result.value.result === "same" && accountId) {
           await new Promise((settled) => setTimeout(settled, SIGN_IN_SETTLE_MS));
           const form = await window.desktopBridge?.accounts?.loginForm?.(tabId);
-          if (form === null) void signInSeen({ accountId, outcome: "signed-in" });
+          // No form could also mean the tab closed or the page is reloading.
+          const moved = currentUrl.current !== "" && currentUrl.current !== capture.url;
+          if (form === null && moved && generation === captureGeneration.current)
+            void signInSeen({ accountId, outcome: "signed-in" });
         }
       })();
     } catch {

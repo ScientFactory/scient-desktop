@@ -294,6 +294,7 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
     url: "https://example.com",
     documentId: "document",
     userEdited: false,
+    hasPassword: true,
     hasValues: false,
   };
   expect(automaticSignIn(form)).toBe(true);

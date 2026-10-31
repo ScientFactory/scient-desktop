@@ -39,6 +39,7 @@ export interface DesktopLoginForm {
   readonly pageUrl?: string;
   readonly documentId: string;
   readonly userEdited: boolean;
+  readonly hasPassword: boolean;
   readonly hasValues: boolean;
 }
 
@@ -105,7 +106,8 @@ export interface DesktopAccountsBridge {
     environmentId?: string,
   ) => Promise<boolean>;
   /** Fills the login form on the tab's current page. Resolves false when it found none. */
-  readonly fill: (input: DesktopSignInFill) => Promise<boolean>;
+  /** False when nothing was filled; "submitted" when the form was also really sent. */
+  readonly fill: (input: DesktopSignInFill) => Promise<boolean | "submitted">;
   readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;
   readonly onLoginFormDetected?: (listener: (form: DesktopLoginForm) => void) => () => void;
   readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;

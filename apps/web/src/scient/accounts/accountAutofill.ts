@@ -123,11 +123,11 @@ export function watchAccountAutofill(
     if (!done) return;
     filled.set(form.tabId, { accountId: account.accountId, url: pageUrl });
     for (const listener of listeners) listener();
-    if (!submit) return;
-    // A form still there means the password no longer works; retries could lock the account.
+    if (done !== "submitted") return;
+    // A password field still there means it no longer works; retries could lock the account.
     await new Promise((settled) => setTimeout(settled, SIGN_IN_SETTLE_MS));
     const still = await bridge.loginForm?.(form.tabId).catch(() => undefined);
-    if (still && still.url === form.url)
+    if (still?.hasPassword && still.url === form.url)
       await accountsState.signInSeen.run(registry, {
         environmentId,
         input: { accountId: account.accountId, outcome: "password-rejected" },

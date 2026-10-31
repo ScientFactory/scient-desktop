@@ -101,7 +101,9 @@ export const fill = Effect.fn("DesktopAccounts.fill")(function* (
       try: () =>
         contents
           .executeJavaScript(loginFillScript(input.value, origin, input.value))
-          .then((result: unknown) => result === true),
+          .then((result: unknown) =>
+            result === true || result === "submitted" ? (result as true | "submitted") : false,
+          ),
       catch: unavailable,
     });
   }).pipe(Effect.orElseSucceed(() => false));
@@ -383,6 +385,7 @@ const FormReport = Schema.Struct({
   url: Schema.String,
   documentId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
   userEdited: Schema.Boolean,
+  hasPassword: Schema.Boolean,
   hasValues: Schema.Boolean,
 });
 const decodeFormReport = Schema.decodeUnknownOption(FormReport);

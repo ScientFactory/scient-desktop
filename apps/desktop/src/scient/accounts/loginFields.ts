@@ -123,8 +123,10 @@ function fillLoginForm(
       if (options.automatic && state) state.autoFilled = true;
       // Only a complete sign-in: a username step still needs the user's page to move on.
       const form = detected.inputs[detected.password]?.form;
-      if (options.submit && values.username !== undefined && detected.username !== -1)
-        form?.requestSubmit();
+      if (form && options.submit && values.username !== undefined && detected.username !== -1) {
+        form.requestSubmit();
+        return "submitted";
+      }
       return true;
     }
   }
@@ -167,6 +169,7 @@ export function loginFormReport() {
     url: location.origin,
     documentId: state.documentId,
     userEdited: state.userEdited,
+    hasPassword: fields.password !== -1,
     hasValues: [fields.username, fields.password, fields.otp].some((index) =>
       Boolean(fields.inputs[index]?.value),
     ),
