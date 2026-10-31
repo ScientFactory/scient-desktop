@@ -5,6 +5,8 @@ import type {
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
 
+import { COMPUTE_LANGUAGE_CATALOG, type ComputeCatalogLanguage } from "./computeLanguageCatalog";
+
 export type ComputeSettingsInstallation = ComputeLanguageRuntimeInventory["installations"][number];
 
 function runtimeSourceLabel(source: string): string {
@@ -86,6 +88,69 @@ export function computeLanguageAbsent(language: ComputeLanguageRuntimeInventory)
     language.installations.length === 0 &&
     computeScientPart(language.descriptor.languageId) !== "managed-python"
   );
+}
+
+/** Not here, and nowhere for Scient to send you for it yet. */
+export function computeLanguageComingSoon(
+  runtime: ComputeLanguageRuntimeInventory | undefined,
+): boolean {
+  return (
+    runtime === undefined ||
+    (computeLanguageAbsent(runtime) && computeLanguageDownloadUrl(runtime) === undefined)
+  );
+}
+
+export interface ComputeLanguageEntry extends ComputeCatalogLanguage {
+  /** What this computer reports. Nothing, for a language no kernel here has named. */
+  readonly runtime: ComputeLanguageRuntimeInventory | undefined;
+}
+
+export interface ComputeLanguageGroup {
+  readonly title: string;
+  readonly entries: ReadonlyArray<ComputeLanguageEntry>;
+}
+
+const CATALOG_IDS: ReadonlySet<string> = new Set(
+  COMPUTE_LANGUAGE_CATALOG.flatMap((group) =>
+    group.languages.map((language) => language.languageId),
+  ),
+);
+
+/** Every language in its one place, with what can be used now leading each group. */
+export function computeLanguageGroups(
+  languages: ReadonlyArray<ComputeLanguageRuntimeInventory>,
+): ReadonlyArray<ComputeLanguageGroup> {
+  const reported = new Map<string, ComputeLanguageRuntimeInventory>(
+    languages.map((language) => [language.descriptor.languageId, language]),
+  );
+  const groups = COMPUTE_LANGUAGE_CATALOG.map(({ title, languages: named }) => ({
+    title,
+    entries: named
+      .map((language) => ({ ...language, runtime: reported.get(language.languageId) }))
+      .toSorted(
+        (a, b) =>
+          Number(computeLanguageComingSoon(a.runtime)) -
+          Number(computeLanguageComingSoon(b.runtime)),
+      ),
+  }));
+  // A kernel the catalog does not name is real while it is here, and promises nothing once gone.
+  const other = languages.filter(
+    (language) =>
+      !CATALOG_IDS.has(language.descriptor.languageId) && !computeLanguageAbsent(language),
+  );
+  return other.length === 0
+    ? groups
+    : [
+        ...groups,
+        {
+          title: "Other",
+          entries: other.map((runtime) => ({
+            languageId: runtime.descriptor.languageId,
+            name: runtime.descriptor.displayName,
+            runtime,
+          })),
+        },
+      ];
 }
 
 export type ComputeManagedPrimaryAction = Extract<

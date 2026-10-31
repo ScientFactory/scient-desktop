@@ -785,6 +785,10 @@ describe("Scientific Computing settings interactions", () => {
     expect(row()?.textContent).toContain("Python");
     expect(row()?.textContent).toContain("Checking");
     expect(offersSetup()).toBe(false);
+    // Stata is named here before the server has said whether Scient can set it up.
+    expect(
+      _fixture.container.querySelector('[data-compute-coming-soon="stata"]')?.textContent,
+    ).toBe("Stata");
     await render(_fixture);
     expect(_fixture.container.textContent).toContain("Checking");
     expect(offersSetup()).toBe(false);
@@ -997,16 +1001,68 @@ describe("Scientific Computing settings interactions", () => {
     expect(missing?.textContent).toContain("Get R");
     expect(missing?.getAttribute("href")).toBe("https://cloud.r-project.org/");
     await renderOverview(_fixture);
+    const overviewRow = _fixture.container.querySelector('li[data-compute-language="r"]')!;
+    expect(overviewRow.textContent).toContain("Not installed");
+    expect(overviewRow.querySelector('a[aria-label="Get R"]')?.getAttribute("href")).toBe(
+      "https://cloud.r-project.org/",
+    );
+  });
+
+  it("groups languages by use and field, with Coming soon beside each name", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const kernel = (
+      languageId: string,
+      displayName: string,
+      found: boolean,
+    ): ComputeLanguageRuntimeInventory => ({
+      ...python(),
+      descriptor: {
+        ...python().descriptor,
+        languageId: ComputeLanguageId.make(languageId),
+        displayName,
+      },
+      managedRuntime: null,
+      installations: found
+        ? [
+            {
+              executable: `/kernels/${languageId}`,
+              source: "conventional",
+              version: null,
+              problem: null,
+            },
+          ]
+        : [],
+    });
+    mocks.languages = [python(), kernel("haskell", "Haskell", true), kernel("spss", "SPSS", false)];
+    await renderOverview(_fixture);
+
     expect(
-      _fixture.container.querySelector('#scientific-computing li[data-compute-language="r"]'),
-    ).toBeNull();
-    expect(
-      _fixture.container
-        .querySelector(
-          '#scientific-computing-more li[data-compute-language="r"] a[aria-label="Get R"]',
-        )
-        ?.getAttribute("href"),
-    ).toBe("https://cloud.r-project.org/");
+      [..._fixture.container.querySelectorAll("h2")].map((heading) => heading.textContent),
+    ).toEqual([
+      "Most used",
+      "Statistics and social science",
+      "Life sciences and medicine",
+      "Mathematics",
+      "Physics and astronomy",
+      "Engineering and optimization",
+      "Computer science",
+    ]);
+    const mostUsed = _fixture.container.querySelector("#scientific-computing")!;
+    expect(mostUsed.querySelector('[data-compute-language="python"]')).not.toBeNull();
+    const spss = mostUsed.querySelector('[data-compute-coming-soon="spss"]')!;
+    expect(spss.textContent).toBe("SPSSComing soon");
+    expect(spss.querySelector("a")).toBeNull();
+    expect(_fixture.container.querySelector('li[data-compute-language="spss"]')).toBeNull();
+    expect(_fixture.container.querySelector("[data-language-icon]")).toBeNull();
+    // A found kernel turns its row into the real thing, in the same field.
+    expect(_fixture.container.querySelector('[data-compute-coming-soon="haskell"]')).toBeNull();
+    const computerScience = _fixture.container.querySelector('ul[aria-label="Computer science"]')!;
+    expect(computerScience.firstElementChild?.getAttribute("data-compute-language")).toBe(
+      "haskell",
+    );
   });
 
   it("renders Python Toolkits in a separate card that follows the language page", async () => {

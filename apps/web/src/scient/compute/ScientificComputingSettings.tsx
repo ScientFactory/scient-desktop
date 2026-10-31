@@ -1,11 +1,10 @@
 import { Link } from "@tanstack/react-router";
 import { ExternalLinkIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ComputeLanguageRuntimeInventory, EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import { SettingsPageContainer } from "~/components/settings/settingsLayout";
 import { Button } from "~/components/ui/button";
-import { ExtensionGrid } from "~/scient/extensions/ExtensionRow";
 import { ExtensionsSection } from "~/scient/extensions/ExtensionsPage";
 import { ComputeLanguageMark } from "./ComputeLanguageMark";
 import {
@@ -17,24 +16,28 @@ import {
 import {
   computeCurrentRuntimeSummary,
   computeLanguageAbsent,
+  computeLanguageComingSoon,
   computeLanguageDetail,
   computeLanguageDownloadUrl,
+  computeLanguageGroups,
+  type ComputeLanguageEntry,
 } from "./computeInstallationSettingsModel";
-import { useComputeLanguages } from "./useComputeLanguages";
+import { useComputeLanguages, type ComputeLanguages } from "./useComputeLanguages";
 
 /** One language, drawn like an extension: the whole row opens its page. */
 function LanguageRow({
-  language,
+  languageId,
+  name,
   environmentId,
   detail,
   trailing,
 }: {
-  language: ComputeLanguageRuntimeInventory;
+  languageId: string;
+  name: string;
   environmentId: EnvironmentId;
   detail: string;
   trailing?: ReactNode;
 }) {
-  const languageId = language.descriptor.languageId;
   return (
     <li className="flex min-w-0 flex-col" data-compute-language={languageId}>
       <div className="relative flex items-center gap-3 rounded-xl p-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring">
@@ -44,9 +47,9 @@ function LanguageRow({
             to="/settings/scientific-computing/$languageId"
             params={{ languageId }}
             search={{ environmentId }}
-            className="block truncate text-sm font-medium text-foreground outline-none after:absolute after:inset-0 after:rounded-xl"
+            className="block text-sm font-medium wrap-anywhere text-foreground outline-none after:absolute after:inset-0 after:rounded-xl"
           >
-            {language.descriptor.displayName}
+            {name}
           </Link>
           <p className="truncate text-xs text-muted-foreground">{detail}</p>
         </div>
@@ -56,78 +59,113 @@ function LanguageRow({
   );
 }
 
+/** Nothing opens yet, so this is a name and not a link. */
+function ComingSoonRow({
+  languageId,
+  name,
+  checking,
+}: {
+  languageId: string;
+  name: string;
+  checking: boolean;
+}) {
+  return (
+    <li className="flex min-w-0 items-center gap-3 p-2" data-compute-coming-soon={languageId}>
+      <ComputeLanguageMark languageId={languageId} />
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+        <span className="truncate text-sm font-medium text-foreground">{name}</span>
+        {checking ? null : (
+          <span className="shrink-0 text-xs text-muted-foreground">Coming soon</span>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/** A language wherever it is listed: what it runs on, where to get it, or not yet. */
+function LanguageEntry({
+  entry: { languageId, name, runtime },
+  inventory,
+  environmentId,
+}: {
+  entry: ComputeLanguageEntry;
+  inventory: ComputeLanguages;
+  environmentId: EnvironmentId;
+}) {
+  if (runtime === undefined || (!inventory.pending && computeLanguageComingSoon(runtime))) {
+    return <ComingSoonRow languageId={languageId} name={name} checking={inventory.pending} />;
+  }
+  const row = { languageId, name, environmentId };
+  if (inventory.pending) return <LanguageRow {...row} detail="Checking…" />;
+  if (computeLanguageAbsent(runtime)) {
+    return (
+      <LanguageRow
+        {...row}
+        detail="Not installed"
+        trailing={
+          <Button
+            size="xs"
+            variant="outline"
+            aria-label={`Get ${name}`}
+            render={
+              <a href={computeLanguageDownloadUrl(runtime)} target="_blank" rel="noreferrer" />
+            }
+          >
+            Get <ExternalLinkIcon />
+          </Button>
+        }
+      />
+    );
+  }
+  const preference = inventory.preferenceFor(runtime);
+  return (
+    <LanguageRow
+      {...row}
+      detail={computeLanguageDetail(
+        runtime,
+        computeCurrentRuntimeSummary({
+          language: runtime,
+          preference,
+          managed: runtime.managedRuntime,
+        }),
+        preference,
+        runtime.managedRuntime,
+      )}
+    />
+  );
+}
+
 function LanguagesOverview({ environmentId }: { environmentId: EnvironmentId }) {
   const inventory = useComputeLanguages(environmentId);
-  const here = inventory.languages.filter(
-    (language) => inventory.pending || !computeLanguageAbsent(language),
-  );
-  const notHere = inventory.pending ? [] : inventory.languages.filter(computeLanguageAbsent);
   return (
     <SettingsPageContainer>
       <div className="@container/extensions grid gap-10">
-        <ExtensionsSection
-          id="scientific-computing"
-          title="On this computer"
-          action={<FindRuntimesButton inventory={inventory} />}
-        >
-          <ExtensionGrid label="Languages on this computer">
-            {here.map((language) => {
-              const preference = inventory.preferenceFor(language);
-              return (
-                <LanguageRow
-                  key={language.descriptor.languageId}
-                  language={language}
+        {computeLanguageGroups(inventory.languages).map((group, index) => (
+          <ExtensionsSection
+            key={group.title}
+            title={group.title}
+            {...(index === 0
+              ? {
+                  id: "scientific-computing",
+                  action: <FindRuntimesButton inventory={inventory} />,
+                }
+              : {})}
+          >
+            <ul
+              aria-label={group.title}
+              className="-mx-2 grid grid-cols-1 gap-x-6 gap-y-1 @min-[440px]/extensions:grid-cols-2 @min-[840px]/extensions:grid-cols-3"
+            >
+              {group.entries.map((entry) => (
+                <LanguageEntry
+                  key={entry.languageId}
+                  entry={entry}
+                  inventory={inventory}
                   environmentId={environmentId}
-                  detail={
-                    inventory.pending
-                      ? "Checking…"
-                      : computeLanguageDetail(
-                          language,
-                          computeCurrentRuntimeSummary({
-                            language,
-                            preference,
-                            managed: language.managedRuntime,
-                          }),
-                          preference,
-                          language.managedRuntime,
-                        )
-                  }
                 />
-              );
-            })}
-          </ExtensionGrid>
-        </ExtensionsSection>
-        {notHere.length > 0 ? (
-          <ExtensionsSection id="scientific-computing-more" title="Not installed">
-            <ExtensionGrid label="Languages not installed">
-              {notHere.map((language) => {
-                const url = computeLanguageDownloadUrl(language);
-                return (
-                  <LanguageRow
-                    key={language.descriptor.languageId}
-                    language={language}
-                    environmentId={environmentId}
-                    detail={language.descriptor.setup?.needs ?? "Not found on this computer"}
-                    trailing={
-                      url ? (
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          aria-label={`Get ${language.descriptor.displayName}`}
-                          render={<a href={url} target="_blank" rel="noreferrer" />}
-                        >
-                          Get <ExternalLinkIcon />
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">Coming soon</span>
-                      )
-                    }
-                  />
-                );
-              })}
-            </ExtensionGrid>
+              ))}
+            </ul>
           </ExtensionsSection>
-        ) : null}
+        ))}
         <ComputeInventoryFailure inventory={inventory} />
       </div>
     </SettingsPageContainer>

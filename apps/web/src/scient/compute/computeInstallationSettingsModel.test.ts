@@ -8,8 +8,10 @@ import {
   automaticComputeRuntimeLabel,
   computeCurrentRuntimeSummary,
   computeLanguageAbsent,
+  computeLanguageComingSoon,
   computeLanguageDetail,
   computeLanguageDownloadUrl,
+  computeLanguageGroups,
   computeLanguagePrimaryAction,
   computeManagedPrimaryAction,
   computeRuntimePickerLabel,
@@ -551,6 +553,40 @@ describe("what a language shows", () => {
       setup.url,
     );
     expect(computeLanguageDownloadUrl(language("spss", []))).toBeUndefined();
+  });
+
+  it("says coming soon only of a language that is not here and has nowhere to come from", () => {
+    expect(computeLanguageComingSoon(undefined)).toBe(true);
+    expect(computeLanguageComingSoon(language("spss", []))).toBe(true);
+    expect(computeLanguageComingSoon(language("spss", [found]))).toBe(false);
+    expect(computeLanguageComingSoon(language("r", []))).toBe(false);
+    expect(computeLanguageComingSoon(language("python", []))).toBe(false);
+  });
+
+  it("lists every language once", () => {
+    const ids = computeLanguageGroups([]).flatMap((group) =>
+      group.entries.map((entry) => entry.languageId),
+    );
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("leads each group with what can be used now and otherwise keeps its order", () => {
+    const computerScience = (languages: ReadonlyArray<ComputeLanguageRuntimeInventory>) =>
+      computeLanguageGroups(languages)
+        .find((group) => group.title === "Computer science")!
+        .entries.map((entry) => entry.languageId);
+    expect(computerScience([]).slice(0, 2)).toEqual(["apl", "csharp"]);
+    expect(computerScience([language("haskell", [found])]).slice(0, 2)).toEqual(["haskell", "apl"]);
+    // A kernel removed since Scient started is listed but gone, so its language is still to come.
+    expect(computerScience([language("haskell", [])])[0]).toBe("apl");
+  });
+
+  it("gives a kernel the catalog does not name a place only while it is here", () => {
+    expect(computeLanguageGroups([language("brainfuck", [found])]).at(-1)).toMatchObject({
+      title: "Other",
+      entries: [{ languageId: "brainfuck", name: "brainfuck" }],
+    });
+    expect(computeLanguageGroups([language("brainfuck", [])]).at(-1)?.title).not.toBe("Other");
   });
 
   it("offers one action, the most urgent", () => {

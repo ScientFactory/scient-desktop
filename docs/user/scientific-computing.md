@@ -53,12 +53,12 @@ control. Prefer a project `.venv` or another virtual environment you control. Sc
 with `pip --user`; do not force packages into a Homebrew- or system-managed Python merely to make
 runtime discovery succeed.
 
-Settings → Scientific Computing shows every language at once. **On this computer** lists what runs
-here or what Scient can set up, each with what it runs on, or what it needs: **Needs setup**,
-**Not connected**, **Off** or a problem. **Found** means a language's own kernel was found and has
-not been started yet. **Not installed** lists the rest, each with what it needs and a **Get** link.
-SPSS says **Coming soon**. Each language opens its own page, and a file's language status opens that
-page directly. Each optional Toolkit has its own **Download**
+Settings → Scientific Computing shows every language at once: **Most used** first, then one group
+per field. Each language sits in one place and says where it stands: what it runs on, or **Needs
+setup**, **Not connected**, **Off** or a problem. **Found** means a language's own kernel was found
+and has not been started yet. **Not installed** comes with a **Get** link. **Coming soon** beside a
+name means Scient cannot run that language yet. Every other language opens its own page, and a
+file's language status opens that page directly. Each optional Toolkit has its own **Download**
 action; installed Toolkits have a small menu with **Remove**. There is no separate Apply step.
 Toolkits appear once Scient-managed Python is installed. Toolkit operations continue when you leave
 the page; status reflects the server's verified installation, not the click.
@@ -222,8 +222,10 @@ Variables pane, and Scient has no private part in them.
 | Stata            | Stata 17 or later and [nbstata](https://hugetim.github.io/nbstata/)                                          |
 | Wolfram Language | Wolfram Engine and [WolframLanguageForJupyter](https://github.com/WolframResearch/WolframLanguageForJupyter) |
 
-SPSS is shown as **Coming soon** because it has no Jupyter kernel yet. A notebook in a language that
-is not installed opens normally and shows **Not installed**.
+Settings marks many more languages **Coming soon**, such as SAS, C++, Fortran and Lean. Scient has no
+setup for them yet, and SPSS has no Jupyter kernel at all. The mark goes away when Scient finds a
+kernel for the language. A notebook in a language that is not installed opens normally and shows
+**Not installed**.
 
 ## Console
 
