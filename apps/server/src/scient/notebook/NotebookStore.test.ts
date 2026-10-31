@@ -306,6 +306,37 @@ describe("NotebookStore", () => {
     ),
   );
 
+  it.effect("keeps a raw cell's waiting text raw, so Run all does not run it", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk, writeOutside } = yield* fixture;
+        const raw = structuredClone(notebook);
+        raw.cells[0]!.cell_type = "raw";
+        yield* writeOutside(`${JSON.stringify(raw, null, 1)}\n`);
+        yield* store.read({ cwd, path });
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [
+            {
+              _tag: "set-source",
+              cellId: "title",
+              source: "print('mine')",
+              base: notebookCodeHash("# Title"),
+            },
+          ],
+        });
+        raw.cells[0]!.source = ["from outside"];
+        yield* writeOutside(`${JSON.stringify(raw, null, 1)}\n`);
+        yield* store.flush({ cwd, path });
+        expect((yield* onDisk).cells[1]).toMatchObject({
+          cell_type: "raw",
+          source: ["print('mine')"],
+        });
+      }),
+    ),
+  );
+
   it.effect("keeps text waiting to be saved when the file's cell changes underneath it", () =>
     scoped(
       Effect.gen(function* () {

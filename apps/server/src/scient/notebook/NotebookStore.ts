@@ -317,7 +317,10 @@ function replayPending(
         _tag: "insert",
         cellId,
         afterCellId: edit.cellId,
-        cellType: cell?.fields.cell_type === "markdown" ? "markdown" : "code",
+        cellType:
+          cell?.fields.cell_type === "markdown" || cell?.fields.cell_type === "raw"
+            ? cell.fields.cell_type
+            : "code",
         source: edit.source,
       });
     }
