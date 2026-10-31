@@ -68,3 +68,10 @@ it("needs the service's whole name, so a domain label can't match inside another
   expect(codeInText("Your Schedule code is 123456", service)).toBeUndefined();
   expect(codeInText("Sydney University code 123456", service)).toBe("123456");
 });
+
+it("takes the code from the message, never the sender's number or a year", () => {
+  const service = serviceWords({ name: "Example", sites: ["example.com"] });
+  expect(codeInText("Your verification code is 482913", service, "Example")).toBe("482913");
+  expect(codeInText("Example: your code is 482913", service, "32665")).toBe("482913");
+  expect(codeInText("In 2026 Example code is 482913", service)).toBe("482913");
+});

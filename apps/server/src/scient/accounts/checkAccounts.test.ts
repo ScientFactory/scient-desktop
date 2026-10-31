@@ -146,6 +146,7 @@ it.effect("never repeats a sign-in the site rejected", () =>
   Effect.gen(function* () {
     const rejected: AccountSummary = {
       ...account,
+      lastSignInOutcome: "password-rejected",
       lastCheck: { state: "rejected", at: "2026-01-01T00:00:00.000Z" },
     };
     const { uses, checks } = yield* run([rejected]);

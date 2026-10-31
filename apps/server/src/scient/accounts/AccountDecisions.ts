@@ -2,6 +2,7 @@ import {
   defaultBrowserProfileRecord,
   GOOGLE_SITE,
   type AccountApprovalDecision,
+  type AccountCheck,
   type AccountCheckState,
   type AccountControls,
   type AccountSummary,
@@ -109,44 +110,69 @@ export const siteLimiting = (account: Pick<AccountSummary, "lastCheck">, nowMs: 
   account.lastCheck?.state === "limited" &&
   nowMs - Date.parse(account.lastCheck.at) < LIMITED_PAUSE_MS;
 
+/** The site refused what's saved, so nothing should try it again until that changes. */
+export const signInRefused = (
+  account: Pick<AccountSummary, "lastSignInOutcome"> & Partial<Pick<AccountSummary, "secrets">>,
+) =>
+  account.lastSignInOutcome === "password-rejected" ||
+  // A one-time code the user typed says nothing about what's saved, and nothing here can change it.
+  (account.lastSignInOutcome === "code-rejected" && account.secrets?.totp !== undefined);
+
+const recentCheck = (account: Pick<AccountSummary, "lastCheck">, nowMs: number) =>
+  account.lastCheck !== undefined && nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS;
+
 /**
  * True while Scient must not try this sign-in by itself. A refused one can lock the account, a
  * site limiting automation stays limited for longer when pushed, and one that failed or needed the
  * user will do the same again.
  */
 export const signInOnHold = (
-  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck">,
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck"> &
+    Partial<Pick<AccountSummary, "secrets">>,
   nowMs: number,
-) => {
-  const recent =
-    account.lastCheck !== undefined && nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS;
-  return (
-    account.lastSignInOutcome === "password-rejected" ||
-    account.lastSignInOutcome === "code-rejected" ||
-    account.lastCheck?.state === "rejected" ||
-    siteLimiting(account, nowMs) ||
-    (recent && (account.lastCheck?.state === "needs-you" || account.lastSignInOutcome === "failed"))
-  );
-};
+) =>
+  signInRefused(account) ||
+  siteLimiting(account, nowMs) ||
+  (recentCheck(account, nowMs) &&
+    (account.lastCheck?.state === "needs-you" || account.lastSignInOutcome === "failed"));
+
+/** A sign-in that worked moments ago and is needed again: something keeps ending it. */
+export const signedInMomentsAgo = (account: Pick<AccountSummary, "lastCheck">, nowMs: number) =>
+  account.lastCheck?.state === "signed-in" && recentCheck(account, nowMs);
 
 /**
- * True while Scient must not sign in by itself. A sign-in that worked moments ago and is needed
- * again means something keeps ending it, and signing back in would only fight whatever that is.
+ * True while Scient must not sign in by itself. Beyond the hold, one that needed the user or failed
+ * would only do so again with nobody there to help.
  */
 export const automaticSignInOnHold = (
-  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck">,
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck"> &
+    Partial<Pick<AccountSummary, "secrets">>,
   nowMs: number,
 ) =>
   signInOnHold(account, nowMs) ||
-  // One that needed the user, or failed, would only do so again with nobody there to help.
   (account.lastSignInOutcome !== undefined && account.lastSignInOutcome !== "signed-in") ||
-  (account.lastCheck?.state === "signed-in" &&
-    nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS);
+  signedInMomentsAgo(account, nowMs);
 
 /** True while an agent mustn't repeat a sign-in. A person can still finish one that needed them. */
 export const agentSignInOnHold = (
-  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck">,
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck"> &
+    Partial<Pick<AccountSummary, "secrets">>,
   session: { readonly unattended: boolean },
   nowMs: number,
 ) =>
   signInOnHold(account, nowMs) && (session.unattended || account.lastCheck?.state !== "needs-you");
+
+/**
+ * What a new check leaves on an account. A limit outlasts later looks at the site, and a session
+ * seen working clears a result that only needed a person.
+ */
+export const withCheck = (summary: AccountSummary, check: AccountCheck, nowMs: number) => {
+  if (check.state !== "signed-in" && siteLimiting(summary, nowMs)) return summary;
+  const { lastSignInOutcome, ...rest } = summary;
+  return check.state === "signed-in" &&
+    (lastSignInOutcome === "needs-user" ||
+      lastSignInOutcome === "failed" ||
+      lastSignInOutcome === "limited")
+    ? { ...rest, lastCheck: check }
+    : { ...summary, lastCheck: check };
+};

@@ -8,6 +8,7 @@ const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1);
 
 const CODE_WORDS = /code|otp|passcode|password|verif|one.?time|קוד|סיסמ|אימות/iu;
 const CODE = /(?<![\d/.:,-])\d{4,8}(?![\d/.:,-]*\d)/u;
+const SIX_DIGIT_CODE = /(?<![\d/.:,-])\d{6}(?![\d/.:,-]*\d)/u;
 
 const GENERIC_NAMES = new Set([
   "account",
@@ -24,6 +25,7 @@ const GENERIC_NAMES = new Set([
   "secure",
   "signin",
   "sso",
+  "the",
   "university",
   "website",
   "www",
@@ -49,10 +51,10 @@ export function serviceWords(input: {
  * The sign-in code in a message's text, when it talks about a code and names this service. A fresh
  * code from anyone else must never go into this site's page, so anything unclear goes to the card.
  */
-export function codeInText(text: string, service: ReadonlyArray<string>) {
-  const words = new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u));
+export function codeInText(text: string, service: ReadonlyArray<string>, sender?: string | null) {
+  const words = new Set(`${sender ?? ""} ${text}`.toLowerCase().split(/[^\p{L}\p{N}]+/u));
   if (!service.some((word) => words.has(word))) return undefined;
-  return CODE_WORDS.test(text) ? CODE.exec(text)?.[0] : undefined;
+  return CODE_WORDS.test(text) ? (SIX_DIGIT_CODE.exec(text) ?? CODE.exec(text))?.[0] : undefined;
 }
 
 /** Recent messages keep their text only inside an archived attributed string. */
@@ -79,9 +81,12 @@ const messagesDatabase = () => NodePath.join(NodeOS.homedir(), "Library/Messages
 
 export function messagesReadable(database = messagesDatabase()) {
   try {
-    new NodeSqlite.DatabaseSync(database, { readOnly: true })
-      .prepare("SELECT 1 FROM message LIMIT 1")
-      .get();
+    const db = new NodeSqlite.DatabaseSync(database, { readOnly: true });
+    try {
+      db.prepare("SELECT 1 FROM message LIMIT 1").get();
+    } finally {
+      db.close();
+    }
     return true;
   } catch {
     return false;
@@ -108,7 +113,7 @@ export function readMessageCode(
     for (const row of rows) {
       const text =
         row.text ?? (row.attributedBody ? attributedText(row.attributedBody) : undefined);
-      const code = text === undefined ? undefined : codeInText(`${row.sender} ${text}`, service);
+      const code = text === undefined ? undefined : codeInText(text, service, row.sender);
       if (code !== undefined) return code;
     }
     return undefined;

@@ -7,14 +7,20 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
 const OPENALEX = "https://api.openalex.org";
 
+const decodeDoi = (doi: string) => {
+  try {
+    return decodeURIComponent(doi);
+  } catch {
+    return doi;
+  }
+};
+
 /** A DOI anywhere in a link or text: `10.1038/s41586-020-2649-2`, minus trailing punctuation. */
 export function doiIn(text: string | undefined): string | undefined {
   const match = text?.match(/\b(10\.\d{4,9}\/[^\s"<>]+)/u)?.[1];
-  return match
-    ? decodeURIComponent(match)
-        .replace(/[).,;\]]+$/u, "")
-        .toLowerCase()
-    : undefined;
+  if (!match) return undefined;
+  const clean = match.replace(/[).,;\]]+$/u, "").toLowerCase();
+  return URL.canParse(`https://doi.org/${clean}`) ? decodeDoi(clean) : undefined;
 }
 
 const Location = Schema.Struct({

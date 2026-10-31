@@ -17,16 +17,12 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
-import {
-  automaticSignInOnHold,
-  isGoogleSessionRow,
-  outcomeCheckState,
-} from "./AccountDecisions.ts";
+import { automaticSignInOnHold, isGoogleSessionRow } from "./AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "./AccountsService.ts";
 import { AccountCookies } from "./agent/cookies.ts";
 import { classifyProfilePage } from "./agent/profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./agent/profileDetection.ts";
-import { signIn } from "./signIn/engine.ts";
+import { guardedSignIn } from "./agent/guardedSignIn.ts";
 import { matchesAccountOrigin } from "./signIn/origin.ts";
 
 /** A page that a library proxy can reach only when the user's library session is live. */
@@ -102,8 +98,12 @@ export function sessionState(
   return hasSessionCookie && knownSession ? "signed-in" : "unknown";
 }
 
-const checkOne = Effect.fn("AccountsCheck.one")(function* (account: AccountSummary, url: string) {
+const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummary, url: string) {
   const accounts = yield* AccountsService;
+  // A run can take minutes, and an agent's result since then decides whether to sign in.
+  const account =
+    (yield* accounts.snapshot).accounts.find((item) => item.accountId === listed.accountId) ??
+    listed;
   const broker = yield* PreviewAutomationBroker;
   const scope = yield* AgentInvocationContext;
   const invoke = <A>(
@@ -163,7 +163,8 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (account: AccountSumma
     );
     const onHold = automaticSignInOnHold(account, yield* Clock.currentTimeMillis);
     if (state !== "signed-out" || account.secrets.password === undefined || onHold) {
-      if (onHold && state === "signed-out") return;
+      // A hold keeps its own explanation, unless the row would otherwise go on saying signed in.
+      if (onHold && state === "signed-out" && account.lastCheck?.state !== "signed-in") return;
       return yield* accounts.recordCheck(account.accountId, {
         state,
         ...(state === "unknown" ? { message: "Couldn't tell from the site's page." } : {}),
@@ -172,21 +173,13 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (account: AccountSumma
           : {}),
       });
     }
-    const values = yield* accounts.resolveSecrets(account.accountId, ["password", "totp"]);
-    const result = yield* signIn(session, account, values, tabId, { userRun: true });
-    if ("tabId" in result) tabs.add(result.tabId);
-    yield* accounts.recordUse({
-      target: { type: "account", accountId: account.accountId },
-      action: "sign-in",
-      threadId: CHECK_THREAD,
-      signInOutcome: result.outcome,
-      outcome: result.outcome === "signed-in" ? "ok" : "error",
+    const result = yield* guardedSignIn(session, account, {
+      tabId,
+      automatic: true,
+      authorized: true,
+      engine: { userRun: true },
     });
-    if (result.outcome !== "signed-in" && "message" in result && result.message)
-      yield* accounts.recordCheck(account.accountId, {
-        state: outcomeCheckState(result.outcome),
-        message: result.message,
-      });
+    if ("tabId" in result) tabs.add(result.tabId);
   }).pipe(
     Effect.ensuring(
       Effect.forEach(tabs, (tab) => invoke("close", {}, tab).pipe(Effect.ignore), {

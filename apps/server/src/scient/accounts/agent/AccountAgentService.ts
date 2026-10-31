@@ -6,15 +6,12 @@ import {
   type PreviewAutomationStatus,
   type PreviewTabId,
 } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
-import { agentSignInOnHold, siteLimiting } from "../AccountDecisions.ts";
-import { signIn } from "../signIn/engine.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
 
 const isAccountsError = Schema.is(AccountsError);
@@ -26,6 +23,7 @@ import { authorizePreviewProfile } from "./previewProfileAccess.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
 import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
 import { fillField } from "./fillField.ts";
+import { guardedSignIn } from "./guardedSignIn.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
 import { getPaper } from "../../papers/getPaper.ts";
@@ -164,40 +162,11 @@ export const accountAgentOperations = {
     tabId?: PreviewTabId | undefined;
   }) {
     const scope = yield* accountSessionScope();
-    return yield* withAccountUse(
-      scope,
-      { type: "account", accountId },
-      "sign-in",
-      Effect.gen(function* () {
-        const accounts = yield* AccountsService;
-        const account = yield* getAccount(scope, accountId);
-        const now = yield* Clock.currentTimeMillis;
-        if (siteLimiting(account, now))
-          return {
-            outcome: "limited" as const,
-            message: "The site is limiting access from this network. Try again in an hour.",
-          };
-        if (agentSignInOnHold(account, scope, now))
-          return {
-            outcome: "failed" as const,
-            message:
-              "The last sign-in for this account didn't go through, so Scient won't repeat it yet. Tell the user, or try again later.",
-          };
-        const values = yield* accounts.resolveSecrets(accountId, ["password", "totp"]);
-        return yield* signIn(scope, account, values, tabId, yield* signInCodes(scope, account));
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.succeed({
-            outcome: "failed" as const,
-            message: isAccountsError(error)
-              ? error.message
-              : "The browser sign-in could not be completed.",
-          }),
-        ),
-      ),
-      (result) => result.outcome === "signed-in",
-      (result) => result.outcome,
-    );
+    const account = yield* getAccount(scope, accountId);
+    return yield* guardedSignIn(scope, account, {
+      tabId,
+      engine: yield* signInCodes(scope, account),
+    });
   }),
   scient_account_request: Effect.fn("AccountsAgent.request")(function* (
     input: ToolInput<"scient_account_request">,

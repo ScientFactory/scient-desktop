@@ -11,7 +11,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
-import { agentSignInOnHold } from "../AccountDecisions.ts";
+import { signInRefused, siteLimiting } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { SignInDetection, signInDetectionScript } from "../signIn/detection.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
@@ -43,21 +43,20 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
   if (details.kind !== "website" && details.kind !== "library")
     return yield* denied("Only website and library accounts fill a page.");
   const now = yield* Clock.currentTimeMillis;
-  if (agentSignInOnHold(account, scope, now))
+  if (signInRefused(account) || siteLimiting(account, now))
     return {
       filled: false,
-      message: "The last sign-in for this account didn't go through. Tell the user.",
+      message: "The site refused this sign-in or is limiting access. Tell the user.",
     };
   const lastPassword = passwordFills.get(account.accountId);
-  if (
-    input.field === "password" &&
-    lastPassword !== undefined &&
-    now - lastPassword < PASSWORD_FILL_GAP_MS
-  )
-    return {
-      filled: false,
-      message: "This password was filled moments ago. If the site refused it, tell the user.",
-    };
+  if (input.field === "password") {
+    if (lastPassword !== undefined && now - lastPassword < PASSWORD_FILL_GAP_MS)
+      return {
+        filled: false,
+        message: "This password was filled moments ago. If the site refused it, tell the user.",
+      };
+    passwordFills.set(account.accountId, now);
+  }
   const accounts = yield* AccountsService;
   const broker = yield* PreviewAutomationBroker;
   const invocation = yield* AgentInvocationContext;
@@ -101,7 +100,16 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
     const secret = field === "password" ? "password" : "totp";
     const value = (yield* accounts.resolveSecrets(account.accountId, [secret]))[secret];
     if (value === undefined) return undefined;
-    return field === "password" ? Redacted.value(value) : accountOtp(Redacted.value(value), now);
+    return field === "password"
+      ? Redacted.value(value)
+      : yield* Effect.try({
+          try: () => accountOtp(Redacted.value(value), now),
+          catch: () =>
+            new AccountsError({
+              reason: "invalid-input",
+              message: "The account's two-factor setup is invalid.",
+            }),
+        });
   });
   const found = { username: page.username, password: page.password, code: page.otp }[input.field];
   const selector = input.selector ?? found;
@@ -111,6 +119,5 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
   if (text === undefined)
     return { filled: false, message: `This account has no saved ${input.field}.` };
   yield* invoke("accountType", { origin: page.origin, selector, text, clear: true }, tabId);
-  if (input.field === "password") passwordFills.set(account.accountId, now);
   return { filled: true };
 });

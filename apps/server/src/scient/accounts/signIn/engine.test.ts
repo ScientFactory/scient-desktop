@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  defaultAccountControls,
   defaultBrowserProfileRecord,
   type AccountSummary,
   type PreviewAutomationStatus,
@@ -393,4 +394,79 @@ it.effect(
       expect((yield* run).outcome).toBe("signed-in");
       expect(opened).toEqual([undefined]);
     }),
+);
+
+it.effect("treats a library that sends the reader on to a publisher as signed in", () =>
+  Effect.gen(function* () {
+    const library: AccountSummary = {
+      accountId: AccountId.make("acc_fixture5"),
+      name: "Library",
+      details: {
+        kind: "library",
+        sites: ["library.example.edu"],
+        username: "fixture-user",
+        proxyUrl: "https://library.example.edu/go?url={url}",
+      },
+      secrets: { password: { source: { type: "scient" } } },
+      controls: defaultAccountControls("library"),
+      status: "ready",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const profileId = BrowserProfileId.make("default");
+    const status: PreviewAutomationStatus = {
+      available: true,
+      visible: false,
+      tabId: "tab-fixture",
+      url: "https://library.example.edu",
+      title: null,
+      loading: false,
+      defaultProfileId: profileId,
+      profiles: [{ id: profileId, name: "Default" }],
+      tabs: [{ tabId: "tab-fixture", url: null, profileId, ownedByCaller: true }],
+    };
+    let submitted = false;
+    const broker = PreviewAutomationBroker.of({
+      connect: () => Effect.succeed(Stream.empty),
+      focusHost: () => Effect.void,
+      respond: () => Effect.void,
+      invoke: <A>(request: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0]) =>
+        Effect.sync(() => {
+          if (request.operation === "click") submitted = true;
+          if (request.operation !== "evaluate") return status as A;
+          return {
+            origin: submitted ? "https://www.nature.com" : "https://library.example.edu",
+            username: submitted ? null : "#user",
+            password: submitted ? null : "#password",
+            otp: null,
+            submit: submitted ? null : "button",
+            challenge: null,
+            signedIn: false,
+          } as A;
+        }),
+    });
+    const scope = {
+      threadId: ThreadId.make("thread-fixture"),
+      projectId: ProjectId.make("project-fixture"),
+      unattended: true,
+    };
+    const result = yield* signIn(scope, library, {
+      password: Redacted.make("synthetic-password"),
+    }).pipe(
+      Effect.provideService(
+        AccountsService,
+        fakeAccounts({ profiles: [defaultBrowserProfileRecord(profileId)] }).service,
+      ),
+      Effect.provideService(PreviewAutomationBroker, broker),
+      Effect.provideService(AgentInvocationContext, {
+        ...scope,
+        environmentId: EnvironmentId.make("env-fixture"),
+        providerSessionId: "session-fixture",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview", "accounts"] as const),
+        issuedAt: 0,
+      }),
+    );
+    expect(result.outcome).toBe("signed-in");
+  }),
 );

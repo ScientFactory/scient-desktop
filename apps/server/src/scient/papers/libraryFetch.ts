@@ -11,13 +11,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
-import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
+import type { AccountSessionScope } from "../accounts/AccountsService.ts";
 import {
   authorizePreviewProfile,
   recordProfileUse,
 } from "../accounts/agent/previewProfileAccess.ts";
+import { guardedSignIn } from "../accounts/agent/guardedSignIn.ts";
 import { matchesAccountOrigin } from "../accounts/signIn/origin.ts";
-import { signIn } from "../accounts/signIn/engine.ts";
 import { isPdf } from "./paperLookup.ts";
 
 const MAX_STEPS = 5;
@@ -41,7 +41,7 @@ const pageScript = `(() => {
     url: location.href,
     pdf,
     pdfUrl: pdf ? location.href : meta ? new URL(meta, location.href).href : (link ?? null),
-    login: !!document.querySelector('input[type="password"]'),
+    login: [...document.querySelectorAll('input[type="password"]')].some((input) => input.getClientRects().length > 0),
   };
 })()`;
 // Fetches the PDF inside the page, so the site's own session applies, then saves it as a download.
@@ -82,7 +82,6 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
   const details = library.details;
   const invocation = yield* AgentInvocationContext;
   const broker = yield* PreviewAutomationBroker;
-  const accounts = yield* AccountsService;
   const fs = yield* FileSystem.FileSystem;
   const invoke = <A>(
     operation: Parameters<typeof broker.invoke>[0]["operation"],
@@ -157,8 +156,11 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
             message: `The library asks to sign in on ${new URL(url).hostname}. Open the link in the same browser profile for the user to sign in once, then ask again.`,
             openUrl: open.url,
           };
-        const values = yield* accounts.resolveSecrets(library.accountId, ["password", "totp"]);
-        const result = yield* signIn(session, library, values, tab, { userRun });
+        const result = yield* guardedSignIn(session, library, {
+          tabId: tab,
+          authorized: true,
+          engine: { userRun },
+        });
         if (result.outcome !== "signed-in")
           return {
             status: "needs-sign-in" as const,

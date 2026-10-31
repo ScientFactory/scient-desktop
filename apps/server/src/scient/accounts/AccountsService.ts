@@ -201,7 +201,10 @@ export interface AccountsServiceShape {
     check: Omit<AccountCheck, "at">,
   ) => Effect.Effect<void, AccountsError>;
   /** Non-blocking; records the outcome of a use that `authorize` allowed. */
-  readonly recordUse: (entry: Omit<AccountActivityEntry, "at" | "decision">) => Effect.Effect<void>;
+  readonly recordUse: (
+    entry: Omit<AccountActivityEntry, "at" | "decision">,
+    message?: string,
+  ) => Effect.Effect<void>;
 }
 
 export class AccountsService extends Context.Service<AccountsService, AccountsServiceShape>()(

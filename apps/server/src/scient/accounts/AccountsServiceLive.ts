@@ -58,6 +58,7 @@ import { AccountSources, type OnePasswordClient } from "./AccountSources.ts";
 import {
   GOOGLE_RECHECK_WRITE_MS,
   isGoogleSessionRow,
+  withCheck,
   applyApprovalDecision,
   agentAccessOff,
   authorizationDecision,
@@ -1412,14 +1413,18 @@ export const layer = Layer.effect(
             yield* commit(
               replaceAccount({
                 ...account,
-                summary: { ...account.summary, lastCheck: { ...check, at: yield* now } },
+                summary: withCheck(
+                  account.summary,
+                  { ...check, at: yield* now },
+                  yield* Clock.currentTimeMillis,
+                ),
               }),
               true,
             );
           }),
         ),
       ),
-      recordUse: Effect.fn("AccountsService.recordUse")((entry) =>
+      recordUse: Effect.fn("AccountsService.recordUse")((entry, message) =>
         locked(
           Effect.gen(function* () {
             yield* appendActivity({ ...entry, decision: "allowed" });
@@ -1430,16 +1435,21 @@ export const layer = Layer.effect(
                 yield* commit(
                   replaceAccount({
                     ...account,
-                    summary: {
-                      ...account.summary,
-                      lastUsedAt: at,
-                      ...(entry.signInOutcome
-                        ? {
+                    summary: entry.signInOutcome
+                      ? withCheck(
+                          {
+                            ...account.summary,
+                            lastUsedAt: at,
                             lastSignInOutcome: entry.signInOutcome,
-                            lastCheck: { state: outcomeCheckState(entry.signInOutcome), at },
-                          }
-                        : {}),
-                    },
+                          },
+                          {
+                            state: outcomeCheckState(entry.signInOutcome),
+                            at,
+                            ...(message === undefined ? {} : { message }),
+                          },
+                          yield* Clock.currentTimeMillis,
+                        )
+                      : { ...account.summary, lastUsedAt: at },
                   }),
                   true,
                 );

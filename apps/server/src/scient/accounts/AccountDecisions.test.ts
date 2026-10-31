@@ -1,5 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProjectId, ThreadId, defaultAccountControls } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ThreadId,
+  defaultAccountControls,
+  type AccountSummary,
+} from "@t3tools/contracts";
 import {
   applyApprovalDecision,
   authorizationDecision,
@@ -9,6 +14,7 @@ import {
   isGoogleSessionRow,
   signInOnHold,
   siteMatches,
+  withCheck,
 } from "./AccountDecisions.ts";
 
 const projectId = ProjectId.make("synthetic-project");
@@ -113,6 +119,10 @@ describe("sign-in holds", () => {
       ),
     ).toBe(true);
     expect(signInOnHold({ lastCheck: { state: "signed-in", at } }, minutes(1))).toBe(false);
+    // A one-time code the user typed wrong isn't something saved that needs fixing.
+    expect(
+      signInOnHold({ lastSignInOutcome: "code-rejected", secrets: {} }, minutes(100_000)),
+    ).toBe(false);
   });
 
   it("won't sign back in by itself right after a sign-in that worked", () => {
@@ -149,5 +159,35 @@ describe("Google session rows", () => {
     expect(
       isGoogleSessionRow({ details: { ...details, sites: ["accounts.google.com"] }, secrets: {} }),
     ).toBe(false);
+  });
+});
+
+describe("what a check leaves on an account", () => {
+  const at = "2026-10-31T10:00:00.000Z";
+  const now = Date.parse(at);
+  const summary = (fields: Partial<AccountSummary>) => fields as AccountSummary;
+
+  it("keeps a limit through later looks, until a session is seen working", () => {
+    const limited = summary({ lastCheck: { state: "limited", at } });
+    expect(withCheck(limited, { state: "unknown", at }, now + 60_000).lastCheck?.state).toBe(
+      "limited",
+    );
+    expect(withCheck(limited, { state: "signed-in", at }, now + 60_000).lastCheck?.state).toBe(
+      "signed-in",
+    );
+  });
+
+  it("clears a result that only needed a person, never a refused password", () => {
+    expect(
+      withCheck(summary({ lastSignInOutcome: "needs-user" }), { state: "signed-in", at }, now)
+        .lastSignInOutcome,
+    ).toBeUndefined();
+    expect(
+      withCheck(
+        summary({ lastSignInOutcome: "password-rejected" }),
+        { state: "signed-in", at },
+        now,
+      ).lastSignInOutcome,
+    ).toBe("password-rejected");
   });
 });

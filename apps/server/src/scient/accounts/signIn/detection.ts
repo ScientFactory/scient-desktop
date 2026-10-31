@@ -43,12 +43,15 @@ export const signInDetectionScript = String.raw`(() => {
     }
     return "html > " + parts.join(" > ");
   };
-  const password = inputs.find(input => input.type === "password");
+  // Sign-up and change-password pages ask for a password too; a saved one must not go there.
+  const passwords = inputs.filter(input => input.type === "password");
+  const newPassword = passwords.length > 1 || passwords.some(input => input.autocomplete === "new-password");
+  const password = newPassword ? undefined : passwords[0];
   const label = (input) => [input.name, input.id, input.placeholder, input.getAttribute("aria-label")].join(" ");
   const otp = inputs.find(input => input.autocomplete === "one-time-code")
     ?? inputs.find(input => input.type !== "password" && input.type !== "email" && /otp|mfa|2fa|two.?factor|verification|one.?time|(auth|security|sms).?code|\bcode\b/i.test(label(input)))
     ?? inputs.find(input => input.type !== "password" && input.inputMode === "numeric" && input.maxLength >= 4 && input.maxLength <= 8);
-  const username = inputs.find(input => input !== otp && (input.autocomplete === "username" || input.type === "email"))
+  const username = newPassword ? undefined : inputs.find(input => input !== otp && (input.autocomplete === "username" || input.type === "email"))
     ?? inputs.find(input => input !== otp && /^(user(name)?|email|login)$/i.test(input.name || input.id))
     ?? (password ? inputs.slice(0, inputs.indexOf(password)).reverse().find(input => input !== otp && (input.type === "text" || input.type === "tel")) : undefined);
   const form = (password ?? otp ?? username)?.form;

@@ -134,18 +134,27 @@ const fetchPaper = Effect.fn("Papers.fetch")(function* (
       if (wait > 0) yield* Effect.sleep(wait);
       fetchesByDay.clear();
       fetchesByDay.set(day, used + 1);
-      const fetched = yield* fetchThroughLibrary(scope, account, paper.landingUrl, userRun);
-      lastLibraryFetch = yield* Clock.currentTimeMillis;
-      return fetched;
+      return yield* fetchThroughLibrary(scope, account, paper.landingUrl, userRun).pipe(
+        Effect.ensuring(
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => {
+              lastLibraryFetch = now;
+            }),
+          ),
+        ),
+      );
     }).pipe(library.withPermits(1));
-    const result = userRun
-      ? yield* fetch
-      : yield* withAccountUse(
-          scope,
-          { type: "account", accountId: account.accountId },
-          "sign-in",
-          fetch,
-        );
+    // A refused library use still leaves any free copy to find.
+    const result = yield* (
+      userRun
+        ? fetch
+        : withAccountUse(scope, { type: "account", accountId: account.accountId }, "sign-in", fetch)
+    ).pipe(
+      Effect.catchTags({
+        AccountsError: (error) =>
+          Effect.succeed({ status: "no-access" as const, message: error.message }),
+      }),
+    );
     if (result?.status === "saved") return found(result.bytes, "library", true);
     if (result) note = result;
   }

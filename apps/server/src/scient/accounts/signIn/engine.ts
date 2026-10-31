@@ -32,19 +32,23 @@ const decodeDetection = Schema.decodeUnknownEffect(SignInDetection);
 const REJECTION_SETTLE_CHECKS = 5;
 const EMPTY_PAGE_SETTLE_CHECKS = 3;
 
+export interface SignInOptions {
+  /** The user's own check: their profile's agent access doesn't apply. */
+  readonly userRun?: boolean;
+  /** Waits for a code the user types into a private card, on any of their devices. */
+  readonly askCode?: (site: string) => Effect.Effect<string, never, never>;
+  /** Looks once for a code in the sources the user turned on. */
+  readonly findCode?: (sinceMs: number) => Effect.Effect<string | undefined, never, never>;
+  /** Started by a page, not by a tool that can ask for a code: hand that step to the agent. */
+  readonly stopAtCode?: boolean;
+}
+
 export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   session: AccountSessionScope,
   account: AccountSummary,
   secrets: Readonly<Record<string, Redacted.Redacted<string>>>,
   tabId?: PreviewTabId,
-  options: {
-    /** The user's own check: their profile's agent access doesn't apply. */
-    readonly userRun?: boolean;
-    /** Waits for a code the user types into a private card, on any of their devices. */
-    readonly askCode?: (site: string) => Effect.Effect<string, never, never>;
-    /** Looks once for a code in the sources the user turned on. */
-    readonly findCode?: (sinceMs: number) => Effect.Effect<string | undefined, never, never>;
-  } = {},
+  options: SignInOptions = {},
 ) {
   if (account.details.kind !== "website" && account.details.kind !== "library")
     return yield* new AccountsError({
@@ -197,9 +201,20 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       }
       if (continuation.type !== "continue" && !page.signedIn)
         return { outcome: continuation.type, message: continuation.message, tabId: target };
-      const nextAddress = pageOffersNoSignIn(page, details.sites)
-        ? otherAddresses.shift()
-        : undefined;
+      // A library sends a signed-in reader on to the publisher, which is none of its sites.
+      if (
+        details.kind === "library" &&
+        submissions.some(({ fields }) => fields.includes("password")) &&
+        !matchesAccountOrigin(page.origin, details.sites)
+      ) {
+        clearFilled = false;
+        return { outcome: "signed-in" as const, tabId: target };
+      }
+      // After a submission, an empty page is that sign-in's next step, not a dead address.
+      const nextAddress =
+        submissions.length === 0 && pageOffersNoSignIn(page, details.sites)
+          ? otherAddresses.shift()
+          : undefined;
       if (nextAddress !== undefined) {
         yield* invoke(
           "open",
@@ -217,6 +232,12 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           return { outcome: "limited" as const, message: action.message, tabId: target };
         if (session.unattended || action.kind === undefined)
           return { outcome: "needs-user" as const, message: action.message, tabId: target };
+        if (options.stopAtCode && action.kind === "code")
+          return {
+            outcome: "needs-user" as const,
+            message: `It needs a code. Call scient_account_sign_in with ${account.accountId} on this tab, which asks the user privately.`,
+            tabId: target,
+          };
         const handoffId = NodeCrypto.randomUUID();
         const startedAt = timestamp;
         // The code belongs to the page that asked for it, not to wherever the tab is by now.
@@ -229,7 +250,10 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         });
         const enterCode = Effect.fn("accounts.signIn.enterCode")(function* (code: string) {
           const field = yield* inspect(step);
-          if (!field.page.otp || field.page.origin !== codeOrigin) return "continue" as const;
+          if (!field.page.otp || field.page.origin !== codeOrigin) {
+            ({ page, timestamp, otpPeriod, continuation } = field);
+            return "continue" as const;
+          }
           yield* invoke(
             "accountType",
             { origin: codeOrigin, selector: field.page.otp, text: code, clear: true },
@@ -324,12 +348,11 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
                 : "The user did not finish signing in within 3 minutes.",
             tabId: target,
           };
-        action = decide(page);
-        if (action.type === "signed-in") return { outcome: "signed-in" as const, tabId: target };
-        if (continuation.type !== "continue")
-          return { outcome: continuation.type, message: continuation.message, tabId: target };
-        if (action.type === "needs-user")
+        // A code belongs to the page that asked for it; another site asking gets the user.
+        if (page.otp && codeOrigin !== undefined && page.origin !== codeOrigin)
           return { outcome: "needs-user" as const, message: action.message, tabId: target };
+        // Back to the top: it waits for a slow answer, and catches a limit or a refusal.
+        continue;
       }
       clearFilled = true;
       filled = [];
