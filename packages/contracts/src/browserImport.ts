@@ -70,6 +70,9 @@ export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
   sourceId: BrowserImportSourceId,
   sourceProfileDirectory: TrimmedNonEmptyString,
   targetProfileId: BrowserProfileId,
+  // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+  keepSites: BrowserImportInput.fields.keepSites,
+  // SCIENT-FORK:END
 });
 
 export const BrowserImportResult = Schema.Struct({

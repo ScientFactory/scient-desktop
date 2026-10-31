@@ -133,6 +133,7 @@ describe("BrowserImport.writeCookies", () => {
             "https://mail.google.com/",
             "https://notgoogle.com/",
             "https://portal.example.org/",
+            "https://example.org/",
           ].map((url) => ({
             url,
             name: "fixture",
