@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
-import { signInOnHold, siteLimiting } from "../AccountDecisions.ts";
+import { agentSignInOnHold, siteLimiting } from "../AccountDecisions.ts";
 import { signIn } from "../signIn/engine.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
 
@@ -25,6 +25,7 @@ import { accountSessionScope } from "./scope.ts";
 import { authorizePreviewProfile } from "./previewProfileAccess.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
 import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
+import { fillField } from "./fillField.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
 import { getPaper } from "../../papers/getPaper.ts";
@@ -143,6 +144,18 @@ export const accountAgentOperations = {
       }),
     );
   }),
+  scient_account_fill: Effect.fn("AccountsAgent.fillTool")(function* ({
+    accountId,
+    ...input
+  }: ToolInput<"scient_account_fill">) {
+    const scope = yield* accountSessionScope();
+    return yield* withAccountUse(
+      scope,
+      { type: "account", accountId },
+      "sign-in",
+      Effect.flatMap(getAccount(scope, accountId), (account) => fillField(scope, account, input)),
+    );
+  }),
   scient_account_sign_in: Effect.fn("AccountsAgent.signInTool")(function* ({
     accountId,
     tabId,
@@ -164,11 +177,7 @@ export const accountAgentOperations = {
             outcome: "limited" as const,
             message: "The site is limiting access from this network. Try again in an hour.",
           };
-        // A person can finish what needed them; nothing else repeats a sign-in that went wrong.
-        if (
-          signInOnHold(account, now) &&
-          (scope.unattended || account.lastCheck?.state !== "needs-you")
-        )
+        if (agentSignInOnHold(account, scope, now))
           return {
             outcome: "failed" as const,
             message:

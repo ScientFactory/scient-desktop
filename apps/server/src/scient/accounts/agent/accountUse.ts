@@ -59,6 +59,6 @@ export const accountUsage = (account: AccountSummary) =>
           ? ["scient_account_request"]
           : []),
         ...(["website", "library"].includes(account.details.kind)
-          ? ["scient_account_sign_in", "scient_account_browser_session"]
+          ? ["scient_account_sign_in", "scient_account_fill", "scient_account_browser_session"]
           : []),
       ];

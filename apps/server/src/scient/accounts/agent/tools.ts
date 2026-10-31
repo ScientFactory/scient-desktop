@@ -122,6 +122,22 @@ const signIn = metadata(
   "sign-in",
   "Sign in to an account",
 );
+const fill = metadata(
+  Tool.make("scient_account_fill", {
+    ...common,
+    description:
+      "Type one saved field of a website or library account into your own browser tab, on a page of the account's sites, without showing you the value. Use it when scient_account_sign_in returns needs-user or failed on a page you can read: find the step yourself, fill the field, then press the page's button. If the site refuses a password, tell the user.",
+    parameters: Schema.Struct({
+      accountId: AccountId,
+      field: Schema.Literals(["username", "password", "code"]),
+      tabId: Schema.optional(PreviewTabId),
+      selector: Schema.optional(Schema.String),
+    }),
+    success: Schema.Struct({ filled: Schema.Boolean, message: Schema.optional(Schema.String) }),
+  }),
+  "fill",
+  "Fill a saved sign-in field",
+);
 const request = metadata(
   Tool.make("scient_account_request", {
     ...common,
@@ -278,6 +294,7 @@ export const ScientAccountsToolkit = Toolkit.make(
   list,
   credentials,
   signIn,
+  fill,
   request,
   browserSession,
   findProfile,

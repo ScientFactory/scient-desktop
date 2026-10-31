@@ -140,3 +140,11 @@ export const automaticSignInOnHold = (
   signInOnHold(account, nowMs) ||
   (account.lastCheck?.state === "signed-in" &&
     nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS);
+
+/** True while an agent mustn't repeat a sign-in. A person can still finish one that needed them. */
+export const agentSignInOnHold = (
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck">,
+  session: { readonly unattended: boolean },
+  nowMs: number,
+) =>
+  signInOnHold(account, nowMs) && (session.unattended || account.lastCheck?.state !== "needs-you");

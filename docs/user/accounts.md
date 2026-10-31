@@ -17,16 +17,17 @@ or **Off** to deny agents. Scope can limit access to selected projects. The glob
 turns agent access off without changing individual controls. Read-only applies where Scient
 can enforce it; readable values are supplied to agents through private session files.
 
-| Agent tool                       | Use                                                     |
-| -------------------------------- | ------------------------------------------------------- |
-| `scient_accounts_list`           | List available accounts and profiles.                   |
-| `scient_account_sign_in`         | Sign in through the browser, including supported 2FA.   |
-| `scient_account_credentials`     | Create private credential files for readable accounts.  |
-| `scient_account_request`         | Make an HTTPS request with a hidden key.                |
-| `scient_account_find_profile`    | Find a browser profile that can open a page.            |
-| `scient_account_browser_session` | Supply a site's browser session to scripts.             |
-| `scient_account_add`             | Ask you for a key in a private card and keep it here.   |
-| `scient_paper_get`               | Save a paper's PDF through open access or your library. |
+| Agent tool                       | Use                                                                             |
+| -------------------------------- | ------------------------------------------------------------------------------- |
+| `scient_accounts_list`           | List available accounts and profiles.                                           |
+| `scient_account_fill`            | Fill one saved field on a page the agent is working through, without seeing it. |
+| `scient_account_sign_in`         | Sign in through the browser, including supported 2FA.                           |
+| `scient_account_credentials`     | Create private credential files for readable accounts.                          |
+| `scient_account_request`         | Make an HTTPS request with a hidden key.                                        |
+| `scient_account_find_profile`    | Find a browser profile that can open a page.                                    |
+| `scient_account_browser_session` | Supply a site's browser session to scripts.                                     |
+| `scient_account_add`             | Ask you for a key in a private card and keep it here.                           |
+| `scient_paper_get`               | Save a paper's PDF through open access or your library.                         |
 
 When an agent needs a key you don't have in Accounts, it asks in a private card and saves your
 answer here, so later conversations reuse it. One-time secrets still use the plain card.

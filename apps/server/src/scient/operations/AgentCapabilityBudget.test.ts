@@ -154,7 +154,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(45);
+      expect(scientTools).toHaveLength(46);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_act",
         "preview_dialog",
@@ -171,6 +171,7 @@ it.live(
         "scient_account_add",
         "scient_account_browser_session",
         "scient_account_credentials",
+        "scient_account_fill",
         "scient_account_find_profile",
         "scient_account_request",
         "scient_account_sign_in",
