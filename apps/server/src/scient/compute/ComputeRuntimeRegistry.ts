@@ -54,15 +54,24 @@ const pythonAndKernelBindings = Effect.gen(function* () {
       configuredExecutable,
     }),
   );
-  // Each language once; a language outside Scient's list appears after a restart.
-  const installed = yield* kernelLanguages().pipe(
-    Effect.flatMap((languages) =>
-      Effect.forEach(languages, (language) =>
-        makeInstalledKernelBinding(language, { host, configuredExecutable }),
+  const bindLanguages = (projectRoot: string | null, known: ReadonlySet<string>) =>
+    kernelLanguages(projectRoot).pipe(
+      Effect.flatMap((languages) =>
+        Effect.forEach(
+          languages.filter((language) => !known.has(language.languageId)),
+          (language) => makeInstalledKernelBinding(language, { host, configuredExecutable }),
+        ),
       ),
-    ),
-  );
-  return [...python, ...kernels, makeSqlRuntimeBinding(host), ...installed];
+    );
+  const installed = yield* bindLanguages(null, new Set());
+  const bound = new Set<string>(installed.map((binding) => binding.adapter.languageId));
+  const lateBindings = (projectRoot: string | null) =>
+    bindLanguages(projectRoot, bound).pipe(
+      Effect.tap((added) =>
+        Effect.sync(() => added.forEach((binding) => bound.add(binding.adapter.languageId))),
+      ),
+    );
+  return [{ ...python[0]!, lateBindings }, ...kernels, makeSqlRuntimeBinding(host), ...installed];
 });
 
 /**

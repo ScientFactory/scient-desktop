@@ -91,7 +91,8 @@ const ScientComputeRunTool = Tool.make("scient_compute_run", {
     code: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(1024 * 1024)),
     language: Schema.optional(
       Schema.String.check(Schema.isMaxLength(64)).annotate({
-        description: "python (default), r, julia, sql or matlab. Ignored with `session`.",
+        description:
+          "python (default), r, julia, sql, matlab, or a language with a kernel listed by scient_compute_inventory. Ignored with `session`.",
       }),
     ),
     session: Schema.optional(SessionId),

@@ -44,21 +44,29 @@ The managed environment is optional. To use Python you already maintain instead:
 2. Open **Python**.
 3. Turn on **Use Python in Scient** if it is off.
 4. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
-   **Found on this computer**, fill in **Custom path** and choose **Use**.
+   **Found on this computer**, fill in **Add a location** and choose **Use**.
 
-A ready Python needs CPython 3.10 or newer, `jupyter_client` 8.6 or newer, and `ipykernel` 6.29 or
-newer. Install missing requirements with your own environment tooling, then use the page refresh
-control. Prefer a project `.venv` or another virtual environment you control. Scient detects a project's
-`.venv` when that project is open. The isolated compute bridge does not load packages installed
-with `pip --user`; do not force packages into a Homebrew- or system-managed Python merely to make
-runtime discovery succeed.
+Any CPython runs, with nothing added to it. Scient needs `jupyter_client` and `ipykernel` to run a
+session, and a Python that lacks them keeps running your code with your packages: Scient adds what
+is missing in its own folder and never writes to your environment. The first time a computer has
+no Python that can carry a session, Scient adds a small private Python of its own, about 60 MB,
+once. It hosts sessions and SQL, and it never runs your code.
+
+New sessions use the first of these that applies: a choice for this run, a choice remembered for
+this project, the project's own environment (`.venv`, then `.conda`, then pixi's `default`, or a
+single child folder with `pyvenv.cfg`), the path or Scient-managed Python you picked, Scient-managed
+Python if set up, then other Pythons in PATH order. A runtime you chose that goes missing stays
+chosen and says why it cannot run. Agents follow the same order.
 
 Settings → Scientific Computing shows every language at once: **Most used** first, then one group
 per field. Each language sits in one place and says where it stands: what it runs on, or **Needs
-setup**, **Not connected**, **Off** or a problem. **Found** means a language's own kernel was found
-and has not been started yet. **Not found** comes with a **Get** link. **Coming soon** beside a
-name means Scient cannot run that language yet. Every other language opens its own page, and a
-file's language status opens that page directly. Each optional Toolkit has its own **Download**
+setup**, **Not connected**, **Off** or a problem. **Kernel found** means a language's own kernel
+was found and has not been started yet. **Not found** means Scient looked in the usual places, and
+**Couldn't check** means a place did not answer in time. **Coming soon** beside a name means Scient
+cannot run that language yet. Looking starts nothing: no language, kernel or licence check runs
+until you press Run or Test. Every language opens its own page with what was found, where, and
+**Add a location** for a copy Scient could not know about. A file's language status opens that page
+directly. Each optional Toolkit has its own **Download**
 action; installed Toolkits have a small menu with **Remove**. There is no separate Apply step.
 Toolkits appear once Scient-managed Python is installed. Toolkit operations continue when you leave
 the page; status reflects the server's verified installation, not the click.
@@ -72,7 +80,7 @@ For an active build, feedback remains while shutdown and cleanup finish; a faile
 restores the control so you can try again.
 Every language page has the same rows. **Runtime** shows what new sessions use, with the one action
 it needs, if any. Next comes what Scient itself adds, if anything: Scient-managed Python, a private
-IRkernel or IJulia, or the MATLAB connection helper, with its maintenance menu. **Found on this
+kernel such as Ark or IJulia, or the MATLAB connection helper, with its maintenance menu. **Found on this
 computer** opens the full list, each with its version, where it came from (such as Homebrew, uv or
 a conda environment), its path and **Test**. The last row turns the language on or off for you and
 for agents; turning it off changes nothing on your computer.
@@ -193,27 +201,33 @@ project imports and missing submodules get neither action.
 
 R, Julia, and SQL run as Jupyter kernels behind the same bridge as Python. `.R` and `.jl` files
 use `# %%` cells and `.sql` files use `-- %%`; Run cell, selection, file, and **Run fresh** work as
-they do for `.py`. The bridge runs in Scient-managed Python when it is installed, otherwise in the
-Python selected for Python.
+they do for `.py`. Run needs no setup step: a missing kernel is added the first time you run.
 
-- **R** uses the R found on PATH or in its usual install locations. An R that already has IRkernel
-  uses it. Otherwise **Set up** on the IRkernel row installs IRkernel from CRAN into a private
-  library in Scient's compute directory; sessions add that library in front of your own, so your
-  packages stay available and your library is unchanged.
-- **Julia** works the same way with IJulia, installed into a private Julia depot and project.
-  Your default environment stays first, so `using` and `Pkg` keep working on your own packages.
-- **SQL** runs DuckDB in Scient-managed Python, which includes it. Paths resolve from the
+- **R** uses the R found on PATH, in its usual install locations, in a conda environment or in the
+  Windows registry. An R that already has IRkernel uses it. Otherwise Scient adds
+  [Ark](https://github.com/posit-dev/ark), a standalone R kernel of about 8 MB, to its own folder.
+  Nothing is installed into your R libraries, so renv projects and pinned packages are unaffected.
+  On Windows Scient always uses Ark, because IRkernel cannot be interrupted there.
+- **Julia** uses a person's own IJulia, or adds IJulia to a private Julia depot and project. Your
+  default environment stays first, so `using` and `Pkg` keep working on your own packages. A folder
+  with a `Project.toml` uses it, unless you set `JULIA_PROJECT` yourself.
+- **SQL** runs DuckDB from any Python that has it, otherwise from Scient's private Python. Paths
+  resolve from the
   project, so `SELECT * FROM 'data/table.csv'` or a Parquet file works directly. Tables and views
   last for the session and appear under Variables; **Restart** starts with an empty database.
   Results show the first 100 rows of each statement.
 
 ## Other languages
 
-Any installed Jupyter kernel works in notebooks and for agents. Scient finds kernels in Jupyter's
-usual folders and in every Python environment it can see. Rust, GNU Octave, Stata and Wolfram
-Language are always shown, with what each needs, and are found by the refresh control as soon as
-they are installed. Another language appears after restarting Scient. These languages have no
-Variables pane, and Scient has no private part in them.
+Every language Settings lists runs from its file. Open a `.sh`, `.c`, `.f90`, `.rs`, `.do` or
+`.lean` file and press **Run**: Scient uses the best command it found on this computer, builds
+first where it must, streams the output, keeps a record of the run and can stop it. Add a location
+on the language's page when the tool lives somewhere unusual. A file type two languages share goes
+to the first in Scient's list: `.m` to MATLAB, `.pl` to Perl, `.v` to Rocq and `.pro` to IDL.
+
+Any installed Jupyter kernel also works in notebooks and for agents. Scient finds kernels in
+Jupyter's usual folders and in every Python environment it can see, and a new kernel works without
+restarting Scient. These languages have no Variables pane, and Scient has no private part in them.
 
 | Language         | Needs                                                                                                        |
 | ---------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -222,10 +236,7 @@ Variables pane, and Scient has no private part in them.
 | Stata            | Stata 17 or later and [nbstata](https://hugetim.github.io/nbstata/)                                          |
 | Wolfram Language | Wolfram Engine and [WolframLanguageForJupyter](https://github.com/WolframResearch/WolframLanguageForJupyter) |
 
-Settings marks many more languages **Coming soon**, such as SAS, C++, Fortran and Lean. Scient has no
-setup for them yet, and SPSS has no Jupyter kernel at all. The mark goes away when Scient finds a
-kernel for the language. A notebook in a language Scient cannot find opens normally and shows
-**Not found**.
+A notebook in a language Scient cannot find opens normally and shows **Not found**.
 
 ## Console
 

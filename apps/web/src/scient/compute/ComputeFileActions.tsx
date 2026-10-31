@@ -10,7 +10,9 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDown, LoaderCircle, Play } from "lucide-react";
+import * as Schema from "effect/Schema";
+import { ChevronDown, LoaderCircle, Play, XIcon } from "lucide-react";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { Link } from "@tanstack/react-router";
 import {
   forwardRef,
@@ -163,6 +165,11 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const [operation, setOperation] = useState<ComputeRunKind | "fresh" | null>(null);
     const [refreshing, setRefreshing] = useState(false);
     const [switching, setSwitching] = useState(false);
+    const [projectEnvironmentNoted, setProjectEnvironmentNoted] = useLocalStorage(
+      `scient.compute.projectEnvironmentNoted:${props.cwd}`,
+      false,
+      Schema.Boolean,
+    );
     const [stoppingUnusedSession, setStoppingUnusedSession] = useState<ComputeSessionId | null>(
       null,
     );
@@ -1087,6 +1094,12 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         : hasIndependentRuntime;
     const showManagedFailure = Boolean(managedRuntime.failure) && !managedFailureUnrelated;
     const showManagedNotice = Boolean(setupProgress) || showManagedFailure;
+    // Once, for people who were on Scient-managed Python before a project's environment led.
+    const showProjectEnvironmentNote =
+      !projectEnvironmentNoted &&
+      languageInspection?.selection?.mode === "project" &&
+      managedRuntime.status?.installed === true &&
+      managedRuntime.status.selection === "managed";
     const pinRuntimeChrome =
       showManagedNotice ||
       runtimeToolbar.kind === "setup" ||
@@ -1154,6 +1167,18 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 variant="toolbar"
                 showFailure={showManagedFailure}
               />
+            ) : showProjectEnvironmentNote ? (
+              <Button
+                size="toolbar"
+                variant="ghost-muted"
+                className="min-w-0 max-w-full"
+                onClick={() => setProjectEnvironmentNoted(true)}
+              >
+                <span className="truncate">
+                  New sessions here now use this project's environment
+                </span>
+                <XIcon />
+              </Button>
             ) : capacityBlocked ? (
               <Menu>
                 <MenuTrigger

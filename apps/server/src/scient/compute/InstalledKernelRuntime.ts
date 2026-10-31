@@ -133,8 +133,10 @@ const installedSpecs = Effect.fn("InstalledKernelRuntime.installedSpecs")(functi
  * The languages with a setup entry, then any other kernel language installed now. The first group
  * is bound whether or not it is installed, so its kernel is found without a restart.
  */
-export const kernelLanguages = Effect.fn("InstalledKernelRuntime.languages")(function* () {
-  const specs = yield* installedSpecs(null).pipe(
+export const kernelLanguages = Effect.fn("InstalledKernelRuntime.languages")(function* (
+  projectRoot: string | null = null,
+) {
+  const specs = yield* installedSpecs(projectRoot).pipe(
     Effect.map((installed) => installed.specs),
     Effect.catchCause((cause) =>
       Effect.logWarning("installed Jupyter kernels are unavailable", { cause }).pipe(Effect.as([])),

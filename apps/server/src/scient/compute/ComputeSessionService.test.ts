@@ -1123,6 +1123,37 @@ describe("compute runtime inspection", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("offers a language whose kernel appeared after startup, with no restart", () =>
+    Effect.gen(function* () {
+      const late = {
+        adapter: { ...adapterFor("ready"), languageId: ComputeLanguageId.make("haskell") },
+        transport: { open: () => Effect.never },
+      } satisfies ComputeRuntimeBinding;
+      let installed = false;
+      const test = yield* harness({
+        additionalBindings: [
+          {
+            ...late,
+            adapter: { ...late.adapter, languageId: ComputeLanguageId.make("host") },
+            lateBindings: () => Effect.succeed(installed ? [late] : []),
+          },
+        ],
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const known = () => service.runtimeDescriptors.map((row) => row.languageId as string);
+          expect(known()).not.toContain("haskell");
+          installed = true;
+          yield* service.runtimeInventory({ configuredExecutables: {} });
+          expect(known()).toContain("haskell");
+          yield* service.runtimeInventory({ configuredExecutables: {} });
+          expect(known().filter((languageId) => languageId === "haskell")).toHaveLength(1);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("retains the language row when its inventory fails or is unsupported", () =>
     Effect.gen(function* () {
       for (const adapter of [

@@ -155,6 +155,10 @@ export interface ComputeRuntimeBinding {
   readonly adapter: ComputeLanguageAdapter;
   readonly transport: ComputeTransport;
   readonly descriptor?: ComputeRuntimeDescriptor;
+  /** Languages whose kernels appeared after startup, including ones only a project has. */
+  readonly lateBindings?: (
+    projectRoot: string | null,
+  ) => Effect.Effect<ReadonlyArray<ComputeRuntimeBinding>>;
   readonly toolkitSupport?:
     | {
         readonly descriptors: ReadonlyArray<ComputeToolkitDescriptor>;
@@ -517,7 +521,7 @@ const make = Effect.gen(function* () {
   const hostCapacity = yield* ComputeHostCapacity.ComputeHostCapacity;
   const observeOperation = yield* makeOperationAnalytics;
   const observeComputeOutputs = yield* makeComputeOutputAnalytics;
-  const bindings = yield* ComputeRuntimeBindings;
+  const bindings = [...(yield* ComputeRuntimeBindings)];
   const options = yield* ComputeSessionServiceConfig;
   const hostEnvironment = yield* HostProcess.Environment;
   const startupSlots = yield* Semaphore.make(
@@ -556,6 +560,18 @@ const make = Effect.gen(function* () {
       capabilities: [...REQUIRED_COMPUTE_CAPABILITIES],
     };
 
+  /** A kernel installed while Scient runs needs no restart, whatever its language. */
+  const bindNewLanguages = Effect.fn("ComputeSessionService.bindNewLanguages")(function* (
+    projectRoot: string | null,
+  ) {
+    for (const source of bindings.flatMap((binding) => binding.lateBindings ?? [])) {
+      for (const binding of yield* source(projectRoot)) {
+        if (!bindings.some((known) => known.adapter.languageId === binding.adapter.languageId))
+          bindings.push(binding);
+      }
+    }
+  });
+
   const runtimeEnvironment = () => sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
 
   const runtimeDirectory = (
@@ -580,6 +596,7 @@ const make = Effect.gen(function* () {
   ) {
     const snapshot =
       toolDiscovery === null ? null : yield* toolDiscovery.snapshot(input.refresh === true);
+    yield* bindNewLanguages(null);
     const context = yield* discoveryContext;
     const toolsOf = (languageId: string) => {
       const found = (snapshot?.tools.get(languageId) ?? []).map((tool) => ({
@@ -805,6 +822,7 @@ const make = Effect.gen(function* () {
     const workingDirectory = yield* runtimeDirectory("inspect", input.workingDirectory);
     const projectRoot =
       input.projectRoot === null ? null : yield* runtimeDirectory("inspect", input.projectRoot);
+    yield* bindNewLanguages(projectRoot);
     const requested = bindings.filter(
       (binding) =>
         input.languageIds === undefined || input.languageIds.has(binding.adapter.languageId),
@@ -2469,6 +2487,7 @@ const make = Effect.gen(function* () {
     input: ComputeStartSessionInput,
   ) {
     if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
+    yield* bindNewLanguages(input.workingDirectory);
     const binding = bindings.find((candidate) => candidate.adapter.languageId === input.languageId);
     if (binding === undefined) {
       return yield* computeError(
@@ -3717,7 +3736,9 @@ const make = Effect.gen(function* () {
   });
 
   return ComputeSessionService.of({
-    runtimeDescriptors: bindings.map(descriptorFor),
+    get runtimeDescriptors() {
+      return bindings.map(descriptorFor);
+    },
     runtimeInventory,
     inspectRuntimes,
     verifyRuntime,

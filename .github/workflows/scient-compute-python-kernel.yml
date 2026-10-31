@@ -212,6 +212,12 @@ jobs:
           export SCIENT_TEST_BARE_PYTHON
           vp test run src/scient/compute/KernelLanguages.live.test.ts --maxWorkers=1
 
+      - name: Run real files and scan this computer
+        working-directory: apps/server
+        env:
+          SCIENT_TEST_RUN_TABLE: "1"
+        run: vp test run src/scient/analysis/RunTableAdapter.live.test.ts --maxWorkers=1
+
       - name: Install the bridge host's packages
         run: python -m pip install "jupyter_client>=8.6" "ipykernel>=6.29"
 
