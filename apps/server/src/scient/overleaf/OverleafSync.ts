@@ -584,6 +584,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const savingEditorsFirst = <A, E, R>(connectionId: string, body: Effect.Effect<A, E, R>) =>
     OverleafCoordinator.reserveOverleafConnection(reservations, connectionId, (owner) =>
       Effect.gen(function* () {
+        yield* connections.followRestored(connectionId);
         const read = yield* store.readConnection(connectionId);
         if (read._tag !== "ready")
           return yield* new OverleafCoordinator.OverleafConnectionNotReadyError({

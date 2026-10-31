@@ -187,7 +187,7 @@ describe("overleafChipView", () => {
     expect(
       overleafChipView(status({ availability: "unavailable", local: null }), false).detail,
     ).toBe(
-      "The linked folder was moved, renamed or deleted. Link it again at its new place, or unlink it.",
+      "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.",
     );
   });
 

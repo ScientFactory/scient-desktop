@@ -431,6 +431,27 @@ describe("useMarkdownPersistenceLease", () => {
     expect(_fixture.container.textContent).toBe("A");
   });
 
+  it("opens by itself once the file reads differently, and stops at one try per reading", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const failure = new Error("The current file is missing.");
+    vi.mocked(transport.read).mockRejectedValueOnce(failure);
+    await act(async () => await _fixture.root0.rerender(<Surface _fixture={_fixture} />));
+    expect(_fixture.latest.admissionError).toBe(failure);
+    // Nothing new about the file: no second try, so a lasting failure can't spin.
+    await act(async () => await _fixture.root0.rerender(<Surface _fixture={_fixture} />));
+    expect(transport.read).toHaveBeenCalledTimes(1);
+
+    initial = { ...initial, revision: "rBack" };
+    await act(async () => await _fixture.root0.rerender(<Surface _fixture={_fixture} />));
+    expect(transport.read).toHaveBeenCalledTimes(2);
+    expect(_fixture.latest.admissionError).toBeNull();
+    expect(_fixture.latest.lease).not.toBeNull();
+    expect(_fixture.container.textContent).toBe("A");
+  });
+
   it("does not attach a late bootstrap result to a different path", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));

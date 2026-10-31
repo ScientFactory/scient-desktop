@@ -917,7 +917,10 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       found: OverleafConnectionDocument["folder"]["identity"] | null,
       recorded: OverleafConnectionDocument["folder"]["identity"],
     ) => found !== null && platformFileIdentity.equal(found, recorded);
-    if (!same(checkout, document.checkout.identity) || !same(folder, document.folder.identity))
+    if (
+      (!same(checkout, document.checkout.identity) || !same(folder, document.folder.identity)) &&
+      (checkout === null || !(yield* isRestored(document)))
+    )
       return {
         ...base,
         availability: "unavailable",
@@ -940,8 +943,57 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     return { ...base, availability, reasons, local } satisfies OverleafConnectionStatus;
   });
 
+  /**
+   * A new folder at the link's place that still holds the project: a restore, or a cloud
+   * drive putting it back, perhaps edited since. Every file last synced is there and at
+   * least one is untouched. Anything else may not be this project's, so it waits for the
+   * person.
+   */
+  const isRestored = Effect.fn("OverleafConnections.isRestored")(function* (
+    document: OverleafConnectionDocument,
+  ) {
+    if (
+      document.activeApply !== null ||
+      document.stagingPaths.length > 0 ||
+      document.markers.length > 0 ||
+      document.forcedConflicts.length > 0 ||
+      (yield* identityOf(folderOf(document))) === null
+    )
+      return false;
+    const compared = yield* compareWithBase(document);
+    return compared._tag === "read" && compared.deleted === 0 && compared.unchanged > 0;
+  });
+
+  /** Records a restored folder as the link's own. Run while holding the connection. */
+  const followRestored = Effect.fn("OverleafConnections.followRestored")(function* (
+    connectionId: string,
+  ) {
+    const read = yield* store.readConnection(connectionId);
+    if (read._tag !== "ready" || read.document.state !== "active") return;
+    const document = read.document;
+    const checkout = yield* identityOf(document.checkout.canonicalRoot);
+    const folder = yield* identityOf(folderOf(document));
+    if (checkout === null || folder === null) return;
+    if (
+      platformFileIdentity.equal(checkout, document.checkout.identity) &&
+      platformFileIdentity.equal(folder, document.folder.identity)
+    )
+      return;
+    if (!(yield* isRestored(document))) return;
+    yield* store.replaceConnection({
+      expectedRevision: document.revision,
+      next: {
+        ...document,
+        revision: document.revision + 1,
+        checkout: { ...document.checkout, identity: checkout },
+        folder: { ...document.folder, identity: folder },
+        updatedAt: DateTime.formatIso(yield* DateTime.now),
+      },
+    });
+  });
+
   /** Compares the folder with the base by Git object ID; reads files, writes nothing. */
-  const localChanges = Effect.fn("OverleafConnections.localChanges")(function* (
+  const compareWithBase = Effect.fn("OverleafConnections.compareWithBase")(function* (
     document: OverleafConnectionDocument,
   ) {
     const repo = repositoryPath(document.connectionId);
@@ -978,22 +1030,39 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
         reason: captured.refusal.reason,
       } satisfies OverleafLocalChanges;
     let changed = 0;
+    let unchanged = 0;
     for (const [path, file] of captured.inventory.captured) {
       const recorded = base.get(path);
       if (recorded === undefined || recorded !== gitBlobId(file.bytes)) changed++;
+      else unchanged++;
     }
     return {
       _tag: "read",
       changed,
+      unchanged,
       deleted: captured.inventory.missingManaged.filter((path) => base.has(path)).length,
       added: captured.inventory.additions.filter((addition) => addition.checkedByDefault).length,
-    } satisfies OverleafLocalChanges;
+    } as const;
   });
+
+  const localChanges = (document: OverleafConnectionDocument) =>
+    compareWithBase(document).pipe(
+      Effect.map((compared): OverleafLocalChanges =>
+        compared._tag === "read"
+          ? {
+              _tag: "read",
+              changed: compared.changed,
+              deleted: compared.deleted,
+              added: compared.added,
+            }
+          : compared,
+      ),
+    );
 
   /** Readable connection records with their recorded bindings, for ownership checks. */
   const documents = connections;
 
-  return { connect, disconnect, relink, status, list, documents };
+  return { connect, disconnect, relink, status, list, documents, followRestored };
 });
 
 export type OverleafConnections = Effect.Success<ReturnType<typeof makeOverleafConnections>>;

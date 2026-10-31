@@ -152,7 +152,7 @@ describe("Project Settings ▸ Overleaf", () => {
       />,
     );
     const row = page.getByRole("group", { name: "paper" });
-    await expect.element(row.getByText(/moved, renamed or deleted/u)).toBeVisible();
+    await expect.element(row.getByText(/moved, renamed, replaced or deleted/u)).toBeVisible();
     await expect.element(row.getByRole("button", { name: "Sync now" })).not.toBeInTheDocument();
     await row.getByRole("button", { name: "Unlink" }).click();
     await expect.poll(() => client.disconnectOverleaf.mock.calls.length).toBe(1);

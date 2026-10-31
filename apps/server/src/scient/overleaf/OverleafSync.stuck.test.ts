@@ -134,6 +134,60 @@ describe.skipIf(!canApply)("a link never traps anyone", () => {
     ),
   );
 
+  it.live("goes on with its folder when it comes back, edited or not", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connectionId = yield* linked(w);
+        const caller = w.at(w.main);
+        const paper = NodePath.join(w.main, "paper");
+        const away = `${paper}-away`;
+        yield* write(paper, { "notes.tex": "notes" });
+        yield* w.service.sync({ caller, connectionId, requestId: "s2" });
+        // A copy put back is a new folder at the same place, as a cloud drive leaves it.
+        yield* Effect.promise(async () => {
+          await NodeFSP.rename(paper, away);
+          await NodeFSP.cp(away, paper, { recursive: true });
+          await NodeFSP.rm(away, { recursive: true });
+        });
+        expect(yield* w.service.status({ caller, connectionId })).toMatchObject({
+          availability: "ready",
+          reasons: [],
+        });
+        yield* write(paper, { "main.tex": "after the restore" });
+        expect(yield* w.service.sync({ caller, connectionId, requestId: "s3" })).toMatchObject({
+          _tag: "synced",
+        });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({
+          "main.tex": "after the restore",
+          "notes.tex": "notes",
+        });
+      }),
+    ),
+  );
+
+  it.live("won't take a different folder at its place for its own", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connectionId = yield* linked(w);
+        const caller = w.at(w.main);
+        const paper = NodePath.join(w.main, "paper");
+        yield* Effect.promise(() => NodeFSP.rm(paper, { recursive: true }));
+        // The same file name, as any LaTeX folder has, doesn't make it this project.
+        yield* write(paper, { "main.tex": "someone else's work" });
+        expect(yield* w.service.status({ caller, connectionId })).toMatchObject({
+          availability: "unavailable",
+          reasons: ["folder-changed"],
+        });
+        expect(
+          yield* Effect.flip(w.service.sync({ caller, connectionId, requestId: "s2" })),
+        ).toMatchObject({ _tag: "OverleafConnectionNotReadyError", reason: "folder-changed" });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf" });
+      }),
+    ),
+  );
+
   it.live("brings the project in again after its folder was deleted", () =>
     run(
       Effect.gen(function* () {

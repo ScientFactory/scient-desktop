@@ -336,6 +336,11 @@ If you delete or move a linked folder, you can link the project again without
 unlinking first. A moved folder keeps its history. A new folder starts fresh, and the
 old link is put away.
 
+If a linked folder comes back at the same place, from a backup or a cloud drive, the
+link carries on by itself: every file from the last sync is there and at least one is
+unchanged. A different folder with the same name stops the sync, so it can't replace
+your Overleaf project. Unlink it and link the folder you want.
+
 ## Messages
 
 | Message                                                              | What to do                                                                 |
@@ -369,7 +374,7 @@ old link is put away.
 | Two names differ only by letter case or accents.                     | Rename one and sync again.                                                 |
 | Overleaf sent something Scient won't write.                          | Remove the link, repository or LFS file on Overleaf.                       |
 | The folder isn't there, or its disk isn't connected.                 | Connect the disk, or pick the folder at its new place.                     |
-| The linked folder was moved, renamed or deleted.                     | Link it again at its new place, or unlink it.                              |
+| The linked folder was moved, renamed, replaced or deleted.           | Link it again at its new place, or unlink it.                              |
 | Another Scient process holds the Overleaf state.                     | Quit the other Scient and sync again.                                      |
 | An earlier attempt stopped before it finished.                       | Try again; Scient never repeats an attempt that may have half run.         |
 | Scient can't read its Overleaf link records.                         | Nothing was linked or changed. Report it; the records need repair.         |

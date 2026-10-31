@@ -164,7 +164,7 @@ export function overleafChipView(
       detail:
         status.availability === "disconnected"
           ? "This folder is no longer linked."
-          : "The linked folder was moved, renamed or deleted. Link it again at its new place, or unlink it.",
+          : "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.",
     };
   }
   if (status.reasons.includes("conflict-marks") || status.reasons.includes("interrupted-files")) {
@@ -183,7 +183,7 @@ export function overleafChipView(
       state: "problem",
       label: "Overleaf problem",
       detail: status.reasons.includes("folder-changed")
-        ? "The folder moved, or its disk isn't connected."
+        ? "The folder moved or was replaced, or its disk isn't connected."
         : "An earlier change left folders to tidy. Sync to finish it.",
     };
   }
@@ -281,7 +281,7 @@ export function refusalText(
       return "The folder isn't there, or its disk isn't connected.";
     case "folder-changed":
     case "folder-unavailable":
-      return "The linked folder was moved, renamed or deleted. Link it again at its new place, or unlink it.";
+      return "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.";
     case "folder-not-empty":
       return "A folder with that name already has files. Pick another name, or link it instead.";
     case "folder-outside-checkout":

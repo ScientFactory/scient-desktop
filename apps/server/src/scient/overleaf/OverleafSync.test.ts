@@ -1724,7 +1724,7 @@ describe.skipIf(!canApply)("OverleafSync", () => {
               reason: "folder-changed",
             });
             expect(error.message).toBe(
-              "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.",
+              "The linked folder was moved, renamed or replaced. Put it back, or unlink it and link the right folder.",
             );
             expect(error.message).not.toContain("folder-unavailable");
           }
