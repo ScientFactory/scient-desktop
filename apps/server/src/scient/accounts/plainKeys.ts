@@ -7,10 +7,19 @@ import * as Path from "effect/Path";
 import type { AccountsServiceShape } from "./AccountsService.ts";
 
 const PROJECT_FILES = [".env", ".env.local", ".env.development", ".env.production"];
-const SHELL_FILES = [".zshrc", ".zprofile", ".bashrc", ".bash_profile", ".profile"];
+const SHELL_FILES = [
+  ".zshrc",
+  ".zprofile",
+  ".bashrc",
+  ".bash_profile",
+  ".profile",
+  "Documents/PowerShell/Microsoft.PowerShell_profile.ps1",
+  "Documents/WindowsPowerShell/Microsoft.PowerShell_profile.ps1",
+];
 const SECRET_NAME = /(?:^|_)(?:API_?KEY|SECRET|TOKEN|PASSWORD|PASSWD|ACCESS_KEY)(?:$|_)/iu;
 const NOT_A_VALUE = /^(?:your|<|\$|xxx|change|example|todo|none|null|true|false|\/|~)/iu;
-const LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(?:"([^"]*)"|'([^']*)'|([^\s#]*))/gmu;
+const LINE =
+  /^\s*(?:export\s+|\$env:)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s#]*))/gmu;
 
 /** Assignments that look like real secrets: a secret's name, and a value long enough to be one. */
 export function secretsInText(text: string) {

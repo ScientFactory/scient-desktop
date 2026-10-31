@@ -14,3 +14,9 @@ it("finds real-looking secrets and skips the rest", () => {
   ].join("\n");
   expect(secretsInText(text).map(({ name }) => name)).toEqual(["OPENAI_API_KEY", "GITHUB_TOKEN"]);
 });
+
+it("reads PowerShell's way of setting a variable", () => {
+  expect(secretsInText('$env:OPENAI_API_KEY = "sk-synthetic-value-12345"')).toEqual([
+    { name: "OPENAI_API_KEY", value: "sk-synthetic-value-12345" },
+  ]);
+});
