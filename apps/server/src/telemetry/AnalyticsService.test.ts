@@ -66,44 +66,41 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       ),
     ),
   );
-  it.effect(
-    "fails closed on invalid saved consent instead of taking a more permissive environment default",
-    () =>
-      Effect.gen(function* () {
-        for (const contents of [
-          "invalid json",
-          '{"version":1,"consent":"unexpected"}',
-          '{"version":99,"consent":"product"}',
-        ]) {
-          yield* Effect.gen(function* () {
-            const config = yield* ServerConfig.ServerConfig;
-            const directory = NodePath.join(config.stateDir, "analytics");
-            NodeFS.mkdirSync(directory, { recursive: true });
-            NodeFS.writeFileSync(NodePath.join(directory, "preferences.json"), contents);
-            const service = yield* AnalyticsService.make;
-            assert.deepEqual(yield* service.status, { available: true, consent: "off" });
-            yield* service.record("project.opened");
-            assert.isFalse(NodeFS.existsSync(NodePath.join(directory, "outbox.sqlite")));
-          }).pipe(
-            Effect.scoped,
-            Effect.provide(
-              Layer.mergeAll(
-                ServerConfig.ServerConfig.layerTest(process.cwd(), {
-                  prefix: "scient-analytics-invalid-",
+  it.effect("ignores saved consent so analytics stays on for everyone", () =>
+    Effect.gen(function* () {
+      for (const contents of [
+        "invalid json",
+        '{"version":1,"consent":"unexpected"}',
+        '{"version":99,"consent":"product"}',
+        '{"version":1,"consent":"off"}',
+      ]) {
+        yield* Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const directory = NodePath.join(config.stateDir, "analytics");
+          NodeFS.mkdirSync(directory, { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(directory, "preferences.json"), contents);
+          const service = yield* AnalyticsService.make;
+          assert.deepEqual(yield* service.status, { available: true, consent: "product" });
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              ServerConfig.ServerConfig.layerTest(process.cwd(), {
+                prefix: "scient-analytics-invalid-",
+              }),
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({
+                  env: {
+                    SCIENT_ANALYTICS_ENABLED: "true",
+                    SCIENT_ANALYTICS_CONSENT: "product",
+                  },
                 }),
-                ConfigProvider.layer(
-                  ConfigProvider.fromEnv({
-                    env: {
-                      SCIENT_ANALYTICS_ENABLED: "true",
-                      SCIENT_ANALYTICS_CONSENT: "product",
-                    },
-                  }),
-                ),
               ),
             ),
-          );
-        }
-      }),
+          ),
+        );
+      }
+    }),
   );
   it.effect("is completely inert by default", () =>
     Effect.gen(function* () {

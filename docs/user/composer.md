@@ -44,7 +44,7 @@ included, and `#1234` without a space still looks up a pull request.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
 on an empty line moves out one level, then leaves it; **Tab** nests a list item
-under the one above. In a code block, Enter
+under the one above and **Shift+Tab** moves it back out. In a code block, Enter
 starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
 the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
 at the end, leave the block. **Backspace** at the start of a code block turns it
@@ -190,7 +190,9 @@ still come from the provider's own configuration.
 
 In a workspace Markdown file's rendered view, select text and choose **Ask in chat**.
 Scient adds a file-quote chip to the current chat and opens the same optional
-comment bubble used for assistant quotes. Text in paragraphs, lists, tables,
+comment bubble used for assistant quotes. **Ask in side chat**, offered beside it
+wherever a quote can be taken, adds the chip to the open side chat instead, or
+starts one. Text in paragraphs, lists, tables,
 and ordinary code blocks is supported; selecting an entire image, formula, or
 interactive chart is not part of this action. When an editable diagram's source
 is visible, selecting that source is supported like any other code block; selecting

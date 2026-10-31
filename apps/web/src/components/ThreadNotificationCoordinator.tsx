@@ -1,6 +1,9 @@
 // SCIENT-FORK:START — Account approvals and sign-in hand-offs use thread notifications.
 import { watchAccountNotifications } from "../scient/accounts/accountNotifications";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+import { acquireNotificationPresenter } from "../scient/multiWindow/notificationPresenter";
+// SCIENT-FORK:END
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -50,6 +53,7 @@ interface NotificationState extends ThreadNotificationObservation {
 interface WatchedEnvironment {
   unsubscribe: () => void;
   previous: Map<ThreadId, NotificationState>;
+  reconnecting: boolean;
   readonly gate: ReturnType<typeof createThreadNotificationGate<ThreadId>>;
 }
 
@@ -63,6 +67,9 @@ export function startThreadNotifications(
 ): () => void {
   const pending = new Map<string, { environmentId: EnvironmentId; notification: Notification }>();
   const watched = new Map<EnvironmentId, WatchedEnvironment>();
+  // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+  const presenter = acquireNotificationPresenter();
+  // SCIENT-FORK:END
 
   const trackNotification = (environmentId: EnvironmentId, notification: Notification) => {
     pending.get(notification.tag)?.notification.close();
@@ -108,11 +115,13 @@ export function startThreadNotifications(
                 ? "Guest request"
                 : "Input needed");
     // SCIENT-FORK:END
-    if (hasNotificationSound(mode)) {
+    // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+    if (hasNotificationSound(mode) && presenter.isPresenter()) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
       );
     }
+    // SCIENT-FORK:END
     if (
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
@@ -151,6 +160,9 @@ export function startThreadNotifications(
       });
       return;
     }
+    // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+    if (!presenter.isPresenter()) return;
+    // SCIENT-FORK:END
     if (
       !hasDesktopNotifications(mode) ||
       (document.visibilityState === "visible" && document.hasFocus()) ||
@@ -208,7 +220,11 @@ export function startThreadNotifications(
       }
       const prior = previous.get(rawThread.id);
       const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
-      if (prior?.raw === rawThread && prior.subagentRequest === subagentRequest) {
+      if (
+        !entry.reconnecting &&
+        prior?.raw === rawThread &&
+        prior.subagentRequest === subagentRequest
+      ) {
         next.set(rawThread.id, prior);
         continue;
       }
@@ -237,6 +253,7 @@ export function startThreadNotifications(
       next.set(thread.id, state);
       changed.push([prior, state]);
     }
+    entry.reconnecting = false;
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
     for (const [prior, state] of changed) {
@@ -250,6 +267,7 @@ export function startThreadNotifications(
   const watchEnvironment = (environmentId: EnvironmentId): WatchedEnvironment => {
     const entry: WatchedEnvironment = {
       previous: new Map(),
+      reconnecting: false,
       unsubscribe: () => {},
       gate: createThreadNotificationGate<ThreadId>((threadId, kind) => {
         const state = entry.previous.get(threadId);
@@ -268,8 +286,8 @@ export function startThreadNotifications(
           observeThreads(environmentId, entry, threads);
           return;
         }
-        entry.gate.clear();
-        entry.previous = new Map();
+        entry.gate.cancelPending();
+        entry.reconnecting = true;
       },
       { immediate: true },
     );
@@ -397,5 +415,8 @@ export function startThreadNotifications(
     for (const entry of watched.values()) entry.unsubscribe();
     watched.clear();
     stopModeListeners();
+    // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+    presenter.stop();
+    // SCIENT-FORK:END
   };
 }

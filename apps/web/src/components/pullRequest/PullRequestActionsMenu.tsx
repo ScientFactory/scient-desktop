@@ -58,6 +58,9 @@ import { PullRequestGlyph } from "./pullRequestIcons";
 import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+// SCIENT-FORK:START — a pull request tab can open in a new window from its menu.
+import { PanelTabNewWindowItem } from "~/scient/multiWindow/PanelTabNewWindowItem";
+// SCIENT-FORK:END
 
 /** Everything else the reader can do with the pull request, behind the header's overflow button. */
 export function PullRequestActionsMenu({
@@ -399,6 +402,9 @@ export function PullRequestActionsMenu({
           <ArrowUpRightIcon className="size-3.5" />
           {openOnHostText}
         </MenuItem>
+        {/* SCIENT-FORK:START — a pull request tab can open in a new window from its menu. */}
+        <PanelTabNewWindowItem iconClassName="size-3.5" />
+        {/* SCIENT-FORK:END */}
         <MenuItem onClick={() => copyReference(detail.url, `${terminology.shortLabel} link`)}>
           <LinkIcon className="size-3.5" />
           Copy link

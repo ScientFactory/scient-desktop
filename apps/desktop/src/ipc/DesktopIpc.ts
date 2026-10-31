@@ -10,6 +10,9 @@ export interface DesktopIpcInvokeEvent {
 
 export interface DesktopIpcSyncEvent {
   returnValue: unknown;
+  // SCIENT-FORK:START — sync handlers can tell which app window asked.
+  readonly sender?: { readonly id: number };
+  // SCIENT-FORK:END
 }
 
 export type DesktopIpcHandleListener = (
@@ -65,7 +68,9 @@ export interface DesktopIpcMethod<E, R> {
 
 export interface DesktopSyncIpcMethod<E, R> {
   readonly channel: string;
-  readonly handler: () => Effect.Effect<unknown, E, R>;
+  // SCIENT-FORK:START — sync handlers can tell which app window asked.
+  readonly handler: (event?: DesktopIpcSyncEvent) => Effect.Effect<unknown, E, R>;
+  // SCIENT-FORK:END
 }
 
 export class DesktopIpc extends Context.Service<
@@ -131,7 +136,9 @@ export const make = (ipcMain: DesktopIpcMain): DesktopIpc["Service"] =>
               event.returnValue = runSync(
                 Effect.gen(function* () {
                   yield* Effect.annotateCurrentSpan({ channel });
-                  return yield* handler();
+                  // SCIENT-FORK:START — sync handlers can tell which app window asked.
+                  return yield* handler(event);
+                  // SCIENT-FORK:END
                 }).pipe(
                   Effect.annotateLogs({ channel }),
                   Effect.withSpan("desktop.ipc.invokeSync"),
@@ -239,7 +246,9 @@ export interface DesktopSyncIpcMethodRegistration<
     ResultDecodingServices,
     ResultEncodingServices
   >;
-  readonly handler: () => Effect.Effect<Result, E, R>;
+  // SCIENT-FORK:START — sync handlers can tell which app window asked.
+  readonly handler: (event?: DesktopIpcSyncEvent) => Effect.Effect<Result, E, R>;
+  // SCIENT-FORK:END
 }
 
 export const makeSyncIpcMethod = <
@@ -263,9 +272,11 @@ export const makeSyncIpcMethod = <
 
   return {
     channel: method.channel,
-    handler: () =>
+    // SCIENT-FORK:START — sync handlers can tell which app window asked.
+    handler: (event) =>
       method
-        .handler()
+        .handler(event)
+        // SCIENT-FORK:END
         .pipe(
           Effect.flatMap(encode),
           Effect.withSpan("desktop.ipc.method", { attributes: { channel: method.channel } }),

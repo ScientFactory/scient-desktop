@@ -152,7 +152,7 @@ function records(
 }
 
 describe("idleCompactionWindow", () => {
-  it("skips small contexts, unknown expiry, other providers, switched threads, and compactions", () => {
+  it("skips small contexts, unknown expiry, other providers, switched threads, compactions, and side chats", () => {
     const cache = { cacheExpiresInMs: 60 * MINUTE_MS };
     expect(idleCompactionWindow(records({ ...cache, usedTokens: 199_999 }), NOW_MS)).toBeNull();
     expect(idleCompactionWindow(records(), NOW_MS)).toBeNull();
@@ -170,6 +170,13 @@ describe("idleCompactionWindow", () => {
     const archived = records(cache);
     archived.thread = { ...archived.thread, archivedAt: at() };
     expect(idleCompactionWindow(archived, NOW_MS)).toBeNull();
+    const sideChat = records(cache);
+    expect(idleCompactionWindow(sideChat, NOW_MS)).not.toBeNull();
+    sideChat.thread = {
+      ...sideChat.thread,
+      lineage: { ...sideChat.thread.lineage, relationshipToParent: "fork", sideChat: true },
+    };
+    expect(idleCompactionWindow(sideChat, NOW_MS)).toBeNull();
   });
 });
 

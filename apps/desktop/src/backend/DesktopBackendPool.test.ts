@@ -86,6 +86,9 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
           zoomMain: () => Effect.die("unexpected zoom"),
           runMainContentsCommand: () => Effect.die("unexpected main contents command"),
           syncAppearance: Effect.void,
+          // SCIENT-FORK:START — several app windows share one desktop process.
+          openNewWindow: () => Effect.die("unexpected window create"),
+          // SCIENT-FORK:END
         } satisfies DesktopWindow.DesktopWindow["Service"]),
       ),
     ),

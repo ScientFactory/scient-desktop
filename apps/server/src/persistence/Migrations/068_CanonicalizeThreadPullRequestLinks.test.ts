@@ -158,6 +158,7 @@ layer("068_CanonicalizeThreadPullRequestLinks", (it) => {
       assert.equal(v1?.payload_json, v1Payload);
 
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      yield* runMigrations();
       yield* runScientMigrations(sql);
       assert.isTrue((yield* maintenance.rebuild).valid);
       for (const [host, repository, id] of [

@@ -104,7 +104,7 @@ export async function probeWindowsRetention(directory: string, helper: string | 
           for (const name of folder === directory
             ? [NodePath.basename(scratch)]
             : await NodeFSP.readdir(folder))
-            await removeNativeRetainedEntry(lease, folder, name, helper);
+            await removeNativeRetainedEntry(lease, folder, name);
         },
         { mode: "exclusive" },
       );

@@ -12,6 +12,9 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 // SCIENT-FORK:START — Scient Accounts: expose the desktop accounts bridge.
 import { makeDesktopAccountsBridge } from "./scient/accounts/preloadBridge.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+import { makeMultiWindowBridge } from "./scient/multiWindow/preloadBridge.ts";
+// SCIENT-FORK:END
 import * as IpcChannels from "./ipc/channels.ts";
 import { makeDesktopVoiceBridge } from "./scient/voice/preloadBridge.ts";
 import { installSpellingSampler, type SampleOutcome } from "./scient/spelling/preloadSampler.ts";
@@ -487,5 +490,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   voice: makeDesktopVoiceBridge(ipcRenderer),
   // SCIENT-FORK:START — Scient Accounts: mount the desktop accounts bridge.
   accounts: makeDesktopAccountsBridge(ipcRenderer),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  ...makeMultiWindowBridge(ipcRenderer),
   // SCIENT-FORK:END
 } satisfies DesktopBridge);

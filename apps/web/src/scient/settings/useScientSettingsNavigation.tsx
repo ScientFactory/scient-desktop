@@ -58,7 +58,6 @@ const SETTINGS_PAGE_SECTIONS: Partial<
   ],
   "/settings/about": [
     { label: "App", targetId: "about" },
-    { label: "Privacy and analytics", targetId: "scient-analytics" },
     { label: "Legal", targetId: "legal" },
   ],
 };

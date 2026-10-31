@@ -22,12 +22,16 @@ vi.mock("@scientfactory/analytics", async (importOriginal) => ({
 function fakeRuntime(enabled = true) {
   let alive = enabled;
   const recorded: string[] = [];
+  const properties: unknown[] = [];
   const runtime: AnalyticsRuntime = {
     get enabled() {
       return alive;
     },
-    record: (name) => {
-      if (alive) recorded.push(name);
+    record: (name, eventProperties) => {
+      if (alive) {
+        recorded.push(name);
+        properties.push(eventProperties);
+      }
       return alive;
     },
     flush: async () => 0,
@@ -41,6 +45,7 @@ function fakeRuntime(enabled = true) {
   return {
     runtime,
     recorded,
+    properties,
     fail: () => {
       alive = false;
     },
@@ -148,36 +153,6 @@ it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
       Effect.provide(testLayer()),
     ),
   );
-  it.effect("does not inspect or record owner identities while product analytics is enabled", () =>
-    Effect.gen(function* () {
-      const active = fakeRuntime();
-      factory
-        .mockReset()
-        .mockImplementation((options: AnalyticsRuntimeOptions) =>
-          options.enabled ? active.runtime : fakeRuntime(false).runtime,
-        );
-      const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: true, consent: "product" });
-      for (const observedBy of ["server", "client"] as const) {
-        yield* service.recordOwners(
-          [
-            {
-              get source(): "openai" {
-                throw new Error("Unexpected telemetry identity inspection");
-              },
-              get ownerId(): string {
-                throw new Error("Unexpected telemetry identity inspection");
-              },
-            },
-          ],
-          observedBy,
-        );
-      }
-      yield* service.record("project.opened");
-      assert.deepEqual(active.recorded, ["app.session.started", "project.opened"]);
-    }).pipe(Effect.provide(testLayer())),
-  );
-
   it.effect("defaults to usage and reliability when available without a saved preference", () =>
     Effect.gen(function* () {
       factory.mockReset().mockImplementation(() => fakeRuntime().runtime);
@@ -187,7 +162,7 @@ it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
     }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
   );
 
-  it.effect("preserves a saved Off choice across service restarts with the new default", () =>
+  it.effect("returns to the default after a restart, whatever choice was saved", () =>
     Effect.gen(function* () {
       factory
         .mockReset()
@@ -201,11 +176,32 @@ it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
         }),
       );
       const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: true, consent: "off" });
+      assert.deepEqual(yield* service.status, { available: true, consent: "diagnostic" });
     }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
   );
 
-  it.effect("fails closed on damaged saved preferences despite the new default", () =>
+  it.effect("reports each owner once per process", () =>
+    Effect.gen(function* () {
+      const active = fakeRuntime();
+      factory.mockReset().mockImplementation(() => active.runtime);
+      const service = yield* AnalyticsService.make;
+      const owners = [
+        { source: "openai", ownerId: "a".repeat(64) },
+        { source: "claude", ownerId: "b".repeat(64) },
+      ] as const;
+      yield* service.recordOwners(owners, "server");
+      yield* service.recordOwners(owners, "server");
+      assert.deepEqual(
+        active.properties.filter((_, index) => active.recorded[index] === "install.owner_observed"),
+        [
+          { ownerSource: "openai", ownerId: "a".repeat(64), observedBy: "server" },
+          { ownerSource: "claude", ownerId: "b".repeat(64), observedBy: "server" },
+        ],
+      );
+    }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
+  );
+
+  it.effect("ignores damaged saved preferences", () =>
     Effect.gen(function* () {
       factory.mockReset().mockImplementation(() => fakeRuntime(false).runtime);
       const fs = yield* FileSystem.FileSystem;
@@ -215,7 +211,7 @@ it.layer(NodeServices.layer)("AnalyticsService control recovery", (it) => {
       yield* fs.makeDirectory(directory, { recursive: true });
       yield* fs.writeFileString(path.join(directory, "preferences.json"), "invalid");
       const service = yield* AnalyticsService.make;
-      assert.deepEqual(yield* service.status, { available: true, consent: "off" });
+      assert.deepEqual(yield* service.status, { available: true, consent: "diagnostic" });
     }).pipe(Effect.provide(testLayer({ SCIENT_ANALYTICS_ENABLED: "true" }))),
   );
 

@@ -72,13 +72,15 @@ export const runDefaultServerCommand = Effect.fn("server.runDefaultServerCommand
 });
 
 export const startCommand = Command.make("start", { ...sharedServerCommandFlags }).pipe(
-  Command.withDescription("Run the Scient server."),
+  Command.withDescription("Same as `scient`."),
+  Command.unlisted,
   Command.withHandler((flags) => runServerCommand(flags, { rejectRunningServer: true })),
 );
 
 export const serveCommand = Command.make("serve", { ...sharedServerCommandFlags }).pipe(
+  Command.withShortDescription("Run Scient in this terminal, with no browser."),
   Command.withDescription(
-    "Run the Scient server without opening a browser and print headless pairing details.",
+    "Run Scient in this terminal without opening a browser, and print pairing details.",
   ),
   Command.withHandler((flags) =>
     runServerCommand(flags, {

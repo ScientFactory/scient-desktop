@@ -542,7 +542,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const removeKept = async (lease: NativeFilePublicationLease, directory: string, name: string) => {
     const path = NodePath.join(directory, name);
     await deps.retainedHooks?.removal?.("before", path);
-    await removeNativeRetainedEntry(lease, directory, name, deps.nativePublicationHelper);
+    await removeNativeRetainedEntry(lease, directory, name);
     await deps.retainedHooks?.removal?.("after", path);
   };
   /**
@@ -634,6 +634,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         decodeReference,
       );
       const directory = reference?.recordDirectory ?? indexed;
+      // A deleted folder took the referenced record with it; nothing is left to settle.
       if (!(await standing(directory))) return null;
       // Taken before the read: a change after it moves this on.
       const stand = await recordStand(indexed, directory);

@@ -29,6 +29,9 @@ const ElectronMenuOperation = Schema.Literals([
   "set-application-menu",
   "popup-template",
   "show-context-menu",
+  // SCIENT-FORK:START — the Dock menu opens another app window.
+  "set-dock-menu",
+  // SCIENT-FORK:END
 ]);
 
 export class ElectronMenuOperationError extends Schema.TaggedError<ElectronMenuOperationError>()(
@@ -57,6 +60,12 @@ export class ElectronMenu extends Context.Service<
       input: ElectronMenuContextInput,
     ) => Effect.Effect<Option.Option<string>>;
     readonly popupTemplate: (input: ElectronMenuTemplateInput) => Effect.Effect<void>;
+    // SCIENT-FORK:START — the Dock menu opens another app window.
+    /** Items above the system's own in the macOS Dock icon's menu; nothing elsewhere. */
+    readonly setDockMenu: (
+      template: readonly Electron.MenuItemConstructorOptions[],
+    ) => Effect.Effect<void>;
+    // SCIENT-FORK:END
   }
 >()("@t3tools/desktop/electron/ElectronMenu") {}
 
@@ -202,6 +211,23 @@ export const make = Effect.gen(function* () {
           }),
       }).pipe(Effect.orDie);
     }),
+    // SCIENT-FORK:START — the Dock menu opens another app window.
+    setDockMenu: Effect.fn("ElectronMenu.setDockMenu")(function (template) {
+      return Effect.try({
+        try: () => {
+          Electron.app.dock?.setMenu(Electron.Menu.buildFromTemplate([...template]));
+        },
+        catch: (cause) =>
+          new ElectronMenuOperationError({
+            operation: "set-dock-menu",
+            platform,
+            windowId: null,
+            itemCount: template.length,
+            cause,
+          }),
+      }).pipe(Effect.orDie);
+    }),
+    // SCIENT-FORK:END
     popupTemplate: Effect.fn("ElectronMenu.popupTemplate")(function (input) {
       return input.template.length === 0
         ? Effect.void

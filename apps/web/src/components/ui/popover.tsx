@@ -4,6 +4,8 @@ import { useContext } from "react";
 import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { cn } from "~/lib/utils";
 
+import { renderClosingPositioner } from "./closing-positioner";
+
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
 
 const Popover = PopoverPrimitive.Root;
@@ -100,6 +102,7 @@ function PopoverPopup({
         style={suspended ? { visibility: "hidden" } : undefined}
         inert={suspended || undefined}
         data-slot="popover-positioner"
+        render={renderClosingPositioner}
         side={side}
         sideOffset={sideOffset}
       >
