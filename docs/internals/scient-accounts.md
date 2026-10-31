@@ -451,7 +451,7 @@ result to `accounts.googleSessions.seen` at startup, after a sign-in, and on foc
 minutes. A profile with no Google cookies isn't asked. The server keeps one password-free website
 row per address and profile, site `google.com`, with `lastCheck` set from what Google said. Those
 rows tell `pickBrowserProfile` where each account lives, and a saved password stays a separate row
-so autofill doesn't widen to every Google subdomain.
+so autofill doesn't widen to every Google subdomain. Check my accounts leaves those rows to Google.
 
 ### Sign-in codes
 
@@ -582,7 +582,9 @@ provider environment. The existing proxy redacts reflected values in responses.
   (ties: latest switch for the host anywhere, the conversation's, the project's, the default, list
   order); the conversation's; the project's; the default. Choices live in Accounts state
   (`profileChoices`: projects, and threads with per-host switches, 500 threads and 50 hosts kept),
-  written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile.
+  written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. On a
+  page signed out in the tab's profile but signed in on another, `ProfileSwitcher` offers that
+  profile in one click.
 - **Library access**: a library account's link pattern (`proxyUrl` with `{url}`, e.g. HUJI's
   OpenAthens redirector) is how `scient_paper_get` reaches paywalled PDFs. Pasting any library
   link derives the pattern. The tool opens the article through it in the library account's

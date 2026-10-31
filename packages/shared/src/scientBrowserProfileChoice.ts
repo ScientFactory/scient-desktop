@@ -82,6 +82,24 @@ export function pageSite(url: string | undefined) {
   }
 }
 
+/** The profiles signed in to a page, in `profiles` order. */
+export function profilesSignedIn(
+  url: string | undefined,
+  profiles: ReadonlyArray<string>,
+  signIns: ReadonlyArray<ProfileSignIn>,
+) {
+  const page = pageSite(url);
+  if (!page) return [];
+  return profiles.filter((id) =>
+    signIns.some(
+      (signIn) =>
+        signIn.profileId === id &&
+        !signIn.signedOut &&
+        signIn.sites.some((site) => covers(site, page)),
+    ),
+  );
+}
+
 /**
  * The profile a new tab opens in: the user's switch for this site here; the only profile signed
  * in to the site (ties: latest switch, conversation, project, default, list order); the latest
@@ -109,9 +127,7 @@ export function pickBrowserProfile(input: {
     const signIns = input.signIns.filter(
       (signIn) => !signIn.signedOut && signIn.sites.some((site) => covers(site, page)),
     );
-    const signedIn = input.profiles.filter((id) =>
-      signIns.some((signIn) => signIn.profileId === id),
-    );
+    const signedIn = profilesSignedIn(input.url, input.profiles, signIns);
     // Sites under one sign-in are one service: a switch on Gmail also counts for Google Docs.
     const sameService = (host: string) =>
       host === page.hostname ||

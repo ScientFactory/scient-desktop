@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { pickBrowserProfile, profileSignIns } from "./scientBrowserProfileChoice.ts";
+import {
+  pickBrowserProfile,
+  profileSignIns,
+  profilesSignedIn,
+} from "./scientBrowserProfileChoice.ts";
 
 const base = {
   url: "https://portal.huji.ac.il/courses",
@@ -119,6 +123,16 @@ describe("pickBrowserProfile", () => {
 });
 
 describe("profileSignIns", () => {
+  it("names the profiles signed in to a page", () => {
+    const signIns = [
+      { profileId: "work", sites: ["google.com"] },
+      { profileId: "yaacov", sites: ["google.com"], signedOut: true },
+    ];
+    expect(profilesSignedIn("https://mail.google.com/", base.profiles, signIns)).toEqual(["work"]);
+    expect(profilesSignedIn("https://notgoogle.com/", base.profiles, signIns)).toEqual([]);
+    expect(profilesSignedIn(undefined, base.profiles, signIns)).toEqual([]);
+  });
+
   it("follows what a check found, in either direction", () => {
     const row = {
       details: { kind: "website", profileId: "work", sites: ["google.com"], username: "a@b.co" },
