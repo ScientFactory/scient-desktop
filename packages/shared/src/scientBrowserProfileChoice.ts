@@ -81,8 +81,9 @@ export function pageSite(url: string | undefined) {
 
 /**
  * The profile a new tab opens in: the user's switch for this site here; the only profile signed
- * in to the site (ties: latest switch, conversation, project, default, list order); then the
- * conversation's, the project's, the default. `profiles` are the eligible ones, in order.
+ * in to the site (ties: latest switch, conversation, project, default, list order); the latest
+ * switch for the site in any conversation; then the conversation's, the project's, the default.
+ * `profiles` are the eligible ones, in order.
  */
 export function pickBrowserProfile(input: {
   readonly url: string | undefined;
@@ -102,22 +103,30 @@ export function pickBrowserProfile(input: {
   if (page) {
     const switched = thread?.sites[page.hostname]?.profileId;
     if (eligible(switched)) return { profileId: switched };
-    const signedIn = input.profiles.filter((id) =>
-      input.signIns.some(
-        (signIn) =>
-          signIn.profileId === id &&
-          !signIn.signedOut &&
-          signIn.sites.some((site) => covers(site, page)),
-      ),
+    const signIns = input.signIns.filter(
+      (signIn) => !signIn.signedOut && signIn.sites.some((site) => covers(site, page)),
     );
+    const signedIn = input.profiles.filter((id) =>
+      signIns.some((signIn) => signIn.profileId === id),
+    );
+    // Sites under one sign-in are one service: a switch on Gmail also counts for Google Docs.
+    const sameService = (host: string) =>
+      host === page.hostname ||
+      signIns.some((signIn) =>
+        signIn.sites.some((site) => covers(site, new URL(`https://${host}`))),
+      );
+    const lastSwitch = Object.values(input.choices?.threads ?? {})
+      .flatMap((entry) =>
+        Object.entries(entry.sites).flatMap(([host, choice]) =>
+          sameService(host) ? [choice] : [],
+        ),
+      )
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .find(({ profileId }) =>
+        signedIn.length > 0 ? signedIn.includes(profileId) : eligible(profileId),
+      )?.profileId;
+    if (signedIn.length === 0 && lastSwitch !== undefined) return { profileId: lastSwitch };
     if (signedIn.length > 0) {
-      const lastSwitch = Object.values(input.choices?.threads ?? {})
-        .flatMap((entry) => {
-          const choice = entry.sites[page.hostname];
-          return choice ? [choice] : [];
-        })
-        .sort((a, b) => b.at.localeCompare(a.at))
-        .find((choice) => signedIn.includes(choice.profileId))?.profileId;
       const profileId =
         signedIn.length === 1
           ? signedIn[0]!

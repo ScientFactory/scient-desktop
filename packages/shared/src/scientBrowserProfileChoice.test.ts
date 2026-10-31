@@ -62,6 +62,41 @@ describe("pickBrowserProfile", () => {
     expect(pickBrowserProfile({ ...base, signIns, choices: elsewhere }).profileId).toBe("huji");
   });
 
+  it("carries a switch into other conversations, and across one sign-in's sites", () => {
+    const elsewhere = {
+      projects: {},
+      threads: {
+        "thread-b": {
+          profileId: "work",
+          sites: { "mail.google.com": { profileId: "work", at: "2026-10-31T00:00:00.000Z" } },
+        },
+      },
+    };
+    expect(
+      pickBrowserProfile({ ...base, url: "https://mail.google.com/", choices: elsewhere }),
+    ).toEqual({ profileId: "work" });
+    expect(
+      pickBrowserProfile({
+        ...base,
+        url: "https://docs.google.com/",
+        choices: elsewhere,
+        signIns: [
+          { profileId: "work", sites: ["google.com"] },
+          { profileId: "yaacov", sites: ["google.com"] },
+        ],
+      }),
+    ).toEqual({ profileId: "work", signedInSite: "docs.google.com" });
+    // A profile that holds the sign-in beats an older switch to one that doesn't.
+    expect(
+      pickBrowserProfile({
+        ...base,
+        url: "https://mail.google.com/",
+        choices: elsewhere,
+        signIns: [{ profileId: "yaacov", sites: ["google.com"] }],
+      }),
+    ).toEqual({ profileId: "yaacov", signedInSite: "mail.google.com" });
+  });
+
   it("ignores signed-out and unavailable profiles, then falls back to conversation, project and default", () => {
     expect(
       pickBrowserProfile({
