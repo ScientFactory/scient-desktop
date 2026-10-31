@@ -528,6 +528,15 @@ export function isBrowserSignIn(account: AccountSummary) {
   );
 }
 
+/** The saved sign-ins a page can be filled with. A browser sign-in has nothing to type. */
+export function fillableAccounts(
+  accounts: ReadonlyArray<AccountSummary>,
+  url: string,
+  profileId: string,
+) {
+  return matchingAccounts(accounts, url, profileId).filter((account) => !isBrowserSignIn(account));
+}
+
 /** Google knows this profile's accounts, and none of them works here any more. */
 export function signedOutOfGoogle(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
   const rows = accounts.filter(

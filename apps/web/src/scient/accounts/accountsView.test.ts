@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import {
   accountStatusLabel,
+  fillableAccounts,
   isBrowserSignIn,
   signedOutOfGoogle,
   sitesToKeep,
@@ -61,6 +62,30 @@ describe("Accounts decisions", () => {
     expect(siteMatchesUrl("https://example.com:8443", "https://example.com:8443/login")).toBe(true);
     expect(siteMatchesUrl("https://example.com:8443", "https://example.com/login")).toBe(false);
     expect(siteMatchesUrl("example.com", "not a URL")).toBe(false);
+  });
+
+  it("fills from saved sign-ins only, never a browser sign-in with nothing to type", () => {
+    const google = {
+      ...website("work"),
+      details: {
+        kind: "website" as const,
+        sites: ["google.com"],
+        username: "a@example.com",
+        profileId: "work",
+      },
+    };
+    const saved = {
+      ...website(),
+      details: {
+        kind: "website" as const,
+        sites: ["accounts.google.com"],
+        username: "a@example.com",
+      },
+      secrets: { password: { source: { type: "scient" as const } } },
+    };
+    expect(fillableAccounts([google, saved], "https://accounts.google.com/", "work")).toEqual([
+      saved,
+    ]);
   });
 
   it("groups Google rows with browser sign-ins, and says when a profile lost Google", () => {

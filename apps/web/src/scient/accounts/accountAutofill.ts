@@ -1,10 +1,11 @@
 import { ThreadId, type DesktopLoginForm, type EnvironmentId } from "@t3tools/contracts";
+import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { readThreadPreviewState } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadShells } from "~/state/threads";
 import { accountsState } from "./accountsState";
-import { agentMayUse, automaticSignIn, matchingAccounts } from "./accountsView";
+import { agentMayUse, automaticSignIn, fillableAccounts } from "./accountsView";
 
 /** Runtime tab ids are `[environmentId, threadId, serverEpoch, tabId]` (`previewRuntimeTabId`). */
 function runtimeTab(id: string) {
@@ -81,19 +82,22 @@ export function watchAccountAutofill(
     const projectId = appAtomRegistry.get(
       environmentThreadShells.threadShellAtom(threadRef),
     )?.projectId;
-    const matches = matchingAccounts(accounts.accounts, form.url, form.profileId);
+    const matches = fillableAccounts(accounts.accounts, form.url, form.profileId);
     const account = matches.find(
       (match) => !agentTab || agentMayUse(match.controls, accounts.agentAccess, projectId),
     );
     if (!account) return;
     const lastSubmitted = signedBackIn.get(form.url) ?? 0;
+    const pageUrl = form.pageUrl ?? form.url;
+    // Only a sign-in page: a form asking for the password on "close account" looks just the same.
     const submit =
       !agentTab &&
       matches.length === 1 &&
       account.lastSignInOutcome === "signed-in" &&
+      account.secrets.password !== undefined &&
+      isLoginPlace(new URL(pageUrl)) &&
       Date.now() - lastSubmitted > SIGN_BACK_IN_COOLDOWN_MS;
     if (submit) signedBackIn.set(form.url, Date.now());
-    const pageUrl = form.pageUrl ?? form.url;
     const values = await accountsState.fillValues.run(registry, {
       environmentId,
       input: {

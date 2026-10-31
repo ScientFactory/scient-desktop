@@ -16,7 +16,12 @@ import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
-import { capturedSignInInput, matchingAccounts, signInLabel } from "./accountsView";
+import {
+  capturedSignInInput,
+  fillableAccounts,
+  matchingAccounts,
+  signInLabel,
+} from "./accountsView";
 
 import { SaveStores } from "./SaveStores";
 import { autofilledTabs, filledTabRecord } from "./accountAutofill";
@@ -219,7 +224,7 @@ function DesktopBrowserAccountControls({
   }, [canWrite]);
   const matches =
     data && window.desktopBridge?.accounts?.originBoundFill === true
-      ? matchingAccounts(data.accounts, url, profileId)
+      ? fillableAccounts(data.accounts, url, profileId)
       : [];
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
   const autofilled = useSyncExternalStore(autofilledTabs.subscribe, () =>
