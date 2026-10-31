@@ -271,7 +271,10 @@ describe("ConnectOverleafDialog", () => {
   it("names the folder a project is linked to, and moves the link here in one click", async () => {
     reset(true);
     client.listOverleafConnections.mockResolvedValue({
-      connections: [{ ...summary("old-copy"), linkedHere: true }],
+      connections: [
+        { ...summary("worktree-copy"), linkedHere: false },
+        { ...summary("old-copy"), linkedHere: true },
+      ],
     });
     client.connectOverleaf
       .mockResolvedValueOnce({ _tag: "refused", reason: "project-already-linked" })

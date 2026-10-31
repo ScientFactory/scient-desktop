@@ -2033,7 +2033,9 @@ describe.skipIf(!canApply)("OverleafSync", () => {
     () =>
       run(
         Effect.gen(function* () {
-          const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+          const w = yield* world({
+            overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } },
+          });
           const caller = w.at(w.main);
           const connected = yield* w.service.connect({
             caller,
@@ -2075,7 +2077,7 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           expect(
             yield* w.service.sync({ caller, connectionId: id, requestId: "s4" }),
           ).toMatchObject({ _tag: "synced", review: { localOnly: ["main.tex"] } });
-          expect(yield* w.overleafNow(PROJECT)).toEqual({});
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "other.tex": "O" });
         }),
       ),
   );

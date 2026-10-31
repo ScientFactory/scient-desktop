@@ -304,12 +304,23 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
         : ("outside" as const);
     });
 
-  /** The very directory a link recorded still stands at the path it recorded. */
+  /**
+   * Whether a link still has its folder. Only a folder proved absent or replaced is gone:
+   * one that can't be read now (permissions, a disk waking) stands, so no link is put away
+   * on a guess.
+   */
   const stands = Effect.fn("OverleafConnections.stands")(function* (
     document: OverleafConnectionDocument,
   ) {
-    const found = yield* identityOf(folderOf(document));
-    return found !== null && platformFileIdentity.equal(found, document.folder.identity);
+    const folder = folderOf(document);
+    const found = yield* identityOf(folder);
+    if (found !== null) return platformFileIdentity.equal(found, document.folder.identity);
+    return yield* Effect.promise(() =>
+      NodeFSP.lstat(folder).then(
+        (stat) => stat.isDirectory(),
+        (cause: NodeJS.ErrnoException) => cause.code !== "ENOENT" && cause.code !== "ENOTDIR",
+      ),
+    );
   });
 
   const archived = (document: OverleafConnectionDocument, updatedAt: string) =>

@@ -7,6 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import { canApply } from "./OverleafCoordinator.testkit.ts";
@@ -275,6 +276,80 @@ describe.skipIf(!canApply)("a link never traps anyone", () => {
     ),
   );
 
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "doesn't take a folder it can't read for a gone one",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const sub = NodePath.join(w.main, "sub");
+          yield* Effect.promise(() => NodeFSP.mkdir(sub));
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "sub/paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          // A permission problem, not a deleted folder: the link stays, and still blocks.
+          yield* Effect.acquireRelease(
+            Effect.promise(() => NodeFSP.chmod(sub, 0o000)),
+            () => Effect.promise(() => NodeFSP.chmod(sub, 0o700)),
+          );
+          expect(
+            yield* w.service.connect({
+              caller: w.at(w.main),
+              folder: "second",
+              create: true,
+              project: PROJECT,
+              requestId: "c2",
+            }),
+          ).toMatchObject({ _tag: "refused", reason: "project-already-linked" });
+          const kept = yield* w.store.readConnection(id);
+          if (kept._tag !== "ready") return yield* Effect.die(kept);
+          expect(kept.document.state).toBe("active");
+        }),
+      ),
+  );
+
+  it.live("won't unlink when the link's checkout left the caller's project meanwhile", () =>
+    run(
+      Effect.gen(function* () {
+        let crash = false;
+        const w = yield* world({
+          at: (point) => (point === "applied" && crash ? Effect.die("stopped") : Effect.void),
+        });
+        const id = yield* linked(w);
+        yield* w.collaborate(PROJECT, { "main.tex": "newer" });
+        crash = true;
+        yield* Effect.exit(
+          w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        );
+        crash = false;
+        // The unlink finishes the interrupted sync first; that waits on the windows' saves.
+        w.setEditorSave(
+          { _tag: "saved" },
+          Effect.sync(() =>
+            w.bindings.set(w.main, {
+              bindingId: "binding-main",
+              hostProjectId: "project-2",
+              generation: 2,
+            }),
+          ),
+        );
+        expect(
+          yield* w.service.disconnect({
+            caller: w.at(w.worktree),
+            connectionId: id,
+            requestId: "d1",
+          }),
+        ).toMatchObject({ _tag: "refused", reason: "authority-changed" });
+      }),
+    ),
+  );
+
   it.live("still refuses a second link of a project whose first folder stands", () =>
     run(
       Effect.gen(function* () {
@@ -382,6 +457,40 @@ describe.skipIf(!canApply)("a link never traps anyone", () => {
             connectionId: connected.connection.connectionId,
           }),
         ).toEqual({ state: "unknown" });
+      }),
+    ),
+  );
+
+  it.live("never deletes everything on Overleaf because a folder was emptied", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A", "refs.bib": "B" } },
+        });
+        const id = yield* linked(w);
+        const folder = NodePath.join(w.main, "paper");
+        for (const name of ["main.tex", "refs.bib"])
+          yield* Effect.promise(() => NodeFSP.rm(NodePath.join(folder, name)));
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        ).toMatchObject({ _tag: "refused", refusal: { reason: "would-empty-overleaf" } });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "A", "refs.bib": "B" });
+      }),
+    ),
+  );
+
+  it.live("still sends a deletion that leaves the project some files", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: { [PROJECT]: { "main.tex": "A", "refs.bib": "B" } },
+        });
+        const id = yield* linked(w);
+        yield* Effect.promise(() => NodeFSP.rm(NodePath.join(w.main, "paper", "refs.bib")));
+        expect(
+          yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" }),
+        ).toMatchObject({ _tag: "synced" });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "A" });
       }),
     ),
   );

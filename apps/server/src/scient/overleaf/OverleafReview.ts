@@ -191,6 +191,8 @@ export interface OverleafReview {
 }
 
 export type OverleafReviewRefusal =
+  /** The send would delete every file Overleaf has. */
+  | { readonly reason: "would-empty-overleaf" }
   | { readonly reason: "remote-file-limit" }
   | { readonly reason: "remote-too-large" }
   | { readonly reason: "remote-file-too-large"; readonly path: string }
@@ -803,6 +805,10 @@ export const buildOverleafReview = Effect.fn("OverleafReview.build")(function* (
 
   const incoming = yield* repos.diff({ repo, from: localTree, to: candidateTree });
   const outgoing = yield* repos.diff({ repo, from: input.remote.tree, to: publishedTree });
+  // A sync is one click, so it never empties a project: an emptied folder is almost
+  // always an accident. Someone who means it can delete the files on Overleaf.
+  if (remote.size > 0 && outgoing.filter(({ kind }) => kind === "deleted").length === remote.size)
+    return refused({ reason: "would-empty-overleaf" });
 
   const warnings: OverleafReviewWarning[] = [];
   if (connection.base.tree === null) {

@@ -30,7 +30,12 @@ import { ensureBrowseDirectoryPath } from "@t3tools/client-runtime/state/project
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjectPathSearch } from "~/state/queries";
 
-import { connectOverleaf, overleafRequestId, saveOverleafToken } from "./client";
+import {
+  connectOverleaf,
+  listOverleafConnections,
+  overleafRequestId,
+  saveOverleafToken,
+} from "./client";
 import { reportOverleafSync, runOverleafSync, unlinkOverleaf } from "./overleafActions";
 import {
   folderNameProblem,
@@ -49,7 +54,6 @@ import {
   reloadOverleafWorkspaces,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
-  useOverleafWorkspace,
   type OverleafConnection,
 } from "./overleafStore";
 
@@ -129,7 +133,6 @@ export function ConnectOverleafDialog(props: {
   // Once made, the project stays: a refused link is tried again in it, never made twice.
   const [madeRoot, setMadeRoot] = useState<string | null>(null);
   const cwd = newProject ? (madeRoot ?? "") : props.cwd;
-  const workspace = useOverleafWorkspace(newProject ? null : environmentId, cwd);
   const busy = phase._tag === "working";
   // Until the token's status is known, Connect waits: without it, a missing
   // token would only show after the project was made.
@@ -234,9 +237,12 @@ export function ConnectOverleafDialog(props: {
         requestId: overleafRequestId(),
       });
       if (connected._tag === "refused") {
+        // Asked now, and only of this copy: another worktree's link is not what refused this.
         const existing =
           connected.reason === "project-already-linked"
-            ? workspace.connections.find((link) => link.projectId === projectId)
+            ? (await listOverleafConnections(environmentId, workspaceRoot)).connections.find(
+                (link) => link.linkedHere && link.projectId === projectId,
+              )
             : undefined;
         setLinkedAlready(existing ?? null);
         setError(
@@ -288,7 +294,9 @@ export function ConnectOverleafDialog(props: {
 
   /** Unlinks the folder the project is linked to, then links it here instead. */
   const linkHereInstead = async (link: OverleafConnection) => {
+    setPhase({ _tag: "working", step: "connect" });
     if (await unlinkOverleaf(environmentId, cwd, link.connectionId)) await connect();
+    else setPhase({ _tag: "form" });
   };
 
   const view = phase._tag === "done" && phase.result ? overleafResultView(phase.result) : null;

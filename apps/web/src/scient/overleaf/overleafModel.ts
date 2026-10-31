@@ -263,6 +263,8 @@ export function refusalText(
       return `Git failed while talking to Overleaf. ${action === "connect" ? "Try connecting again." : "Sync again."}`;
     case "no-branch":
       return "The Overleaf project has no single main branch.";
+    case "would-empty-overleaf":
+      return "This folder has none of the project's files, so a sync would delete everything on Overleaf. Nothing was sent. Put the files back, or unlink the folder.";
     case "workspace-not-authorized":
       return "This Overleaf link belongs to another project.";
     case "folder-invalid":
