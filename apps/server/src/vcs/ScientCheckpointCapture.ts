@@ -192,6 +192,12 @@ export const checkpointCleanGitEnv = (): NodeJS.ProcessEnv => ({
   GIT_ALTERNATE_OBJECT_DIRECTORIES: undefined,
 });
 
+// Git reads one alternate per line, so a directory holding a newline must be C-quoted.
+const gitAlternatesEntry = (objectDirectory: string) =>
+  objectDirectory.includes("\n")
+    ? `"${objectDirectory.replace(/["\\\n]/g, (char) => (char === "\n" ? "\\n" : `\\${char}`))}"\n`
+    : `${objectDirectory}\n`;
+
 export const prepareCheckpointStagingRepo = Effect.fnUntraced(function* (input: {
   readonly execute: VcsDriver.VcsDriver["Service"]["execute"];
   readonly fileSystem: FileSystem.FileSystem;
@@ -237,7 +243,7 @@ export const prepareCheckpointStagingRepo = Effect.fnUntraced(function* (input: 
   yield* fileSystem
     .writeFileString(
       path.join(stagingRepo, "objects", "info", "alternates"),
-      `${path.join(gitCommonDir, "objects").replaceAll("\\", "/")}\n`,
+      gitAlternatesEntry(path.join(gitCommonDir, "objects").replaceAll("\\", "/")),
     )
     .pipe(
       Effect.mapError((error) =>

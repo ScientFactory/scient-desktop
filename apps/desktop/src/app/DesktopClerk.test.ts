@@ -119,6 +119,18 @@ const layerDesktopClerk = (
   );
 };
 
+// SCIENT-FORK:START restored-sole-guards - the bridge takes upstream's owner-only store around Clerk's storage.
+const assertBridgeConfigured = (renderer: { readonly scheme: string; readonly host: string }) => {
+  assert.equal(createClerkBridgeMock.mock.calls.length, 1);
+  const { storage, ...options } = createClerkBridgeMock.mock.calls[0]![0];
+  assert.deepEqual(options, { manageSingleInstanceLock: false, passkeys: true, renderer });
+  assert.notStrictEqual(storage, storageAdapter);
+  storageAdapter.getItem.mockReturnValueOnce("stored-token");
+  assert.equal(storage.getItem("session"), "stored-token");
+  assert.deepEqual(storageAdapter.getItem.mock.lastCall, ["session"]);
+};
+// SCIENT-FORK:END restored-sole-guards
+
 describe("DesktopClerk", () => {
   beforeEach(() => {
     createClerkBridgeMock.mockReset();
@@ -150,7 +162,7 @@ describe("DesktopClerk", () => {
       name: "development",
       isDevelopment: true,
       platform: "win32" as const,
-      userData: "/tmp/t3-state/electron-userdata",
+      userData: `${clerkStateDir}/electron-userdata`,
     },
     // SCIENT-FORK:END desktop-state-isolation
   ])(
@@ -239,19 +251,10 @@ describe("DesktopClerk", () => {
     return Effect.gen(function* () {
       yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
 
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme: "scient-next-dev", host: "app" },
-          },
-        ],
-      ]);
+      assertBridgeConfigured({ scheme: "scient-next-dev", host: "app" });
       assert.equal(cleanup.mock.calls.length, 1);
       assert.deepEqual(events, [
-        "setPath:userData:/tmp/t3-state/electron-userdata",
+        `setPath:userData:${clerkStateDir}/electron-userdata`,
         "requestSingleInstanceLock",
         "on:second-instance",
         "on:open-url",
@@ -333,17 +336,10 @@ describe("DesktopClerk", () => {
       createClerkBridgeMock.mockReturnValue(bridge);
 
       yield* Effect.scoped(Layer.build(layerDesktopClerk(isDevelopment)));
-      assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme, host: "app" },
-          },
-        ],
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
       ]);
+      assertBridgeConfigured({ scheme, host: "app" });
       storageMock.mockClear();
       createClerkBridgeMock.mockClear();
     }),

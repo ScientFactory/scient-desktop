@@ -25,20 +25,20 @@ import {
 
 const GiB = 1024 ** 3;
 
+// SCIENT-FORK:START node-runner-tests
 function setup() {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-changed-check-"));
   const git = (...args: string[]) =>
-    NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8" });
+    NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8", env });
   const write = (file: string, text: string) => {
     NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, file)), { recursive: true });
     NodeFS.writeFileSync(NodePath.join(root, file), text);
   };
   git("init", "--quiet");
-  const emptyTree = NodeChildProcess.execFileSync(
-    "git",
-    ["hash-object", "-w", "-t", "tree", "--stdin"],
-    { cwd: root, input: "", encoding: "utf8" },
-  ).trim();
+  // An empty commit on a remote's main is the base, so every fixture file counts as changed.
+  git("commit", "--quiet", "--allow-empty", "--message", "base");
+  git("remote", "add", "origin", NodePath.join(root, "missing"));
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
   write(
     "scripts/check-changed.ts",
     NodeFS.readFileSync(new URL("./check-changed.ts", import.meta.url), "utf8"),
@@ -60,8 +60,8 @@ function setup() {
     ".git/info/exclude",
     "/scripts/\n/node_modules/\n/pnpm-workspace.yaml\n/package.json\n/preload.mjs\n/calls.jsonl\n/.github/scripts/ci-changes.cjs\n",
   );
-  // Only the base lookup and expensive vp gates are replaced. Path output comes
-  // from real Git; Node-runner tests execute in a real child process.
+  // Only the expensive vp gates are replaced. The base lookup and path output
+  // come from real Git; Node-runner tests execute in a real child process.
   write(
     "preload.mjs",
     `
@@ -73,9 +73,6 @@ const spawn = ChildProcess.spawn;
 const exitWith = (stdout, options) =>
   spawn(process.execPath, ["-e", \`process.stdout.write(\${JSON.stringify(stdout)})\`], options);
 ChildProcess.spawn = (command, args, options) => {
-  if (command === "git" && args.includes("merge-base")) {
-    return exitWith(${JSON.stringify(emptyTree + "\n")}, options);
-  }
   if (command !== "vp") return spawn(command, args, options);
   fs.appendFileSync(new URL("./calls.jsonl", import.meta.url), JSON.stringify(args) + "\\n");
   return exitWith("", options);
@@ -94,7 +91,7 @@ syncBuiltinESMExports();
           NodePath.join(root, "preload.mjs"),
           NodePath.join(root, "scripts/check-changed.ts"),
         ],
-        { cwd: root, encoding: "utf8" },
+        { cwd: root, encoding: "utf8", env },
       ),
     calls: () => {
       const file = NodePath.join(root, "calls.jsonl");
@@ -108,6 +105,7 @@ syncBuiltinESMExports();
     [Symbol.dispose]: () => NodeFS.rmSync(root, { recursive: true, force: true }),
   };
 }
+// SCIENT-FORK:END node-runner-tests
 
 describe("check:changed", () => {
   it("bounds the default concurrency by the scarcer of cores and available memory", () => {
@@ -251,6 +249,15 @@ describe("check:changed", () => {
   });
 });
 
+// SCIENT-FORK:START node-runner-tests
+it("runs the CLI against the remote main it found", () => {
+  using fixture = setup();
+  fixture.write("docs/change.md", "changed\n");
+  const result = fixture.run();
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  assert.include(result.stdout, "(origin/main)");
+});
+
 it.each([
   ["docs/café.md", "docs/naïve.md"],
   ["docs/first\npart.md", "docs/second\npart.md"],
@@ -336,6 +343,7 @@ it("invalidates a passing cache when a real Node suite starts failing and never 
     assert.notInclude(result.stdout, "Nothing changed since the last passing run.");
   }
 });
+// SCIENT-FORK:END node-runner-tests
 
 // Hooks export GIT_DIR and GIT_INDEX_FILE, and user config or the default
 // ~/.config/git/ignore can ignore or sign fixture files.

@@ -399,7 +399,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // replacement reruns this factory without project_trust, and the app drops notices outside a turn,
   // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.
   let projectTrustChecked = false;
-  pi.on("before_agent_start", (_event, ctx) => {
+  // SCIENT-FORK:START: the single before_agent_start hook on each path below runs this check.
+  const checkProjectTrust = (ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted" | "ui">) => {
+    // SCIENT-FORK:END
     if (projectTrustChecked) return;
     projectTrustChecked = true;
     if (ctx.isProjectTrusted() || process.argv.some((arg) => arg === "--no-approve" || arg === "-na")) return;
@@ -407,7 +409,17 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       \`Pi did not load project settings, extensions, skills, prompts, MCP servers or system prompt files for \${ctx.cwd} because the folder is not trusted. To load them, run the configured Pi binary there with the same PI_CODING_AGENT_DIR (if set), trust the folder or its parent with /trust, then start a new thread in that same worktree. To trust every project, add --approve to Pi's launch arguments in Scient settings; to keep them off without this notice, add --no-approve.\`,
       "warning",
     );
-  });
+    // SCIENT-FORK:START: Pi isolates a failure per hook, so the shared hook has to do it here:
+    // a failed trust check must not cost the turn its system prompt or tool discovery.
+  };
+  const noticeUntrustedProject = (ctx: Parameters<typeof checkProjectTrust>[0]) => {
+    try {
+      checkProjectTrust(ctx);
+    } catch {
+      // The notice is advisory and the turn goes on without it.
+    }
+  };
+  // SCIENT-FORK:END
 
   // Keep skill chips in the request. Pi expands only one leading /skill:
   // command, so use its own frontmatter loader for every selected chip here.
@@ -525,7 +537,12 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   const runtimeSystemPrompt = (systemPrompt: string) =>
     [systemPrompt, awareness, endpoint && token ? ORCHESTRATION_INSTRUCTIONS : ""].filter(Boolean).join("\\n\\n");
   if (endpoint === undefined || token === undefined) {
-    pi.on("before_agent_start", (event) => ({ systemPrompt: runtimeSystemPrompt(event.systemPrompt) }));
+    // SCIENT-FORK:START: runtime guidance without MCP; this path's single before_agent_start hook.
+    pi.on("before_agent_start", (event, ctx) => {
+      noticeUntrustedProject(ctx);
+      return { systemPrompt: runtimeSystemPrompt(event.systemPrompt) };
+    });
+    // SCIENT-FORK:END
     pi.on("session_start", async (_event, ctx) => {
       ctx.ui.notify(
         "Scient MCP unavailable: the MCP endpoint or access token is missing.",
@@ -774,6 +791,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
   // Keep guidance in the system prompt so leading slash commands still expand.
   pi.on("before_agent_start", (event, ctx) => {
+    // SCIENT-FORK:START: the trust notice shares this path's single before_agent_start hook.
+    noticeUntrustedProject(ctx);
+    // SCIENT-FORK:END
     reconcileDiscovery(ctx);
     const sections = event.systemPromptOptions?.sections;
     if (sections && typeof sections === "object" && event.systemPromptOptions?.forceSystemPrompt === undefined) {

@@ -213,8 +213,9 @@ describe("SessionControl", () => {
     const events: string[] = [];
     control.track(committed.promise);
     const queued = control.system(async () => events.push("queued"));
+    // Deadlines are performance.now() readings; zero has passed whatever the clock says.
     await expect(
-      control.agent("agent", async () => events.push("expired"), performance.now()),
+      control.agent("agent", async () => events.push("expired"), 0),
     ).rejects.toMatchObject({ name: "TimeoutError" });
     committed.resolve();
     await queued;

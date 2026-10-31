@@ -1546,9 +1546,12 @@ describe("DesktopWindow", () => {
           return yield* Effect.die("will-navigate listener was not registered");
         }
         for (const [url, expectedPrevented] of [
-          ["t3code-dev://app/threads?id=1#latest", false],
-          ["t3code-dev://other/", true],
-          ["t3code://app/", true],
+          // SCIENT-FORK:START scient-window — the window's origin uses Scient's development scheme.
+          ["scient-next-dev://app/threads?id=1#latest", false],
+          ["scient-next-dev://other/", true],
+          ["scient://app/", true],
+          ["t3code-dev://app/threads?id=1#latest", true],
+          // SCIENT-FORK:END scient-window
         ] as const) {
           const preventDefault = vi.fn();
           willNavigate({ preventDefault }, url);

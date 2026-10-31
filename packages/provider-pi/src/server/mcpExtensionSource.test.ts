@@ -231,6 +231,67 @@ describe("Pi project trust", () => {
     for (const message of sent)
       assert.include(message, "for /repo because the folder is not trusted");
   });
+
+  // SCIENT-FORK:START — the notice shares the single system-prompt hook on each bridge path.
+  it("keeps guidance beside one notice per session when the MCP bridge is connected", async () => {
+    const sent: string[] = [];
+    const ctx = {
+      cwd: "/repo",
+      isProjectTrusted: () => false,
+      ui: { notify: (message: string) => sent.push(message) },
+    };
+    for (const _session of [1, 2]) {
+      const bridge = await loadMcpBridge({ argv: ["node", "pi"] });
+      const hook = bridge.handlers.get("before_agent_start")!;
+      for (const _turn of [1, 2]) {
+        const result = await hook({ systemPrompt: "base" }, ctx);
+        assert.include(result?.systemPrompt ?? "", "orchestrator_capabilities");
+      }
+    }
+    assert.equal(sent.length, 2);
+    for (const message of sent)
+      assert.include(message, "for /repo because the folder is not trusted");
+  });
+
+  it("stays quiet on the MCP path for --no-approve and a trusted folder", async () => {
+    const sent: string[] = [];
+    const ctx = (trusted: boolean) => ({
+      cwd: "/repo",
+      isProjectTrusted: () => trusted,
+      ui: { notify: (message: string) => sent.push(message) },
+    });
+    const quiet = await loadMcpBridge({ argv: ["node", "pi", "--no-approve"] });
+    await quiet.handlers.get("before_agent_start")!({ systemPrompt: "base" }, ctx(false));
+    const trusted = await loadMcpBridge({ argv: ["node", "pi"] });
+    await trusted.handlers.get("before_agent_start")!({ systemPrompt: "base" }, ctx(true));
+    assert.deepEqual(sent, []);
+  });
+
+  it.each([
+    { name: "connected", connected: true },
+    { name: "missing", connected: false },
+  ])(
+    "keeps the system prompt when the trust check fails and MCP is $name",
+    async ({ connected }) => {
+      const ctx = {
+        cwd: "/repo",
+        isProjectTrusted: () => {
+          throw new Error("This extension ctx is stale after session replacement.");
+        },
+        ui: { notify: assert.fail },
+      };
+      const hook = connected
+        ? (await loadMcpBridge()).handlers.get("before_agent_start")!
+        : ((await loadHooks()).get("before_agent_start") as (
+            event: { systemPrompt: string },
+            context: typeof ctx,
+          ) => { systemPrompt: string });
+      const result = await hook({ systemPrompt: "base" }, ctx);
+      assert.isTrue(result?.systemPrompt.startsWith("base"));
+      if (connected) assert.include(result?.systemPrompt ?? "", "orchestrator_capabilities");
+    },
+  );
+  // SCIENT-FORK:END
 });
 
 describe("Pi MCP tool results", () => {

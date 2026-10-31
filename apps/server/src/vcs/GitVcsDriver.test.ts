@@ -1289,6 +1289,12 @@ it.effect.each(["missing", "invalid"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+// SCIENT-FORK:START — capture stages in a scoped repository and publishes by transfer.
+const SCIENT_STAGING_SETUP = ["rev-parse", "init"];
+const SCIENT_SIZE_CHECK = ["rev-parse", "status"];
+const SCIENT_PUBLICATION = ["pack-objects", "config", "unpack-objects", "rev-list", "fetch"];
+// SCIENT-FORK:END
+
 const captureRecordingGitCommands = Effect.fn("test.captureRecordingGitCommands")(function* (
   cwd: string,
   checkpointRef: CheckpointRef,
@@ -1299,7 +1305,9 @@ const captureRecordingGitCommands = Effect.fn("test.captureRecordingGitCommands"
     Effect.provideService(VcsProcess.VcsProcess, {
       run: (input) => {
         let index = 0;
-        while (input.args[index] === "-C" || input.args[index] === "-c") index += 2;
+        // SCIENT-FORK:START — the staged pack is written through --git-dir.
+        while (["-C", "-c", "--git-dir"].includes(input.args[index] ?? "")) index += 2;
+        // SCIENT-FORK:END
         commands.push(input.args[index]);
         return liveProcess.run(input);
       },
@@ -1331,13 +1339,21 @@ it.effect.each(["committed", "unborn"] as const)(
 
       assert.deepStrictEqual(commands, [
         "rev-parse",
+        // SCIENT-FORK:START
+        ...SCIENT_STAGING_SETUP,
+        // SCIENT-FORK:END
         "config",
         ...(head === "committed" ? ["read-tree", "ls-files"] : []),
         "check-ignore",
+        // SCIENT-FORK:START
+        ...SCIENT_SIZE_CHECK,
+        // SCIENT-FORK:END
         "add",
         "write-tree",
         "commit-tree",
-        "update-ref",
+        // SCIENT-FORK:START
+        ...SCIENT_PUBLICATION,
+        // SCIENT-FORK:END
       ]);
       assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
       const [, ...parents] = (yield* git([
@@ -1388,15 +1404,23 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.deepStrictEqual(commands, [
         "rev-parse",
         "rev-parse",
+        // SCIENT-FORK:START
+        ...SCIENT_STAGING_SETUP,
+        // SCIENT-FORK:END
         "config",
         "rev-parse",
         "read-tree",
         "ls-files",
         "check-ignore",
+        // SCIENT-FORK:START
+        ...SCIENT_SIZE_CHECK,
+        // SCIENT-FORK:END
         "add",
         "write-tree",
         "commit-tree",
-        "update-ref",
+        // SCIENT-FORK:START
+        ...SCIENT_PUBLICATION,
+        // SCIENT-FORK:END
       ]);
       assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
       assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);

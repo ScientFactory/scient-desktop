@@ -22,19 +22,6 @@ import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command, CliError } from "effect/cli";
 
-import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as ServerConfig from "../config.ts";
-import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
-import * as ServerSettings from "../serverSettings.ts";
-import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
-import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import { cli } from "../binCli.ts";
@@ -53,37 +40,7 @@ import { DevServerNotProxiableError, resolveTailscaleLocalTarget } from "./pair.
 import packageJson from "../../package.json" with { type: "json" };
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 
-// The full command tree requires these execution authorities even when a
-// fixture invokes another subcommand. Their state belongs to a scoped test profile.
-const layerCliAuthority = Layer.mergeAll(
-  ThreadCommandExecutor.layer,
-  ProjectCloneTracker.layer.pipe(
-    Layer.provide(
-      SourceControlRepositoryService.layer.pipe(
-        Layer.provide(GitVcsDriver.layer),
-        Layer.provide(
-          SourceControlProviderRegistry.layer.pipe(
-            Layer.provide(BuiltInDrivers.layer),
-            Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
-          ),
-        ),
-      ),
-    ),
-    Layer.provide(GitVcsDriver.layer),
-    Layer.provide(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
-    Layer.provide(VcsProcess.layer),
-    Layer.provide(FetchHttpClient.layer),
-    Layer.provide(SqlitePersistence.layerMemory),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-    Layer.provide(
-      ServerConfig.layerTest("/", { prefix: "scient-cli-authority-test-" }).pipe(
-        Layer.provideMerge(NodeServices.layer),
-      ),
-    ),
-  ),
-);
-
-const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer, layerCliAuthority);
+const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const baseState = {
   version: 1,
