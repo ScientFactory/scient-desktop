@@ -115,6 +115,37 @@ describe.skipIf(!nativeHost)("WorkspaceFileSystem canonical retention", () => {
         }),
     );
 
+    it.effect("keeps working when a record's folder was deleted", () =>
+      Effect.gen(function* () {
+        const { fs, path, root, cwd, retention, api } = yield* fixture();
+        const opened = yield* api.readFile({ cwd, relativePath: "rich.md" });
+        const first = yield* api.writeFile({
+          cwd,
+          relativePath: "rich.md",
+          contents: "after",
+          expectedRevision: opened.revision,
+          mutationId: "before-the-folder-went",
+        });
+        const stale = path.join(retention, "1-2", "stale");
+        yield* fs.makeDirectory(stale, { recursive: true, mode: 0o700 });
+        yield* fs.chmod(path.dirname(stale), 0o700);
+        yield* fs.writeFileString(
+          path.join(stale, "reference.json"),
+          JSON.stringify({ version: 1, recordDirectory: path.join(root, "deleted", "record") }),
+        );
+        const saved = yield* api.writeFile({
+          cwd,
+          relativePath: "rich.md",
+          contents: "later",
+          expectedRevision: first.revision,
+          mutationId: "after-the-folder-went",
+        });
+        expect(saved.revision).toBe(revisionForBytes(Buffer.from("later")));
+        const history = yield* api.listFileVersions({ cwd, relativePath: "rich.md" });
+        expect(history.attention).toBeNull();
+      }),
+    );
+
     it.effect.each(["symlink", "public"] as const)(
       "refuses a %s final storage directory without changing it",
       (leaf) =>
