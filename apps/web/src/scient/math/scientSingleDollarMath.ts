@@ -35,6 +35,9 @@ const CODE_BACKSLASH = 92;
 const CODE_LEFT_BRACE = 123;
 // ו ה ב כ ל מ ש
 const HEBREW_PREFIX_CODES = new Set([0x5d5, 0x5d4, 0x5d1, 0x5db, 0x5dc, 0x5de, 0x5e9]);
+// Text a dollar stays glued to as prose. Dashes count, as they join prices (`$5–$10`);
+// the Hebrew maqaf joins a prefix to its word instead (`ו־$x$`).
+const PROSE_BEFORE_OPENER_PATTERN = /(?!\u05be)[\p{L}\p{M}\p{N}\p{Pd}]/u;
 
 /**
  * Longer candidates are overwhelmingly two unrelated dollars pairing up, not
@@ -254,14 +257,14 @@ function scientSingleDollarMathText(): Construct {
     return start;
 
     function start(code: Code): State | undefined {
-      // The opener must not follow a word character (`file$x$`, `US$5$`) or
-      // an unescaped dollar. Characters beyond ASCII stay conservative: a
-      // dollar glued to non-ASCII text reads as prose, not an opener. Hebrew's
+      // The opener must not follow a word character (`file$x$`, `US$5$`, `מחיר$5$`) or an
+      // unescaped dollar. Other punctuation is not a word (`ו־$x$`, `“$x$”`). Hebrew's
       // one-letter prefixes are the exception: they attach to the next word (`ש$x$`).
       if (
         isAsciiAlphanumericCode(openerPrevious) ||
         (openerPrevious !== null &&
           openerPrevious > 127 &&
+          PROSE_BEFORE_OPENER_PATTERN.test(String.fromCodePoint(openerPrevious)) &&
           !HEBREW_PREFIX_CODES.has(openerPrevious)) ||
         (openerPrevious === CODE_DOLLAR && openerPreviousEventType !== "characterEscape")
       ) {

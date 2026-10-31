@@ -192,6 +192,15 @@ describe("guarded single-dollar tokenizer", () => {
     expect(render("价格是$5，或者$10。")).not.toContain("language-math");
   });
 
+  it("opens after the Hebrew maqaf and quotes, but not after a letter or a price dash", () => {
+    for (const markdown of ["ו־$x$", "ב־$x^2$ ו־$y$", "“$x$”", "«$x$»"]) {
+      expect(render(markdown)).toContain(INLINE_MATH_SHAPE);
+    }
+    for (const markdown of ["מחיר$5$", "日本$x$", "ב־$5 ועד $10", "$5–$10$", "$5—$10$"]) {
+      expect(render(markdown)).not.toContain("language-math");
+    }
+  });
+
   it("never closes before a digit or another dollar", () => {
     expect(render("between $5-$10 total")).not.toContain("language-math");
     expect(render("odd $x$$ tail")).not.toContain("language-math");

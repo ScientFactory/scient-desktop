@@ -200,7 +200,9 @@ Single-dollar recognition admits uppercase symbols with a numeric subscript
 unbraced superscript charges and stars (`$HCO_3^-$`, `$Na^+$`, `$x^*$`), comma
 lists of symbols and numbers that space only after their commas (`$x, y$`,
 `$[0, 1]$`; `$USER, localhost$` stays literal), and an opener
-glued to a Hebrew one-letter prefix (`ש$x$`). These narrow exceptions do not
+glued to a Hebrew one-letter prefix (`ש$x$`), a Hebrew maqaf (`ו־$x$`) or other
+non-ASCII punctuation (`“$x$”`). Letters, digits and dashes stay prose, since dashes
+join prices (`$5–$10$`). These narrow exceptions do not
 remove the surrounding delimiter, length, code, link, price, or shell-shape
 guards. Longer or underscored uppercase identifiers (`$PATH$`, `$USER_ID$`) and
 capitals joined to the next word (`$A$B`) stay literal. The shared

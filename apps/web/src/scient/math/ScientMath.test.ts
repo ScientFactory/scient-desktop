@@ -72,11 +72,11 @@ it.each(["x_{cache_unique}", "\\badcmd_{cache_unique}"])(
 );
 
 it.each([ScientInlineMath, ScientDisplayMath])(
-  "keeps keyboard scrolling in messages without adding a nested preview tab stop",
+  "starts as reading, not a tab stop, and keeps its copy source without a nested preview stop",
   (Component) => {
     const message = renderToStaticMarkup(createElement(Component, { tex: "x^2" }));
-    expect(message).toContain('tabindex="0"');
-    expect(message).toContain('role="group"');
+    expect(message).not.toContain("tabindex");
+    expect(message).not.toContain('role="group"');
     const preview = renderToStaticMarkup(
       createElement(Component, { tex: "x^2", focusable: false }),
     );
