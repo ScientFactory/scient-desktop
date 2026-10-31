@@ -108,7 +108,8 @@ write is hidden from the choices until you reconnect 1Password; no setup step is
 Removing an account leaves its external keychain and 1Password copies in place.
 
 CAPTCHAs, push approvals and passkeys need you. A Google sign-in copied from Chrome can stop
-working while you keep using Chrome, so sign in to Google once inside Scient. Hidden values stay out of agent conversations, but Accounts
+working while you keep using Chrome, so sign in to Google once inside Scient: press Sign in next to "Signed out of Google" on the
+profile, or Gmail in the browser toolbar, which always opens the selected profile. Hidden values stay out of agent conversations, but Accounts
 does not protect them from a malicious process running as you. On Windows and Linux,
 other programs running as you can read system keychain items. A host without a usable
 keychain keeps Scient's encryption key in an owner-only file.

@@ -28,7 +28,10 @@ vi.mock("~/state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/environments")>()),
   usePrimaryEnvironmentId: () => PRIMARY_LOCAL_ENVIRONMENT_ID,
 }));
-vi.mock("~/components/ui/toast", () => ({ toastManager: { add: state.toast } }));
+vi.mock("~/components/ui/toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/components/ui/toast")>()),
+  toastManager: { add: state.toast },
+}));
 vi.mock("./useAccounts", () => ({
   useAccountCommand: () => state.command,
 }));

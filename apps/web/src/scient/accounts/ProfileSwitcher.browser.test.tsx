@@ -74,10 +74,25 @@ const googleRow = (state: "signed-in" | "signed-out") => ({
   lastCheck: { state, at: "2026-10-31T00:00:00.000Z" },
 });
 
-it("opens Gmail in the profile signed in to Google", async () => {
+it("opens Gmail in the selected profile when it holds the Google session", async () => {
   state.accounts = [googleRow("signed-in")];
   const onOpenInProfile = vi.fn();
-  const { container } = await render(
+  await using _screen = await render(
+    <ProfileSwitcher
+      threadRef={threadRef}
+      url="https://www.example.com/"
+      activeProfileId="work"
+      onOpenInProfile={onOpenInProfile}
+    />,
+  );
+  await page.getByRole("button", { name: "Open Gmail" }).click();
+  expect(onOpenInProfile).toHaveBeenCalledWith("work", "https://mail.google.com/mail/");
+});
+
+it("stays on the selected profile when only another holds a Google session", async () => {
+  state.accounts = [googleRow("signed-in")];
+  const onOpenInProfile = vi.fn();
+  await using _screen = await render(
     <ProfileSwitcher
       threadRef={threadRef}
       url="https://www.example.com/"
@@ -85,13 +100,28 @@ it("opens Gmail in the profile signed in to Google", async () => {
       onOpenInProfile={onOpenInProfile}
     />,
   );
-  container.querySelector<HTMLButtonElement>('[aria-label="Open Gmail"]')?.click();
+  await page.getByRole("button", { name: "Open Gmail" }).click();
+  expect(onOpenInProfile).toHaveBeenCalledWith("home", "https://mail.google.com/mail/");
+});
+
+it("keeps the Gmail button when Google signed the profile out", async () => {
+  state.accounts = [googleRow("signed-out")];
+  const onOpenInProfile = vi.fn();
+  await using _screen = await render(
+    <ProfileSwitcher
+      threadRef={threadRef}
+      url="https://www.example.com/"
+      activeProfileId="work"
+      onOpenInProfile={onOpenInProfile}
+    />,
+  );
+  await page.getByRole("button", { name: "Open Gmail" }).click();
   expect(onOpenInProfile).toHaveBeenCalledWith("work", "https://mail.google.com/mail/");
 });
 
-it("hides the Gmail button when no profile holds a working Google session", async () => {
-  state.accounts = [googleRow("signed-out")];
-  const { container } = await render(
+it("hides the Gmail button when no profile has used Google", async () => {
+  state.accounts = [signedInOnWork];
+  await using screen = await render(
     <ProfileSwitcher
       threadRef={threadRef}
       url="https://www.example.com/"
@@ -100,5 +130,5 @@ it("hides the Gmail button when no profile holds a working Google session", asyn
     />,
   );
   await expect.element(page.getByRole("button", { name: "Profile: Home" }).first()).toBeVisible();
-  expect(container.querySelector('[aria-label="Open Gmail"]')).toBeNull();
+  expect(screen.container.querySelector('[aria-label="Open Gmail"]')).toBeNull();
 });

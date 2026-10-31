@@ -1,3 +1,5 @@
+import "../../index.css";
+
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import {
@@ -10,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import { render } from "../../../test/render";
 import { AccountRow } from "./AccountsPage";
+import { ProfileDetail } from "./BrowserProfiles";
 
 const state = vi.hoisted(() => ({ open: vi.fn(), external: vi.fn() }));
 vi.mock("~/browser/openFileInPreview", () => ({ openUrlInPreview: state.open }));
@@ -101,6 +104,39 @@ it("offers sign-in again in the account profile, then removes the status and act
   await page.getByRole("button", { name: "Account menu" }).click();
   await expect
     .element(page.getByRole("menuitem", { name: "Sign in again", exact: true }))
+    .not.toBeInTheDocument();
+});
+
+it("offers Sign in beside a Google sign-out, without leaving the row or clipping", async () => {
+  const onSignIn = vi.fn();
+  await using _screen = await render(
+    <div style={{ width: 220 }}>
+      <ProfileDetail
+        email="a-very-long-address-that-cannot-fit@example.com"
+        signedOut
+        onSignIn={onSignIn}
+      />
+    </div>,
+  );
+  await expect.element(page.getByText("· Signed out of Google", { exact: true })).toBeVisible();
+  const button = page.getByRole("button", { name: "Sign in", exact: true });
+  await expect.element(button).toBeVisible();
+  expect(button.element().getBoundingClientRect().right).toBeLessThanOrEqual(
+    button.element().closest("div")!.getBoundingClientRect().right,
+  );
+  const status = page.getByText("· Signed out of Google", { exact: true }).element();
+  expect(status.scrollWidth).toBeLessThanOrEqual(status.clientWidth);
+  await button.click();
+  expect(onSignIn).toHaveBeenCalledOnce();
+});
+
+it("shows only the address while Google accepts the profile", async () => {
+  await using _screen = await render(
+    <ProfileDetail email="a@example.com" signedOut={false} onSignIn={vi.fn()} />,
+  );
+  await expect.element(page.getByText("a@example.com", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Sign in", exact: true }))
     .not.toBeInTheDocument();
 });
 

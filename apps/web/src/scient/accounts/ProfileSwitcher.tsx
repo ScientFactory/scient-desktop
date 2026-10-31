@@ -15,11 +15,9 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { useQuietThreadShell } from "~/state/entities";
 
 import { accountsState } from "./accountsState";
-import { mergeProfiles } from "./accountsView";
+import { GMAIL_URL, mergeProfiles, usesGoogle } from "./accountsView";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand, useAccounts } from "./useAccounts";
-
-const GMAIL_URL = "https://mail.google.com/mail/";
 
 /**
  * The tab's browser profile. Choosing another opens the same page in a new tab in it and is
@@ -51,8 +49,6 @@ export function ProfileSwitcher({
   const profileIds = profiles.map((profile) => profile.id);
   const signIns = profileSignIns(data?.accounts ?? []);
   const holders = profilesSignedIn(url, profileIds, signIns);
-  const gmailHolders = profilesSignedIn(GMAIL_URL, profileIds, signIns);
-  const gmailProfile = gmailHolders.includes(activeProfileId) ? activeProfileId : gmailHolders[0];
   // This page is signed out here but signed in on another profile: one click, not a login page.
   const signedInElsewhere = holders.includes(activeProfileId)
     ? undefined
@@ -115,12 +111,12 @@ export function ProfileSwitcher({
           ) : null}
         </MenuPopup>
       </Menu>
-      {gmailProfile ? (
+      {usesGoogle(data?.accounts ?? []) ? (
         <Button
           size="icon-xs"
           variant="ghost"
           aria-label="Open Gmail"
-          onClick={() => onOpenInProfile(gmailProfile, GMAIL_URL)}
+          onClick={() => onOpenInProfile(activeProfileId, GMAIL_URL)}
         >
           <MailIcon />
         </Button>

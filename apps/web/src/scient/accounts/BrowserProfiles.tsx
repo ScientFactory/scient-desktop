@@ -57,9 +57,11 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
 import { ProfilePicture } from "./ProfilePicture";
+import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
+  GMAIL_URL,
   browserIconUrl,
   importProfileName,
   mergeProfiles,
@@ -597,6 +599,30 @@ export function BrowserImportDialog({
   );
 }
 
+/** The line under a profile's name: its address and, when Google refused it, a way back in. */
+export function ProfileDetail({
+  email,
+  signedOut,
+  onSignIn,
+}: {
+  email: string | undefined;
+  signedOut: boolean;
+  onSignIn?: () => void;
+}) {
+  if (!email && !signedOut) return null;
+  return (
+    <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+      {email ? <span className="truncate">{email}</span> : null}
+      {signedOut ? <span className="shrink-0">{email ? "· " : ""}Signed out of Google</span> : null}
+      {signedOut && onSignIn ? (
+        <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={onSignIn}>
+          <span className="text-xs text-foreground">Sign in</span>
+        </Button>
+      ) : null}
+    </span>
+  );
+}
+
 export function BrowserProfiles({
   environmentId,
   snapshot,
@@ -616,6 +642,7 @@ export function BrowserProfiles({
     reportFailure: false,
     reportDefect: false,
   });
+  const openBrowser = useAccountBrowser(environmentId);
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
@@ -926,19 +953,13 @@ export function BrowserProfiles({
                       </span>
                     ) : null}
                   </span>
-                  {profile.record.source?.email ||
-                  signedOutOfGoogle(snapshot.accounts, profile.id) ? (
-                    <span className="truncate text-xs text-muted-foreground">
-                      {[
-                        profile.record.source?.email,
-                        signedOutOfGoogle(snapshot.accounts, profile.id)
-                          ? "Signed out of Google"
-                          : undefined,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                  ) : null}
+                  <ProfileDetail
+                    email={profile.record.source?.email}
+                    signedOut={signedOutOfGoogle(snapshot.accounts, profile.id)}
+                    {...(previewBridge
+                      ? { onSignIn: () => void openBrowser(GMAIL_URL, profile.id) }
+                      : {})}
+                  />
                 </span>
               )}
             </div>

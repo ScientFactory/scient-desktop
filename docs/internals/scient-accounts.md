@@ -599,8 +599,11 @@ provider environment. The existing proxy redacts reflected values in responses.
   (`profileChoices`: projects, and threads with per-host switches, 500 threads and 50 hosts kept),
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. On a
   page signed out in the tab's profile but signed in on another, `ProfileSwitcher` offers that
-  profile in one click. It also shows a Gmail button once a profile holds a working Google session, which
-  opens the inbox in that profile.
+  profile in one click. It also shows a Gmail button once any profile has used Google. The button
+  always opens the selected profile: signed out, Google shows its own sign-in and returns to the
+  inbox, so Scient adds no flow of its own. `/mail/u/<address>/` gives "Temporary Error", so it is
+  not used. `BrowserProfiles` puts a Sign in link beside "Signed out of Google" that opens the same
+  page, and the Google check that follows clears the label.
 - **Library access**: a library account's link pattern (`proxyUrl` with `{url}`, e.g. HUJI's
   OpenAthens redirector) is how `scient_paper_get` reaches paywalled PDFs. Pasting any library
   link derives the pattern. The tool opens the article through it in the library account's
