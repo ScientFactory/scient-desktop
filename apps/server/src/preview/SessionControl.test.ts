@@ -206,6 +206,22 @@ describe("SessionControl", () => {
     expect(events).toEqual(["navigation committed", "next action"]);
   });
 
+  // SCIENT-FORK:START — an expired request must not wait behind a navigation to say so.
+  it("rejects an expired action without waiting behind tracked navigation", async () => {
+    const control = new SessionControl("agent");
+    const committed = Promise.withResolvers<void>();
+    const events: string[] = [];
+    control.track(committed.promise);
+    const queued = control.system(async () => events.push("queued"));
+    await expect(
+      control.agent("agent", async () => events.push("expired"), performance.now()),
+    ).rejects.toMatchObject({ name: "TimeoutError" });
+    committed.resolve();
+    await queued;
+    expect(events).toEqual(["queued"]);
+  });
+  // SCIENT-FORK:END
+
   it("handles tracked navigation failures without poisoning the next action", async () => {
     const control = new SessionControl("agent");
     const committed = Promise.withResolvers<void>();

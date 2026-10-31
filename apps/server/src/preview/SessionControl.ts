@@ -82,6 +82,12 @@ export class SessionControl {
   private async action<A>(allowed: () => boolean, run: () => Promise<A>, deadlineMs?: number) {
     this.assertOpen();
     if (!allowed()) throw new BrowserControlInterrupted("You do not control this browser tab.");
+    // SCIENT-FORK:START — queued work can sit behind a navigation, so a request already past its
+    // deadline answers now; waiting would outlast the broker and disconnect the browser host.
+    if (deadlineMs !== undefined && performance.now() >= deadlineMs) {
+      throw new DOMException("This browser request expired before it could start.", "TimeoutError");
+    }
+    // SCIENT-FORK:END
     const epoch = this.epoch;
     return this.enqueue(async () => {
       this.assertOpen();

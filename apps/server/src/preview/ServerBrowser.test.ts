@@ -641,6 +641,10 @@ it.live("an expired open still drains its initial navigation before human input"
       expect(sessions).toHaveLength(1);
       const tabId = PreviewTabId.make(sessions[0]!.tabId);
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      // SCIENT-FORK:START — the viewer's finalizer drains this navigation, so a failing run must
+      // release it first or the frozen clock and context spy leak into every later test.
+      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+      // SCIENT-FORK:END
       yield* Queue.clear(viewer.output);
       const takeover = yield* viewer.input({ type: "takeControl" }).pipe(Effect.forkScoped);
       let control = yield* Queue.take(viewer.output);
@@ -2892,7 +2896,9 @@ it.live("profiles reported by one client survive another client's report", () =>
       expect(yield* openWork()).toMatchObject({
         defaultProfileId: shared.id,
         profiles: [
-          { id: "default", name: "Default" },
+          // SCIENT-FORK:START Scient names the built-in profile Main.
+          { id: "default", name: "Main" },
+          // SCIENT-FORK:END
           { id: "incognito", name: "Incognito", incognito: true },
           { id: work.id, name: work.name },
           { id: shared.id, name: shared.name },
@@ -2905,8 +2911,10 @@ it.live("profiles reported by one client survive another client's report", () =>
       const removed = yield* openWork().pipe(Effect.flip);
       expect(removed).toMatchObject({
         _tag: "PreviewAutomationExecutionError",
+        // SCIENT-FORK:START Scient names the built-in profile Main.
         reason:
-          'No browser profile is named "profile-work". Use one of: Default (id default), Incognito (id incognito), Shared (id profile-shared).',
+          'No browser profile is named "profile-work". Use one of: Main (id default), Incognito (id incognito), Shared (id profile-shared).',
+        // SCIENT-FORK:END
       });
     }),
   ).pipe(Effect.provide(layer)),
