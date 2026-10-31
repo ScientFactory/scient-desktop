@@ -99,6 +99,10 @@ import { observeResize } from "~/lib/observeResize";
 // SCIENT-FORK:START — Scient Accounts: browser profile switcher.
 import { ProfileSwitcher } from "~/scient/accounts/ProfileSwitcher";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient: Google, apps and shortcuts on an empty tab.
+import { BrowserHome } from "~/scient/browser/BrowserHome";
+import { recordSiteVisit } from "~/scient/browser/browserShortcuts";
+// SCIENT-FORK:END
 
 interface Props {
   threadRef: ScopedThreadRef;
@@ -241,7 +245,16 @@ export function PreviewView({
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
-  const navigateToResolvedUrl = async (resolvedUrl: string) => {
+  // SCIENT-FORK:START — Scient: shortcuts count what people open, never in an incognito tab.
+  const incognito =
+    browserDefaults.profiles.find((profile) => profile.id === activeProfileId)?.kind ===
+    "incognito";
+  const countSiteVisit = (visited: string) => {
+    if (!incognito) recordSiteVisit(visited);
+  };
+  // SCIENT-FORK:END
+
+  const navigateToResolvedUrl = async (resolvedUrl: string, profileId?: string) => {
     if (isServerTab && serverSurfaceRef.current) {
       if (serverInputDisabled) return false;
       serverSurfaceRef.current.navigate(resolvedUrl);
@@ -253,7 +266,12 @@ export function PreviewView({
       rememberPreviewUrl(threadRef, resolvedUrl);
       return true;
     }
-    const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
+    const result = await openPreviewSession({
+      openPreview: open,
+      threadRef,
+      url: resolvedUrl,
+      ...(profileId ? { profileId } : {}),
+    });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       if (error instanceof BrowserSettingsReadError) {
@@ -272,6 +290,7 @@ export function PreviewView({
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
       if (await navigateToResolvedUrl(resolved)) {
         recordVisitForThread(threadRef, resolved);
+        countSiteVisit(resolved);
       }
     } catch (error) {
       toastManager.add({
@@ -286,14 +305,15 @@ export function PreviewView({
     }
   };
 
-  const handleOpenServerUrl = async (next: string) => {
+  const handleOpenServerUrl = async (next: string, profileId?: string) => {
     try {
       const resolved =
         isServerTab || !previewBridge
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
-      if (await navigateToResolvedUrl(resolved)) {
+      if (await navigateToResolvedUrl(resolved, profileId)) {
         recordVisitForThread(threadRef, next);
+        countSiteVisit(next);
       }
     } catch (error) {
       toastManager.add({
@@ -928,11 +948,11 @@ export function PreviewView({
             threadRef={threadRef}
             url={url}
             activeProfileId={activeProfileId}
-            onOpenInProfile={(profileId, pageUrl = url) =>
+            onOpenInProfile={(profileId) =>
               void openPreviewSession({
                 openPreview: open,
                 threadRef,
-                ...(pageUrl ? { url: pageUrl } : {}),
+                ...(url ? { url } : {}),
                 viewport,
                 profileId,
               }).then((result) => {
@@ -1060,6 +1080,14 @@ export function PreviewView({
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
+            // SCIENT-FORK:START — Scient: these links open in the profile the toolbar shows.
+            home={
+              <BrowserHome
+                threadRef={threadRef}
+                onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
+              />
+            }
+            // SCIENT-FORK:END
           />
         ) : null}
         {snapshot && desktopOverlay ? (

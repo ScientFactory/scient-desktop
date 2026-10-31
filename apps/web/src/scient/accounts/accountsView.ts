@@ -540,13 +540,6 @@ export function fillableAccounts(
 /** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
 export const GMAIL_URL = "https://mail.google.com/mail/";
 
-/** Scient has seen a Google sign-in on some profile, so a way into Gmail means something. */
-export function usesGoogle(accounts: ReadonlyArray<AccountSummary>) {
-  return accounts.some(
-    ({ details }) => details.kind === "website" && details.sites.includes(GOOGLE_SITE),
-  );
-}
-
 /** Google knows this profile's accounts, and none of them works here any more. */
 export function signedOutOfGoogle(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
   const rows = accounts.filter(
