@@ -228,9 +228,9 @@ function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onCl
 function HomeSearch({ onSearch }: { onSearch: (query: string) => void }) {
   const [query, setQuery] = useState("");
   return (
-    <div className="flex w-full flex-col items-center gap-4">
-      <p className="flex items-center gap-2 text-2xl tracking-tight">
-        <ScientSymbol className="size-7" />
+    <div className="flex w-full flex-col items-center gap-6 pt-6">
+      <p className="flex items-center gap-1.5 text-xl tracking-tight">
+        <ScientSymbol className="size-6" />
         <span>
           <span className="font-semibold">Scient</span>{" "}
           <span className="text-muted-foreground">Browser</span>
