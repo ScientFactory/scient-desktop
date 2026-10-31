@@ -11,6 +11,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
     {
       readonly clearCache: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
+      readonly cookies: { readonly on: ReturnType<typeof vi.fn> };
       readonly getUserAgent: ReturnType<typeof vi.fn<() => string>>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
@@ -57,6 +58,7 @@ describe("BrowserSession", () => {
       const browserSession = {
         clearCache: vi.fn(() => Promise.resolve()),
         clearStorageData: vi.fn(() => Promise.resolve()),
+        cookies: { on: vi.fn() },
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
@@ -133,6 +135,7 @@ describe("BrowserSession", () => {
         const browserSession = {
           clearCache: vi.fn(() => Promise.resolve()),
           clearStorageData: vi.fn(() => Promise.resolve()),
+          cookies: { on: vi.fn() },
           getUserAgent: vi.fn(() => userAgent),
           setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(),

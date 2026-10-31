@@ -1,11 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
-import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import { AccountsError, AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import type { AtomCommand } from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
+
+const isAccountsError = Schema.is(AccountsError);
 
 export function useAccounts(environmentId: EnvironmentId | null) {
   const query = useEnvironmentQuery(
@@ -41,7 +45,12 @@ export function useAccountCommand<A, E, I>(
       }
       return { ok: true, value };
     }
-    toastManager.add({ type: "error", title: "Account action failed" });
+    // Account errors are written for the user; anything else stays generic.
+    const error = Cause.squash(result.cause);
+    toastManager.add({
+      type: "error",
+      title: isAccountsError(error) ? error.message : "Account action failed",
+    });
     return { ok: false };
   };
 }

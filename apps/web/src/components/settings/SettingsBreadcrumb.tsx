@@ -8,7 +8,7 @@ import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
 const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
   ...SETTINGS_SECTION_LABELS,
   // SCIENT-FORK:START — Scient Accounts: label account settings.
-  "/settings/accounts": "Accounts",
+  "/settings/accounts": "Accounts & secrets",
   // SCIENT-FORK:END
   "/settings/diagnostics": "Diagnostics",
   "/settings/skills/external": "External skills",

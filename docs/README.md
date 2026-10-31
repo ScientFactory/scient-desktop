@@ -59,6 +59,7 @@ require a cosmetic folder migration.
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Default browser](./user/default-browser.md)
+- [New browser tab](./user/browser-new-tab.md)
 - [Devices](./user/devices.md)
 - [Usage and limits](./user/usage.md)
 - [Product usage data](./user/telemetry.md)

@@ -1,11 +1,27 @@
 import type { SignInDetection } from "./detection.ts";
 import { matchesAccountOrigin } from "./origin.ts";
 
+/** Google alone can take seven: account list, address, passkey, options, password, code, trust. */
+export const MAX_SIGN_IN_STEPS = 10;
+export const SIGN_IN_TOO_LONG = `Sign-in did not finish after ${MAX_SIGN_IN_STEPS} steps.`;
+
 export function decideSignIn(
   page: SignInDetection,
   sites: ReadonlyArray<string>,
-  available: { username: boolean; password: boolean; otp: boolean },
+  available: {
+    username: boolean;
+    password: boolean;
+    otp: boolean;
+    accountName?: string;
+    passwordSent?: boolean;
+  },
 ) {
+  if (page.broken && !page.signedIn)
+    return {
+      type: "needs-user",
+      kind: undefined,
+      message: "The site's sign-in page didn't load. Try again later.",
+    } as const;
   if (!matchesAccountOrigin(page.origin, sites))
     return {
       type: "needs-user",
@@ -13,6 +29,15 @@ export function decideSignIn(
       message: "Continue sign-in on an allowed site.",
     } as const;
   if (page.signedIn) return { type: "signed-in" } as const;
+  if (page.limited)
+    return {
+      type: "needs-user",
+      kind: undefined,
+      message: "The site is limiting access from this network. Try again later.",
+    } as const;
+  // Passkeys can't be used in this browser yet, and many accounts offer one first.
+  if (page.challenge === "passkey" && page.signInLink && available.password)
+    return { type: "fill", fields: [], submit: page.signInLink } as const;
   if (page.challenge)
     return {
       type: "needs-user",
@@ -29,6 +54,20 @@ export function decideSignIn(
     ...(page.password ? [{ field: "password" as const, selector: page.password }] : []),
     ...(page.otp ? [{ field: "otp" as const, selector: page.otp }] : []),
   ];
+  const listed = page.accountChoices?.find(
+    ({ email }) => email.toLowerCase() === available.accountName?.toLowerCase(),
+  );
+  if (fields.length === 0 && listed)
+    return { type: "fill", fields, submit: listed.selector } as const;
+  // "Stay signed in?" has no fields; its Yes button is the whole step.
+  if (fields.length === 0 && page.stay) return { type: "fill", fields, submit: page.stay } as const;
+  // A site's home page often has only a link to its sign-in page.
+  if (fields.length === 0 && page.signInLink)
+    return { type: "fill", fields, submit: page.signInLink } as const;
+  // "Try another way" leads to the password. After it, the same link belongs to the user's two-step
+  // check, and pressing it would use up their attempts.
+  if (fields.length === 0 && page.anotherWay && available.password && !available.passwordSent)
+    return { type: "fill", fields, submit: page.anotherWay } as const;
   if (fields.length === 0)
     return {
       type: "needs-user",
@@ -42,6 +81,22 @@ export function decideSignIn(
       message: "Enter the missing sign-in information in the browser.",
     } as const;
   return { type: "fill", fields, submit: page.submit } as const;
+}
+
+/** Nothing here to fill or press, so another address may still reach the sign-in. */
+export function pageOffersNoSignIn(page: SignInDetection, sites: ReadonlyArray<string>) {
+  if (page.broken) return !page.signedIn;
+  if (page.signedIn || page.limited || page.challenge) return false;
+  if (!matchesAccountOrigin(page.origin, sites)) return false;
+  return !(
+    page.username ||
+    page.password ||
+    page.otp ||
+    page.stay ||
+    page.signInLink ||
+    page.anotherWay ||
+    page.accountChoices?.length
+  );
 }
 
 export interface SignInSubmission {
@@ -63,8 +118,11 @@ export function decideSignInContinuation(
     return {
       type: "password-rejected",
       message:
-        "The site did not accept the saved password. Ask the user to check it in Settings → Accounts.",
+        "The site did not accept the saved password. Ask the user to check it in Settings → Accounts & secrets.",
     } as const;
+  // Going round in circles looks like an attack to a site, and has got a browser restricted.
+  if (page.username && sameOrigin.filter((entry) => entry.fields.includes("username")).length >= 2)
+    return { type: "failed", message: "The site kept returning to its first step." } as const;
   const codes = sameOrigin.filter((entry) => entry.fields.includes("otp"));
   if (
     page.otp &&
@@ -75,10 +133,8 @@ export function decideSignInContinuation(
   )
     return {
       type: "code-rejected",
-      message:
-        "The site did not accept the sign-in code. Ask the user to check it in Settings → Accounts.",
+      message: "The site did not accept the sign-in code.",
     } as const;
-  if (step >= 6)
-    return { type: "failed", message: "Sign-in did not finish after six steps." } as const;
+  if (step >= MAX_SIGN_IN_STEPS) return { type: "failed", message: SIGN_IN_TOO_LONG } as const;
   return { type: "continue" } as const;
 }

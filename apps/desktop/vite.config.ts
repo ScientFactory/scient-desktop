@@ -133,7 +133,9 @@ export default defineConfig({
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/preview-pick-preload.ts"],
       deps: {
-        alwaysBundle: (id) => id === "react-grab" || id.startsWith("react-grab/"),
+        // SCIENT-FORK:START — A sandboxed preload can only require electron, so nothing else may stay external.
+        alwaysBundle: (id) => id !== "electron" && !id.startsWith("electron/"),
+        // SCIENT-FORK:END
       },
     },
     {

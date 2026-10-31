@@ -40,7 +40,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
         accountId: AccountId.make("acc_synthetic01"),
         name: "Synthetic",
         details: { kind: "website", sites: ["example.com"] },
-        secrets: {},
+        secrets: { password: { source: { type: "scient" } } },
         controls: defaultAccountControls("website"),
         status: "ready",
         createdAt: "2026-10-26T00:00:00.000Z",

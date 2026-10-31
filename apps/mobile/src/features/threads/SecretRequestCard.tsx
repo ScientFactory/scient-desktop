@@ -20,6 +20,9 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/Button";
+// SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
+import { isSignInCodeRequest } from "@t3tools/shared/scientAccountSecretRequest";
+// SCIENT-FORK:END
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
@@ -112,12 +115,22 @@ function PendingSecretRequestForm(props: {
         value={secret}
         onChangeText={setSecret}
         editable={!submitting}
-        secureTextEntry
+        // SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
+        {...(isSignInCodeRequest(item.id)
+          ? ({
+              autoComplete: "one-time-code",
+              textContentType: "oneTimeCode",
+              importantForAutofill: "yes",
+            } as const)
+          : ({
+              secureTextEntry: true,
+              autoComplete: "off",
+              textContentType: "none",
+              importantForAutofill: "no",
+            } as const))}
+        // SCIENT-FORK:END
         autoCorrect={false}
         autoCapitalize="none"
-        autoComplete="off"
-        textContentType="none"
-        importantForAutofill="no"
         spellCheck={false}
         returnKeyType="done"
         onSubmitEditing={() => void send({ type: "save", secret })}
@@ -132,7 +145,9 @@ function PendingSecretRequestForm(props: {
         </Text>
       ) : null}
       <Button
-        label="Save securely"
+        // SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
+        label={isSignInCodeRequest(item.id) ? "Send code" : "Save securely"}
+        // SCIENT-FORK:END
         tone="primary"
         fullWidth
         disabled={submitting || secret.trim().length === 0}

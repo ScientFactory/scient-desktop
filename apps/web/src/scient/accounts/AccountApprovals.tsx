@@ -8,13 +8,13 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveBrowserProfiles } from "@t3tools/contracts";
+import { accountHandoffInstruction } from "@t3tools/shared/scientSignInPage";
 import { Button } from "~/components/ui/button";
 import { useClientSettings } from "~/hooks/useSettings";
 import { accountsState } from "./accountsState";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 
 import { HandoffBrowser } from "./HandoffBrowser";
-import { handoffInstruction } from "./handoffInstruction";
 
 const revealed = new Set<string>();
 
@@ -64,7 +64,7 @@ export function AccountHandoffs({
             <span className="min-w-0 flex-1 truncate text-muted-foreground">
               <span className="font-medium text-foreground">{handoff.accountName}</span>
               {" · "}
-              {handoffInstruction(handoff)}
+              {accountHandoffInstruction(handoff.kind)}
             </span>
             {handoff.kind === "push" && handoff.number ? (
               <span className="shrink-0 rounded bg-muted px-1.5 text-sm font-semibold tabular-nums text-foreground">
