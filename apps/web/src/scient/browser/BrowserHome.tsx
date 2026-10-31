@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { GripIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
+import { GripIcon, MoreVerticalIcon, PlusIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
 import { useFaviconForThreadUrl } from "~/browserFaviconStore";
@@ -32,10 +32,15 @@ import {
 } from "./browserShortcuts";
 
 const TILE_CLASS =
-  "flex w-full flex-col items-center gap-1.5 rounded-lg p-1.5 hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
+  "flex w-full flex-col items-center gap-1.5 rounded-lg p-1.5 hover:bg-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 const CIRCLE_CLASS =
   "flex size-11 items-center justify-center overflow-hidden rounded-full border border-border/60";
 const TILE_LABEL_CLASS = "w-full truncate text-center text-xs text-muted-foreground";
+/** The menu button sits on the tile, so the tile stays lit under it and while its menu is open. */
+const SHORTCUT_TILE_CLASS = `${TILE_CLASS} group-hover/row:bg-accent group-has-data-popup-open/row:bg-accent`;
+/** Darker than the tile in both themes, whatever the tile beneath it shows. */
+const SHORTCUT_MENU_CLASS =
+  "absolute end-1 top-1 flex size-5 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-foreground/10 data-popup-open:text-foreground data-popup-open:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100";
 const MAX_NAME_LENGTH = 60;
 
 function SiteIcon({
@@ -112,7 +117,7 @@ function ShortcutCircle({
 }) {
   return (
     <div className="group/row relative w-20">
-      <button type="button" className={TILE_CLASS} onClick={onOpen}>
+      <button type="button" className={SHORTCUT_TILE_CLASS} onClick={onOpen}>
         <span className={`${CIRCLE_CLASS} bg-white`}>
           <SiteIcon threadRef={threadRef} site={shortcut} className="size-6 object-contain" />
         </span>
@@ -121,15 +126,14 @@ function ShortcutCircle({
       <Menu>
         <MenuTrigger
           render={
-            <Button
-              size="icon-tiny"
-              variant="ghost-muted-row"
-              className="absolute end-1 top-1"
+            <button
+              type="button"
+              className={SHORTCUT_MENU_CLASS}
               aria-label={`${shortcut.name} options`}
             />
           }
         >
-          <MoreHorizontalIcon />
+          <MoreVerticalIcon className="size-3.5" />
         </MenuTrigger>
         <MenuPopup align="start">
           <MenuItem onClick={onEdit}>Edit</MenuItem>

@@ -12,6 +12,15 @@ const threadRef = {
   threadId: ThreadId.make("thread-fixture"),
 };
 
+function cssColor(color: string) {
+  const probe = document.createElement("div");
+  probe.style.backgroundColor = color;
+  document.body.append(probe);
+  const resolved = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  return resolved;
+}
+
 function renderHome(onOpenUrl: (url: string) => void = vi.fn()) {
   useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
   return render(<BrowserHome threadRef={threadRef} onOpenUrl={onOpenUrl} />);
@@ -48,6 +57,29 @@ async function chooseFromMenu(shortcut: string, action: string) {
   await page.getByRole("button", { name: `${shortcut} options` }).click();
   await page.getByRole("menuitem", { name: action }).click();
 }
+
+it("keeps a shortcut lit under its stronger menu button, and while the menu is open", async () => {
+  await using _screen = await renderHome();
+  const tile = page.getByRole("button", { name: "Calendar", exact: true });
+  const options = page.getByRole("button", { name: "Calendar options" });
+  const background = (element: Element) => getComputedStyle(element).backgroundColor;
+  const lit = cssColor("var(--accent)");
+
+  await tile.hover();
+  expect(background(tile.element())).toBe(lit);
+
+  await options.hover();
+  expect(background(tile.element())).toBe(lit);
+  const strong = background(options.element());
+  expect(strong).not.toBe(lit);
+  expect(strong).not.toBe("rgba(0, 0, 0, 0)");
+
+  await options.click();
+  await page.getByRole("button", { name: "Google", exact: true }).hover({ force: true });
+  expect(background(tile.element())).toBe(lit);
+  expect(background(options.element())).toBe(strong);
+  await userEvent.keyboard("{Escape}");
+});
 
 it("removes a shortcut from its menu", async () => {
   await using _screen = await renderHome();
