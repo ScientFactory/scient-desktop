@@ -27,7 +27,7 @@ export class AnalyticsService extends Context.Service<
     /** Attempt delivery of the currently due local outbox batch. */
     readonly flush: Effect.Effect<void>;
 
-    /** Compatibility only: Scient never records provider or installation owner identities. */
+    /** Report who an install belongs to, as hashed ids, once per owner per process. */
     readonly recordOwners: (
       owners: ReadonlyArray<TelemetryOwner>,
       observedBy: "server" | "client",

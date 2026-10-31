@@ -216,6 +216,11 @@
       "purpose": "Retain external Oh My Pi attribution in the shared generated revision-8 analytics fixture while adding the fixed Synced folders settings category."
     },
     {
+      "path": "packages/scient-analytics/fixtures/contract-v9.json",
+      "anchor": "\"provider\": \"omp\"",
+      "purpose": "Retain external Oh My Pi attribution in the shared generated revision-9 analytics fixture while adding T3's usage events."
+    },
+    {
       "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
       "anchor": "inputs.provider == 'omp'",
       "purpose": "Qualify Oh My Pi catalog candidates on every supported target with the server's RPC check."

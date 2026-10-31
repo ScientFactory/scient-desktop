@@ -95,7 +95,6 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { AnalyticsPrivacySettings } from "../../scient/analytics/AnalyticsPrivacySettings";
 // SCIENT-FORK: fork context size preference.
 import { ForkContextSettings } from "../../scient/fork/ForkContextSettings";
 import { ScientGettingStartedSettingsRow } from "../../scient/onboarding/ScientGettingStartedSettingsRow";
@@ -1685,9 +1684,7 @@ export function AboutSettingsPanel() {
         )}
       </SettingsSection>
 
-      <AnalyticsPrivacySettings />
-
-      {/* SCIENT-FORK: the external privacy-policy row is withheld; analytics controls stay above. */}
+      {/* SCIENT-FORK: the external privacy-policy row is withheld. */}
       <SettingsSection id="legal" title="Legal">
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
