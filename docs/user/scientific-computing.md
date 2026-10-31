@@ -32,8 +32,7 @@ Existing managed installations receive these additions through **Update**; openi
 does not install them silently. Existing sessions retain their original environment until closed.
 Selecting a system or project Python does not add these packages to that installation.
 
-Setting up managed Python from a file that has no usable runtime enables Python and selects the new
-environment. So does setting it up from Settings on **Automatic**. If you chose another Python, that
+Setting up managed Python from a file that has no usable runtime selects the new environment. So does setting it up from Settings on **Automatic**. If you chose another Python, that
 choice stays, and the managed environment becomes another runtime you can select.
 
 The managed environment is optional. To use Python you already maintain instead:
@@ -465,7 +464,7 @@ work. Closing the owning file/Compute tab stops its session and any fresh or bat
 if shutdown cannot be confirmed, the tab stays available with an error.
 
 MATLAB also offers **Run MATLAB batch** for the exact saved `.m` file. This uses MATLAB's
-native `-batch` process, not the Engine connection helper. It needs enabled, installed,
+native `-batch` process, not the Engine connection helper. It needs an installed,
 licensed MATLAB but does not require **Connect MATLAB** or an Engine connection test.
 Results appear in the same pane, with the existing batch history and **Save to project**
 action. Batch runs remain queued per MATLAB runtime; interactive and fresh sessions can
