@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 const client = vi.hoisted(() => ({
+  readOverleafRemoteState: vi.fn(),
   readOverleafToken: vi.fn(),
   saveOverleafToken: vi.fn(),
   removeOverleafToken: vi.fn(),
@@ -150,6 +151,33 @@ const chip = (relativePath = "paper/main.tex") => (
 );
 
 describe("OverleafFileChip", () => {
+  it("says when Overleaf has changes, once Overleaf was asked", async () => {
+    reset({ status: status({ local: { _tag: "read", changed: 0, deleted: 0, added: 0 } }) });
+    client.readOverleafRemoteState.mockResolvedValue({ state: "changed" });
+    await using screen = await render(chip());
+    await expect
+      .poll(() => screen.container.querySelector("[data-overleaf-chip]")?.textContent)
+      .toBe("Changes in Overleaf");
+  });
+
+  it("unlinks from the chip's menu, and tells what happened to the files", async () => {
+    reset();
+    client.disconnectOverleaf.mockResolvedValue({ _tag: "done", connection: connection(true) });
+    await using _screen = await render(chip());
+    await page.getByRole("button", { name: /^Overleaf:/u }).click();
+    await page.getByRole("menuitem", { name: "Unlink from Overleaf" }).click();
+    await expect
+      .poll(() => client.disconnectOverleaf.mock.calls[0]?.[1])
+      .toMatchObject({
+        workspaceRoot: "/work/project",
+        connectionId: connection(true).connectionId,
+      });
+    await expect.poll(() => toasts.add.mock.calls.length).toBe(1);
+    expect(toasts.add.mock.calls[0]).toEqual([
+      expect.objectContaining({ title: "Unlinked from Overleaf" }),
+    ]);
+  });
+
   it("is absent for a file outside every linked folder", async () => {
     reset();
     await using screen = await render(chip("analysis/run.py"));

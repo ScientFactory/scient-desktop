@@ -96,13 +96,6 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
       switch (field("reason")) {
         case "token-missing":
           return Effect.succeed(toolError("token-missing", `${error.message} ${SAVE_TOKEN}`));
-        case "relink-needed":
-          return Effect.succeed(
-            toolError(
-              "relink-needed",
-              `${error.message} Use scient_overleaf_manage with action relink and the folder's path.`,
-            ),
-          );
         case "project-invalid":
           return Effect.succeed(
             toolError(

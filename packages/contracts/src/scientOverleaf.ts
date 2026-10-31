@@ -245,6 +245,15 @@ export const ScientOverleafManageResult = Schema.Union([
 ]);
 export type ScientOverleafManageResult = typeof ScientOverleafManageResult.Type;
 
+/**
+ * Whether Overleaf holds changes this folder has not taken in, asked of Overleaf itself.
+ * `unknown`: the link has never synced, no token is saved, or Overleaf did not answer.
+ */
+export const ScientOverleafRemoteState = Schema.Struct({
+  state: Schema.Literals(["changed", "same", "unknown"]),
+});
+export type ScientOverleafRemoteState = typeof ScientOverleafRemoteState.Type;
+
 export const ScientOverleafStatus = Schema.Struct({
   connection: ScientOverleafConnectionSummary,
   availability: Schema.Literals([

@@ -2,7 +2,7 @@
 /** Connect/disconnect/relink a folder and read status offline. Connect writes no
  * manuscript file and sends nothing; the first sync does both. Disconnect archives
  * with history and kept copies; reconnecting the same folder/project reactivates it.
- * Relink records a moved folder or renewed binding and keeps the base. */
+ * Relink records a moved folder and keeps the base. */
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import { overleafDirectoryIdentity } from "./overleafHostPaths.ts";
 import * as NodeCrypto from "node:crypto";
@@ -304,6 +304,47 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
         : ("outside" as const);
     });
 
+  /**
+   * Whether a link still has its folder. Only a folder proved absent or replaced is gone:
+   * one that can't be read now (permissions, a disk waking) stands, so no link is put away
+   * on a guess.
+   */
+  const stands = Effect.fn("OverleafConnections.stands")(function* (
+    document: OverleafConnectionDocument,
+  ) {
+    const folder = folderOf(document);
+    const found = yield* identityOf(folder);
+    if (found !== null) return platformFileIdentity.equal(found, document.folder.identity);
+    return yield* Effect.promise(() =>
+      NodeFSP.lstat(folder).then(
+        (stat) => stat.isDirectory(),
+        (cause: NodeJS.ErrnoException) => cause.code !== "ENOENT" && cause.code !== "ENOTDIR",
+      ),
+    );
+  });
+
+  const archived = (document: OverleafConnectionDocument, updatedAt: string) =>
+    ({
+      ...document,
+      revision: document.revision + 1,
+      state: "archived",
+      updatedAt,
+    }) satisfies OverleafConnectionDocument;
+
+  /** A link whose folder is gone owns nothing: it stops blocking, its history kept as an archive. */
+  const archiveGone = Effect.fn("OverleafConnections.archiveGone")(function* (
+    gone: ReadonlyArray<OverleafConnectionDocument>,
+  ) {
+    const now = DateTime.formatIso(yield* DateTime.now);
+    for (const document of gone)
+      yield* reserveOverleafConnection(options.reservations, document.connectionId, () =>
+        store.replaceConnection({
+          expectedRevision: document.revision,
+          next: archived(document, now),
+        }),
+      );
+  });
+
   const list = Effect.fn("OverleafConnections.list")(function* (filter?: {
     readonly checkoutRoot?: string;
   }) {
@@ -445,30 +486,36 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
           const all = yield* readAll;
           if (all.unreadable) return yield* refuse("records-unreadable");
           const others = all.found;
-          let archive: OverleafConnectionDocument | null = null;
+          let revived: OverleafConnectionDocument | null = null;
+          const gone: OverleafConnectionDocument[] = [];
           for (const other of others) {
             const otherChain = yield* Effect.promise(() => identityChain(folderOf(other)));
             const sameDirectory = platformFileIdentity.equal(other.folder.identity, folderIdentity);
             const sameFolder = sameDirectory || (otherChain !== null && otherChain[0] === chain[0]);
+            const sameProject = other.remote.projectId === input.projectId;
+            const sameCheckout = other.checkout.canonicalRoot === input.checkoutRoot;
+            // Only a link of this very directory comes back: a replacement at the same path
+            // would inherit its base and its first sync would delete Overleaf's files. A moved
+            // folder may not take an interrupted apply with it. Otherwise a new link starts.
+            const revivable =
+              sameDirectory &&
+              sameProject &&
+              (other.folder.relativePath === folderPath ||
+                (other.activeApply === null && other.stagingPaths.length === 0)) &&
+              (yield* input.owns(other.binding.bindingId));
             if (other.state === "archived") {
-              // Reactivate an archive only for its own project and recorded directory:
-              // a replacement at the same path would inherit its base and its first
-              // sync would delete Overleaf's files. Otherwise start a new connection.
-              if (
-                sameDirectory &&
-                other.remote.projectId === input.projectId &&
-                archive === null &&
-                (yield* input.owns(other.binding.bindingId))
-              )
-                archive = other;
+              if (revivable && revived === null) revived = other;
+              continue;
+            }
+            const nested = otherChain !== null && overlaps(chain, otherChain);
+            if (!sameFolder && !nested && !(sameProject && sameCheckout)) continue;
+            if (!(yield* stands(other))) {
+              if (revivable) revived = other;
+              else gone.push(other);
               continue;
             }
             // Asking again for a link that already stands is answered with that link.
-            if (
-              sameFolder &&
-              other.remote.projectId === input.projectId &&
-              other.binding.bindingId === input.authority.bindingId
-            ) {
+            if (sameFolder && sameProject && sameCheckout) {
               yield* finish("completed", `id-${other.connectionId}`);
               return {
                 _tag: "connected",
@@ -476,16 +523,11 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
                 reconnected: false,
               } satisfies OverleafConnectResult;
             }
-            if (sameFolder || (otherChain !== null && overlaps(chain, otherChain)))
-              return yield* refuse("folder-overlaps");
-            if (
-              other.remote.projectId === input.projectId &&
-              other.checkout.canonicalRoot === input.checkoutRoot
-            )
-              return yield* refuse("project-already-linked");
+            if (sameFolder || nested) return yield* refuse("folder-overlaps");
+            return yield* refuse("project-already-linked");
           }
 
-          const id = archive?.connectionId ?? connectionId;
+          const id = revived?.connectionId ?? connectionId;
           const repo = repositoryPath(id);
           const reached = yield* Effect.gen(function* () {
             yield* repos.initialize({ repo, gitUrl: gitUrl(input.projectId) });
@@ -518,9 +560,11 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
           );
           if (reached._tag === "refused") return yield* refuse(reached.reason);
           if (!(yield* input.stillAuthorized)) return yield* refuse("authority-changed");
+          yield* archiveGone(gone);
 
-          if (archive !== null) {
-            // Reconnecting the same folder to the same project: its history survives.
+          if (revived !== null) {
+            // The same folder and the same project, wherever the folder is now: history survives.
+            const link = revived;
             const reactivated = yield* reserveOverleafConnection(options.reservations, id, () =>
               Effect.gen(function* () {
                 const retention = yield* store.prepareRetention({
@@ -528,20 +572,20 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
                   connectionId: id,
                   checkoutRoot: input.checkoutRoot,
                   publicationHelper: options.publicationHelper,
-                  expected: archive.retention.vaultIdentity,
+                  expected: link.retention.vaultIdentity,
                 });
                 const next: OverleafConnectionDocument = {
-                  ...archive,
-                  revision: archive.revision + 1,
+                  ...link,
+                  revision: link.revision + 1,
                   state: "active",
                   binding: input.authority,
                   checkout: { canonicalRoot: input.checkoutRoot, identity: checkoutIdentity },
                   folder: { relativePath: folderPath, identity: folderIdentity },
-                  remote: { ...archive.remote, branch: reached.branch },
-                  retention: { ...archive.retention, vaultIdentity: retention.identity },
+                  remote: { ...link.remote, branch: reached.branch },
+                  retention: { ...link.retention, vaultIdentity: retention.identity },
                   updatedAt: started,
                 };
-                yield* store.replaceConnection({ expectedRevision: archive.revision, next });
+                yield* store.replaceConnection({ expectedRevision: link.revision, next });
                 return next;
               }),
             );
@@ -672,8 +716,8 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     readonly connectionId: string;
     readonly requestId: string;
     readonly callerBindingId: string;
-    /** The caller's and the connection's authority still hold, checked before the change. */
-    readonly stillAuthorized: (document: OverleafConnectionDocument) => Effect.Effect<boolean>;
+    /** The caller's authority still holds, checked before the change. */
+    readonly stillAuthorized: Effect.Effect<boolean>;
   }) {
     yield* store.admitWritable;
     return yield* reserveOverleafConnection(options.reservations, input.connectionId, () =>
@@ -686,17 +730,11 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
         },
         Effect.gen(function* () {
           const document = yield* readActive(input.connectionId);
-          // Contract section 4: local work settles first. Unknown sends may be archived.
-          if (document.activeApply !== null || document.stagingPaths.length > 0)
-            return { _tag: "refused", reason: "local-work-pending" } satisfies OverleafManageResult;
-          if (!(yield* input.stillAuthorized(document)))
+          if (!(yield* input.stillAuthorized))
             return { _tag: "refused", reason: "authority-changed" } satisfies OverleafManageResult;
-          const next: OverleafConnectionDocument = {
-            ...document,
-            revision: document.revision + 1,
-            state: "archived",
-            updatedAt: DateTime.formatIso(yield* DateTime.now),
-          };
+          // Unlinking only changes this record, so nothing can keep a person in a link. An
+          // unfinished apply stays in the archive, and linking the folder again finishes it.
+          const next = archived(document, DateTime.formatIso(yield* DateTime.now));
           yield* store.replaceConnection({ expectedRevision: document.revision, next });
           return { _tag: "done", connection: summarize(next) } satisfies OverleafManageResult;
         }),
@@ -756,25 +794,23 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
                 _tag: "refused",
                 reason: "records-unreadable",
               } satisfies OverleafManageResult;
+            const gone: OverleafConnectionDocument[] = [];
             for (const other of all.found) {
               if (other.connectionId === document.connectionId || other.state !== "active")
                 continue;
               const otherChain = yield* Effect.promise(() => identityChain(folderOf(other)));
-              if (
+              const sameFolder =
                 platformFileIdentity.equal(other.folder.identity, folderIdentity) ||
-                (otherChain !== null && overlaps(chain, otherChain))
-              )
-                return {
-                  _tag: "refused",
-                  reason: "folder-overlaps",
-                } satisfies OverleafManageResult;
-              if (
+                (otherChain !== null && overlaps(chain, otherChain));
+              const sameProject =
                 other.remote.projectId === document.remote.projectId &&
-                other.checkout.canonicalRoot === input.checkoutRoot
-              )
+                other.checkout.canonicalRoot === input.checkoutRoot;
+              if (!sameFolder && !sameProject) continue;
+              if (!(yield* stands(other))) gone.push(other);
+              else
                 return {
                   _tag: "refused",
-                  reason: "project-already-linked",
+                  reason: sameFolder ? "folder-overlaps" : "project-already-linked",
                 } satisfies OverleafManageResult;
             }
             if (!(yield* input.stillAuthorized))
@@ -782,6 +818,7 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
                 _tag: "refused",
                 reason: "authority-changed",
               } satisfies OverleafManageResult;
+            yield* archiveGone(gone);
             // The kept copies' folder is found again by its recorded identity.
             const retention = yield* store.prepareRetention({
               environmentId: options.environmentId,

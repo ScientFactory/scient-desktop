@@ -5,13 +5,19 @@ import type {
   EnvironmentId,
   ScientOverleafConnectionList,
   ScientOverleafConflictChoice,
+  ScientOverleafRemoteState,
   ScientOverleafReview,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
 } from "@t3tools/contracts";
 import { useSyncExternalStore } from "react";
 
-import { listOverleafConnections, readOverleafStatus, readOverleafToken } from "./client";
+import {
+  listOverleafConnections,
+  readOverleafRemoteState,
+  readOverleafStatus,
+  readOverleafToken,
+} from "./client";
 import {
   actionableDecisions,
   connectionForPath,
@@ -44,6 +50,8 @@ export interface OverleafWorkspaceSnapshot {
   readonly connections: ReadonlyArray<OverleafConnection>;
   readonly error: string | null;
   readonly statuses: ReadonlyMap<string, ScientOverleafStatus>;
+  /** What Overleaf itself last said about each link. The status only reads the folder. */
+  readonly remoteStates: ReadonlyMap<string, ScientOverleafRemoteState["state"]>;
   readonly syncing: ReadonlySet<string>;
   /** The latest operation's result, whatever it was: what the result lines describe. */
   readonly lastSync: ReadonlyMap<string, OverleafLastSync>;
@@ -88,6 +96,7 @@ const EMPTY: OverleafWorkspaceSnapshot = {
   connections: [],
   error: null,
   statuses: new Map(),
+  remoteStates: new Map(),
   syncing: new Set(),
   lastSync: new Map(),
   reviews: new Map(),
@@ -121,6 +130,7 @@ const EMPTY_PART: WorkspacePart = {
   statuses: new Map(),
 };
 const EMPTY_LIFECYCLE: Lifecycle = {
+  remoteStates: new Map(),
   syncing: new Set(),
   lastSync: new Map(),
   reviews: new Map(),
@@ -194,6 +204,9 @@ const statusReads = new Map<string, number>();
 /** When each link's status was last read, and links a save has made stale since. */
 const statusReadAt = new Map<string, number>();
 const staleStatuses = new Set<string>();
+/** When Overleaf was last asked about each link; it is asked at most this often. */
+const remoteCheckedAt = new Map<string, number>();
+const REMOTE_CHECK_EVERY_MS = 60_000;
 /** Status reads still waiting for their answer, by link. */
 const statusInflight = new Map<string, number>();
 const listReads = new Map<string, number>();
@@ -238,6 +251,33 @@ export async function refreshOverleafStatus(
     const left = (statusInflight.get(readKey) ?? 1) - 1;
     if (left > 0) statusInflight.set(readKey, left);
     else statusInflight.delete(readKey);
+  }
+}
+
+/** Asks Overleaf whether the link's project moved, at most once a minute per link. */
+async function refreshOverleafRemoteState(
+  environmentId: EnvironmentId,
+  workspaceRoot: string,
+  connectionId: string,
+): Promise<void> {
+  const link = reviewKeyOf(environmentId, connectionId);
+  const asked = Date.now();
+  if (asked - (remoteCheckedAt.get(link) ?? 0) < REMOTE_CHECK_EVERY_MS) return;
+  remoteCheckedAt.set(link, asked);
+  try {
+    const { state } = await readOverleafRemoteState(environmentId, {
+      workspaceRoot,
+      connectionId,
+    });
+    // A sync that ended or is running while this asked knows better.
+    if (remoteCheckedAt.get(link) === asked)
+      updateLifecycle(environmentId, (current) =>
+        current.syncing.has(connectionId)
+          ? current
+          : { ...current, remoteStates: new Map(current.remoteStates).set(connectionId, state) },
+      );
+  } catch {
+    // Nothing is known: the chip says what the folder shows, and the next check asks again.
   }
 }
 
@@ -403,6 +443,8 @@ export function loadOverleafWorkspace(
           refreshOverleafStatus(environmentId, workspaceRoot, connection.connectionId),
         ),
       );
+      for (const connection of listed.connections)
+        void refreshOverleafRemoteState(environmentId, workspaceRoot, connection.connectionId);
     } catch (error) {
       if (listReads.get(key) !== read) return;
       // An environment without Overleaf sync, or a folder that isn't a project, has no links.
@@ -540,6 +582,7 @@ export function recordOverleafSync(
   carried: ReadonlyMap<string, OverleafFileDecision> = NO_FILE_DECISIONS,
 ): void {
   const at = Date.now();
+  if (result._tag === "synced") remoteCheckedAt.set(reviewKeyOf(environmentId, connectionId), at);
   updateLifecycle(environmentId, (current) => {
     const reviews = new Map(current.reviews);
     const syncedAt = new Map(current.syncedAt);
@@ -581,8 +624,13 @@ export function recordOverleafSync(
     previewNotes.delete(connectionId);
     const outdated = new Set(current.outdated);
     outdated.delete(connectionId);
+    const remoteStates =
+      result._tag === "synced"
+        ? new Map(current.remoteStates).set(connectionId, "same" as const)
+        : current.remoteStates;
     const next = {
       ...current,
+      remoteStates,
       reviews,
       syncedAt,
       fileDecisions,
@@ -629,6 +677,7 @@ export function setOverleafFileDecision(
 export function forgetOverleafConnection(environmentId: EnvironmentId, connectionId: string): void {
   const versionKey = reviewKeyOf(environmentId, connectionId);
   reviewVersions.set(versionKey, (reviewVersions.get(versionKey) ?? 0) + 1);
+  remoteCheckedAt.delete(versionKey);
   updateLifecycle(environmentId, (current) => {
     const without = <V>(map: ReadonlyMap<string, V>) => {
       const next = new Map(map);
@@ -637,6 +686,7 @@ export function forgetOverleafConnection(environmentId: EnvironmentId, connectio
     };
     return {
       ...current,
+      remoteStates: without(current.remoteStates),
       reviews: without(current.reviews),
       fileDecisions: without(current.fileDecisions),
       conflictChoices: without(current.conflictChoices),
@@ -741,7 +791,12 @@ export function useOverleafWorkspace(
     const onFocus = () =>
       void loadOverleafWorkspace(environmentId, workspaceRoot, { maxAgeMs: 10_000 });
     window.addEventListener("focus", onFocus);
+    // Overleaf can be open in the app's own browser, where the window never loses focus.
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") onFocus();
+    }, 2 * REMOTE_CHECK_EVERY_MS);
     return () => {
+      clearInterval(timer);
       window.removeEventListener("focus", onFocus);
       unsubscribe();
     };

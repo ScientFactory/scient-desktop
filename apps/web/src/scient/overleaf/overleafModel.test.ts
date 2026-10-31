@@ -153,8 +153,50 @@ describe("paths", () => {
 });
 
 describe("overleafChipView", () => {
+  it("says up to date only once Overleaf was asked, and says when Overleaf changed", () => {
+    expect(overleafChipView(status(), false).label).toBe("No edits to send");
+    expect(overleafChipView(status(), false, null, "unknown")).toMatchObject({
+      label: "No edits to send",
+      detail: "Scient couldn't check Overleaf just now.",
+    });
+    expect(overleafChipView(status(), false, null, "changed")).toMatchObject({
+      state: "incoming",
+      label: "Changes in Overleaf",
+    });
+    expect(
+      overleafChipView(
+        status({ local: { _tag: "read", changed: 1, deleted: 0, added: 0 } }),
+        false,
+        null,
+        "changed",
+      ),
+    ).toMatchObject({ label: "Edits to send", detail: "1 change to send. Overleaf changed too." });
+  });
+
+  it("says a link that never synced hasn't, not that it has nothing to send", () => {
+    const fresh = status();
+    expect(
+      overleafChipView(
+        { ...fresh, connection: { ...fresh.connection, completedSyncCount: 0 } },
+        false,
+      ),
+    ).toMatchObject({ state: "incoming", label: "Not synced yet" });
+  });
+
+  it("names a link whose folder is gone, with the way out", () => {
+    expect(
+      overleafChipView(status({ availability: "unavailable", local: null }), false).detail,
+    ).toBe(
+      "The linked folder was moved, renamed or deleted. Link it again at its new place, or unlink it.",
+    );
+  });
+
   it("shows up to date, edits to send, needs a decision and a problem", () => {
-    expect(overleafChipView(status(), false).label).toBe("Up to date");
+    expect(overleafChipView(status(), false, null, "same")).toMatchObject({
+      state: "up-to-date",
+      label: "Up to date",
+      detail: "Same as Overleaf.",
+    });
     expect(
       overleafChipView(
         status({ local: { _tag: "read", changed: 2, deleted: 0, added: 1 } }),

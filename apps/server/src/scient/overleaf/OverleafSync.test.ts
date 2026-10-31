@@ -9,6 +9,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ScientOverleafReview } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -341,26 +342,11 @@ describe.skipIf(!canApply)("OverleafSync", () => {
             w.service.sync({ caller: w.at(w.elsewhere), connectionId: id, requestId: "s2" }),
           ),
         ).toMatchObject({ reason: "workspace-not-authorized" });
-        // A checkout re-registered under a new binding needs relinking first.
+        // Registration changes; the folder is the same, so the link simply goes on working.
         w.bindings.set(w.main, {
           bindingId: "binding-main-2",
           hostProjectId: "project-1",
           generation: 1,
-        });
-        expect(
-          yield* Effect.flip(
-            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
-          ),
-        ).toMatchObject({ reason: "relink-needed" });
-        expect(
-          yield* w.service.relink({
-            caller: w.at(w.main),
-            connectionId: id,
-            folder: "paper",
-            requestId: "m1",
-          }),
-        ).toMatchObject({
-          _tag: "done",
         });
         const after = yield* w.service.sync({
           caller: w.at(w.main),
@@ -894,6 +880,44 @@ describe.skipIf(!canApply)("OverleafSync", () => {
     ),
   );
 
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "doesn't take a folder it can't read for a gone one",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const sub = NodePath.join(w.main, "sub");
+          yield* Effect.promise(() => NodeFSP.mkdir(sub));
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "sub/paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          // A permission problem, not a deleted folder: the link stays, and still blocks.
+          yield* Effect.acquireRelease(
+            Effect.promise(() => NodeFSP.chmod(sub, 0o000)),
+            () => Effect.promise(() => NodeFSP.chmod(sub, 0o700)),
+          );
+          expect(
+            yield* w.service.connect({
+              caller: w.at(w.main),
+              folder: "second",
+              create: true,
+              project: PROJECT,
+              requestId: "c2",
+            }),
+          ).toMatchObject({ _tag: "refused", reason: "project-already-linked" });
+          const kept = yield* w.store.readConnection(id);
+          if (kept._tag !== "ready") return yield* Effect.die(kept);
+          expect(kept.document.state).toBe("active");
+        }),
+      ),
+  );
+
   it.live("cancels a sync at its next stage boundary", () =>
     run(
       Effect.gen(function* () {
@@ -1064,7 +1088,7 @@ describe.skipIf(!canApply)("OverleafSync", () => {
     ),
   );
 
-  it.live("lists a connection only for the project that owns its recorded binding", () =>
+  it.live("lists a link for the project at its folder, even one added again", () =>
     run(
       Effect.gen(function* () {
         const w = yield* world();
@@ -1079,13 +1103,16 @@ describe.skipIf(!canApply)("OverleafSync", () => {
         expect(yield* w.service.list(w.at(w.main))).toMatchObject([
           { connectionId: connected.connection.connectionId, linkedHere: true },
         ]);
-        // The same path registered again under another project does not inherit the link.
+        // The same folder added again as a project keeps its link, and others still don't see it.
         w.bindings.set(w.main, {
           bindingId: "binding-main-b",
-          hostProjectId: "project-2",
+          hostProjectId: "project-3",
           generation: 1,
         });
-        expect(yield* w.service.list(w.at(w.main))).toEqual([]);
+        expect(yield* w.service.list(w.at(w.main))).toMatchObject([
+          { connectionId: connected.connection.connectionId, linkedHere: true },
+        ]);
+        expect(yield* w.service.list(w.at(w.elsewhere))).toEqual([]);
       }),
     ),
   );
@@ -2045,7 +2072,9 @@ describe.skipIf(!canApply)("OverleafSync", () => {
     () =>
       run(
         Effect.gen(function* () {
-          const w = yield* world({ overleaf: { [PROJECT]: { "main.tex": "A" } } });
+          const w = yield* world({
+            overleaf: { [PROJECT]: { "main.tex": "A", "other.tex": "O" } },
+          });
           const caller = w.at(w.main);
           const connected = yield* w.service.connect({
             caller,
@@ -2087,7 +2116,7 @@ describe.skipIf(!canApply)("OverleafSync", () => {
           expect(
             yield* w.service.sync({ caller, connectionId: id, requestId: "s4" }),
           ).toMatchObject({ _tag: "synced", review: { localOnly: ["main.tex"] } });
-          expect(yield* w.overleafNow(PROJECT)).toEqual({});
+          expect(yield* w.overleafNow(PROJECT)).toEqual({ "other.tex": "O" });
         }),
       ),
   );
