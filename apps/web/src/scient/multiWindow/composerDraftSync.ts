@@ -225,11 +225,19 @@ export function createComposerDraftCrossWindowSync<
     }
   }
 
+  const hasOwnChanges = (write: NonNullable<typeof pendingWrite>): boolean =>
+    write.full ||
+    write.dirtyWhole.length > 0 ||
+    KEYED_SECTIONS.some((section) => write.dirty[section].length > 0);
+
   const storage: StateStorage = {
     getItem: (name) => baseStorage.getItem(name),
     setItem: (name, value) => {
       const write = name === options.key ? pendingWrite : null;
       pendingWrite = null;
+      // Writing back only what this window read can undo another window's newer save, which
+      // reaches this window's localStorage a moment after it lands.
+      if (write && !hasOwnChanges(write)) return;
       baseStorage.setItem(name, value);
       if (write) commitWrite(write, value);
     },

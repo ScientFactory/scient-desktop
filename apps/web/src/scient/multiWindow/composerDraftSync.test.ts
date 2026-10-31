@@ -52,6 +52,23 @@ interface StoredDrafts {
   version: number;
 }
 
+/** A window's view of `storage`; while paused, other windows' saves have not reached it yet. */
+function laggingView(storage: SharedLocalStorage) {
+  let seen: string | null | undefined;
+  return {
+    getItem: (key: string) =>
+      seen !== undefined && key === COMPOSER_DRAFT_STORAGE_KEY ? seen : storage.getItem(key),
+    setItem: (key: string, value: string) => {
+      storage.setItem(key, value);
+      if (seen !== undefined && key === COMPOSER_DRAFT_STORAGE_KEY) seen = value;
+    },
+    removeItem: (key: string) => storage.removeItem(key),
+    pause: () => {
+      seen = storage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
+    },
+  };
+}
+
 function readStored(storage: SharedLocalStorage): StoredDrafts {
   return JSON.parse(storage.getItem(COMPOSER_DRAFT_STORAGE_KEY) ?? "null") as StoredDrafts;
 }
@@ -113,6 +130,24 @@ describe("composer drafts across app windows", () => {
       [threadKey("other")]: "from the first window",
       [threadKey("shared")]: "unsaved in the second window",
     });
+  });
+
+  it("does not save drafts it only took from another window, which could undo that window's newer save", async () => {
+    const storage = sharedLocalStorage();
+    const secondView = laggingView(storage);
+    using first = await openDraftWindow(storage);
+    using second = await openDraftWindow(secondView);
+
+    first.setPrompt("shared", "first draft");
+    first.flush();
+    second.receiveStorageEvent();
+    expect(second.prompt("shared")).toBe("first draft");
+    secondView.pause();
+    first.setPrompt("shared", "first draft, revised");
+    first.flush();
+    second.flush();
+
+    expect(storedPrompts(storage)).toEqual({ [threadKey("shared")]: "first draft, revised" });
   });
 
   it("keeps this window's file bytes when another window edits the same draft", async () => {
