@@ -71,13 +71,14 @@ localStorage the same way, so the merge applies between them too:
 - Records merge per entry, so two windows editing different threads never
   collide. When two windows change the same entry, the later save wins.
 
-This applies to composer drafts (per draft), the prompt stash (adopted from
-`storage` events), UI state (`uiStateSync.ts`; a thread visit keeps the later
-timestamp of the two windows, unless this window marked the thread unread),
-compute context bindings, and the side panel's per-thread state
-(`rightPanelSync.ts`). With one window,
-the stored value always equals the window's own, so each store writes exactly
-what it wrote before. Other persisted preferences already follow `storage`
+This applies to composer drafts (per draft), the prompt stash, UI state
+(`uiStateSync.ts`; a thread visit keeps the later timestamp of the two windows,
+unless this window marked the thread unread), compute context bindings, and the
+side panel's per-thread state (`rightPanelSync.ts`). With one window, the stored
+value always equals the window's own, so each store writes exactly what it wrote
+before. Another window's save is readable before its `storage` event arrives, so
+stashing, taking a stashed prompt and saving its images first adopt what is
+stored, and act on that. Other persisted preferences already follow `storage`
 events or hold state where the last save is harmless. Check a new persisted
 store against this before several windows rely on it.
 
@@ -149,6 +150,13 @@ events during a tab drag. A drag that ends outside the viewport opens the window
 
 - Every window's title is the app name, because upstream pins the title.
 - A relaunch restores one window.
+- Two windows that save different changes within the moment a save takes to
+  reach the other window (about a millisecond) can lose one of them. Each window
+  merges with the stored value it can see, and localStorage has no transaction
+  across windows. A Web Lock would order the saves, but it makes them
+  asynchronous, while upstream saves drafts synchronously as a window closes and
+  the stash must know at once that its save landed. Typing in one window at a
+  time does not cause it.
 - Only macOS offers **New Window** from the app icon. The Windows taskbar would
   need a jump list task that relaunches the app with an argument the primary
   instance handles in `second-instance`; Linux would need a desktop entry
