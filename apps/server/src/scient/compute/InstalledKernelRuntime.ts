@@ -11,9 +11,13 @@ import {
   type ComputeRuntimeProfile,
 } from "@scientfactory/compute";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
+import {
+  jupyterKernelDirectories,
+  readInstalledKernelSpecs,
+  type InstalledKernelSpec,
+} from "./KernelSpecs.ts";
 import type { KernelBridgeHost } from "./PythonComputeRuntime.ts";
 import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
 import { JUPYTER_BRIDGE_TRANSPORT_KIND, buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
@@ -27,33 +31,15 @@ import {
 
 /** Languages with their own adapter; their kernels are not offered a second time. */
 const CURATED_LANGUAGES: ReadonlySet<string> = new Set(["python", "r", "julia", "matlab", "sql"]);
-const MAX_KERNELS = 64;
-
-const KernelJson = Schema.Struct({
-  argv: Schema.NonEmptyArray(Schema.NonEmptyString),
-  display_name: Schema.String,
-  language: Schema.NonEmptyString,
-  interrupt_mode: Schema.optional(Schema.Literals(["signal", "message"])),
-  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-});
-const decodeKernelJson = Schema.decodeUnknownOption(Schema.fromJsonString(KernelJson));
-
-/** One installed kernel; its directory is its identity, so two `python3` specs never merge. */
-export interface InstalledKernelSpec {
-  readonly name: string;
-  readonly resourceDir: string;
-  readonly displayName: string;
-  readonly language: string;
-  readonly argv: ReadonlyArray<string>;
-  readonly interruptMode: "signal" | "message";
-  readonly env: Readonly<Record<string, string>>;
-}
-
 interface KernelLanguage {
   readonly name: string;
   readonly extension?: string;
   /** Present on the languages Scient always lists, installed or not. */
-  readonly setup?: { readonly needs: string; readonly url?: string };
+  readonly setup?: {
+    readonly needs: string;
+    readonly kernel?: string;
+    readonly url?: string;
+  };
 }
 
 const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
@@ -74,6 +60,7 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
     name: "GNU Octave",
     setup: {
       needs: "GNU Octave and octave_kernel",
+      kernel: "octave_kernel",
       url: "https://github.com/Calysto/octave_kernel",
     },
   },
@@ -84,6 +71,7 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
     extension: ".rs",
     setup: {
       needs: "The evcxr kernel: cargo install --locked evcxr_jupyter, then evcxr_jupyter --install",
+      kernel: "evcxr",
       url: "https://github.com/evcxr/evcxr/tree/main/evcxr_jupyter",
     },
   },
@@ -96,7 +84,11 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
   stata: {
     name: "Stata",
     extension: ".do",
-    setup: { needs: "Stata 17 or later and nbstata", url: "https://hugetim.github.io/nbstata/" },
+    setup: {
+      needs: "Stata 17 or later and nbstata",
+      kernel: "nbstata",
+      url: "https://hugetim.github.io/nbstata/",
+    },
   },
   typescript: { name: "TypeScript", extension: ".ts" },
   "wolfram-language": {
@@ -104,72 +96,11 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
     extension: ".wl",
     setup: {
       needs: "Wolfram Engine and WolframLanguageForJupyter",
+      kernel: "WolframLanguageForJupyter",
       url: "https://github.com/WolframResearch/WolframLanguageForJupyter",
     },
   },
 };
-
-/** Jupyter's search order: JUPYTER_PATH, the user's data directory, environment prefixes, system. */
-export function jupyterKernelDirectories(
-  context: DiscoveryContext,
-  prefixes: ReadonlyArray<string>,
-): ReadonlyArray<string> {
-  const path = pathModule(context.platform);
-  const env = context.environment;
-  const home = context.homeDirectory;
-  const user =
-    env.JUPYTER_DATA_DIR ??
-    (context.platform === "darwin"
-      ? path.join(home, "Library", "Jupyter")
-      : context.platform === "win32"
-        ? path.join(env.APPDATA ?? path.join(home, "AppData", "Roaming"), "jupyter")
-        : path.join(env.XDG_DATA_HOME ?? path.join(home, ".local", "share"), "jupyter"));
-  const system =
-    context.platform === "win32"
-      ? [path.join(env.PROGRAMDATA ?? "C:\\ProgramData", "jupyter")]
-      : ["/usr/local/share/jupyter", "/usr/share/jupyter"];
-  return [
-    ...(env.JUPYTER_PATH ?? "")
-      .split(context.platform === "win32" ? ";" : ":")
-      .filter((entry) => entry.length > 0),
-    user,
-    ...prefixes.map((prefix) => path.join(prefix, "share", "jupyter")),
-    ...system,
-  ].map((directory) => path.join(directory, "kernels"));
-}
-
-/** Reads kernel.json files only; nothing is launched. */
-function readInstalledKernelSpecs(
-  context: DiscoveryContext,
-  directories: ReadonlyArray<string>,
-): ReadonlyArray<InstalledKernelSpec> {
-  const path = pathModule(context.platform);
-  const seen = new Set<string>();
-  const specs: InstalledKernelSpec[] = [];
-  for (const directory of directories) {
-    for (const name of context.host.readDirectory(directory).toSorted()) {
-      const resourceDir = path.join(directory, name);
-      const key = context.platform === "win32" ? resourceDir.toLowerCase() : resourceDir;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const text = context.host.readText(path.join(resourceDir, "kernel.json"));
-      if (text === null) continue;
-      const parsed = decodeKernelJson(text);
-      if (parsed._tag === "None") continue;
-      specs.push({
-        name,
-        resourceDir,
-        displayName: parsed.value.display_name || name,
-        language: parsed.value.language,
-        argv: parsed.value.argv,
-        interruptMode: parsed.value.interrupt_mode ?? "signal",
-        env: parsed.value.env ?? {},
-      });
-      if (specs.length >= MAX_KERNELS) return specs;
-    }
-  }
-  return specs;
-}
 
 /** Kernels in the standard locations and in every Python environment discovery can see. */
 const installedSpecs = Effect.fn("InstalledKernelRuntime.installedSpecs")(function* (

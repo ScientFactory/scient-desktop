@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   condaPrefixes,
   enumeratePythonRuntimes,
+  parseWindowsInstallRoots,
   parseWindowsPythonRegistry,
 } from "./RuntimeDiscovery.ts";
 import { fakeDiscoveryContext, fakeDiscoveryHost } from "./RuntimeDiscoveryTestHost.ts";
@@ -309,6 +310,24 @@ describe("Python discovery on Windows", () => {
     expect(parseWindowsPythonRegistry(output)).toEqual([
       "C:\\Users\\ada\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
       "D:\\Anaconda3\\python.exe",
+    ]);
+  });
+});
+
+describe("Windows install roots", () => {
+  it("reads the folder each installer recorded", () => {
+    const output = [
+      "HKEY_LOCAL_MACHINE\\Software\\R-core\\R",
+      "    InstallPath    REG_SZ    D:\\Tools\\R-4.6.2",
+      "    Current Version    REG_SZ    4.6.2",
+      "HKEY_LOCAL_MACHINE\\Software\\R-core\\R\\4.6.2",
+      "    InstallPath    REG_SZ    D:\\Tools\\R-4.6.2",
+      "HKEY_LOCAL_MACHINE\\Software\\R-core\\R\\4.5.0",
+      "    InstallPath    REG_SZ    C:\\Program Files\\R\\R-4.5.0",
+    ].join("\r\n");
+    expect(parseWindowsInstallRoots(output, "InstallPath")).toEqual([
+      "D:\\Tools\\R-4.6.2",
+      "C:\\Program Files\\R\\R-4.5.0",
     ]);
   });
 });

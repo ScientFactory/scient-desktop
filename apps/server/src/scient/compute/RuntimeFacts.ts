@@ -158,7 +158,12 @@ export interface RFacts {
 function rHome(context: DiscoveryContext, executable: string): string | null {
   const path = pathModule(context.platform);
   const real = context.host.realPath(executable) ?? executable;
-  if (context.platform === "win32") return path.dirname(path.dirname(path.dirname(real)));
+  if (context.platform === "win32") {
+    // bin\R.exe, or bin\x64\R.exe.
+    const folder = path.dirname(real);
+    const bin = path.basename(folder).toLowerCase() === "bin" ? folder : path.dirname(folder);
+    return path.dirname(bin);
+  }
   // bin/R is a shell script that names its home.
   const script = context.host.readText(real) ?? "";
   return /^R_HOME_DIR=["']?([^"'\n]+)/mu.exec(script)?.[1] ?? null;

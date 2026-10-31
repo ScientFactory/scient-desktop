@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- discovery reads host filesystem metadata only.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- discovery reads host filesystem metadata only.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -18,12 +18,14 @@ export interface RuntimeDiscoveryHost {
   /** A link whose target no longer exists. */
   readonly isDanglingLink: (path: string) => boolean;
   readonly isExecutable: (path: string) => boolean;
-  readonly readDirectory: (path: string) => ReadonlyArray<string>;
+  readonly readDirectory: (path: string, limit?: number) => ReadonlyArray<string>;
   /** Small text files only; null when absent or unreadable. */
   readonly readText: (path: string) => string | null;
   readonly realPath: (path: string) => string | null;
   /** PEP 514 executables; empty off Windows. A refresh reads the registry again. */
   readonly windowsPythonRegistrations: (refresh?: boolean) => Promise<ReadonlyArray<string>>;
+  /** Folders an installer recorded; empty off Windows. */
+  readonly windowsInstallRoots: (application: "r" | "matlab") => Promise<ReadonlyArray<string>>;
 }
 
 const MAX_TEXT_BYTES = 64 * 1024;
@@ -83,6 +85,31 @@ export function parseWindowsPythonRegistry(
   return found;
 }
 
+/** Install folders written by the R and MATLAB installers. */
+const INSTALL_ROOT_KEYS = {
+  r: { keys: ["HKCU\\Software\\R-core\\R", "HKLM\\Software\\R-core\\R"], value: "InstallPath" },
+  matlab: { keys: ["HKLM\\Software\\MathWorks\\MATLAB"], value: "MATLABROOT" },
+} as const;
+
+export function parseWindowsInstallRoots(output: string, value: string): ReadonlyArray<string> {
+  const roots = output.split(/\r?\n/u).flatMap((line) => {
+    const match = /^\s*(\S+)\s+REG_(?:EXPAND_)?SZ\s+(.+)$/u.exec(line);
+    return match?.[1] === value ? [match[2]!.trim()] : [];
+  });
+  return [...new Set(roots)];
+}
+
+function queryRegistry(key: string): Promise<string> {
+  return new Promise((resolve) => {
+    NodeChildProcess.execFile(
+      "reg.exe",
+      ["query", key, "/s"],
+      { timeout: 3000, windowsHide: true, maxBuffer: 1024 * 1024 },
+      (error, stdout) => resolve(error === null ? stdout : ""),
+    );
+  });
+}
+
 let registrations: Promise<ReadonlyArray<string>> | null = null;
 
 function readWindowsRegistrations(
@@ -90,30 +117,35 @@ function readWindowsRegistrations(
   refresh: boolean,
 ): Promise<ReadonlyArray<string>> {
   if (refresh) registrations = null;
-  registrations ??= Promise.all(
-    REG_KEYS.map(
-      (key) =>
-        new Promise<string>((resolve) => {
-          NodeChildProcess.execFile(
-            "reg.exe",
-            ["query", key, "/s"],
-            { timeout: 3000, windowsHide: true, maxBuffer: 1024 * 1024 },
-            (error, stdout) => resolve(error === null ? stdout : ""),
-          );
-        }),
-    ),
-  ).then((outputs) => [
+  registrations ??= Promise.all(REG_KEYS.map(queryRegistry)).then((outputs) => [
     ...new Set(outputs.flatMap((output) => parseWindowsPythonRegistry(output, environment))),
   ]);
   return registrations;
 }
 
-const makeNodeRuntimeDiscoveryHost = (
+/** Folders that stopped answering, until a retry. Blocking calls here would stall the server. */
+const quarantined = new Map<string, number>();
+
+export function quarantineFolder(source: string, until: number): void {
+  const folder = source.split("*", 1)[0]!;
+  if (NodePath.isAbsolute(folder)) quarantined.set(folder, until);
+}
+
+function isQuarantined(path: string): boolean {
+  for (const [folder, until] of quarantined) {
+    if (until <= Date.now()) quarantined.delete(folder);
+    else if (path === folder || path.startsWith(`${folder}${NodePath.sep}`)) return true;
+  }
+  return false;
+}
+
+export const makeNodeRuntimeDiscoveryHost = (
   platform: NodeJS.Platform,
   environment: Readonly<Record<string, string | undefined>>,
 ): RuntimeDiscoveryHost => ({
-  kind: nodeKind,
+  kind: (path) => (isQuarantined(path) ? null : nodeKind(path)),
   isDanglingLink: (path) => {
+    if (isQuarantined(path)) return false;
     try {
       return NodeFS.lstatSync(path).isSymbolicLink() && nodeKind(path) === null;
     } catch {
@@ -121,7 +153,7 @@ const makeNodeRuntimeDiscoveryHost = (
     }
   },
   isExecutable: (path) => {
-    if (nodeKind(path) !== "file") return false;
+    if (isQuarantined(path) || nodeKind(path) !== "file") return false;
     if (platform === "win32") return true;
     try {
       NodeFS.accessSync(path, NodeFS.constants.X_OK);
@@ -130,14 +162,16 @@ const makeNodeRuntimeDiscoveryHost = (
       return false;
     }
   },
-  readDirectory: (path) => {
+  readDirectory: (path, limit = 4096) => {
+    if (isQuarantined(path)) return [];
     try {
-      return NodeFS.readdirSync(path).slice(0, 4096);
+      return NodeFS.readdirSync(path).slice(0, limit);
     } catch {
       return [];
     }
   },
   readText: (path) => {
+    if (isQuarantined(path)) return null;
     try {
       const stat = NodeFS.statSync(path);
       if (!stat.isFile() || stat.size > MAX_TEXT_BYTES) return null;
@@ -147,11 +181,18 @@ const makeNodeRuntimeDiscoveryHost = (
     }
   },
   realPath: (path) => {
+    if (isQuarantined(path)) return null;
     try {
       return NodeFS.realpathSync(path);
     } catch {
       return null;
     }
+  },
+  windowsInstallRoots: async (application) => {
+    if (platform !== "win32") return [];
+    const { keys, value } = INSTALL_ROOT_KEYS[application];
+    const outputs = await Promise.all(keys.map(queryRegistry));
+    return parseWindowsInstallRoots(outputs.join("\n"), value);
   },
   windowsPythonRegistrations: (refresh = false) =>
     platform === "win32" ? readWindowsRegistrations(environment, refresh) : Promise.resolve([]),

@@ -73,6 +73,7 @@ export function fakeDiscoveryHost(input: {
       return resolved === null || kind(resolved) === null ? null : resolved;
     },
     windowsPythonRegistrations: () => Promise.resolve(input.registrations ?? []),
+    windowsInstallRoots: () => Promise.resolve([]),
   };
 }
 

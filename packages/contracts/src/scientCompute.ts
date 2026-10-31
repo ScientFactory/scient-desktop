@@ -53,6 +53,8 @@ const ComputeHistoryLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maxi
 /** What a language needs on this computer before Scient can run it. */
 export const ComputeLanguageSetup = Schema.Struct({
   needs: Schema.String.check(Schema.isMaxLength(256)),
+  /** What is still missing when the language itself is here. */
+  kernel: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
   url: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(512))),
 });
 export type ComputeLanguageSetup = typeof ComputeLanguageSetup.Type;
@@ -111,6 +113,17 @@ export const ComputeRuntimeInspection = Schema.Struct({
 });
 export type ComputeRuntimeInspection = typeof ComputeRuntimeInspection.Type;
 
+/** Something on this computer that belongs to a language, whether or not Scient can run it. */
+export const ComputeFoundTool = Schema.Struct({
+  name: Schema.String.check(Schema.isMaxLength(128)),
+  executable: ComputeExecutable,
+  version: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
+  origin: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
+  /** Why a location someone added cannot be used. */
+  problem: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+});
+export type ComputeFoundTool = typeof ComputeFoundTool.Type;
+
 /** Cheap Settings data, deliberately separate from runnable candidates. */
 export const ComputeLanguageRuntimeInventory = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
@@ -119,12 +132,22 @@ export const ComputeLanguageRuntimeInventory = Schema.Struct({
   managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus),
   toolkits: Schema.Array(ComputeToolkitDescriptor).check(Schema.isMaxLength(64)),
   installations: Schema.Array(ComputeRuntimeInstallation).check(Schema.isMaxLength(64)),
+  /** The language's own tools. Runtimes Scient runs are in `installations`. */
+  tools: Schema.optional(Schema.Array(ComputeFoundTool).check(Schema.isMaxLength(32))),
   failureMessage: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
 });
 export type ComputeLanguageRuntimeInventory = typeof ComputeLanguageRuntimeInventory.Type;
 
+export const ComputeRuntimeInventoryInput = Schema.Struct({
+  /** Look again now, instead of answering from the last few minutes. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type ComputeRuntimeInventoryInput = typeof ComputeRuntimeInventoryInput.Type;
+
 export const ComputeRuntimeInventory = Schema.Struct({
-  languages: Schema.Array(ComputeLanguageRuntimeInventory).check(Schema.isMaxLength(32)),
+  languages: Schema.Array(ComputeLanguageRuntimeInventory).check(Schema.isMaxLength(256)),
+  /** Some places could not be read in time, so an empty row may only mean not checked yet. */
+  incomplete: Schema.optional(Schema.Boolean),
   /** This machine's selection key; choices are saved under it. Absent from older servers. */
   hostKey: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
 });

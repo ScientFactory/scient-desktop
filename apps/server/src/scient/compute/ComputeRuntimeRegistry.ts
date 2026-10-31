@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import * as ComputeProjectOutputObserver from "./ComputeProjectOutputObserver.ts";
 import {
@@ -14,6 +15,7 @@ import { pythonRuntimeBinding } from "./PythonComputeRuntime.ts";
 import { R_KERNEL_LANGUAGE } from "./RComputeRuntime.ts";
 import { ScientificRuntimePreferences } from "./ScientificRuntimePreferences.ts";
 import { makeSqlRuntimeBinding } from "./SqlComputeRuntime.ts";
+import * as ToolDiscovery from "./ToolDiscovery.ts";
 import { ExecutionProcess } from "../execution/LocalExecutionProcess.ts";
 import { ServerConfig } from "../../config.ts";
 
@@ -73,4 +75,4 @@ export const layer = layerWithRuntimeBindings(
   }).pipe(Effect.map((bindings) => bindings.flat())),
   DEFAULT_COMPUTE_SESSION_SERVICE_OPTIONS,
   ComputeProjectOutputObserver.liveLayer,
-);
+).pipe(Layer.provide(ToolDiscovery.layer));

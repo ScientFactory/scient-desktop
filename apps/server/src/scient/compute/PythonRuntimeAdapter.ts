@@ -30,6 +30,7 @@ import {
   type DiscoveredRuntime,
   type DiscoveryContext,
 } from "./RuntimeDiscovery.ts";
+import { kernelPrograms } from "./KernelSpecs.ts";
 import { readPythonFacts } from "./RuntimeFacts.ts";
 import { makeRuntimeProbeCache, type RuntimeProbeCache } from "./RuntimeProbeCache.ts";
 
@@ -456,10 +457,24 @@ export function makePythonRuntimeAdapter(
           )
         : [];
     const managed = yield* managedCandidate();
-    const found = enumeratePythonRuntimes(context, {
+    const enumerated = enumeratePythonRuntimes(context, {
       projectRoot: request.projectRoot,
       windowsRegistrations,
     });
+    // An environment registered with `ipykernel install` may live anywhere.
+    const known = new Set(enumerated.map((runtime) => runtime.executable));
+    const found = [
+      ...enumerated,
+      ...kernelPrograms(context, "python", (name) => /^python[\d.]*(\.exe)?$/u.test(name))
+        .filter(({ executable }) => !known.has(executable))
+        .filter(({ executable }) => context.host.isExecutable(executable))
+        .map(({ executable, kernel }): DiscoveredRuntime => ({
+          executable,
+          source: "conventional",
+          origin: `Kernel: ${kernel}`,
+          problem: null,
+        })),
+    ];
     return {
       managed,
       found: [...pythonCandidates([], null, managed), ...found],

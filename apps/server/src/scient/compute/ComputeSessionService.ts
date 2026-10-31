@@ -76,6 +76,11 @@ import {
   type ComputeRuntimeInstallation,
   type ComputeRuntimeVerification,
 } from "@scientfactory/compute";
+import {
+  COMPUTE_ADDED_LOCATION,
+  COMPUTE_LANGUAGE_CATALOG,
+  type ComputeFoundTool,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -111,6 +116,8 @@ import {
 import { withComputeWorkspaceReservation } from "./ComputeWorkspaceLifetime.ts";
 import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
 import { chooseRuntime, orderByChoice, type RuntimeChoice } from "./RuntimeSelection.ts";
+import { discoveryContext, pathModule } from "./RuntimeDiscovery.ts";
+import { ToolDiscovery } from "./ToolDiscovery.ts";
 import type {
   ResolvedComputeOutputImage,
   ResolvedComputeOutputResource,
@@ -223,7 +230,13 @@ export interface ComputeRuntimeInventoryResult {
   readonly managedRuntime: ComputeManagedRuntimeStatus | null;
   readonly toolkits: ReadonlyArray<ComputeToolkitDescriptor>;
   readonly installations: ReadonlyArray<ComputeRuntimeInstallation>;
+  readonly tools?: ReadonlyArray<ComputeFoundTool>;
   readonly failureMessage: string | null;
+}
+
+export interface ComputeRuntimeInventorySnapshot {
+  readonly languages: ReadonlyArray<ComputeRuntimeInventoryResult>;
+  readonly incomplete: boolean;
 }
 
 export interface ComputeRuntimeVerificationRequest {
@@ -399,8 +412,10 @@ export class ComputeSessionService extends Context.Service<
   {
     readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
     readonly runtimeInventory: (
-      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables">,
-    ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInventoryResult>, ComputeOperationError>;
+      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables"> & {
+        readonly refresh?: boolean;
+      },
+    ) => Effect.Effect<ComputeRuntimeInventorySnapshot, ComputeOperationError>;
     readonly inspectRuntimes: (
       input: ComputeRuntimeInspectionRequest,
     ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInspectionResult>, ComputeOperationError>;
@@ -498,6 +513,7 @@ class ComputeSessionServiceConfig extends Context.Reference<ComputeSessionServic
 ) {}
 
 const make = Effect.gen(function* () {
+  const toolDiscovery = yield* ToolDiscovery;
   const hostCapacity = yield* ComputeHostCapacity.ComputeHostCapacity;
   const observeOperation = yield* makeOperationAnalytics;
   const observeComputeOutputs = yield* makeComputeOutputAnalytics;
@@ -558,9 +574,23 @@ const make = Effect.gen(function* () {
     });
 
   const runtimeInventory = Effect.fn("ComputeSessionService.runtimeInventory")(function* (
-    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables">,
+    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables"> & {
+      readonly refresh?: boolean;
+    },
   ) {
-    return yield* Effect.forEach(
+    const snapshot =
+      toolDiscovery === null ? null : yield* toolDiscovery.snapshot(input.refresh === true);
+    const context = yield* discoveryContext;
+    const toolsOf = (languageId: string) => {
+      const found = (snapshot?.tools.get(languageId) ?? []).map((tool) => ({
+        name: tool.name,
+        executable: tool.executable,
+        version: tool.version,
+        origin: tool.origin,
+      }));
+      return found.length === 0 ? {} : { tools: found.slice(0, 32) };
+    };
+    const bound = yield* Effect.forEach(
       bindings,
       (binding) =>
         Effect.gen(function* () {
@@ -582,7 +612,7 @@ const make = Effect.gen(function* () {
                     projectRoot: null,
                     configuredExecutable:
                       input.configuredExecutables[binding.adapter.languageId] ?? null,
-                    refresh: true,
+                    refresh: input.refresh === true,
                   })
                   .pipe(
                     Effect.catch((cause) => {
@@ -595,11 +625,49 @@ const make = Effect.gen(function* () {
             managedRuntime,
             toolkits: binding.toolkitSupport?.descriptors ?? [],
             installations,
+            ...toolsOf(binding.adapter.languageId),
             failureMessage,
           };
         }),
       { concurrency: 2 },
     );
+    if (toolDiscovery === null) return { languages: bound, incomplete: false };
+    // The rest of the list: what is on this computer, whether or not Scient can run it yet.
+    const known = new Set<string>(bound.map((language) => language.descriptor.languageId));
+    const named = COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages)
+      .filter((language) => !known.has(language.languageId))
+      .map((language) => {
+        const added = input.configuredExecutables[language.languageId] ?? null;
+        const tools = toolsOf(language.languageId).tools ?? [];
+        return {
+          descriptor: {
+            languageId: language.languageId as ComputeLanguageId,
+            displayName: language.name,
+            sourceExtensions: [],
+            capabilities: [],
+          },
+          managedRuntime: null,
+          toolkits: [],
+          installations: [],
+          tools:
+            added !== null
+              ? [
+                  {
+                    name: pathModule(context.platform).basename(added),
+                    executable: added,
+                    version: null,
+                    origin: COMPUTE_ADDED_LOCATION,
+                    ...(context.host.kind(added) === null
+                      ? { problem: "This location was not found." }
+                      : {}),
+                  },
+                  ...tools,
+                ]
+              : tools,
+          failureMessage: null,
+        };
+      });
+    return { languages: [...bound, ...named], incomplete: !(snapshot?.complete ?? true) };
   });
 
   const managedStatusOrFallback = (binding: ComputeRuntimeBinding) =>
@@ -732,6 +800,8 @@ const make = Effect.gen(function* () {
   const inspectRuntimes = Effect.fn("ComputeSessionService.inspectRuntimes")(function* (
     input: ComputeRuntimeInspectionRequest,
   ) {
+    // Sets aside any folder that stopped answering, before the blocking reads below.
+    if (toolDiscovery !== null) yield* toolDiscovery.snapshot(false);
     const workingDirectory = yield* runtimeDirectory("inspect", input.workingDirectory);
     const projectRoot =
       input.projectRoot === null ? null : yield* runtimeDirectory("inspect", input.projectRoot);

@@ -47,6 +47,7 @@ import {
   ComputeProjectSessionInput,
   ComputeRuntimeInspection,
   ComputeRuntimeInventory,
+  ComputeRuntimeInventoryInput,
   ComputeRuntimeVerification,
   ComputeSaveConsoleNotebookInput,
   ComputeSaveConsoleNotebookResult,
@@ -230,7 +231,7 @@ const WsComputeInspectRuntimesRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.comput
 const WsComputeRuntimeInventoryRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.computeRuntimeInventory,
   {
-    payload: Schema.Struct({}),
+    payload: ComputeRuntimeInventoryInput,
     success: ComputeRuntimeInventory,
     error: ComputeRpcError,
   },

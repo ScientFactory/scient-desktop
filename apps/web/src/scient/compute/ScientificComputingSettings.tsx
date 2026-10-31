@@ -14,12 +14,8 @@ import {
   useComputeSettingsEnvironment,
 } from "./ComputeLanguagePage";
 import {
-  computeCurrentRuntimeSummary,
-  computeLanguageAbsent,
-  computeLanguageComingSoon,
-  computeLanguageDetail,
-  computeLanguageDownloadUrl,
   computeLanguageGroups,
+  computeLanguageStatus,
   type ComputeLanguageEntry,
 } from "./computeInstallationSettingsModel";
 import { useComputeLanguages, type ComputeLanguages } from "./useComputeLanguages";
@@ -29,12 +25,14 @@ function LanguageRow({
   languageId,
   name,
   environmentId,
+  comingSoon = false,
   detail,
   trailing,
 }: {
   languageId: string;
   name: string;
   environmentId: EnvironmentId;
+  comingSoon?: boolean;
   detail: string;
   trailing?: ReactNode;
 }) {
@@ -43,40 +41,22 @@ function LanguageRow({
       <div className="relative flex items-center gap-3 rounded-xl p-2 transition-colors has-[a:hover]:bg-foreground/[0.035] has-[a:focus-visible]:outline has-[a:focus-visible]:outline-ring">
         <ComputeLanguageMark languageId={languageId} />
         <div className="min-w-0 flex-1">
-          <Link
-            to="/settings/scientific-computing/$languageId"
-            params={{ languageId }}
-            search={{ environmentId }}
-            className="block text-sm font-medium wrap-anywhere text-foreground outline-none after:absolute after:inset-0 after:rounded-xl"
-          >
-            {name}
-          </Link>
-          <p className="truncate text-xs text-muted-foreground">{detail}</p>
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
+            <Link
+              to="/settings/scientific-computing/$languageId"
+              params={{ languageId }}
+              search={{ environmentId }}
+              className="text-sm font-medium wrap-anywhere text-foreground outline-none after:absolute after:inset-0 after:rounded-xl"
+            >
+              {name}
+            </Link>
+            {comingSoon ? (
+              <span className="shrink-0 text-xs text-muted-foreground">Coming soon</span>
+            ) : null}
+          </div>
+          {detail ? <p className="truncate text-xs text-muted-foreground">{detail}</p> : null}
         </div>
         {trailing ? <div className="relative z-10 shrink-0">{trailing}</div> : null}
-      </div>
-    </li>
-  );
-}
-
-/** Nothing opens yet, so this is a name and not a link. */
-function ComingSoonRow({
-  languageId,
-  name,
-  checking,
-}: {
-  languageId: string;
-  name: string;
-  checking: boolean;
-}) {
-  return (
-    <li className="flex min-w-0 items-center gap-3 p-2" data-compute-coming-soon={languageId}>
-      <ComputeLanguageMark languageId={languageId} />
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5">
-        <span className="truncate text-sm font-medium text-foreground">{name}</span>
-        {checking ? null : (
-          <span className="shrink-0 text-xs text-muted-foreground">Coming soon</span>
-        )}
       </div>
     </li>
   );
@@ -92,45 +72,33 @@ function LanguageEntry({
   inventory: ComputeLanguages;
   environmentId: EnvironmentId;
 }) {
-  if (runtime === undefined || (!inventory.pending && computeLanguageComingSoon(runtime))) {
-    return <ComingSoonRow languageId={languageId} name={name} checking={inventory.pending} />;
-  }
   const row = { languageId, name, environmentId };
   if (inventory.pending) return <LanguageRow {...row} detail="Checking…" />;
-  if (computeLanguageAbsent(runtime)) {
-    return (
-      <LanguageRow
-        {...row}
-        detail={runtime.descriptor.setup === undefined ? "Not found" : "No kernel found"}
-        trailing={
-          <Button
-            size="xs"
-            variant="outline"
-            aria-label={`Get ${name}`}
-            render={
-              <a href={computeLanguageDownloadUrl(runtime)} target="_blank" rel="noreferrer" />
-            }
-          >
-            Get <ExternalLinkIcon />
-          </Button>
-        }
-      />
-    );
-  }
-  const preference = inventory.preferenceFor(runtime);
+  if (runtime === undefined) return <LanguageRow {...row} comingSoon detail="" />;
+  const status = computeLanguageStatus({
+    language: runtime,
+    preference: inventory.preferenceFor(runtime),
+    incomplete: inventory.incomplete,
+  });
   return (
     <LanguageRow
       {...row}
-      detail={computeLanguageDetail(
-        runtime,
-        computeCurrentRuntimeSummary({
-          language: runtime,
-          preference,
-          managed: runtime.managedRuntime,
-        }),
-        preference,
-        runtime.managedRuntime,
-      )}
+      comingSoon={status.comingSoon}
+      detail={status.detail}
+      {...(status.getUrl === undefined
+        ? {}
+        : {
+            trailing: (
+              <Button
+                size="xs"
+                variant="outline"
+                aria-label={`Get ${name}`}
+                render={<a href={status.getUrl} target="_blank" rel="noreferrer" />}
+              >
+                Get <ExternalLinkIcon />
+              </Button>
+            ),
+          })}
     />
   );
 }

@@ -25,6 +25,7 @@ import {
   type ComputeSubmitProjectCellsInput,
   type ComputeSubmitProjectExecutionInput,
   type ComputeTableInput,
+  type ComputeRuntimeInventoryInput,
   type ComputeVerifyRuntimeInput,
   resolveScientificComputingLanguageSettings,
   type ServerSettings as ServerSettingsValue,
@@ -32,7 +33,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
-import type { ServerSettingsError } from "@t3tools/contracts";
+import { COMPUTE_LANGUAGE_CATALOG, type ServerSettingsError } from "@t3tools/contracts";
 import type { LocalAnalysisStoreError } from "../analysis/LocalAnalysisStore.ts";
 import type { ComputeSessionService } from "./ComputeSessionService.ts";
 import type { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
@@ -254,23 +255,29 @@ export function makeComputeRpcGateway(input: {
     >;
   });
 
-  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* () {
+  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* (
+    request: ComputeRuntimeInventoryInput = {},
+  ) {
     const settings = yield* readSettings("inspect");
     const hostKey =
       input.serverSettings.hostKey === undefined ? null : yield* input.serverSettings.hostKey;
+    const languageIds = new Set([
+      ...input.compute.runtimeDescriptors.map((descriptor) => descriptor.languageId),
+      ...COMPUTE_LANGUAGE_CATALOG.flatMap((group) =>
+        group.languages.map((language) => language.languageId as ComputeLanguageId),
+      ),
+    ]);
     const preferences = Object.fromEntries(
-      input.compute.runtimeDescriptors.map((descriptor) => [
-        descriptor.languageId,
-        resolveScientificComputingLanguageSettings(
-          settings.scientificComputing,
-          descriptor.languageId,
-        ),
+      [...languageIds].map((languageId) => [
+        languageId,
+        resolveScientificComputingLanguageSettings(settings.scientificComputing, languageId),
       ]),
     );
-    const languages = yield* input.compute.runtimeInventory({
+    const { languages, incomplete } = yield* input.compute.runtimeInventory({
       configuredExecutables: Object.fromEntries(
         Object.entries(preferences).map(([id, preference]) => [id, preference.executable || null]),
       ),
+      ...(request.refresh === undefined ? {} : { refresh: request.refresh }),
     });
     return {
       languages: languages.map((language) => ({
@@ -278,6 +285,7 @@ export function makeComputeRpcGateway(input: {
         enabled: preferences[language.descriptor.languageId]?.enabled ?? false,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),
+      ...(incomplete ? { incomplete } : {}),
       ...(hostKey === null ? {} : { hostKey }),
     };
   });

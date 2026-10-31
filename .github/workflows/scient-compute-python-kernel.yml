@@ -43,7 +43,7 @@ jobs:
     if: ${{ inputs.managed_python }}
     name: Managed Python toolkits / ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

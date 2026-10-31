@@ -1068,7 +1068,7 @@ describe("compute runtime inspection", () => {
         yield* test.use(
           Effect.gen(function* () {
             const service = yield* ComputeSessionService;
-            const rows = yield* service.runtimeInventory({
+            const { languages: rows } = yield* service.runtimeInventory({
               configuredExecutables: {},
             });
             expect(rows[0]?.failureMessage).toBe("Python unavailable");
@@ -1111,8 +1111,10 @@ describe("compute runtime inspection", () => {
             { concurrency: 8 },
           );
           expect(reads).toBe(100);
-          expect(results.every((result) => result[0]?.installations.length === 1)).toBe(true);
-          expect(results[0]?.[0]).not.toHaveProperty("runtimes");
+          expect(results.every((result) => result.languages[0]?.installations.length === 1)).toBe(
+            true,
+          );
+          expect(results[0]?.languages[0]).not.toHaveProperty("runtimes");
           expect(reads).toBe(100);
           expect(test.opened()).toEqual([]);
           expect(test.submitted()).toEqual([]);
@@ -1141,7 +1143,9 @@ describe("compute runtime inspection", () => {
         yield* test.use(
           Effect.gen(function* () {
             const service = yield* ComputeSessionService;
-            const [row] = yield* service.runtimeInventory({
+            const {
+              languages: [row],
+            } = yield* service.runtimeInventory({
               configuredExecutables: {},
             });
             expect(row?.descriptor.languageId).toBe(PYTHON);

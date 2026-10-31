@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 
+import { discoveryContext } from "./RuntimeDiscovery.ts";
 import { sanitizeComputeEnvironment, validateProjectRoot } from "./ComputeEnvironmentPolicy.ts";
 
 export const MATLAB_LANGUAGE_ID = ComputeLanguageId.make("matlab");
@@ -183,6 +184,7 @@ export function discoverMatlabCandidates(
   configuredExecutable: string | null,
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
+  registeredRoots: ReadonlyArray<string> = [],
 ): ReadonlyArray<MatlabCandidate> {
   if (configuredExecutable !== null && configuredExecutable.trim().length > 0) {
     return [{ executable: configuredExecutable.trim(), source: "configured" }];
@@ -192,7 +194,10 @@ export function discoverMatlabCandidates(
       executable,
       source: "path" as const,
     })),
-    ...conventionalCandidates(platform, environment).map((executable) => ({
+    ...[
+      ...conventionalCandidates(platform, environment),
+      ...registeredRoots.map((root) => NodePath.win32.join(root, "bin", "matlab.exe")),
+    ].map((executable) => ({
       executable,
       source: "conventional" as const,
     })),
@@ -358,6 +363,10 @@ export function makeMatlabRuntimeAdapter(
     (effect) => effect.pipe(probeLock.withPermits(1)),
   );
 
+  const registeredRoots = Effect.flatMap(discoveryContext, (context) =>
+    Effect.promise(() => context.host.windowsInstallRoots("matlab")),
+  );
+
   const adapter: ComputeLanguageAdapter = {
     languageId: MATLAB_LANGUAGE_ID,
     transportKind: MATLAB_ENGINE_TRANSPORT_KIND,
@@ -365,7 +374,8 @@ export function makeMatlabRuntimeAdapter(
       const resolveExecutable = yield* SpawnExecutableResolution;
       // Settings lists alternatives even when execution is pinned to one path.
       // The execution discovery path below deliberately retains its precedence.
-      const automatic = discoverMatlabCandidates(null, environment, platform);
+      const roots = yield* registeredRoots;
+      const automatic = discoverMatlabCandidates(null, environment, platform, roots);
       const candidates = request.configuredExecutable?.trim()
         ? [
             ...discoverMatlabCandidates(request.configuredExecutable, environment, platform),
@@ -418,23 +428,27 @@ export function makeMatlabRuntimeAdapter(
       return [...installations.values()];
     }),
     discover: (request) =>
-      Effect.forEach(
-        discoverMatlabCandidates(request.configuredExecutable, environment, platform),
-        (candidate) =>
-          readMatlabInstallation(candidate.executable).pipe(
-            Effect.map((installation): ComputeRuntimeProfile => ({
-              languageId: MATLAB_LANGUAGE_ID,
-              source: candidate.source,
-              executable: installation.executableRealpath,
-              languageVersion: installation.release || installation.version,
-              architecture: null,
-              displayName: `MATLAB ${installation.release || installation.version} (${candidate.source})`,
-            })),
-            // Discovery already checked the executable. A broken helper or license
-            // must remain visible with its actionable verification failure.
-            Effect.orElseSucceed(() => unavailableProfile(candidate.executable, candidate.source)),
-          ),
-        { concurrency: 1 },
+      Effect.flatMap(registeredRoots, (roots) =>
+        Effect.forEach(
+          discoverMatlabCandidates(request.configuredExecutable, environment, platform, roots),
+          (candidate) =>
+            readMatlabInstallation(candidate.executable).pipe(
+              Effect.map((installation): ComputeRuntimeProfile => ({
+                languageId: MATLAB_LANGUAGE_ID,
+                source: candidate.source,
+                executable: installation.executableRealpath,
+                languageVersion: installation.release || installation.version,
+                architecture: null,
+                displayName: `MATLAB ${installation.release || installation.version} (${candidate.source})`,
+              })),
+              // Discovery already checked the executable. A broken helper or license
+              // must remain visible with its actionable verification failure.
+              Effect.orElseSucceed(() =>
+                unavailableProfile(candidate.executable, candidate.source),
+              ),
+            ),
+          { concurrency: 1 },
+        ),
       ),
     assess: (profile) =>
       mayConnect().pipe(

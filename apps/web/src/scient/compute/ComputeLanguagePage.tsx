@@ -1,10 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { ChevronLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import type {
-  ComputeLanguageRuntimeInventory,
-  EnvironmentId,
-  ScientificComputingLanguageSettings,
+import {
+  COMPUTE_ADDED_LOCATION,
+  type ComputeLanguageRuntimeInventory,
+  type EnvironmentId,
+  type ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
 
 import {
@@ -19,15 +20,12 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { ComputeLanguageMark } from "./ComputeLanguageMark";
-import { ComputeLanguagePanel } from "./ComputeLanguagePanel";
+import { AddLocationRow, ComputeLanguagePanel } from "./ComputeLanguagePanel";
 import {
   useComputeManagedRuntime,
   type ComputeManagedRuntimeController,
 } from "./ComputeManagedRuntimeControls";
-import {
-  computeLanguageAbsent,
-  computeLanguageDownloadUrl,
-} from "./computeInstallationSettingsModel";
+import { computeLanguageAbsent, computeLanguageStatus } from "./computeInstallationSettingsModel";
 import { computeSourceLanguageForId } from "./computeSourceLanguage";
 import { PythonToolkitSettings, type ToolkitChange } from "./PythonToolkitSettings";
 import { useComputeLanguages, type ComputeLanguages } from "./useComputeLanguages";
@@ -157,22 +155,106 @@ function LanguageHeader({
   languageId,
   name,
   state,
+  comingSoon = false,
   inventory,
 }: {
   languageId: string;
   name: string;
   state: string | null;
+  comingSoon?: boolean;
   inventory: ComputeLanguages;
 }) {
   return (
     <header className="flex items-center gap-4">
       <ComputeLanguageMark languageId={languageId} large />
       <div className="min-w-0 flex-1">
-        <h1 className="truncate text-2xl font-medium tracking-[-0.02em] text-foreground">{name}</h1>
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+          <h1 className="truncate text-2xl font-medium tracking-[-0.02em] text-foreground">
+            {name}
+          </h1>
+          {comingSoon ? (
+            <span className="shrink-0 text-sm text-muted-foreground">Coming soon</span>
+          ) : null}
+        </div>
         {state ? <p className="text-sm text-muted-foreground">{state}</p> : null}
       </div>
       <FindRuntimesButton inventory={inventory} />
     </header>
+  );
+}
+
+/** What is here for a language Scient has no runtime for: each file, and room to add another. */
+function FoundElsewhere({
+  language,
+  url,
+  preference,
+  disabled,
+  onChange,
+}: {
+  language: ComputeLanguageRuntimeInventory;
+  url: string | undefined;
+  preference: ScientificComputingLanguageSettings;
+  disabled: boolean;
+  onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
+}) {
+  const languageId = language.descriptor.languageId;
+  const name = language.descriptor.displayName;
+  const setup = language.descriptor.setup;
+  const [path, setPath] = useState("");
+  return (
+    <SettingsSourcePanel id={`scientific-computing-${languageId}`}>
+      {(language.tools ?? []).map((tool) => (
+        <SettingsRow
+          key={tool.executable}
+          id={`${languageId}-found-${tool.executable}`}
+          title={tool.name}
+          description={tool.problem ?? tool.executable}
+          control={
+            tool.origin === COMPUTE_ADDED_LOCATION ? (
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                disabled={disabled}
+                onClick={() => void onChange({ ...preference, executable: "" })}
+              >
+                Remove
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                {[tool.version, tool.origin ?? "System"].filter(Boolean).join(" · ")}
+              </span>
+            )
+          }
+        />
+      ))}
+      {setup === undefined && url === undefined ? null : (
+        <SettingsRow
+          id={`${languageId}-installation-missing`}
+          title="Needs"
+          description={setup?.needs ?? name}
+          control={
+            url ? (
+              <Button
+                size="xs"
+                variant="outline"
+                render={<a href={url} target="_blank" rel="noreferrer" />}
+              >
+                Get <ExternalLinkIcon />
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
+      <AddLocationRow
+        languageId={languageId}
+        name={name}
+        action="Add"
+        path={path}
+        onPathChange={setPath}
+        disabled={disabled}
+        onAdd={(executable) => onChange({ ...preference, executable })}
+      />
+    </SettingsSourcePanel>
   );
 }
 
@@ -204,7 +286,14 @@ function LanguageDetail({
     </div>
   );
   if (language === undefined || computeLanguageAbsent(language)) {
-    const url = language ? computeLanguageDownloadUrl(language) : undefined;
+    const status =
+      language === undefined
+        ? null
+        : computeLanguageStatus({
+            language,
+            preference: inventory.preferenceFor(language),
+            incomplete: inventory.incomplete,
+          });
     return (
       <SettingsPageContainer>
         <div className="grid gap-6">
@@ -212,28 +301,18 @@ function LanguageDetail({
           <LanguageHeader
             languageId={languageId}
             name={name}
-            state={inventory.pending ? "Checking…" : "Not found"}
+            state={inventory.pending ? "Checking…" : (status?.detail ?? "")}
+            comingSoon={!inventory.pending && (status?.comingSoon ?? true)}
             inventory={inventory}
           />
-          {inventory.pending ? null : (
-            <SettingsSourcePanel id={`scientific-computing-${languageId}`}>
-              <SettingsRow
-                id={`${languageId}-installation-missing`}
-                title="Needs"
-                description={language?.descriptor.setup?.needs ?? `A Jupyter kernel for ${name}`}
-                control={
-                  url ? (
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      render={<a href={url} target="_blank" rel="noreferrer" />}
-                    >
-                      Get {name} <ExternalLinkIcon />
-                    </Button>
-                  ) : undefined
-                }
-              />
-            </SettingsSourcePanel>
+          {inventory.pending || language === undefined ? null : (
+            <FoundElsewhere
+              language={language}
+              url={status?.getUrl}
+              preference={inventory.preferenceFor(language)}
+              disabled={inventory.busy}
+              onChange={(next) => inventory.updateLanguage(language.descriptor.languageId, next)}
+            />
           )}
           <ComputeInventoryFailure inventory={inventory} />
         </div>

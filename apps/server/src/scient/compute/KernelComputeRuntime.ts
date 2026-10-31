@@ -30,6 +30,7 @@ import * as Scope from "effect/Scope";
 
 import { sanitizeComputeEnvironment } from "./ComputeEnvironmentPolicy.ts";
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
+import { kernelPrograms } from "./KernelSpecs.ts";
 import { runOwnedProcess } from "./ManagedPythonProvisioner.ts";
 import type { KernelBridgeHost } from "./PythonComputeRuntime.ts";
 import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
@@ -92,12 +93,19 @@ export interface KernelLanguage {
   /** Prints the probe marker, version, architecture, home and its own kernel version, tab-separated. */
   readonly probeArgs: ReadonlyArray<string>;
   readonly readFacts: (context: DiscoveryContext, executable: string) => KernelInstallationFacts;
+  /** The language's own program, lowercase, as a kernel would start it. */
+  readonly programName: string;
+  /** Where installers recorded it, when that can be outside the usual folders. */
+  readonly registered?: (context: DiscoveryContext) => Promise<ReadonlyArray<string>>;
+  /** The program to start, when that differs from the one people run. */
+  readonly program?: (context: DiscoveryContext, executable: string) => string;
   /** Where the executable sits inside a conda-style environment. */
   readonly inEnvironment: (platform: NodeJS.Platform) => ReadonlyArray<string>;
   /** Installs the kernel under `privateDirectory`; the last stdout line is its version. */
   readonly setup: (
     privateDirectory: string,
     environment: Readonly<Record<string, string>>,
+    platform: NodeJS.Platform,
   ) => { readonly args: ReadonlyArray<string>; readonly environment: Record<string, string> };
   /** Null `privateDirectory` means the installation's own kernel. */
   readonly launch: (input: {
@@ -248,8 +256,25 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     for (const { prefix, origin } of condaPrefixes(context))
       for (const relative of language.inEnvironment(platform))
         add(path.join(prefix, relative), "conventional", false, origin);
+    for (const executable of yield* Effect.promise(
+      () => language.registered?.(context) ?? Promise.resolve([]),
+    ))
+      add(executable, "conventional");
+    const isLanguage = (name: string) => name.replace(/\.exe$/u, "") === language.programName;
+    for (const { executable, kernel } of kernelPrograms(
+      context,
+      language.kernelLanguage,
+      isLanguage,
+    ))
+      add(executable, "conventional", false, `Kernel: ${kernel}`);
     return found;
   });
+
+  const programOf = (executable: string) =>
+    Effect.map(
+      discoveryContext,
+      (context) => language.program?.(context, executable) ?? executable,
+    );
 
   const probe = (executable: string) =>
     probes.get(
@@ -257,7 +282,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       Effect.gen(function* () {
         const stdout = yield* runOwnedProcess(input.processes, {
           runId: `scient-${language.languageId}-probe-${NodeCrypto.randomUUID()}`,
-          executable,
+          executable: yield* programOf(executable),
           args: language.probeArgs,
           cwd: NodeOS.tmpdir(),
           environment,
@@ -466,7 +491,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       return yield* runtimeError("prepare", `${language.kernelPackage} is not set up.`);
     const host = yield* hostExecutable();
     const kernel = language.launch({
-      executable: request.profile.executable,
+      executable: yield* programOf(request.profile.executable),
       privateDirectory: state.probe.ownKernelVersion === null ? state.privateDirectory : null,
       environment: request.environment,
       platform,
@@ -598,10 +623,10 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
   ) {
     yield* fileSystem.remove(privateDirectory, { recursive: true }).pipe(Effect.ignore);
     yield* fileSystem.makeDirectory(privateDirectory, { recursive: true });
-    const setup = language.setup(privateDirectory, environment);
+    const setup = language.setup(privateDirectory, environment, platform);
     const stdout = yield* runOwnedProcess(input.processes, {
       runId: `scient-${language.languageId}-kernel-setup-${NodeCrypto.randomUUID()}`,
-      executable,
+      executable: yield* programOf(executable),
       args: setup.args,
       cwd: privateDirectory,
       environment: setup.environment,

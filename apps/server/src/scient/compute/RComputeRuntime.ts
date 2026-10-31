@@ -41,6 +41,7 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
   languageId: R_LANGUAGE_ID,
   displayName: "R",
   kernelLanguage: "R",
+  programName: "r",
   kernelPackage: "IRkernel",
   sourceExtensions: [".r"],
   // IRkernel does not evaluate Jupyter user expressions.
@@ -80,6 +81,22 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
             "/usr/bin/R",
             { directory: "/opt/R", prefix: "", relative: "bin/R" },
           ],
+  registered: async (context) =>
+    (await context.host.windowsInstallRoots("r")).map((root) =>
+      NodePath.win32.join(root, "bin", "R.exe"),
+    ),
+  // R.exe hands its arguments to cmd.exe, which stops at the first line break and reads the rest as
+  // shell syntax, and it leaves the real process a grandchild that nothing can stop.
+  program: (context, executable) => {
+    if (context.platform !== "win32") return executable;
+    const folder = NodePath.win32.dirname(executable);
+    return (
+      [
+        NodePath.win32.join(folder, "x64", "Rterm.exe"),
+        NodePath.win32.join(folder, "Rterm.exe"),
+      ].find((path) => context.host.kind(path) === "file") ?? executable
+    );
+  },
   // A probe answers about R itself, so it skips the startup files a session would run.
   probeArgs: [...R_FLAGS, "--no-site-file", "--no-init-file", "-e", PROBE],
   readFacts: (context, executable) => {

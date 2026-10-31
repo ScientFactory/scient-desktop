@@ -1,3 +1,6 @@
+/** The origin of a program someone pointed Scient at. */
+export const COMPUTE_ADDED_LOCATION = "Added location";
+
 export interface ComputeCatalogLanguage {
   /** What a kernel for this language calls it, so a found kernel lands on this language's row. */
   readonly languageId: string;

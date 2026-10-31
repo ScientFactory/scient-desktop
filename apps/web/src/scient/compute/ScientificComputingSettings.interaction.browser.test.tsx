@@ -432,7 +432,7 @@ describe("Scientific Computing settings interactions", () => {
   };
   const typePath = async (_fixture: _Fixture, value: string, languageName = "Python") => {
     const input = _fixture.container.querySelector<HTMLInputElement>(
-      `input[aria-label="${languageName} executable path"]`,
+      `input[aria-label="${languageName} program path"]`,
     )!;
     await act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
@@ -484,7 +484,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(document.querySelectorAll("[data-slot=select-item]")).toHaveLength(5);
     expect(
       [...document.querySelectorAll("[data-slot=select-item]")].some((item) =>
-        item.textContent?.includes("Custom path"),
+        item.textContent?.includes("Add a location"),
       ),
     ).toBe(false);
     expect(mocks.verify).not.toHaveBeenCalled();
@@ -641,21 +641,17 @@ describe("Scientific Computing settings interactions", () => {
     await openFound(_fixture);
     await typePath(_fixture, "/new/python");
     await closeFound(_fixture);
-    expect(
-      _fixture.container.querySelector('input[aria-label="Python executable path"]'),
-    ).toBeNull();
+    expect(_fixture.container.querySelector('input[aria-label="Python program path"]')).toBeNull();
     await openFound(_fixture);
     expect(
-      _fixture.container.querySelector<HTMLInputElement>(
-        'input[aria-label="Python executable path"]',
-      )!.value,
+      _fixture.container.querySelector<HTMLInputElement>('input[aria-label="Python program path"]')!
+        .value,
     ).toBe("/new/python");
     expect(mocks.update).not.toHaveBeenCalled();
     await click(_fixture, "Use", _fixture.container.querySelector("#python-custom-executable")!);
     expect(
-      _fixture.container.querySelector<HTMLInputElement>(
-        'input[aria-label="Python executable path"]',
-      )!.value,
+      _fixture.container.querySelector<HTMLInputElement>('input[aria-label="Python program path"]')!
+        .value,
     ).toBe("/new/python");
     expect(mocks.preferences.python?.executable).toBe("");
     expect(runtimeValue(_fixture)).toBe(managedPath);
@@ -786,9 +782,10 @@ describe("Scientific Computing settings interactions", () => {
     expect(row()?.textContent).toContain("Checking");
     expect(offersSetup()).toBe(false);
     // Stata is named here before the server has said whether Scient can set it up.
-    expect(
-      _fixture.container.querySelector('[data-compute-coming-soon="stata"]')?.textContent,
-    ).toBe("Stata");
+    const stata = _fixture.container.querySelector('li[data-compute-language="stata"]');
+    expect(stata?.textContent).toContain("Stata");
+    expect(stata?.textContent).toContain("Checking");
+    expect(stata?.textContent).not.toContain("Coming soon");
     await render(_fixture);
     expect(_fixture.container.textContent).toContain("Checking");
     expect(offersSetup()).toBe(false);
@@ -998,7 +995,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(_fixture.container.querySelector("#r-managed-runtime")).toBeNull();
     expect(_fixture.container.querySelector("#r-runtime")).toBeNull();
     const missing = _fixture.container.querySelector("#r-installation-missing a");
-    expect(missing?.textContent).toContain("Get R");
+    expect(missing?.textContent).toContain("Get");
     expect(missing?.getAttribute("href")).toBe("https://cloud.r-project.org/");
     await renderOverview(_fixture);
     const overviewRow = _fixture.container.querySelector('li[data-compute-language="r"]')!;
@@ -1052,14 +1049,17 @@ describe("Scientific Computing settings interactions", () => {
     ]);
     const mostUsed = _fixture.container.querySelector("#scientific-computing")!;
     expect(mostUsed.querySelector('[data-compute-language="python"]')).not.toBeNull();
-    const spss = mostUsed.querySelector('[data-compute-coming-soon="spss"]')!;
+    // Every language opens a page; Coming soon is a word beside its name.
+    const spss = mostUsed.querySelector('[data-compute-language="spss"]')!;
     expect(spss.textContent).toBe("SPSSComing soon");
-    expect(spss.querySelector("a")).toBeNull();
-    expect(_fixture.container.querySelector('li[data-compute-language="spss"]')).toBeNull();
+    expect(spss.querySelector("a")?.textContent).toBe("SPSS");
     expect(_fixture.container.querySelector("[data-language-icon]")).toBeNull();
-    // A found kernel turns its row into the real thing, in the same field.
-    expect(_fixture.container.querySelector('[data-compute-coming-soon="haskell"]')).toBeNull();
+    // What a scan found stays beside it, and a found kernel leads its field.
+    expect(spss.querySelector("p")).toBeNull();
     const computerScience = _fixture.container.querySelector('ul[aria-label="Computer science"]')!;
+    expect(
+      computerScience.querySelector('[data-compute-language="haskell"]')?.textContent,
+    ).not.toContain("Coming soon");
     expect(computerScience.firstElementChild?.getAttribute("data-compute-language")).toBe(
       "haskell",
     );

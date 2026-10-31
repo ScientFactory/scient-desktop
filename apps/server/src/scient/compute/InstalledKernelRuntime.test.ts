@@ -8,11 +8,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import {
-  jupyterKernelDirectories,
   kernelLanguages,
   kernelLaunch,
   makeInstalledKernelBinding,
 } from "./InstalledKernelRuntime.ts";
+import { jupyterKernelDirectories } from "./KernelSpecs.ts";
 import { RuntimeDiscoveryHostReference } from "./RuntimeDiscovery.ts";
 import { fakeDiscoveryContext, fakeDiscoveryHost } from "./RuntimeDiscoveryTestHost.ts";
 

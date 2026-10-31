@@ -1,4 +1,3 @@
-import { ComputeRuntimeInventory } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -229,11 +228,42 @@ const ScientComputeSetupTool = Tool.make("scient_compute_setup", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, { ...operation("compute.setup"), scope: "thread" });
 
+export const ComputeToolRuntime = Schema.Struct({
+  executable: Schema.String,
+  version: Schema.NullOr(Schema.String),
+  origin: Schema.NullOr(Schema.String),
+  problem: Schema.optional(Schema.String),
+});
+export type ComputeToolRuntime = typeof ComputeToolRuntime.Type;
+
+export const ComputeToolLanguage = Schema.Struct({
+  language: Schema.String,
+  name: Schema.String,
+  /** What Settings shows under the name; empty when nothing is known to be missing. */
+  status: Schema.String,
+  /** `scient_compute_run`, or `shell` for a tool Compute cannot run yet. */
+  use: Schema.String,
+  /** The runtime this project uses by default. */
+  default: Schema.NullOr(Schema.String),
+  runtimes: Schema.Array(ComputeToolRuntime),
+  toolkits: Schema.optional(Schema.Array(Schema.String)),
+});
+export type ComputeToolLanguage = typeof ComputeToolLanguage.Type;
+
+export const ComputeToolInventory = Schema.Struct({
+  languages: Schema.Array(ComputeToolLanguage),
+  /** Named by Scient, with nothing found here. */
+  notFound: Schema.Array(Schema.String),
+  /** Some places could not be read, so `notFound` may be missing something. */
+  incomplete: Schema.optional(Schema.Boolean),
+});
+export type ComputeToolInventory = typeof ComputeToolInventory.Type;
+
 const ScientComputeInventoryTool = Tool.make("scient_compute_inventory", {
   description:
-    "List the languages and runtimes Scient Compute has configured or found on this server, including Scient-managed Python and its Toolkits.",
+    "List what this computer has for each language, including this project's environments and tools Scient Compute cannot run yet: the default runtime, every program found, and how to use it. Reading it starts nothing.",
   parameters: EmptyToolInput,
-  success: ComputeRuntimeInventory,
+  success: ComputeToolInventory,
   failure: ScientComputeToolError,
   dependencies,
 })
@@ -244,6 +274,8 @@ const ScientComputeInventoryTool = Tool.make("scient_compute_inventory", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, {
     ...operation("compute.inventory"),
+    // Knowing what is installed needs no permission to run anything.
+    requiredCapabilities: [],
     scope: "thread",
   });
 

@@ -71,6 +71,8 @@ import * as EffectScheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
 import { ComputeMcpGateway } from "../mcp/toolkits/compute/ComputeMcpGateway.ts";
+import { WorkspaceBindingResolutionError } from "../scient/projectScope/WorkspaceBinding.ts";
+import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { listScientComputeInventory } from "../mcp/toolkits/compute/handlers.ts";
 import {
   listScientSkillsForInvocation,
@@ -2852,10 +2854,27 @@ it.effect(
           Effect.provide(
             Layer.mock(ComputeMcpGateway)({
               runtimeInventory: () => Effect.succeed({ languages: [] }),
+              inspectRuntimes: () =>
+                Effect.succeed({
+                  contractVersion: 1 as const,
+                  scope: "environment" as const,
+                  languages: [],
+                }),
+            }),
+          ),
+          Effect.provide(
+            Layer.mock(WorkspaceBindingResolver)({
+              resolveThread: () =>
+                Effect.fail(
+                  new WorkspaceBindingResolutionError({
+                    operation: "test-resolve",
+                    kind: "project-required",
+                  }),
+                ),
             }),
           ),
         );
-        assert.deepEqual(inventory, { languages: [] });
+        assert.deepEqual(inventory, { languages: [], notFound: [] });
         // The grant admits the reader; this thread simply retains no such handoff.
         const missingSummary = yield* dispatchScientOperation(
           "threads.handoff-summary.read",

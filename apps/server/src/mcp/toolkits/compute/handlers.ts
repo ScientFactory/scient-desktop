@@ -17,7 +17,6 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
-import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   agentScope,
   computeFailed,
@@ -26,6 +25,8 @@ import {
   toolError,
   type AgentScope,
 } from "./agentComputeScope.ts";
+import { inventorySummary } from "./inventorySummary.ts";
+import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 import { computeTranscript } from "./computeTranscript.ts";
 import { editScientNotebook, readScientNotebook, runScientNotebook } from "./notebookHandlers.ts";
@@ -402,23 +403,21 @@ const setupScientCompute = Effect.fn("ScientComputeToolkit.setup")(function* (in
   return setupSummary(status);
 }, Effect.mapError(computeFailed));
 
-export const listScientComputeInventory = Effect.fn("ScientComputeToolkit.inventory")(function* () {
-  const invocation = yield* AgentInvocationContext.AgentInvocationContext;
-  if (!invocation.capabilities.has("compute")) {
-    return yield* toolError(
-      "capability-unavailable",
-      "This provider session does not grant Scient Compute access.",
+export const listScientComputeInventory = Effect.fn("ScientComputeToolkit.inventory")(
+  function* () {
+    const gateway = yield* ComputeMcpGateway;
+    const cwd = yield* consumeAgentWorkspace().pipe(
+      Effect.map((workspace) => workspace.binding.canonicalRoot),
+      Effect.orElseSucceed(() => null),
     );
-  }
-  const gateway = yield* ComputeMcpGateway;
-  return yield* gateway
-    .runtimeInventory()
-    .pipe(
-      Effect.mapError(() =>
-        toolError("compute-failed", "The Scient Compute runtime inventory could not be read."),
-      ),
-    );
-});
+    const inventory = yield* gateway.runtimeInventory();
+    const inspection = yield* gateway.inspectRuntimes({ cwd, refresh: false });
+    return inventorySummary(inventory, inspection);
+  },
+  Effect.mapError(() =>
+    toolError("compute-failed", "The Scient Compute runtime inventory could not be read."),
+  ),
+);
 
 const handlers = {
   scient_notebook_read: readScientNotebook,

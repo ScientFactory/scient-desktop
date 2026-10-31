@@ -74,6 +74,7 @@ export function useComputeLanguages(environmentId: EnvironmentId) {
   );
   const hostKey = runtimes.data?.hostKey ?? null;
   const pending = runtimes.data === null && runtimes.error === null;
+  const incomplete = runtimes.data?.incomplete === true;
 
   const preferenceFor = (language: ComputeLanguageRuntimeInventory) => {
     const languageId = language.descriptor.languageId;
@@ -150,6 +151,7 @@ export function useComputeLanguages(environmentId: EnvironmentId) {
         Number(computeScientPart(b.descriptor.languageId) === null),
     ),
     pending,
+    incomplete,
     busy: runtimes.isPending || refreshing,
     refreshing,
     refreshVersion,

@@ -411,9 +411,6 @@ function FoundInstallations({
   const [path, setPath] = useState("");
   const found = language.installations.filter((installation) => installation.source !== "managed");
   const chosen = preference.executable.trim();
-  const applyPath = async () => {
-    if (await selection.select(path.trim())) setPath("");
-  };
   return (
     <>
       <SettingsRow
@@ -456,40 +453,69 @@ function FoundInstallations({
               }
             />
           ))}
-          <SettingsRow
-            id={`${languageId}-custom-executable`}
-            title="Custom path"
-            control={
-              <form
-                className="flex min-w-0 items-center gap-1.5"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (path.trim()) void applyPath();
-                }}
-              >
-                <Input
-                  nativeInput
-                  size="compact"
-                  className="w-64 min-w-0"
-                  value={path}
-                  disabled={disabled || selection.disabled}
-                  placeholder="Executable path"
-                  aria-label={`${name} executable path`}
-                  onChange={(event) => setPath(event.currentTarget.value)}
-                />
-                <Button
-                  size="xs"
-                  variant="outline"
-                  type="submit"
-                  disabled={disabled || selection.disabled || !path.trim()}
-                >
-                  Use
-                </Button>
-              </form>
-            }
+          <AddLocationRow
+            languageId={languageId}
+            name={name}
+            action="Use"
+            path={path}
+            onPathChange={setPath}
+            disabled={disabled || selection.disabled}
+            onAdd={selection.select}
           />
         </div>
       ) : null}
     </>
+  );
+}
+
+/** A copy the scan cannot know about, wherever it lives. */
+export function AddLocationRow({
+  languageId,
+  name,
+  action,
+  path,
+  onPathChange,
+  disabled,
+  onAdd,
+}: {
+  languageId: string;
+  name: string;
+  action: string;
+  path: string;
+  onPathChange: (path: string) => void;
+  disabled: boolean;
+  onAdd: (path: string) => Promise<boolean>;
+}) {
+  const add = async () => {
+    if (await onAdd(path.trim())) onPathChange("");
+  };
+  return (
+    <SettingsRow
+      id={`${languageId}-custom-executable`}
+      title="Add a location"
+      control={
+        <form
+          className="flex min-w-0 items-center gap-1.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (path.trim()) void add();
+          }}
+        >
+          <Input
+            nativeInput
+            size="compact"
+            className="w-64 min-w-0"
+            value={path}
+            disabled={disabled}
+            placeholder="Program path"
+            aria-label={`${name} program path`}
+            onChange={(event) => onPathChange(event.currentTarget.value)}
+          />
+          <Button size="xs" variant="outline" type="submit" disabled={disabled || !path.trim()}>
+            {action}
+          </Button>
+        </form>
+      }
+    />
   );
 }

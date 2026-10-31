@@ -382,6 +382,8 @@ export function createComputeEnvironmentAtoms<R, E>(
         Atom.setIdleTTL(0),
       ),
       (inventory) =>
+        // A slow place may still answer; a dead one is simply read as unknown.
+        inventory.incomplete === true ||
         inventory.languages.some(
           (language) =>
             language.managedRuntime?.operation != null ||
@@ -407,6 +409,10 @@ export function createComputeEnvironmentAtoms<R, E>(
         registry,
         environmentId,
       ) {
+        // Asks the server to look again; the query below then reads what it found.
+        const scan = runtimeInventory({ environmentId, input: { refresh: true } });
+        registry.refresh(scan);
+        yield* AtomRegistry.getResult(registry, scan, { suspendOnWaiting: true });
         const query = runtimeInventory({ environmentId, input: {} });
         registry.refresh(query);
         return yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });

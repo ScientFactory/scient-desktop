@@ -101,15 +101,18 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
   return {
     runtimeDescriptors: [DESCRIPTOR],
     runtimeInventory: () =>
-      Effect.succeed([
-        {
-          descriptor: DESCRIPTOR,
-          managedRuntime,
-          toolkits: [],
-          installations: [],
-          failureMessage: null,
-        },
-      ]),
+      Effect.succeed({
+        languages: [
+          {
+            descriptor: DESCRIPTOR,
+            managedRuntime,
+            toolkits: [],
+            installations: [],
+            failureMessage: null,
+          },
+        ],
+        incomplete: false,
+      }),
     inspectRuntimes: (input) =>
       Effect.succeed([
         {
@@ -283,15 +286,18 @@ describe("compute RPC gateway", () => {
         workspaceResolver: computeWorkspaceResolverForTest,
         compute: computeStub({
           runtimeInventory: () =>
-            Effect.succeed([
-              {
-                descriptor: DESCRIPTOR,
-                managedRuntime: null,
-                toolkits: [],
-                installations: [],
-                failureMessage: null,
-              },
-            ]),
+            Effect.succeed({
+              languages: [
+                {
+                  descriptor: DESCRIPTOR,
+                  managedRuntime: null,
+                  toolkits: [],
+                  installations: [],
+                  failureMessage: null,
+                },
+              ],
+              incomplete: false,
+            }),
           inspectRuntimes: () => Effect.die("Settings must not inspect runtimes"),
           verifyRuntime: () => Effect.die("Settings must not verify runtimes"),
         }),
