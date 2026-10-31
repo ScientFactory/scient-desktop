@@ -15,7 +15,7 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { useQuietThreadShell } from "~/state/entities";
 
 import { accountsState } from "./accountsState";
-import { mergeProfiles, siteMatchesUrl } from "./accountsView";
+import { mergeProfiles } from "./accountsView";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 
@@ -56,13 +56,6 @@ export function ProfileSwitcher({
     ? undefined
     : profiles.find((profile) => profile.id === holders[0]);
   const projectProfileId = projectId ? data?.profileChoices?.projects[projectId] : undefined;
-  // Why this tab may be here: the profile holds a sign-in for the page's site.
-  const signedIn = data?.accounts.find(
-    (account) =>
-      account.details.kind === "website" &&
-      account.details.profileId === activeProfileId &&
-      account.details.sites.some((site) => siteMatchesUrl(site, url)),
-  );
   return (
     <>
       <Menu>
@@ -79,7 +72,7 @@ export function ProfileSwitcher({
         <MenuPopup align="start">
           {profiles.map((profile) => {
             const detail =
-              profile.id === activeProfileId && signedIn
+              profile.id === activeProfileId && holders.includes(activeProfileId)
                 ? `Signed in to ${new URL(url).hostname}`
                 : profile.record.source?.email;
             return (

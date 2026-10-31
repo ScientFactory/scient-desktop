@@ -120,7 +120,6 @@ function PendingSecretRequestForm(props: {
           ? ({
               autoComplete: "one-time-code",
               textContentType: "oneTimeCode",
-              keyboardType: "number-pad",
               importantForAutofill: "yes",
             } as const)
           : ({
@@ -146,7 +145,9 @@ function PendingSecretRequestForm(props: {
         </Text>
       ) : null}
       <Button
-        label="Save securely"
+        // SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
+        label={isSignInCodeRequest(item.id) ? "Send code" : "Save securely"}
+        // SCIENT-FORK:END
         tone="primary"
         fullWidth
         disabled={submitting || secret.trim().length === 0}

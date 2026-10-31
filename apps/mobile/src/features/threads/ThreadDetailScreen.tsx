@@ -1661,10 +1661,12 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     </View>
                   ) : (
                     <>
+                      {/* SCIENT-FORK:START — Scient Accounts: sign-ins reach the phone. */}
                       <ThreadAccountRequests
                         environmentId={props.environmentId}
                         threadId={props.selectedThread.id}
                       />
+                      {/* SCIENT-FORK:END */}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}

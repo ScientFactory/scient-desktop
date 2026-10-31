@@ -632,6 +632,7 @@ function PlainKeysDialog({
   onKept: (key: AccountPlainKey) => void;
   onClose: () => void;
 }) {
+  const keeping = useRef(new Set<string>());
   const keep = useAccountCommand(accountsState.keepPlainKey, environmentId);
   return (
     <ListDialog title="Keys in plain files" onClose={onClose}>
@@ -646,7 +647,10 @@ function PlainKeysDialog({
               variant="outline"
               disabled={!canWrite || key.kept}
               onClick={async () => {
+                if (keeping.current.has(key.name)) return;
+                keeping.current.add(key.name);
                 const result = await keep({ roots, file: key.file, name: key.name });
+                keeping.current.delete(key.name);
                 if (result.ok) onKept(key);
               }}
             >
@@ -749,6 +753,7 @@ function AccountsContent({
   const scanPlainKeys = useEffectEvent((roots: ReadonlyArray<string>) => findPlainKeys({ roots }));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Looks once per set of projects when the page opens; the files aren't watched.
   useEffect(() => {
+    if (!canWrite) return;
     let live = true;
     void scanPlainKeys(scannedRoots ? scannedRoots.split("\u0000") : []).then((result) => {
       if (live && result.ok) setPlainKeys(result.value);
@@ -756,7 +761,7 @@ function AccountsContent({
     return () => {
       live = false;
     };
-  }, [scannedRoots]);
+  }, [canWrite, scannedRoots]);
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const keys = keysInUse(
     serverSettings?.providerInstances ?? {},
@@ -828,9 +833,11 @@ function AccountsContent({
               if (result.ok)
                 toastManager.add({
                   type: "success",
-                  title: result.value.checked
-                    ? `Checked ${result.value.checked} sign-in${result.value.checked === 1 ? "" : "s"}`
-                    : "No sign-ins to check yet",
+                  title: result.value.alreadyRunning
+                    ? "Already checking your accounts"
+                    : result.value.checked
+                      ? `Checked ${result.value.checked} sign-in${result.value.checked === 1 ? "" : "s"}`
+                      : "No sign-ins to check yet",
                 });
             }}
           >

@@ -341,7 +341,7 @@ Each step evaluates a detection script that reports the visible login form: user
 one-time-code fields, a submit control, CAPTCHA or passkey prompts. Scient fills only when the
 page's origin matches one of the account's sites (a bare domain matches its subdomains), so a
 look-alike page never receives the password. It types with `clear`, submits, waits for the
-navigation, and repeats for multi-step SSO up to six submissions. A password field returning on
+navigation, and repeats for multi-step SSO up to ten steps. A password field returning on
 the same origin after password submission returns `password-rejected` without resubmitting; a
 CAPTCHA, passkey or push prompt is a hand-off, not a rejection. A returning code field returns
 `code-rejected`; generated TOTP may retry once only after a new period starts. Static codes never
@@ -411,8 +411,8 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   prompt offers available stores; nothing is kept unless the user saves.
 - **Autofill**: the persistent desktop guest reports a visible login form after load. One watcher
   per environment (`accountAutofill.ts`, started by `accountWatchers.ts`) fills every
-  desktop tab, shown or hidden, the user's or an agent's, once per document, without submitting,
-  only when fields remain empty and nobody typed. In the user's tabs agent access does not gate it
+  desktop tab, shown or hidden, the user's or an agent's, once per document, only when fields remain
+  empty and nobody typed. In the user's tabs agent access does not gate it
   (owner, 2026-10-30); in a tab an agent controls (`automationOwner`) only sign-ins that agent may
   use fill, since its scripts can read the page. Exact-origin accounts rank before bare-domain matches, then most recently used.
   `fillValues` records the filled page per thread and tab in memory; `authorizePreviewTab`
@@ -429,7 +429,7 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 ### Sign-in status and checks
 
 `AccountSummary.lastCheck` keeps what Scient last saw of a sign-in: `signed-in`, `signed-out`,
-`needs-you`, `rejected` or `unknown`, with when and an optional message. Every sign-in outcome
+`needs-you`, `rejected`, `limited` or `unknown`, with when and an optional message. Every sign-in outcome
 updates it (`outcomeCheckState`). `accounts.signInSeen` records the user's own sign-in, when a
 submitted saved password leaves no login form six seconds later. A saved secret resets it. Rows show
 it through `accountStatusLabel`, after anything that needs the user.
@@ -448,7 +448,7 @@ Autofill submits only on the user's own tab, when the site has one saved sign-in
 `lastSignInOutcome` is `signed-in`, at most once per site every 10 minutes, and only a complete form.
 
 Google answers for itself. `googleSessions` (desktop) posts to the account list Chrome reads, with
-the profile's own session and no page, and `watchGoogleSessions` (`accountWatchers.ts`) sends the
+the profile's own session and no page, and `watchGoogleSessions`, started by `accountWatchers.ts`, sends the
 result to `accounts.googleSessions.seen` at startup, after a sign-in, and on focus at most every five
 minutes. A profile with no Google cookies isn't asked. The server keeps one password-free website
 row per address and profile, site `google.com`, with `lastCheck` set from what Google said. Those

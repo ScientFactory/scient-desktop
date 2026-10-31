@@ -130,7 +130,10 @@ export const WsAccountsTestRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsTest
 /** Opens browser sign-ins one at a time; results arrive through account changes. */
 export const WsAccountsCheckRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsCheck, {
   payload: AccountsCheckInput,
-  success: Schema.Struct({ checked: Schema.Int }),
+  success: Schema.Struct({
+    checked: Schema.Int,
+    alreadyRunning: Schema.optional(Schema.Boolean),
+  }),
   error: AccountsRpcError,
 });
 

@@ -88,18 +88,17 @@ export function useAccountBrowser(environmentId: EnvironmentId) {
     if (!opened) return false;
     const threadRef = scopeThreadRef(project.environmentId, opened.threadId);
     useRightPanelStore.getState().requestMaximize(threadRef);
-    const profile = profileId ?? newTabProfileId;
     const result = await openUrlInPreview({
       threadRef,
       url: /^https?:\/\//.test(url) ? url : `https://${url}`,
       openPreview,
-      profileId: BrowserProfileId.make(profile),
+      ...(profileId === undefined ? {} : { profileId: BrowserProfileId.make(profileId) }),
     });
     if (result._tag === "Failure") {
       toastManager.add({ type: "error", title: "Could not open the site" });
       return false;
     }
-    if (signIn) finishSignIn(signIn, profile);
+    if (signIn) finishSignIn(signIn, profileId ?? newTabProfileId);
     return true;
   };
 }

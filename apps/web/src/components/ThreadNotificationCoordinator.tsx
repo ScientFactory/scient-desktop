@@ -308,7 +308,7 @@ export function startThreadNotifications(
     );
     // SCIENT-FORK:END
     entry.unsubscribe = () => {
-      // SCIENT-FORK:START — Dispose the account observers with their environment.
+      // SCIENT-FORK:START — Dispose the account observer with its environment.
       unsubscribeAccounts();
       // SCIENT-FORK:END
       unsubscribeShell();

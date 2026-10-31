@@ -32,7 +32,9 @@ export const makeAccountsRpcHandlers = ({
   plainKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
-  readonly check: (input: AccountsCheckInput) => Effect.Effect<number, AccountsError>;
+  readonly check: (
+    input: AccountsCheckInput,
+  ) => Effect.Effect<{ checked: number; alreadyRunning?: boolean }, AccountsError>;
   readonly linkKey: (link: AccountKeyLink) => Effect.Effect<void, AccountsError>;
   readonly paperForSource: (
     input: AccountPaperForSourceInput,
@@ -89,11 +91,7 @@ export const makeAccountsRpcHandlers = ({
         attributes,
       ),
     [WS_METHODS.accountsCheck]: (input) =>
-      observeRpcEffect(
-        WS_METHODS.accountsCheck,
-        check(input).pipe(Effect.map((checked) => ({ checked }))),
-        attributes,
-      ),
+      observeRpcEffect(WS_METHODS.accountsCheck, check(input), attributes),
     [WS_METHODS.accountsSignInSeen]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSignInSeen,

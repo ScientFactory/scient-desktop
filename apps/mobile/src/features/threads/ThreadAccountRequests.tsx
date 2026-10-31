@@ -26,7 +26,9 @@ export function ThreadAccountRequests(props: {
   const answer = (approval: AccountApproval, decision: "once" | "always" | "deny") =>
     void respond({ environmentId, input: { approvalId: approval.approvalId, decision } });
   const approvals = data?.approvals.filter((item) => item.threadId === threadId) ?? [];
-  const handoffs = data?.handoffs?.filter((item) => item.threadId === threadId) ?? [];
+  // A code has its own private card; the rest are shown here.
+  const handoffs =
+    data?.handoffs?.filter((item) => item.threadId === threadId && item.kind !== "code") ?? [];
   if (approvals.length === 0 && handoffs.length === 0) return null;
   return (
     <View className="gap-2 px-4 pb-2">
@@ -55,6 +57,7 @@ export function ThreadAccountRequests(props: {
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
             {accountHandoffInstruction(handoff.kind)}
             {handoff.kind === "push" && handoff.number ? ` Tap ${handoff.number}.` : ""}
+            {handoff.kind === "captcha" || handoff.kind === "passkey" ? " On your computer." : ""}
           </Text>
           <Button
             label="Cancel sign-in"

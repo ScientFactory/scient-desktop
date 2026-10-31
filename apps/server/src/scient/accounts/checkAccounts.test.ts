@@ -136,7 +136,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const { checked, operations, uses } = yield* run([account]);
-      expect(checked).toBe(1);
+      expect(checked).toEqual({ checked: 1 });
       expect(uses[0]?.signInOutcome).toBe("signed-in");
       expect(operations.at(-1)).toBe("close");
     }),

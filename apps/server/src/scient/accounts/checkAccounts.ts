@@ -231,5 +231,10 @@ export const checkAccounts = (input: AccountsCheckInput, environmentId: Environm
   runCheck(input).pipe(
     Effect.provideService(AgentInvocationContext, userRunInvocation(CHECK_THREAD, environmentId)),
     run.withPermitsIfAvailable(1),
-    Effect.map(Option.getOrElse(() => 0)),
+    Effect.map(
+      Option.match({
+        onNone: () => ({ checked: 0, alreadyRunning: true }),
+        onSome: (checked) => ({ checked }),
+      }),
+    ),
   );

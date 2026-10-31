@@ -338,7 +338,7 @@ function withAccountRequest<S extends { readonly state: RelayAgentActivityState 
     state: {
       ...snapshot.state,
       phase: "waiting_for_approval",
-      headline: "Sign-in needs you",
+      headline: "An account needs you",
       detail: request,
     },
   };
