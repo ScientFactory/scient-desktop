@@ -329,7 +329,7 @@ export function toolScanSteps(context: DiscoveryContext): ReadonlyArray<ToolScan
   ];
 }
 
-/** The tools of each language, the first place found leading, each real file once. */
+/** The tools of each language: the first place found leads, then the catalog's order. */
 export function groupTools(
   tools: ReadonlyArray<FoundLanguageTool>,
 ): ReadonlyMap<string, ReadonlyArray<FoundLanguageTool>> {
@@ -340,6 +340,20 @@ export function groupTools(
     if (seen.has(key)) continue;
     seen.add(key);
     grouped.set(tool.languageId, [...(grouped.get(tool.languageId) ?? []), tool]);
+  }
+  const rank = (tool: FoundLanguageTool) => {
+    const index = LANGUAGE_TOOLS[tool.languageId]?.commands.indexOf(tool.name) ?? -1;
+    return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+  };
+  const folder = (tool: FoundLanguageTool) => tool.executable.replace(/[\\/][^\\/]*$/u, "");
+  for (const [languageId, found] of grouped) {
+    const places = [...new Set(found.map(folder))];
+    grouped.set(
+      languageId,
+      found.toSorted(
+        (a, b) => places.indexOf(folder(a)) - places.indexOf(folder(b)) || rank(a) - rank(b),
+      ),
+    );
   }
   return grouped;
 }

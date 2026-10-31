@@ -35,11 +35,7 @@ interface KernelLanguage {
   readonly name: string;
   readonly extension?: string;
   /** Present on the languages Scient always lists, installed or not. */
-  readonly setup?: {
-    readonly needs: string;
-    readonly kernel?: string;
-    readonly url?: string;
-  };
+  readonly setup?: { readonly needs: string; readonly url?: string };
 }
 
 const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
@@ -60,7 +56,6 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
     name: "GNU Octave",
     setup: {
       needs: "GNU Octave and octave_kernel",
-      kernel: "octave_kernel",
       url: "https://github.com/Calysto/octave_kernel",
     },
   },
@@ -71,7 +66,6 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
     extension: ".rs",
     setup: {
       needs: "The evcxr kernel: cargo install --locked evcxr_jupyter, then evcxr_jupyter --install",
-      kernel: "evcxr",
       url: "https://github.com/evcxr/evcxr/tree/main/evcxr_jupyter",
     },
   },
@@ -86,7 +80,6 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
     extension: ".do",
     setup: {
       needs: "Stata 17 or later and nbstata",
-      kernel: "nbstata",
       url: "https://hugetim.github.io/nbstata/",
     },
   },
@@ -96,7 +89,6 @@ const KERNEL_LANGUAGES: Readonly<Record<string, KernelLanguage>> = {
     extension: ".wl",
     setup: {
       needs: "Wolfram Engine and WolframLanguageForJupyter",
-      kernel: "WolframLanguageForJupyter",
       url: "https://github.com/WolframResearch/WolframLanguageForJupyter",
     },
   },

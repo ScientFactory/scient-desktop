@@ -53,8 +53,6 @@ const ComputeHistoryLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maxi
 /** What a language needs on this computer before Scient can run it. */
 export const ComputeLanguageSetup = Schema.Struct({
   needs: Schema.String.check(Schema.isMaxLength(256)),
-  /** What is still missing when the language itself is here. */
-  kernel: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
   url: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(512))),
 });
 export type ComputeLanguageSetup = typeof ComputeLanguageSetup.Type;

@@ -976,7 +976,7 @@ describe("Scientific Computing settings interactions", () => {
     await renderOverview(_fixture);
     expect(
       _fixture.container.querySelector('li[data-compute-language="r"]')?.textContent,
-    ).toContain("Needs setup");
+    ).toContain("4.6.2 · System");
     await render(_fixture, "r");
     // Scient's kernel row appears once it is installed; until then the Runtime row sets it up.
     expect(_fixture.container.querySelector("#r-managed-runtime")).toBeNull();

@@ -290,14 +290,22 @@ export function computeLanguageDetail(
       const selected = defaultComputeInstallation(language, preference, managed);
       if (selected === undefined) return "Found";
       if (selected.version === null) {
-        return computeScientPart(language.descriptor.languageId) === null
+        if (computeScientPart(language.descriptor.languageId) !== null)
+          return runtimeOriginLabel(selected);
+        const tool = language.tools?.[0];
+        return tool === undefined
           ? "Kernel found"
-          : runtimeOriginLabel(selected);
+          : computeToolDetail(tool, language.descriptor.displayName);
       }
       return computeRuntimePickerLabel(selected, language.descriptor.displayName);
     }
-    case "setup":
-      return "Needs setup";
+    case "setup": {
+      // Run adds what is missing, so nothing has to happen before it.
+      const selected = defaultComputeInstallation(language, preference, managed);
+      return selected === undefined
+        ? "Needs setup"
+        : computeRuntimePickerLabel(selected, language.descriptor.displayName);
+    }
     case "connect":
       return "Not connected";
     case "missing":
@@ -345,13 +353,8 @@ export function computeLanguageStatus(input: {
   }
   const url = computeLanguageDownloadUrl(language);
   const tool = language.tools?.[0];
-  if (tool !== undefined) {
-    const detail = computeToolDetail(tool, language.descriptor.displayName);
-    const kernel = language.descriptor.setup?.kernel;
-    return kernel === undefined
-      ? { ...nothingToGet, detail }
-      : { comingSoon, detail: `${detail} · Needs ${kernel}`, getUrl: url, unknown: false };
-  }
+  if (tool !== undefined)
+    return { ...nothingToGet, detail: computeToolDetail(tool, language.descriptor.displayName) };
   if (incomplete) return { comingSoon, detail: "Couldn't check", getUrl: undefined, unknown: true };
   return comingSoon
     ? { ...nothingToGet, detail: "" }

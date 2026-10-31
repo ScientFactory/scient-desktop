@@ -530,7 +530,8 @@ describe("what a language shows", () => {
     const kernel = { ...status, selection: "existing" as const };
     expect(detail(language("r", [found], kernel))).toBe("4.6.2 · System");
     expect(detail(language("r", [found], kernel), false)).toBe("4.6.2 · System · Off");
-    expect(detail(language("r", [found], { ...status, installed: false }))).toBe("Needs setup");
+    // Run adds a missing kernel, so a language that lacks one says only what it runs on.
+    expect(detail(language("r", [found], { ...status, installed: false }))).toBe("4.6.2 · System");
     expect(detail(language("rust", [{ ...found, version: null }]))).toBe("Kernel found");
     expect(
       detail(language("r", [{ ...found, problem: "The selected R executable was not found." }])),
