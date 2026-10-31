@@ -3,6 +3,7 @@ import type {
   ProviderOptionSelection,
   ServerProviderSkill,
 } from "@t3tools/contracts";
+import { useSideChatCitationInbox } from "../../scient/chat/sideChatCitation";
 import { ScientVoiceComposerControl } from "../../scient/voice/ScientVoiceComposerControl.tsx";
 import { mergeEffectiveProviderSkills } from "../../scient/skills/effectiveSkills.ts";
 // SCIENT-FORK:START — skill cards and the composer share invocation and document helpers.
@@ -3091,6 +3092,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return inserted;
   };
   const citeTextStable = useStableCallback(citeText);
+  // SCIENT-FORK:START — quotes sent here from the main chat's Ask in side chat.
+  useSideChatCitationInbox(routeThreadRef, citeTextStable);
+  // SCIENT-FORK:END
 
   useImperativeHandle(
     composerRef,

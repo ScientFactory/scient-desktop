@@ -190,7 +190,9 @@ still come from the provider's own configuration.
 
 In a workspace Markdown file's rendered view, select text and choose **Ask in chat**.
 Scient adds a file-quote chip to the current chat and opens the same optional
-comment bubble used for assistant quotes. Text in paragraphs, lists, tables,
+comment bubble used for assistant quotes. **Ask in side chat**, offered beside it
+wherever a quote can be taken, adds the chip to the open side chat instead, or
+starts one. Text in paragraphs, lists, tables,
 and ordinary code blocks is supported; selecting an entire image, formula, or
 interactive chart is not part of this action. When an editable diagram's source
 is visible, selecting that source is supported like any other code block; selecting

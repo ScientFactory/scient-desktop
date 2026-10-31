@@ -135,7 +135,7 @@ export function SourceCitationActions<Annotation>({
       preserveSelection
       selectionOwnerId={ownerId}
       allowPreventedSelectionStart={allowSourceSelection}
-      onCite={(citation, anchor) => {
+      onCite={(citation, anchor, destination) => {
         // Activating the action can move focus or collapse the native selection.
         // Validate the captured offsets against the source, not that live selection.
         const source = editor ? editor.getFile()?.contents : currentStaticSource.current;
@@ -170,7 +170,7 @@ export function SourceCitationActions<Annotation>({
           });
           return false;
         }
-        const accepted = onCite(current, anchor);
+        const accepted = onCite(current, anchor, destination);
         if (!accepted)
           toastManager.add({
             type: "warning",

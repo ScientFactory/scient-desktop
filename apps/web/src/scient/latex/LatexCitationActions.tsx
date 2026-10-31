@@ -92,7 +92,7 @@ export function LatexCitationActions({
       allowPreventedSelectionStart={acceptsSelection}
       selectionOwnerId={ownerId}
       preserveSelection
-      onCite={(citation, anchor) => {
+      onCite={(citation, anchor, destination) => {
         const current = capture();
         if (
           !current ||
@@ -110,7 +110,7 @@ export function LatexCitationActions({
           });
           return false;
         }
-        const accepted = onCite(citation, anchor);
+        const accepted = onCite(citation, anchor, destination);
         if (!accepted)
           toastManager.add({
             type: "warning",
