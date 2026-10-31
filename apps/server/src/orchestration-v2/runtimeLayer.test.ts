@@ -5796,6 +5796,28 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["queue.resume", "queued-run.start"] as const)(
+    "%s starts a message a Stop held",
+    (commandType) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-layer-held-queue-send-${commandType}`);
+        const { send, runFor, end, startedRunIds, awaitHeld } = yield* queueTestThread(threadId);
+        yield* send("active", "user", true);
+        yield* send("held", "user", false);
+        yield* end("active", "interrupted");
+        yield* awaitHeld("held");
+        const held = yield* runFor("held");
+        yield* orchestrator.dispatch({
+          type: commandType,
+          commandId: CommandId.make(`${threadId}:send`),
+          threadId,
+          runId: held.id,
+        });
+        assert.equal(yield* Queue.take(startedRunIds), held.id);
+      }),
+  );
+
   it.effect("keeps held agent messages while the thread's worktree setup is unresolved", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
