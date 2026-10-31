@@ -6,6 +6,7 @@
  * @module ScientificRpcHandlers
  */
 import { WS_METHODS, WsRepositoryRpcGroup, WsScientificRpcGroup } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 import type { makeComputeConsoleNotebook } from "../compute/ComputeConsoleNotebook.ts";
@@ -84,6 +85,14 @@ export const makeScientificRpcHandlers = ({
       observeRpcEffect(WS_METHODS.computeInspectRuntimes, computeGateway.inspectRuntimes(input), {
         "rpc.aggregate": "compute",
       }),
+    [WS_METHODS.computeActiveWork]: () =>
+      observeRpcEffect(
+        WS_METHODS.computeActiveWork,
+        Effect.all([computeGateway.activeWork, analysis.activeRunCount]).pipe(
+          Effect.map(([sessions, files]) => ({ count: sessions + files })),
+        ),
+        { "rpc.aggregate": "compute" },
+      ),
     [WS_METHODS.computeRuntimeInventory]: (input) =>
       observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(input), {
         "rpc.aggregate": "compute",

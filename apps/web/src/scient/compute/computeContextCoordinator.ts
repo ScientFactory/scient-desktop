@@ -134,6 +134,29 @@ export async function closeComputeContext(
   return { closed: true, contextId: input.contextId, error: null };
 }
 
+/** Whether closing this context would stop something running or waiting. */
+export async function computeContextHasRunningWork(input: {
+  readonly contextId: ComputeContextId;
+  readonly isSessionBusy: (binding: ComputeContextBinding) => Promise<boolean>;
+  readonly isBatchRunActive: (binding: ComputeContextBinding) => Promise<boolean>;
+}): Promise<boolean> {
+  const { bindings } = useComputeContextStore.getState();
+  const owned = Object.values(bindings).filter(
+    (binding) =>
+      binding.contextId === input.contextId || binding.parentContextId === input.contextId,
+  );
+  const working = await Promise.all(
+    owned.map((binding) =>
+      binding.batchRunId !== undefined
+        ? input.isBatchRunActive(binding)
+        : binding.sessionId !== null && binding.borrowed !== true
+          ? input.isSessionBusy(binding)
+          : false,
+    ),
+  );
+  return working.some(Boolean);
+}
+
 /** Stop the displayed context only; closing its tab also stops all owned children. */
 export async function stopComputeContext(
   input: ComputeContextCloseInput,

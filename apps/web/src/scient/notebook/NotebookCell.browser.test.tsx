@@ -47,7 +47,7 @@ async function mountCell(
   const controller = createNotebookController({
     read: async () => ({ revision: "1.0", language: "python", cells: [...cells] }),
     readOutput: async () => null,
-    edit: async () => ({ revision: "1.1" }),
+    edit: async () => ({ revision: "1.1", refused: [] }),
     recordRun: async () => null,
     onError: () => undefined,
   });

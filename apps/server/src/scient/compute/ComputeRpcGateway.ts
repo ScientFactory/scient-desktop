@@ -41,6 +41,7 @@ import { ComputeWorkspaceAdmission } from "./ComputeWorkspaceAdmission.ts";
 
 type ComputeGatewayService = Pick<
   ComputeSessionService["Service"],
+  | "activeWork"
   | "runtimeDescriptors"
   | "runtimeInventory"
   | "inspectRuntimes"
@@ -591,6 +592,7 @@ export function makeComputeRpcGateway(input: {
 
   return {
     runtimeInventory,
+    activeWork: input.compute.activeWork,
     inspectRuntimes: inWorkspace("inspect", inspectRuntimes),
     verifyRuntime: inWorkspace("verify", verifyRuntime),
     managedRuntimeStatus,

@@ -57,6 +57,7 @@ import {
   ComputeSessionStreamEvent,
   ComputeVariableSnapshot,
   ComputeStartProjectSessionInput,
+  ComputeActiveWork,
   ComputeSubmitProjectCellsInput,
   ComputeSubmitProjectExecutionInput,
   ComputeVerifyRuntimeInput,
@@ -98,6 +99,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   // Scient-owned stateful scientific compute methods
   computeInspectRuntimes: "compute.inspectRuntimes",
   computeRuntimeInventory: "compute.runtimeInventory",
+  computeActiveWork: "compute.activeWork",
   computeVerifyRuntime: "compute.verifyRuntime",
   computeManagedRuntimeStatus: "compute.managedRuntimeStatus",
   computeManageRuntime: "compute.manageRuntime",
@@ -236,6 +238,12 @@ const WsComputeRuntimeInventoryRpc = Rpc.make(
     error: ComputeRpcError,
   },
 );
+
+const WsComputeActiveWorkRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeActiveWork, {
+  payload: Schema.Struct({}),
+  success: ComputeActiveWork,
+  error: ComputeRpcError,
+});
 
 const WsComputeVerifyRuntimeRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeVerifyRuntime, {
   payload: ComputeVerifyRuntimeInput,
@@ -422,6 +430,7 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsSubscribeAnalysisRunsRpc,
   WsComputeInspectRuntimesRpc,
   WsComputeRuntimeInventoryRpc,
+  WsComputeActiveWorkRpc,
   WsComputeVerifyRuntimeRpc,
   WsComputeManagedRuntimeStatusRpc,
   WsComputeManageRuntimeRpc,

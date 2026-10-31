@@ -507,6 +507,8 @@ export class ComputeSessionService extends Context.Service<
     >;
     /** Every run that has finished, for work that must happen with no client attached. */
     readonly settledRuns: Stream.Stream<ComputeSettledRun>;
+    /** Runs executing or waiting in any session. */
+    readonly activeWork: Effect.Effect<number>;
   }
 >()("t3/scient/compute/ComputeSessionService") {}
 
@@ -3757,6 +3759,14 @@ const make = Effect.gen(function* () {
           );
         return yield* action(input);
       });
+  const activeWork = Effect.gen(function* () {
+    let count = 0;
+    for (const live of (yield* Ref.get(sessionsRef)).values()) {
+      const queue = yield* Ref.get(live.queueRef);
+      count += queue.pending.length + (queue.active === null ? 0 : 1);
+    }
+    return count;
+  });
   const scopedList = Effect.fn("ComputeSessionService.scopedList")(function* (
     input: ComputeListSessionsInput,
   ) {
@@ -3834,6 +3844,7 @@ const make = Effect.gen(function* () {
     resolveOutputResource,
     subscribeSessions: scopedSubscribe,
     settledRuns: Stream.fromPubSub(settledRuns),
+    activeWork,
   });
 });
 

@@ -263,6 +263,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.analysisPromoteRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeInspectRuntimes]: AuthOrchestrationReadScope,
   [WS_METHODS.computeRuntimeInventory]: AuthOrchestrationReadScope,
+  [WS_METHODS.computeActiveWork]: AuthOrchestrationReadScope,
   [WS_METHODS.computeVerifyRuntime]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeManagedRuntimeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.computeManageRuntime]: AuthOrchestrationOperateScope,

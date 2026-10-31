@@ -2,12 +2,14 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import type { RightPanelSurface } from "~/rightPanelStore";
+import { ensureLocalApi } from "~/localApi";
+import { analysisEnvironment } from "~/state/analysis";
 import { computeEnvironment } from "~/state/compute";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { useComputeConsoleStore } from "./computeConsoleStore";
-import { closeComputeContext } from "./computeContextCoordinator";
+import { computeContextHasRunningWork, closeComputeContext } from "./computeContextCoordinator";
 import {
   computeFileContextId,
   useComputeContextStore,
@@ -15,6 +17,7 @@ import {
 } from "./computeContextStore";
 import { useComputeFilePresentationStore } from "./computeFilePresentationStore";
 import { computeSourceLanguageForPath } from "./computeSourceLanguage";
+import { isTerminalAnalysisRunStatus } from "../analysis/analysisRunUiState";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
 
 /** The session commands a chat needs to stop compute before closing its tabs. */
@@ -27,7 +30,11 @@ export function useComputeSessionCommands() {
     reportFailure: false,
     refresh: true,
   });
-  return { cancelComputeBatchRun, stopComputeSession, getComputeSession };
+  const getBatchRun = useAtomQueryRunner(analysisEnvironment.run, {
+    reportFailure: false,
+    refresh: true,
+  });
+  return { cancelComputeBatchRun, stopComputeSession, getComputeSession, getBatchRun };
 }
 
 /**
@@ -42,7 +49,7 @@ export function useCloseComputeOwnedSurfaces(input: {
   const {
     activeThreadRef,
     activeWorkspaceRoot,
-    commands: { cancelComputeBatchRun, stopComputeSession, getComputeSession },
+    commands: { cancelComputeBatchRun, stopComputeSession, getComputeSession, getBatchRun },
   } = input;
   const computeContextIdForSurface = (surface: RightPanelSurface): ComputeContextId | null => {
     if (surface.kind === "scient" && surface.module === "compute") {
@@ -78,6 +85,35 @@ export function useCloseComputeOwnedSurfaces(input: {
           .filter((contextId): contextId is ComputeContextId => contextId !== null),
       ),
     ];
+    const working = await Promise.all(
+      contextIds.map((contextId) =>
+        computeContextHasRunningWork({
+          contextId,
+          isSessionBusy: async ({ environmentId, cwd, sessionId }) => {
+            const session = await getComputeSession({
+              environmentId,
+              input: { cwd, sessionId: sessionId! },
+            });
+            return session._tag === "Success" && session.value?.activity === "busy";
+          },
+          isBatchRunActive: async ({ environmentId, cwd, batchRunId }) => {
+            const run = await getBatchRun({
+              environmentId,
+              input: { cwd, runId: batchRunId! },
+            });
+            return run._tag === "Success" && !isTerminalAnalysisRunStatus(run.value.receipt.status);
+          },
+        }),
+      ),
+    );
+    if (
+      working.some(Boolean) &&
+      !(await ensureLocalApi().dialogs.confirm(
+        "Stop what is running and close this tab?\n\nWhat it has printed so far stays with the file.",
+        { variant: "destructive" },
+      ))
+    )
+      return false;
     for (const contextId of contextIds) {
       const result = await closeComputeContext({
         contextId,

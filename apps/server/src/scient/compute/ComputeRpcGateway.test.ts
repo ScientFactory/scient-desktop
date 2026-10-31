@@ -99,6 +99,7 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
     failureMessage: null,
   };
   return {
+    activeWork: Effect.succeed(0),
     runtimeDescriptors: [DESCRIPTOR],
     runtimeInventory: () =>
       Effect.succeed({

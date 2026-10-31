@@ -188,6 +188,8 @@ export class AnalysisService extends Context.Service<
       readonly artifactId: AnalysisArtifactId;
       readonly representationId: AnalysisArtifactRepresentationId;
     }) => Effect.Effect<ResolvedAnalysisArtifactRepresentation | null, AnalysisOperationError>;
+    /** Runs executing or waiting, in every project. */
+    readonly activeRunCount: Effect.Effect<number>;
     readonly subscribeRuns: (
       input: AnalysisSubscribeRunsInput,
     ) => Effect.Effect<Stream.Stream<AnalysisRunStreamEvent>, AnalysisOperationError, Scope.Scope>;
@@ -1634,6 +1636,12 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const activeRunCount = Ref.get(runsRef).pipe(
+    Effect.map(
+      (runs) => [...runs.values()].filter((run) => !isTerminal(run.receipt.status)).length,
+    ),
+  );
+
   const requestRunCancellation = Effect.fn("AnalysisService.requestRunCancellation")(function* (
     input: AnalysisCancelRunInput,
   ) {
@@ -2145,6 +2153,7 @@ const make = Effect.gen(function* () {
     promoteRun,
     resolveArtifact,
     subscribeRuns,
+    activeRunCount,
   });
 });
 
