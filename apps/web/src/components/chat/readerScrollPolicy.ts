@@ -128,6 +128,19 @@ export function readingEndGapOnScreen(
 }
 
 /**
+ * How far the text end moved for a reader resting at it: the less of its move on screen and in
+ * the content. A scroll the record has not seen yet shifts only the first, and content above that
+ * the list already compensated for shifts only the second; neither is growth to follow.
+ */
+export function restingEndGrowth(
+  resting: { readonly gap: number; readonly contentEnd: number },
+  gap: number,
+  scrollTop: number,
+): number {
+  return Math.min(gap - resting.gap, gap + scrollTop - resting.contentEnd);
+}
+
+/**
  * Only the reading end decides whether the reader is at bottom; trailing tools, changed files,
  * timestamps, and busy indicators must not. Use the last non-padding row until measurements exist.
  */
