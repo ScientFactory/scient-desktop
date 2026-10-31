@@ -15,6 +15,7 @@ import {
   type NotebookRecordRunInput,
   type NotebookView,
 } from "@t3tools/contracts";
+import { notebookCodeHash } from "@t3tools/shared/notebookStaleness";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -99,6 +100,7 @@ interface RunResult {
   readonly outputs: ReadonlyArray<unknown>;
   readonly executionCount: number | null;
   readonly run: NotebookCellRun;
+  readonly truncated: boolean;
 }
 type StoreEdit = NotebookEdit | RunResult;
 
@@ -120,9 +122,11 @@ function applyRunResult(index: NotebookIndex, result: RunResult): NotebookIndex 
         pending === null || pending === result.run.execution
           ? result.run
           : { ...result.run, pending };
-      const outputs = Buffer.from(
-        JSON.stringify(result.outputs, null, 1).replaceAll("\n", "\n   "),
-      );
+      // Output that was not kept is not a run that printed nothing: what was saved stays.
+      const outputs =
+        result.truncated && result.outputs.length === 0
+          ? cell.outputs
+          : Buffer.from(JSON.stringify(result.outputs, null, 1).replaceAll("\n", "\n   "));
       return {
         ...cell,
         fields: {
@@ -131,11 +135,20 @@ function applyRunResult(index: NotebookIndex, result: RunResult): NotebookIndex 
           execution_count: result.executionCount ?? latest + 1,
         },
         outputs,
-        outputIndex: indexOutputs(outputs),
+        outputIndex: outputs === null ? [] : indexOutputs(outputs),
         saved: null,
       };
     }),
   };
+}
+
+/** Someone changed this cell after the writer last saw it, so its edit would overwrite them. */
+function sourceMovedOn(index: NotebookIndex, edit: NotebookEdit): boolean {
+  if (edit._tag !== "set-source" || edit.base === undefined) return false;
+  const cell = index.cells.find((entry) => entry.id === edit.cellId);
+  if (cell === undefined) return true;
+  const current = notebookCodeHash(notebookText(cell.fields.source));
+  return current !== edit.base && current !== notebookCodeHash(edit.source);
 }
 
 function newCell(edit: Extract<NotebookEdit, { _tag: "insert" }>): NotebookCellRecord {
@@ -230,6 +243,8 @@ function applyEdit(
       });
     case "expect-run":
       return update(edit.cellId, (cell) => {
+        // A quick run can be recorded before this reaches the server.
+        if (cellRun(cell.fields)?.execution === edit.execution) return cell;
         const metadata = isRecord(cell.fields.metadata) ? cell.fields.metadata : {};
         const scient = isRecord(metadata.scient) ? metadata.scient : {};
         return {
@@ -443,17 +458,23 @@ export const makeNotebookStore = Effect.gen(function* () {
 
   const edit = Effect.fn("NotebookStore.edit")(function* (request: NotebookEditInput) {
     const notebook = yield* open(request);
-    yield* notebook.lock.withPermits(1)(
+    const refused = yield* notebook.lock.withPermits(1)(
       Effect.sync(() => {
+        const refused: string[] = [];
         for (const change of request.edits) {
+          if (sourceMovedOn(notebook.index, change)) {
+            refused.push((change as Extract<NotebookEdit, { _tag: "set-source" }>).cellId);
+            continue;
+          }
           notebook.index = applyEdit(notebook.index, change, notebook.removed);
+          notebook.pending = [...notebook.pending, change];
         }
-        notebook.pending = [...notebook.pending, ...request.edits];
         notebook.version += 1;
+        return refused;
       }),
     );
     yield* scheduleSave(notebook);
-    return { revision: revisionOf(notebook) };
+    return { revision: revisionOf(notebook), refused };
   });
 
   const recordRun = Effect.fn("NotebookStore.recordRun")(function* (
@@ -478,12 +499,17 @@ export const makeNotebookStore = Effect.gen(function* () {
     }).pipe(Effect.mapError((cause) => fail(`A run's output could not be read: ${cause.message}`)));
     const recorded = yield* notebook.lock.withPermits(1)(
       Effect.sync(() => {
+        const cell = notebook.index.cells.find((entry) => entry.id === request.cellId);
+        const last = cell === undefined ? null : cellRun(cell.fields);
+        // The server and an open notebook both record a run, and a result never replaces a newer one.
+        if (cell === undefined || (last !== null && last.at >= request.run.at)) return cell ?? null;
         const edit: RunResult = {
           _tag: "run-result",
           cellId: request.cellId,
           outputs: result.outputs,
           executionCount: request.executionCount ?? result.executionCount,
           run: request.run,
+          truncated: result.truncated,
         };
         notebook.index = applyEdit(notebook.index, edit, notebook.removed);
         notebook.pending = [...notebook.pending, edit];

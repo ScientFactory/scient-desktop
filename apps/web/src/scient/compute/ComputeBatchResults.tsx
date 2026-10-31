@@ -538,9 +538,11 @@ export function useComputeBatchRun(
           reason !== null &&
           [
             "invalid-source",
+            "project-not-initialized",
             "source-changed",
             "runtime-invalid",
             "runtime-missing",
+            "runtime-queue-full",
             "run-already-active",
           ].includes(reason)
         ) {
@@ -1012,7 +1014,7 @@ export function ComputeBatchResults({
               : operationStatus
                 ? operationStatus
                 : projectNotInitialized
-                  ? "Set up this folder as a Scient project to run"
+                  ? "Add this folder to Scient to run it"
                   : runtimeStatusText}
           </span>
         </ScientTooltip>
@@ -1090,8 +1092,7 @@ export function ComputeBatchResults({
         <div className="border-t border-border">
           {projectNotInitialized ? (
             <div className="p-3 text-xs text-muted-foreground">
-              Set up this folder as a Scient project before running analysis files. Viewing and
-              editing remain available.
+              Add this folder to Scient to run its files. Viewing and editing remain available.
             </div>
           ) : !runtimeReady ? (
             <div className="p-3 text-xs text-muted-foreground">

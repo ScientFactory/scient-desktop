@@ -1,6 +1,20 @@
+import type { ComputeExecutionRecord, NotebookCellRun } from "@t3tools/contracts";
+
 import type { NotebookCellView } from "@t3tools/contracts";
 
 /** A short hash, so a cell can tell whether its outputs came from the code it shows now. */
+/** What a notebook keeps about a finished run, so it can tell later if the cell has changed. */
+export function notebookCellRun(execution: ComputeExecutionRecord): NotebookCellRun {
+  const { startedAt, finishedAt } = execution.result ?? {};
+  return {
+    execution: execution.request.executionId,
+    code: notebookCodeHash(execution.request.code),
+    at: finishedAt ?? execution.request.submittedAt,
+    ms:
+      startedAt && finishedAt ? Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)) : null,
+  };
+}
+
 export function notebookCodeHash(code: string): string {
   let hash = 0x811c9dc5;
   const text = code.trimEnd();

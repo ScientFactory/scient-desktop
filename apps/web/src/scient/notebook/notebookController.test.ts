@@ -4,6 +4,7 @@ import type {
   NotebookEditResult,
   NotebookView,
 } from "@t3tools/contracts";
+import { notebookCodeHash } from "@t3tools/shared/notebookStaleness";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createNotebookController, type NotebookTransport } from "./notebookController";
@@ -27,16 +28,21 @@ const view = (cells: ReadonlyArray<NotebookCellView>): NotebookView => ({
 function fakeTransport(initial: NotebookView) {
   const sent: Array<ReadonlyArray<NotebookEdit>> = [];
   const errors: string[] = [];
+  let current = initial;
+  let refused: ReadonlyArray<string> = [];
   let failEdits = false;
   let release: (() => void) | null = null;
   let hold = false;
   const transport: NotebookTransport = {
-    read: async () => initial,
+    read: async () => current,
     readOutput: async () => null,
     edit: async (edits): Promise<NotebookEditResult | null> => {
       sent.push(edits);
       if (hold) await new Promise<void>((resolve) => (release = resolve));
-      return failEdits ? null : { revision: `1.${sent.length}` };
+      if (failEdits) return null;
+      const answer = { revision: `1.${sent.length}`, refused };
+      refused = [];
+      return answer;
     },
     recordRun: async () => null,
     onError: (title) => errors.push(title),
@@ -46,6 +52,10 @@ function fakeTransport(initial: NotebookView) {
     sent,
     errors,
     setFailing: (failing: boolean) => (failEdits = failing),
+    otherWriter: (next: NotebookView, cells: ReadonlyArray<string>) => {
+      current = next;
+      refused = cells;
+    },
     hold: () => (hold = true),
     release: () => {
       hold = false;
@@ -63,13 +73,55 @@ const opened = async (cells: ReadonlyArray<NotebookCellView>) => {
 };
 
 describe("notebookController", () => {
+  it("says what each edit was made from, following its own edits", async () => {
+    const { fake, controller } = await opened([cell("a", "old")]);
+    controller.setSource("a", "new");
+    await controller.flush();
+    controller.setSource("a", "newer");
+    await controller.flush();
+    expect(fake.sent).toEqual([
+      [{ _tag: "set-source", cellId: "a", source: "new", base: notebookCodeHash("old") }],
+      [{ _tag: "set-source", cellId: "a", source: "newer", base: notebookCodeHash("new") }],
+    ]);
+  });
+
+  it("shows the other writer's change and keeps what was typed in a new cell", async () => {
+    const { fake, controller } = await opened([cell("a", "old"), cell("b", "other")]);
+    fake.otherWriter(view([cell("a", "theirs"), cell("b", "other")]), ["a"]);
+    controller.edit("a", "end");
+    controller.setSource("a", "mine");
+    await controller.flush();
+    await vi.waitFor(() => expect(controller.store.getState().order).toHaveLength(3));
+    const state = controller.store.getState();
+    const [first, kept, last] = state.order;
+    expect(first).toBe("a");
+    expect(last).toBe("b");
+    expect(state.cells.a?.source).toBe("theirs");
+    expect(state.cells[kept!]?.source).toBe("mine");
+    expect(state.editing).toBe(kept);
+    expect(fake.errors).toHaveLength(1);
+  });
+
+  it("reads a file change that came during typing once the text has gone", async () => {
+    const { fake, controller } = await opened([cell("a", "old"), cell("b", "theirs")]);
+    controller.setSource("a", "mine");
+    fake.otherWriter(view([cell("a", "mine"), cell("b", "changed")]), []);
+    controller.fileChanged("second");
+    expect(controller.store.getState().cells.b?.source).toBe("theirs");
+    await controller.flush();
+    await vi.waitFor(() => expect(controller.store.getState().cells.b?.source).toBe("changed"));
+    expect(controller.store.getState().cells.a?.source).toBe("mine");
+  });
+
   it("sends one edit for a burst of typing, with the last text", async () => {
     const { fake, controller } = await opened([cell("a")]);
     controller.setSource("a", "x");
     controller.setSource("a", "xy");
     controller.setSource("a", "xyz");
     await controller.flush();
-    expect(fake.sent).toEqual([[{ _tag: "set-source", cellId: "a", source: "xyz" }]]);
+    expect(fake.sent).toEqual([
+      [{ _tag: "set-source", cellId: "a", source: "xyz", base: notebookCodeHash("") }],
+    ]);
     expect(controller.store.getState().cells.a?.source).toBe("xyz");
   });
 
@@ -87,6 +139,7 @@ describe("notebookController", () => {
     const { fake, controller } = await opened([cell("a", "saved")]);
     controller.setSource("a", "typing");
     controller.fileChanged("second");
+    fake.otherWriter(view([cell("a", "typing")]), []);
     await controller.flush();
     expect(controller.store.getState().cells.a?.source).toBe("typing");
     expect(fake.errors).toEqual([]);
@@ -102,7 +155,9 @@ describe("notebookController", () => {
     expect(controller.store.getState().cells.a?.source).toBe("typed");
     fake.setFailing(false);
     await controller.flush();
-    expect(fake.sent.at(-1)).toEqual([{ _tag: "set-source", cellId: "a", source: "typed" }]);
+    expect(fake.sent.at(-1)).toEqual([
+      { _tag: "set-source", cellId: "a", source: "typed", base: notebookCodeHash("saved") },
+    ]);
   });
 
   it("puts a deleted cell back where it was", async () => {

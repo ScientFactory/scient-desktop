@@ -68,6 +68,7 @@ export function makeComputeNotebookOutputs(input: {
       );
     const notebook: NotebookOutput[] = [];
     let executionCount: number | null = null;
+    let truncated = false;
     for (const output of projectComputeOutputs(outputs)) {
       switch (output._tag) {
         case "stream": {
@@ -130,9 +131,10 @@ export function makeComputeNotebookOutputs(input: {
           break;
         }
         case "system":
+          truncated ||= output.event === "output-truncated";
           break;
       }
     }
-    return { outputs: notebook, executionCount } satisfies ComputeNotebookOutputsResult;
+    return { outputs: notebook, executionCount, truncated } satisfies ComputeNotebookOutputsResult;
   });
 }

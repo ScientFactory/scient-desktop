@@ -163,7 +163,7 @@ async function stopOwnedComputeContext(
       /* Keep the owner when shutdown cannot be confirmed. */
     }
     if (!closed) {
-      const error = "Unable to confirm that this tab's MATLAB batch run has stopped.";
+      const error = "Unable to confirm that this tab's run has stopped.";
       useComputeContextStore.getState().markCloseFailed({ contextId: input.contextId, error });
       return { closed: false, contextId: input.contextId, error };
     }

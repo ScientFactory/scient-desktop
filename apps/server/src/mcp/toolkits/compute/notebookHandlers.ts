@@ -10,6 +10,7 @@ import {
   type NotebookView,
 } from "@t3tools/contracts";
 import {
+  notebookCellRun,
   notebookCodeHash,
   staleNotebookCells,
   type NotebookStaleness,
@@ -71,6 +72,7 @@ function describeCell(
     cell: cell.id,
     type: cell.cellType,
     source: cell.source,
+    version: notebookCodeHash(cell.source),
     state:
       cell.cellType !== "code"
         ? "text"
@@ -168,10 +170,9 @@ const recordRun = Effect.fn("ScientComputeToolkit.recordNotebookRun")(function* 
   cells: ReadonlyMap<string, string>,
   execution: ComputeExecutionRecord,
 ) {
-  const { executionId, sessionId, code, submittedAt } = execution.request;
+  const { executionId, sessionId } = execution.request;
   const cellId = cells.get(executionId);
   if (cellId === undefined || !execution.result?.startedAt) return;
-  const { startedAt, finishedAt } = execution.result;
   yield* scope.gateway
     .recordNotebookRun(
       {
@@ -181,12 +182,7 @@ const recordRun = Effect.fn("ScientComputeToolkit.recordNotebookRun")(function* 
         sessionId,
         executionId,
         executionCount: execution.result.executionCount ?? null,
-        run: {
-          execution: executionId,
-          code: notebookCodeHash(code),
-          at: finishedAt ?? submittedAt,
-          ms: finishedAt ? Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)) : null,
-        },
+        run: notebookCellRun(execution),
       },
       scope.gateway.notebookOutputs,
     )
@@ -230,7 +226,12 @@ export const readScientNotebook = Effect.fn("ScientComputeToolkit.notebookRead")
 });
 
 type AgentEdit =
-  | { readonly op: "replace"; readonly cell: string; readonly source: string }
+  | {
+      readonly op: "replace";
+      readonly cell: string;
+      readonly source: string;
+      readonly version: string;
+    }
   | {
       readonly op: "insert";
       readonly after: string | null;
@@ -244,7 +245,7 @@ type AgentEdit =
 function notebookEdit(edit: AgentEdit): NotebookEdit {
   switch (edit.op) {
     case "replace":
-      return { _tag: "set-source", cellId: edit.cell, source: edit.source };
+      return { _tag: "set-source", cellId: edit.cell, source: edit.source, base: edit.version };
     case "insert":
       return {
         _tag: "insert",
@@ -268,16 +269,19 @@ export const editScientNotebook = Effect.fn("ScientComputeToolkit.notebookEdit")
 }) {
   const scope = yield* agentScope();
   const edits = input.edits.map(notebookEdit);
-  yield* scope.gateway
+  const { refused } = yield* scope.gateway
     .editNotebook({ cwd: scope.cwd, path: input.path, edits })
     .pipe(Effect.mapError(notebookFailed));
   yield* scope.gateway
     .flushNotebook({ cwd: scope.cwd, path: input.path })
     .pipe(Effect.mapError(notebookFailed));
-  return describeNotebook(
-    yield* requireNotebook(scope, input.path),
-    new Set(edits.flatMap((edit) => ("cellId" in edit ? [edit.cellId] : []))),
-  );
+  return {
+    ...describeNotebook(
+      yield* requireNotebook(scope, input.path),
+      new Set(edits.flatMap((edit) => ("cellId" in edit ? [edit.cellId] : []))),
+    ),
+    ...(refused.length > 0 ? { refused } : {}),
+  };
 });
 
 export const runScientNotebook = Effect.fn("ScientComputeToolkit.notebookRun")(function* (input: {

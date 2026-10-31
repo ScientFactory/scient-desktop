@@ -1,11 +1,18 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import type { ExecutionProcessPort } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 
 import { JULIA_KERNEL_LANGUAGE } from "./JuliaComputeRuntime.ts";
-import { makeKernelRuntimeBinding, type KernelLanguage } from "./KernelComputeRuntime.ts";
+import {
+  makeKernelRuntimeBinding,
+  replaceDirectory,
+  type KernelLanguage,
+} from "./KernelComputeRuntime.ts";
 import { R_KERNEL_LANGUAGE } from "./RComputeRuntime.ts";
 import { RuntimeDiscoveryHostReference } from "./RuntimeDiscovery.ts";
 import { fakeDiscoveryHost } from "./RuntimeDiscoveryTestHost.ts";
@@ -114,5 +121,58 @@ describe("kernel language inventory", () => {
         ],
       ]);
     }),
+  );
+});
+
+describe("replacing a private kernel", () => {
+  const installed = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const parent = yield* fileSystem.makeTempDirectoryScoped();
+    const directory = `${parent}/kernel`;
+    yield* fileSystem.makeDirectory(directory);
+    yield* fileSystem.writeFileString(`${directory}/working`, "yes");
+    return { fileSystem, parent, directory };
+  });
+
+  it.live("puts the working kernel back when a repair is cancelled", () =>
+    Effect.gen(function* () {
+      const { fileSystem, parent, directory } = yield* installed;
+      const filling = yield* Deferred.make<void>();
+      const repair = yield* replaceDirectory(
+        fileSystem,
+        directory,
+        Effect.gen(function* () {
+          yield* fileSystem.makeDirectory(directory);
+          yield* fileSystem.writeFileString(`${directory}/partial`, "no");
+          yield* Deferred.succeed(filling, undefined);
+          return yield* Effect.never;
+        }),
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(filling);
+      yield* Fiber.interrupt(repair);
+      expect(yield* fileSystem.readDirectory(directory)).toEqual(["working"]);
+      expect(yield* fileSystem.readDirectory(parent)).toEqual(["kernel"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("puts the working kernel back when a repair fails, and keeps a finished one", () =>
+    Effect.gen(function* () {
+      const { fileSystem, parent, directory } = yield* installed;
+      const failed = yield* replaceDirectory(fileSystem, directory, Effect.fail("failed")).pipe(
+        Effect.flip,
+      );
+      expect(failed).toBe("failed");
+      expect(yield* fileSystem.readDirectory(directory)).toEqual(["working"]);
+      yield* replaceDirectory(
+        fileSystem,
+        directory,
+        Effect.gen(function* () {
+          yield* fileSystem.makeDirectory(directory);
+          yield* fileSystem.writeFileString(`${directory}/new`, "yes");
+        }),
+      );
+      expect(yield* fileSystem.readDirectory(directory)).toEqual(["new"]);
+      expect(yield* fileSystem.readDirectory(parent)).toEqual(["kernel"]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

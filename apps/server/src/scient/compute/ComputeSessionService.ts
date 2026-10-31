@@ -94,6 +94,7 @@ import { makeComputeOutputAnalytics } from "../../telemetry/ComputeOutputAnalyti
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
@@ -322,6 +323,13 @@ function codeHash(code: string): string {
   return `sha256:${NodeCrypto.createHash("sha256").update(code, "utf8").digest("hex")}`;
 }
 
+export interface ComputeSettledRun {
+  readonly projectId: ComputeProjectId;
+  /** The folder the run's relative paths belong to. */
+  readonly root: string;
+  readonly execution: ComputeExecutionRecord;
+}
+
 /** How much of a transcript is already spent, and what it is allowed to spend. */
 interface OutputBudget {
   readonly bytes: number;
@@ -497,6 +505,8 @@ export class ComputeSessionService extends Context.Service<
       ComputeOperationError,
       Scope.Scope
     >;
+    /** Every run that has finished, for work that must happen with no client attached. */
+    readonly settledRuns: Stream.Stream<ComputeSettledRun>;
   }
 >()("t3/scient/compute/ComputeSessionService") {}
 
@@ -538,6 +548,7 @@ const make = Effect.gen(function* () {
   const verifyingRef = yield* Ref.make(new Map<ComputeLanguageId, number>());
   const recoveredProjectsRef = yield* Ref.make(new Set<string>());
   const notifications = yield* makeComputeSessionNotifications;
+  const settledRuns = yield* PubSub.unbounded<ComputeSettledRun>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const sessionKey = (projectId: ComputeProjectId, sessionId: ComputeSessionId): string =>
@@ -1077,6 +1088,13 @@ const make = Effect.gen(function* () {
     );
     const result = execution.result;
     const status = result?.status;
+    if (status !== undefined && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status)) {
+      yield* PubSub.publish(settledRuns, {
+        projectId: live.projectId,
+        root: live.workspaceReceipt?.scope.workspaceRoot ?? live.workingDirectory,
+        execution,
+      });
+    }
     // Queue/phase changes must not recreate a start after consent is changed.
     if (
       !isNewExecution &&
@@ -1486,6 +1504,64 @@ const make = Effect.gen(function* () {
     ),
   });
 
+  /**
+   * The session's ceiling rolls: the oldest finished runs give up their output, so the newest always
+   * has room. A notebook already holds its results in its own file by then.
+   */
+  const reclaimSessionOutput = Effect.fn("ComputeSessionService.reclaimSessionOutput")(function* (
+    live: LiveComputeSession,
+    running: ComputeExecutionId | null,
+    needed: number,
+  ) {
+    const executions = yield* store
+      .loadExecutions(live.projectId, live.sessionId)
+      .pipe(Effect.mapError(persistenceError("outputs", "Unable to read output ownership.")));
+    const oldestFirst = executions.toSorted((left, right) =>
+      left.request.submittedAt.localeCompare(right.request.submittedAt),
+    );
+    // Freeing a little more than asked keeps this from running for every line of output.
+    const target = Math.max(needed, Math.floor(options.maximumSessionOutputBytes / 4));
+    let freed = 0;
+    for (const execution of oldestFirst) {
+      if (freed >= target) break;
+      const { request, result } = execution;
+      if (
+        result === null ||
+        result.outputCount === 0 ||
+        (result.truncated && result.outputCount === 1) ||
+        request.executionId === running ||
+        !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(result.status)
+      )
+        continue;
+      yield* store
+        .removeExecutionOutputs(live.projectId, live.sessionId, request.executionId)
+        .pipe(Effect.mapError(persistenceError("outputs", "Unable to make room for new output.")));
+      const marker: ComputeOutput = {
+        _tag: "system",
+        sequence: 0,
+        observedAt: yield* nowIso,
+        event: "output-truncated",
+        detail: "This run's output was removed to make room for newer runs.",
+      };
+      yield* appendOutputs(live, request.executionId, [marker]);
+      const trimmed: ComputeExecutionResultRecord = {
+        ...result,
+        outputCount: 1,
+        imageCount: 0,
+        outputBytes: computeOutputByteLength(marker),
+        truncated: true,
+      };
+      yield* persistResult("outputs", live, trimmed);
+      yield* publishExecution(live, { request, result: trimmed });
+      freed += result.outputBytes;
+    }
+    yield* Ref.update(live.sessionOutputRef, (session) => ({
+      ...session,
+      bytes: Math.max(0, session.bytes - freed),
+    }));
+    return freed >= needed;
+  });
+
   const persistOutput = Effect.fn("ComputeSessionService.persistOutput")(function* (
     live: LiveComputeSession,
     event: Extract<ComputeTransportEvent, { readonly _tag: "output" }>,
@@ -1499,12 +1575,14 @@ const make = Effect.gen(function* () {
     if (budgets === null) return false;
     // A transcript that has already said it is incomplete says it once;
     // everything after the marker is dropped in silence.
-    if (budgets.session.truncated || budgets.execution?.truncated === true) return false;
+    const silenced = budgets.execution?.truncated ?? budgets.session.truncated;
+    if (silenced) return false;
     const size = computeOutputByteLength(event.output);
+    const overSession = budgets.session.bytes + size - budgets.session.ceiling;
     const crossed =
       budgets.execution !== null && budgets.execution.bytes + size > budgets.execution.ceiling
         ? { scope: "execution" as const, ceiling: budgets.execution.ceiling }
-        : budgets.session.bytes + size > budgets.session.ceiling
+        : overSession > 0 && !(yield* reclaimSessionOutput(live, executionId, overSession))
           ? { scope: "session" as const, ceiling: budgets.session.ceiling }
           : null;
     if (crossed !== null) {
@@ -3755,6 +3833,7 @@ const make = Effect.gen(function* () {
     resolveOutputImage,
     resolveOutputResource,
     subscribeSessions: scopedSubscribe,
+    settledRuns: Stream.fromPubSub(settledRuns),
   });
 });
 

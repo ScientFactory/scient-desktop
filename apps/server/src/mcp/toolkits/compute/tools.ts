@@ -291,6 +291,8 @@ export const ComputeToolNotebookCell = Schema.Struct({
   cell: Schema.String,
   type: Schema.String,
   source: Schema.String,
+  /** What `replace` passes back, so a change made since this read is not overwritten. */
+  version: Schema.String,
   /** `never run`, `ran`, `failed`, `running`, `edited since it ran`, or `a cell above changed`. */
   state: Schema.String,
   count: Schema.NullOr(Schema.Number),
@@ -305,10 +307,17 @@ const NotebookResult = Schema.Struct({
   total: Schema.Int,
   cells: Schema.Array(ComputeToolNotebookCell),
   images: Schema.optional(Schema.Array(ComputeToolImage)),
+  /** Cells left as they were because someone changed them after the read. */
+  refused: Schema.optional(Schema.Array(Schema.String)),
 });
 
 const NotebookEditOperation = Schema.Union([
-  Schema.Struct({ op: Schema.Literal("replace"), cell: NotebookCellId, source: Schema.String }),
+  Schema.Struct({
+    op: Schema.Literal("replace"),
+    cell: NotebookCellId,
+    source: Schema.String,
+    version: Schema.String.annotate({ description: "The cell's version from your last read." }),
+  }),
   Schema.Struct({
     op: Schema.Literal("insert"),
     after: Schema.NullOr(NotebookCellId).annotate({ description: "Null inserts at the top." }),
@@ -344,7 +353,7 @@ const ScientNotebookReadTool = Tool.make("scient_notebook_read", {
 
 const ScientNotebookEditTool = Tool.make("scient_notebook_edit", {
   description:
-    "Change a notebook by cell: replace a cell's source, insert, delete or move cells, or clear outputs. The change shows at once in the notebook the user has open. Use this instead of editing the .ipynb file.",
+    "Change a notebook by cell: replace a cell's source, insert, delete or move cells, or clear outputs. The change shows at once in the notebook the user has open. A cell changed since your last read is listed under refused and left as it is, returned here with its current source and version. Use this instead of editing the .ipynb file.",
   parameters: Schema.Struct({
     path: NotebookPath,
     edits: Schema.Array(NotebookEditOperation).check(Schema.isMaxLength(256)),

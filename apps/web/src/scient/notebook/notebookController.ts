@@ -1,6 +1,5 @@
 import type {
   ComputeExecutionRecord,
-  NotebookCellRun,
   NotebookCellType,
   NotebookCellView,
   NotebookEdit,
@@ -14,6 +13,7 @@ import type {
 import { createStore } from "zustand/vanilla";
 
 import {
+  notebookCellRun,
   notebookCodeHash,
   staleNotebookCells,
   type NotebookStaleness,
@@ -66,22 +66,6 @@ function newCellId(): string {
   return `${Date.now().toString(36)}${generatedIds.toString(36)}`.slice(-12);
 }
 
-function runDuration(execution: ComputeExecutionRecord): number | null {
-  const startedAt = execution.result?.startedAt;
-  const finishedAt = execution.result?.finishedAt;
-  if (!startedAt || !finishedAt) return null;
-  return Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt));
-}
-
-function notebookCellRun(execution: ComputeExecutionRecord): NotebookCellRun {
-  return {
-    execution: execution.request.executionId,
-    code: notebookCodeHash(execution.request.code),
-    at: execution.result?.finishedAt ?? execution.request.submittedAt,
-    ms: runDuration(execution),
-  };
-}
-
 function emptyCell(id: string, cellType: NotebookCellType, source: string): NotebookCellView {
   return {
     id,
@@ -123,6 +107,11 @@ export function createNotebookController(transport: NotebookTransport) {
   const removed = new Map<string, NotebookCellView>();
   const outputs = new Map<string, Promise<string | null>>();
   const recording = new Set<string>();
+  /** What the server last held for each cell, which is what an edit here was made from. */
+  let serverSources = new Map<string, string>();
+  /** Cells someone else changed while this person typed. Their text stays until it is kept. */
+  const refused = new Set<string>();
+  let reloadWanted = false;
 
   const orderedCells = (state: NotebookState) =>
     state.order.flatMap((id) => {
@@ -139,9 +128,17 @@ export function createNotebookController(transport: NotebookTransport) {
 
   const send = async () => {
     while (queue.length > 0) {
-      const edits = queue;
+      const edits = queue.filter((edit) => edit._tag !== "set-source" || !refused.has(edit.cellId));
       queue = [];
-      const result = await transport.edit(edits);
+      const sources = new Map(serverSources);
+      const sent = edits.map((edit) => {
+        if (edit._tag === "insert") sources.set(edit.cellId, notebookCodeHash(edit.source));
+        if (edit._tag !== "set-source") return edit;
+        const base = sources.get(edit.cellId);
+        sources.set(edit.cellId, notebookCodeHash(edit.source));
+        return base === undefined ? edit : { ...edit, base };
+      });
+      const result = await transport.edit(sent);
       if (result === null) {
         // What was typed stays on screen and in the queue, and goes out when the server answers.
         queue = [...edits, ...queue];
@@ -152,11 +149,42 @@ export function createNotebookController(transport: NotebookTransport) {
       }
       failing = false;
       revision = result.revision;
+      serverSources = sources;
+      for (const cellId of result.refused) refused.add(cellId);
     }
+  };
+  /** Shows what the other writer did, and keeps what this person typed in a new cell below it. */
+  const keepRefusedText = async () => {
+    const before = store.getState();
+    const kept = [...refused].flatMap((id) => {
+      const cell = before.cells[id];
+      return cell === undefined ? [] : [{ cell, at: before.order.indexOf(id) }];
+    });
+    refused.clear();
+    revision = undefined;
+    await load();
+    let editing: string | null = null;
+    for (const { cell, at } of kept) {
+      const { order } = store.getState();
+      const current = order.indexOf(cell.id);
+      const id = insert(
+        current < 0 ? Math.min(at, order.length) : current + 1,
+        cell.cellType,
+        cell.source,
+      );
+      if (before.editing === cell.id) editing = id;
+    }
+    transport.onError("Someone else changed this cell. What you typed is in a new cell below it.");
+    if (editing !== null) controller.edit(editing, "end");
   };
   const startSending = (): Promise<void> => {
     sending ??= send().finally(() => {
       sending = null;
+      if (refused.size > 0) void keepRefusedText();
+      else if (reloadWanted && queue.length === 0) {
+        reloadWanted = false;
+        void load();
+      }
     });
     return sending;
   };
@@ -180,15 +208,24 @@ export function createNotebookController(transport: NotebookTransport) {
   };
 
   async function load() {
-    if (queue.length > 0 || sending !== null) return;
+    // Text still on its way must not be replaced, so the newer file is read once it has gone.
+    const typing = () => queue.length > 0 || sending !== null;
+    if (typing()) {
+      reloadWanted = true;
+      return;
+    }
     const view = await transport.read(revision);
     if (view === "failed") {
       store.setState((state) => (state.order.length === 0 ? { status: "failed" } : state));
       return;
     }
     if (view === null) return;
-    if (queue.length > 0 || sending !== null) return;
+    if (typing()) {
+      reloadWanted = true;
+      return;
+    }
     revision = view.revision;
+    serverSources = new Map(view.cells.map((cell) => [cell.id, notebookCodeHash(cell.source)]));
     store.setState({
       status: "ready",
       language: view.language,
@@ -214,7 +251,7 @@ export function createNotebookController(transport: NotebookTransport) {
     return id;
   };
 
-  return {
+  const controller = {
     store,
     /** Reads the notebook on open, and again whenever the file changes on disk. */
     fileChanged: (fileRevision: string) => {
@@ -353,6 +390,7 @@ export function createNotebookController(transport: NotebookTransport) {
           revision = result.revision;
           const cell = result.cell;
           if (cell !== null) {
+            serverSources.set(cell.id, notebookCodeHash(cell.source));
             // Typing and a newer run may have moved on while this result was on its way.
             update(cellId, (current) => ({
               ...cell,
@@ -382,6 +420,7 @@ export function createNotebookController(transport: NotebookTransport) {
       void flush();
     },
   };
+  return controller;
 }
 
 export type NotebookController = ReturnType<typeof createNotebookController>;

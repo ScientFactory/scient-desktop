@@ -3424,7 +3424,7 @@ describe("compute session execution", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("stops keeping output once a session reaches its ceiling, across executions", () =>
+  it.effect("gives up the oldest run's output when a session reaches its ceiling", () =>
     Effect.gen(function* () {
       const oneOutput = computeOutputByteLength(streamOutput(0, "1\n"));
       // One retained fact fits and a second equal fact crosses the session
@@ -3437,11 +3437,7 @@ describe("compute session execution", () => {
         Effect.gen(function* () {
           yield* start;
           yield* submit("print(1)", "execution-1");
-          const first = yield* waitForExecution(
-            ComputeExecutionId.make("execution-1"),
-            "succeeded",
-          );
-          expect(first.result?.truncated).toBe(false);
+          yield* waitForExecution(ComputeExecutionId.make("execution-1"), "succeeded");
           expect((yield* outputsOf(ComputeExecutionId.make("execution-1"))).outputs).toEqual([
             streamOutput(0, "1\n"),
           ]);
@@ -3451,23 +3447,20 @@ describe("compute session execution", () => {
             ComputeExecutionId.make("execution-2"),
             "succeeded",
           );
-          // The execution still ran and still succeeded; what it said was not
-          // kept, and its own record says so rather than only the session's.
-          expect(second.result?.truncated).toBe(true);
-
-          const transcript = yield* outputsOf(ComputeExecutionId.make("execution-2"));
-          expect(transcript.outputs).toHaveLength(1);
-          expect(transcript.outputs[0]).toMatchObject({
-            _tag: "system",
-            event: "output-truncated",
-            sequence: 0,
-          });
+          // The newest run keeps what it said, and the run that gave way says so.
+          expect(second.result?.truncated).toBe(false);
+          expect((yield* outputsOf(ComputeExecutionId.make("execution-2"))).outputs).toEqual([
+            streamOutput(0, "1\n"),
+          ]);
+          const first = yield* outputsOf(ComputeExecutionId.make("execution-1"));
+          expect(first.outputs).toHaveLength(1);
+          expect(first.outputs[0]).toMatchObject({ _tag: "system", event: "output-truncated" });
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("keeps the session output ceiling spent across a runtime restart", () =>
+  it.effect("counts output from before a runtime restart against the session's ceiling", () =>
     Effect.gen(function* () {
       const oneOutput = computeOutputByteLength(streamOutput(0, "1\n"));
       const test = yield* harness({
@@ -3490,9 +3483,9 @@ describe("compute session execution", () => {
             ComputeExecutionId.make("execution-2"),
             "succeeded",
           );
-          expect(second.result?.truncated).toBe(true);
+          expect(second.result?.truncated).toBe(false);
           expect(
-            (yield* outputsOf(ComputeExecutionId.make("execution-2"))).outputs[0],
+            (yield* outputsOf(ComputeExecutionId.make("execution-1"))).outputs[0],
           ).toMatchObject({ _tag: "system", event: "output-truncated" });
         }),
       );

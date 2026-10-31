@@ -46,7 +46,8 @@ describe("console notebook", () => {
           getSession: () => Effect.succeed({ languageId: "python", label: "Python" }),
           listAllExecutions: () => Effect.succeed(history),
         },
-        notebookOutputs: () => Effect.succeed({ outputs: [], executionCount: null }),
+        notebookOutputs: () =>
+          Effect.succeed({ outputs: [], executionCount: null, truncated: false }),
         workspaceFileSystem: {
           createBinaryFile: ({
             bytes,
@@ -74,12 +75,13 @@ describe("console notebook", () => {
         languageId: "python",
         displayName: "Python",
         cells: [
-          { code: "x = 1", outputs: { outputs: [], executionCount: null } },
+          { code: "x = 1", outputs: { outputs: [], executionCount: null, truncated: false } },
           {
             code: "x",
             outputs: {
               outputs: [{ output_type: "execute_result", execution_count: 2 }],
               executionCount: 2,
+              truncated: false,
             },
           },
         ],

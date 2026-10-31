@@ -159,6 +159,43 @@ function manageError(message: string, cause?: unknown): ComputeOperationError {
   });
 }
 
+/**
+ * Fills a directory anew. Failing or being cancelled puts back exactly what was there, so a repair
+ * cannot lose a working kernel. A running session keeps the copy it started with. Windows refuses
+ * while files are in use, and the failure says so instead of breaking the session.
+ */
+export const replaceDirectory = <E, R>(
+  fileSystem: FileSystem.FileSystem,
+  directory: string,
+  fill: Effect.Effect<void, E, R>,
+) => {
+  const previous = `${directory}.previous-${NodeCrypto.randomUUID()}`;
+  const moveAside = fileSystem.rename(directory, previous).pipe(
+    Effect.as(true),
+    Effect.catchIf(
+      (cause) => cause._tag === "PlatformError" && cause.reason._tag === "NotFound",
+      () => Effect.succeed(false),
+    ),
+  );
+  return Effect.uninterruptibleMask((cancellable) =>
+    Effect.gen(function* () {
+      const replaced = yield* moveAside;
+      yield* cancellable(fill).pipe(
+        Effect.onError(() =>
+          fileSystem
+            .remove(directory, { recursive: true, force: true })
+            .pipe(
+              Effect.andThen(replaced ? fileSystem.rename(previous, directory) : Effect.void),
+              Effect.ignore,
+            ),
+        ),
+      );
+      if (replaced)
+        yield* fileSystem.remove(previous, { recursive: true, force: true }).pipe(Effect.ignore);
+    }),
+  );
+};
+
 /** The tab-separated line a probe prints after this marker, whatever startup files print. */
 export const KERNEL_PROBE_MARKER = "scient-probe";
 
@@ -625,22 +662,6 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     executable: string,
     privateDirectory: string,
   ) {
-    // A running session keeps the copy it started with. Windows refuses while files are in use,
-    // and the failure says so instead of breaking the session.
-    const previous = `${privateDirectory}.previous-${NodeCrypto.randomUUID()}`;
-    const replaced = yield* fileSystem.rename(privateDirectory, previous).pipe(
-      Effect.as(true),
-      Effect.catchIf(
-        (cause) => cause._tag === "PlatformError" && cause.reason._tag === "NotFound",
-        () => Effect.succeed(false),
-      ),
-    );
-    const restore = fileSystem
-      .remove(privateDirectory, { recursive: true, force: true })
-      .pipe(
-        Effect.andThen(replaced ? fileSystem.rename(previous, privateDirectory) : Effect.void),
-        Effect.ignore,
-      );
     const addKernelFiles = Effect.gen(function* () {
       yield* fileSystem.makeDirectory(privateDirectory, { recursive: true });
       const { setup } = language;
@@ -672,9 +693,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
         encodeMarker({ kernelVersion }),
       );
     });
-    yield* addKernelFiles.pipe(Effect.onError(() => restore));
-    if (replaced)
-      yield* fileSystem.remove(previous, { recursive: true, force: true }).pipe(Effect.ignore);
+    yield* replaceDirectory(fileSystem, privateDirectory, addKernelFiles);
   });
 
   const manage = Effect.fn("KernelComputeRuntime.manage")(function* (
@@ -719,11 +738,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     const work = Effect.gen(function* () {
       if (action === "remove")
         return yield* fileSystem.remove(privateDirectory, { recursive: true });
-      yield* install(executable, privateDirectory).pipe(
-        Effect.onInterrupt(() =>
-          fileSystem.remove(privateDirectory, { recursive: true }).pipe(Effect.ignore),
-        ),
-      );
+      yield* install(executable, privateDirectory);
     });
     const operationId = NodeCrypto.randomUUID();
     const fiber = yield* work.pipe(

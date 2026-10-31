@@ -188,6 +188,11 @@ export class LocalComputeStore extends Context.Service<
       projectId: ComputeProjectId,
       sessionId: ComputeSessionId,
     ) => Effect.Effect<ComputeSessionStorage, LocalComputeStoreError>;
+    readonly removeExecutionOutputs: (
+      projectId: ComputeProjectId,
+      sessionId: ComputeSessionId,
+      executionId: ComputeExecutionId,
+    ) => Effect.Effect<void, LocalComputeStoreError>;
     readonly removeDisposableSessionData: (
       record: ComputeSessionRecord,
       removedAt: string,
@@ -905,6 +910,24 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** Makes room for newer runs. The caller records that this run's output is gone. */
+  const removeExecutionOutputs = Effect.fn("LocalComputeStore.removeExecutionOutputs")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+    executionId: ComputeExecutionId,
+  ) {
+    const directory = yield* executionDirectory(projectId, sessionId, executionId);
+    yield* writeLock.withPermits(1)(
+      Effect.tryPromise({
+        try: async () => {
+          await NodeFSP.rm(`${directory}/output.ndjson`, { force: true });
+          await NodeFSP.rm(`${directory}/outputs`, { force: true, recursive: true });
+        },
+        catch: (cause) => storeError("remove-execution-outputs", directory, cause),
+      }),
+    );
+  });
+
   /**
    * Reclaim output bytes while preserving session/journal/request/result history and an explicit
    * unavailable-figures state. Do not schedule trimming here: retention timing requires a separate
@@ -991,6 +1014,7 @@ const make = Effect.gen(function* () {
     resolveOutputImage,
     resolveOutputResource,
     measureSessionStorage,
+    removeExecutionOutputs,
     removeDisposableSessionData,
   });
 });

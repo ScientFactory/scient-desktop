@@ -39,6 +39,7 @@ import * as WorkspaceEntries from "../../workspace/WorkspaceEntries.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
+import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 import * as AnalysisRunIndex from "./AnalysisRunIndex.ts";
 import {
   AnalysisService,
@@ -123,6 +124,8 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     store: LocalAnalysisStore.LocalAnalysisStore["Service"],
   ) => LocalAnalysisStore.LocalAnalysisStore["Service"],
   onProcessClose?: Effect.Effect<void>,
+  /** Leaves the folder plain and registers it to the host under this name. */
+  registeredFolder?: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const projectRoot = yield* fileSystem.makeTempDirectoryScoped({
@@ -131,8 +134,11 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
   const baseDir = yield* fileSystem.makeTempDirectoryScoped({
     prefix: "scient-analysis-service-state-",
   });
-  yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
-  const projectIdentity = yield* Effect.promise(() => readScientProjectIdentity(projectRoot));
+  if (registeredFolder === undefined)
+    yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
+  const projectId =
+    registeredFolder ??
+    (yield* Effect.promise(() => readScientProjectIdentity(projectRoot))).projectId;
   yield* Effect.forEach(
     [
       "cancel-publishing.m",
@@ -204,6 +210,14 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
   });
   const analysisLayer = layerWithAdapters([adapter]).pipe(
     Layer.provide(
+      registeredFolder === undefined
+        ? Layer.empty
+        : Layer.succeed(WorkspaceBindingResolver, {
+            resolveWorkspaceRoot: () =>
+              Effect.succeed({ binding: { bindingId: registeredFolder } }),
+          } as never),
+    ),
+    Layer.provide(
       ScientificRuntimePreferences.layer.pipe(
         Layer.provide(serviceStoreLayer),
         Layer.provide(settingsLayer),
@@ -223,7 +237,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     localStoreLayer,
     processStartCount,
     processExits,
-    projectId: projectIdentity.projectId,
+    projectId,
     projectRoot,
     startedRuns,
   };
@@ -943,6 +957,74 @@ describe("analysis service coordination", () => {
           expect(cancelled.receipt.status).toBe("cancelled");
           expect(yield* Ref.get(harness.processStartCount)).toBe(1);
           yield* service.cancelRun({ cwd: harness.projectRoot, runId: first.receipt.runId });
+        }).pipe(Effect.provide(harness.analysisLayer)),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("never runs a file that changed while its run was waiting", () =>
+    Effect.gen(function* () {
+      const harness = yield* serviceTestLayer;
+      const fileSystem = yield* FileSystem.FileSystem;
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          const first = yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "first.m",
+            sourceRevision,
+            runtimeId,
+          });
+          yield* Queue.take(harness.startedRuns);
+          const waiting = yield* service.startRun({
+            cwd: harness.projectRoot,
+            relativePath: "queued.m",
+            sourceRevision,
+            runtimeId,
+          });
+          yield* fileSystem.writeFileString(`${harness.projectRoot}/queued.m`, "% changed\n");
+          yield* service.cancelRun({
+            cwd: harness.projectRoot,
+            runId: first.receipt.runId,
+            waitForExit: true,
+          });
+          const refused = yield* service
+            .getRun({ cwd: harness.projectRoot, runId: waiting.receipt.runId })
+            .pipe(Effect.repeat({ until: (run) => run.receipt.status === "failed" }));
+          expect(refused.receipt.failureMessage).toContain("changed while the run was waiting");
+          expect(yield* Ref.get(harness.processStartCount)).toBe(1);
+        }).pipe(Effect.provide(harness.analysisLayer)),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("runs files in a registered folder, and keeps them after the folder is set up", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeServiceTestLayer(testAdapter, undefined, undefined, "folder-1");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* AnalysisService;
+          const request = {
+            cwd: harness.projectRoot,
+            relativePath: "first.m",
+            sourceRevision,
+            runtimeId,
+          };
+          const run = yield* service.startRun(request);
+          expect(run.projectId).toBe("folder-1");
+          yield* Queue.take(harness.startedRuns);
+          yield* service.cancelRun({
+            cwd: harness.projectRoot,
+            runId: run.receipt.runId,
+            waitForExit: true,
+          });
+
+          yield* Effect.promise(() => initializeScientProject({ root: harness.projectRoot }));
+
+          const history = yield* service.listRuns({ cwd: harness.projectRoot, limit: 10 });
+          expect(history.runs.map(({ receipt }) => receipt.runId)).toEqual([run.receipt.runId]);
+          expect((yield* service.startRun(request)).projectId).toBe("folder-1");
+          yield* Queue.take(harness.startedRuns);
         }).pipe(Effect.provide(harness.analysisLayer)),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

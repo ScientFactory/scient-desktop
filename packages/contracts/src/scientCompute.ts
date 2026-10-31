@@ -338,6 +338,8 @@ export type ComputeNotebookOutputsInput = typeof ComputeNotebookOutputsInput.Typ
 export const ComputeNotebookOutputsResult = Schema.Struct({
   outputs: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
   executionCount: Schema.NullOr(Schema.Int),
+  /** Part of this run's output was not kept, so `outputs` may be missing what it printed. */
+  truncated: Schema.Boolean,
 });
 export type ComputeNotebookOutputsResult = typeof ComputeNotebookOutputsResult.Type;
 

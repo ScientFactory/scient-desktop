@@ -69,7 +69,12 @@ export const NotebookOutputJson = Schema.Struct({ json: Schema.NullOr(Schema.Str
 export type NotebookOutputJson = typeof NotebookOutputJson.Type;
 
 export const NotebookEdit = Schema.Union([
-  Schema.TaggedStruct("set-source", { cellId: CellId, source: Schema.String }),
+  Schema.TaggedStruct("set-source", {
+    cellId: CellId,
+    source: Schema.String,
+    /** `notebookCodeHash` of the source this came from. A cell that moved on since refuses it. */
+    base: Schema.optional(Schema.String),
+  }),
   Schema.TaggedStruct("insert", {
     cellId: CellId,
     afterCellId: Schema.NullOr(CellId),
@@ -93,7 +98,11 @@ export const NotebookEditInput = Schema.Struct({
 });
 export type NotebookEditInput = typeof NotebookEditInput.Type;
 
-export const NotebookEditResult = Schema.Struct({ revision: Schema.String });
+export const NotebookEditResult = Schema.Struct({
+  revision: Schema.String,
+  /** Cells whose source moved on from an edit's `base`. Those edits changed nothing. */
+  refused: Schema.Array(CellId),
+});
 export type NotebookEditResult = typeof NotebookEditResult.Type;
 
 export const NotebookRecordRunInput = Schema.Struct({

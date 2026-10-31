@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ComputeExecutionId, ComputeSessionId } from "@t3tools/contracts";
+import { notebookCodeHash } from "@t3tools/shared/notebookStaleness";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -197,6 +198,7 @@ describe("NotebookStore", () => {
             return {
               outputs: [{ output_type: "stream", name: "stdout", text: "two\n" }],
               executionCount: null,
+              truncated: false,
             };
           }),
         );
@@ -248,6 +250,7 @@ describe("NotebookStore", () => {
           Effect.succeed({
             outputs: [{ output_type: "stream", name: "stdout", text: "kept\n" }],
             executionCount: null,
+            truncated: false,
           }),
         );
         const outside = structuredClone(notebook);
@@ -273,9 +276,133 @@ describe("NotebookStore", () => {
           edits: [{ _tag: "expect-run", cellId: "second", execution: "run-2" }],
         });
         const recorded = yield* store.recordRun({ ...record, cwd }, () =>
-          Effect.succeed({ outputs: [], executionCount: null }),
+          Effect.succeed({ outputs: [], executionCount: null, truncated: false }),
         );
         expect(recorded.cell?.pendingExecution).toBe("run-2");
+      }),
+    ),
+  );
+
+  it.effect("a rerun whose output was not kept leaves the saved output in place", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk } = yield* fixture;
+        yield* store.recordRun({ ...record, cwd, cellId: "first" }, () =>
+          Effect.succeed({ outputs: [], executionCount: null, truncated: true }),
+        );
+        yield* store.flush({ cwd, path });
+        const saved = (yield* onDisk).cells[1] as unknown as Record<string, unknown>;
+        expect(saved.outputs).toEqual(notebook.cells[1]?.outputs);
+      }),
+    ),
+  );
+
+  it.effect("a rerun that printed nothing clears the saved output", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk } = yield* fixture;
+        yield* store.recordRun({ ...record, cwd, cellId: "first" }, () =>
+          Effect.succeed({ outputs: [], executionCount: null, truncated: false }),
+        );
+        yield* store.flush({ cwd, path });
+        const saved = (yield* onDisk).cells[1] as unknown as Record<string, unknown>;
+        expect(saved.outputs).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("records a run once when the server and an open notebook both report it", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store } = yield* fixture;
+        const outputs = () =>
+          Effect.succeed({
+            outputs: [{ output_type: "stream", name: "stdout", text: "once\n" }],
+            executionCount: null,
+            truncated: false,
+          });
+        const [first, second] = yield* Effect.all(
+          [
+            store.recordRun({ ...record, cwd }, outputs),
+            store.recordRun({ ...record, cwd }, outputs),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(first.cell?.executionCount).toBe(second.cell?.executionCount);
+      }),
+    ),
+  );
+
+  it.effect("keeps a newer result when an older one arrives late", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store } = yield* fixture;
+        const text = (value: string) => () =>
+          Effect.succeed({
+            outputs: [{ output_type: "stream", name: "stdout", text: value }],
+            executionCount: null,
+            truncated: false,
+          });
+        yield* store.recordRun(
+          {
+            ...record,
+            cwd,
+            executionId: ComputeExecutionId.make("run-new"),
+            run: { ...run, execution: "run-new", at: "2026-11-01T00:00:00.000Z" },
+          },
+          text("new\n"),
+        );
+        const late = yield* store.recordRun(
+          { ...record, cwd, run: { ...run, at: "2026-10-01T00:00:00.000Z" } },
+          text("old\n"),
+        );
+        expect(late.cell?.run?.execution).toBe("run-new");
+        expect(late.cell?.outputs[0]?.json).toContain("new");
+      }),
+    ),
+  );
+
+  it.effect("refuses an edit to a cell that moved on, and neither writer loses text", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk } = yield* fixture;
+        const base = notebookCodeHash("a = 1");
+        const agent = yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "set-source", cellId: "first", source: "a = 2", base }],
+        });
+        expect(agent.refused).toEqual([]);
+        const person = yield* store.edit({
+          cwd,
+          path,
+          edits: [
+            { _tag: "set-source", cellId: "first", source: "a = 3", base },
+            { _tag: "set-source", cellId: "second", source: "b = 1", base: notebookCodeHash("") },
+            { _tag: "set-source", cellId: "gone", source: "c = 1", base },
+          ],
+        });
+        expect(person.refused).toEqual(["first", "gone"]);
+        yield* store.flush({ cwd, path });
+        const saved = yield* onDisk;
+        expect(saved.cells[1]?.source).toEqual(["a = 2"]);
+        expect(saved.cells[2]?.source).toEqual(["b = 1"]);
+      }),
+    ),
+  );
+
+  it.effect("does not call the same text from two writers a conflict", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store } = yield* fixture;
+        const edit = {
+          _tag: "set-source",
+          cellId: "first",
+          source: "a = 2",
+          base: notebookCodeHash("a = 1"),
+        } as const;
+        yield* store.edit({ cwd, path, edits: [edit] });
+        expect((yield* store.edit({ cwd, path, edits: [edit] })).refused).toEqual([]);
       }),
     ),
   );
