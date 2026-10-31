@@ -1033,7 +1033,7 @@ export function BrowserProfiles({
                       })
                     }
                   >
-                    Remove
+                    Remove and sign out
                   </MenuItem>
                 ) : null}
               </ControlsMenu>

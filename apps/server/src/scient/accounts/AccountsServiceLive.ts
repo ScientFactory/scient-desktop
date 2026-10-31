@@ -860,8 +860,11 @@ export const layer = Layer.effect(
           batched(
             Effect.gen(function* () {
               const rows = () =>
-                state.accounts.filter(({ summary }) =>
-                  isGoogleSessionRow(summary, input.profileId),
+                state.accounts.filter(
+                  ({ summary }) =>
+                    isGoogleSessionRow(summary) &&
+                    "profileId" in summary.details &&
+                    summary.details.profileId === input.profileId,
                 );
               const address = ({ summary }: StoredAccount) =>
                 summary.details.kind === "website" ? summary.details.username : undefined;
@@ -872,6 +875,7 @@ export const layer = Layer.effect(
                     details: {
                       kind: "website",
                       sites: [GOOGLE_SITE],
+                      loginUrl: "https://accounts.google.com/",
                       username: email,
                       profileId: input.profileId,
                     },

@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
-import { outcomeCheckState, signInOnHold } from "./AccountDecisions.ts";
+import { isGoogleSessionRow, outcomeCheckState, signInOnHold } from "./AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "./AccountsService.ts";
 import { AccountCookies } from "./agent/cookies.ts";
 import { classifyProfilePage } from "./agent/profileClassification.ts";
@@ -201,6 +201,8 @@ const runCheck = Effect.fn("AccountsCheck.run")(function* (input: AccountsCheckI
         ? worthChecking(account)
         : account.accountId === input.accountId,
     )
+    // Google says itself whether these work (`accounts.googleSessions.seen`).
+    .filter((account) => !isGoogleSessionRow(account))
     .slice(0, MAX_CHECKED);
   yield* Effect.forEach(
     chosen,

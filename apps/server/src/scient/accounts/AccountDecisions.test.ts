@@ -5,6 +5,7 @@ import {
   authorizationDecision,
   effectiveProfile,
   inScope,
+  isGoogleSessionRow,
   signInOnHold,
   siteMatches,
 } from "./AccountDecisions.ts";
@@ -111,5 +112,27 @@ describe("sign-in holds", () => {
       ),
     ).toBe(true);
     expect(signInOnHold({ lastCheck: { state: "signed-in", at } }, minutes(1))).toBe(false);
+  });
+});
+
+describe("Google session rows", () => {
+  const details = {
+    kind: "website",
+    sites: ["google.com"],
+    username: "a@example.com",
+    profileId: "work",
+  } as const;
+
+  it("are the password-free rows for google.com, never a saved password", () => {
+    expect(isGoogleSessionRow({ details, secrets: {} })).toBe(true);
+    expect(
+      isGoogleSessionRow({
+        details,
+        secrets: { password: { source: { type: "scient" } } },
+      }),
+    ).toBe(false);
+    expect(
+      isGoogleSessionRow({ details: { ...details, sites: ["accounts.google.com"] }, secrets: {} }),
+    ).toBe(false);
   });
 });

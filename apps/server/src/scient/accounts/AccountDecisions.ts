@@ -95,9 +95,8 @@ export const outcomeCheckState = (
 export const GOOGLE_RECHECK_WRITE_MS = 60 * 60 * 1000;
 
 /** The row Scient keeps for a Google address in a profile. A saved password is a separate row. */
-export const isGoogleSessionRow = (account: AccountSummary, profileId: BrowserProfileId) =>
+export const isGoogleSessionRow = (account: Pick<AccountSummary, "details" | "secrets">) =>
   account.details.kind === "website" &&
-  account.details.profileId === profileId &&
   account.details.username !== undefined &&
   account.details.sites.length === 1 &&
   account.details.sites[0] === GOOGLE_SITE &&

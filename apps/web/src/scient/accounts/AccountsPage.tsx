@@ -214,6 +214,7 @@ export function AccountRow({
               <MenuItem
                 onClick={async () => {
                   setBusy(true);
+                  window.dispatchEvent(new Event("scient-accounts-session-changed"));
                   await check({ accountId: account.accountId });
                   setBusy(false);
                 }}
@@ -810,6 +811,7 @@ function AccountsContent({
             disabled={!canWrite || checking}
             onClick={async () => {
               setChecking(true);
+              window.dispatchEvent(new Event("scient-accounts-session-changed"));
               const result = await checkAll({});
               setChecking(false);
               if (result.ok)
