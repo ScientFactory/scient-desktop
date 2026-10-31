@@ -50,7 +50,10 @@ export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
   }
   if (automaticSignInOnHold(allowed, yield* Clock.currentTimeMillis))
     return {
-      note: `This page needs a sign-in, and ${allowed.name}'s last attempt did not go through (${allowed.lastCheck?.message ?? allowed.lastSignInOutcome ?? "see Accounts"}). Scient won't retry it by itself; tell the user.`,
+      note:
+        allowed.lastCheck?.state === "signed-in"
+          ? `This page needs a sign-in, but ${allowed.name} signed in moments ago, so something keeps ending it. Scient won't repeat it by itself; tell the user.`
+          : `This page needs a sign-in, and ${allowed.name}'s last attempt did not go through (${allowed.lastCheck?.message ?? allowed.lastSignInOutcome ?? "see Accounts"}). Scient won't retry it by itself; tell the user.`,
     };
   const result = yield* withAccountUse(
     scope,

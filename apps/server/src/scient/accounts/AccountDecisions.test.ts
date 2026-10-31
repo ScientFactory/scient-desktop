@@ -120,6 +120,14 @@ describe("sign-in holds", () => {
     expect(automaticSignInOnHold(worked, minutes(5))).toBe(true);
     expect(automaticSignInOnHold(worked, minutes(16))).toBe(false);
   });
+
+  it("only signs in by itself where that has worked or was never tried", () => {
+    const later = minutes(100_000);
+    expect(automaticSignInOnHold({}, later)).toBe(false);
+    expect(automaticSignInOnHold({ lastSignInOutcome: "signed-in" }, later)).toBe(false);
+    expect(automaticSignInOnHold({ lastSignInOutcome: "needs-user" }, later)).toBe(true);
+    expect(automaticSignInOnHold({ lastSignInOutcome: "failed" }, later)).toBe(true);
+  });
 });
 
 describe("Google session rows", () => {

@@ -440,7 +440,8 @@ one at a time and 1.5 seconds apart, under a reserved thread that is no agent's
 so the profile is always named. A session shows by a sign-out link, a login wall or sign-in link, then
 a protected cookie, which only counts for a sign-in known to have worked because anonymous visitors
 get those too; a library by leaving the university's pages on a publisher link. A signed-out
-account with a saved password gets one unattended sign-in, unless the last one was rejected. A whole
+account with a saved password gets one unattended sign-in, only if the last one worked or none was
+tried: one that needed the user or failed would do the same with nobody there. A whole
 run skips imported passwords with no history and stops at 40 accounts.
 
 Autofill submits only on the user's own tab, when the site has one saved sign-in whose

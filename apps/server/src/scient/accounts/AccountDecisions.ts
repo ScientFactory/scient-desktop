@@ -138,6 +138,8 @@ export const automaticSignInOnHold = (
   nowMs: number,
 ) =>
   signInOnHold(account, nowMs) ||
+  // One that needed the user, or failed, would only do so again with nobody there to help.
+  (account.lastSignInOutcome !== undefined && account.lastSignInOutcome !== "signed-in") ||
   (account.lastCheck?.state === "signed-in" &&
     nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS);
 
