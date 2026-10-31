@@ -17,6 +17,8 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { profileDomains } from "~/scient/accounts/accountsView";
+import { useAccounts } from "~/scient/accounts/useAccounts";
 
 import {
   canAddShortcut,
@@ -27,6 +29,7 @@ import {
   type HomeSite,
   parseSiteUrl,
   type Shortcut,
+  universityMoodle,
   useBrowserShortcuts,
   visibleShortcuts,
 } from "./browserShortcuts";
@@ -40,7 +43,7 @@ const TILE_LABEL_CLASS = "w-full truncate text-center text-xs text-muted-foregro
 const SHORTCUT_TILE_CLASS = `${TILE_CLASS} group-hover/row:bg-accent group-has-data-popup-open/row:bg-accent`;
 /** Darker than the tile in both themes, whatever the tile beneath it shows. */
 const SHORTCUT_MENU_CLASS =
-  "absolute end-1 top-1 flex size-5 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-foreground/10 data-popup-open:text-foreground data-popup-open:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100";
+  "absolute end-0.5 top-0.5 flex size-5 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-foreground/10 data-popup-open:text-foreground data-popup-open:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100";
 const MAX_NAME_LENGTH = 60;
 
 function SiteIcon({
@@ -219,11 +222,15 @@ function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onCl
 /** What an empty browser tab offers first: Google's main apps and the user's shortcuts. */
 export function BrowserHome({
   threadRef,
+  profileId,
   onOpenUrl,
 }: {
   threadRef: ScopedThreadRef;
+  profileId: string;
   onOpenUrl: (url: string) => void;
 }) {
+  const { data } = useAccounts(threadRef.environmentId);
+  const moodle = universityMoodle(profileDomains(data, profileId));
   const added = useBrowserShortcuts((state) => state.added);
   const names = useBrowserShortcuts((state) => state.names);
   const hidden = useBrowserShortcuts((state) => state.hidden);
@@ -233,7 +240,7 @@ export function BrowserHome({
   return (
     <div className="flex flex-col items-center gap-5">
       <div className="flex flex-wrap items-center justify-center gap-1">
-        {[GOOGLE, GMAIL, DRIVE].map((site) => (
+        {[GOOGLE, GMAIL, DRIVE, ...(moodle ? [moodle] : [])].map((site) => (
           <Button key={site.name} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
             <SiteIcon threadRef={threadRef} site={site} className="size-4 object-contain" />
             {site.name}
@@ -242,16 +249,18 @@ export function BrowserHome({
         <GoogleApps threadRef={threadRef} onOpenUrl={onOpenUrl} />
       </div>
       <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-1">
-        {visibleShortcuts({ added, names, hidden, visits }).map((shortcut) => (
-          <ShortcutCircle
-            key={shortcut.url}
-            threadRef={threadRef}
-            shortcut={shortcut}
-            onOpen={() => onOpenUrl(shortcut.url)}
-            onEdit={() => setDialog({ shortcut })}
-            onRemove={() => remove(shortcut)}
-          />
-        ))}
+        {visibleShortcuts({ added, names, hidden, visits }, moodle ? [moodle] : []).map(
+          (shortcut) => (
+            <ShortcutCircle
+              key={shortcut.url}
+              threadRef={threadRef}
+              shortcut={shortcut}
+              onOpen={() => onOpenUrl(shortcut.url)}
+              onEdit={() => setDialog({ shortcut })}
+              onRemove={() => remove(shortcut)}
+            />
+          ),
+        )}
         {canAddShortcut(added) ? (
           <div className="w-20">
             <button

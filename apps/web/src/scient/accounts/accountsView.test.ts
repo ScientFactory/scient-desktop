@@ -25,6 +25,7 @@ import {
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
+  profileDomains,
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
@@ -623,5 +624,43 @@ describe("keys used by Scient", () => {
       ["Groq", ["Custom models"]],
     ]);
     expect(keys[0]?.variables).toHaveLength(2);
+  });
+});
+
+describe("profileDomains", () => {
+  const signIn = (profileId: string, sites: string[], username?: string) =>
+    ({ details: { kind: "website", profileId, sites, username } }) as never;
+  const profile = (profileId: string, email?: string) =>
+    ({ profileId, ...(email ? { source: { email } } : {}) }) as never;
+
+  it("reads the imported address and the profile's own sign-ins", () => {
+    const snapshot = {
+      profiles: [profile("work", "a@mail.huji.ac.il")],
+      accounts: [
+        signIn("work", ["google.com"], "b@cs.huji.ac.il"),
+        signIn("work", ["moodle.huji.ac.il"]),
+      ],
+    };
+    expect(profileDomains(snapshot, "work")).toEqual([
+      "mail.huji.ac.il",
+      "cs.huji.ac.il",
+      "google.com",
+      "moodle.huji.ac.il",
+    ]);
+  });
+
+  it("leaves out other profiles and passwords saved without a profile", () => {
+    const snapshot = {
+      profiles: [profile("work", "a@mail.huji.ac.il"), profile("home")],
+      accounts: [
+        signIn("work", ["huji.ac.il"]),
+        { details: { kind: "website", sites: ["moodle.huji.ac.il"], username: "b" } } as never,
+      ],
+    };
+    expect(profileDomains(snapshot, "home")).toEqual([]);
+  });
+
+  it("has nothing to read before accounts load", () => {
+    expect(profileDomains(null, "work")).toEqual([]);
   });
 });

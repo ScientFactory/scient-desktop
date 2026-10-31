@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   canAddShortcut,
   GOOGLE_APPS,
+  universityMoodle,
   useBrowserShortcuts,
   visibleShortcuts,
 } from "./browserShortcuts";
@@ -105,6 +106,30 @@ describe("visibleShortcuts", () => {
 it("fills a four by four Apps menu with different apps", () => {
   expect(new Set(GOOGLE_APPS.map(({ name }) => name)).size).toBe(16);
   expect(GOOGLE_APPS.every(({ icon }) => icon?.startsWith("data:image/"))).toBe(true);
+});
+
+describe("universityMoodle", () => {
+  it.each(["mail.huji.ac.il", "huji.ac.il", "cs.huji.ac.il", "MAIL.HUJI.AC.IL"])(
+    "finds the Moodle of %s",
+    (domain) => {
+      expect(universityMoodle(["gmail.com", domain])).toMatchObject({
+        name: "Moodle",
+        url: "https://moodle.huji.ac.il/",
+      });
+    },
+  );
+
+  it.each(["gmail.com", "nothuji.ac.il", "huji.ac.il.example.org"])("ignores %s", (domain) => {
+    expect(universityMoodle([domain])).toBeUndefined();
+  });
+
+  it("doesn't repeat a Moodle on the top row as a shortcut", () => {
+    visit("https://moodle.huji.ac.il/2026-27/", 3);
+    const moodle = universityMoodle(["huji.ac.il"])!;
+    expect(names()).toContain("Moodle");
+    const onTopRow = visibleShortcuts(useBrowserShortcuts.getState(), [moodle]);
+    expect(onTopRow.map(({ name }) => name)).not.toContain("Moodle");
+  });
 });
 
 describe("recordVisit", () => {

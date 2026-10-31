@@ -1084,6 +1084,7 @@ export function PreviewView({
             home={
               <BrowserHome
                 threadRef={threadRef}
+                profileId={activeProfileId}
                 onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
               />
             }

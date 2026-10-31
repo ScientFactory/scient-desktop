@@ -5,6 +5,9 @@ Google Account, Calendar, Docs, Sheets, Slides, Forms, Meet, Tasks, Photos, YouT
 Scholar, Gemini Notebook, Gemini and Colab. They open in the profile shown in the toolbar, so you
 reach that profile's account. If it isn't signed in, Google shows its sign-in first.
 
+On a Hebrew University profile, **Moodle** joins them. Scient recognises the profile from its email
+address or its sign-ins on `huji.ac.il` sites.
+
 Shortcuts sit below them, above your local previews and recently used pages. Sites you add come
 first, then the sites you open most, then Scholar, PubMed, arXiv, Overleaf and Calendar.
 

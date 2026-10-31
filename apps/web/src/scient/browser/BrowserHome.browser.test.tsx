@@ -7,6 +7,11 @@ import { render } from "../../../test/render";
 import { BrowserHome } from "./BrowserHome";
 import { useBrowserShortcuts } from "./browserShortcuts";
 
+const accounts = vi.hoisted(() => ({ data: null as unknown }));
+vi.mock("~/scient/accounts/useAccounts", () => ({
+  useAccounts: () => ({ data: accounts.data }),
+}));
+
 const threadRef = {
   environmentId: EnvironmentId.make("environment-fixture"),
   threadId: ThreadId.make("thread-fixture"),
@@ -23,7 +28,8 @@ function cssColor(color: string) {
 
 function renderHome(onOpenUrl: (url: string) => void = vi.fn()) {
   useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
-  return render(<BrowserHome threadRef={threadRef} onOpenUrl={onOpenUrl} />);
+  accounts.data = null;
+  return render(<BrowserHome threadRef={threadRef} profileId="main" onOpenUrl={onOpenUrl} />);
 }
 
 it("opens Google, Gmail, Drive and each shortcut", async () => {
@@ -39,6 +45,23 @@ it("opens Google, Gmail, Drive and each shortcut", async () => {
     "https://drive.google.com/",
     "https://pubmed.ncbi.nlm.nih.gov/",
   ]);
+});
+
+it("shows the university's Moodle only on that university's profile", async () => {
+  const onOpenUrl = vi.fn();
+  accounts.data = {
+    profiles: [{ profileId: "uni", source: { email: "a@mail.huji.ac.il" } }, { profileId: "main" }],
+    accounts: [],
+  };
+  const home = (profileId: string) => (
+    <BrowserHome threadRef={threadRef} profileId={profileId} onOpenUrl={onOpenUrl} />
+  );
+  useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
+  await using screen = await render(home("uni"));
+  await page.getByRole("button", { name: "Moodle" }).click();
+  expect(onOpenUrl).toHaveBeenCalledWith("https://moodle.huji.ac.il/");
+  await screen.rerender(home("main"));
+  await expect.element(page.getByRole("button", { name: "Moodle" })).not.toBeInTheDocument();
 });
 
 it("opens an app from the Apps menu and closes it", async () => {
@@ -136,7 +159,7 @@ it("keeps every label inside its circle at a narrow panel width", async () => {
   });
   await using screen = await render(
     <div data-testid="narrow" style={{ width: 260 }}>
-      <BrowserHome threadRef={threadRef} onOpenUrl={vi.fn()} />
+      <BrowserHome threadRef={threadRef} profileId="main" onOpenUrl={vi.fn()} />
     </div>,
   );
   const panel = screen.container.querySelector("[data-testid=narrow]")!;

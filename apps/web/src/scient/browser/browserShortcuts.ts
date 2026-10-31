@@ -4,7 +4,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { isLocalLoopbackHost, normalizeHostname } from "~/browser/browserTargetResolver";
 import { resolveStorage } from "~/lib/storage";
-import { GMAIL_URL } from "~/scient/accounts/accountsView";
+import { byDomain, GMAIL_URL } from "~/scient/accounts/accountsView";
 import { isIdentityProvider } from "~/scient/accounts/sessionDetection";
 
 import ICONS from "./browserHomeIcons.json";
@@ -101,6 +101,16 @@ const STARTING_SITES: ReadonlyArray<HomeSite> = [
   CALENDAR,
 ];
 
+/** Each university's Moodle, by the domain of its people's addresses and sign-ins. */
+const UNIVERSITY_MOODLES: Readonly<Record<string, HomeSite>> = {
+  "huji.ac.il": { name: "Moodle", url: "https://moodle.huji.ac.il/", icon: ICONS.moodle },
+};
+
+/** The Moodle of the university a profile belongs to, from `profileDomains`. */
+export function universityMoodle(domains: ReadonlyArray<string>) {
+  return byDomain(domains, UNIVERSITY_MOODLES)?.value;
+}
+
 /** A web address, or null when the text isn't one. Chromium percent-encodes spaces in a host. */
 export function parseSiteUrl(raw: string): URL | null {
   try {
@@ -121,7 +131,7 @@ function siteKeyOf(raw: string) {
 }
 
 const KNOWN_SITES = new Map(
-  [...GOOGLE_APPS, ...STARTING_SITES].flatMap((site) => {
+  [...GOOGLE_APPS, ...STARTING_SITES, ...Object.values(UNIVERSITY_MOODLES)].flatMap((site) => {
     const key = siteKeyOf(site.url);
     return key ? [[key, site] as const] : [];
   }),
@@ -138,8 +148,11 @@ function shortcutFor(url: string, key: string, name?: string): Shortcut {
 }
 
 /** The user's sites, then what they open most, then the starting set, without repeating a site. */
-export function visibleShortcuts({ added, names, hidden, visits }: SavedShortcuts): Shortcut[] {
-  const onTopRow = TOP_ROW.flatMap((site) => siteKeyOf(site.url) ?? []);
+export function visibleShortcuts(
+  { added, names, hidden, visits }: SavedShortcuts,
+  alsoOnTopRow: ReadonlyArray<HomeSite> = [],
+): Shortcut[] {
+  const onTopRow = [...TOP_ROW, ...alsoOnTopRow].flatMap((site) => siteKeyOf(site.url) ?? []);
   const taken = new Set([...hidden, ...onTopRow]);
   const shortcuts = added.flatMap((url) => {
     const key = siteKeyOf(url);

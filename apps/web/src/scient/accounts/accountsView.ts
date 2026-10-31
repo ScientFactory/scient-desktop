@@ -211,7 +211,7 @@ const ICON_NAME_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /** The entry for the first site whose host is a key or a subdomain of one. */
-function byDomain<T>(
+export function byDomain<T>(
   sites: ReadonlyArray<string>,
   table: Readonly<Record<string, T>>,
 ): { readonly domain: string; readonly value: T } | undefined {
@@ -539,6 +539,25 @@ export function fillableAccounts(
 
 /** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
 export const GMAIL_URL = "https://mail.google.com/mail/";
+
+/**
+ * The domains that tie a browser profile to its owner's organisations: the address it was imported
+ * from, and the addresses and sites of its sign-ins.
+ */
+export function profileDomains(
+  snapshot: Pick<AccountsSnapshot, "accounts" | "profiles"> | null | undefined,
+  profileId: string,
+) {
+  const record = snapshot?.profiles.find((profile) => profile.profileId === profileId);
+  const signIns = (snapshot?.accounts ?? []).flatMap(({ details }) =>
+    details.kind === "website" && details.profileId === profileId ? [details] : [],
+  );
+  const addresses = [record?.source?.email, ...signIns.map(({ username }) => username)];
+  return [
+    ...addresses.flatMap((address) => address?.split("@").slice(1) ?? []),
+    ...signIns.flatMap(({ sites }) => sites),
+  ];
+}
 
 /** Google knows this profile's accounts, and none of them works here any more. */
 export function signedOutOfGoogle(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
