@@ -23,9 +23,12 @@ const FNV_OFFSET_BASIS_32 = 0x811c9dc5;
 
 export { fnv1a32 };
 
+// SCIENT-FORK:START — the shared key trims, so a patch with outer whitespace adds its own hash.
 export function buildPatchCacheKey(patch: string, scope = "diff-panel"): string {
-  return buildScopedPatchCacheKey(patch, scope);
+  const key = buildScopedPatchCacheKey(patch, scope);
+  return patch === patch.trim() ? key : `${key}:${fnv1a32(patch).toString(36)}`;
 }
+// SCIENT-FORK:END
 
 export type RenderablePatch =
   | {
@@ -147,15 +150,10 @@ export function getRenderablePatch(
   cacheScope = "diff-panel",
   options: RenderablePatchOptions = {},
 ): RenderablePatch | null {
-  if (!patch) return null;
-  const normalizedPatch = patch.trim();
-  if (normalizedPatch.length === 0) return null;
+  if (!patch?.trim()) return null;
 
   try {
-    const parsedPatches = parsePatchFiles(
-      normalizedPatch,
-      buildPatchCacheKey(normalizedPatch, cacheScope),
-    );
+    const parsedPatches = parsePatchFiles(patch, buildPatchCacheKey(patch, cacheScope));
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
       const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
@@ -167,13 +165,13 @@ export function getRenderablePatch(
 
     return {
       kind: "raw",
-      text: normalizedPatch,
+      text: patch,
       reason: "Unsupported diff format. Showing raw patch.",
     };
   } catch {
     return {
       kind: "raw",
-      text: normalizedPatch,
+      text: patch,
       reason: "Failed to parse patch. Showing raw patch.",
     };
   }

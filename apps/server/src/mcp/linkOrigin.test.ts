@@ -163,6 +163,7 @@ const layerTools = Layer.mergeAll(
         }),
     }),
   ),
+  Layer.provide(layerCloneTracker),
   Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),

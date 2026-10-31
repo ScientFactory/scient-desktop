@@ -4,33 +4,41 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Option from "effect/Option";
 import { assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
-import { defaultConcurrency, gitLines, runSteps, type Step } from "./check-changed.ts";
+import {
+  comparisonBase,
+  defaultConcurrency,
+  gitLines,
+  runSteps,
+  type Step,
+} from "./check-changed.ts";
 
 const GiB = 1024 ** 3;
 
+// SCIENT-FORK:START node-runner-tests
 function setup() {
   const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-changed-check-"));
   const git = (...args: string[]) =>
-    NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8" });
+    NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8", env });
   const write = (file: string, text: string) => {
     NodeFS.mkdirSync(NodePath.dirname(NodePath.join(root, file)), { recursive: true });
     NodeFS.writeFileSync(NodePath.join(root, file), text);
   };
   git("init", "--quiet");
-  const emptyTree = NodeChildProcess.execFileSync(
-    "git",
-    ["hash-object", "-w", "-t", "tree", "--stdin"],
-    { cwd: root, input: "", encoding: "utf8" },
-  ).trim();
+  // An empty commit on a remote's main is the base, so every fixture file counts as changed.
+  git("commit", "--quiet", "--allow-empty", "--message", "base");
+  git("remote", "add", "origin", NodePath.join(root, "missing"));
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
   write(
     "scripts/check-changed.ts",
     NodeFS.readFileSync(new URL("./check-changed.ts", import.meta.url), "utf8"),
@@ -52,8 +60,8 @@ function setup() {
     ".git/info/exclude",
     "/scripts/\n/node_modules/\n/pnpm-workspace.yaml\n/package.json\n/preload.mjs\n/calls.jsonl\n/.github/scripts/ci-changes.cjs\n",
   );
-  // Only the base lookup and expensive vp gates are replaced. Path output comes
-  // from real Git; Node-runner tests execute in a real child process.
+  // Only the expensive vp gates are replaced. The base lookup and path output
+  // come from real Git; Node-runner tests execute in a real child process.
   write(
     "preload.mjs",
     `
@@ -65,9 +73,6 @@ const spawn = ChildProcess.spawn;
 const exitWith = (stdout, options) =>
   spawn(process.execPath, ["-e", \`process.stdout.write(\${JSON.stringify(stdout)})\`], options);
 ChildProcess.spawn = (command, args, options) => {
-  if (command === "git" && args.includes("merge-base")) {
-    return exitWith(${JSON.stringify(emptyTree + "\n")}, options);
-  }
   if (command !== "vp") return spawn(command, args, options);
   fs.appendFileSync(new URL("./calls.jsonl", import.meta.url), JSON.stringify(args) + "\\n");
   return exitWith("", options);
@@ -86,7 +91,7 @@ syncBuiltinESMExports();
           NodePath.join(root, "preload.mjs"),
           NodePath.join(root, "scripts/check-changed.ts"),
         ],
-        { cwd: root, encoding: "utf8" },
+        { cwd: root, encoding: "utf8", env },
       ),
     calls: () => {
       const file = NodePath.join(root, "calls.jsonl");
@@ -100,6 +105,7 @@ syncBuiltinESMExports();
     [Symbol.dispose]: () => NodeFS.rmSync(root, { recursive: true, force: true }),
   };
 }
+// SCIENT-FORK:END node-runner-tests
 
 describe("check:changed", () => {
   it("bounds the default concurrency by the scarcer of cores and available memory", () => {
@@ -243,6 +249,15 @@ describe("check:changed", () => {
   });
 });
 
+// SCIENT-FORK:START node-runner-tests
+it("runs the CLI against the remote main it found", () => {
+  using fixture = setup();
+  fixture.write("docs/change.md", "changed\n");
+  const result = fixture.run();
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  assert.include(result.stdout, "(origin/main)");
+});
+
 it.each([
   ["docs/café.md", "docs/naïve.md"],
   ["docs/first\npart.md", "docs/second\npart.md"],
@@ -327,4 +342,91 @@ it("invalidates a passing cache when a real Node suite starts failing and never 
     assert.include(result.stdout, "changed suite fails");
     assert.notInclude(result.stdout, "Nothing changed since the last passing run.");
   }
+});
+// SCIENT-FORK:END node-runner-tests
+
+// Hooks export GIT_DIR and GIT_INDEX_FILE, and user config or the default
+// ~/.config/git/ignore can ignore or sign fixture files.
+const fixtureConfig = {
+  "core.excludesFile": NodeOS.devNull,
+  "user.name": "Fixture",
+  "user.email": "fixture@example.invalid",
+};
+const env = {
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+  GIT_CONFIG_GLOBAL: NodeOS.devNull,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_COUNT: String(Object.keys(fixtureConfig).length),
+  ...Object.fromEntries(
+    Object.entries(fixtureConfig).flatMap(([key, value], index) => [
+      [`GIT_CONFIG_KEY_${index}`, key],
+      [`GIT_CONFIG_VALUE_${index}`, value],
+    ]),
+  ),
+};
+
+// History A -> B -> C, with HEAD at C. Each remote's main points at A or B.
+function fixture(remotes: Record<string, "A" | "B">) {
+  const root = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-check-changed-")),
+  );
+  const commits: Record<string, string> = {};
+  try {
+    const write = (file: string, content: string) => {
+      const path = NodePath.join(root, file);
+      NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+      NodeFS.writeFileSync(path, content);
+    };
+    const git = (...args: Array<string>) =>
+      NodeChildProcess.execFileSync("git", args, { cwd: root, encoding: "utf8", env }).trim();
+    git("init");
+    for (const name of ["A", "B", "C"]) {
+      write(`${name}.txt`, name);
+      git("add", ".");
+      git("commit", "-m", name);
+      commits[name] = git("rev-parse", "HEAD");
+    }
+    for (const [remote, commit] of Object.entries(remotes)) {
+      git("remote", "add", remote, NodePath.join(root, "missing"));
+      git("update-ref", `refs/remotes/${remote}/main`, commits[commit]!);
+    }
+  } catch (error) {
+    NodeFS.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    commits,
+    root,
+    [Symbol.dispose]() {
+      NodeFS.rmSync(root, { recursive: true, force: true });
+    },
+  };
+}
+
+const compare = (root: string, ref: Option.Option<string>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    return yield* comparisonBase(root, ref).pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => spawner.spawn(ChildProcess.setEnv(command, env))),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+
+it.each(["upstream", "team/upstream"])(
+  "compares against %s/main when the fork's origin/main lags it",
+  async (remote) => {
+    using project = fixture({ origin: "A", [remote]: "B" });
+    const result = await compare(project.root, Option.none());
+    assert.strictEqual(result.base, project.commits.B);
+    assert.strictEqual(result.ref, remote + "/main");
+  },
+);
+
+it("compares against an explicit ref instead of the closest remote main", async () => {
+  using project = fixture({ origin: "A", upstream: "B" });
+  const result = await compare(project.root, Option.some("origin/main"));
+  assert.strictEqual(result.base, project.commits.A);
+  assert.strictEqual(result.ref, "origin/main");
 });

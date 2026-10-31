@@ -1,5 +1,6 @@
 import { ClaudeSettings } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -99,7 +100,12 @@ const writeReplayTaskOutputFiles = Effect.fn("ClaudeReplay.writeTaskOutputFiles"
     const stderr = typeof result.stderr === "string" ? result.stderr : "";
     outputByToolUseId.set(toolResult.tool_use_id, `${result.stdout}${stderr}`);
   }
-  const root = claudeTaskOutputRoot({ CLAUDE_CODE_TMPDIR: tmpRoot }, path);
+  const root = claudeTaskOutputRoot(
+    { CLAUDE_CODE_TMPDIR: tmpRoot },
+    path,
+    null,
+    yield* HostProcess.Platform,
+  );
   for (const frame of frames) {
     if (frame.type !== "system" || frame.subtype !== "task_started") continue;
     if (frame.task_type !== "local_bash" || frame.is_backgrounded !== false) continue;

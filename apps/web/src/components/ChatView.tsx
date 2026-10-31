@@ -1220,7 +1220,12 @@ function ChatViewContent(props: ChatViewProps) {
   useLayoutEffect(() => {
     const explicitThreadRef = explicitDiffOpenRef.current;
     explicitDiffOpenRef.current = null;
-    if (diffOpen && activeThreadRef && explicitThreadRef !== activeThreadRef) {
+    if (
+      diffOpen &&
+      activeThreadRef &&
+      explicitThreadRef !== activeThreadRef &&
+      !useDiffPanelStore.getState().consumeKeepSelectionOnOpen(activeThreadRef)
+    ) {
       useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     }
   }, [activeThreadRef, diffOpen]);
@@ -3063,6 +3068,9 @@ function ChatViewContent(props: ChatViewProps) {
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
+    // SCIENT-FORK:START — a restored branch returns focus through the composer's own path.
+    scheduleComposerFocus,
+    // SCIENT-FORK:END
     canOperateThread,
     clientSettingsHydrated,
     activeThread,
@@ -3090,7 +3098,6 @@ function ChatViewContent(props: ChatViewProps) {
     clearUsageLimitsFor,
     beginLocalDispatch,
     resetLocalDispatch,
-    scheduleComposerFocus,
     scrollToEnd,
     persistThreadSettingsForNextTurn,
   });

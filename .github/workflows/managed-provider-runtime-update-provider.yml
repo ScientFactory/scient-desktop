@@ -290,6 +290,8 @@ jobs:
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/secrets/secretProviderDefinitions.ts \
+            apps/server/src/secrets/settingsSecretValue.ts \
+            apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -352,6 +354,8 @@ jobs:
             packages/effect-acp \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/secrets/secretProviderDefinitions.ts \
+            apps/server/src/secrets/settingsSecretValue.ts \
+            apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -415,6 +419,8 @@ jobs:
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
             apps/server/src/secrets/secretProviderDefinitions.ts \
+            apps/server/src/secrets/settingsSecretValue.ts \
+            apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -502,6 +508,8 @@ jobs:
             apps/server/src/modelReasoning.ts \
             apps/server/src/scientServerSettings.ts \
             apps/server/src/secrets/secretProviderDefinitions.ts \
+            apps/server/src/secrets/settingsSecretValue.ts \
+            apps/server/src/secrets/SecretResolver.ts \
             apps/server/src/serverSettings.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \

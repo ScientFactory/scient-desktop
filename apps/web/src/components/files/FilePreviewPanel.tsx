@@ -2863,7 +2863,7 @@ export default function FilePreviewPanel({
                 revision={queriedFile.authoritativeData?.revision ?? ""}
                 truncated={file.data.truncated}
                 workspaceMutationId={workspaceMutationId}
-                readOnly={isHostFile || !canWriteFiles}
+                readOnly={file.data.truncated || isHostFile || !canWriteFiles}
                 onPendingChange={handlePendingChange}
                 onSaveFailure={handleSaveFailure}
                 onSaveConfirmed={handleSaveConfirmed}

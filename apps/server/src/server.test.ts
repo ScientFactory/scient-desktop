@@ -257,6 +257,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as ThreadCommandExecutor from "./orchestration-v2/ThreadCommandExecutor.ts";
@@ -1274,9 +1275,14 @@ const buildAppUnderTest = (options?: {
       );
 
     const appLayer = servedRoutesLayer
-      // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses (own pipe: one pipe takes at most 20 steps).
-      .pipe(Layer.provide(AccountsTestkit.layer))
-      // SCIENT-FORK:END
+      // Own pipe: one pipe takes at most 20 steps.
+      .pipe(
+        // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses.
+        Layer.provide(AccountsTestkit.layer),
+        // SCIENT-FORK:END
+        // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
+        Layer.provide(SecretResolver.layer.pipe(Layer.provide(serverSettingsLayer))),
+      )
       .pipe(
         Layer.provide(DocumentText.layer),
         Layer.provide(CloudLink.layer),
