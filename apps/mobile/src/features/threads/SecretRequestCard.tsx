@@ -20,6 +20,9 @@ import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/Button";
+// SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
+import { SIGN_IN_CODE_LABEL_PREFIX } from "@t3tools/shared/scientSignInPage";
+// SCIENT-FORK:END
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
@@ -112,12 +115,23 @@ function PendingSecretRequestForm(props: {
         value={secret}
         onChangeText={setSecret}
         editable={!submitting}
-        secureTextEntry
+        // SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
+        {...(item.label.startsWith(SIGN_IN_CODE_LABEL_PREFIX)
+          ? ({
+              autoComplete: "one-time-code",
+              textContentType: "oneTimeCode",
+              keyboardType: "number-pad",
+              importantForAutofill: "yes",
+            } as const)
+          : ({
+              secureTextEntry: true,
+              autoComplete: "off",
+              textContentType: "none",
+              importantForAutofill: "no",
+            } as const))}
+        // SCIENT-FORK:END
         autoCorrect={false}
         autoCapitalize="none"
-        autoComplete="off"
-        textContentType="none"
-        importantForAutofill="no"
         spellCheck={false}
         returnKeyType="done"
         onSubmitEditing={() => void send({ type: "save", secret })}
