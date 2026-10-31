@@ -17,6 +17,7 @@ import { returnToLiveFollow } from "./liveFollowOffset";
 import {
   readerAtReadingEnd,
   readingEndGapOnScreen,
+  restingEndGrowth,
   readingIdentity,
   resolveReadingRow,
 } from "./readerScrollPolicy";
@@ -328,7 +329,7 @@ export function useReadingBookkeepingFrame({
     // the list already compensated for leaves the on-screen gap unchanged.
     const contentEnd = gap + viewport.scrollTop;
     if (Math.abs(contentEnd - resting.contentEnd) <= 1) return;
-    const grown = gap - resting.gap;
+    const grown = restingEndGrowth(resting, gap, viewport.scrollTop);
     if (grown > 1) viewport.scrollTop += grown;
     // The refs are the caller's stable useRef objects; listing them changes nothing.
   });
