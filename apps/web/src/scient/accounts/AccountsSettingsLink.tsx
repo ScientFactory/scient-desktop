@@ -14,7 +14,7 @@ export function AccountsSettingsLink({ disabled }: { disabled: boolean }) {
   );
   return available ? (
     <SettingsRow
-      title="Accounts"
+      title="Accounts & secrets"
       control={
         <Link to="/settings/accounts" className="text-sm text-primary hover:underline">
           Manage accounts

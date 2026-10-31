@@ -191,6 +191,9 @@ import {
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHandle, type ThreadFeedHistoryControls } from "./ThreadFeed";
+// SCIENT-FORK:START — Scient Accounts: sign-ins waiting for the user reach the phone.
+import { ThreadAccountRequests } from "./ThreadAccountRequests";
+// SCIENT-FORK:END
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
@@ -1658,6 +1661,12 @@ function ThreadDetailBody(props: ThreadDetailScreenProps) {
                     </View>
                   ) : (
                     <>
+                      {/* SCIENT-FORK:START — Scient Accounts: sign-ins reach the phone. */}
+                      <ThreadAccountRequests
+                        environmentId={props.environmentId}
+                        threadId={props.selectedThread.id}
+                      />
+                      {/* SCIENT-FORK:END */}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}

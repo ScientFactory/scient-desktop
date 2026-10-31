@@ -14,6 +14,9 @@ import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { previewRuntimeFor } from "~/browser/previewRuntime";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
+// SCIENT-FORK:START — Scient Accounts: choose the profile a new tab opens in.
+import { openProfileId } from "~/scient/accounts/openProfile";
+// SCIENT-FORK:END
 
 interface OpenPreviewSessionInput<E> {
   openPreview: (input: {
@@ -47,7 +50,9 @@ export async function openPreviewSession<E>(
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
       viewport: input.viewport ?? defaults.viewport,
-      profileId: input.profileId ?? defaults.profileId,
+      // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
+      profileId: input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults)),
+      // SCIENT-FORK:END
       ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
     },
   });

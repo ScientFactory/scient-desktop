@@ -110,3 +110,28 @@ export const layer = Layer.effect(
     return yield* makeAccountsSecretStore(yield* ServerSecretStore, yield* AccountVault);
   }),
 ).pipe(Layer.provide(vaultLayer));
+
+/**
+ * Seals one-time card answers. The salt that names them stays plain: it is read at startup, and
+ * startup must not wait for the keychain.
+ */
+export const secretRequestStoreLayer = Layer.effect(
+  ServerSecretStore,
+  Effect.gen(function* () {
+    const plain = yield* ServerSecretStore;
+    const sealed = yield* AccountsSecretStore;
+    const pick = (name: string) => (name === "secret-request-salt" ? plain : sealed);
+    return ServerSecretStore.of({
+      ...plain,
+      get: Effect.fn("SecretRequestStore.get")((name) => pick(name).get(name)),
+      set: Effect.fn("SecretRequestStore.set")((name, value) => pick(name).set(name, value)),
+      create: Effect.fn("SecretRequestStore.create")((name, value) =>
+        pick(name).create(name, value),
+      ),
+      getOrCreateRandom: Effect.fn("SecretRequestStore.getOrCreateRandom")((name, bytes) =>
+        pick(name).getOrCreateRandom(name, bytes),
+      ),
+      remove: Effect.fn("SecretRequestStore.remove")((name) => pick(name).remove(name)),
+    });
+  }),
+).pipe(Layer.provide(layer));

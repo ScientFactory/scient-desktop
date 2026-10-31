@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Copy,
+  Download,
   ExternalLink,
   FileText,
   LoaderCircle,
@@ -612,6 +613,7 @@ export function SourceDetails(props: {
   readonly onRefreshMetadata: () => Promise<void>;
   readonly onApproveReview?: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
+  readonly onGetPdf?: () => Promise<void>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
     readonly attachmentId: string;
@@ -623,6 +625,7 @@ export function SourceDetails(props: {
     null,
   );
   const [approvingReview, setApprovingReview] = useState(false);
+  const [gettingPdf, setGettingPdf] = useState(false);
   const record = props.record;
   const sourceNote = useSourceNoteControls({ record, onSave: props.onSaveNote });
   const publication = publicationLocation(record);
@@ -737,6 +740,20 @@ export function SourceDetails(props: {
               ))}
             </MenuPopup>
           </Menu>
+        ) : props.onGetPdf && (hasDoi || record.url) ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={gettingPdf}
+            onClick={async () => {
+              setGettingPdf(true);
+              await props.onGetPdf?.();
+              setGettingPdf(false);
+            }}
+          >
+            {gettingPdf ? <LoaderCircle className="animate-spin" /> : <Download />}
+            Get PDF
+          </Button>
         ) : null}
         <Menu>
           <ScientTooltip content="More source actions">

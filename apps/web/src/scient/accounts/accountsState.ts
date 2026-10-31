@@ -67,6 +67,53 @@ export const accountsState = {
     tag: WS_METHODS.accountsTest,
     ...lane,
   }),
+  check: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:check",
+    tag: WS_METHODS.accountsCheck,
+  }),
+  signInSeen: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:signInSeen",
+    tag: WS_METHODS.accountsSignInSeen,
+    ...lane,
+  }),
+  googleSessionsSeen: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:googleSessionsSeen",
+    tag: WS_METHODS.accountsGoogleSessionsSeen,
+    ...lane,
+  }),
+  sessionEnded: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionEnded",
+    tag: WS_METHODS.accountsSessionEnded,
+    ...lane,
+  }),
+  setCodeSources: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:setCodeSources",
+    tag: WS_METHODS.accountsSetCodeSources,
+    ...lane,
+  }),
+  paperForSource: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:paperForSource",
+    tag: WS_METHODS.accountsPaperForSource,
+  }),
+  plainKeys: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:plainKeys",
+    tag: WS_METHODS.accountsPlainKeys,
+  }),
+  keepPlainKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:keepPlainKey",
+    tag: WS_METHODS.accountsKeepPlainKey,
+    ...lane,
+  }),
+  linkKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:linkKey",
+    tag: WS_METHODS.accountsLinkKey,
+    ...lane,
+  }),
+  unlinkKey: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:unlinkKey",
+    tag: WS_METHODS.accountsUnlinkKey,
+    ...lane,
+  }),
   setControls: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:setControls",
     tag: WS_METHODS.accountsSetControls,
@@ -85,6 +132,11 @@ export const accountsState = {
   removeProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:removeProfile",
     tag: WS_METHODS.accountsProfileRemove,
+    ...lane,
+  }),
+  chooseProfile: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:chooseProfile",
+    tag: WS_METHODS.accountsProfileChoose,
     ...lane,
   }),
   showHandoff: createEnvironmentRpcCommand(connectionAtomRuntime, {

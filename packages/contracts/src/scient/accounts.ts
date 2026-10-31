@@ -9,6 +9,7 @@ import {
 } from "../baseSchemas.ts";
 import { BrowserImportSourceId } from "../browserImport.ts";
 import { BrowserProfileId } from "../browserProfile.ts";
+import { PreviewTabId } from "../preview.ts";
 import { GrantScope } from "./secrets.ts";
 
 /**
@@ -258,8 +259,27 @@ export const AccountSignInOutcome = Schema.Literals([
   "needs-user",
   "password-rejected",
   "code-rejected",
+  "limited",
   "failed",
 ]);
+
+export const AccountCheckState = Schema.Literals([
+  "signed-in",
+  "signed-out",
+  "needs-you",
+  "rejected",
+  "limited",
+  "unknown",
+]);
+export type AccountCheckState = typeof AccountCheckState.Type;
+
+/** What Scient last saw when it opened or used this sign-in. */
+export const AccountCheck = Schema.Struct({
+  state: AccountCheckState,
+  at: IsoDateTime,
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type AccountCheck = typeof AccountCheck.Type;
 
 export const AccountSummary = Schema.Struct({
   accountId: AccountId,
@@ -271,6 +291,7 @@ export const AccountSummary = Schema.Struct({
   /** Set only when something is wrong. */
   statusMessage: Schema.optional(TrimmedNonEmptyString),
   lastSignInOutcome: Schema.optional(AccountSignInOutcome),
+  lastCheck: Schema.optional(AccountCheck),
   signedOut: Schema.optional(Schema.Boolean),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -434,11 +455,123 @@ export type AccountHandoff = typeof AccountHandoff.Type;
 
 export const AccountHandoffCancelInput = Schema.Struct({ handoffId: TrimmedNonEmptyString });
 
+/**
+ * Which browser profile a tab opens in, as the user chose it: per project, and per conversation
+ * (its profile and, per site, the profile the user switched that site's tab to).
+ */
+export const BrowserProfileChoices = Schema.Struct({
+  projects: Schema.Record(ProjectId, BrowserProfileId),
+  threads: Schema.Record(
+    ThreadId,
+    Schema.Struct({
+      profileId: BrowserProfileId,
+      sites: Schema.Record(
+        Schema.String,
+        Schema.Struct({ profileId: BrowserProfileId, at: IsoDateTime }),
+      ),
+    }),
+  ),
+});
+export type BrowserProfileChoices = typeof BrowserProfileChoices.Type;
+
+export const BrowserProfileChoiceInput = Schema.Union([
+  /** The user switched a conversation's tab to this profile, on this page's site. */
+  Schema.Struct({
+    threadId: ThreadId,
+    profileId: BrowserProfileId,
+    url: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
+  }),
+  /** "Use in this project"; null clears it. */
+  Schema.Struct({ projectId: ProjectId, profileId: Schema.NullOr(BrowserProfileId) }),
+]);
+export type BrowserProfileChoiceInput = typeof BrowserProfileChoiceInput.Type;
+
+/** Get PDF on a source: fetched like an agent's request, saved in `papers/` and attached. */
+export const AccountPaperForSourceInput = Schema.Struct({
+  root: Schema.String.check(Schema.isMaxLength(4096)),
+  sourceId: TrimmedNonEmptyString,
+  expectedRevision: Schema.Int,
+  doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
+  url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
+});
+export type AccountPaperForSourceInput = typeof AccountPaperForSourceInput.Type;
+
+export const AccountPaperForSourceResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("attached"),
+    /** False for an accepted manuscript or preprint. */
+    published: Schema.Boolean,
+  }),
+  Schema.Struct({
+    status: Schema.Literals(["not-found", "no-access", "needs-sign-in", "limit"]),
+    message: Schema.String,
+    landingUrl: Schema.optional(Schema.String),
+  }),
+]);
+
+/** A secret sitting in a plain file: by name only, never its value. */
+export const AccountPlainKey = Schema.Struct({
+  file: Schema.String.check(Schema.isMaxLength(4096)),
+  name: EnvironmentVariableName,
+  kept: Schema.Boolean,
+});
+export type AccountPlainKey = typeof AccountPlainKey.Type;
+
+export const AccountPlainKeysInput = Schema.Struct({
+  roots: Schema.Array(Schema.String.check(Schema.isMaxLength(4096))).check(Schema.isMaxLength(200)),
+});
+
+export const AccountPlainKeyInput = Schema.Struct({
+  ...AccountPlainKeysInput.fields,
+  file: AccountPlainKey.fields.file,
+  name: AccountPlainKey.fields.name,
+});
+export type AccountPlainKeyInput = typeof AccountPlainKeyInput.Type;
+
+/** A provider variable that takes its value from an API-key account, and follows it. */
+export const AccountKeyLink = Schema.Struct({
+  accountId: AccountId,
+  instanceId: TrimmedNonEmptyString,
+  variable: EnvironmentVariableName,
+});
+export type AccountKeyLink = typeof AccountKeyLink.Type;
+
+export const AccountKeyUnlinkInput = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  variable: EnvironmentVariableName,
+});
+
+/** Where Scient keeps a browser profile's Google session. */
+export const GOOGLE_SITE = "google.com";
+
+/** The Google accounts a browser profile holds, as Google reports them. */
+export const AccountGoogleSessions = Schema.Struct({
+  profileId: BrowserProfileId,
+  sessions: Schema.Array(
+    Schema.Struct({ email: Schema.String.check(Schema.isMaxLength(256)), valid: Schema.Boolean }),
+  ),
+});
+export type AccountGoogleSessions = typeof AccountGoogleSessions.Type;
+
+/** Where Scient may look for a sign-in code. Off until the user turns it on. */
+export const AccountCodeSources = Schema.Struct({
+  messages: Schema.Boolean,
+});
+export type AccountCodeSources = typeof AccountCodeSources.Type;
+
+export const AccountCodeSourcesResult = Schema.Struct({
+  /** macOS refused to open Messages; Scient needs Full Disk Access. */
+  messagesNeedAccess: Schema.Boolean,
+});
+
 export const AccountsSnapshot = Schema.Struct({
   /** Off turns every account and profile off for agents without changing their settings. */
   agentAccess: Schema.Boolean,
   accounts: Schema.Array(AccountSummary),
   profiles: Schema.Array(BrowserProfileRecord),
+  profileChoices: Schema.optional(BrowserProfileChoices),
+  codeSources: Schema.optional(AccountCodeSources),
+  keyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
   stores: AccountStoresStatus,
   approvals: Schema.Array(AccountApproval),
   handoffs: Schema.optional(Schema.Array(AccountHandoff)),
@@ -586,9 +719,18 @@ export const PasswordImportResult = Schema.Struct({
 export type PasswordImportResult = typeof PasswordImportResult.Type;
 
 /** The user's own sign-in on a page they are viewing; refused unless `origin` matches the account. */
+export const AccountFilledTab = Schema.Struct({
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  /** The page that was filled; the tab stays closed to agents that may not use it until it changes. */
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+});
+export type AccountFilledTab = typeof AccountFilledTab.Type;
+
 export const AccountFillValuesInput = Schema.Struct({
   accountId: AccountId,
   origin: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  tab: Schema.optional(AccountFilledTab),
 });
 
 export const AccountFillValues = Schema.Struct({
@@ -610,6 +752,17 @@ export const AccountMatchSignInResult = Schema.Struct({
   accountId: Schema.optional(AccountId),
 });
 export type AccountMatchSignInResult = typeof AccountMatchSignInResult.Type;
+
+/** How a sign-in with this saved password on the user's own tab ended. */
+export const AccountSignInSeenInput = Schema.Struct({
+  accountId: AccountId,
+  outcome: Schema.Literals(["signed-in", "password-rejected"]),
+});
+export type AccountSignInSeenInput = typeof AccountSignInSeenInput.Type;
+
+/** Every browser sign-in, or one. */
+export const AccountsCheckInput = Schema.Struct({ accountId: Schema.optional(AccountId) });
+export type AccountsCheckInput = typeof AccountsCheckInput.Type;
 
 export const AccountsTestInput = Schema.Struct({ accountId: AccountId });
 

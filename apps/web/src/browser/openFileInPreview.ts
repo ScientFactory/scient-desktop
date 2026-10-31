@@ -31,6 +31,9 @@ import {
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 import { useHtmlPdfSourceStore } from "~/scient/documentExport/htmlPdfSourceStore";
 import { resolveBrowserDefaults } from "./browserDefaults";
+// SCIENT-FORK:START — Scient Accounts: choose the profile a new tab opens in.
+import { openProfileId } from "~/scient/accounts/openProfile";
+// SCIENT-FORK:END
 
 /** Classifies a link target; host-file authorization keeps literal extensions. */
 export const isBrowserPreviewFile = (path: string): boolean =>
@@ -122,7 +125,9 @@ export async function openUrlInPreview<E>(input: {
       threadId: input.threadRef.threadId,
       url: input.url,
       viewport: defaults.viewport,
-      profileId: input.profileId ?? defaults.profileId,
+      // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
+      profileId: input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults)),
+      // SCIENT-FORK:END
       ...(runtime === undefined ? {} : { runtime }),
     },
   });

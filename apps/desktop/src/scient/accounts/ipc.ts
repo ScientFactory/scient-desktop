@@ -22,6 +22,8 @@ import { groupSignedInSites, siteCookieRemovals } from "./signedInSites.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
+import { readGoogleSessions } from "./googleSessions.ts";
+import { isPublicHttps, quietVisit } from "./quietVisit.ts";
 import * as Channels from "./protocol.ts";
 
 const Value = Schema.String.check(Schema.isMaxLength(65_536));
@@ -33,6 +35,7 @@ const Fill = Schema.Struct({
   otp: Schema.optional(Value),
   documentId: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
   automatic: Schema.optional(Schema.Boolean),
+  submit: Schema.optional(Schema.Boolean),
 });
 const Sites = Schema.Struct({
   profileId: BrowserProfileId,
@@ -51,6 +54,12 @@ const SignOut = Schema.Struct({
   site: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253)),
 });
 const decodeSignOut = Schema.decodeUnknownOption(SignOut);
+const decodeQuietVisit = Schema.decodeUnknownOption(
+  Schema.Struct({
+    ...Sites.fields,
+    url: Schema.String.check(Schema.isMaxLength(2048), Schema.isPattern(/^https:\/\//)),
+  }),
+);
 const decodeCapture = Schema.decodeUnknownOption(Capture);
 
 type AccountsInvokeEvent = DesktopIpcInvokeEvent & { readonly senderFrame?: unknown };
@@ -92,7 +101,9 @@ export const fill = Effect.fn("DesktopAccounts.fill")(function* (
       try: () =>
         contents
           .executeJavaScript(loginFillScript(input.value, origin, input.value))
-          .then((result: unknown) => result === true),
+          .then((result: unknown) =>
+            result === true || result === "submitted" ? (result as true | "submitted") : false,
+          ),
       catch: unavailable,
     });
   }).pipe(Effect.orElseSucceed(() => false));
@@ -122,6 +133,60 @@ export const signedInSites = Effect.fn("DesktopAccounts.signedInSites")(function
       ),
     ),
     Effect.orElseSucceed(() => []),
+  );
+});
+
+const visitQuietly = Effect.fn("DesktopAccounts.visitQuietly")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* mainSender(event))) return null;
+  const input = decodeQuietVisit(raw);
+  if (Option.isNone(input) || !isPublicHttps(input.value.url)) return null;
+  const manager = yield* PreviewManager;
+  const scope = resolvePartitionScope(
+    input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
+    input.value.profileId,
+  );
+  return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
+    Effect.flatMap((session) =>
+      Effect.tryPromise({
+        try: () =>
+          quietVisit(
+            (url) =>
+              Electron.net.request({
+                url,
+                session,
+                credentials: "include",
+                useSessionCookies: true,
+                redirect: "manual",
+              }),
+            input.value.url,
+          ),
+        catch: unavailable,
+      }),
+    ),
+    Effect.orElseSucceed(() => null),
+  );
+});
+
+const googleSessions = Effect.fn("DesktopAccounts.googleSessions")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* mainSender(event))) return null;
+  const input = decodeSites(raw);
+  if (Option.isNone(input)) return null;
+  const manager = yield* PreviewManager;
+  const scope = resolvePartitionScope(
+    input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
+    input.value.profileId,
+  );
+  return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
+    Effect.flatMap((session) =>
+      Effect.tryPromise({ try: () => readGoogleSessions(session), catch: unavailable }),
+    ),
+    Effect.orElseSucceed(() => null),
   );
 });
 
@@ -239,6 +304,8 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
   yield* ipc.handle({ channel: Channels.COOKIE_METADATA, handler: cookieMetadata });
+  yield* ipc.handle({ channel: Channels.GOOGLE_SESSIONS, handler: googleSessions });
+  yield* ipc.handle({ channel: Channels.QUIET_VISIT, handler: visitQuietly });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });
@@ -318,6 +385,7 @@ const FormReport = Schema.Struct({
   url: Schema.String,
   documentId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64)),
   userEdited: Schema.Boolean,
+  hasPassword: Schema.Boolean,
   hasValues: Schema.Boolean,
 });
 const decodeFormReport = Schema.decodeUnknownOption(FormReport);
@@ -335,7 +403,7 @@ const readLoginForm = Effect.fn("DesktopAccounts.readLoginForm")(function* (tabI
   });
   const report = decodeFormReport(result);
   if (Option.isNone(report) || report.value.url !== safeHttpOrigin(contents.getURL())) return null;
-  return { ...report.value, tabId, profileId: identity.profileId };
+  return { ...report.value, pageUrl: contents.getURL(), tabId, profileId: identity.profileId };
 });
 const inspectLoginForm = Effect.fn("DesktopAccounts.inspectLoginForm")(function* (
   raw: unknown,

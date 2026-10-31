@@ -33,6 +33,28 @@ describe("browser profile page classification", () => {
       page: { ...page, finalUrl: "https://identity.example.com/sso/start" },
       result: "sign-in",
     },
+    {
+      name: "login page on the same site, before any password field",
+      page: { ...page, finalUrl: "https://docs.example.com/login?next=/sheet" },
+      result: "sign-in",
+    },
+    {
+      name: "sign-in subdomain",
+      page: { ...page, finalUrl: "https://sso.docs.example.com/start" },
+      result: "sign-in",
+    },
+    {
+      name: "a login address the agent asked for is not a wall",
+      requested: "https://docs.example.com/login",
+      page: { ...page, finalUrl: "https://docs.example.com/login" },
+      result: "opens",
+    },
+    {
+      name: "signing out on purpose is not a wall",
+      requested: "https://docs.example.com/logout",
+      page: { ...page, finalUrl: "https://docs.example.com/login", passwordField: true },
+      result: "opens",
+    },
     { name: "visible password field", page: { ...page, passwordField: true }, result: "sign-in" },
     {
       name: "denial text takes priority over a login form",

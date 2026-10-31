@@ -33,9 +33,13 @@ export interface DesktopCapturedSignIn {
 export interface DesktopLoginForm {
   readonly tabId: string;
   readonly profileId: string;
+  /** The page's origin. */
   readonly url: string;
+  /** The full page address, for the tab Scient filled. */
+  readonly pageUrl?: string;
   readonly documentId: string;
   readonly userEdited: boolean;
+  readonly hasPassword: boolean;
   readonly hasValues: boolean;
 }
 
@@ -45,12 +49,20 @@ export interface DesktopSignInFill {
   readonly expectedOrigin?: string;
   readonly documentId?: string;
   readonly automatic?: boolean;
+  /** Submit a complete sign-in after filling it. */
+  readonly submit?: boolean;
   readonly username?: string;
   readonly password?: string;
   readonly otp?: string;
 }
 
 /** Scient Accounts members of the desktop bridge (`ScientDesktopBridge.accounts`). */
+export interface DesktopGoogleSession {
+  readonly email: string;
+  /** False when Google remembers the account but no longer accepts its session. */
+  readonly valid: boolean;
+}
+
 export interface DesktopAccountsBridge {
   /** Set only when fill enforces expectedOrigin in the native guest before applying values. */
   readonly originBoundFill?: true;
@@ -76,6 +88,17 @@ export interface DesktopAccountsBridge {
     readonly httpOnly?: boolean;
     readonly expires?: number;
   }> | null>;
+  /** What Google says about this profile's accounts, or null when it couldn't be read. */
+  readonly googleSessions?: (
+    profileId: string,
+    environmentId?: string,
+  ) => Promise<ReadonlyArray<DesktopGoogleSession> | null>;
+  /** Asks a site for a page with the profile's session and no page opened; null if that failed. */
+  readonly quietVisit?: (
+    profileId: string,
+    url: string,
+    environmentId?: string,
+  ) => Promise<{ readonly url: string; readonly status: number } | null>;
   /** Removes every cookie of one site (a registrable domain) from the profile. Optional for older desktops. */
   readonly signOutSite?: (
     profileId: string,
@@ -83,7 +106,8 @@ export interface DesktopAccountsBridge {
     environmentId?: string,
   ) => Promise<boolean>;
   /** Fills the login form on the tab's current page. Resolves false when it found none. */
-  readonly fill: (input: DesktopSignInFill) => Promise<boolean>;
+  /** False when nothing was filled; "submitted" when the form was also really sent. */
+  readonly fill: (input: DesktopSignInFill) => Promise<boolean | "submitted">;
   readonly loginForm?: (tabId: string) => Promise<DesktopLoginForm | null>;
   readonly onLoginFormDetected?: (listener: (form: DesktopLoginForm) => void) => () => void;
   readonly onSignInCaptured: (listener: (capture: DesktopCapturedSignIn) => void) => () => void;

@@ -11,6 +11,9 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+// SCIENT-FORK:START — Scient Accounts: sign-ins outlive the app.
+import { keepSessionCookies } from "../scient/accounts/keepSessionCookies.ts";
+// SCIENT-FORK:END
 
 const PREVIEW_PARTITION_PREFIX = SCIENT_DESKTOP_IDENTITY.previewPartitionPrefix;
 /** Ephemeral partitions omit persist: but retain a product prefix so the webview gate recognizes them. */
@@ -286,6 +289,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       return Effect.try({
         try: () => {
           const browserSession = session.fromPartition(partition);
+          // SCIENT-FORK:START — Scient Accounts: sign-ins outlive the app.
+          if (persistent) keepSessionCookies(browserSession);
+          // SCIENT-FORK:END
           // Like Chrome, clipboard reads ask once per origin; both answers last for the session.
           const clipboardReadDecisions = new Map<string, boolean>();
           const confirmClipboardRead = (

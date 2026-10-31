@@ -1,10 +1,12 @@
+import { GOOGLE_SITE } from "@t3tools/contracts";
+
 export interface CookieMetadata {
   readonly domain: string;
   readonly httpOnly?: boolean;
   readonly expires?: number;
 }
 
-export function siteHost(site: string) {
+function siteHost(site: string) {
   try {
     const url = new URL(site.includes("://") ? site : `https://${site}`);
     return url.protocol === "https:" ? url.hostname.toLowerCase() : null;
@@ -30,23 +32,26 @@ export function siteCookies(
   });
 }
 
-export function hasNewSiteCookie(
+/** Domains of HttpOnly cookies for the site that `after` has and `before` didn't. */
+function newSessionDomains(
   before: ReadonlyArray<CookieMetadata>,
   after: ReadonlyArray<CookieMetadata>,
   site: string,
-  now = Date.now(),
+  now: number,
 ) {
   const counts = new Map<string, number>();
   const key = (cookie: CookieMetadata) =>
     `${cookie.domain.toLowerCase()}:${cookie.expires ?? "session"}`;
   for (const cookie of siteCookies(before, site, now))
     counts.set(key(cookie), (counts.get(key(cookie)) ?? 0) + 1);
-  return siteCookies(after, site, now).some((cookie) => {
+  return siteCookies(after, site, now).flatMap((cookie) => {
     const count = counts.get(key(cookie)) ?? 0;
     counts.set(key(cookie), count - 1);
-    return count === 0;
+    return count > 0 ? [] : [cookie.domain.replace(/^\./, "").toLowerCase()];
   });
 }
+
+const YOUTUBE_SITE = "youtube.com";
 
 export function isIdentityProvider(raw: string) {
   try {
@@ -66,22 +71,40 @@ export function isIdentityProvider(raw: string) {
   }
 }
 
-export function shouldOfferSession(input: {
+/**
+ * The site a sign-in through an identity provider just created, or null. The site is where the
+ * new session cookie lives. A cookie that also covers the sign-in page is the provider's own
+ * session (Google's sign-in, then Docs or Gmail), so it is no new sign-in.
+ */
+export function signedInSite(input: {
   previousUrl: string;
   url: string;
   incognito: boolean;
   hasAccount: boolean;
-  offered: boolean;
   before: ReadonlyArray<CookieMetadata>;
   after: ReadonlyArray<CookieMetadata>;
-}) {
-  return (
-    !input.incognito &&
-    !input.hasAccount &&
-    !input.offered &&
-    isIdentityProvider(input.previousUrl) &&
-    !isIdentityProvider(input.url) &&
-    siteHost(input.url) !== null &&
-    hasNewSiteCookie(input.before, input.after, input.url)
-  );
+  now?: number;
+}): string | null {
+  const provider = siteHost(input.previousUrl);
+  if (
+    input.incognito ||
+    input.hasAccount ||
+    provider === null ||
+    !isIdentityProvider(input.previousUrl) ||
+    isIdentityProvider(input.url) ||
+    siteHost(input.url) === null
+  )
+    return null;
+  // Google's own services are one session, which Scient asks Google about (`googleSessions`).
+  const insideGoogle = (domain: string) =>
+    provider.endsWith(`.${GOOGLE_SITE}`) &&
+    (domain.endsWith(`.${GOOGLE_SITE}`) ||
+      domain === YOUTUBE_SITE ||
+      domain.endsWith(`.${YOUTUBE_SITE}`));
+  const domains = newSessionDomains(input.before, input.after, input.url, input.now ?? Date.now())
+    .filter(
+      (domain) => provider !== domain && !provider.endsWith(`.${domain}`) && !insideGoogle(domain),
+    )
+    .toSorted((a, b) => a.length - b.length);
+  return domains[0] ?? null;
 }

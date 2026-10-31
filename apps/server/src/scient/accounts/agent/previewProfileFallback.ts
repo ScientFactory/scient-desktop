@@ -15,6 +15,8 @@ import { findProfiles } from "./findProfiles.ts";
 import { classifyProfilePage } from "./profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./profileDetection.ts";
 import { profileOpenDecision } from "./profileOpenDecision.ts";
+import { signInOnPage } from "./signInOnPage.ts";
+import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 
 const decodeDetection = Schema.decodeUnknownEffect(ProfileDetection);
 
@@ -43,7 +45,8 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
     yield* invoke("accountWaitForLoad", {}, tabId);
     const raw = yield* invoke<unknown>("evaluate", { expression: profileDetectionScript }, tabId);
     const page = yield* decodeDetection(raw);
-    const decision = profileOpenDecision(classifyProfilePage(url, page), {
+    const result = classifyProfilePage(url, page);
+    const decision = profileOpenDecision(result, {
       operation: options.operation,
       explicitProfile: options.input?.profileId !== undefined,
       targetsExistingTab: options.targetsExistingTab,
@@ -55,11 +58,23 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
       status.profiles?.find((profile) => profile.id === profileId)?.name ??
       profileId ??
       "the current profile";
+    // The saved sign-in for this page, once no signed-in profile can open it.
+    const signInHere = Effect.gen(function* () {
+      if (result !== "sign-in") return undefined;
+      const signedIn = yield* signInOnPage(scope, {
+        requestedUrl: url,
+        pageUrl: page.finalUrl,
+        tabId,
+      }).pipe(Effect.provideService(AgentInvocationContext, invocation));
+      return signedIn && { ...(signedIn.status ?? status), accountsNote: signedIn.note };
+    });
     if (decision.action === "note")
-      return {
-        ...status,
-        accountsNote: `This page shows ${decision.problem} in ${profileName}. Call scient_account_find_profile with this URL to find a profile that can open it.`,
-      };
+      return (
+        (yield* signInHere) ?? {
+          ...status,
+          accountsNote: `This page shows ${decision.problem} in ${profileName}. Call scient_account_find_profile with this URL to find a profile that can open it.`,
+        }
+      );
     // Without the original identity, discovery cannot safely exclude its profile.
     if (profileId === undefined) return status;
     const found = yield* findProfiles(scope, invocation, url, {
@@ -68,11 +83,13 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
     });
     const best = found.profiles.find((profile) => profile.profileId === found.best);
     if (!best)
-      return {
-        ...status,
-        accountsNote:
-          "This page needs another account; no allowed browser profile can open it. Ask the user to sign in or to allow a profile in Settings → Accounts.",
-      };
+      return (
+        (yield* signInHere) ?? {
+          ...status,
+          accountsNote:
+            "This page needs another account; no allowed browser profile can open it. Ask the user to sign in or to allow a profile in Settings → Accounts & secrets.",
+        }
+      );
     const { tabId: _tabId, ...openInput } = options.input ?? {};
     const opened = yield* withAccountUse(
       { ...scope, unattended: true },

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { AccountsSnapshot, ProjectId, ThreadId, defaultAccountControls } from "@t3tools/contracts";
+import {
+  AccountsSnapshot,
+  BrowserProfileId,
+  ProjectId,
+  ThreadId,
+  defaultAccountControls,
+} from "@t3tools/contracts";
 import { Clock, Deferred, Effect, Fiber, Redacted, Schema, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import { TOTP } from "otpauth";
@@ -26,6 +32,51 @@ const waitingApproval = (service: import("./AccountsService.ts").AccountsService
   );
 
 describe("AccountsService persistence", () => {
+  it.effect("keeps one row per Google address in a profile, following what Google reports", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness({ storage: memoryStore() });
+      const profileId = BrowserProfileId.make("profile-work");
+      const saved = yield* service.save(website(syntheticValue()));
+      const rows = Effect.map(service.snapshot, ({ accounts }) =>
+        accounts.filter(({ accountId }) => accountId !== saved.accountId),
+      );
+      yield* service.googleSessionsSeen({
+        profileId,
+        sessions: [
+          { email: "a@example.com", valid: true },
+          { email: "b@example.com", valid: false },
+        ],
+      });
+      expect(
+        (yield* rows).map(({ details, lastCheck }) => [
+          details.kind === "website" ? details.username : undefined,
+          lastCheck?.state,
+        ]),
+      ).toEqual([
+        ["a@example.com", "signed-in"],
+        ["b@example.com", "signed-out"],
+      ]);
+      // Seen again, with the first signed out and the second gone from Google's list.
+      yield* service.googleSessionsSeen({
+        profileId,
+        sessions: [{ email: "a@example.com", valid: false }],
+      });
+      const after = yield* rows;
+      expect(after.map(({ lastCheck }) => lastCheck?.state)).toEqual(["signed-out", "signed-out"]);
+      expect(after).toHaveLength(2);
+      // Another profile keeps its own row; the saved password is never touched.
+      yield* service.googleSessionsSeen({
+        profileId: BrowserProfileId.make("profile-home"),
+        sessions: [{ email: "a@example.com", valid: true }],
+      });
+      expect(yield* rows).toHaveLength(3);
+      expect(
+        (yield* service.snapshot).accounts.find(({ accountId }) => accountId === saved.accountId)
+          ?.lastCheck,
+      ).toBeUndefined();
+    }),
+  );
+
   it.effect(
     "writes encrypted values before metadata, retains old values on failure, and survives restart",
     () =>

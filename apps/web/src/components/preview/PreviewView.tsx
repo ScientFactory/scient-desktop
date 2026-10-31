@@ -925,13 +925,14 @@ export function PreviewView({
         leadingActions={
           // SCIENT-FORK:START — Scient Accounts: profile switcher replaces the profile-name badge.
           <ProfileSwitcher
-            environmentId={threadRef.environmentId}
+            threadRef={threadRef}
+            url={url}
             activeProfileId={activeProfileId}
-            onOpenInProfile={(profileId) =>
+            onOpenInProfile={(profileId, pageUrl = url) =>
               void openPreviewSession({
                 openPreview: open,
                 threadRef,
-                ...(url ? { url } : {}),
+                ...(pageUrl ? { url: pageUrl } : {}),
                 viewport,
                 profileId,
               }).then((result) => {

@@ -4,7 +4,8 @@
   "ownedRoots": [
     "apps/server/src/scient/accounts",
     "apps/web/src/scient/accounts",
-    "apps/desktop/src/scient/accounts"
+    "apps/desktop/src/scient/accounts",
+    "apps/server/src/scient/papers"
   ],
   "ownedFiles": [
     "packages/contracts/src/scient/accounts.ts",
@@ -13,7 +14,12 @@
     "packages/contracts/src/scient/secrets.ts",
     "apps/web/src/routes/_chat.settings.accounts.tsx",
     "packages/contracts/src/clientRpcPermissions.scient.test.ts",
-    "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts"
+    "apps/server/src/mcp/toolkits/preview/handlers.scient.test.ts",
+    "packages/shared/src/scientAccountSecretRequest.ts",
+    "packages/shared/src/scientBrowserProfileChoice.ts",
+    "packages/shared/src/scientSignInPage.ts",
+    "apps/mobile/src/state/accounts.ts",
+    "apps/mobile/src/features/threads/ThreadAccountRequests.tsx"
   ],
   "accountsDiffSignals": [
     "scient/accounts",
@@ -48,6 +54,26 @@
       "path": "apps/desktop/src/preview/Manager.ts",
       "anchor": "accountsWebContents: requireWebContents",
       "purpose": "Resolve registered guest contents and bind sessions to profile identities."
+    },
+    {
+      "path": "apps/desktop/src/preview/BrowserSession.ts",
+      "anchor": "if (persistent) keepSessionCookies(browserSession);",
+      "purpose": "Sign-ins marked as ending with the browser outlive the app."
+    },
+    {
+      "path": "apps/server/src/relay/AgentAwarenessRelay.ts",
+      "anchor": "withAccountRequest(",
+      "purpose": "A sign-in waiting for the user reaches their phone."
+    },
+    {
+      "path": "apps/mobile/src/features/threads/ThreadDetailScreen.tsx",
+      "anchor": "<ThreadAccountRequests",
+      "purpose": "The phone answers approvals and shows sign-ins waiting for the user."
+    },
+    {
+      "path": "apps/server/src/orchestration-v2/runtimeLayer.ts",
+      "anchor": "Layer.provide(secretRequestStoreLayer),",
+      "purpose": "One-time card answers are encrypted at rest."
     },
     {
       "path": "apps/desktop/src/preview/BrowserImport/Sources.ts",
@@ -205,6 +231,36 @@
       "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
     },
     {
+      "path": "apps/desktop/src/preview/BrowserImport/BrowserImport.ts",
+      "anchor": "coveredBySite",
+      "purpose": "Leave working sign-ins alone when a browser refresh copies cookies."
+    },
+    {
+      "path": "packages/contracts/src/browserImport.ts",
+      "anchor": "keepSites",
+      "purpose": "Carry the sites a refresh must leave alone."
+    },
+    {
+      "path": "apps/mobile/src/features/threads/SecretRequestCard.tsx",
+      "anchor": "isSignInCodeRequest",
+      "purpose": "Let the phone offer a sign-in code in one tap on a card that asks for one."
+    },
+    {
+      "path": "apps/server/src/secrets/SecretRequests.ts",
+      "anchor": "startup must not wait for the keychain",
+      "purpose": "Sweep sealed card answers without holding up startup, and keep a record a locked store can't read yet."
+    },
+    {
+      "path": "packages/contracts/src/ipc.ts",
+      "anchor": "keepSites",
+      "purpose": "Carry the sites a refresh must leave alone through the desktop preview bridge."
+    },
+    {
+      "path": "apps/web/src/appInit.tsx",
+      "anchor": "./scient/accounts/accountWatchers",
+      "purpose": "Start saved sign-in autofill and session checks with the app, whatever the notification settings."
+    },
+    {
       "path": "apps/web/src/components/ThreadNotificationCoordinator.tsx",
       "anchor": "../scient/accounts/accountNotifications",
       "purpose": "Present account approvals and sign-in hand-offs through the existing thread notification path."
@@ -223,9 +279,39 @@
       "path": "apps/server/src/testUtils/shardWeights.json",
       "anchor": "\"src/assets/AssetAccess.test.ts\":",
       "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
+    },
+    {
+      "path": "packages/client-runtime/src/secretRequest.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: an Accounts card keeps the key in Accounts.",
+      "purpose": "Say on scient_account_add cards that the key is kept in Accounts, on web and mobile."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: only scient_account_add may open an Accounts card.",
+      "purpose": "Reserve the Accounts card id prefix so request_secret cannot imitate an Accounts card."
+    },
+    {
+      "path": "apps/web/src/components/preview/openPreviewSession.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    },
+    {
+      "path": "apps/web/src/browser/openFileInPreview.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
+    },
+    {
+      "path": "apps/web/src/components/preview/openTerminalLinkInPreview.ts",
+      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
     }
   ],
   "scientMounts": [
+    {
+      "path": "apps/server/src/provider/ScientAgentCopy.ts",
+      "anchor": "scient_account_add",
+      "purpose": "Agents look in Accounts first and keep a new key there; one-time secrets stay with request_secret."
+    },
     {
       "path": "apps/server/src/scient/extensions/PluginKeySessionCache.ts",
       "anchor": "bindingRevision",

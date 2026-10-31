@@ -10,6 +10,9 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+// SCIENT-FORK:START — Scient Accounts: reserve the Accounts card id prefix.
+import { ACCOUNT_SECRET_REQUEST_PREFIX } from "@t3tools/shared/scientAccountSecretRequest";
+// SCIENT-FORK:END
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -136,6 +139,13 @@ const handlers = {
   ),
   request_secret: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
+      // SCIENT-FORK:START — Scient Accounts: only scient_account_add may open an Accounts card.
+      if (input.clientRequestId?.startsWith(ACCOUNT_SECRET_REQUEST_PREFIX))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `clientRequestId must not start with ${ACCOUNT_SECRET_REQUEST_PREFIX}`,
+        });
+      // SCIENT-FORK:END
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.requestSecret(scope, input);
