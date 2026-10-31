@@ -3,6 +3,18 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scientAccountSecretRequest": {
+      "types": "./src/scientAccountSecretRequest.ts",
+      "import": "./src/scientAccountSecretRequest.ts"
+    },
+    "./scientSignInPage": {
+      "types": "./src/scientSignInPage.ts",
+      "import": "./src/scientSignInPage.ts"
+    },
+    "./scientBrowserProfileChoice": {
+      "types": "./src/scientBrowserProfileChoice.ts",
+      "import": "./src/scientBrowserProfileChoice.ts"
+    },
     "./scientPublicationArtifact": {
       "types": "./src/scientPublicationArtifact.ts",
       "import": "./src/scientPublicationArtifact.ts"

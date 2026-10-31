@@ -88,18 +88,19 @@ export function useAccountBrowser(environmentId: EnvironmentId) {
     if (!opened) return false;
     const threadRef = scopeThreadRef(project.environmentId, opened.threadId);
     useRightPanelStore.getState().requestMaximize(threadRef);
-    const profile = profileId ?? newTabProfileId;
+    const tabProfileId = signIn ? (profileId ?? newTabProfileId) : profileId;
     const result = await openUrlInPreview({
       threadRef,
       url: /^https?:\/\//.test(url) ? url : `https://${url}`,
       openPreview,
-      profileId: BrowserProfileId.make(profile),
+      // A sign-in stays in the profile it will be saved to.
+      ...(tabProfileId === undefined ? {} : { profileId: BrowserProfileId.make(tabProfileId) }),
     });
     if (result._tag === "Failure") {
       toastManager.add({ type: "error", title: "Could not open the site" });
       return false;
     }
-    if (signIn) finishSignIn(signIn, profile);
+    if (signIn) finishSignIn(signIn, profileId ?? newTabProfileId);
     return true;
   };
 }

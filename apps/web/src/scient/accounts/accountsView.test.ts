@@ -11,14 +11,24 @@ import {
   type ProjectId,
 } from "@t3tools/contracts";
 import {
+  accountStatusLabel,
+  fillableAccounts,
+  isBrowserSignIn,
+  signedOutOfGoogle,
+  sitesToKeep,
+  activityLine,
+  keysInUse,
+  agentMayUse,
+  libraryLinkTemplate,
+  accountListRows,
   providerManagedAccounts,
   accountCatalogue,
   catalogueDetails,
   accountIconUrl,
+  profileDomains,
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
-  canAutomaticallyFill,
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
@@ -53,6 +63,74 @@ describe("Accounts decisions", () => {
     expect(siteMatchesUrl("https://example.com:8443", "https://example.com:8443/login")).toBe(true);
     expect(siteMatchesUrl("https://example.com:8443", "https://example.com/login")).toBe(false);
     expect(siteMatchesUrl("example.com", "not a URL")).toBe(false);
+  });
+
+  it("fills from saved sign-ins only, never a browser sign-in with nothing to type", () => {
+    const google = {
+      ...website("work"),
+      details: {
+        kind: "website" as const,
+        sites: ["google.com"],
+        username: "a@example.com",
+        profileId: "work",
+      },
+    };
+    const saved = {
+      ...website(),
+      details: {
+        kind: "website" as const,
+        sites: ["accounts.google.com"],
+        username: "a@example.com",
+      },
+      secrets: { password: { source: { type: "scient" as const } } },
+    };
+    expect(fillableAccounts([google, saved], "https://accounts.google.com/", "work")).toEqual([
+      saved,
+    ]);
+  });
+
+  it("groups Google rows with browser sign-ins, and says when a profile lost Google", () => {
+    const google = (state: "signed-in" | "signed-out", profileId = "work") => ({
+      ...website(profileId),
+      details: {
+        kind: "website" as const,
+        sites: ["google.com"],
+        username: "a@example.com",
+        profileId,
+      },
+      lastCheck: { state, at: "2026-10-31T00:00:00.000Z" },
+    });
+    expect(isBrowserSignIn(google("signed-in"))).toBe(true);
+    expect(
+      isBrowserSignIn({
+        ...website("work"),
+        details: { ...website("work").details, username: "a" },
+      } as AccountSummary),
+    ).toBe(false);
+    expect(signedOutOfGoogle([google("signed-out")], "work")).toBe(true);
+    expect(signedOutOfGoogle([google("signed-out"), google("signed-in")], "work")).toBe(false);
+    expect(signedOutOfGoogle([google("signed-out", "home")], "work")).toBe(false);
+    expect(signedOutOfGoogle([], "work")).toBe(false);
+  });
+
+  it("keeps working sign-ins and any Google session out of a refresh, per profile", () => {
+    const row = (site: string, profileId: string, state?: "signed-in" | "signed-out") => ({
+      ...website(profileId),
+      details: { kind: "website" as const, sites: [site], profileId },
+      ...(state ? { lastCheck: { state, at: "2026-10-31T00:00:00.000Z" } } : {}),
+    });
+    expect(
+      sitesToKeep(
+        [
+          row("github.com", "work", "signed-in"),
+          row("overleaf.com", "work", "signed-out"),
+          row("nature.com", "work"),
+          row("google.com", "work", "signed-out"),
+          row("arxiv.org", "home", "signed-in"),
+        ],
+        "work",
+      ),
+    ).toEqual(["github.com", "google.com"]);
   });
 
   it("offers a site's accounts in any profile, the tab's own profile first", () => {
@@ -211,26 +289,20 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
       (account) => account.accountId,
     ),
   ).toEqual([exact.accountId, recent.accountId, older.accountId]);
-  const current = { tabId: "tab", profileId: "default", url: "https://example.com/login" };
   const form = {
-    ...current,
+    tabId: "tab",
+    profileId: "default",
     url: "https://example.com",
     documentId: "document",
     userEdited: false,
+    hasPassword: true,
     hasValues: false,
   };
-  expect(automaticSignIn(form, current, null)).toBe(true);
-  expect(automaticSignIn(form, current, form.documentId)).toBe(false);
-  expect(automaticSignIn({ ...form, userEdited: true }, current, null)).toBe(false);
-  expect(automaticSignIn({ ...form, hasValues: true }, current, null)).toBe(false);
-  expect(
-    automaticSignIn(
-      { ...form, profileId: "incognito" },
-      { ...current, profileId: "incognito" },
-      null,
-    ),
-  ).toBe(false);
-  expect(automaticSignIn(form, { ...current, url: "https://other.example.com" }, null)).toBe(false);
+  expect(automaticSignIn(form)).toBe(true);
+  expect(automaticSignIn({ ...form, userEdited: true })).toBe(false);
+  expect(automaticSignIn({ ...form, hasValues: true })).toBe(false);
+  expect(automaticSignIn({ ...form, profileId: "incognito" })).toBe(false);
+  expect(automaticSignIn({ ...form, url: "http://example.com" })).toBe(false);
 });
 
 it("offers connected vaults until a write rejection marks one read-only", () => {
@@ -358,27 +430,6 @@ describe("toggleScope", () => {
   });
 });
 
-it("does not automatically fill accounts the thread agent cannot use, while retaining explicit matches", () => {
-  const project = "project-a" as ProjectId;
-  const other = "project-b" as ProjectId;
-  const controls = defaultAccountControls("website");
-  expect(canAutomaticallyFill(controls, true, project)).toBe(true);
-  expect(canAutomaticallyFill(controls, false, project)).toBe(false);
-  expect(canAutomaticallyFill({ ...controls, access: "off" }, true, project)).toBe(false);
-  expect(canAutomaticallyFill({ ...controls, access: "ask" }, true, project)).toBe(false);
-  const approved = { ...controls, access: "ask" as const, allowedProjects: [project] };
-  expect(canAutomaticallyFill(approved, true, project)).toBe(true);
-  expect(canAutomaticallyFill(approved, true, other)).toBe(false);
-  expect(canAutomaticallyFill(approved, true, undefined)).toBe(false);
-  const scoped = { ...approved, scope: { type: "projects" as const, projectIds: [other] } };
-  expect(canAutomaticallyFill(scoped, true, project)).toBe(false);
-  expect(canAutomaticallyFill({ ...scoped, access: "allowed" }, true, other)).toBe(true);
-  expect(canAutomaticallyFill({ ...scoped, access: "allowed" }, true, undefined)).toBe(false);
-  expect(canAutomaticallyFill(controls, true, undefined)).toBe(true);
-  const account = { ...website(), controls: { ...controls, access: "off" as const } };
-  expect(matchingAccounts([account], "https://example.com", "default")).toEqual([account]);
-});
-
 it("lists only signed-in provider connections, deduplicating apps across plugins", () => {
   const base: ServerProvider = {
     instanceId: ProviderInstanceId.make("synthetic-claude"),
@@ -450,4 +501,166 @@ it("recognizes key prefixes without retaining values or guessing unknown keys", 
   expect(recognizeAccountKey("unknown")).toBeUndefined();
   expect(recognizeAccountKey("sk-")).toBeUndefined();
   expect(recognizeAccountKey("sk-synthetic extra")).toBeUndefined();
+});
+
+it("lists one row per site for sign-ins kept only as profile sessions", () => {
+  const signIn = (id: string, site: string, profileId: string) => ({
+    ...website(profileId),
+    accountId: AccountId.make(`acc_${id}`.padEnd(12, "0")),
+    name: site,
+    details: { kind: "website" as const, sites: [site], profileId },
+  });
+  const docs = signIn("docs1", "https://docs.google.com", "yaacov");
+  const password = { ...website(), secrets: { password: { source: { type: "scient" as const } } } };
+  const rows = accountListRows([
+    docs,
+    password,
+    signIn("docs2", "docs.google.com", "work"),
+    signIn("ovl", "overleaf.com", "work"),
+  ]);
+  expect(rows).toHaveLength(3);
+  expect(rows[0]).toHaveLength(2);
+  expect(rows[1]).toBe(password);
+  expect(rows[2]).toMatchObject({ name: "overleaf.com" });
+});
+
+it("turns a link from the library into its pattern", () => {
+  expect(
+    libraryLinkTemplate(
+      "https://go.openathens.net/redirector/huji.ac.il?url=https%3A%2F%2Fwww.nature.com%2Farticles%2Fx",
+    ),
+  ).toBe("https://go.openathens.net/redirector/huji.ac.il?url={url}");
+  expect(libraryLinkTemplate("https://ezproxy.example.edu/login?url=https://doi.org/10.1/x")).toBe(
+    "https://ezproxy.example.edu/login?url={url}",
+  );
+  expect(libraryLinkTemplate("https://proxy.example.edu/{url}")).toBe(
+    "https://proxy.example.edu/{url}",
+  );
+});
+
+it("lets an agent's tab fill only sign-ins that agent may use", () => {
+  const project = "project-a" as ProjectId;
+  const controls = defaultAccountControls("website");
+  expect(agentMayUse(controls, true, project)).toBe(true);
+  expect(agentMayUse(controls, false, project)).toBe(false);
+  expect(agentMayUse({ ...controls, access: "off" }, true, project)).toBe(false);
+  expect(agentMayUse({ ...controls, access: "ask" }, true, project)).toBe(false);
+  expect(
+    agentMayUse({ ...controls, access: "ask", allowedProjects: [project] }, true, project),
+  ).toBe(true);
+});
+
+describe("account status", () => {
+  const at = "2026-10-30T10:00:00.000Z";
+  const relative = () => "2h ago";
+  it("puts what needs the user first, then the last check", () => {
+    expect(
+      accountStatusLabel(
+        { lastSignInOutcome: "password-rejected", lastCheck: { state: "signed-in", at } },
+        relative,
+      ),
+    ).toBe("Password rejected");
+    expect(
+      accountStatusLabel({ signedOut: true, lastCheck: { state: "signed-in", at } }, relative),
+    ).toBe("Signed out");
+    expect(accountStatusLabel({ lastCheck: { state: "signed-in", at } }, relative)).toBe(
+      "Signed in · 2h ago",
+    );
+    expect(accountStatusLabel({ lastCheck: { state: "needs-you", at } }, relative)).toBe(
+      "Needs you",
+    );
+    expect(accountStatusLabel({}, relative)).toBeNull();
+    expect(
+      accountStatusLabel(
+        {
+          details: { kind: "api-key", sites: [], auth: { type: "bearer" } },
+          lastCheck: { state: "rejected", at },
+        },
+        relative,
+      ),
+    ).toBe("Key refused");
+  });
+
+  it("reads activity as what happened and where", () => {
+    const entry = {
+      at,
+      target: { type: "account", accountId: AccountId.make("acc_fixture1") },
+      action: "request",
+      decision: "allowed",
+      outcome: "ok",
+    } as const;
+    expect(activityLine(entry, "Data cleanup")).toBe("Made a request · Data cleanup");
+    expect(activityLine({ ...entry, decision: "denied" }, undefined)).toBe(
+      "Denied: made a request",
+    );
+    expect(
+      activityLine({ ...entry, action: "sign-in", signInOutcome: "password-rejected" }, undefined),
+    ).toBe("Password rejected");
+  });
+});
+
+describe("keys used by Scient", () => {
+  it("lists secret variables by name, one row per name, and never ordinary settings", () => {
+    const keys = keysInUse(
+      {
+        codex: {
+          driver: "codex",
+          environment: [
+            { name: "OPENAI_API_KEY", sensitive: true },
+            { name: "CODEX_HOME", sensitive: false },
+          ],
+        },
+        work: {
+          driver: "omp",
+          displayName: "Work",
+          environment: [{ name: "OPENAI_API_KEY", sensitive: true }],
+        },
+      },
+      [{ name: "Groq" }],
+      () => "Codex",
+    );
+    expect(keys.map((key) => [key.name, key.usedBy])).toEqual([
+      ["OPENAI_API_KEY", ["Codex", "Work"]],
+      ["Groq", ["Custom models"]],
+    ]);
+    expect(keys[0]?.variables).toHaveLength(2);
+  });
+});
+
+describe("profileDomains", () => {
+  const signIn = (profileId: string, sites: string[], username?: string) =>
+    ({ details: { kind: "website", profileId, sites, username } }) as never;
+  const profile = (profileId: string, email?: string) =>
+    ({ profileId, ...(email ? { source: { email } } : {}) }) as never;
+
+  it("reads the imported address and the profile's own sign-ins", () => {
+    const snapshot = {
+      profiles: [profile("work", "a@mail.huji.ac.il")],
+      accounts: [
+        signIn("work", ["google.com"], "b@cs.huji.ac.il"),
+        signIn("work", ["moodle.huji.ac.il"]),
+      ],
+    };
+    expect(profileDomains(snapshot, "work")).toEqual([
+      "mail.huji.ac.il",
+      "cs.huji.ac.il",
+      "google.com",
+      "moodle.huji.ac.il",
+    ]);
+  });
+
+  it("leaves out other profiles and passwords saved without a profile", () => {
+    const snapshot = {
+      profiles: [profile("work", "a@mail.huji.ac.il"), profile("home")],
+      accounts: [
+        signIn("work", ["huji.ac.il"]),
+        { details: { kind: "website", sites: ["moodle.huji.ac.il"], username: "b" } } as never,
+      ],
+    };
+    expect(profileDomains(snapshot, "home")).toEqual([]);
+  });
+
+  it("has nothing to read before accounts load", () => {
+    expect(profileDomains(null, "work")).toEqual([]);
+  });
 });

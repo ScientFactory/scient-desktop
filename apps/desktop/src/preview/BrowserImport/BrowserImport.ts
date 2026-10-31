@@ -100,14 +100,30 @@ const cookieHost = (url: string): string => {
   }
 };
 
+// SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+const coveredBySite = (url: string, sites: ReadonlyArray<string>) => {
+  const host = cookieHost(url);
+  return sites.some((site) => {
+    const kept = site.startsWith("https://") ? cookieHost(site) : site;
+    return host === kept || host.endsWith(`.${kept}`) || kept.endsWith(`.${host}`);
+  });
+};
+// SCIENT-FORK:END
+
 export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   session: { readonly cookies: Pick<Session["cookies"], "set" | "flushStore"> },
   read: CookieReadResult,
+  // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+  keepSites: ReadonlyArray<string> = [],
+  // SCIENT-FORK:END
 ) {
   let imported = 0;
   let skipped = read.undecryptable;
   const skippedDomains = new Set(read.undecryptableHosts);
   for (const cookie of read.cookies) {
+    // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+    if (coveredBySite(cookie.url, keepSites)) continue;
+    // SCIENT-FORK:END
     const written = yield* Effect.tryPromise({
       try: () =>
         session.cookies.set({
@@ -286,7 +302,9 @@ export const make = Effect.gen(function* BrowserImportMake() {
       );
 
     // Chromium serializes writes; a rejected cookie should not prevent the others.
-    return yield* writeCookies(session, result);
+    // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+    return yield* writeCookies(session, result, input.input.keepSites);
+    // SCIENT-FORK:END
   });
 
   return BrowserImport.of({ listSources, importCookies });

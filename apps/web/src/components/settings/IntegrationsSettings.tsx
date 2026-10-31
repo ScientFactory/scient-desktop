@@ -203,6 +203,9 @@ export async function importBrowserCookiesIntoTarget(
     readonly sourceProfileDirectory: string;
     readonly target: WizardTarget;
     readonly profileName?: string;
+    // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+    readonly keepSites?: ReadonlyArray<string>;
+    // SCIENT-FORK:END
   },
 ): Promise<ImportOutcome> {
   try {
@@ -211,6 +214,9 @@ export async function importBrowserCookiesIntoTarget(
       sourceId: source.id,
       sourceProfileDirectory: input.sourceProfileDirectory,
       targetProfileId: input.target.profileId,
+      // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+      ...(input.keepSites === undefined ? {} : { keepSites: input.keepSites }),
+      // SCIENT-FORK:END
     });
     if (
       input.target.kind === "existing" &&

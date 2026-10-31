@@ -293,7 +293,11 @@ const make = Effect.gen(function* () {
     });
     let removed = 0;
     for (const name of names) {
-      const stored = yield* store.get(name).pipe(Effect.orElseSucceed(Option.none));
+      // SCIENT-FORK:START — Scient Accounts: a sealed store can be briefly locked; keep the record.
+      const read = yield* Effect.option(store.get(name));
+      if (Option.isNone(read)) continue;
+      const stored = read.value;
+      // SCIENT-FORK:END
       const decoded = Option.flatMap(stored, (bytes) =>
         decodeStored(new TextDecoder().decode(bytes)),
       );
@@ -323,7 +327,10 @@ const make = Effect.gen(function* () {
     Effect.withSpan("SecretRequests.sweepExpiredFiles"),
   );
   const sweep = Effect.andThen(sweepExpired, sweepExpiredFiles);
-  yield* sweep;
+  // SCIENT-FORK:START — Scient Accounts: startup must not wait for the keychain.
+  yield* Effect.forkScoped(sweepExpired);
+  yield* sweepExpiredFiles;
+  // SCIENT-FORK:END
   yield* sweep.pipe(
     Effect.delay("1 hour"),
     Effect.repeat(Schedule.spaced("1 hour")),

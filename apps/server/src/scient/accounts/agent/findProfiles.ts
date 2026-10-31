@@ -55,7 +55,7 @@ export const findProfiles = Effect.fn("AccountsAgent.findProfiles")(function* (
     status.profiles?.map((profile) => profile.id),
   );
   if (!session.agentAccess)
-    return yield* fail("denied", "Agent access is disabled in Settings → Accounts.");
+    return yield* fail("denied", "Agent access is disabled in Settings → Accounts & secrets.");
   const profiles: Array<{
     profileId: BrowserProfileId;
     name: string;

@@ -1,7 +1,7 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, type AtomRegistry } from "effect/reactivity";
 import { accountsState } from "./accountsState";
-import { handoffInstruction } from "./handoffInstruction";
+import { accountHandoffInstruction } from "@t3tools/shared/scientSignInPage";
 
 export function watchAccountNotifications(
   registry: AtomRegistry.AtomRegistry,
@@ -19,7 +19,7 @@ export function watchAccountNotifications(
         if (!seen.has(entry.handoffId))
           present(
             entry.threadId,
-            `${entry.accountName}: ${handoffInstruction(entry)}${entry.kind === "push" && entry.number ? ` Tap ${entry.number}.` : ""}`,
+            `${entry.accountName}: ${accountHandoffInstruction(entry.kind)}${entry.kind === "push" && entry.number ? ` Tap ${entry.number}.` : ""}`,
             "Waiting for you",
           );
       }

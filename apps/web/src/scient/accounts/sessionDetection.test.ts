@@ -1,23 +1,13 @@
 import { expect, it } from "vite-plus/test";
-import {
-  hasNewSiteCookie,
-  isIdentityProvider,
-  shouldOfferSession,
-  siteCookies,
-} from "./sessionDetection";
+import { isIdentityProvider, signedInSite, siteCookies } from "./sessionDetection";
 
-it("compares live HttpOnly domain/expiry multisets without cookie names or values", () => {
-  const cookie = { domain: ".example.com", httpOnly: true };
-  expect(hasNewSiteCookie([], [cookie], "https://www.example.com")).toBe(true);
-  expect(hasNewSiteCookie([cookie], [cookie], "example.com")).toBe(false);
-  expect(hasNewSiteCookie([cookie], [cookie, cookie], "example.com")).toBe(true);
-  expect(hasNewSiteCookie([cookie], [{ ...cookie, expires: 500 }], "example.com", 1000)).toBe(true);
+it("reads only live HttpOnly cookies of the site, without names or values", () => {
   expect(
     siteCookies(
       [
         { domain: "example.com", httpOnly: false },
         { domain: "evil-example.com", httpOnly: true },
-        { ...cookie, expires: 1 },
+        { domain: ".example.com", httpOnly: true, expires: 1 },
       ],
       "example.com",
       2000,
@@ -48,24 +38,64 @@ it("recognizes only known HTTPS IdPs and the designated host paths", () => {
     expect(isIdentityProvider(url)).toBe(false);
 });
 
-it("offers only a new site session after an IdP return, excluding existing, offered and incognito accounts", () => {
+it("records the new session's own site after an identity provider, never the provider's own session", () => {
   const input = {
-    previousUrl: "https://accounts.google.com",
-    url: "https://example.com/home",
+    previousUrl: "https://accounts.google.com/signin",
+    url: "https://www.overleaf.com/project",
     incognito: false,
     hasAccount: false,
-    offered: false,
-    before: [],
-    after: [{ domain: "example.com", httpOnly: true }],
+    before: [{ domain: ".google.com", httpOnly: true }],
+    after: [
+      { domain: ".google.com", httpOnly: true },
+      { domain: "www.overleaf.com", httpOnly: true },
+      { domain: ".overleaf.com", httpOnly: true },
+    ],
+    now: 0,
   };
-  expect(shouldOfferSession(input)).toBe(true);
+  expect(signedInSite(input)).toBe("overleaf.com");
+  // Google's sign-in, then Docs: the new cookie is Google's own session.
+  expect(
+    signedInSite({
+      ...input,
+      url: "https://docs.google.com/spreadsheets/d/1",
+      before: [],
+      after: [{ domain: ".google.com", httpOnly: true }],
+    }),
+  ).toBeNull();
+  // Gmail's own cookie is still Google's session.
+  expect(
+    signedInSite({
+      ...input,
+      url: "https://mail.google.com/mail/u/0/",
+      before: [],
+      after: [{ domain: "mail.google.com", httpOnly: true }],
+    }),
+  ).toBeNull();
+  // YouTube lives on its own domain and is still that one Google session.
+  expect(
+    signedInSite({
+      ...input,
+      url: "https://www.youtube.com/feed/subscriptions",
+      before: [],
+      after: [{ domain: ".youtube.com", httpOnly: true }],
+    }),
+  ).toBeNull();
+  // A university sign-in, then a service of the same university, is a session of its own.
+  expect(
+    signedInSite({
+      ...input,
+      previousUrl: "https://idp.huji.ac.il/idp/profile/SAML2",
+      url: "https://moodle.huji.ac.il/my",
+      before: [],
+      after: [{ domain: "moodle.huji.ac.il", httpOnly: true }],
+    }),
+  ).toBe("moodle.huji.ac.il");
   for (const patch of [
     { incognito: true },
     { hasAccount: true },
-    { offered: true },
     { previousUrl: "https://other.com" },
     { url: "https://accounts.google.com" },
-    { after: [] },
+    { after: input.before },
   ])
-    expect(shouldOfferSession({ ...input, ...patch })).toBe(false);
+    expect(signedInSite({ ...input, ...patch })).toBeNull();
 });
