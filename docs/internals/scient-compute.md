@@ -57,6 +57,7 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
   reads the rest with `scient_compute_output` or `scient_notebook_read`. A chip opens through
   `openComputeCitation` and `computeQuoteReveal`. In a `# %%` script, `SourceCaretAction` offers a
   clicked cell as an ordinary file quote, using `computeCellQuote`.
+- **Outside changes** reach an open editor through `moveEditorToSource`, as the smallest edit, on attach and while open, so a retained copy never outranks the latest text. Conflicts come from a refused save, never from comparing reads with the draft, which can catch your own save in flight. `authoritativeData` is the file as last read; `data` puts your draft first.
 - **The active cell** is drawn by `useScientFileLineRange`, outside the editor's options. A changed
   option rebuilds the editor, and that restores a bare caret: it collapses a drag and can lose a click.
 - **Console** is the Compute tab (`ComputeConsole`): it owns a session like a file tab does, starts it

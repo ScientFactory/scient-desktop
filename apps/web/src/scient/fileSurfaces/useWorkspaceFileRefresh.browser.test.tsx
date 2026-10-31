@@ -55,7 +55,6 @@ const input = {
   relativePath: "report.md",
   loadAsText: true,
   sourcePending: false,
-  surfaceOwnsConflictDetection: false,
   workspaceMutationId: "mutation-1",
 };
 
@@ -189,23 +188,20 @@ describe("workspace refresh ownership", () => {
     expect(mocks.refreshFile).not.toHaveBeenCalled();
   });
 
-  it("leaves rich-editor conflict ownership to the session", async () => {
+  it("leaves a dirty file's conflicts to the save, which cannot mistake its own write", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
     mocks.file = {
-      authoritativeData: file("External", "r1"),
+      authoritativeData: file("My save still in flight", "r1"),
       data: file("My draft", "r0"),
       error: null,
       isPending: false,
     };
 
-    await render(_fixture, { sourcePending: true, surfaceOwnsConflictDetection: true });
-    expect(
-      (await render(_fixture, { sourcePending: true, surfaceOwnsConflictDetection: true }))
-        .reloadNotice,
-    ).toBeNull();
+    await render(_fixture, { sourcePending: true });
+    expect((await render(_fixture, { sourcePending: true })).reloadNotice).toBeNull();
   });
 
   it("keeps one complete snapshot through conflict confirmation and retry", async () => {
@@ -220,8 +216,9 @@ describe("workspace refresh ownership", () => {
       isPending: false,
     };
 
-    await render(_fixture, { sourcePending: true });
     let result = await render(_fixture, { sourcePending: true });
+    await act(() => result.handleExternalConflict("report.md", "External", "r1"));
+    result = await render(_fixture, { sourcePending: true });
     expect(result.reloadNotice).toMatchObject({
       kind: "external-change",
       contents: "External",
@@ -282,7 +279,7 @@ describe("workspace refresh ownership", () => {
       error: publicationAttention,
     });
     expect(result.saveRetryReady).toBe(false);
-    await act(() => result.handleSaveConfirmed("report.md", "Current", "r1"));
+    await act(() => result.handleSaveConfirmed("report.md"));
     result = await render(_fixture, { sourcePending: true });
     await act(() => result.handleExternalConflict("report.md", "Current", "r1"));
     result = await render(_fixture, { sourcePending: true });
@@ -371,7 +368,6 @@ describe("workspace refresh ownership", () => {
 
     let result = await render(_fixture, {
       sourcePending: true,
-      surfaceOwnsConflictDetection: true,
     });
     await act(() =>
       result.handleSaveFailure(
@@ -384,15 +380,12 @@ describe("workspace refresh ownership", () => {
         }),
       ),
     );
-    result = await render(_fixture, { sourcePending: true, surfaceOwnsConflictDetection: true });
+    result = await render(_fixture, { sourcePending: true });
     expect(result.reloadNotice).toMatchObject({ contents: null, revision: "r2" });
 
     await act(() => result.requestOverwrite());
     await act(() => result.resolveReloadNotice("retry"));
-    expect(
-      (await render(_fixture, { sourcePending: true, surfaceOwnsConflictDetection: true }))
-        .saveResolution,
-    ).toBeNull();
+    expect((await render(_fixture, { sourcePending: true })).saveResolution).toBeNull();
 
     mocks.file = {
       authoritativeData: file("External", "r2"),
@@ -400,8 +393,8 @@ describe("workspace refresh ownership", () => {
       error: null,
       isPending: false,
     };
-    await render(_fixture, { sourcePending: true, surfaceOwnsConflictDetection: true });
-    result = await render(_fixture, { sourcePending: true, surfaceOwnsConflictDetection: true });
+    await render(_fixture, { sourcePending: true });
+    result = await render(_fixture, { sourcePending: true });
     expect(result.reloadNotice).toMatchObject({ contents: "External", revision: "r2" });
   });
 
@@ -418,18 +411,17 @@ describe("workspace refresh ownership", () => {
     };
     let result = await render(_fixture, {
       sourcePending: true,
-      surfaceOwnsConflictDetection: true,
     });
 
     await act(() => result.requestManualReload());
-    result = await render(_fixture, { sourcePending: true, surfaceOwnsConflictDetection: true });
+    result = await render(_fixture, { sourcePending: true });
     expect(result.reloadNotice).toMatchObject({
       kind: "manual-reload",
       contents: "Disk",
       revision: "r1",
     });
     await act(() => result.resolveReloadNotice("discard"));
-    result = await render(_fixture, { sourcePending: true, surfaceOwnsConflictDetection: true });
+    result = await render(_fixture, { sourcePending: true });
     expect(result.saveResolution).toMatchObject({
       action: "discard",
       contents: "Disk",

@@ -139,9 +139,7 @@ async function setup() {
       runtime.project = (contents) => setOptimistic({ ...disk, contents });
     }, []);
     return (
-      <QueryContext
-        value={{ data: optimistic ?? current, authoritativeData: optimistic ?? current }}
-      >
+      <QueryContext value={{ data: optimistic ?? current, authoritativeData: current }}>
         <Surface />
       </QueryContext>
     );

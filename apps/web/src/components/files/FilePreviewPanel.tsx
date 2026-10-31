@@ -20,6 +20,8 @@ import {
 } from "~/scient/fileSurfaces/scientWorkspaceViewerRefresh";
 import {
   ScientMathSourceToolbar,
+  minimalSourceEdit,
+  moveEditorToSource,
   scientEditorGutterUtility,
   useScientFileLineRange,
   scientFileEditorUnsafeCss,
@@ -997,10 +999,6 @@ export function EditableFileEditor({
     : fileEditStateKey;
   // SCIENT-FORK:END
   const [editedContents, setEditedContents] = useState<string | null>(null);
-  if (contents !== (editedContents ?? externalFile.contents)) {
-    setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
-    setEditedContents(null);
-  }
   const { ready: editable, onPostRender: onEditablePostRender } =
     useEditableAfterHighlight(externalFile);
   const editorRef = useRef<Editor<"file", FileCommentAnnotationGroup, undefined> | null>(null);
@@ -1009,6 +1007,14 @@ export function EditableFileEditor({
     FileCommentAnnotationGroup,
     undefined
   > | null>(null);
+  // SCIENT-FORK:START — an open editor takes a new version as an edit, which keeps your place.
+  const outsideChange = contents !== (editedContents ?? externalFile.contents);
+  const updatesInPlace = editor !== null && externalPersistence === undefined;
+  if (outsideChange && !updatesInPlace) {
+    setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
+    setEditedContents(null);
+  }
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
   const compositionTarget = useStableCallback(
     () => externalPersistence?.target ?? { environmentId, cwd, relativePath },
@@ -1058,38 +1064,8 @@ export function EditableFileEditor({
       ) {
         const previous = restored.contents;
         const current = snapshot.draftSource;
-        const splitsBoundary = (source: string, offset: number) => {
-          if (offset === 0 || offset === source.length) return false;
-          const before = source.charCodeAt(offset - 1);
-          const after = source.charCodeAt(offset);
-          return (
-            (before === 13 && after === 10) ||
-            (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff)
-          );
-        };
-        let start = 0;
-        while (
-          start < previous.length &&
-          start < current.length &&
-          previous[start] === current[start]
-        )
-          start += 1;
-        while (splitsBoundary(previous, start) || splitsBoundary(current, start)) start -= 1;
-        let suffix = 0;
-        while (
-          suffix < previous.length - start &&
-          suffix < current.length - start &&
-          previous[previous.length - suffix - 1] === current[current.length - suffix - 1]
-        )
-          suffix += 1;
-        while (
-          splitsBoundary(previous, previous.length - suffix) ||
-          splitsBoundary(current, current.length - suffix)
-        )
-          suffix -= 1;
-        const end = previous.length - suffix;
-        const text = current.slice(start, current.length - suffix);
-        const prepared = attachedEditor.prepareExternalEdits(previous, [{ start, end, text }]);
+        const edit = minimalSourceEdit(previous, current);
+        const prepared = attachedEditor.prepareExternalEdits(previous, [edit]);
         const latest = persistence.getSnapshot();
         if (
           prepared &&
@@ -1099,7 +1075,7 @@ export function EditableFileEditor({
           latest.draftSource === current &&
           !latest.editingBlocked &&
           persistence.getPendingInput() === null &&
-          previous.slice(0, start) + text + previous.slice(end) === current
+          previous.slice(0, edit.start) + edit.text + previous.slice(edit.end) === current
         ) {
           applyingExternal.current = true;
           applyExternalProjection(
@@ -1112,6 +1088,8 @@ export function EditableFileEditor({
           );
         }
       }
+      // Without a document session the latest text, or your unsaved draft, wins over a retained copy.
+      if (!persistence) moveEditorToSource(attachedEditor, contents, applyingExternal);
       const projected = attachedEditor.getFile();
       if (persistence) {
         const current = persistence.getSnapshot();
@@ -1127,6 +1105,9 @@ export function EditableFileEditor({
     // SCIENT-FORK:END
     onComplete: () => {
       editorRef.current = null;
+      // SCIENT-FORK:START — a detached editor takes no in-place update.
+      setEditor(null);
+      // SCIENT-FORK:END
     },
     onFocus: () => queueMicrotask(() => reportEditorSelectionRef.current()),
   };
@@ -1187,6 +1168,7 @@ export function EditableFileEditor({
     reportEditorSelectionRef,
     onEditorSelectionChange,
     onRunShortcut,
+    outsideSource: updatesInPlace && outsideChange ? contents : null,
   });
   const readCitationBaseline = () =>
     externalBindings.current.externalPersistence?.getSnapshot().baselineSource ??
@@ -1666,7 +1648,6 @@ export default function FilePreviewPanel({
     loadAsText: attachment === undefined && !isProjectNotebook,
     // SCIENT-FORK:END
     sourcePending: effectiveSourcePending,
-    surfaceOwnsConflictDetection: usesDocumentSession,
     workspaceMutationId,
     // Host files outside the workspace are watched too: they stay read-only,
     // but an agent or another app can still change them while they are open.

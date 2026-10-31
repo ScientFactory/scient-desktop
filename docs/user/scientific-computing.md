@@ -499,6 +499,10 @@ see the output and figures of their runs, can read your runs, list a session's v
 interrupt or restart a session, and set up Scient-managed Python or its Toolkits. They run with the
 same authority as your own code.
 
+### Files changed outside the editor
+
+An open file shows the latest version by itself, so an agent's edit or a script's output appears while you keep your place, and what you see is what runs. Undo takes back your own edits, not outside ones. If you have unsaved edits when a file changes, nothing is overwritten: choose **Reload from disk** or **Use my edits**.
+
 ### Ask in chat
 
 **Ask in chat** works as it does in documents. Select text in the Console, in Results or in a

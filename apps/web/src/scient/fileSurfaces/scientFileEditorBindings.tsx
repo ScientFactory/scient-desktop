@@ -15,7 +15,11 @@ import {
 
 import { MathInputTools } from "~/scient/math/input/MathInputTools";
 import type { MathInputController } from "~/scient/math/input/controller";
-import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/sourceAdapter";
+import {
+  sourceMathController,
+  sourceMathOwnsEvent,
+  sourcePosition,
+} from "~/scient/math/input/sourceAdapter";
 import { installLatexFileCompletion } from "~/scient/latex/latexFileCompletion";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
@@ -42,6 +46,7 @@ export function useScientFileEditorBindings<Annotation>({
   reportEditorSelectionRef,
   onEditorSelectionChange,
   onRunShortcut,
+  outsideSource,
 }: {
   editor: Editor<"file", Annotation, undefined> | null;
   relativePath: string;
@@ -57,7 +62,15 @@ export function useScientFileEditorBindings<Annotation>({
   reportEditorSelectionRef: MutableRefObject<() => void>;
   onEditorSelectionChange: ((selection: EditorSelection | null) => void) | undefined;
   onRunShortcut: ((selection: EditorSelection | null) => void) | undefined;
+  /** A new version of the file, while the editor still shows the one before it. */
+  outsideSource: string | null;
 }) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- brings a new version of the file into the open editor, which holds its own text.
+  useLayoutEffect(() => {
+    if (editor !== null && outsideSource !== null) {
+      moveEditorToSource(editor, outsideSource, applyingExternal);
+    }
+  }, [applyingExternal, editor, outsideSource]);
   const reportExternalVersion = useStableCallback((version: number) =>
     externalBindings.current.onExternalVersionApplied?.(version),
   );
@@ -170,6 +183,69 @@ export function useScientFileEditorBindings<Annotation>({
       onRunShortcut(editor?.getViewState().selections?.at(-1) ?? null);
     },
   };
+}
+
+/** The smallest edit from one source to another, so a caret elsewhere stays where it is. */
+export function minimalSourceEdit(previous: string, current: string) {
+  const splitsBoundary = (source: string, offset: number) => {
+    if (offset === 0 || offset === source.length) return false;
+    const before = source.charCodeAt(offset - 1);
+    const after = source.charCodeAt(offset);
+    return (
+      (before === 13 && after === 10) ||
+      (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff)
+    );
+  };
+  let start = 0;
+  while (start < previous.length && start < current.length && previous[start] === current[start])
+    start += 1;
+  while (splitsBoundary(previous, start) || splitsBoundary(current, start)) start -= 1;
+  let suffix = 0;
+  while (
+    suffix < previous.length - start &&
+    suffix < current.length - start &&
+    previous[previous.length - suffix - 1] === current[current.length - suffix - 1]
+  )
+    suffix += 1;
+  while (
+    splitsBoundary(previous, previous.length - suffix) ||
+    splitsBoundary(current, current.length - suffix)
+  )
+    suffix -= 1;
+  return {
+    start,
+    end: previous.length - suffix,
+    text: current.slice(start, current.length - suffix),
+  };
+}
+
+/**
+ * Moves an editor to a source as the smallest edit, which keeps your place. It stays out of your
+ * undo history where that history can be rebased around it, and joins it where it cannot.
+ */
+export function moveEditorToSource<Annotation>(
+  editor: Editor<"file", Annotation, undefined>,
+  source: string,
+  applyingExternal: MutableRefObject<boolean>,
+) {
+  const previous = editor.getText();
+  if (previous === source || editor.isComposing) return;
+  const { start, end, text } = minimalSourceEdit(previous, source);
+  const prepared = editor.prepareExternalEdits(previous, [{ start, end, text }]);
+  applyingExternal.current = true;
+  applyExternalProjection(
+    () => {
+      if (prepared !== null) {
+        prepared();
+        return;
+      }
+      const range = { start: sourcePosition(previous, start), end: sourcePosition(previous, end) };
+      editor.applyEdits([{ range, newText: text }]);
+    },
+    () => {
+      applyingExternal.current = false;
+    },
+  );
 }
 
 type RenderedFile = Pick<Parameters<FilePostRender>[1], "setSelectedLines">;
