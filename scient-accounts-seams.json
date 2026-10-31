@@ -241,6 +241,21 @@
       "purpose": "Carry the sites a refresh must leave alone."
     },
     {
+      "path": "apps/mobile/src/features/threads/SecretRequestCard.tsx",
+      "anchor": "isSignInCodeRequest",
+      "purpose": "Let the phone offer a sign-in code in one tap on a card that asks for one."
+    },
+    {
+      "path": "apps/server/src/secrets/SecretRequests.ts",
+      "anchor": "startup must not wait for the keychain",
+      "purpose": "Sweep sealed card answers without holding up startup, and keep a record a locked store can't read yet."
+    },
+    {
+      "path": "packages/contracts/src/ipc.ts",
+      "anchor": "keepSites",
+      "purpose": "Carry the sites a refresh must leave alone through the desktop preview bridge."
+    },
+    {
       "path": "apps/web/src/appInit.tsx",
       "anchor": "./scient/accounts/accountWatchers",
       "purpose": "Start saved sign-in autofill and session checks with the app, whatever the notification settings."
