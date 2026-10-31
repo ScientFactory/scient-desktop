@@ -12,6 +12,7 @@ import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Schema from "effect/Schema";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
+import { COMPUTE_LANGUAGE_CATALOG } from "@t3tools/contracts";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -287,11 +288,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "scientific-computing",
     title: "Scientific Computing",
     to: "/settings/scientific-computing",
-    searchTerms: ["scientific computing", "python", "matlab", "runtimes"],
+    searchTerms: [
+      "scientific computing",
+      "runtimes",
+      ...COMPUTE_LANGUAGE_CATALOG.flatMap((group) =>
+        group.languages.map((language) => language.name),
+      ),
+    ],
   },
   {
     id: "scientific-computing-language",
-    title: "Python and MATLAB languages and runtimes",
+    title: "Languages and runtimes",
     to: "/settings/scientific-computing",
     targetId: "scientific-computing",
     searchTerms: ["scientific computing languages"],

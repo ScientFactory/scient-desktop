@@ -2031,7 +2031,7 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
         const { hasMcp } = scenario;
         const runtimePolicy = { ...CODEX_TEST_RUNTIME_POLICY, interactionMode: scenario.mode };
         const capabilities = new Set<McpCapability>(
-          scenario.grants ? ["preview", "documents:build", "compute:inventory", "skills:read"] : [],
+          scenario.grants ? ["preview", "documents:build", "compute", "skills:read"] : [],
         );
         const modelSelection: ModelSelection = {
           ...CODEX_TEST_MODEL_SELECTION,

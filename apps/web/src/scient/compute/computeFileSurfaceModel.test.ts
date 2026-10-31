@@ -20,11 +20,15 @@ import {
   nudgeComputeFileSplit,
   computeFileSplitFromPointer,
   computeRuntimeDisplayLabel,
+  computeConsoleRuntime,
+  computeRuntimeChoiceLabel,
   resolveComputeRuntimeToolbarState,
   resolveComputePreRunRuntimeChoice,
   defaultComputeRuntime,
+  computeRuntimeBlocker,
   isComputeCapacityReachedError,
   isExactTerminalComputeSession,
+  type ComputeReadyRuntime,
 } from "./computeFileSurfaceModel";
 
 const pythonRuntime = {
@@ -69,7 +73,6 @@ describe("python compute surface model", () => {
         sourceExtensions: [".py"],
         capabilities: [],
       },
-      enabled: true,
       configuredExecutable: null,
       managedRuntime: {
         installed: true,
@@ -167,7 +170,6 @@ describe("python compute surface model", () => {
         sourceExtensions: [".py"],
         capabilities: [],
       },
-      enabled: true,
       configuredExecutable: null,
       managedRuntime: null,
       toolkits: [],
@@ -183,8 +185,87 @@ describe("python compute surface model", () => {
     expect(
       defaultComputeRuntime([{ ...language, runtimes: [candidate("path", true)] }])?.profile.source,
     ).toBe("path");
-    expect(defaultComputeRuntime([{ ...language, enabled: false }])).toBeNull();
   });
+  it("follows the server's selection and names an explicit or project blocker", () => {
+    const candidate = (source: "managed" | "path" | "project", ready: boolean) => ({
+      profile: { ...pythonRuntime, source, executable: `/${source}/python` },
+      verification: {
+        profile: { ...pythonRuntime, source, executable: `/${source}/python` },
+        readiness: ready ? ("ready" as const) : ("unusable" as const),
+        missingRequirements: [],
+        packages: [],
+        message: null,
+      },
+      toolkits: [],
+    });
+    const language: ComputeLanguageRuntimeInspection = {
+      descriptor: {
+        languageId: pythonRuntime.languageId,
+        displayName: "Python",
+        sourceExtensions: [".py"],
+        capabilities: [],
+      },
+      configuredExecutable: null,
+      managedRuntime: null,
+      toolkits: [],
+      runtimes: [candidate("managed", true), candidate("path", false)],
+      selection: { mode: "automatic", executable: "/managed/python", problem: null },
+    };
+    expect(defaultComputeRuntime([language])?.profile.source).toBe("managed");
+    expect(computeRuntimeBlocker(language)).toBeNull();
+    const broken = {
+      ...language,
+      runtimes: [candidate("project", false), candidate("path", true)],
+      selection: {
+        mode: "project" as const,
+        executable: null,
+        problem: "Its Python is missing. Recreate the environment.",
+      },
+    };
+    expect(defaultComputeRuntime([broken])).toBeNull();
+    expect(
+      resolveComputeRuntimeToolbarState({
+        liveSession: null,
+        runtimeInspectionPending: false,
+        readyRuntimeAvailable: false,
+        preferredRuntimeExecutable: null,
+        scientificPackagesMissing: false,
+        runtimeBlocker: computeRuntimeBlocker(broken),
+      }),
+    ).toEqual({
+      kind: "choose",
+      label: "Project environment can't run",
+      canRun: false,
+      note: "Its Python is missing. Recreate the environment.",
+    });
+  });
+
+  it("says a failed or empty check failed instead of asking to set up Python", () => {
+    const base = {
+      liveSession: null,
+      runtimeInspectionPending: false,
+      readyRuntimeAvailable: false,
+      preferredRuntimeExecutable: null,
+      scientificPackagesMissing: false,
+    };
+    expect(resolveComputeRuntimeToolbarState({ ...base, runtimeCheckFailure: "" })).toEqual({
+      kind: "retry",
+      label: "Couldn't check Python",
+      canRun: false,
+    });
+    expect(
+      resolveComputeRuntimeToolbarState({ ...base, runtimeCheckFailure: "Probe host crashed." }),
+    ).toMatchObject({ kind: "retry", note: "Probe host crashed." });
+    // A ready runtime from an earlier check still runs.
+    expect(
+      resolveComputeRuntimeToolbarState({
+        ...base,
+        readyRuntimeAvailable: true,
+        runtimeCheckFailure: "Probe host crashed.",
+      }).canRun,
+    ).toBe(true);
+  });
+
   it("remembers only a results layout and keeps the split readable", () => {
     expect(normalizeComputeFileResultsView("split")).toBe("split");
     expect(normalizeComputeFileResultsView("results")).toBe("results");
@@ -228,7 +309,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: null,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Checking Python…", canRun: false });
+    ).toEqual({ kind: "status", label: "Python", canRun: false, busy: true });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: null,
@@ -237,9 +318,8 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
         runtimeVersion: pythonRuntime.languageVersion,
-        runtimeSource: pythonRuntime.source,
       }),
-    ).toEqual({ kind: "status", label: "Python 3.12.13 · Custom", canRun: true });
+    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: null,
@@ -272,7 +352,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python capacity reached", canRun: true });
+    ).toEqual({ kind: "status", label: "Python", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         contextLifecycle: "starting",
@@ -283,7 +363,26 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python retry start", canRun: true });
+    ).toEqual({ kind: "status", label: "Python", canRun: true });
+  });
+
+  it("says a language with its own kernel was not found, rather than offering setup", () => {
+    expect(
+      resolveComputeRuntimeToolbarState({
+        languageId: "wolfram-language",
+        languageName: "Wolfram Language",
+        liveSession: null,
+        runtimeInspectionPending: false,
+        readyRuntimeAvailable: false,
+        preferredRuntimeExecutable: null,
+        scientificPackagesMissing: false,
+      }),
+    ).toEqual({
+      kind: "status",
+      label: "Not found",
+      canRun: false,
+      note: "Wolfram Language was not found on this computer",
+    });
   });
 
   it("uses the active session as authority for Python run availability", () => {
@@ -301,7 +400,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: null,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python · Custom · Running", canRun: true });
+    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: true, busy: true });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: {
@@ -316,7 +415,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "R active", canRun: false });
+    ).toEqual({ kind: "status", label: "R", canRun: false });
     expect(
       resolveComputeRuntimeToolbarState({
         liveSession: {
@@ -331,7 +430,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: pythonRuntime.executable,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "Python starting", canRun: false });
+    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: false, busy: true });
   });
 
   it("offers an explicit switch without blocking a deliberately chosen live runtime", () => {
@@ -349,7 +448,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/scient/managed/python",
         scientificPackagesMissing: true,
       }),
-    ).toEqual({ kind: "switch", label: "Python · Custom", canRun: true });
+    ).toEqual({ kind: "switch", label: "Python 3.12.13", canRun: true });
   });
 
   it("distinguishes scientific packages from the ability to run ordinary Python", () => {
@@ -406,7 +505,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/MATLAB/bin/matlab",
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "MATLAB · Custom", canRun: true });
+    ).toEqual({ kind: "status", label: "MATLAB R2026a", canRun: true });
     expect(
       resolveComputeRuntimeToolbarState({
         languageId: "matlab",
@@ -430,7 +529,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: "/MATLAB/bin/matlab",
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "status", label: "MATLAB · Custom", canRun: true });
+    ).toEqual({ kind: "status", label: "MATLAB R2026a", canRun: true });
   });
 
   it("does not offer a switch from stale inspection data or while work is running", () => {
@@ -450,7 +549,7 @@ describe("python compute surface model", () => {
     };
     expect(resolveComputeRuntimeToolbarState(input)).toEqual({
       kind: "status",
-      label: "Python · Custom",
+      label: "Python 3.12.13",
       canRun: true,
     });
     expect(
@@ -459,7 +558,7 @@ describe("python compute surface model", () => {
         runtimeInspectionPending: false,
         liveSession: { ...liveSession, activity: "busy" },
       }),
-    ).toEqual({ kind: "status", label: "Python · Custom · Running", canRun: true });
+    ).toEqual({ kind: "status", label: "Python 3.12.13", canRun: true, busy: true });
   });
 
   it("accepts a stop as shutdown only for the exact session, generation and a terminal status", () => {
@@ -482,5 +581,93 @@ describe("python compute surface model", () => {
       ),
     ).toBe(false);
     expect(isExactTerminalComputeSession({ ...stopped, status: "stopping" }, expected)).toBe(false);
+  });
+});
+
+describe("Console language choices", () => {
+  const profile = {
+    languageVersion: "3.14.7",
+    source: "managed",
+  } as unknown as ComputeLanguageRuntimeInspection["runtimes"][number]["profile"];
+  const python = { languageId: "python", languageName: "Python", profile };
+
+  it("names a language by version, and adds the source only to tell two apart", () => {
+    expect(computeRuntimeChoiceLabel(python, [{ languageId: "python" }])).toBe("Python 3.14.7");
+    expect(
+      computeRuntimeChoiceLabel(python, [{ languageId: "python" }, { languageId: "python" }]),
+    ).toBe("Python 3.14.7 · Scient-managed");
+    expect(
+      computeRuntimeChoiceLabel(
+        {
+          languageId: "python",
+          languageName: "Python",
+          profile: { ...profile, source: "path", origin: "Homebrew" },
+        },
+        [{ languageId: "python" }, { languageId: "python" }],
+      ),
+    ).toBe("Python 3.14.7 · Homebrew");
+  });
+
+  it("does not show DuckDB's version as SQL's, or a version a kernel does not report", () => {
+    expect(
+      computeRuntimeChoiceLabel({ ...python, languageId: "sql", languageName: "SQL" }, [
+        { languageId: "sql" },
+      ]),
+    ).toBe("SQL");
+    expect(
+      computeRuntimeChoiceLabel(
+        {
+          languageId: "rust",
+          languageName: "Rust",
+          profile: { ...profile, languageVersion: "unknown" },
+        },
+        [{ languageId: "rust" }],
+      ),
+    ).toBe("Rust");
+  });
+});
+
+describe("computeConsoleRuntime", () => {
+  const ready = (languageId: string, executable: string) =>
+    ({
+      language: { descriptor: { languageId } },
+      candidate: { profile: { executable } },
+      key: `${languageId}:${executable}`,
+    }) as unknown as ComputeReadyRuntime;
+  const python = ready("python", "/bin/python");
+  const otherPython = ready("python", "/other/python");
+  const r = ready("r", "/bin/R");
+  const all = [python, otherPython, r];
+  const session = (languageId: string, executable: string) =>
+    ({ languageId, runtime: { executable } }) as never;
+  const pick = (input: Partial<Parameters<typeof computeConsoleRuntime>[0]>) =>
+    computeConsoleRuntime({
+      ready: all,
+      session: null,
+      chosenKey: "",
+      defaultRuntime: python.candidate,
+      ...input,
+    });
+
+  it("starts on the default and follows what is picked", () => {
+    expect(pick({})).toBe(python);
+    expect(pick({ chosenKey: r.key })).toBe(r);
+  });
+
+  it("stays on what its session ran on, whatever else is picked or the default", () => {
+    expect(pick({ session: session("r", "/bin/R") })).toBe(r);
+    expect(pick({ session: session("r", "/bin/R"), chosenKey: python.key })).toBe(r);
+    expect(pick({ session: session("python", "/other/python") })).toBe(otherPython);
+  });
+
+  it("never swaps in something else when what it ran on has gone", () => {
+    expect(pick({ session: session("python", "/gone/python") })).toBeNull();
+    expect(pick({ session: session("julia", "/bin/julia") })).toBeNull();
+    expect(pick({ chosenKey: "julia:/bin/julia" })).toBeNull();
+  });
+
+  it("keeps to the language of a session that never recorded its runtime", () => {
+    const unrecorded = { languageId: "r", runtime: null } as never;
+    expect(pick({ session: unrecorded })).toBe(r);
   });
 });

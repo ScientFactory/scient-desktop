@@ -89,7 +89,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP MCP authority", () => {
                       }),
                     ),
                 }),
-                Layer.succeed(ComputeMcpGateway, {
+                Layer.mock(ComputeMcpGateway)({
                   runtimeInventory: () =>
                     Effect.sync(() => {
                       inventoryCalls++;

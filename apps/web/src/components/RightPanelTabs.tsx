@@ -93,7 +93,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { ScientRightPanelSurfaceIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
 import { scientRightPanelSurfaceTitle } from "~/scient/rightPanel/surfaces";
-import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
+import type { NewDocumentChoice } from "~/scient/documents/NewDocumentMenuItems";
 // SCIENT-FORK:START
 import { ScientFilesIcon } from "~/scient/rightPanel/ScientRightPanelSurfaceIcon";
 import { ScientNewTabButton, ScientSurfaceLauncher } from "~/scient/rightPanel/SurfaceLauncher";
@@ -165,7 +165,7 @@ export interface RightPanelTabsProps {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
-  onAddDocuments?: ((format: NewDocumentFormat) => void) | undefined;
+  onAddDocuments?: ((format: NewDocumentChoice) => void) | undefined;
   onAddCompute: () => void;
 
   onAddDevice: () => void;
@@ -386,8 +386,8 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
-/** The two kinds of document, each with the two words that tell them apart. */
-function NewDocumentMenuItems(props: { readonly onChoose: (format: NewDocumentFormat) => void }) {
+/** The kinds of document, each with the words that tell them apart. */
+function NewDocumentMenuItems(props: { readonly onChoose: (format: NewDocumentChoice) => void }) {
   return (
     <>
       <MenuItem onClick={() => props.onChoose("markdown")}>
@@ -397,6 +397,10 @@ function NewDocumentMenuItems(props: { readonly onChoose: (format: NewDocumentFo
       <MenuItem onClick={() => props.onChoose("latex")}>
         <span className="flex-1">LaTeX</span>
         <span className="ps-3 text-muted-foreground/50 text-xs">Papers · PDF</span>
+      </MenuItem>
+      <MenuItem onClick={() => props.onChoose("notebook")}>
+        <span className="flex-1">Notebook</span>
+        <span className="ps-3 text-muted-foreground/50 text-xs">Code · Results</span>
       </MenuItem>
     </>
   );
@@ -417,7 +421,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequests: () => void;
   onAddAgents: () => void;
   onAddSources: () => void;
-  onAddDocuments?: ((format: NewDocumentFormat) => void) | undefined;
+  onAddDocuments?: ((format: NewDocumentChoice) => void) | undefined;
   onAddCompute: () => void;
 
   onAddDevice: () => void;

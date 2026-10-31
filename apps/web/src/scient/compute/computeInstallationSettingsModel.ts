@@ -1,79 +1,89 @@
-import type {
-  ComputeLanguageRuntimeInventory,
-  ComputeManagedRuntimeAction,
-  ComputeManagedRuntimeStatus,
-  ScientificComputingLanguageSettings,
+import {
+  COMPUTE_LANGUAGE_CATALOG,
+  computeLanguageAbsent,
+  computeScientPart,
+  managedFailureNeedsRepair,
+  type ComputeCatalogLanguage,
+  type ComputeCurrentRuntimeSummary,
+  type ComputeLanguageRuntimeInventory,
+  type ComputeManagedRuntimeAction,
+  type ComputeManagedRuntimeStatus,
+  type ComputeSettingsInstallation,
+  type ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
 
-export type ComputeSettingsInstallation = ComputeLanguageRuntimeInventory["installations"][number];
+export {
+  automaticComputeRuntimeLabel,
+  computeCurrentRuntimeSummary,
+  computeLanguageAbsent,
+  computeLanguageComingSoon,
+  computeLanguageDetail,
+  computeLanguageDownloadUrl,
+  computeLanguageStatus,
+  computeRuntimePickerLabel,
+  computeScientPart,
+  defaultComputeInstallation,
+  type ComputeCurrentRuntimeSummary,
+  type ComputeScientPart,
+  type ComputeSettingsInstallation,
+} from "@t3tools/contracts";
 
-export function runtimeSourceLabel(source: string): string {
-  switch (source) {
-    case "managed":
-      return "Scient-managed";
-    case "configured":
-      return "Custom installation";
-    case "project":
-      return "Project environment";
-    case "path":
-    case "conventional":
-      return "System installation";
-    default:
-      return source;
-  }
+export interface ComputeLanguageEntry extends ComputeCatalogLanguage {
+  /** What this computer reports. Nothing, for a language no kernel here has named. */
+  readonly runtime: ComputeLanguageRuntimeInventory | undefined;
 }
 
-/** Automatic is a selection policy, not an additional installation. */
-export function automaticComputeRuntimeLabel(
-  installation: ComputeSettingsInstallation | undefined,
-): string {
-  if (!installation) return "Automatic";
-  const source =
-    installation.source === "path" || installation.source === "conventional"
-      ? "System"
-      : runtimeSourceLabel(installation.source);
-  return `Automatic · ${source}`;
+export interface ComputeLanguageGroup {
+  readonly title: string;
+  readonly entries: ReadonlyArray<ComputeLanguageEntry>;
 }
 
-/** Short picker label, with the shortest distinguishing directory suffix when needed. */
-export function computeRuntimePickerLabel(
-  installation: ComputeSettingsInstallation,
-  languageName: string,
-  installations: ReadonlyArray<ComputeSettingsInstallation> = [],
-): string {
-  const base = `${installation.version ?? languageName} · ${runtimeSourceLabel(installation.source)}`;
-  const duplicates = installations.filter(
-    (candidate) =>
-      candidate.executable !== installation.executable &&
-      (candidate.version ?? languageName) === (installation.version ?? languageName) &&
-      runtimeSourceLabel(candidate.source) === runtimeSourceLabel(installation.source),
+const CATALOG_IDS: ReadonlySet<string> = new Set(
+  COMPUTE_LANGUAGE_CATALOG.flatMap((group) =>
+    group.languages.map((language) => language.languageId),
+  ),
+);
+
+const onThisComputer = (runtime: ComputeLanguageRuntimeInventory | undefined) =>
+  runtime !== undefined && (!computeLanguageAbsent(runtime) || (runtime.tools?.length ?? 0) > 0);
+
+/** Every language in its one place, with what is on this computer leading each group. */
+export function computeLanguageGroups(
+  languages: ReadonlyArray<ComputeLanguageRuntimeInventory>,
+): ReadonlyArray<ComputeLanguageGroup> {
+  const reported = new Map<string, ComputeLanguageRuntimeInventory>(
+    languages.map((language) => [language.descriptor.languageId, language]),
   );
-  if (duplicates.length === 0) return base;
-  const pathParts = installation.executable.split(/[\\/]/u).filter(Boolean);
-  for (let length = 2; length <= pathParts.length; length++) {
-    const suffix = pathParts.slice(-length).join("/");
-    if (
-      duplicates.every(
-        (candidate) =>
-          candidate.executable.split(/[\\/]/u).filter(Boolean).slice(-length).join("/") !== suffix,
-      )
-    )
-      return `${base} · ${suffix}`;
-  }
-  return `${base} · ${installation.executable}`;
+  const groups = COMPUTE_LANGUAGE_CATALOG.map(({ title, languages: named }) => ({
+    title,
+    entries: named
+      .map((language) => ({ ...language, runtime: reported.get(language.languageId) }))
+      .toSorted((a, b) => Number(onThisComputer(b.runtime)) - Number(onThisComputer(a.runtime))),
+  }));
+  // A kernel the catalog does not name is real while it is here, and promises nothing once gone.
+  const other = languages.filter(
+    (language) =>
+      !CATALOG_IDS.has(language.descriptor.languageId) && !computeLanguageAbsent(language),
+  );
+  return other.length === 0
+    ? groups
+    : [
+        ...groups,
+        {
+          title: "Other",
+          entries: other.map((runtime) => ({
+            languageId: runtime.descriptor.languageId,
+            name: runtime.descriptor.displayName,
+            runtime,
+          })),
+        },
+      ];
 }
 
 export type ComputeManagedPrimaryAction = Extract<
   ComputeManagedRuntimeAction,
   "install" | "repair" | "use-managed"
 >;
-
-function managedFailureNeedsRepair(status: ComputeManagedRuntimeStatus): boolean {
-  if (status.failure !== undefined && status.failure !== null) {
-    return status.failure.action !== "remove";
-  }
-  return Boolean(status.failureMessage);
-}
 
 /** Resolve the primary setup action from ownership and status, never from UI copy. */
 export function computeManagedPrimaryAction(
@@ -84,136 +94,69 @@ export function computeManagedPrimaryAction(
   return "use-managed";
 }
 
-export function defaultComputeInstallation(
-  language: ComputeLanguageRuntimeInventory,
-  preference: ScientificComputingLanguageSettings,
+/** The MATLAB helper was built for a different installation than the one selected. */
+export function computeConnectionNeedsRetarget(
   managed: ComputeManagedRuntimeStatus | null,
-): ComputeSettingsInstallation | undefined {
-  if (language.descriptor.languageId === "python" && managed?.selection === "managed") {
-    return language.installations.find((installation) => installation.source === "managed");
-  }
-  const configured = preference.executable.trim();
-  if (configured) {
-    return language.installations.find(
-      (installation) =>
-        installation.executable === configured ||
-        (language.configuredExecutable === configured && installation.configured === true),
-    );
-  }
-  // A settings save can arrive before the refreshed inventory. Its old explicit
-  // candidate order must not be presented as the new automatic default.
-  if (language.configuredExecutable?.trim()) return undefined;
-  return language.installations.find((installation) => installation.source !== "managed");
+  selected: ComputeSettingsInstallation | undefined,
+): boolean {
+  return (
+    managed?.installed === true &&
+    managed.installationExecutable !== undefined &&
+    selected !== undefined &&
+    managed.installationExecutable !== selected.executable
+  );
 }
 
-export type ComputeCurrentRuntimeSummary = {
-  readonly kind:
-    | "disabled"
-    | "ready"
-    | "setup"
-    | "connect"
-    | "repair-connection"
-    | "update-managed"
-    | "repair-managed"
-    | "unavailable"
-    | "missing";
-  readonly title: string;
-  readonly detail: string;
-};
+export interface ComputeLanguagePrimaryAction {
+  readonly label: string;
+  /** "setup" installs what the language needs, keeping any Python already chosen. */
+  readonly run: "setup" | ComputeManagedRuntimeAction;
+  readonly emphasis: boolean;
+}
 
-/** One-line current runtime for the default Settings chrome. */
-export function computeCurrentRuntimeSummary(input: {
+/** The single action a language needs now, most urgent first. */
+export function computeLanguagePrimaryAction(input: {
   readonly language: ComputeLanguageRuntimeInventory;
-  readonly preference: ScientificComputingLanguageSettings;
+  readonly summary: ComputeCurrentRuntimeSummary;
   readonly managed: ComputeManagedRuntimeStatus | null;
-}): ComputeCurrentRuntimeSummary {
-  const { language, preference, managed } = input;
-  const isMatlab = language.descriptor.languageId === "matlab";
-  const selected = defaultComputeInstallation(language, preference, managed);
-  const source = selected === undefined ? null : runtimeSourceLabel(selected.source);
-  const enabled = preference.enabled;
-
-  if (!enabled) {
-    return { kind: "disabled", title: "Off", detail: "" };
+  readonly selected: ComputeSettingsInstallation | undefined;
+  readonly failureRetry: ComputeManagedRuntimeAction | null | undefined;
+}): ComputeLanguagePrimaryAction | null {
+  const { language, summary, managed, selected, failureRetry } = input;
+  const part = computeScientPart(language.descriptor.languageId);
+  const isMatlab = part === "connection";
+  if (
+    isMatlab &&
+    managed?.selection === "managed" &&
+    computeConnectionNeedsRetarget(managed, selected)
+  ) {
+    return { label: "Set up connection", run: "repair", emphasis: false };
   }
-
-  if (selected?.problem && selected.source === "managed") {
+  const connectionFailed = isMatlab && failureRetry != null && failureRetry !== "remove";
+  if (summary.kind === "repair-connection" || connectionFailed) {
     return {
-      kind: "repair-managed",
-      title: selected.problem,
-      detail: source ?? language.descriptor.displayName,
+      label: "Repair connection",
+      run: connectionFailed && failureRetry === "install" ? "install" : "repair",
+      emphasis: false,
     };
+  }
+  if (isMatlab && summary.kind === "connect") {
+    return { label: "Connect MATLAB", run: "setup", emphasis: false };
+  }
+  if ((part === "managed-python" && !managed?.installed) || summary.kind === "setup") {
+    return { label: "Set up", run: "setup", emphasis: false };
   }
   if (
-    selected?.source === "managed" &&
-    managed?.installed === true &&
-    managed.selection === "managed" &&
-    managed.updateAvailable
+    summary.kind === "repair-managed" ||
+    (part === "managed-python" && computeManagedPrimaryAction(managed) === "repair")
   ) {
-    return {
-      kind: "update-managed",
-      title: selected.version ?? "Scient-managed Python",
-      detail: "Toolkit update available",
-    };
+    return { label: "Repair", run: "repair", emphasis: false };
   }
-  if (selected?.problem) {
-    return {
-      kind: "unavailable",
-      title: selected.problem,
-      detail: source ?? language.descriptor.displayName,
-    };
-  }
-  if (isMatlab && managed !== null && managedFailureNeedsRepair(managed)) {
-    return {
-      kind: "repair-connection",
-      title: managed.failure?.summary ?? "MATLAB connection failed",
-      detail: managed.failure?.detail ?? managed.failureMessage ?? "Repair the connection helper.",
-    };
-  }
-  if (
-    managed !== null &&
-    managedFailureNeedsRepair(managed) &&
-    (selected?.source === "managed" || selected === undefined)
-  ) {
-    return {
-      kind: "repair-managed",
-      title: managed.failure?.summary ?? "Scient-managed runtime needs repair",
-      detail: "Scient-managed",
-    };
-  }
-  if (isMatlab && managed !== null && !managed.installed && selected !== undefined) {
-    return {
-      kind: "connect",
-      title: "Not connected",
-      detail: "Connect Scient to this MATLAB installation.",
-    };
-  }
-  if (selected !== undefined && enabled) {
-    return {
-      kind: "ready",
-      title: selected.version ?? language.descriptor.displayName,
-      detail: source ?? "Ready",
-    };
-  }
-  if (isMatlab) {
-    if (language.installations.length === 0) {
-      return {
-        kind: "missing",
-        title: "Not connected",
-        detail: "Requires a licensed MATLAB installation on this server.",
-      };
-    }
-    return {
-      kind: "connect",
-      title: "Not connected",
-      detail: "Connect the MATLAB already installed on this server.",
-    };
-  }
-  return {
-    kind: "setup",
-    title: "Not set up",
-    detail: "Set up Scientific Python or choose an existing runtime.",
-  };
+  // Maintenance belongs to the installed capability, not the selected runtime.
+  // For MATLAB this updates Scient's helper, never the user's MATLAB installation.
+  return managed?.installed && managed.updateAvailable
+    ? { label: "Update", run: "update", emphasis: true }
+    : null;
 }
 
 /** Save the requested path before releasing managed precedence. A failed save

@@ -1064,6 +1064,32 @@ describe.skipIf(!native)("native workspace publication admission", () => {
         );
       },
     );
+    it.live("keeps the workspace readable when a referenced record's folder is gone", () =>
+      fileMutationFixture(async (h) => {
+        await NodeFSP.writeFile(NodePath.join(h.cwd, "main.tex"), "A");
+        const parent = await directoryIdentity(h.cwd),
+          storage = NodePath.join(h.retentionRoot, `${parent.dev}-${parent.ino}`),
+          index = NodePath.join(storage, "external-gone");
+        await NodeFSP.mkdir(index, { recursive: true, mode: 0o700 });
+        await NodeFSP.chmod(h.retentionRoot, 0o700);
+        await NodeFSP.chmod(storage, 0o700);
+        await NodeFSP.writeFile(
+          NodePath.join(index, "reference.json"),
+          JSON.stringify({
+            version: 1,
+            recordDirectory: NodePath.join(h.cwd, "..", "deleted-worktree", "record"),
+            target: NodePath.join(h.cwd, "main.tex"),
+            mutationId: "external-gone",
+          }),
+        );
+        const methods = await h.restart();
+        const history = await h.run(
+          methods.listFileVersions({ cwd: h.cwd, relativePath: "main.tex" }),
+        );
+        expect(history.attention).toBeNull();
+        await expect(h.run(methods.getMutationEpoch({ cwd: h.cwd }))).resolves.toBeDefined();
+      }),
+    );
     it.live("retires legacy active records without asserting pre-namespace authority", () =>
       fileMutationFixture(async (h) => {
         const target = NodePath.join(h.cwd, "main.tex");

@@ -279,6 +279,10 @@
       "types": "./src/composerCitations.ts",
       "import": "./src/composerCitations.ts"
     },
+    "./computeCitations": {
+      "types": "./src/computeCitations.ts",
+      "import": "./src/computeCitations.ts"
+    },
     "./pdfCitations": {
       "types": "./src/pdfCitations.ts",
       "import": "./src/pdfCitations.ts"
@@ -442,6 +446,10 @@
     "./t3McpToolPresentation": {
       "types": "./src/t3McpToolPresentation.ts",
       "import": "./src/t3McpToolPresentation.ts"
+    },
+    "./notebookStaleness": {
+      "types": "./src/notebookStaleness.ts",
+      "import": "./src/notebookStaleness.ts"
     },
     "./scientMcpToolPresentation": {
       "types": "./src/scientMcpToolPresentation.ts",

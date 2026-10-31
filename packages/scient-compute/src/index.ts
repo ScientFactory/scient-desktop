@@ -10,4 +10,5 @@ export * from "./representation.ts";
 export * from "./service.ts";
 export * from "./sessionStateMachine.ts";
 export * from "./simulator.ts";
+export * from "./table.ts";
 export * from "./toolkit.ts";

@@ -23,6 +23,7 @@ import { ExecutionProcess } from "../execution/LocalExecutionProcess.ts";
 import { ServerConfig } from "../../config.ts";
 import { ScientificRuntimePreferences } from "./ScientificRuntimePreferences.ts";
 import { makeMatlabConnectionHelper } from "./MatlabConnectionHelper.ts";
+import { discoveryContext, pathMatches } from "./RuntimeDiscovery.ts";
 import { ComputeRecipeNetwork, makeComputeRecipeSource } from "./ComputeRecipeSource.ts";
 import { resolveManagedPythonSpecPath } from "./ManagedPythonProvisioner.ts";
 import { sanitizeComputeEnvironment } from "./ComputeEnvironmentPolicy.ts";
@@ -351,7 +352,16 @@ export const matlabRuntimeBinding: Effect.Effect<
   if (helper !== null)
     yield* Effect.addFinalizer(() => Effect.sync(() => helper.controller.dispose()));
   const inspect = yield* makeMatlabEngineInspector(helper?.hostFor);
-  const runtime = makeMatlabRuntimeAdapter(inspect, environment, platform, bridgePath);
+  // Newer releases bundle an Engine any Python can load, so only Run can prove a connection.
+  const mayConnect = Effect.fn("MatlabComputeRuntime.mayConnect")(
+    function* () {
+      const context = yield* discoveryContext;
+      const status = helper === null ? null : yield* helper.controller.status();
+      return status?.installed === true || pathMatches(context, hostCandidates()).length > 0;
+    },
+    Effect.orElseSucceed(() => true),
+  );
+  const runtime = makeMatlabRuntimeAdapter(inspect, environment, platform, bridgePath, mayConnect);
   let lastHelperIdentity: string | null = null;
   const managedRuntime =
     helper === null

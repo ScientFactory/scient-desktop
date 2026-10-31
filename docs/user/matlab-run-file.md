@@ -50,7 +50,7 @@ from that same Run menu. Batch does not require the Engine connection helper:
 2. Wait for any pending save to finish. Scient runs the exact saved version,
    not an unsaved editor buffer.
 3. If MATLAB was not found, open **Scientific Computing**, enable MATLAB, then
-   expand **Runtime** and choose a detected installation or **Custom executable…**. The page refresh
+   expand **Runtime** and choose a detected installation or a **Custom path**. The page refresh
    control scans again.
 4. Choose **Run MATLAB batch**. Standard output, errors, status, figures, and the
    file's recent run history appear in Results. Discovery is not proof of a working license;

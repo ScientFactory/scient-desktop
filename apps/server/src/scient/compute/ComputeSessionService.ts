@@ -16,6 +16,7 @@ import {
   admitComputeExecution,
   classifyMatlabSource,
   cancelComputeExecution,
+  MAXIMUM_PENDING_COMPUTE_EXECUTIONS,
   checkComputeSessionGeneration,
   computeOutputByteLength,
   computeQueueEntries,
@@ -69,10 +70,17 @@ import {
   type ComputeToolkitAssessment,
   type ComputeToolkitDescriptor,
   type ComputeVariableSnapshot,
+  type DataTablePage,
+  type DataTableQuery,
   type ComputeRuntimeProfile,
   type ComputeRuntimeInstallation,
   type ComputeRuntimeVerification,
 } from "@scientfactory/compute";
+import {
+  COMPUTE_ADDED_LOCATION,
+  COMPUTE_LANGUAGE_CATALOG,
+  type ComputeFoundTool,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -106,6 +114,10 @@ import {
   type ComputeWorkspaceReceipt,
 } from "./ComputeWorkspaceAdmission.ts";
 import { withComputeWorkspaceReservation } from "./ComputeWorkspaceLifetime.ts";
+import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
+import { chooseRuntime, orderByChoice, type RuntimeChoice } from "./RuntimeSelection.ts";
+import { discoveryContext, pathModule } from "./RuntimeDiscovery.ts";
+import { ToolDiscovery } from "./ToolDiscovery.ts";
 import type {
   ResolvedComputeOutputImage,
   ResolvedComputeOutputResource,
@@ -143,6 +155,10 @@ export interface ComputeRuntimeBinding {
   readonly adapter: ComputeLanguageAdapter;
   readonly transport: ComputeTransport;
   readonly descriptor?: ComputeRuntimeDescriptor;
+  /** Languages whose kernels appeared after startup, including ones only a project has. */
+  readonly lateBindings?: (
+    projectRoot: string | null,
+  ) => Effect.Effect<ReadonlyArray<ComputeRuntimeBinding>>;
   readonly toolkitSupport?:
     | {
         readonly descriptors: ReadonlyArray<ComputeToolkitDescriptor>;
@@ -156,6 +172,8 @@ export interface ComputeRuntimeBinding {
         readonly isRemoving: () => boolean;
         /** Production bindings may enforce precise process-scoped environment ownership. */
         readonly tracksUsage?: boolean;
+        /** Setup replaces files live sessions load from, so it waits for them like removal. */
+        readonly rebuildsInPlace?: boolean;
         readonly status: () => Effect.Effect<ComputeManagedRuntimeStatus, ComputeOperationError>;
         readonly manage: (
           action: ComputeManagedRuntimeAction,
@@ -178,25 +196,36 @@ export interface ComputeRuntimeDescriptor {
   readonly displayName: string;
   readonly sourceExtensions: ReadonlyArray<string>;
   readonly capabilities: ReadonlyArray<ComputeCapability>;
+  readonly setup?: { readonly needs: string; readonly url?: string };
 }
 
 export interface ComputeRuntimeInspectionRequest {
   readonly projectRoot: string | null;
   readonly workingDirectory: string;
   readonly configuredExecutables: Readonly<Record<string, string | null>>;
-  readonly enabledLanguageIds: ReadonlySet<string>;
+  /** Languages whose configured executable was chosen for this project, not this machine. */
+  readonly chosenForProject?: ReadonlySet<string>;
   readonly refresh: boolean;
+  /** Absent means every language. */
+  readonly languageIds?: ReadonlySet<string>;
 }
 
 export interface ComputeRuntimeInspectionResult {
   readonly descriptor: ComputeRuntimeDescriptor;
   readonly managedRuntime?: ComputeManagedRuntimeStatus | null | undefined;
   readonly toolkits: ReadonlyArray<ComputeToolkitDescriptor>;
+  /** The chosen or blocking runtime first, then the rest in discovery order. */
   readonly runtimes: ReadonlyArray<{
     readonly profile: ComputeRuntimeProfile;
     readonly verification: ComputeRuntimeVerification;
     readonly toolkits: ReadonlyArray<ComputeToolkitAssessment>;
   }>;
+  readonly selection?: {
+    readonly mode: RuntimeChoice["mode"];
+    readonly executable: string | null;
+    readonly problem: string | null;
+  };
+  readonly failure?: string | null;
 }
 
 export interface ComputeRuntimeInventoryResult {
@@ -204,7 +233,13 @@ export interface ComputeRuntimeInventoryResult {
   readonly managedRuntime: ComputeManagedRuntimeStatus | null;
   readonly toolkits: ReadonlyArray<ComputeToolkitDescriptor>;
   readonly installations: ReadonlyArray<ComputeRuntimeInstallation>;
+  readonly tools?: ReadonlyArray<ComputeFoundTool>;
   readonly failureMessage: string | null;
+}
+
+export interface ComputeRuntimeInventorySnapshot {
+  readonly languages: ReadonlyArray<ComputeRuntimeInventoryResult>;
+  readonly incomplete: boolean;
 }
 
 export interface ComputeRuntimeVerificationRequest {
@@ -251,6 +286,16 @@ function computeError(
 }
 
 /** Durable text fields are bounded by their schemas; clamp before encoding. */
+/** A language with no file check: nothing is known to be missing, so Run finds out. */
+const unassessed = (profile: ComputeRuntimeProfile): ComputeRuntimeVerification => ({
+  profile,
+  readiness: "ready",
+  connection: "detected",
+  missingRequirements: [],
+  message: null,
+  packages: [],
+});
+
 function shortText(value: string): string {
   return value.slice(0, 4096);
 }
@@ -348,7 +393,12 @@ interface LiveComputeSession {
   readonly sessionOutputRef: Ref.Ref<{ readonly bytes: number; readonly truncated: boolean }>;
   readonly startRequest: Pick<
     ComputeStartSessionInput,
-    "languageId" | "workingDirectory" | "configuredExecutable" | "requestedExecutable" | "runOnce"
+    | "languageId"
+    | "workingDirectory"
+    | "configuredExecutable"
+    | "chosenForProject"
+    | "requestedExecutable"
+    | "runOnce"
   >;
 }
 
@@ -365,8 +415,10 @@ export class ComputeSessionService extends Context.Service<
   {
     readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
     readonly runtimeInventory: (
-      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables" | "enabledLanguageIds">,
-    ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInventoryResult>, ComputeOperationError>;
+      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables"> & {
+        readonly refresh?: boolean;
+      },
+    ) => Effect.Effect<ComputeRuntimeInventorySnapshot, ComputeOperationError>;
     readonly inspectRuntimes: (
       input: ComputeRuntimeInspectionRequest,
     ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInspectionResult>, ComputeOperationError>;
@@ -387,6 +439,11 @@ export class ComputeSessionService extends Context.Service<
     readonly startSession: (
       input: ComputeStartSessionInput,
     ) => Effect.Effect<ComputeSessionRecord, ComputeOperationError>;
+    readonly submitExecutions: (input: {
+      readonly projectId: ComputeProjectId;
+      readonly sessionId: ComputeSessionId;
+      readonly submissions: ReadonlyArray<ComputeSubmitExecutionInput>;
+    }) => Effect.Effect<ReadonlyArray<ComputeExecutionRecord>, ComputeOperationError>;
     readonly submitExecution: (
       input: ComputeSubmitExecutionInput,
     ) => Effect.Effect<ComputeExecutionRecord, ComputeOperationError>;
@@ -405,6 +462,13 @@ export class ComputeSessionService extends Context.Service<
     readonly inspectVariables: (
       input: ComputeSessionCommandInput,
     ) => Effect.Effect<ComputeVariableSnapshot, ComputeOperationError>;
+    /** One page of a table-like variable, read silently from the live namespace. */
+    readonly readTable: (
+      input: ComputeSessionCommandInput & {
+        readonly name: string;
+        readonly query: DataTableQuery;
+      },
+    ) => Effect.Effect<DataTablePage, ComputeOperationError>;
     readonly listSessions: (
       input: ComputeListSessionsInput,
     ) => Effect.Effect<ReadonlyArray<ComputeSessionRecord>, ComputeOperationError>;
@@ -452,10 +516,11 @@ class ComputeSessionServiceConfig extends Context.Reference<ComputeSessionServic
 ) {}
 
 const make = Effect.gen(function* () {
+  const toolDiscovery = yield* ToolDiscovery;
   const hostCapacity = yield* ComputeHostCapacity.ComputeHostCapacity;
   const observeOperation = yield* makeOperationAnalytics;
   const observeComputeOutputs = yield* makeComputeOutputAnalytics;
-  const bindings = yield* ComputeRuntimeBindings;
+  const bindings = [...(yield* ComputeRuntimeBindings)];
   const options = yield* ComputeSessionServiceConfig;
   const hostEnvironment = yield* HostProcess.Environment;
   const startupSlots = yield* Semaphore.make(
@@ -494,6 +559,18 @@ const make = Effect.gen(function* () {
       capabilities: [...REQUIRED_COMPUTE_CAPABILITIES],
     };
 
+  /** A kernel installed while Scient runs needs no restart, whatever its language. */
+  const bindNewLanguages = Effect.fn("ComputeSessionService.bindNewLanguages")(function* (
+    projectRoot: string | null,
+  ) {
+    for (const source of bindings.flatMap((binding) => binding.lateBindings ?? [])) {
+      for (const binding of yield* source(projectRoot)) {
+        if (!bindings.some((known) => known.adapter.languageId === binding.adapter.languageId))
+          bindings.push(binding);
+      }
+    }
+  });
+
   const runtimeEnvironment = () => sanitizeComputeEnvironment(definedEnvironment(hostEnvironment));
 
   const runtimeDirectory = (
@@ -512,9 +589,24 @@ const make = Effect.gen(function* () {
     });
 
   const runtimeInventory = Effect.fn("ComputeSessionService.runtimeInventory")(function* (
-    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables" | "enabledLanguageIds">,
+    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables"> & {
+      readonly refresh?: boolean;
+    },
   ) {
-    return yield* Effect.forEach(
+    const snapshot =
+      toolDiscovery === null ? null : yield* toolDiscovery.snapshot(input.refresh === true);
+    yield* bindNewLanguages(null);
+    const context = yield* discoveryContext;
+    const toolsOf = (languageId: string) => {
+      const found = (snapshot?.tools.get(languageId) ?? []).map((tool) => ({
+        name: tool.name,
+        executable: tool.executable,
+        version: tool.version,
+        origin: tool.origin,
+      }));
+      return found.length === 0 ? {} : { tools: found.slice(0, 32) };
+    };
+    const bound = yield* Effect.forEach(
       bindings,
       (binding) =>
         Effect.gen(function* () {
@@ -529,7 +621,6 @@ const make = Effect.gen(function* () {
                   }),
                 );
           const installations =
-            !input.enabledLanguageIds.has(binding.adapter.languageId) ||
             binding.adapter.listInstallations === undefined
               ? []
               : yield* binding.adapter
@@ -537,7 +628,7 @@ const make = Effect.gen(function* () {
                     projectRoot: null,
                     configuredExecutable:
                       input.configuredExecutables[binding.adapter.languageId] ?? null,
-                    refresh: true,
+                    refresh: input.refresh === true,
                   })
                   .pipe(
                     Effect.catch((cause) => {
@@ -550,64 +641,102 @@ const make = Effect.gen(function* () {
             managedRuntime,
             toolkits: binding.toolkitSupport?.descriptors ?? [],
             installations,
+            ...toolsOf(binding.adapter.languageId),
             failureMessage,
           };
         }),
       { concurrency: 2 },
     );
+    if (toolDiscovery === null) return { languages: bound, incomplete: false };
+    // The rest of the list: what is on this computer, whether or not Scient can run it yet.
+    const known = new Set<string>(bound.map((language) => language.descriptor.languageId));
+    const named = COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages)
+      .filter((language) => !known.has(language.languageId))
+      .map((language) => {
+        const added = input.configuredExecutables[language.languageId] ?? null;
+        const tools = toolsOf(language.languageId).tools ?? [];
+        return {
+          descriptor: {
+            languageId: language.languageId as ComputeLanguageId,
+            displayName: language.name,
+            sourceExtensions: [],
+            capabilities: [],
+          },
+          managedRuntime: null,
+          toolkits: [],
+          installations: [],
+          tools:
+            added !== null && !tools.some((tool) => tool.executable === added)
+              ? [
+                  {
+                    name: pathModule(context.platform).basename(added),
+                    executable: added,
+                    version: null,
+                    origin: COMPUTE_ADDED_LOCATION,
+                    ...(context.host.kind(added) === null
+                      ? { problem: "This location was not found." }
+                      : {}),
+                  },
+                  ...tools,
+                ]
+              : tools,
+          failureMessage: null,
+        };
+      });
+    return { languages: [...bound, ...named], incomplete: !(snapshot?.complete ?? true) };
   });
 
-  const inspectRuntimes = Effect.fn("ComputeSessionService.inspectRuntimes")(function* (
-    input: ComputeRuntimeInspectionRequest,
-  ) {
-    const workingDirectory = yield* runtimeDirectory("inspect", input.workingDirectory);
-    const projectRoot =
-      input.projectRoot === null ? null : yield* runtimeDirectory("inspect", input.projectRoot);
-    const { environment } = runtimeEnvironment();
-    return yield* Effect.forEach(bindings, (binding) =>
-      Effect.gen(function* () {
-        const managedRuntime =
-          binding.managedRuntime === undefined
-            ? null
-            : yield* binding.managedRuntime.status().pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("managed compute runtime status unavailable", {
-                    languageId: binding.adapter.languageId,
-                    cause,
-                  }).pipe(
-                    Effect.as({
-                      installed: false,
-                      selection: "existing" as const,
-                      updateAvailable: false,
-                      runtimeVersion: null,
-                      toolkitRevision: null,
-                      operation: null,
-                      failureMessage: shortText(cause.message),
-                    }),
-                  ),
-                ),
-              );
-        if (!input.enabledLanguageIds.has(binding.adapter.languageId)) {
-          return {
-            descriptor: descriptorFor(binding),
-            managedRuntime,
-            toolkits: binding.toolkitSupport?.descriptors ?? [],
-            runtimes: [],
-          };
-        }
-        const profiles = yield* binding.adapter
-          .discover({
-            projectRoot,
-            configuredExecutable: input.configuredExecutables[binding.adapter.languageId] ?? null,
-            refresh: input.refresh,
-          })
-          .pipe(
-            Effect.mapError((cause) =>
-              computeError("inspect", "runtime-unusable", cause.message, cause),
+  const managedStatusOrFallback = (binding: ComputeRuntimeBinding) =>
+    binding.managedRuntime === undefined
+      ? Effect.succeed(null)
+      : binding.managedRuntime.status().pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("managed compute runtime status unavailable", {
+              languageId: binding.adapter.languageId,
+              cause,
+            }).pipe(
+              Effect.as({
+                installed: false,
+                selection: "existing" as const,
+                updateAvailable: false,
+                runtimeVersion: null,
+                toolkitRevision: null,
+                operation: null,
+                failureMessage: shortText(cause.message),
+              }),
             ),
-          );
-        const runtimes = yield* Effect.forEach(profiles, (profile) =>
-          binding.adapter.verify({ profile, cwd: workingDirectory, environment }).pipe(
+          ),
+        );
+
+  const inspectLanguage = Effect.fn("ComputeSessionService.inspectLanguage")(function* (
+    binding: ComputeRuntimeBinding,
+    input: {
+      readonly projectRoot: string | null;
+      readonly workingDirectory: string;
+      readonly configuredExecutable: string | null;
+      readonly chosenForProject: boolean;
+      readonly refresh: boolean;
+    },
+  ): Effect.fn.Return<ComputeRuntimeInspectionResult> {
+    const managedRuntime = yield* managedStatusOrFallback(binding);
+    const base = {
+      descriptor: descriptorFor(binding),
+      managedRuntime,
+      toolkits: binding.toolkitSupport?.descriptors ?? [],
+    };
+    const request = {
+      projectRoot: input.projectRoot,
+      configuredExecutable: input.configuredExecutable,
+      refresh: input.refresh,
+    };
+    return yield* Effect.gen(function* () {
+      const profiles = yield* binding.adapter.discover(request);
+      // Inspecting reads files. Nothing starts until someone presses Run or Test.
+      const assess = binding.adapter.assess;
+      const runtimes = yield* Effect.forEach(
+        profiles,
+        (profile) =>
+          (assess === undefined ? Effect.succeed(unassessed(profile)) : assess(profile)).pipe(
             Effect.catch((cause) =>
               Effect.succeed({
                 profile,
@@ -623,14 +752,106 @@ const make = Effect.gen(function* () {
               toolkits: binding.toolkitSupport?.assess(verification) ?? [],
             })),
           ),
+        { concurrency: 4 },
+      );
+      // A choice remembered for this project outranks the machine's Scient-managed selection.
+      const explicit =
+        input.chosenForProject || binding.adapter.selectedExecutable === undefined
+          ? input.configuredExecutable
+          : yield* binding.adapter.selectedExecutable(request);
+      const choice = yield* chooseRuntime(
+        profiles,
+        explicit,
+        (profile) => Effect.succeed(runtimes.find((runtime) => runtime.profile === profile)!),
+        { chosenForProject: input.chosenForProject },
+      );
+      return {
+        ...base,
+        runtimes: orderByChoice(runtimes, choice),
+        selection: {
+          mode: choice.mode,
+          executable: choice.selected?.profile.executable ?? null,
+          problem: choice.problem === null ? null : shortText(choice.problem),
+        },
+        failure: null,
+      };
+    }).pipe(
+      // A failed check is reported as such, never as an empty list that reads "not installed".
+      Effect.catch((cause) =>
+        Effect.succeed({ ...base, runtimes: [], failure: shortText(cause.message) }),
+      ),
+    );
+  });
+
+  // Served at once from the last result; a stale one is refreshed in the background.
+  const inspections = makeRuntimeProbeCache<ComputeRuntimeInspectionResult, never>({
+    successTtlMs: 0,
+    concurrency: 8,
+  });
+  const inspectionSnapshots = new Map<
+    string,
+    { readonly result: ComputeRuntimeInspectionResult; readonly at: number }
+  >();
+  const INSPECTION_STALE_MS = 30_000;
+
+  const inspectionSnapshot = Effect.fn("ComputeSessionService.inspectionSnapshot")(function* (
+    key: string,
+    inspect: Effect.Effect<ComputeRuntimeInspectionResult>,
+    refresh: boolean,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const store = inspections.get(
+      key,
+      inspect.pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => inspectionSnapshots.set(key, { result, at: now })),
+        ),
+      ),
+    );
+    const snapshot = refresh ? undefined : inspectionSnapshots.get(key);
+    if (snapshot === undefined) return yield* store;
+    if (now - snapshot.at >= INSPECTION_STALE_MS) yield* Effect.forkIn(store, serviceScope);
+    return snapshot.result;
+  });
+
+  const inspectRuntimes = Effect.fn("ComputeSessionService.inspectRuntimes")(function* (
+    input: ComputeRuntimeInspectionRequest,
+  ) {
+    // Sets aside any folder that stopped answering, before the blocking reads below.
+    if (toolDiscovery !== null) yield* toolDiscovery.snapshot(false);
+    const workingDirectory = yield* runtimeDirectory("inspect", input.workingDirectory);
+    const projectRoot =
+      input.projectRoot === null ? null : yield* runtimeDirectory("inspect", input.projectRoot);
+    yield* bindNewLanguages(projectRoot);
+    const requested = bindings.filter(
+      (binding) =>
+        input.languageIds === undefined || input.languageIds.has(binding.adapter.languageId),
+    );
+    // Each language is independent: a slow R probe never holds back Python.
+    return yield* Effect.forEach(
+      requested,
+      (binding) => {
+        const languageId = binding.adapter.languageId;
+        const configuredExecutable = input.configuredExecutables[languageId] ?? null;
+        return inspectionSnapshot(
+          JSON.stringify([
+            languageId,
+            projectRoot,
+            workingDirectory,
+            configuredExecutable,
+            input.chosenForProject?.has(languageId) === true,
+          ]),
+          inspectLanguage(binding, {
+            projectRoot,
+            workingDirectory,
+            configuredExecutable,
+            chosenForProject: input.chosenForProject?.has(languageId) === true,
+            refresh: input.refresh,
+          }),
+          input.refresh,
         );
-        return {
-          descriptor: descriptorFor(binding),
-          managedRuntime,
-          toolkits: binding.toolkitSupport?.descriptors ?? [],
-          runtimes,
-        };
-      }),
+      },
+      { concurrency: "unbounded" },
     );
   });
 
@@ -658,7 +879,10 @@ const make = Effect.gen(function* () {
       options?: ComputeManagedRuntimeProvisionOptions,
     ) {
       const controller = yield* managedController(languageId);
-      if (action === "remove" && !controller.tracksUsage) {
+      const destructive =
+        action === "remove" ||
+        (controller.rebuildsInPlace === true && (action === "install" || action === "repair"));
+      if (destructive && !controller.tracksUsage) {
         const liveSessions = yield* Ref.get(sessionsRef);
         if (
           [...liveSessions.values()].some((session) => session.adapter.languageId === languageId) ||
@@ -667,7 +891,9 @@ const make = Effect.gen(function* () {
           return yield* computeError(
             "manage",
             "operation-failed",
-            `Stop live ${languageId} sessions and finish connection verification before removing its Scient-managed runtime.`,
+            action === "remove"
+              ? `Stop live ${languageId} sessions and finish connection verification before removing its Scient-managed runtime.`
+              : `Stop live ${languageId} sessions before rebuilding its kernel.`,
           );
         }
       }
@@ -1087,6 +1313,25 @@ const make = Effect.gen(function* () {
       yield* Effect.forEach(changed, (execution) => publishExecution(live, execution), {
         discard: true,
       });
+    },
+  );
+
+  /** A notebook stops at the first cell that did not succeed; later cells depend on it. */
+  const cancelQueuedNotebookCells = Effect.fn("ComputeSessionService.cancelQueuedNotebookCells")(
+    function* (live: LiveComputeSession, source: ComputeExecutionSource) {
+      if (source._tag !== "document" || source.cell === undefined) return;
+      const pending = yield* Ref.get(live.pendingRef);
+      for (const executionId of (yield* Ref.get(live.queueRef)).pending) {
+        const queued = pending.get(executionId)?.request.source;
+        if (queued?._tag !== "document" || queued.cell === undefined) continue;
+        if (queued.path !== source.path) continue;
+        yield* Ref.update(
+          live.queueRef,
+          (queue) => cancelComputeExecution(queue, executionId).state,
+        );
+        yield* setExecutionStatus("submit", live, executionId, "cancelled");
+        yield* appendJournal("submit", live, "execution-cancelled", null, executionId);
+      }
     },
   );
 
@@ -1964,9 +2209,17 @@ const make = Effect.gen(function* () {
         if (event.generation !== record.generation) return false;
         const executionId = ComputeExecutionId.make(event.requestId);
         yield* collectProjectOutputs(live, event);
-        yield* setExecutionStatus("submit", live, executionId, event.outcome);
+        const finished = (yield* Ref.get(live.pendingRef)).get(executionId);
+        yield* setExecutionStatus("submit", live, executionId, event.outcome, (result) =>
+          event.executionCount === undefined
+            ? result
+            : { ...result, executionCount: event.executionCount },
+        );
         yield* Ref.update(live.queueRef, (queue) => finishComputeExecution(queue, executionId));
         yield* appendJournal("submit", live, "execution-finished", event.outcome, executionId);
+        if (event.outcome !== "succeeded" && finished !== undefined) {
+          yield* cancelQueuedNotebookCells(live, finished.request.source);
+        }
         yield* syncQueueCounters("submit", live);
         return true;
       }
@@ -2227,6 +2480,7 @@ const make = Effect.gen(function* () {
     input: ComputeStartSessionInput,
   ) {
     if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
+    yield* bindNewLanguages(input.workingDirectory);
     const binding = bindings.find((candidate) => candidate.adapter.languageId === input.languageId);
     if (binding === undefined) {
       return yield* computeError(
@@ -2263,36 +2517,59 @@ const make = Effect.gen(function* () {
       .pipe(
         Effect.mapError((cause) => computeError("start", "runtime-missing", cause.message, cause)),
       );
-    // A default may prefer the managed runtime; a deliberate session choice
-    // must not. The configured profile also covers an alias whose probe
-    // reports a different canonical executable path.
-    const candidate =
+    const verifyCandidate = (profile: ComputeRuntimeProfile) =>
+      binding.adapter.verify({ profile, cwd: projectRoot, environment }).pipe(
+        Effect.map((verification) => ({ profile, verification })),
+        Effect.mapError((cause) => computeError("start", "runtime-unusable", cause.message, cause)),
+      );
+    // A one-run choice is exact; otherwise the same rule as inspection decides, so Automatic never
+    // treats the first runtime found as a pin and an explicit or project runtime is never replaced.
+    const requested =
       input.requestedExecutable === undefined
-        ? profiles[0]
+        ? null
         : (profiles.find((profile) => profile.executable === input.requestedExecutable) ??
           profiles.find((profile) => profile.source === "configured"));
-    if (candidate === undefined) {
+    if (input.requestedExecutable !== undefined && requested == null) {
       return yield* computeError(
         "start",
         "runtime-missing",
-        input.requestedExecutable === undefined
-          ? `No ${input.languageId} runtime was found for this project.`
-          : "The selected runtime is no longer available. Refresh runtimes and choose it again.",
+        "The selected runtime is no longer available. Refresh runtimes and choose it again.",
       );
     }
-    const verification = yield* binding.adapter
-      .verify({ profile: candidate, cwd: projectRoot, environment })
-      .pipe(
-        Effect.mapError((cause) => computeError("start", "runtime-unusable", cause.message, cause)),
-      );
-    if (verification.readiness !== "ready") {
+    const explicit =
+      input.chosenForProject === true || binding.adapter.selectedExecutable === undefined
+        ? input.configuredExecutable
+        : yield* binding.adapter
+            .selectedExecutable({ projectRoot, configuredExecutable: input.configuredExecutable })
+            .pipe(
+              Effect.mapError((cause) =>
+                computeError("start", "runtime-missing", cause.message, cause),
+              ),
+            );
+    const choice =
+      requested != null
+        ? yield* verifyCandidate(requested).pipe(
+            Effect.map((checked) =>
+              checked.verification.readiness === "ready"
+                ? { selected: checked, problem: null }
+                : { selected: null, problem: checked.verification.message, blocker: checked },
+            ),
+          )
+        : yield* chooseRuntime(profiles, explicit, verifyCandidate, {
+            chosenForProject: input.chosenForProject === true,
+          });
+    if (choice.selected === null) {
+      const blocker = "blocker" in choice ? choice.blocker : null;
       return yield* computeError(
         "start",
-        "runtime-unusable",
-        verification.message ??
-          `The ${input.languageId} runtime at ${candidate.executable} cannot be used.`,
+        blocker == null ? "runtime-missing" : "runtime-unusable",
+        choice.problem ??
+          (blocker == null
+            ? `No ${input.languageId} runtime was found for this project.`
+            : `The ${input.languageId} runtime at ${blocker.profile.executable} cannot be used.`),
       );
     }
+    const { verification } = choice.selected;
     const launch = yield* binding.adapter
       .prepareLaunch({ profile: verification.profile, cwd: projectRoot, environment })
       .pipe(
@@ -2369,6 +2646,7 @@ const make = Effect.gen(function* () {
       sessionId: input.sessionId,
       projectId: input.projectId,
       label: labelText(input.label),
+      ...(input.owner === undefined ? {} : { owner: input.owner }),
       languageId: binding.adapter.languageId,
       transportKind: binding.adapter.transportKind,
       workingDirectory: shortText(projectRoot),
@@ -2434,6 +2712,7 @@ const make = Effect.gen(function* () {
         languageId: input.languageId,
         workingDirectory: input.workingDirectory,
         configuredExecutable: input.configuredExecutable,
+        chosenForProject: input.chosenForProject,
         requestedExecutable: input.requestedExecutable,
         ...(input.runOnce === undefined ? {} : { runOnce: input.runOnce }),
       },
@@ -2510,6 +2789,7 @@ const make = Effect.gen(function* () {
               existing.startRequest.languageId !== input.languageId ||
               existing.startRequest.workingDirectory !== input.workingDirectory ||
               existing.startRequest.configuredExecutable !== input.configuredExecutable ||
+              existing.startRequest.chosenForProject !== input.chosenForProject ||
               existing.startRequest.requestedExecutable !== input.requestedExecutable ||
               !sameRunOnce(existing.startRequest.runOnce, input.runOnce)
             ) {
@@ -2666,6 +2946,7 @@ const make = Effect.gen(function* () {
       code: input.code,
       codeHash: codeHash(input.code),
       source: input.source,
+      ...(input.actor === undefined ? {} : { actor: input.actor }),
       submittedAt,
       environmentFingerprint: record.environmentFingerprint,
     };
@@ -2712,6 +2993,45 @@ const make = Effect.gen(function* () {
       .pipe(Effect.tapError((error) => failClosedOnPersistenceError(live, error)));
     yield* dispatch(live, admitted.dispatch);
     return admitted.execution;
+  });
+
+  /** One admission: no cell can finish and stop the run while later cells are still arriving. */
+  const submitExecutions = Effect.fn("ComputeSessionService.submitExecutions")(function* (input: {
+    readonly projectId: ComputeProjectId;
+    readonly sessionId: ComputeSessionId;
+    readonly submissions: ReadonlyArray<ComputeSubmitExecutionInput>;
+  }) {
+    const live = yield* requireLiveSession("submit", input.projectId, input.sessionId);
+    const ids = new Set(input.submissions.map((submission) => submission.executionId));
+    if (ids.size !== input.submissions.length) {
+      return yield* computeError("submit", "execution-conflict", "A run repeats an execution id.");
+    }
+    const admitted: Array<Effect.Success<ReturnType<typeof admitSubmission>>> = [];
+    const outcome = yield* live.mutation
+      .withPermits(1)(
+        Effect.gen(function* () {
+          const queue = yield* Ref.get(live.queueRef);
+          const room = MAXIMUM_PENDING_COMPUTE_EXECUTIONS - queue.pending.length;
+          if (input.submissions.length > room) {
+            return yield* computeError(
+              "submit",
+              "queue-full",
+              "This run has more cells than the session can queue.",
+            );
+          }
+          for (const submission of input.submissions) {
+            admitted.push(yield* admitSubmission(live, submission));
+          }
+        }),
+      )
+      .pipe(
+        Effect.tapError((error) => failClosedOnPersistenceError(live, error)),
+        Effect.exit,
+      );
+    // Whatever was admitted has a queue slot, so it must run even if a later cell was refused.
+    yield* Effect.forEach(admitted, (entry) => dispatch(live, entry.dispatch), { discard: true });
+    if (Exit.isFailure(outcome)) return yield* Effect.failCause(outcome.cause);
+    return admitted.map((entry) => entry.execution);
   });
 
   const loadStoredExecution = (
@@ -2884,37 +3204,50 @@ const make = Effect.gen(function* () {
     return yield* Ref.get(live.recordRef);
   });
 
-  const inspectVariables = Effect.fn("ComputeSessionService.inspectVariables")(function* (
+  /**
+   * The idle current generation's channel, for a read of the live namespace. A slow read must
+   * never hold the lifecycle lease and prevent Stop; the transport rechecks generation at send.
+   */
+  const idleNamespaceChannel = Effect.fn("ComputeSessionService.idleNamespaceChannel")(function* (
+    operation: "variables" | "table",
     input: ComputeSessionCommandInput,
   ) {
-    const live = yield* requireLiveSession("variables", input.projectId, input.sessionId);
+    const live = yield* requireLiveSession(operation, input.projectId, input.sessionId);
+    const capability = operation === "table" ? "tables" : "variables";
     const generation = yield* live.mutation.withPermits(1)(
       Effect.gen(function* () {
         const record = yield* Ref.get(live.recordRef);
-        yield* requireCurrentGeneration("variables", live, record, input.expectedGeneration);
+        yield* requireCurrentGeneration(operation, live, record, input.expectedGeneration);
         if (record.status !== "ready" || record.activity !== "idle") {
           return yield* computeError(
-            "variables",
+            operation,
             "session-not-running",
             record.activity === "busy"
               ? "Current variables are available after the running code finishes."
               : `This session is ${record.status} and cannot inspect variables.`,
           );
         }
-        if (!(yield* Ref.get(live.capabilitiesRef)).has("variables")) {
+        if (!(yield* Ref.get(live.capabilitiesRef)).has(capability)) {
           return yield* computeError(
-            "variables",
+            operation,
             "capability-missing",
-            `This ${live.adapter.languageId} runtime does not support variable inspection.`,
+            operation === "table"
+              ? `This ${live.adapter.languageId} runtime cannot show variables as tables.`
+              : `This ${live.adapter.languageId} runtime does not support variable inspection.`,
           );
         }
         return record.generation;
       }),
     );
-    // A slow runtime inspection must never hold the lifecycle lease and
-    // prevent Stop. The transport rechecks generation and stopping at send.
     if (live.workspaceReceipt) yield* live.workspaceReceipt.assertCurrent;
-    return yield* (yield* channelFor(live, "variables"))
+    return { generation, channel: yield* channelFor(live, operation) };
+  });
+
+  const inspectVariables = Effect.fn("ComputeSessionService.inspectVariables")(function* (
+    input: ComputeSessionCommandInput,
+  ) {
+    const { generation, channel } = yield* idleNamespaceChannel("variables", input);
+    return yield* channel
       .inspectVariables({
         requestId: ComputeRequestId.make(NodeCrypto.randomUUID()),
         expectedGeneration: generation,
@@ -2923,6 +3256,25 @@ const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           computeError("variables", "operation-failed", cause.message, cause),
         ),
+      );
+  });
+
+  const readTable = Effect.fn("ComputeSessionService.readTable")(function* (
+    input: ComputeSessionCommandInput & {
+      readonly name: string;
+      readonly query: DataTableQuery;
+    },
+  ) {
+    const { generation, channel } = yield* idleNamespaceChannel("table", input);
+    return yield* channel
+      .inspectTable({
+        requestId: ComputeRequestId.make(NodeCrypto.randomUUID()),
+        expectedGeneration: generation,
+        name: input.name,
+        query: input.query,
+      })
+      .pipe(
+        Effect.mapError((cause) => computeError("table", "operation-failed", cause.message, cause)),
       );
   });
 
@@ -3377,7 +3729,9 @@ const make = Effect.gen(function* () {
   });
 
   return ComputeSessionService.of({
-    runtimeDescriptors: bindings.map(descriptorFor),
+    get runtimeDescriptors() {
+      return bindings.map(descriptorFor);
+    },
     runtimeInventory,
     inspectRuntimes,
     verifyRuntime,
@@ -3386,9 +3740,11 @@ const make = Effect.gen(function* () {
     cancelManagedRuntime,
     startSession: scopedStart,
     submitExecution: guarded("submit", submitExecution),
+    submitExecutions: guarded("submit", submitExecutions),
     cancelExecution: guarded("cancel", cancelExecution),
     interruptSession: guarded("interrupt", interruptSession),
     inspectVariables: guarded("variables", inspectVariables),
+    readTable: guarded("table", readTable),
     restartSession: guarded("restart", restartSession),
     stopSession: guarded("stop", stopSession),
     listSessions: scopedList,

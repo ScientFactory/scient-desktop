@@ -21,7 +21,6 @@ import {
 import { projectEnvironment } from "~/state/projects";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 
-import { hasExternalFileConflict } from "./fileRefreshPolicy";
 const isPublicationAttention = Schema.is(ProjectFilePublicationAttention);
 
 const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
@@ -105,7 +104,6 @@ export function useWorkspaceFileRefresh(input: {
   readonly relativePath: string | null;
   readonly loadAsText: boolean;
   readonly sourcePending: boolean;
-  readonly surfaceOwnsConflictDetection?: boolean;
   readonly workspaceMutationId: string | null;
   readonly watchChanges?: boolean;
 }) {
@@ -131,11 +129,6 @@ export function useWorkspaceFileRefresh(input: {
   });
   const [viewerRefreshKey, setViewerRefreshKey] = useState(0);
   const lastObservedChangeRef = useRef<object | null>(null);
-  const lastConfirmedSaveRef = useRef<{
-    readonly relativePath: string;
-    readonly contents: string;
-    readonly revision: string;
-  } | null>(null);
   const publicationBlocked =
     saveError?.attention !== undefined ||
     file.authoritativeData?.publicationAttention !== undefined;
@@ -173,7 +166,6 @@ export function useWorkspaceFileRefresh(input: {
     if (observedPath.current === input.relativePath) return;
     observedPath.current = input.relativePath;
     lastObservedChangeRef.current = null;
-    lastConfirmedSaveRef.current = null;
   }, [input.relativePath]);
 
   // A retained publication read with the file blocks saving until it is reviewed.
@@ -207,42 +199,6 @@ export function useWorkspaceFileRefresh(input: {
     // remount, and realigns the viewer after subscription reconnects.
     refreshViewer();
   }, [fileChanges.change, refreshViewer]);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- raises the external-change reload notice when the authoritative file read conflicts with a pending save
-  useEffect(() => {
-    const relativePath = input.relativePath;
-    const authoritative = file.authoritativeData;
-    if (relativePath === null || authoritative === null) return;
-    if (
-      !input.surfaceOwnsConflictDetection &&
-      hasExternalFileConflict({
-        authoritative,
-        optimistic: input.sourcePending ? file.data : null,
-        lastConfirmedSave:
-          lastConfirmedSaveRef.current?.relativePath === relativePath
-            ? lastConfirmedSaveRef.current
-            : null,
-        pending: input.sourcePending,
-      })
-    ) {
-      setReloadNotice((current) =>
-        current?.kind === "confirm-overwrite" && current.relativePath === relativePath
-          ? current
-          : {
-              kind: "external-change",
-              relativePath,
-              contents: authoritative.contents,
-              revision: authoritative.revision,
-            },
-      );
-    }
-  }, [
-    file.authoritativeData,
-    file.data,
-    input.relativePath,
-    input.sourcePending,
-    input.surfaceOwnsConflictDetection,
-  ]);
 
   const [noticeSource, setNoticeSource] = useState(file.authoritativeData);
   if (noticeSource !== file.authoritativeData) {
@@ -315,15 +271,12 @@ export function useWorkspaceFileRefresh(input: {
     });
   };
 
-  const handleSaveConfirmed = useStableCallback(
-    (path: string, contents: string, revision: string) => {
-      lastConfirmedSaveRef.current = { relativePath: path, contents, revision };
-      setSaveError((current) =>
-        current?.relativePath === path && current.attention === undefined ? null : current,
-      );
-      setReloadNotice((current) => (current?.relativePath === path ? null : current));
-    },
-  );
+  const handleSaveConfirmed = useStableCallback((path: string) => {
+    setSaveError((current) =>
+      current?.relativePath === path && current.attention === undefined ? null : current,
+    );
+    setReloadNotice((current) => (current?.relativePath === path ? null : current));
+  });
 
   /** A surface-observed external change conflicts with the local draft. */
   const handleExternalConflict = (path: string, contents: string, revision: string) => {
@@ -423,7 +376,8 @@ export function useWorkspaceFileRefresh(input: {
   });
 
   return {
-    automaticRefreshUnavailable: fileChanges.unavailable,
+    // A missing file has nothing to follow, which is not a paused watcher.
+    automaticRefreshUnavailable: fileChanges.unavailable && file.failureReason !== "not_found",
     cancelReloadNotice,
     file,
     handleExternalConflict,

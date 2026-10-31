@@ -1,7 +1,6 @@
 import type {
   ComputeExecutionId,
   ComputeExecutionRecord,
-  ComputeOutput,
   ComputeSessionRecord,
 } from "@t3tools/contracts";
 
@@ -14,7 +13,6 @@ import {
 } from "./computeFigureReference";
 import type { ComputeFigureResource, ComputeStaticImageOutput } from "./computeResultPresentation";
 
-type ComputeImageOutput = Extract<ComputeOutput, { readonly _tag: "image" }>;
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
 
 export interface ComputeFigurePresentation {
@@ -24,6 +22,15 @@ export interface ComputeFigurePresentation {
   readonly viewer: PreviewStaticImageSurfaceDescriptor;
   readonly reference: ComputeFigureReference;
   readonly nativeDownload: ComputeFigureNativeDownload | null;
+  /** Copies Save to project can write; empty for a figure that is already a project file. */
+  readonly saveTargets: ReadonlyArray<ComputeFigureSaveTarget>;
+}
+
+export interface ComputeFigureSaveTarget {
+  readonly format: string;
+  readonly kind: "image" | "resource";
+  readonly contentHash: string;
+  readonly relativePath: string;
 }
 
 export interface ComputeFigureNativeDownload {
@@ -35,8 +42,15 @@ export interface ComputeFigureNativeDownload {
   readonly byteLength: ComputeFigureResource["byteLength"];
 }
 
-function figureNames(output: ComputeImageOutput, runtimeDisplayOrdinal: number) {
-  const extension = output.mediaType === "image/png" ? "png" : "svg";
+const FIGURE_EXTENSIONS = {
+  "image/png": "png",
+  "image/svg+xml": "svg",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+} as const satisfies Record<ComputeStaticImageOutput["mediaType"], string>;
+
+function figureNames(output: ComputeStaticImageOutput, runtimeDisplayOrdinal: number) {
+  const extension = FIGURE_EXTENSIONS[output.mediaType];
   const projectPath = output.origin?._tag === "project-file" ? output.origin.path : null;
   const fileName = projectPath?.split("/").at(-1) ?? `figure-${runtimeDisplayOrdinal}.${extension}`;
   return {
@@ -46,10 +60,41 @@ function figureNames(output: ComputeImageOutput, runtimeDisplayOrdinal: number) 
   };
 }
 
+/** `figures/<source file stem>.<ext>`; the server adds -2, -3… instead of overwriting. */
+function figureSaveTargets(
+  output: ComputeStaticImageOutput,
+  source: ComputeExecutionSource | null,
+): ReadonlyArray<ComputeFigureSaveTarget> {
+  if (output.origin?._tag === "project-file") return [];
+  const fileName = source?._tag === "document" ? (source.path.split("/").at(-1) ?? "") : "";
+  const stem = fileName.replace(/\.[^.]*$/u, "") || "figure";
+  const extension = FIGURE_EXTENSIONS[output.mediaType];
+  const image: ComputeFigureSaveTarget = {
+    format: extension.toUpperCase(),
+    kind:
+      output.mediaType === "image/png" || output.mediaType === "image/svg+xml"
+        ? "image"
+        : "resource",
+    contentHash: output.contentHash,
+    relativePath: `figures/${stem}.${extension}`,
+  };
+  return output.pdf === undefined
+    ? [image]
+    : [
+        image,
+        {
+          format: "PDF",
+          kind: "resource",
+          contentHash: output.pdf.contentHash,
+          relativePath: `figures/${stem}.pdf`,
+        },
+      ];
+}
+
 function computeOutputResource(input: {
   readonly session: Pick<ComputeSessionRecord, "projectId" | "sessionId">;
   readonly executionId: ComputeExecutionId | null;
-  readonly output: ComputeImageOutput;
+  readonly output: ComputeStaticImageOutput;
 }) {
   return {
     _tag: "compute-output" as const,
@@ -65,7 +110,7 @@ export function computeFigureDescriptorForRevision(input: {
   readonly reference: ComputeFigureReference;
   readonly session: Pick<ComputeSessionRecord, "projectId" | "sessionId">;
   readonly executionId: ComputeExecutionId | null;
-  readonly output: ComputeImageOutput;
+  readonly output: ComputeStaticImageOutput;
   readonly displayOrdinal?: number;
 }): PreviewStaticImageSurfaceDescriptor {
   const ordinal =
@@ -173,5 +218,11 @@ export function computeFigurePresentation(input: {
           fileName: names.fileName.replace(/\.(png|svg)$/i, ".fig"),
           byteLength: input.output.nativeFigure.byteLength,
         };
-  return { inline, viewer, reference, nativeDownload };
+  return {
+    inline,
+    viewer,
+    reference,
+    nativeDownload,
+    saveTargets: figureSaveTargets(input.output, input.source),
+  };
 }

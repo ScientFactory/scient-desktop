@@ -506,6 +506,30 @@ describe("durable generic file publication", () => {
     expect(disk).toBe("C");
   });
 
+  it("waits without complaint for a file that does not exist, and saves once it has been read", async () => {
+    const onRecoveryFailure = vi.fn();
+    const persist = vi.fn(async (_source: string, _revision: string | undefined, _id: string) =>
+      AsyncResult.success<Result, Error>({ revision: "r2" }),
+    );
+    const owner = open({ initialSource: "", initialRevision: "", persist, onRecoveryFailure });
+
+    expect(await owner.ready()).toBe(true);
+    expect(onRecoveryFailure).not.toHaveBeenCalled();
+
+    owner.change("typed before any read");
+    await owner.flush();
+    expect(persist).not.toHaveBeenCalled();
+
+    const later = open({ initialSource: "", initialRevision: "", persist, onRecoveryFailure });
+    await later.ready();
+    later.syncConfirmedFileRevision("rB", "B");
+    later.change("B and more");
+    await later.flush();
+    expect(persist).toHaveBeenCalledOnce();
+    expect(persist.mock.calls[0]).toEqual(["B and more", "rB", expect.any(String)]);
+    expect(onRecoveryFailure).not.toHaveBeenCalled();
+  });
+
   it("debounces shared input, respects suspension and flushes the actual newest source on final disposal", async () => {
     let disk = "A";
     const owner = open({

@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   query: vi.fn(),
   updateAtom: {},
-  toggle: null as null | ((enabled: boolean) => void),
   known: true,
   pending: false,
   refreshRuntimeInventory: vi.fn(),
@@ -51,11 +50,17 @@ vi.mock("~/state/query", () => ({
                   sourceExtensions: [".m"],
                   capabilities: [],
                 },
-                enabled: false,
                 configuredExecutable: null,
                 managedRuntime: null,
                 toolkits: [],
-                installations: [],
+                installations: [
+                  {
+                    executable: "/matlab",
+                    source: "conventional",
+                    version: "R2026a",
+                    problem: null,
+                  },
+                ],
                 failureMessage: null,
               },
             ],
@@ -70,13 +75,11 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (atom: unknown) =>
     atom === mocks.updateAtom ? mocks.updateSettings : mocks.refreshRuntimeInventory,
 }));
-vi.mock("~/components/ui/switch", () => ({
-  Switch: ({ onCheckedChange }: { onCheckedChange: (enabled: boolean) => void }) => {
-    mocks.toggle = onCheckedChange;
-    return <button type="button">Toggle</button>;
-  },
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children }: { children?: ReactNode }) => <a href="#language">{children}</a>,
 }));
 vi.mock("~/components/settings/settingsLayout", () => ({
+  useSettingsSearchTarget: () => undefined,
   SettingsPageContainer: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SettingsSection: ({
     children,
@@ -110,6 +113,7 @@ vi.mock("~/components/settings/settingsLayout", () => ({
   ),
 }));
 
+import { ComputeLanguagePage } from "./ComputeLanguagePage";
 import { ScientificComputingSettings } from "./ScientificComputingSettings";
 
 describe("Scientific Computing environment ownership", () => {
@@ -117,29 +121,18 @@ describe("Scientific Computing environment ownership", () => {
     vi.clearAllMocks();
     mocks.known = true;
     mocks.pending = false;
-    mocks.toggle = null;
     mocks.updateSettings.mockResolvedValue({ _tag: "Success", value: null });
     mocks.refreshRuntimeInventory.mockResolvedValue({ _tag: "Success", value: null });
   });
 
-  it("reads, edits, and inspects the requested remote server, not the primary", () => {
-    const markup = renderToStaticMarkup(
-      <ScientificComputingSettings environmentId={EnvironmentId.make("remote-server")} />,
+  it("reads and inspects the requested remote server, not the primary", () => {
+    renderToStaticMarkup(
+      <ComputeLanguagePage
+        languageId="matlab"
+        environmentId={EnvironmentId.make("remote-server")}
+      />,
     );
-    expect(markup).toContain("remote-server");
     expect(mocks.readSettings).toHaveBeenCalledWith("remote-server");
-    mocks.toggle?.(true);
-    expect(mocks.updateSettings).toHaveBeenCalledWith({
-      environmentId: "remote-server",
-      input: {
-        patch: {
-          scientificComputing: {
-            schemaVersion: 1,
-            languages: { matlab: { enabled: true, executable: "" } },
-          },
-        },
-      },
-    });
     expect(mocks.query).toHaveBeenCalledWith({
       environmentId: "remote-server",
       input: {},
@@ -148,10 +141,9 @@ describe("Scientific Computing environment ownership", () => {
   });
 
   it("uses the primary environment only when none was requested", () => {
-    const markup = renderToStaticMarkup(<ScientificComputingSettings />);
+    const markup = renderToStaticMarkup(<ComputeLanguagePage languageId="matlab" />);
     expect(mocks.readSettings).toHaveBeenCalledWith("local-server");
-    expect(markup).not.toContain("More scientific tools are coming soon");
-    expect(markup).toContain("Default runtime");
+    expect(markup).toContain("Runtime");
   });
 
   it("renders truthful language cards while the inventory is loading", () => {

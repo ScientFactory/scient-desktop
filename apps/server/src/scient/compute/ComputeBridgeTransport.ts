@@ -3,7 +3,6 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   COMPUTE_PROTOCOL_VERSION,
-  ComputeLanguageId,
   ComputeRepresentationBundle,
   ComputeSessionGeneration,
   ComputeTransportError,
@@ -50,12 +49,15 @@ import {
   type BridgeMessage,
   type DisplayPayload,
   type KernelPortsPayload,
+  type TablePayload,
 } from "./BridgeProtocol.ts";
 import { inspectComputeStaticImage } from "./ComputeStaticImage.ts";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 const DEFAULT_INTERRUPT_TIMEOUT_MS = 10_000;
 const DEFAULT_VARIABLES_TIMEOUT_MS = 10_000;
+// The bridge gives the kernel 30 seconds to sort or search a large table.
+const DEFAULT_TABLE_TIMEOUT_MS = 35_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 15_000;
 const DEFAULT_FINALIZER_SHUTDOWN_MS = 5_000;
 const DEFAULT_MAX_EVENT_QUEUE_BYTES = 32 * 1024 * 1024;
@@ -174,11 +176,17 @@ function estimateEventBytes(event: ComputeTransportEvent): number {
  * image without ending the namespace and discarding variables; only protocol-invalid frames are
  * fatal.
  */
+// Kernels may wrap base64 into MIME-style lines (IRkernel does) or leave off the padding (Ark does).
+const readBase64 = (data: string): Uint8Array | null => {
+  const compact = data.replace(/\s+/gu, "");
+  return compact.length % 4 !== 1 && /^[A-Za-z0-9+/]*={0,2}$/.test(compact)
+    ? new Uint8Array(Buffer.from(compact, "base64"))
+    : null;
+};
+
 function decodePngPayload(data: string): Uint8Array | string {
-  if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
-    return "An image output was dropped: its data was not readable base64.";
-  }
-  const bytes = new Uint8Array(Buffer.from(data, "base64"));
+  const bytes = readBase64(data);
+  if (bytes === null) return "An image output was dropped: its data was not readable base64.";
   if (bytes.byteLength > MAX_PNG_DECODED_BYTES) {
     return "An image output was dropped: it exceeded the decoded byte limit.";
   }
@@ -200,10 +208,8 @@ function decodeSvgPayload(data: string): Uint8Array | string {
 }
 
 function decodeBase64Payload(data: string): Uint8Array | string {
-  if (data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
-    return "A rich representation was dropped: its data was not readable base64.";
-  }
-  const bytes = new Uint8Array(Buffer.from(data, "base64"));
+  const bytes = readBase64(data);
+  if (bytes === null) return "A rich representation was dropped: its data was not readable base64.";
   if (bytes.byteLength > MAX_PNG_DECODED_BYTES) {
     return "A rich representation was dropped: it exceeded the decoded byte limit.";
   }
@@ -295,9 +301,8 @@ function materializeRichDisplay(payload: Exclude<RichDisplayPayload, { kind: "cl
     representations,
     metadataJson,
   });
-  return Option.isNone(decoded)
-    ? "A rich representation was dropped because its bounded bundle was invalid."
-    : { bundle: decoded.value, resources, warning };
+  if (Option.isSome(decoded)) return { bundle: decoded.value, resources, warning };
+  return warning ?? "A rich representation was dropped because its bounded bundle was invalid.";
 }
 
 function hasCapabilities(
@@ -596,6 +601,7 @@ export function makeComputeBridgeTransport(
           "kernel-ready",
           "interrupt-result",
           "variables",
+          "table",
           "restarted",
           "shutdown-complete",
         ]);
@@ -832,6 +838,7 @@ export function makeComputeBridgeTransport(
             }
             const payload = message.payload as {
               outcome: "succeeded" | "failed" | "cancelled";
+              executionCount?: number | null;
             };
             yield* emit({
               _tag: "completed",
@@ -840,6 +847,9 @@ export function makeComputeBridgeTransport(
               requestId: message.requestId!,
               generation: message.generation,
               outcome: payload.outcome,
+              ...(typeof payload.executionCount === "number"
+                ? { executionCount: payload.executionCount }
+                : {}),
             });
             MutableRef.set(activeRequestId, null);
             break;
@@ -1090,7 +1100,9 @@ export function makeComputeBridgeTransport(
             if (ackPayload.ownerToken !== ownerToken) {
               return yield* transportError("handshake", "Owner token mismatch.");
             }
-            if (ackPayload.pid !== handle.pid) {
+            // On Windows a virtual environment's python.exe is a launcher that starts the real
+            // Python, so the two processes differ. The owner token above still proves the peer.
+            if (ackPayload.platform !== "win32" && ackPayload.pid !== handle.pid) {
               return yield* transportError("handshake", "Bridge PID mismatch.");
             }
             if (!hasCapabilities(ackPayload.capabilities, request.requiredCapabilities)) {
@@ -1107,13 +1119,9 @@ export function makeComputeBridgeTransport(
               {
                 type: "start-kernel",
                 generation: request.generation,
-                // A null kernel name asks the bridge for the interpreter that
-                // is already running it, which is what a Python session wants.
-                // A future language ships its own kernel spec name here without
-                // the bridge having to guess from the launch plan.
                 payload: {
                   workingDirectory: request.launch.cwd,
-                  kernelName: null,
+                  kernel: request.launch.kernel ?? null,
                   ...(endpointLease === null ? {} : { kernelPorts: endpointLease.ports }),
                 },
               },
@@ -1130,17 +1138,19 @@ export function makeComputeBridgeTransport(
             if (payload.protocolVersion !== COMPUTE_PROTOCOL_VERSION) {
               return yield* transportError("handshake", "Kernel protocol version mismatch.");
             }
-            if (payload.languageId !== request.languageId) {
+            const expectedLanguage = request.launch.kernel?.language ?? request.languageId;
+            // Installed kernels name their language in either case ("Rust", "rust").
+            if (payload.languageId.toLowerCase() !== expectedLanguage.toLowerCase()) {
               return yield* transportError(
                 "handshake",
-                `Expected language '${request.languageId}', received '${payload.languageId}'.`,
+                `Expected language '${expectedLanguage}', received '${payload.languageId}'.`,
               );
             }
             if (!hasCapabilities(payload.capabilities, request.requiredCapabilities)) {
               return yield* transportError("handshake", "Kernel capabilities are incomplete.");
             }
             const runtime: ComputeRuntimeIdentity = {
-              languageId: ComputeLanguageId.make(payload.languageId),
+              languageId: request.languageId,
               transportKind: ComputeTransportKind.make(request.transportKind),
               protocolVersion: payload.protocolVersion,
               languageVersion: payload.languageVersion,
@@ -1181,51 +1191,58 @@ export function makeComputeBridgeTransport(
        * Keep execute outside commandGate: waiting behind restart only delays an inevitable
        * stale-generation refusal. writeGate still orders it atomically against other executions.
        */
+      const afterInspections: Effect.Effect<void> = Effect.suspend(() =>
+        MutableRef.get(inspectingVariables)
+          ? commandGate.withPermits(1)(Effect.void).pipe(Effect.andThen(afterInspections))
+          : Effect.void,
+      );
       const execute: ComputeChannel["execute"] = (executeRequest) =>
-        Effect.suspend(() => {
-          if (MutableRef.get(transitioning)) {
-            return Effect.fail(transportError("execute", "The runtime is changing generation."));
-          }
-          if (MutableRef.get(activeRequestId) !== null) {
-            return Effect.fail(transportError("execute", "An execution is already active."));
-          }
-          if (MutableRef.get(inspectingVariables)) {
-            return Effect.fail(
-              transportError("execute", "The runtime is inspecting its current variables."),
-            );
-          }
-          if (estimateTextBytes(executeRequest.code) > 1024 * 1024) {
-            return Effect.fail(
-              transportError("execute", "Execution code exceeds the 1048576 byte limit."),
-            );
-          }
-          MutableRef.set(activeRequestId, executeRequest.requestId);
-          return ensureGeneration("execute", executeRequest.expectedGeneration).pipe(
-            Effect.andThen(
-              sendCommand(
-                "execute",
-                "execute",
-                {
-                  code: executeRequest.code,
-                  silent: false,
-                  storeHistory: true,
-                  ...(executeRequest.sourceContext === undefined
-                    ? {}
-                    : {
-                        sourceContext: executeRequest.sourceContext,
-                      }),
-                },
-                executeRequest.expectedGeneration,
-                executeRequest.requestId,
-              ),
-            ),
-            Effect.tapError(() =>
-              Effect.sync(() => {
-                MutableRef.set(activeRequestId, null);
-              }),
-            ),
-          );
-        });
+        // Reading variables is brief, so a run waits for it instead of being refused.
+        afterInspections.pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              if (MutableRef.get(transitioning)) {
+                return Effect.fail(
+                  transportError("execute", "The runtime is changing generation."),
+                );
+              }
+              if (MutableRef.get(activeRequestId) !== null) {
+                return Effect.fail(transportError("execute", "An execution is already active."));
+              }
+              if (estimateTextBytes(executeRequest.code) > 1024 * 1024) {
+                return Effect.fail(
+                  transportError("execute", "Execution code exceeds the 1048576 byte limit."),
+                );
+              }
+              MutableRef.set(activeRequestId, executeRequest.requestId);
+              return ensureGeneration("execute", executeRequest.expectedGeneration).pipe(
+                Effect.andThen(
+                  sendCommand(
+                    "execute",
+                    "execute",
+                    {
+                      code: executeRequest.code,
+                      silent: false,
+                      storeHistory: true,
+                      ...(executeRequest.sourceContext === undefined
+                        ? {}
+                        : {
+                            sourceContext: executeRequest.sourceContext,
+                          }),
+                    },
+                    executeRequest.expectedGeneration,
+                    executeRequest.requestId,
+                  ),
+                ),
+                Effect.tapError(() =>
+                  Effect.sync(() => {
+                    MutableRef.set(activeRequestId, null);
+                  }),
+                ),
+              );
+            }),
+          ),
+        );
 
       const interrupt: ComputeChannel["interrupt"] = (interruptRequest) =>
         commandGate.withPermits(1)(
@@ -1298,6 +1315,51 @@ export function makeComputeBridgeTransport(
                       truncated: payload.truncated,
                     } satisfies ComputeVariableSnapshot)
                   : Effect.fail(transportError("variables", payload.error));
+              }),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  MutableRef.set(inspectingVariables, false);
+                }),
+              ),
+            );
+          }),
+        );
+
+      const inspectTable: ComputeChannel["inspectTable"] = (tableRequest) =>
+        commandGate.withPermits(1)(
+          Effect.suspend(() => {
+            if (MutableRef.get(transitioning)) {
+              return Effect.fail(transportError("table", "The runtime is changing generation."));
+            }
+            if (MutableRef.get(activeRequestId) !== null) {
+              return Effect.fail(transportError("table", "An execution is already active."));
+            }
+            MutableRef.set(inspectingVariables, true);
+            return ensureGeneration("table", tableRequest.expectedGeneration).pipe(
+              Effect.andThen(
+                requestResponse(
+                  "table",
+                  {
+                    type: "inspect-table",
+                    payload: { name: tableRequest.name, query: tableRequest.query },
+                    generation: tableRequest.expectedGeneration,
+                    requestId: tableRequest.requestId,
+                  },
+                  {
+                    type: "table",
+                    generation: tableRequest.expectedGeneration,
+                    requestId: tableRequest.requestId,
+                  },
+                  DEFAULT_TABLE_TIMEOUT_MS,
+                ),
+              ),
+              Effect.flatMap((message) => {
+                const payload = message.payload as TablePayload;
+                return payload.table === null
+                  ? Effect.fail(
+                      transportError("table", payload.error ?? "The table could not be read."),
+                    )
+                  : Effect.succeed(payload.table);
               }),
               Effect.ensuring(
                 Effect.sync(() => {
@@ -1441,6 +1503,7 @@ export function makeComputeBridgeTransport(
         execute,
         interrupt,
         inspectVariables,
+        inspectTable,
         restart,
         shutdown,
       } satisfies ComputeChannel;

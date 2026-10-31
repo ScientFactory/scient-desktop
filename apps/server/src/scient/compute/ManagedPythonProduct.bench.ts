@@ -92,7 +92,8 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
             prefix: "scient-managed-python-project-",
           });
           const stateRoot = yield* fs.makeTempDirectoryScoped({
-            prefix: "scient-managed-python-state-",
+            // Short: Windows limits the path of a DLL deep inside the environment.
+            prefix: "smp-",
           });
           yield* Effect.promise(() => initializeScientProject({ root: projectRoot }));
 
@@ -156,7 +157,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
                   ...DEFAULT_SERVER_SETTINGS,
                   scientificComputing: {
                     schemaVersion: 1,
-                    languages: { [PYTHON]: { enabled: true, executable: "" } },
+                    languages: { [PYTHON]: { executable: "" } },
                   },
                 }),
               },

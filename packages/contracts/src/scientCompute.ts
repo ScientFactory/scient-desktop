@@ -2,6 +2,7 @@ import {
   ComputeCapability,
   ComputeExecutionId,
   ComputeExecutionRecord,
+  ComputeExecutionActor,
   ComputeExecutionSource,
   computeOutputByteLength,
   ComputeLanguageId,
@@ -14,12 +15,12 @@ import {
   ComputeProjectId,
   projectComputeOutputs,
   sameComputeRepresentationBundle,
-  selectComputeRepresentation,
   ComputeRuntimeProfile,
   ComputeRuntimeInstallation,
   ComputeRuntimeVerification,
   ComputeSessionGeneration,
   ComputeSessionId,
+  ComputeSessionOwner,
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeTransportKind,
@@ -37,12 +38,24 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-export { ComputeToolkitId, ComputeManagedToolkitChange };
+export {
+  ComputeExecutionActor,
+  ComputeManagedToolkitChange,
+  ComputeSessionOwner,
+  ComputeToolkitId,
+};
 
 const ComputeCwd = Schema.String.check(Schema.isMaxLength(4096));
 const ComputeExecutable = Schema.String.check(Schema.isMaxLength(4096));
 const ComputeCode = Schema.String.check(Schema.isMaxLength(1024 * 1024));
 const ComputeHistoryLimit = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }));
+
+/** What a language needs on this computer before Scient can run it. */
+export const ComputeLanguageSetup = Schema.Struct({
+  needs: Schema.String.check(Schema.isMaxLength(256)),
+  url: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(512))),
+});
+export type ComputeLanguageSetup = typeof ComputeLanguageSetup.Type;
 
 export const ComputeLanguageDescriptor = Schema.Struct({
   languageId: ComputeLanguageId,
@@ -51,6 +64,7 @@ export const ComputeLanguageDescriptor = Schema.Struct({
     Schema.isMaxLength(32),
   ),
   capabilities: Schema.Array(ComputeCapability).check(Schema.isMaxLength(32)),
+  setup: Schema.optionalKey(ComputeLanguageSetup),
 });
 export type ComputeLanguageDescriptor = typeof ComputeLanguageDescriptor.Type;
 
@@ -65,7 +79,8 @@ export type ComputeRuntimeCandidate = typeof ComputeRuntimeCandidate.Type;
 
 export const ComputeLanguageRuntimeInspection = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
-  enabled: Schema.Boolean,
+  /** Always true: a language that is found works. Older clients require the key. */
+  enabled: Schema.optionalKey(Schema.Boolean),
   configuredExecutable: Schema.NullOr(ComputeExecutable),
   managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
@@ -74,6 +89,19 @@ export const ComputeLanguageRuntimeInspection = Schema.Struct({
     .check(Schema.isMaxLength(64))
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   runtimes: Schema.Array(ComputeRuntimeCandidate).check(Schema.isMaxLength(64)),
+  /**
+   * What new sessions use. Automatic picks the best ready runtime; an explicit choice or the
+   * project's environment is used or blocks with its problem. Absent from older servers.
+   */
+  selection: Schema.optional(
+    Schema.Struct({
+      mode: Schema.Literals(["automatic", "explicit", "project"]),
+      executable: Schema.NullOr(ComputeExecutable),
+      problem: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
+    }),
+  ),
+  /** The check itself failed; this says nothing about what is installed. */
+  failure: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096)))),
 });
 export type ComputeLanguageRuntimeInspection = typeof ComputeLanguageRuntimeInspection.Type;
 
@@ -84,20 +112,44 @@ export const ComputeRuntimeInspection = Schema.Struct({
 });
 export type ComputeRuntimeInspection = typeof ComputeRuntimeInspection.Type;
 
+/** Something on this computer that belongs to a language, whether or not Scient can run it. */
+export const ComputeFoundTool = Schema.Struct({
+  name: Schema.String.check(Schema.isMaxLength(128)),
+  executable: ComputeExecutable,
+  version: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
+  origin: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
+  /** Why a location someone added cannot be used. */
+  problem: Schema.optional(Schema.String.check(Schema.isMaxLength(256))),
+});
+export type ComputeFoundTool = typeof ComputeFoundTool.Type;
+
 /** Cheap Settings data, deliberately separate from runnable candidates. */
 export const ComputeLanguageRuntimeInventory = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
-  enabled: Schema.Boolean,
+  /** Always true: a language that is found works. Older clients require the key. */
+  enabled: Schema.optionalKey(Schema.Boolean),
   configuredExecutable: Schema.NullOr(ComputeExecutable),
   managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus),
   toolkits: Schema.Array(ComputeToolkitDescriptor).check(Schema.isMaxLength(64)),
   installations: Schema.Array(ComputeRuntimeInstallation).check(Schema.isMaxLength(64)),
+  /** The language's own tools. Runtimes Scient runs are in `installations`. */
+  tools: Schema.optional(Schema.Array(ComputeFoundTool).check(Schema.isMaxLength(32))),
   failureMessage: Schema.NullOr(Schema.String.check(Schema.isMaxLength(4096))),
 });
 export type ComputeLanguageRuntimeInventory = typeof ComputeLanguageRuntimeInventory.Type;
 
+export const ComputeRuntimeInventoryInput = Schema.Struct({
+  /** Look again now, instead of answering from the last few minutes. */
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type ComputeRuntimeInventoryInput = typeof ComputeRuntimeInventoryInput.Type;
+
 export const ComputeRuntimeInventory = Schema.Struct({
-  languages: Schema.Array(ComputeLanguageRuntimeInventory).check(Schema.isMaxLength(32)),
+  languages: Schema.Array(ComputeLanguageRuntimeInventory).check(Schema.isMaxLength(256)),
+  /** Some places could not be read in time, so an empty row may only mean not checked yet. */
+  incomplete: Schema.optional(Schema.Boolean),
+  /** This machine's selection key; choices are saved under it. Absent from older servers. */
+  hostKey: Schema.optional(Schema.String.check(Schema.isMaxLength(128))),
 });
 export type ComputeRuntimeInventory = typeof ComputeRuntimeInventory.Type;
 
@@ -118,11 +170,12 @@ export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>
       "stop",
       "outputs",
       "variables",
+      "table",
       "subscribe",
+      "save",
     ]),
     reason: Schema.Literals([
       "project-not-initialized",
-      "language-disabled",
       "language-unavailable",
       "runtime-not-found",
       "source-invalid",
@@ -137,6 +190,8 @@ export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>
 export const ComputeInspectRuntimesInput = Schema.Struct({
   cwd: Schema.NullOr(ComputeCwd),
   refresh: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Only these languages, so opening one file never waits on another language's runtimes. */
+  languageIds: Schema.optional(Schema.Array(ComputeLanguageId).check(Schema.isMaxLength(32))),
 });
 export type ComputeInspectRuntimesInput = typeof ComputeInspectRuntimesInput.Type;
 
@@ -168,6 +223,7 @@ export const ComputeStartProjectSessionInput = Schema.Struct({
   sessionId: ComputeSessionId,
   languageId: ComputeLanguageId,
   executable: Schema.NullOr(ComputeExecutable),
+  owner: Schema.optional(ComputeSessionOwner),
   runOnce: Schema.optional(
     Schema.Struct({
       executionId: ComputeExecutionId,
@@ -177,6 +233,21 @@ export const ComputeStartProjectSessionInput = Schema.Struct({
   ),
 });
 export type ComputeStartProjectSessionInput = typeof ComputeStartProjectSessionInput.Type;
+
+const ComputeCellText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096));
+
+/** A notebook's cells, queued together so a failure stops every later cell. */
+export const ComputeSubmitProjectCellsInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  expectedGeneration: ComputeSessionGeneration,
+  path: ComputeCellText,
+  actor: Schema.optional(ComputeExecutionActor),
+  cells: Schema.Array(
+    Schema.Struct({ cellId: ComputeCellText, executionId: ComputeExecutionId, code: ComputeCode }),
+  ).check(Schema.isMaxLength(512)),
+});
+export type ComputeSubmitProjectCellsInput = typeof ComputeSubmitProjectCellsInput.Type;
 
 export const ComputeProjectInput = Schema.Struct({ cwd: ComputeCwd });
 export type ComputeProjectInput = typeof ComputeProjectInput.Type;
@@ -207,6 +278,7 @@ export const ComputeSubmitProjectExecutionInput = Schema.Struct({
   expectedGeneration: ComputeSessionGeneration,
   code: ComputeCode,
   source: ComputeExecutionSource,
+  actor: Schema.optional(ComputeExecutionActor),
 });
 export type ComputeSubmitProjectExecutionInput = typeof ComputeSubmitProjectExecutionInput.Type;
 
@@ -232,6 +304,43 @@ export const ComputeListProjectOutputsInput = Schema.Struct({
 });
 export type ComputeListProjectOutputsInput = typeof ComputeListProjectOutputsInput.Type;
 
+/** Copies a stored figure or resource into the project; an existing file is never replaced. */
+export const ComputeSaveProjectOutputInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  executionId: Schema.NullOr(ComputeExecutionId),
+  contentHash: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(128)),
+  kind: Schema.Literals(["image", "resource"]),
+  relativePath: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(1024)),
+});
+export type ComputeSaveProjectOutputInput = typeof ComputeSaveProjectOutputInput.Type;
+
+export const ComputeSaveProjectOutputResult = Schema.Struct({ relativePath: Schema.String });
+export type ComputeSaveProjectOutputResult = typeof ComputeSaveProjectOutputResult.Type;
+
+export const ComputeSaveConsoleNotebookInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+});
+export type ComputeSaveConsoleNotebookInput = typeof ComputeSaveConsoleNotebookInput.Type;
+
+export const ComputeSaveConsoleNotebookResult = Schema.Struct({ relativePath: Schema.String });
+export type ComputeSaveConsoleNotebookResult = typeof ComputeSaveConsoleNotebookResult.Type;
+
+/** A finished run as nbformat 4 outputs, figures inlined, for notebook files. */
+export const ComputeNotebookOutputsInput = Schema.Struct({
+  cwd: ComputeCwd,
+  sessionId: ComputeSessionId,
+  executionId: ComputeExecutionId,
+});
+export type ComputeNotebookOutputsInput = typeof ComputeNotebookOutputsInput.Type;
+
+export const ComputeNotebookOutputsResult = Schema.Struct({
+  outputs: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+  executionCount: Schema.NullOr(Schema.Int),
+});
+export type ComputeNotebookOutputsResult = typeof ComputeNotebookOutputsResult.Type;
+
 export const ComputeListProjectSessionsResult = Schema.Array(ComputeSessionRecord);
 export const ComputeGetProjectSessionResult = Schema.NullOr(ComputeSessionRecord);
 export const ComputeListProjectExecutionsResult = Schema.Array(ComputeExecutionRecord);
@@ -250,7 +359,6 @@ export {
   ComputeProjectId,
   projectComputeOutputs,
   sameComputeRepresentationBundle,
-  selectComputeRepresentation,
   ComputeRuntimeVerification,
   ComputeSessionGeneration,
   ComputeSessionId,

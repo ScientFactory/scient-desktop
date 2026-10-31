@@ -8,8 +8,10 @@ export const NEW_DOCUMENT_FORMATS = {
   latex: { label: "LaTeX", hint: "Papers · PDF" },
 } as const satisfies Record<NewDocumentFormat, { label: string; hint: string }>;
 
+export type NewDocumentChoice = NewDocumentFormat | "notebook";
+
 export function NewDocumentMenuItems(props: {
-  readonly onChoose: (format: NewDocumentFormat) => void;
+  readonly onChoose: (choice: NewDocumentChoice) => void;
 }) {
   return (
     <>
@@ -21,6 +23,10 @@ export function NewDocumentMenuItems(props: {
           </span>
         </MenuItem>
       ))}
+      <MenuItem onClick={() => props.onChoose("notebook")}>
+        <span className="flex-1">Notebook</span>
+        <span className="ps-4 text-2xs text-muted-foreground/45">Code · Results</span>
+      </MenuItem>
     </>
   );
 }

@@ -169,6 +169,9 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       ) {
         return;
       }
+      // SCIENT-FORK:START — in a code editor, Tab indents the selected lines.
+      if (event.target instanceof Element && event.target.closest(".cm-editor") !== null) return;
+      // SCIENT-FORK:END
       if (toolbar.disabled) return;
       event.preventDefault();
       event.stopPropagation();

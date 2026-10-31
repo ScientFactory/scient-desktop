@@ -1,4 +1,10 @@
-import { DownloadIcon, LoaderCircleIcon, MoreHorizontalIcon, XIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  DownloadIcon,
+  LoaderCircleIcon,
+  MoreHorizontalIcon,
+  XIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ComputeLanguageRuntimeInventory, ComputeToolkitId } from "@t3tools/contracts";
 import { SettingsRow } from "~/components/settings/settingsLayout";
@@ -252,8 +258,14 @@ export function PythonToolkitSettings({
               )
             }
           >
-            <details className="mt-1 text-xs text-muted-foreground">
-              <summary className="w-fit cursor-pointer">Packages</summary>
+            <details className="group mt-1 text-xs text-muted-foreground">
+              <summary className="flex w-fit cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
+                Packages
+                <ChevronDownIcon
+                  aria-hidden
+                  className="size-3 transition-transform group-open:rotate-180"
+                />
+              </summary>
               <p className="mt-1 break-words">
                 {toolkit.packageRequirements.map((item) => item.displayName).join(", ")}
               </p>

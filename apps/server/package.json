@@ -81,6 +81,8 @@
     "diff": "8.0.3",
     "effect": "catalog:",
     "fast-xml-parser": "5.8.0",
+    "hyparquet": "1.31.5",
+    "hyparquet-compressors": "1.1.2",
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
     "msgpackr-extract": "3.0.4",

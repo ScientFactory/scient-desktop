@@ -1,12 +1,22 @@
-import { isPdfCitation, type FileCitation, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  isComputeCitation,
+  isPdfCitation,
+  type FileCitation,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { formatFileCitationHref, parseFileCitationHref } from "@t3tools/shared/composerCitations";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 import { useEffect, useRef } from "react";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { randomUUID } from "~/lib/utils";
+import { cancelComputeQuoteReveal } from "~/scient/compute/computeQuoteReveal";
 import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { toastManager } from "~/components/ui/toast";
+import {
+  computeCitationFromLocation,
+  openComputeCitation,
+} from "~/scient/compute/computeCitationNavigation";
 import {
   openPdfCitation,
   pdfCitationActivation,
@@ -103,7 +113,9 @@ export function useFileCitationTarget(
   runAfterPendingSave: (surfaceId: string, run: () => void) => void,
 ): void {
   const citation =
-    fileCitationFromLocation(location.href) ?? pdfCitationFromLocation(location.href);
+    fileCitationFromLocation(location.href) ??
+    pdfCitationFromLocation(location.href) ??
+    computeCitationFromLocation(location.href);
   const handled = useRef<string | null>(null);
   // Leaving the thread abandons the PDF quote this view started, if it is
   // still the latest. The cleanup waits a task: React's development replay
@@ -150,12 +162,17 @@ export function useFileCitationTarget(
     const key = `${location.key ?? ""}:${location.href}`;
     if (handled.current === key) return;
     handled.current = key;
+    cancelComputeQuoteReveal();
     if (isPdfCitation(citation)) {
       started.current = openPdfCitation(citation, currentCwd, runAfterPendingSave);
     } else {
-      // A later file quote supersedes a PDF quote still waiting for its document.
+      // A later quote supersedes a PDF quote still waiting for its document.
       supersedePdfCitationNavigation();
-      openFileCitation(citation, currentCwd, runAfterPendingSave);
+      if (isComputeCitation(citation)) {
+        openComputeCitation(citation, currentCwd, runAfterPendingSave);
+      } else {
+        openFileCitation(citation, currentCwd, runAfterPendingSave);
+      }
     }
   }, [citation, ref, location.href, location.key, currentCwd, runAfterPendingSave]);
 }

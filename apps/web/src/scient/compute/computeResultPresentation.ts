@@ -18,11 +18,29 @@ export type ComputeFigureResource = {
   readonly byteLength: number;
 };
 
+const COMPUTE_STATIC_IMAGE_MEDIA_TYPES = [
+  "image/svg+xml",
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+] as const;
+export type ComputeStaticImageMediaType = (typeof COMPUTE_STATIC_IMAGE_MEDIA_TYPES)[number];
+
 /** Local presentation metadata; the retained output contract stays unchanged. */
-export type ComputeStaticImageOutput = Extract<ComputeOutput, { readonly _tag: "image" }> & {
+export type ComputeStaticImageOutput = Omit<
+  Extract<ComputeOutput, { readonly _tag: "image" }>,
+  "mediaType"
+> & {
+  readonly mediaType: ComputeStaticImageMediaType;
   readonly displayId?: string;
   readonly nativeFigure?: ComputeFigureResource;
+  /** A vector copy shown inline figures carry for saving. */
+  readonly pdf?: ComputeFigureResource;
 };
+
+function isStaticImageMediaType(mediaType: string): mediaType is ComputeStaticImageMediaType {
+  return (COMPUTE_STATIC_IMAGE_MEDIA_TYPES as ReadonlyArray<string>).includes(mediaType);
+}
 
 /** A standalone image update is itself a complete retained figure snapshot. */
 export function projectComputeFigureOutputs(
@@ -37,9 +55,7 @@ export function projectComputeFigureOutputs(
         output._tag === "display-update" &&
         !displays.has(output.displayId) &&
         output.bundle.representations.some(
-          (item) =>
-            (item.mediaType === "image/png" || item.mediaType === "image/svg+xml") &&
-            item.data._tag === "resource",
+          (item) => isStaticImageMediaType(item.mediaType) && item.data._tag === "resource",
         )
       ) {
         displays.add(output.displayId);
@@ -64,7 +80,10 @@ export function computeProjectedStaticImage(
     native.data.byteLength <= MAX_COMPUTE_NATIVE_FIGURE_BYTES
       ? native.data
       : null;
-  for (const mediaType of ["image/svg+xml", "image/png"] as const) {
+  const pdf = output.bundle.representations.find(
+    (item) => item.mediaType === "application/pdf",
+  )?.data;
+  for (const mediaType of COMPUTE_STATIC_IMAGE_MEDIA_TYPES) {
     const representation = output.bundle.representations.find(
       (candidate) => candidate.mediaType === mediaType && candidate.data._tag === "resource",
     );
@@ -81,6 +100,7 @@ export function computeProjectedStaticImage(
       origin: { _tag: "runtime-display" },
       ...(output.displayId === null ? {} : { displayId: output.displayId }),
       ...(nativeFigure === null ? {} : { nativeFigure }),
+      ...(pdf?._tag === "resource" ? { pdf } : {}),
     };
   }
   return null;
@@ -201,93 +221,25 @@ export function computeSourceLabel(
   options: { readonly includePath: boolean },
 ): string {
   if (source._tag === "console") return "Console";
-
   const range =
     source.origin === "file" || source.range === null
       ? null
       : source.range.startLine === source.range.endLine
-        ? `line ${source.range.startLine + 1}`
-        : `lines ${source.range.startLine + 1}–${source.range.endLine + 1}`;
+        ? `${source.range.startLine + 1}`
+        : `${source.range.startLine + 1}–${source.range.endLine + 1}`;
+  const what =
+    source.origin === "file"
+      ? options.includePath
+        ? null
+        : SOURCE_ORIGIN_LABELS.file
+      : [SOURCE_ORIGIN_LABELS[source.origin], range].filter(Boolean).join(" ");
   return [
-    ...(options.includePath ? [source.path] : []),
-    SOURCE_ORIGIN_LABELS[source.origin],
-    range,
+    options.includePath ? source.path : null,
+    what,
     source.bufferState === "dirty" ? "unsaved" : null,
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");
-}
-
-export function computeSourceFreshnessLabel(
-  source: ComputeExecutionSource,
-  current: { readonly revision: string; readonly pending: boolean } | null,
-): "Source changed" | null {
-  if (source._tag !== "document" || current === null || source.bufferState === "dirty") return null;
-  return current.pending || source.revision !== current.revision ? "Source changed" : null;
-}
-
-export interface ComputeFigureFallback {
-  readonly execution: ComputeExecutionRecord;
-  readonly reason: "updating" | "latest-run-failed";
-}
-
-function fallbackReason(
-  status: ComputeExecutionStatus | undefined,
-): ComputeFigureFallback["reason"] | null {
-  switch (status) {
-    case undefined:
-    case "queued":
-    case "submitting":
-    case "running":
-    case "interrupting":
-      return "updating";
-    case "failed":
-    case "cancelled":
-    case "lost":
-      return "latest-run-failed";
-    case "succeeded":
-      return null;
-  }
-}
-
-/**
- * Keeps the last successful figure visible while the newest run is settling or
- * has failed. History remains exact: fallback is only valid for the newest run
- * of the same document and session generation, and a newer successful run with
- * no figures clears it.
- */
-export function selectComputeFigureFallback(
-  executions: ReadonlyArray<ComputeExecutionRecord>,
-  selected: ComputeExecutionRecord | null,
-  selectedHasObservedImage: boolean,
-): ComputeFigureFallback | null {
-  if (selected === null || executions[0]?.request.executionId !== selected.request.executionId) {
-    return null;
-  }
-  const selectedSource = selected.request.source;
-  if (
-    selectedSource._tag !== "document" ||
-    selectedHasObservedImage ||
-    (selected.result?.imageCount ?? 0) > 0
-  ) {
-    return null;
-  }
-
-  const reason = fallbackReason(selected.result?.status);
-  if (reason === null) return null;
-
-  const execution = executions.slice(1).find((candidate) => {
-    const source = candidate.request.source;
-    return (
-      source._tag === "document" &&
-      source.path === selectedSource.path &&
-      candidate.request.sessionId === selected.request.sessionId &&
-      candidate.request.generation === selected.request.generation &&
-      candidate.result?.status === "succeeded" &&
-      candidate.result.imageCount > 0
-    );
-  });
-  return execution === undefined ? null : { execution, reason };
 }
 
 export function computeExecutionStatusLabel(
@@ -302,4 +254,19 @@ export function computeExecutionStatusLabel(
 
 export function computeSystemEventLabel(event: ComputeSystemEvent): string {
   return SYSTEM_EVENT_LABELS[event];
+}
+
+export function computeRunDurationLabel(
+  result: Pick<NonNullable<ComputeExecutionRecord["result"]>, "startedAt" | "finishedAt"> | null,
+): string | null {
+  if (result?.startedAt == null || result.finishedAt == null) return null;
+  const ms = Date.parse(result.finishedAt) - Date.parse(result.startedAt);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 10) return `${seconds.toFixed(1)} s`;
+  if (seconds < 60) return `${Math.round(seconds)} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${Math.floor(seconds % 60)}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }

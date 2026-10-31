@@ -23,7 +23,7 @@ import { buildScientRuntimeInstructions } from "./ScientRuntimeInstructions.ts";
 const capabilities = new Set<McpCapability>([
   "preview",
   "device",
-  "compute:inventory",
+  "compute",
   "documents:build",
   "skills:read",
 ]);
