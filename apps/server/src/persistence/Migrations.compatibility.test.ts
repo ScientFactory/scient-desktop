@@ -19,7 +19,15 @@ for (const previousId of [49, 50, 52, 71] as const) {
             yield* sql`INSERT INTO effect_sql_migrations (migration_id, name)
               VALUES (50, 'ProjectionSessionErrorReason')`;
           }
-          if (previousId === 71) yield* runScientMigrations(sql);
+          if (previousId === 71) {
+            // Startup always runs these first; Scient's migrations read projects through the
+            // current store, which needs the columns 80 adds.
+            yield* sql`ALTER TABLE projection_projects ADD COLUMN pinned_at TEXT`;
+            yield* sql`ALTER TABLE projection_projects ADD COLUMN archived_at TEXT`;
+            yield* runScientMigrations(sql);
+            yield* sql`ALTER TABLE projection_projects DROP COLUMN pinned_at`;
+            yield* sql`ALTER TABLE projection_projects DROP COLUMN archived_at`;
+          }
           const scientificBefore =
             previousId === 71
               ? yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`
@@ -35,6 +43,13 @@ for (const previousId of [49, 50, 52, 71] as const) {
             assert.deepStrictEqual(applied, [
               [72, "ShellStopRequestIndex"],
               [73, "ThreadMessageSearch"],
+              [74, "PeerLinks"],
+              [75, "PeerLinkFence"],
+              [76, "WaitingLinkRequestIndex"],
+              [77, "ActiveTurnItemIndexes"],
+              [78, "ExcludeAttachmentPlaceholdersFromSearch"],
+              [79, "SubagentDeliveryState"],
+              [80, "ProjectionProjectsPinArchive"],
             ]);
             assert.deepStrictEqual(
               yield* sql`SELECT * FROM scient_schema_migrations ORDER BY migration_id`,

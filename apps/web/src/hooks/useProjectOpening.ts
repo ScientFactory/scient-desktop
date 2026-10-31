@@ -11,6 +11,7 @@ export function useProjectOpening(open: boolean, close: () => void) {
   } | null>(null);
   const mounted = useRef(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state and drops an un-handed-off attempt ref on unmount
   useLayoutEffect(() => {
     mounted.current = true;
     return () => {
@@ -18,6 +19,7 @@ export function useProjectOpening(open: boolean, close: () => void) {
       if (!active.current?.handedOff) active.current = null;
     };
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the pending attempt when the picker closes without a navigation handoff
   useLayoutEffect(() => {
     if (!open && !active.current?.handedOff) {
       active.current = null;

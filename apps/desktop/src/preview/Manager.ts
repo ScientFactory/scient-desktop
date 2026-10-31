@@ -1,6 +1,9 @@
 // SCIENT-FORK:START — Scient Accounts: remember the identity of browser sessions.
 import { rememberAccountsSession } from "../scient/accounts/sessionIdentity.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
+import { PreviewHostWindows } from "../scient/multiWindow/previewHostWindows.ts";
+// SCIENT-FORK:END
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewRecordingInputSchema,
@@ -73,7 +76,6 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
-  HUMAN_INPUT_PERMISSION_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_INPUT_CHANNEL,
@@ -368,7 +370,6 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
 };
 
 type Listener = (tabId: string, state: PreviewTabState) => Effect.Effect<void>;
-type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => Effect.Effect<void>;
 
 type PreviewInputSignal =
   | { readonly kind: "pointer"; readonly x: number; readonly y: number; readonly button: number }
@@ -433,13 +434,17 @@ type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<vo
 // about:blank inherits relaxed guest preferences; external editor schemes must reach the OS handler.
 const POPUP_PROTOCOLS = new Set(["http:", "https:"]);
 
-const isPopupUrl = (rawUrl: string): boolean => {
-  try {
-    return POPUP_PROTOCOLS.has(new URL(rawUrl).protocol);
-  } catch {
-    return false;
-  }
-};
+// Main-process loadURL bypasses Chromium's renderer-side restrictions on local and inline URLs.
+const IN_PLACE_DENIED_PROTOCOLS = new Set([
+  "about:",
+  "chrome:",
+  "data:",
+  "devtools:",
+  "file:",
+  "filesystem:",
+  "javascript:",
+  "view-source:",
+]);
 
 /** Popups bypass will-attach-webview hardening and would inherit the picker's contextIsolation:false. */
 const POPUP_WINDOW_OPTIONS = {
@@ -450,15 +455,19 @@ const POPUP_WINDOW_OPTIONS = {
   },
 } satisfies Electron.BrowserWindowConstructorOptions;
 
-/** OAuth needs a surviving popup opener; unhardenable schemes and form POSTs must stay in place. */
+/**
+ * OAuth needs a surviving popup opener. `blob:`, app links (behind the session's `openExternal`
+ * prompt) and form POSTs stay in place.
+ */
 export const previewWindowOpenAction = (details: {
   readonly url: string;
   readonly disposition: Electron.HandlerDetails["disposition"];
   readonly postBody?: Electron.PostBody;
 }): "popup" | "new-tab" | "navigate" | "deny" => {
+  const protocol = URL.parse(details.url)?.protocol;
   // MSAL redirects on a denied blank popup; navigating the tab would destroy that fallback.
-  if (details.url === "" || details.url === "about:blank") return "deny";
-  if (!isPopupUrl(details.url)) return "navigate";
+  if (protocol === undefined || IN_PLACE_DENIED_PROTOCOLS.has(protocol)) return "deny";
+  if (!POPUP_PROTOCOLS.has(protocol)) return "navigate";
   if (details.disposition === "new-window") return "popup";
   return !details.postBody &&
     (details.disposition === "foreground-tab" || details.disposition === "background-tab")
@@ -551,9 +560,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const recordingInputListenersRef = yield* Ref.make<ReadonlySet<RecordingInputListener>>(
     new Set(),
   );
-  const recordingFrameListenersRef = yield* Ref.make<ReadonlySet<RecordingFrameListener>>(
-    new Set(),
-  );
   const pickSessionsRef = yield* Ref.make<ReadonlyMap<string, PickSession>>(new Map());
   const controlSessionsRef = yield* SynchronizedRef.make<
     ReadonlyMap<number, BrowserControlSession>
@@ -574,7 +580,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
-  let currentMainWindow: BrowserWindow | undefined;
+  // SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
+  const hostWindows = new PreviewHostWindows();
+  // SCIENT-FORK:END
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
@@ -678,9 +686,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
   const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
-    const mainWindow = yield* Ref.get(mainWindowRef);
-    if (Option.isNone(mainWindow)) return;
-    yield* setWindowBackgroundThrottling(mainWindow.value, enabled);
+    // SCIENT-FORK:START — Multi-window: capture keeps every app window unthrottled.
+    yield* Effect.forEach(
+      hostWindows.windows,
+      (window) => setWindowBackgroundThrottling(window, enabled),
+      { discard: true },
+    );
+    // SCIENT-FORK:END
   });
   const setFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     wc: Electron.WebContents,
@@ -826,12 +838,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const deliverEvent = (
-    eventKind:
-      | "state-change"
-      | "recording-frame"
-      | "recording-input"
-      | "pointer-event"
-      | "open-link",
+    eventKind: "state-change" | "recording-input" | "pointer-event" | "open-link",
     tabId: string,
     delivery: () => Effect.Effect<void>,
   ) =>
@@ -1101,35 +1108,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                   },
                   () => wcDebugger.sendCommand("Page.screencastFrameAck", { sessionId }),
                 ).pipe(Effect.ignore);
-              }
-              const tabId = yield* tabIdForWebContents(wc.id);
-              const metadata =
-                typeof params["metadata"] === "object" && params["metadata"] !== null
-                  ? (params["metadata"] as Record<string, unknown>)
-                  : {};
-              if (tabId && typeof params["data"] === "string") {
-                const captureSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(
-                  tabId,
-                );
-                if (captureSession?.consumers.has("recording")) {
-                  const receivedAt = yield* currentIso;
-                  const listeners = yield* Ref.get(recordingFrameListenersRef);
-                  const frame: DesktopPreviewRecordingFrame = {
-                    tabId,
-                    data: params["data"],
-                    width:
-                      typeof metadata["deviceWidth"] === "number" ? metadata["deviceWidth"] : 0,
-                    height:
-                      typeof metadata["deviceHeight"] === "number" ? metadata["deviceHeight"] : 0,
-                    receivedAt,
-                  };
-                  yield* Effect.forEach(
-                    listeners,
-                    (listener) =>
-                      deliverEvent("recording-frame", frame.tabId, () => listener(frame)),
-                    { discard: true },
-                  );
-                }
               }
             }
             if (method === "Runtime.consoleAPICalled" || method === "Runtime.exceptionThrown") {
@@ -1464,13 +1442,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
     };
     const humanInput = (_event: unknown, rawSignal?: unknown): void => {
-      if (!isPreviewInputSignal(rawSignal)) return;
-      browserHost.noteHumanInput(wc);
       runFork(handleHumanInput(rawSignal));
-    };
-    const humanInputPermission = (event: Electron.IpcMainEvent, kind?: unknown): void => {
-      event.returnValue =
-        (kind === "pointer" || kind === "key") && browserHost.canReportHumanInput(wc, kind);
     };
     const mouseNavigate = (_event: unknown, payload?: unknown): void => {
       const direction =
@@ -1536,7 +1508,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
       if (forwarded && host) {
         event.preventDefault();
-        if (!input.isAutoRepeat) host.send(MENU_ACTION_CHANNEL, forwarded.command);
+        if (!input.isAutoRepeat) {
+          if (
+            forwarded.command === "workspace.focusNext" ||
+            forwarded.command === "workspace.focusPrevious"
+          ) {
+            // DOM focus in the renderer cannot by itself release the guest's native keyboard focus.
+            host.focus();
+          }
+          host.send(MENU_ACTION_CHANNEL, forwarded.command);
+        }
         return;
       }
       if (isPreviewRefreshShortcut(input)) {
@@ -1567,7 +1548,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
-        wc.ipc.off(HUMAN_INPUT_PERMISSION_CHANNEL, humanInputPermission);
         wc.ipc.off(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         detachPasskeys();
@@ -1587,7 +1567,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-fail-load", failed as never);
         wc.on("audio-state-changed", audioStateChanged);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
-        wc.ipc.on(HUMAN_INPUT_PERMISSION_CHANNEL, humanInputPermission);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         detachPasskeys = passkeys.attachGuest(wc);
@@ -1637,15 +1616,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.gen(function* () {
         // Cleanup or lock acquisition can outlive the replacement window.
         if (window.isDestroyed()) return [undefined, sessions] as const;
+        // SCIENT-FORK:START — Multi-window: registering a window adds it beside the others.
+        if (hostWindows.has(window)) return [undefined, sessions] as const;
+        // SCIENT-FORK:END
         if (sessions.size > 0) {
           yield* setWindowBackgroundThrottling(window, false);
         }
         yield* Ref.set(mainWindowRef, Option.some(window));
-        currentMainWindow = window;
+        // SCIENT-FORK:START — Multi-window: registering a window adds it beside the others.
+        hostWindows.add(window);
+        // SCIENT-FORK:END
         frameCaptureWindowOpen = true;
         window.once("closed", () => {
-          if (currentMainWindow !== window) return;
-          currentMainWindow = undefined;
+          // SCIENT-FORK:START — Multi-window: a closing window releases only its own tabs' captures.
+          const closed = hostWindows.close(window);
+          if (closed === undefined) return;
+          if (closed !== "last") {
+            if (closed.size > 0) runFork(releaseTabCaptures(closed).pipe(Effect.ignore));
+            return;
+          }
+          // SCIENT-FORK:END
           frameCaptureWindowOpen = false;
           mainWindowCleanupFiber = runFork(
             Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
@@ -1658,6 +1648,31 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     ).pipe(Effect.uninterruptible);
   });
+
+  // SCIENT-FORK:START — Multi-window: release picture-in-picture and recordings of selected tabs.
+  const releaseTabCaptures = Effect.fn("PreviewManager.releaseTabCaptures")(function* (
+    tabIds: ReadonlySet<string>,
+  ) {
+    for (const tabId of tabIds) clearPendingRecording(tabId);
+    const pictureInPictureSessions = yield* SynchronizedRef.get(pictureInPictureSessionsRef);
+    const frameCaptureSessions = yield* SynchronizedRef.get(frameCaptureSessionsRef);
+    yield* Effect.all(
+      [
+        Effect.forEach(
+          [...pictureInPictureSessions.keys()].filter((tabId) => tabIds.has(tabId)),
+          closePictureInPicture,
+          { concurrency: "unbounded", discard: true },
+        ),
+        Effect.forEach(
+          [...frameCaptureSessions.keys()].filter((tabId) => tabIds.has(tabId)),
+          (tabId) => stopFrameCapture(tabId, "recording"),
+          { concurrency: "unbounded", discard: true },
+        ),
+      ],
+      { concurrency: "unbounded", discard: true },
+    );
+  });
+  // SCIENT-FORK:END
 
   const createTabUnlocked = Effect.fn("PreviewManager.createTabUnlocked")(function* (
     tabId: string,
@@ -1716,6 +1731,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
     clearPendingRecording(tabId);
     annotationSendEnabled.delete(tabId);
+    // SCIENT-FORK:START — Multi-window: forget the closed tab's host window.
+    hostWindows.forgetTab(tabId);
+    // SCIENT-FORK:END
     yield* Effect.all(
       [
         cancelPickElement(tabId),
@@ -1800,14 +1818,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     const wc = webContents.fromId(webContentsId);
     const mainWindow = yield* Ref.get(mainWindowRef);
+    // SCIENT-FORK:START — Multi-window: accept guests hosted by any live app window.
+    const hostWindow = hostWindows.hostOf(wc);
     if (
       !wc ||
       wc.isDestroyed() ||
       wc.getType() !== "webview" ||
-      (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)
+      (Option.isSome(mainWindow) && hostWindow === undefined)
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
+    hostWindows.setTabHost(tabId, hostWindow);
+    // SCIENT-FORK:END
     yield* rendererHistory.register(wc, { surface: "preview", tabId });
     const attached = yield* Ref.get(attachedRef);
     const annotationTheme = yield* Ref.get(annotationThemeRef);
@@ -2528,13 +2550,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (!captureSession?.consumers.has("picture-in-picture") || captureSession.scope === null)
       return;
     const wc = yield* requireWebContents(tabId);
-    const image = yield* attemptPromise(
-      {
-        operation: "frameCapture.capturePage",
-        tabId,
-        webContentsId: wc.id,
-      },
-      () => wc.capturePage(),
+    const captureContext = { operation: "frameCapture.capturePage", tabId, webContentsId: wc.id };
+    const image = yield* attemptPromise(captureContext, () => wc.capturePage()).pipe(
+      Effect.timeout(CAPTURE_PAGE_ATTEMPT_TIMEOUT_MS),
+      Effect.catchTags({
+        TimeoutError: (cause) =>
+          Effect.fail(new PreviewOperationError({ ...captureContext, cause })),
+      }),
     );
     const currentCaptureSession = yield* Effect.all(
       [SynchronizedRef.get(frameCaptureSessionsRef), SynchronizedRef.get(tabsRef)],
@@ -2590,78 +2612,66 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       height: size.height,
       receivedAt,
     };
-    const deliveries: Array<Effect.Effect<void>> = [];
-    if (pictureInPicture) {
-      const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(
-        tabId,
-      )?.window;
-      if (pictureInPictureWindow && !pictureInPictureWindow.isDestroyed()) {
-        deliveries.push(
-          Effect.gen(function* () {
-            const previousAspectRatio = (yield* Ref.get(pictureInPictureAspectRatiosRef)).get(
-              tabId,
+    const pictureInPictureWindow = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(
+      tabId,
+    )?.window;
+    if (!pictureInPictureWindow || pictureInPictureWindow.isDestroyed()) return;
+    yield* Effect.gen(function* () {
+      const previousAspectRatio = (yield* Ref.get(pictureInPictureAspectRatiosRef)).get(tabId);
+      const aspectRatio = frame.width / frame.height;
+      if (
+        previousAspectRatio === undefined ||
+        Math.abs(previousAspectRatio - aspectRatio) > PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON
+      ) {
+        yield* attempt(
+          {
+            operation: "pictureInPicture.setAspectRatio",
+            tabId,
+            webContentsId: wc.id,
+          },
+          () => {
+            const contentSize = fitPictureInPictureContentSize(
+              pictureInPictureWindow.getContentSize(),
+              aspectRatio,
             );
-            const aspectRatio = frame.width / frame.height;
-            if (
-              previousAspectRatio === undefined ||
-              Math.abs(previousAspectRatio - aspectRatio) > PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON
-            ) {
-              yield* attempt(
-                {
-                  operation: "pictureInPicture.setAspectRatio",
-                  tabId,
-                  webContentsId: wc.id,
-                },
-                () => {
-                  const contentSize = fitPictureInPictureContentSize(
-                    pictureInPictureWindow.getContentSize(),
-                    aspectRatio,
-                  );
-                  pictureInPictureWindow.setAspectRatio(0);
-                  pictureInPictureWindow.setContentSize(contentSize[0], contentSize[1], false);
-                  pictureInPictureWindow.setAspectRatio(aspectRatio);
-                },
-              );
-              yield* Ref.update(pictureInPictureAspectRatiosRef, (aspectRatios) =>
-                replaceMap(aspectRatios, (copy) => {
-                  copy.set(tabId, aspectRatio);
-                }),
-              );
-            }
-            yield* attempt(
-              {
-                operation: "pictureInPicture.deliverFrame",
-                tabId,
-                webContentsId: wc.id,
-              },
-              () => {
-                pictureInPictureWindow.webContents.send(
-                  PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
-                  frame,
-                );
-              },
-            );
-            yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) => {
-              if (sessions.get(tabId) !== frameSession) return sessions;
-              return replaceMap(sessions, (copy) => {
-                copy.set(tabId, {
-                  ...frameSession,
-                  lastPictureInPictureFingerprint: fingerprint,
-                });
-              });
-            });
-          }).pipe(
-            Effect.catch((error) =>
-              Effect.logWarning("Picture-in-picture frame delivery failed.", {
-                tabId,
-                error,
-              }),
-            ),
-          ),
+            pictureInPictureWindow.setAspectRatio(0);
+            pictureInPictureWindow.setContentSize(contentSize[0], contentSize[1], false);
+            pictureInPictureWindow.setAspectRatio(aspectRatio);
+          },
+        );
+        yield* Ref.update(pictureInPictureAspectRatiosRef, (aspectRatios) =>
+          replaceMap(aspectRatios, (copy) => {
+            copy.set(tabId, aspectRatio);
+          }),
         );
       }
-    }
-    yield* Effect.all(deliveries, { concurrency: 2, discard: true });
+      yield* attempt(
+        {
+          operation: "pictureInPicture.deliverFrame",
+          tabId,
+          webContentsId: wc.id,
+        },
+        () => {
+          pictureInPictureWindow.webContents.send(PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL, frame);
+        },
+      );
+      yield* SynchronizedRef.update(frameCaptureSessionsRef, (sessions) => {
+        if (sessions.get(tabId) !== frameSession) return sessions;
+        return replaceMap(sessions, (copy) => {
+          copy.set(tabId, {
+            ...frameSession,
+            lastPictureInPictureFingerprint: fingerprint,
+          });
+        });
+      });
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Picture-in-picture frame delivery failed.", {
+          tabId,
+          error,
+        }),
+      ),
+    );
   });
 
   const startFrameCapture = Effect.fn("PreviewManager.startFrameCapture")(function* (
@@ -2681,7 +2691,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       frameCaptureSessionsRef,
       (sessions) => {
         return Effect.gen(function* () {
-          if (!frameCaptureWindowOpen) {
+          // SCIENT-FORK:START — Multi-window: gate on the tab's own host window.
+          if (!frameCaptureWindowOpen || hostWindows.isTabHostClosed(tabId)) {
+            // SCIENT-FORK:END
             return yield* new PreviewMainWindowClosedError({ tabId });
           }
           const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
@@ -3169,7 +3181,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             webContentsId: wc.id,
           });
         }
-        if (!frameCaptureWindowOpen || requestWebContents.isDestroyed()) {
+        // SCIENT-FORK:START — Multi-window: gate on the tab's own host window.
+        if (
+          !frameCaptureWindowOpen ||
+          hostWindows.isTabHostClosed(tabId) ||
+          requestWebContents.isDestroyed()
+        ) {
+          // SCIENT-FORK:END
           return yield* new PreviewMainWindowClosedError({ tabId });
         }
         installDisplayMediaRequestHandler(requestWebContents.session);
@@ -3379,7 +3397,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         Ref.set(listenersRef, new Set()),
         Ref.set(pointerEventListenersRef, new Set()),
         Ref.set(openLinkListenersRef, new Set()),
-        Ref.set(recordingFrameListenersRef, new Set()),
         Ref.set(recordingInputListenersRef, new Set()),
       ],
       { discard: true },
@@ -3433,8 +3450,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     subscribeOpenLinks: (listener: OpenLinkListener) => subscribe(openLinkListenersRef, listener),
     subscribeRecordingInputs: (listener: RecordingInputListener) =>
       subscribe(recordingInputListenersRef, listener),
-    subscribeRecordingFrames: (listener: RecordingFrameListener) =>
-      subscribe(recordingFrameListenersRef, listener),
     subscribeStateChanges: (listener: Listener) => subscribe(listenersRef, listener),
     zoomIn: (tabId: string) => applyZoom(tabId, (current) => nextZoomLevel(current, "in")),
     zoomOut: (tabId: string) => applyZoom(tabId, (current) => nextZoomLevel(current, "out")),
@@ -3688,9 +3703,6 @@ export class PreviewManager extends Context.Service<
     readonly subscribeRecordingInputs: (
       listener: RecordingInputListener,
     ) => Effect.Effect<void, never, Scope.Scope>;
-    readonly subscribeRecordingFrames: (
-      listener: RecordingFrameListener,
-    ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/preview/Manager/PreviewManager") {}
 
@@ -3717,7 +3729,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     downloadSessions.add(session);
     session.on("will-download", (_event, item, source) => {
       // Decided before the server's path is set: placing it consumes the guid.
-      const human = browserHost.pendingDownloadWasHuman(source);
+      const human = browserHost.humanStartedDownload(source);
       if (!browserHost.placeDownload(source, item) || !human) return;
       item.once("done", (_doneEvent, state) => {
         if (state !== "completed") return;
@@ -3823,7 +3835,6 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     subscribeStateChanges: operations.subscribeStateChanges,
     subscribePointerEvents: operations.subscribePointerEvents,
     subscribeOpenLinks: operations.subscribeOpenLinks,
-    subscribeRecordingFrames: operations.subscribeRecordingFrames,
     subscribeRecordingInputs: operations.subscribeRecordingInputs,
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));

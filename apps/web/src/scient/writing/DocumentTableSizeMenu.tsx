@@ -211,10 +211,12 @@ export function DocumentGridSizeMenu({
   const previousVisibleColumnsRef = useRef<number>(INITIAL_TABLE_SIZE_PICKER_DIMENSIONS.columns);
   const opensToLeft = placement.side === "left";
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps activeSizeRef holding the current active size
   useLayoutEffect(() => {
     activeSizeRef.current = activeSize;
   }, [activeSize]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps visibleSizeRef holding the current visible size
   useLayoutEffect(() => {
     visibleSizeRef.current = visibleSize;
   }, [visibleSize]);
@@ -227,8 +229,10 @@ export function DocumentGridSizeMenu({
     pendingFocusRef.current = null;
     cell.focus();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the expanded table-size cell
   useLayoutEffect(() => focusExpandedTableCell(visibleSize), [visibleSize]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the new edge cell into view when the grid expands
   useLayoutEffect(() => {
     const previousColumns = previousVisibleColumnsRef.current;
     previousVisibleColumnsRef.current = visibleSize.columns;
@@ -239,6 +243,7 @@ export function DocumentGridSizeMenu({
     newEdgeCell?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
   }, [open, visibleSize.columns]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the menu popup's physical side via MutationObserver and locks placement after it settles
   useLayoutEffect(() => {
     if (!open || !pickerElement || placement.locked) return;
     const popup = pickerElement.closest<HTMLElement>("[data-slot='menu-sub-content']");
@@ -289,6 +294,7 @@ export function DocumentGridSizeMenu({
     };
   }, [open, pickerElement, placement.locked]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- extends the table-size selection from document pointermove events while open
   useEffect(() => {
     if (!open || !pickerElement) return;
     const viewport = pickerElement.querySelector<HTMLElement>("[data-scient-table-size-viewport]");

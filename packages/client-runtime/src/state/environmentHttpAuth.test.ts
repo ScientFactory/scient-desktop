@@ -57,7 +57,6 @@ import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import { v2Projection, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 // SCIENT-FORK:END
 
-const encodeThreadSnapshot = Schema.encodeSync(OrchestrationV2ThreadDetailSnapshot);
 const encodeBoundedSnapshot = Schema.encodeSync(OrchestrationV2ThreadBoundedSnapshot);
 const encodeThreadTranscript = Schema.encodeSync(OrchestrationV2ThreadTranscript);
 const encodeShellSnapshot = Schema.encodeEffect(OrchestrationV2ShellSnapshotJson);
@@ -178,6 +177,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
           },
         };
       }),
+    renewDpopBeforeExpiry: () => Effect.die("HTTP requests must not renew a socket's token."),
   });
   const signer = ManagedRelay.ManagedRelayDpopSigner.of({
     thumbprint: Effect.succeed("test-thumbprint"),
@@ -296,18 +296,6 @@ const LOADERS: ReadonlyArray<{
       fetchEnvironmentShellSnapshot(input).pipe(
         Effect.map(({ loadPullRequests: _links, ...snapshot }) => snapshot),
       ),
-  },
-  {
-    name: "thread snapshot",
-    method: "GET",
-    path: `/api/orchestration/threads/${THREAD.projection.thread.id}`,
-    response: encodeThreadSnapshot(THREAD),
-    expected: THREAD,
-    load: (input: HttpInput) =>
-      ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({
-        ...input,
-        threadId: THREAD.projection.thread.id,
-      }),
   },
   {
     name: "thread transcript",
@@ -506,12 +494,6 @@ describe("authenticated environment HTTP requests", () => {
       response: encodeThreadTranscript(TRANSCRIPT),
       load: (input: HttpInput) =>
         fetchEnvironmentThreadTranscript({ ...input, threadId: MCP_THREAD_ID }),
-    },
-    {
-      name: "thread snapshot",
-      response: encodeThreadSnapshot(THREAD),
-      load: (input: HttpInput) =>
-        ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({ ...input, threadId: MCP_THREAD_ID }),
     },
     {
       name: "bounded thread snapshot",

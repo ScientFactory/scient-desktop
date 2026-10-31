@@ -173,6 +173,7 @@ export function MermaidDiagramCard({
     });
     if (isNearViewport && diagramState.status !== "error") setDiagramState({ status: "loading" });
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renders the diagram through the async Mermaid renderer when the source nears the viewport, ignoring stale generations
   useEffect(() => {
     if (!isNearViewport) return;
     const generation = renderGenerationRef.current + 1;
@@ -207,6 +208,7 @@ export function MermaidDiagramCard({
     };
   }, [isNearViewport, retryVersion, source, theme]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the copy-message reset timer held in a ref on unmount
   useEffect(
     () => () => {
       if (copyResetTimerRef.current != null) clearTimeout(copyResetTimerRef.current);

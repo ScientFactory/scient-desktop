@@ -43,8 +43,8 @@ metadata but cannot fetch current workspace bytes. Historical approvals remain i
 Older historical roster entries are recovered as their timeline pages are loaded.
 
 Claude's MCP server namespace and exact read-only allowlist use canonical Scient
-names. `scient_thread_read` is allowed in the read-only sandbox while retaining its
-separate host `threads:read` capability requirement. `scient_thread_inspect` remains
+names. `scient_handoff_summary_read` is allowed in the read-only sandbox while retaining
+its separate host `threads:read` capability requirement. `scient_thread_inspect` remains
 excluded because it acknowledges child results.
 
 Native workflow ingestion requires an accepted strong coordinator identity from the exact

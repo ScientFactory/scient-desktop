@@ -19,6 +19,7 @@ export const SNAP_SHOT_EVENT_CHANNEL = "desktop:snap-shot-event";
 export const WEB_LINK_OPEN_CHANNEL = "desktop:web-link-open";
 export const WEB_LINK_READY_CHANNEL = "desktop:web-link-ready";
 export const QUIT_SHORTCUT_CHANNEL = "desktop:quit-shortcut";
+export const TRACKPAD_SCROLL_BEGIN_CHANNEL = "desktop:trackpad-scroll-begin";
 export const TRACKPAD_SCROLL_END_CHANNEL = "desktop:trackpad-scroll-end";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";
 export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state";
@@ -60,7 +61,6 @@ export const DISMISS_SNAP_SHOT_ANIMATION_CHANNEL = "desktop:dismiss-snap-shot-an
 export const ACKNOWLEDGE_SNAP_SHOT_CHANNEL = "desktop:acknowledge-snap-shot";
 export const GET_CONNECTION_CATALOG_CHANNEL = "desktop:get-connection-catalog";
 export const SET_CONNECTION_CATALOG_CHANNEL = "desktop:set-connection-catalog";
-export const CLEAR_CONNECTION_CATALOG_CHANNEL = "desktop:clear-connection-catalog";
 export const DISCOVER_SSH_HOSTS_CHANNEL = "desktop:discover-ssh-hosts";
 export const RESOLVE_SSH_HOST_CHANNEL = "desktop:resolve-ssh-host";
 export const ENSURE_SSH_ENVIRONMENT_CHANNEL = "desktop:ensure-ssh-environment";
@@ -68,7 +68,6 @@ export const DISCONNECT_SSH_ENVIRONMENT_CHANNEL = "desktop:disconnect-ssh-enviro
 export const FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL = "desktop:fetch-ssh-environment-descriptor";
 export const BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL = "desktop:bootstrap-ssh-bearer-session";
 export const FETCH_SSH_SESSION_STATE_CHANNEL = "desktop:fetch-ssh-session-state";
-export const ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL = "desktop:issue-ssh-websocket-token";
 export const SSH_PASSWORD_PROMPT_CHANNEL = "desktop:ssh-password-prompt";
 export const RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL = "desktop:resolve-ssh-password-prompt";
 export const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
@@ -117,7 +116,6 @@ export const PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL = "desktop:preview-pip-fra
 export const PREVIEW_RECORDING_START_CHANNEL = "desktop:preview-recording-start";
 export const PREVIEW_RECORDING_STOP_CHANNEL = "desktop:preview-recording-stop";
 export const PREVIEW_RECORDING_SAVE_CHANNEL = "desktop:preview-recording-save";
-export const PREVIEW_RECORDING_FRAME_CHANNEL = "desktop:preview-recording-frame";
 export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
@@ -142,6 +140,11 @@ export const UPLOAD_OPENED_CONVERSATION_FILE_CHANNEL = "scient:conversation-impo
 export const CANCEL_OPENED_CONVERSATION_FILE_UPLOAD_CHANNEL =
   "scient:conversation-import:cancel-upload-opened";
 export const RELEASE_OPENED_CONVERSATION_FILE_CHANNEL = "scient:conversation-import:release-opened";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+export const OPEN_NEW_WINDOW_CHANNEL = "scient:window:open-new";
+export const CLIENT_SETTINGS_CHANGED_CHANNEL = "scient:client-settings:changed";
+export const CONNECTION_CATALOG_CHANGED_CHANNEL = "scient:connection-catalog:changed";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 export const NOTE_SPELLING_SAMPLE_CHANNEL = "scient:spelling:note-sample";

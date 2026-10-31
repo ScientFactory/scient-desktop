@@ -14,12 +14,13 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentFilePath,
   type AuthEnvironmentScope,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProjectWriteFileError,
+  SecretProviderId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as RpcAuthorization from "./RpcAuthorization.ts";
@@ -125,12 +126,14 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
-    for (const method of [
-      WS_METHODS.terminalObserve,
-      WS_METHODS.subscribeTerminalEvents,
-      WS_METHODS.subscribeTerminalMetadata,
-    ]) {
+    for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
     }
     for (const method of [
@@ -139,8 +142,8 @@ describe("RPC authorization scopes", () => {
       WS_METHODS.terminalWrite,
       WS_METHODS.terminalResize,
       WS_METHODS.terminalClear,
-      WS_METHODS.terminalRestart,
       WS_METHODS.terminalClose,
+      WS_METHODS.previewStopLocalServer,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalOperateScope);
     }
@@ -398,7 +401,6 @@ it.effect(
     Effect.gen(function* () {
       const tested = [
         WS_METHODS.serverTestCustomModel,
-        WS_METHODS.serverReportHostPowerState,
         WS_METHODS.filesystemPrepareFileOpen,
         WS_METHODS.serverUninstallAcpRegistryManagedBinary,
       ] as const;
@@ -424,11 +426,6 @@ it.effect(
             return { revision: 1 };
           }),
         ),
-        group.toLayerHandler(WS_METHODS.serverReportHostPowerState, () =>
-          Effect.sync(() => {
-            handled.push("host-power");
-          }),
-        ),
         group.toLayerHandler(WS_METHODS.filesystemPrepareFileOpen, () =>
           Effect.sync(() => {
             handled.push("host-file");
@@ -452,28 +449,11 @@ it.effect(
         instanceId: ProviderInstanceId.make("pi"),
         revision: 1,
       };
-      const powerInput = {
-        source: "electron-main" as const,
-        idle: "false" as const,
-        idleSeconds: 0,
-        locked: "false" as const,
-        suspended: false,
-        onBattery: "false" as const,
-        lowPowerMode: "false" as const,
-        thermalState: "nominal" as const,
-        stale: false,
-        updatedAt: DateTime.makeUnsafe("2026-10-01T00:00:00.000Z"),
-      };
       const broad = yield* clientFor([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]);
       const refused = [
         [
           yield* broad[WS_METHODS.serverTestCustomModel](modelInput).pipe(Effect.flip),
           AuthSettingsWriteScope,
-          AuthOrchestrationOperateScope,
-        ],
-        [
-          yield* broad[WS_METHODS.serverReportHostPowerState](powerInput).pipe(Effect.flip),
-          AuthEnvironmentMaintainScope,
           AuthOrchestrationOperateScope,
         ],
         [
@@ -498,12 +478,10 @@ it.effect(
       expect(handled).toEqual([]);
       const exact = yield* clientFor([
         AuthSettingsWriteScope,
-        AuthEnvironmentMaintainScope,
         AuthFilesystemReadScope,
         AuthProvidersManageScope,
       ]);
       expect(yield* exact[WS_METHODS.serverTestCustomModel](modelInput)).toEqual({ revision: 1 });
-      yield* exact[WS_METHODS.serverReportHostPowerState](powerInput);
       expect(yield* exact[WS_METHODS.filesystemPrepareFileOpen]({ path: filePath })).toEqual(
         fileResult,
       );
@@ -512,7 +490,7 @@ it.effect(
           agentId: "fixture-agent",
         }),
       ).toEqual({ agentId: "fixture-agent", removed: true });
-      expect(handled).toEqual(["paid-model", "host-power", "host-file", "provider-remove"]);
+      expect(handled).toEqual(["paid-model", "host-file", "provider-remove"]);
     }).pipe(Effect.scoped),
 );
 
@@ -548,17 +526,38 @@ describe("settings mutation authorization", () => {
       );
       yield* client[WS_METHODS.serverUpdateSettings]({ patch: {}, providerInstanceMutation });
       expect(handled).toBe(1);
+      yield* client[WS_METHODS.serverUpdateSettings]({
+        patch: {},
+        providerInstanceMutation: {
+          operation: "upsert",
+          instanceId: ProviderInstanceId.make("codex_work"),
+          instance: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [
+              {
+                name: "OPENAI_API_KEY",
+                sensitive: true,
+                value: {
+                  provider: SecretProviderId.make("personal"),
+                  reference: "op://Private/OpenAI/credential",
+                },
+              },
+            ],
+          },
+        },
+      });
+      expect(handled).toBe(2);
       expect(
         yield* client[WS_METHODS.serverUpdateSettings]({
           patch: { defaultRuntimeMode: "full-access" },
           providerInstanceMutation,
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
-      expect(handled).toBe(1);
+      expect(handled).toBe(2);
     }).pipe(Effect.scoped),
   );
 
-  it.effect("does not let a settings grant create or remove providers", () =>
+  it.effect("does not let a settings grant create or remove providers or secret providers", () =>
     Effect.gen(function* () {
       let handled = false;
       const client = yield* RpcTest.makeClient(group).pipe(
@@ -578,6 +577,11 @@ describe("settings mutation authorization", () => {
         yield* client[WS_METHODS.serverUpdateSettings]({
           patch: {},
           providerInstanceMutation,
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      expect(
+        yield* client[WS_METHODS.serverUpdateSettings]({
+          patch: { secretProviders: { [SecretProviderId.make("personal")]: null } },
         }).pipe(Effect.flip),
       ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
       expect(handled).toBe(false);

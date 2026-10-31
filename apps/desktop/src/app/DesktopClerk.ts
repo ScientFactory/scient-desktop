@@ -16,6 +16,7 @@ import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
 // SCIENT-FORK:START — registered app identity and local draft-link policy.
 import { scientPromptLinkAppPath as promptLinkAppPath } from "@t3tools/shared/scientPromptLinks";
 // SCIENT-FORK:END
+import { readPairingAppLink } from "@t3tools/shared/remote";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -23,6 +24,7 @@ import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -87,9 +89,13 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
     : __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__,
 );
 
-function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean) {
+function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, userDataPath: string) {
   return createClerkBridge({
-    storage: storage({ path: stateDir }),
+    storage: openClerkTokenStorage(
+      stateDir,
+      (directory) => storage({ path: directory }),
+      userDataPath,
+    ),
     manageSingleInstanceLock: false,
     passkeys: true,
     renderer: {
@@ -123,10 +129,20 @@ export const make = Effect.gen(function* () {
   yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
     handleSecondInstance(argv);
   });
+  // macOS hands a launch link to open-url, which can fire before configure runs.
+  const pendingOpenUrls: Array<string> = [];
+  let handleOpenUrl = (url: string) => {
+    pendingOpenUrls.push(url);
+    return true;
+  };
+  yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
+    if (handleOpenUrl(url)) event.preventDefault();
+  });
 
   yield* Effect.acquireRelease(
     Effect.try({
-      try: () => createDesktopClerkBridge(environment.stateDir, environment.isDevelopment),
+      try: () =>
+        createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,
@@ -204,7 +220,8 @@ export const make = Effect.gen(function* () {
       };
       // SCIENT-FORK: app links reach the renderer while browser activation stays held.
       const openAppLink = (value: string | undefined) => {
-        if (!value || promptLinkAppPath(value) === null) return false;
+        if (!value || (promptLinkAppPath(value) === null && readPairingAppLink(value) === null))
+          return false;
         void runPromise(webLinks.receive(value));
         return true;
       };
@@ -217,15 +234,12 @@ export const make = Effect.gen(function* () {
         void runPromise(webLinks.receive(url));
         return true;
       };
-      yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
-        if (
-          startProviderAuthHandoff(url) ||
-          resumeProviderAuth(url) ||
-          openWebLink(url) ||
-          openAppLink(url)
-        )
-          event.preventDefault();
-      });
+      handleOpenUrl = (url) =>
+        startProviderAuthHandoff(url) ||
+        resumeProviderAuth(url) ||
+        openWebLink(url) ||
+        openAppLink(url);
+      for (const url of pendingOpenUrls.splice(0)) handleOpenUrl(url);
       yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
         if (!DesktopWebLinks.desktopWebLinksEnabled || !DesktopWebLinks.isWebPageFile(path)) return;
         event.preventDefault();

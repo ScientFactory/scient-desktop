@@ -53,6 +53,7 @@ export function useDesktopReloadGuard(
   describeAttention: (id: string) => string | undefined,
 ): void {
   const currentRef = useRef({ pendingSurfaceIds, options });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps currentRef in step with the latest pending surfaces and options for the reload handler
   useLayoutEffect(() => {
     currentRef.current = { pendingSurfaceIds, options };
   }, [pendingSurfaceIds, options]);
@@ -70,6 +71,7 @@ export function useDesktopReloadGuard(
     },
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this component as the module-level beforeReload handler and unregisters on unmount
   useEffect(() => {
     const handler = (reload: () => void) => {
       const finish = () => {

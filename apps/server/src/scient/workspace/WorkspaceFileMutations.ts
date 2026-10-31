@@ -3,7 +3,6 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeTimersPromises from "node:timers/promises";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   ProjectDeleteFileInput,
@@ -61,6 +60,7 @@ import {
   publicationLeaseBindings,
   decodeRetainedRecord,
   readRetainedRecord,
+  replaceByRename,
   type RetainedRecord,
   retainedFileNames,
   retainedMutationReceipt,
@@ -315,6 +315,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         recoveryId: cause.recoveryId,
         retainedPaths: [...cause.retainedPaths],
         publicationOutcome: "retained-attention",
+        cause,
       });
     }
     if (cause instanceof PlainPublicationUnchangedError)
@@ -541,7 +542,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const removeKept = async (lease: NativeFilePublicationLease, directory: string, name: string) => {
     const path = NodePath.join(directory, name);
     await deps.retainedHooks?.removal?.("before", path);
-    await removeNativeRetainedEntry(lease, directory, name, deps.nativePublicationHelper);
+    await removeNativeRetainedEntry(lease, directory, name);
     await deps.retainedHooks?.removal?.("after", path);
   };
   /**
@@ -624,7 +625,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         decodeReference,
       );
       const directory = reference?.recordDirectory ?? indexed;
-      await assertPrivateRetention(directory, deps.nativePublicationHelper);
+      try {
+        await assertPrivateRetention(directory, deps.nativePublicationHelper);
+      } catch (e) {
+        // A deleted folder took the referenced record with it; nothing is left to settle.
+        if (reference && isNodeError(e, "ENOENT")) return null;
+        throw e;
+      }
       // Taken before the read: a change after it moves this on.
       const stand = await recordStand(indexed, directory);
       const text = await readOptional(NodePath.join(directory, "record.json"), (value) => value);
@@ -1286,22 +1293,6 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           ),
         )
       : Effect.void;
-  const replaceByRename = async (from: string, to: string) => {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await NodeFSP.rename(from, to);
-      } catch (cause) {
-        // Windows refuses to replace a file another program briefly holds open (indexers, antivirus).
-        if (
-          HostProcess.Platform.defaultValue() !== "win32" ||
-          attempt >= 4 ||
-          !["EPERM", "EACCES", "EBUSY"].some((code) => isNodeError(cause, code))
-        )
-          throw cause;
-        await NodeTimersPromises.setTimeout(50 * 2 ** attempt);
-      }
-    }
-  };
   /**
    * A publishing call failed: return if the desired bytes are in place, report a known
    * refusal if the target is exactly as before, and otherwise keep the outcome unknown.
@@ -2695,9 +2686,17 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       };
     }
     const resolved = yield* resolveTarget(input);
+    const replacesFile = yield* Effect.promise(() =>
+      NodeFSP.lstat(resolved.target).then(
+        () => true,
+        () => false,
+      ),
+    );
     const result = yield* publish(input, resolved, intent);
     yield* receipt(input, resolved, result);
-    yield* workspaceEntries.refresh(input.cwd);
+    // Autosave leaves the indexed paths unchanged and the watcher applies new contents,
+    // so only a new path needs the forced rescan a save would otherwise wait for.
+    if (!replacesFile) yield* workspaceEntries.refresh(input.cwd);
     return {
       relativePath: resolved.named.relativePath,
       revision: result.revision!,

@@ -90,8 +90,16 @@ Endpoint behavior follows the actual address:
 - a non-loopback HTTP endpoint can be used for direct LAN pairing; and
 - `127.0.0.1` is reachable only from the server computer.
 
+For a server you start in a terminal, `scient serve --lan` accepts connections
+from your local network and tailnet, but not from public addresses. A pairing
+code is then all that keeps other devices on those networks out.
+
 Prefer SSH forwarding or a correctly secured private HTTPS endpoint. Do not
 expose an unauthenticated Scient server port to the public internet.
+
+On a computer with the desktop app, you can open the printed `scient://pair`
+app link instead. The desktop app asks you to confirm the server address, then
+adds it.
 
 ### Reach one machine several ways
 
@@ -100,17 +108,19 @@ URL, or SSH. Tailscale shares its `100.64.0.0/10` address range with
 other VPNs such as Cloudflare WARP, so an address in that range shows as VPN
 unless the machine confirms it is on Tailscale. To add a route, choose **Add
 route** in the machine's route list.
-Pairing the same machine again over another address also adds a route instead
-of a second machine. A new route is placed by speed, in that order, and you can
-reorder routes at any time.
+A pairing link for a saved machine is refused when it comes from an address
+that machine does not have yet; add that address with **Add route** instead.
+Pairing again over an address the machine already has still works. A new route
+is placed by speed, in that order, and you can reorder routes at any time.
 
 While connected through a paired address, Scient also learns the machine's
 current LAN and Tailscale addresses and adds them as routes, so pairing once
 is enough to use the LAN at home. When the
 machine's LAN address changes, for example after it joins another Wi-Fi network,
 the learned route follows it. The machine must allow network access for its LAN
-address to be learned. The [background service](./background-service.md#local-network-access)
-allows it on private networks by default. You can reorder a learned route, but not remove it; it
+address to be learned: **Network access** in the desktop app, or
+`scient serve --lan` for a server in a terminal.
+You can reorder a learned route, but not remove it; it
 goes away with the route it was learned through, or when the machine stops
 reporting that address.
 
@@ -277,6 +287,15 @@ On a phone, tap the floating preview's corner dot to show its controls, then
 **Pop into separate window** to keep watching in picture-in-picture over other
 apps.
 
+### Local servers
+
+The browser lists a local server once it has a **Preview URL**: set one on the
+project action that starts the server. Scient checks that address and opens it
+as written, including HTTPS addresses and specific paths. It does not send web
+requests to other ports, even ones your terminals and agents opened, because a
+process may use a non-web protocol. To open any other local server, enter its
+URL in the browser.
+
 ### Browser host setup
 
 macOS, Windows, and Linux desktops run the browser as is. Some Linux hosts need
@@ -297,14 +316,71 @@ any missing libraries and system fonts with apt; pages that load without text
 can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
 reports what it would change.
 
-The browser always runs in Chrome's sandbox. Where you cannot change the host,
-set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
+The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
+as root. If your Scient server runs as root, run it as a nonroot user to keep
+sandboxing enabled. `scient browser setup` does not fix this root restriction.
+
+If you need to run as root, or cannot enable the sandbox on your host, set
+`T3CODE_SERVER_BROWSER_SANDBOX=0` in the **Scient server's environment** and restart
+the server. This disables Chrome's sandbox. For a manual launch:
+
+```sh
+T3CODE_SERVER_BROWSER_SANDBOX=0 npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" scient serve
+```
+
+If you run the server under your own systemd unit, add
+`Environment=T3CODE_SERVER_BROWSER_SANDBOX=0` under `[Service]` in its configuration,
+run `sudo systemctl daemon-reload`, then restart that unit. Setting the variable in an
+agent's terminal does not change the environment of an already running Scient server.
 
 ## Connect an outside agent
 
 Claude Code, Codex, ChatGPT and other agents Scient did not start can drive
 threads on an environment through its MCP server. See
 [outside agents](./outside-agents.md) for setup.
+
+## Link another environment
+
+Link two machines, such as your laptop and a VPS, and agents on one can work on
+the other: launch, message, wait on and stop its threads, answer their
+questions, and manage its queues, projects and scheduled tasks.
+
+Linked environments is a beta. Turn it on for both machines in **Settings →
+Labs**; on mobile, **Settings → Labs** lists each connected machine. While it is
+off on either machine, agents start nothing over a link between them. A task
+already running on the other machine still finishes, and if that machine has it
+off, its result arrives once it is back on.
+
+On the machine you will work from, open **Settings → Environments → Linked environments**,
+choose **Link**, and pick the other machine or enter its address. The list
+holds the machines this app knows. If this
+app is connected to that machine with a session that manages access there, it
+makes the pairing code itself; otherwise paste one from that machine's
+**Settings → Sharing & access**. From a terminal, use
+`scient environment link <address> --pairing-code <code> --access <mode>`.
+
+You can also ask an agent to link a machine by name, such as "delegate this to
+my vps". It shows a card in the thread where you pick the machine the same way
+and the access, then approve.
+
+- The access you pick is the most agents from this machine may do there. An
+  agent also never gets more there than its own mode here.
+- Threads a link starts are marked **From** and this machine's name there.
+- A full-access link works there like that machine's own agents. Below full
+  access, the link's agents can change only threads it started, not that
+  machine's own threads, projects or settings, and they skip its project setup
+  scripts.
+- The link shows up in that machine's **Settings → Sharing & access** like any
+  outside agent. Revoke it there to end it. **Forget** on this machine only
+  removes it here.
+- Links last 30 days. Link again with a new pairing code to renew one.
+
+An agent can also hand a task to a linked machine with `delegate_task`: it runs
+there as an ordinary thread, in the project with the same repository (or the
+one `target.projectId` names), and this thread wakes with its result when it
+ends, as for any delegated task. It keeps following the task across restarts.
+If the other machine revokes the link, or the link is removed here, the task
+fails with that reason.
 
 ## Manage or revoke access
 

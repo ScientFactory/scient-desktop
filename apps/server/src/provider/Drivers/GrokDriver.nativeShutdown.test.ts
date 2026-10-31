@@ -38,6 +38,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
@@ -106,6 +107,7 @@ const testLayer = ServerConfig.layerTest(process.cwd(), { prefix: "grok-native-s
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ProviderLatestVersions.layer),
   Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(Layer.mock(SecretResolver.SecretResolver)({})),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     TestProviderHost.layer({ runBackgroundWork: false }).pipe(Layer.provide(NodeServices.layer)),
@@ -440,6 +442,7 @@ const managerLayer = Effect.fn("GrokShutdown.managerLayer")(function* (h: Harnes
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(ProviderInstanceRegistry, h.registry),
           Layer.succeed(EventSink.EventSinkV2, sink),
           Layer.succeed(ProjectionStore.ProjectionStoreV2, store),
           Layer.succeed(IdAllocator.IdAllocatorV2, allocator),

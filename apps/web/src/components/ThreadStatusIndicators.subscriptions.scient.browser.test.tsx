@@ -100,7 +100,7 @@ const ROW_HEIGHT = 45;
 const SPACER = 1000;
 
 // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
-it("leases only visible palette results while retaining observed and cached PR badges", async () => {
+it("leases only visible palette results while retaining observed PR badges", async () => {
   // SCIENT-FORK:START — verify pooling while real browser intersections drive visibility.
   const NativeIntersectionObserver = globalThis.IntersectionObserver;
   const observers: IntersectionObserver[] = [];
@@ -155,48 +155,30 @@ it("leases only visible palette results while retaining observed and cached PR b
     <AppAtomRegistryProvider>
       <div data-slot="scroll-area-viewport" style={{ height: 20, overflowY: "auto" }}>
         <div style={{ height: SPACER }} />
-        {threads.map((thread, index) => (
+        {threads.map((thread) => (
           <div key={thread.id} style={{ height: ROW_HEIGHT, overflow: "hidden" }}>
-            <ThreadRowLeadingStatus
-              thread={thread}
-              snapshot={
-                index === 126
-                  ? {
-                      branch: "feature/test",
-                      sourceControlProvider: undefined,
-                      pr: {
-                        number: 126,
-                        title: "Cached badge",
-                        url: "https://github.com/example/repo/pull/126",
-                        baseRef: "main",
-                        headRef: "feature/test",
-                        state: "open",
-                      },
-                    }
-                  : undefined
-              }
-            />
+            <ThreadRowLeadingStatus thread={thread} />
             {thread.title}
           </div>
         ))}
       </div>
     </AppAtomRegistryProvider>,
   );
-  await scrollTo(0, 0, 1);
+  await scrollTo(0, 0, 0);
   expect(state.queries).toEqual([]);
-  expect(badgeCount()).toBe(1);
+  expect(badgeCount()).toBe(0);
   expect(observers).toHaveLength(1);
   expect(observedRows.size).toBe(128);
 
   // Band [1000, 1340]: rows 0..7.
-  await scrollTo(SPACER + 160, 8, 9);
+  await scrollTo(SPACER + 160, 8, 8);
   expect(state.queries).toHaveLength(8);
   expect(state.queries.filter((key) => key.startsWith("vcs:"))).toHaveLength(4);
   expect(state.queries.filter((key) => key.startsWith("pr:"))).toHaveLength(4);
-  expect(badgeCount()).toBe(9);
+  expect(badgeCount()).toBe(8);
 
   // Band [1370, 1710]: rows 8..15.
-  await scrollTo(SPACER + 8 * ROW_HEIGHT + 10 + 160, 16, 17);
+  await scrollTo(SPACER + 8 * ROW_HEIGHT + 10 + 160, 16, 16);
   expect(state.queries).toHaveLength(16);
-  expect(badgeCount()).toBe(17);
+  expect(badgeCount()).toBe(16);
 });

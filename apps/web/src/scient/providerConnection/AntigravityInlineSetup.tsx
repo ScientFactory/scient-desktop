@@ -121,10 +121,12 @@ export function AntigravityInlineSetup(props: {
   const signInInvocation = useRef<SignInInvocation | null>(null);
   const currentProvider = useRef(props.provider);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps currentProvider holding the latest provider snapshot for imperative callbacks
   useLayoutEffect(() => {
     currentProvider.current = props.provider;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears invocation refs on unmount
   useLayoutEffect(
     () => () => {
       actionInvocation.current = null;
@@ -144,6 +146,7 @@ export function AntigravityInlineSetup(props: {
   }
 
   const invocationInstanceId = useRef(props.provider.instanceId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears invocation refs when the provider instance changes
   useLayoutEffect(() => {
     if (invocationInstanceId.current === props.provider.instanceId) return;
     invocationInstanceId.current = props.provider.instanceId;
@@ -192,6 +195,7 @@ export function AntigravityInlineSetup(props: {
     operationId: connectionOperationId,
     status: connectionOperation?.status,
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the sign-in invocation ref with the observed provider connection operation
   useLayoutEffect(() => {
     const invocation = signInInvocation.current;
     if (!invocation) return;

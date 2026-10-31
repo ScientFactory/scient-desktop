@@ -38,11 +38,6 @@
       "path": "apps/web/src/routeTree.gen.ts",
       "anchor": "/_chat/getting-started",
       "purpose": "Register the additive generated route entry."
-    },
-    {
-      "path": "scripts/effect-budget.json",
-      "anchor": "\"apps/web/src/scient/onboarding/ScientGettingStartedFlow.tsx\"",
-      "purpose": "The shared React effect budget records existing Scient onboarding lifecycle owners; new effects still require their own scoped justification and lint validation."
     }
   ]
 }

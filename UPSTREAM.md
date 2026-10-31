@@ -17,7 +17,7 @@ idle end keeping, restore), `readingPositionStore.ts` (session storage),
 (return to a follow), `useTimelineEndControl.ts` and `unreadTimelineMessages.ts` (Scroll to
 end and its count). They are mounted in marked regions of `ChatView.tsx`,
 `MessagesTimeline.tsx` and `timelineScrollAnchoring.ts`; ChatView's reader navigation
-(placement cancel, one-shot Scroll to end, gesture listeners, thread-switch reset) stays in
+(placement cancel, Scroll to end, gesture listeners, thread-switch reset) stays in
 marked regions there because it shares refs with upstream's anchor callbacks. The outer
 timeline never maintains the live end during streaming, tool activity, completion, or queued
 sends (LegendList `maintainScrollAtEnd` stays off). While idle and resting at the reading
@@ -63,21 +63,31 @@ stays on underneath the reveal. The timeline's working state (`chat/timelineWork
 send's prompt is listed (the optimistic row, or a newer server user message than the dispatch
 started from), and stays on while that prompt's own V2 run prepares or starts (the dispatch is
 reset at admission; V2 reports that phase as connecting).
-Preserve the existing first-message framing. One controller in ChatView owns the send follow
-(`chat/responseFollow.ts`): eligible sends, and queued prompts the server delivers while the
-reader is at the end (V2's `queued_turn`/`promoted_queued_to_steer` input intent on the
-delivered prompt, which keeps its message id), start it; it settles from the V2 run answering
-that prompt (the run its message belongs to, so a promoted steer follows the run it went into,
-not its cancelled queue run), never from the thread looking busy. A prompt's response ends at the
-next prompt. It reveals the prompt and the start of its response's latest
-message through `chat/useBoundedAnswerFollow.ts` (for a later prompt, `followResponse`
-follows the whole response's end, traces and tools included, at a calmer pace): capped at the prompt's first line
-reaching the top margin, past it only to show a message pushed below the fold, never
-past that message's top. Scrolling up by any means (wheel, keys, touch, scrollbar)
-cancels pending placement and bounded following; scrolling down, clicks and selection do not.
-An upward scroll away from the end without reader input (assistive technology) also ends a
-fresh-open end restore. Footer metadata never moves the reader: upstream's footer-growth follow
-(`onFooterGrow`) is not composed (marked in `useTimelineFollow.ts`).
+Preserve the existing first-message framing. One controller in ChatView owns the follow
+(`chat/responseFollow.ts`), whose rule is that work is watched and answers are read. A reader at
+the end of a working thread follows it: a send at the end, a prompt arriving at the end from
+anywhere (including a queued prompt V2 delivers: its `queued_turn`/`promoted_queued_to_steer`
+input intent keeps the message id, so it counts before the send's receipt), and arriving at the
+end while the latest prompt's run works (scrolling down, Scroll to end, opening the thread there)
+start or rejoin it. A follow the reader ended stays ended until they leave the end and come back.
+It settles from the V2 run answering that prompt (the run its message belongs to, so a promoted
+steer follows the run it went into, not its cancelled queue run), never from the thread looking
+busy. A prompt's response ends at the next prompt. `chat/useBoundedAnswerFollow.ts` follows the
+response's live end (traces, tools, short progress notes, the reader's queued messages after the
+latest response) at a calm pace, and stops before the start of a read row passes the top margin:
+a message still arriving, one `keepsSettledAnswerVisible` keeps when its turn folds, a plan, a
+card, or work the reader expanded. Read rows the reader had scrolled past when they joined do not
+stop it, unless still arriving. Past the stop it only shows the first lines of a message pushed
+below the fold. Scrolling up by any means (wheel, keys, touch, scrollbar)
+cancels pending placement and bounded following; scrolling down and clicks do not, and a text
+selection holds it still. An upward scroll away from the end without reader input (assistive
+technology) also ends a fresh-open end restore. Footer status never moves the reader: upstream's
+footer-growth follow (`onFooterGrow`) is not composed (marked in `useTimelineFollow.ts`); the
+reader's queued messages are kept reachable by the follow and `chat/queuedRunsInView.ts`, which
+also shows Scroll to end while they are hidden below.
+The end-of-timeline "Syncing messages..." status waits 2s instead of upstream's 400ms while the
+cached messages already show; "Loading messages..." for an empty thread keeps upstream's delay
+(marked in `ChatView.tsx`).
 Keys count only when they scroll the timeline: focus in it or nowhere, no modifier, not in a
 field (a menu's arrow keys or a shortcut leave the follow be).
 While the reader scrolls toward the end (wheel, keys, touch, scrollbar drag), the follow never
@@ -86,13 +96,14 @@ from rest 250ms after their input stops. ChatView hands every end report to
 `useTimelineEndControl`, which reacts to transitions only and changes the follow modes there.
 The timeline never pins to its end, so a report of leaving it is never swallowed (upstream's
 handler swallows it because its list pins; restoring that hides Scroll to end while an answer
-grows below). The existing Scroll to end button is a one-shot action with an
-unread badge counting responses, not a follow toggle, and it ends the follow. Do not add a
+grows below). The existing Scroll to end button jumps to the bottom with an unread badge
+counting responses; while the thread works the reader then follows it again. Do not add a
 second navigation button. A reader who leaves while the follow is still going (saved as
 `followingPromptId`; never inferred from resting at the end) comes back to where the follow
-would be now for that saved prompt (`chat/liveFollowOffset.ts`): its response's end if it all
-fits, else the prompt at the top margin, or its latest message's start there if it would be below
-the screen; a later prompt (from another window) never moves it further. The follow then carries
+would be now for that saved prompt (`chat/liveFollowOffset.ts`, the same stop rule): its
+response's end unless that passes a read row's start, else that row at the top margin, or its
+latest message's start there if it would be below the screen; a later prompt (from another
+window) never moves it further. The follow then carries
 on while that prompt's run works. Reading positions resolve by message/turn identity, load up to two pages of missing
 history before falling back to a neighbor or the end, and
 survive same-window reloads; never restore an unrelated absolute pixel offset.
@@ -229,6 +240,9 @@ Stop turns into a queued message joins the held queue. A stop made so a queued m
 (`scient/orchestration/TerminalQueueHold.ts`). Upstream's release block in `Orchestrator.ts`
 is not composed; marked expectations in `ThreadLaunchService.test.ts` and
 `SteeringCompletion.integration.test.ts` assert Scient's rule.
+Upstream's release of unattended messages after a later completed run is composed: the
+terminal fence honours it as the one release without a command, and a message queued before a
+Stop stays held (`releaseUnattendedHolds`, `Orchestrator.ts`).
 
 The web queue is upstream's `QueuedRunsControl`, mounted through the composer's
 `queuedRunsControl` slot. Scient's additions live in
@@ -605,6 +619,81 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`79f1fadfc6020b820d541ca4691d2feebb15dd1b` is recorded in
+[the 2026-10-31 79f1fadfc6 receipt](docs/internals/t3-upstream-sync-20261031-79f1fadfc6.md).
+Literal merge `5589000e86b47f1c227daa57521779cb8e93d5f9` has owned base
+`f91025e88ce96d5f26bb4e7485af2db2f62d768c` (#718) and the frozen official target as parents,
+retaining the 103 official commits after `59bb4e83bc`. Side chats are real threads on upstream's
+lineage beside Scient's frozen forks, and a forked parent gives them its frozen history. Model
+and effort share one control on Scient's picker. Upstream's migration 076 lands as Scient 080.
+Release remains separate.
+
+The previous committed alignment through
+`59bb4e83bcf753e6ebb99b63b5232f5f41251c8a` is recorded in
+[the 2026-10-31 59bb4e83bc receipt](docs/internals/t3-upstream-sync-20261031-59bb4e83bc.md).
+Literal merge `bcf7bf08725b71e805949d4d7e757947b8c4bffd` has owned base
+`3a3dec7711ba5eb07e31eb5c8a2ab0fa6a911c48` (#713, with main's #715) and the frozen official
+target as parents, retaining the 295 official commits after `97e35bcf23`. Every chat message
+renders through upstream's faster renderer, and messages without math intent also take its
+cache and last-block streaming; Scient's math, direction, image gallery and generated-image
+display stay. Upstream's migrations 074 and 075 land as Scient 078 and 079. Release remains
+separate.
+
+An earlier committed alignment through
+`97e35bcf23e4dcf34c2dcffadd37c08db0e01e52` is recorded in
+[the 2026-10-30 97e35bcf23 receipt](docs/internals/t3-upstream-sync-20261030-97e35bcf23.md).
+Literal merge `fa47084190dd8c156172c23678b2e84bbea8a4a6` has owned base
+`5dc9c2c26725b92751c984263f5f9b70abdb21f3` (#710) and the frozen official target as
+parents, retaining the 27 official commits after `dd14848153`. Stop always completes with
+force stop on top of Scient's queue and admission rules; held agent, server and scheduled
+messages continue after a later completed run, except those a Stop held. Provider environment
+secrets arrive behind upstream's off secrets
+flag. Release remains separate.
+
+An earlier committed alignment through
+`dd148481531a0a090780a2ade20588566db099a2` is recorded in
+[the 2026-10-30 dd14848153 receipt](docs/internals/t3-upstream-sync-20261030-dd14848153.md).
+Literal merge `e86962f1278340f6fdbdda071ebe1cc0a11aec22` has owned base
+`51505395956e7dc959e00c868b10048a63f89946` (#707, which carries #694) and the frozen
+official target as parents, retaining the 99 official commits after `6d450a4284`.
+Upstream's server performance work is in; Scient keeps full SQLite durability, its
+counts-free startup heartbeat, and its settings, sidebar-section and fork-history
+additions on upstream's faster shapes. Upstream's migration 073 lands as Scient 077.
+1Password secret providers stay behind upstream's off-by-default flag. Release remains
+separate.
+
+The previous committed alignment through
+`6d450a4284852af137b2f3407fddd89eb76e7644` is recorded in
+[the 2026-10-29 6d450a4284 receipt](docs/internals/t3-upstream-sync-20261029-6d450a4284.md),
+stacked on #694. Literal merge `49d0d85dde06de7b398f4d117a098cd41fb862a7` has owned base
+`abe2e529285a9b1b204e507d5673d2fd3dff5dbd` and the frozen official target as parents,
+retaining the 44 official commits after `9826dbb990`. Scient keeps its Stable/Beta update
+picker and adopts the updater's release floor and guarded downgrade; upstream's npm-based
+fleet track switch is not adopted. Upstream's out-of-usage fallback, turning a thread
+without a project into a project, local-first Git status and Electron 44.10.0 are in.
+Immutable migrations (none added), cloud, telemetry, relay, mobile publication and
+release controls remain. Release remains separate.
+
+The previous committed alignment through
+`9826dbb9904b2591bfbf60d1317486b59132f56b` is recorded in
+[the 2026-10-28 8e76f945d2 receipt](docs/internals/t3-upstream-sync-20261028-8e76f945d2.md)
+([Scient PR #694](https://github.com/ScientFactory/scient-desktop/pull/694)).
+Literal merge `f3c25c6c49cf8cc3e76a61ddb71553ffb5029f2e` has owned base
+`b3ea3c2fd48441e00f85247920decf96afcc1541` and the frozen official target as parents,
+retaining the 102 official commits after `a56ecdafa7`; owned-main catch-up
+`0f956df756f3c2a866b1d9df672ea4320728e3c7` includes `eaf4ccdd8e`; official extension
+`05313ed5470d673fa4a51fcf394b59fe86267490` retains the next 53 through `9826dbb990`, with
+upstream's grouped composer, the boring sidebar in place of the deleted legacy sidebar,
+bounded history pages and Simlock as a Labs alpha. Update-time thread
+continuation and thread-continuation gating are removed with upstream; thread links
+use upstream's v2 format while older links still parse; upstream's peer links land
+as migrations 074-076 with `scient_*` tool names; Labs keeps upstream's page.
+Upstream's dead-code sweep also removes the Scient code that only it reached, and
+every Scient React effect now states its reason. Native V2, immutable migrations,
+storage identities and cloud, telemetry, relay, updater, mobile publication and
+release controls remain. Release remains separate.
+
+The previous committed alignment through
 `a56ecdafa7c944286f3b45aa51486be4ffe079fd` is recorded in
 [the 2026-10-27 a56ecdafa7 receipt](docs/internals/t3-upstream-sync-20261027-a56ecdafa7.md)
 ([Scient PR #684](https://github.com/ScientFactory/scient-desktop/pull/684)).
@@ -1050,7 +1139,9 @@ opts in; an externally managed OpenCode server does not.
 See [workspace authority and agent capabilities](docs/internals/scient-workspace-binding.md).
 
 Scient's injected MCP connection is named `scient`, and the omitted-history
-reader is `scient_thread_read`. Tool descriptions, provider-qualified names,
+reader is `scient_thread_inspect` (upstream `t3_thread_read`). Scient's own
+`scient_handoff_summary_read` pages saved handoff summaries that upstream's
+reader omits. Tool descriptions, provider-qualified names,
 generated handoff instructions and activity presentation use Scient identity.
 Preserve this public boundary when adopting upstream toolkits. Historical
 `t3-code`/`t3_` activity identities are normalized only for display; they are not
@@ -1145,6 +1236,12 @@ index for untracked files. A freshly timestamped copy can bypass Git's racy-clea
 content checks and omit rapid same-size tracked edits. Keep the source index read-only,
 retain split-index handling, and preserve the deterministic regression in
 `GitVcsDriverCore.test.ts`; do not replace it with a timing delay or size-changing fixture.
+
+`effect-codex-app-server`'s client runs the caller's `onTermination` hook and
+then fails its own termination signal. Upstream's handler replaces the caller's
+hook, so Scient's session cleanup never ran. The order matters: the signal can
+retire the session and interrupt the hook. Retire the marked block when upstream
+composes the two.
 
 Unread-answer attention stays in Scient-owned `scient/answerAttention` modules.
 Preserve the optional durable completion marker in shell/detail snapshots, its
@@ -1714,3 +1811,79 @@ When aligning, check:
 - **User docs.** `docs/user/keybindings.md` (these shortcuts) and `docs/user/devices.md`
   (Device under More on the New tab page) carry no markers, like the rest of
   Scient's lines there.
+
+## Add project paste
+
+The Add project box starts with the home folder (`~/` until the environment resolves it) or the
+configured base folder. Upstream's input only ever joins pasted text to that, so pasting
+`/Users/dana/thesis` gives `/Users/dana//Users/dana/thesis`, a missing folder inside home that
+Add project creates empty. The marked `onPaste` seam in
+`CommandPalette.tsx` replaces the box when `resolvePastedBrowsePath` sees a full path, and leaves
+every other paste and all typing alone. Drop the seam if upstream fixes this in their picker.
+
+## Browser downloads and composer focus
+
+Browser download attribution is upstream's, unchanged: `DesktopBrowserHost.humanStartedDownload`
+treats a download as the person's unless agent CDP input reached the tab in the last 5 seconds,
+and only then does `Manager.ts` copy it to ~/Downloads. Do not attribute downloads from the guest
+preload's input reports. Chrome's PDF viewer is an out-of-process frame the preload never runs in,
+so its Download button would never count as the person's, and the file would be lost when the tab
+closes (this happened between the 2026-10-09 alignment and 2026-10-30). Keep the preload's input
+reports asynchronous; a synchronous IPC per key or click makes page typing wait on the main process.
+
+Two marked focus seams keep the caret where the person is typing:
+
+- `ChatView.tsx`, the thread-open effect: a new thread, or closing the terminal, focuses the
+  composer as in T3. The same thread re-resolving (a reconnect) focuses it only when
+  `shouldRefocusComposerOnWindowFocus` allows, so a browser page, field or editor keeps the caret.
+- `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
+  takes the caret only if focus is still in the composer or nowhere in particular.
+
+## Multiple app windows
+
+Scient Desktop can run several full app windows in one Electron process
+([Multiple app windows](docs/internals/multi-window.md)). The behavior lives in
+`apps/desktop/src/scient/multiWindow` and `apps/web/src/scient/multiWindow`; T3
+files keep marked seams only. Paths below are relative to `apps/desktop/src`, or
+to `apps/web/src` after `web/`.
+
+| Area                      | T3 files with marked seams                                                                                                                              | What the seam does                                                                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Window registry           | `electron/ElectronWindow.ts`                                                                                                                            | Keeps app windows in focus order; the head is the main window (`appWindows`)                                                                                                                         |
+| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `electron/ElectronMenu.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts` | `createWindow({ route, cascadeFrom, atCursor })`, `openNewWindow`, New Window in File and Dock menus, per-window bounds, focus; registers `scient/multiWindow/ipc.ts` and spreads its preload bridge |
+| Sender checks             | `ipc/DesktopIpc.ts`, `ipc/methods/{window,snapShot,appActivation,webLinks}.ts`, `app/DesktopAppActivation.ts`, `app/DesktopWebLinks.ts`                 | Accept any app window's renderer and act on its window; deliver to a ready renderer                                                                                                                  |
+| Shared settings           | `ipc/methods/{clientSettings,connectionCatalog}.ts`, `web/hooks/useSettings.ts`, `web/connection/storage.ts`                                            | Change notices to other windows; Web Lock around writes                                                                                                                                              |
+| Preview hosting           | `preview/Manager.ts`, `web/browser/ElectronBrowserHost.tsx`, `web/browser/desktopTabLifetime.ts`                                                        | Guests from any app window; one window mounts each tab's webview; another window's close waits                                                                                                       |
+| Persisted renderer stores | `web/composerDraftStore.ts`, `web/promptStashStore.ts`, `web/uiStateStore.ts`, `web/rightPanelStore.ts`                                                 | Merge on save with what other windows or web client tabs stored (the stash adopts it before each change); adopt their saves from `storage` events                                                    |
+| Notifications             | `web/components/ThreadNotificationCoordinator.tsx`                                                                                                      | Only the presenter window plays sounds and shows system notifications                                                                                                                                |
+| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                            | Thread and draft menu item, shown only when the desktop bridge can open windows                                                                                                                      |
+| Side panel tab windows    | `web/components/RightPanelTabs.tsx`, `web/components/ChatView.tsx`, `web/appInit.tsx`                                                                   | Tab menu item, dragging a tab out of the strip, the shown page's opener, and the new window's request to show that tab                                                                               |
+| Page menus                | `web/components/preview/PreviewView.tsx`, `web/components/device/DeviceControlsRail.tsx`, `web/components/pullRequest/PullRequestActionsMenu.tsx`       | Open in new window in the browser, device and pull request menus: an import and one `PanelTabNewWindowItem` element each                                                                             |
+
+Desktop test files that build `ElectronWindow`, `DesktopWindow` or `ElectronMenu`
+fakes carry marked `appWindows`, `openNewWindow` and `setDockMenu` members;
+Scient cases live in
+`.scient.` siblings and `scient/multiWindow` tests.
+
+When aligning, check:
+
+- **Single-window assumptions.** A new T3 call to `electronWindow.main` or a
+  comparison of an IPC sender with the main window's renderer usually means
+  "the window that asked". Route it through `appWindowForSender` unless it really
+  concerns the most recently used window.
+- **Window construction.** T3 changes to `createWindow` (options, load, DevTools,
+  bounds persistence) apply to every app window. Keep the route and cascade
+  options, and keep DevTools opening only for the first window.
+- **Persisted stores.** A T3 change to a merged store's persisted shape or
+  version must keep its sync module's fields in step: `uiStateSync.ts` lists UI
+  state fields, `rightPanelSync.ts` reads `byThreadKey` and
+  `threadPanelVisibilityByThreadKey`, and `composerDraftSync.ts` lists draft
+  sections. A new field in a thread's side panel entry is shared with the tabs
+  by default; one that belongs to each window's view goes in `rightPanelSync.ts`'s
+  `splitView` and `withOwnView`. A new T3 store that persists shared state needs the same treatment or a reason
+  it does not.
+- **Preview manager.** T3 code that reads a single main window in
+  `preview/Manager.ts` must use the tab's host window (`PreviewHostWindows` in
+  `scient/multiWindow/previewHostWindows.ts`) or all `appWindows`.
+- **Shortcuts.** File > New Window uses `CmdOrCtrl+Alt+Shift+N`. If T3 binds it,
+  decide which command keeps the key and update `docs/user/multiple-windows.md`.

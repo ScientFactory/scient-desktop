@@ -10,7 +10,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
-import * as ThreadUndo from "../../hooks/threadUndo";
+import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";

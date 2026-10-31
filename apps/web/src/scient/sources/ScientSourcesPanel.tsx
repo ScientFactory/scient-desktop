@@ -279,10 +279,12 @@ export function ScientSourcesPanel(props: {
     readonly sourceIds: ReadonlySet<string>;
   } | null>(null);
   const panelContextRef = useRef(panelContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps panelContextRef holding the current panel context
   useLayoutEffect(() => {
     panelContextRef.current = panelContext;
   }, [panelContext]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state in panelMounted for async callbacks
   useEffect(() => {
     panelMounted.current = true;
     return () => {
@@ -328,6 +330,7 @@ export function ScientSourcesPanel(props: {
   }
 
   const expirySchedule = { context: panelContext, sourceIds: recentlyAddedSourceIds };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expires recent-add highlights on a timer
   useEffect(() => {
     const panelContext = expirySchedule.context;
     const entries = recentSourceAdds.get(panelContext);
@@ -340,6 +343,7 @@ export function ScientSourcesPanel(props: {
     return () => window.clearTimeout(timeout);
   }, [expirySchedule, setRecentlyAddedSourceIds]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reloads recent-add state from the recent-adds store when the panel context changes
   useEffect(() => {
     importRevealRequest.current += 1;
     setRecentlyAddedSourceIds(readRecentSourceAdds(panelContext));
@@ -365,6 +369,7 @@ export function ScientSourcesPanel(props: {
     { key: `scient-sources:${panelContext}` },
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records newly added sources in the recent-adds store and mirrors them into state
   useEffect(() => {
     const records = sources.overview?.records;
     if (!records) return;
@@ -410,6 +415,7 @@ export function ScientSourcesPanel(props: {
 
   if (selectedSourceId && !selectedRecord && !selectedSummary) setSelectedSourceId(null);
   const loadSource = sources.loadSource;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the selected source record from the server when missing
   useEffect(() => {
     if (!selectedSourceId || selectedRecord || !selectedSummary) return;
     void loadSource(selectedSourceId).catch(() => undefined);

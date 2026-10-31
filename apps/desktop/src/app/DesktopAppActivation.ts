@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Local socket ownership checks need lstat, an atomic rename, and a directory watch at the Node adapter boundary.
+import { pipe } from "effect/Function";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -21,7 +22,10 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import type * as Electron from "electron";
+// SCIENT-FORK:START — requests go to the most recently focused ready app window.
+import { makeActivationRenderers } from "../scient/multiWindow/activationRenderers.ts";
+import { appWindowForSender } from "../scient/multiWindow/appWindows.ts";
+// SCIENT-FORK:END
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
@@ -151,8 +155,10 @@ export async function startDesktopAppControlServer(input: {
       }
 
       if (!isDesktopAppActivationRequest(parsed)) {
-        finish(
-          invalidResponse(requestIdFromUnknown(parsed), "The desktop app request is invalid."),
+        pipe(
+          requestIdFromUnknown(parsed),
+          (requestId) => invalidResponse(requestId, "The desktop app request is invalid."),
+          finish,
         );
         return;
       }
@@ -284,7 +290,12 @@ export class DesktopAppActivation extends Context.Service<
   DesktopAppActivation,
   {
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
-    readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
+    // SCIENT-FORK:START — each app window reports its own readiness.
+    readonly setRendererReady: (
+      ready: boolean,
+      senderId: number | undefined,
+    ) => Effect.Effect<void>;
+    // SCIENT-FORK:END
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppActivation") {}
@@ -306,9 +317,7 @@ export const make = Effect.gen(function* () {
     userId,
     joinPath: path.join,
   });
-  let registeredWebContents: Electron.WebContents | null = null;
-  let detachRendererListeners: (() => void) | null = null;
-
+  // SCIENT-FORK:START — requests go to the most recently focused ready app window.
   const broker = new DesktopAppActivationBroker({
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
     activate: () => {
@@ -320,12 +329,10 @@ export const make = Effect.gen(function* () {
     },
   });
 
-  const clearRegisteredRenderer = () => {
-    detachRendererListeners?.();
-    detachRendererListeners = null;
-    registeredWebContents = null;
-    broker.clearRenderer();
-  };
+  const setWindowReady = makeActivationRenderers(broker, electronWindow, (window, request) =>
+    window.webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request),
+  );
+  // SCIENT-FORK:END
 
   return DesktopAppActivation.of({
     start: Effect.acquireRelease(
@@ -351,37 +358,14 @@ export const make = Effect.gen(function* () {
           Effect.ensuring(Effect.sync(() => broker.close())),
         ),
     ).pipe(Effect.asVoid),
-    setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(function* (ready) {
-      if (!ready) {
-        clearRegisteredRenderer();
-        return;
-      }
-      const main = yield* electronWindow.main;
-      if (Option.isNone(main)) return;
-      const webContents = main.value.webContents;
-      if (webContents.isDestroyed()) return;
-
-      if (registeredWebContents !== webContents) {
-        clearRegisteredRenderer();
-        registeredWebContents = webContents;
-        const onUnavailable = () => clearRegisteredRenderer();
-        const onNavigation = (
-          event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
-        ) => {
-          if (event.isMainFrame && !event.isSameDocument) clearRegisteredRenderer();
-        };
-        webContents.on("did-start-navigation", onNavigation);
-        webContents.once("destroyed", onUnavailable);
-        detachRendererListeners = () => {
-          webContents.removeListener("did-start-navigation", onNavigation);
-          webContents.removeListener("destroyed", onUnavailable);
-        };
-      }
-
-      broker.registerRenderer((request) => {
-        webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
-      });
-    }),
+    // SCIENT-FORK:START — each app window reports its own readiness.
+    setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(
+      function* (ready, senderId) {
+        const window = yield* appWindowForSender(electronWindow, senderId);
+        if (Option.isSome(window)) setWindowReady(window.value, ready);
+      },
+    ),
+    // SCIENT-FORK:END
     // The IPC handler owns the activation-completion span.
     complete: Effect.fnUntraced(function* (response) {
       return yield* Effect.sync(() => broker.complete(response));

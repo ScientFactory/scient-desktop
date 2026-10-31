@@ -67,6 +67,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
 import { LegacyV1ThreadImporter } from "../legacy/LegacyV1ThreadImporter.ts";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
+import { ContextHandoffBudgetError } from "@t3tools/provider-core/server/failure";
 import { scientContextHandoffPolicy } from "../ScientContextHandoffPolicy.ts";
 import { deliverContextHandoffs } from "../ContextHandoffDelivery.ts";
 import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
@@ -863,7 +864,7 @@ it.live.each(
             (item) => item.type === "error" && item.runId === settled.runs.at(-1)?.id,
           );
           assert.ok(failure?.type === "error");
-          assert.include(failure.failure.message, "Insufficient context allowance");
+          assert.include(failure.failure.message, new ContextHandoffBudgetError().message);
           assert.isFalse(
             handoff.delivery?.status === "inline" || handoff.delivery?.status === "injected",
           );
@@ -1189,7 +1190,7 @@ it.live.each(
                   (item) => item.type === "error" && item.runId === refused.runs.at(-1)?.id,
                 );
                 assert.ok(failure?.type === "error");
-                assert.include(failure.failure.message, "Insufficient context allowance");
+                assert.include(failure.failure.message, new ContextHandoffBudgetError().message);
                 const retainedDelta = yield* sourceReader.resolveContextHistory({
                   handoffs: refused.contextHandoffs.filter(
                     (candidate) => candidate.strategy === "fork_delta_summary",

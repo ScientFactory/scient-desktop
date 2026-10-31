@@ -6,7 +6,6 @@ import type {
   OrchestrationV2AppThread,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
-import { modelSelectionsEqual } from "@t3tools/shared/model";
 
 import type { ProviderSwitchPlanV2 } from "../ProviderSwitchService.ts";
 
@@ -27,7 +26,6 @@ export function settingExecutionOwnerOf(
         : undefined,
     // SCIENT: next-turn defaults cannot detach a source that still owns held Droid input.
     droid: run?.status === "running" ? run.heldDroidSteer : undefined,
-    providerThreadId: run?.providerThreadId,
   };
 }
 
@@ -42,8 +40,6 @@ export function ownerPreservingSwitchPlan(input: {
   if (owner?.droid !== undefined)
     return {
       instanceChanged: modelSelection.instanceId !== thread.providerInstanceId,
-      modelChanged: !modelSelectionsEqual(thread.modelSelection, modelSelection),
-      targetProviderThreadId: owner.providerThreadId!,
       releaseProviderSessionIds: [],
       transition: { type: "reuse" as const },
     };
@@ -52,8 +48,6 @@ export function ownerPreservingSwitchPlan(input: {
   if (owner?.native !== undefined && modelSelection.instanceId === thread.providerInstanceId)
     return {
       instanceChanged: false,
-      modelChanged: !modelSelectionsEqual(thread.modelSelection, modelSelection),
-      targetProviderThreadId: owner.native.providerThreadId,
       releaseProviderSessionIds: [],
       transition: { type: "reuse" as const },
     };

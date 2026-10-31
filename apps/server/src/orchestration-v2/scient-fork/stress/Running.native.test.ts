@@ -34,7 +34,9 @@ import { ProjectionStoreV2 } from "../../ProjectionStore.ts";
 import { layerWithRegistry } from "../../testkit/ProviderReplayHarness.ts";
 import { makeReplayServerConfig } from "../../testkit/ProviderReplayHarness.ts";
 import { layer as allocatorLayer } from "@t3tools/provider-core/server/IdAllocator";
-import { layerFromDrivers } from "../../ProviderAdapterRegistry.ts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { layerFromAdaptersEffect } from "../../ProviderAdapterRegistry.ts";
+import { DEFAULT_CODEX_SETTINGS } from "../../Adapters/CodexAdapterV2.replay.testkit.ts";
 import * as CodexAdapterV2 from "../../Adapters/CodexAdapterV2.ts";
 import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
@@ -193,15 +195,21 @@ it.live.each([false, true])(
               } satisfies CodexClient.CodexAppServerClient["Service"];
             }),
         });
-        const registry = layerFromDrivers({
-          drivers: [CodexAdapterV2.CodexAdapterV2Driver],
-          configMap: { [modelSelection.instanceId]: { driver: CodexAdapterV2.CODEX_DRIVER_KIND } },
-        }).pipe(
+        const registry = layerFromAdaptersEffect(
+          CodexAdapterV2.createCodexAdapterV2({
+            instanceId: modelSelection.instanceId,
+            displayName: undefined,
+            environment: [],
+            enabled: true,
+            config: { ...DEFAULT_CODEX_SETTINGS, homePath: `${config.baseDir}/home` },
+          }).pipe(Effect.map((adapter) => [adapter])),
+        ).pipe(
           Layer.provide(
             Layer.mergeAll(
               factory,
               Layer.succeed(ServerConfig, config),
               allocatorLayer,
+              McpProviderSessions.layer,
               NodeServices.layer,
             ),
           ),

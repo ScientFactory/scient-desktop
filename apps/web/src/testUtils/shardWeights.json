@@ -414,7 +414,6 @@
   "src/lib/chunkReloadGuard.test.ts": 0.01,
   "src/lib/color.test.ts": 0.012,
   "src/lib/composerContextRecords.test.ts": 0.133,
-  "src/lib/composerContextSend.browser.test.ts": 0.155,
   "src/lib/contextWindow.test.ts": 0.015,
   "src/lib/desktopReload.browser.test.tsx": 0.087,
   "src/lib/diffRendering.test.ts": 0.063,

@@ -23,51 +23,18 @@ describe("Scient awareness", () => {
     expect(buildScientAwareness(new Set(["device"]))).not.toContain(SCIENT_COMPUTE_AWARENESS);
     expect(buildScientAwareness(new Set(["compute:inventory"]))).not.toContain("## Scient devices");
   });
-  it("keeps the always-on identity compact and product-level", () => {
+
+  it("keeps the always-on identity compact and free of tool-specific guidance", () => {
     expect(wordCount(SCIENT_CORE_AWARENESS)).toBeLessThanOrEqual(120);
-    expect(SCIENT_CORE_AWARENESS).toContain("project workspace");
-    expect(SCIENT_CORE_AWARENESS).toContain("inspect and edit workspace files");
-    expect(SCIENT_CORE_AWARENESS).toContain("Scient's Markdown chat");
-    expect(SCIENT_CORE_AWARENESS).toContain("Project `.tex` files open");
-    expect(SCIENT_CORE_AWARENESS).toContain("editable LaTeX source/PDF workspace");
-    expect(SCIENT_CORE_AWARENESS).toContain("Linked project `.html` files open directly");
-    expect(SCIENT_CORE_AWARENESS).toContain("integrated browser with relative resources");
-    expect(SCIENT_CORE_AWARENESS).toContain("prefer clickable project-relative Markdown links");
-    // Agents write links relative to their shell directory unless told not to.
-    expect(SCIENT_CORE_AWARENESS).toContain("Markdown links (never shell-relative)");
-    expect(SCIENT_CORE_AWARENESS).toContain("temporary preview URLs");
-    expect(SCIENT_CORE_AWARENESS).not.toContain("localhost");
-    expect(SCIENT_CORE_AWARENESS).not.toContain("When LaTeX fits");
-    expect(SCIENT_CORE_AWARENESS).toContain("diagram declaration before its contents");
-    expect(SCIENT_CORE_AWARENESS).toContain("self-contained Plotly figure JSON");
-    expect(SCIENT_CORE_AWARENESS).toContain(
-      "Use these formats directly, without HTML or JavaScript wrappers",
-    );
-    expect(SCIENT_CORE_AWARENESS).toContain("Create workspace files");
-    expect(SCIENT_CORE_AWARENESS).toContain("standalone deliverable");
+    // Link spelling comes from upstream's runtime instructions alone.
+    expect(SCIENT_CORE_AWARENESS).not.toMatch(/relative|absolute/u);
     expect(SCIENT_CORE_AWARENESS).not.toContain("sources_");
   });
 
   it("mentions Scient skills only when exact skill access is granted", () => {
-    expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(125);
+    expect(wordCount(SCIENT_SKILLS_AWARENESS)).toBeLessThanOrEqual(80);
     expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skills_list`");
     expect(SCIENT_SKILLS_AWARENESS).toContain("`scient_skill_load`");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("These tools cover Scient skills only");
-    expect(SCIENT_SKILLS_AWARENESS).not.toContain("project-specific guidance");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("read the current-turn marker first");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("A complete empty scope needs no");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("reuse visible full-catalog summaries only");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("The digest is freshness metadata, not authority");
-    expect(SCIENT_SKILLS_AWARENESS).not.toContain("Before a substantive new task");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("provider-native skills are separate");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("scope.includesAllSkills");
-    expect(SCIENT_SKILLS_AWARENESS).toContain(
-      "Pending or incomplete scope does not prove emptiness",
-    );
-    expect(SCIENT_SKILLS_AWARENESS).toContain("Load applicable instructions");
-    expect(SCIENT_SKILLS_AWARENESS).toContain("provide guidance and grant no tools or authority");
-    expect(SCIENT_SKILLS_AWARENESS).not.toContain("automatic skill");
-    expect(SCIENT_SKILLS_AWARENESS).not.toContain("user-selected");
     expect(buildScientAwareness(new Set(["skills:read"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_SKILLS_AWARENESS}`,
     );
@@ -86,20 +53,14 @@ describe("Scient awareness", () => {
   });
 
   it("recommends read-only Compute inventory only with compute authority", () => {
-    expect(wordCount(SCIENT_COMPUTE_AWARENESS)).toBeLessThanOrEqual(90);
+    expect(wordCount(SCIENT_COMPUTE_AWARENESS)).toBeLessThanOrEqual(40);
     expect(SCIENT_COMPUTE_AWARENESS).toContain("`scient_compute_inventory`");
-    expect(SCIENT_COMPUTE_AWARENESS).toContain("configured settings");
-    expect(SCIENT_COMPUTE_AWARENESS).toContain("managed-runtime status");
-    expect(SCIENT_COMPUTE_AWARENESS).toContain("existing candidates");
-    expect(SCIENT_COMPUTE_AWARENESS).toContain("readiness is unknown");
-    expect(SCIENT_COMPUTE_AWARENESS).toContain("does not install, run, execute, or attach");
     expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
     expect(buildScientAwareness(new Set(["sources:read"]))).toBe(SCIENT_CORE_AWARENESS);
     expect(buildScientAwareness(new Set(["compute:inventory"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_COMPUTE_AWARENESS}`,
     );
   });
-
   it("projects the Compute inventory name for Claude's MCP namespace", () => {
     const awareness = buildScientAwareness(
       new Set(["compute:inventory"]),
@@ -159,7 +120,6 @@ describe("Scient awareness", () => {
     expect(awareness).toContain("`mcp__scient__scient_skills_list`");
     expect(awareness).toContain("`mcp__scient__scient_skill_load`");
     expect(awareness).not.toContain("`scient_skills_list`");
-    expect(awareness).toContain("provider-native skills are separate");
     expect(buildScientAwareness(new Set(), CLAUDE_SCIENT_TOOL_PROJECTION)).toBe(
       SCIENT_CORE_AWARENESS,
     );

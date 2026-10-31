@@ -34,6 +34,27 @@ it("keeps systemd pinned to the stable launcher rather than a versioned server",
   expect(unit).not.toContain("versions/1.2.3");
 });
 
+it("protects the server unit from agents under CPU and memory pressure", () => {
+  // SCIENT-FORK: Scient's boot plan runs Node with its service launcher.
+  const unit = BootService.renderBootServiceUnit({
+    nodePath: "/usr/bin/node",
+    launcherPath: "/home/theo/.t3/runtime/service-launcher.mjs",
+    baseDir: "/home/theo/.t3",
+    logPath: "/home/theo/.t3/userdata/logs/boot-service.log",
+    unitPath: "/home/theo/.config/systemd/user/t3code.service",
+  });
+  const service = unit.slice(unit.indexOf("[Service]"), unit.indexOf("[Install]"));
+  for (const line of [
+    "CPUWeight=1000",
+    "IOWeight=1000",
+    "MemoryLow=1536M",
+    "OOMScoreAdjust=100",
+    "OOMPolicy=continue",
+  ]) {
+    expect(service.split("\n")).toContain(line);
+  }
+});
+
 it.each([
   ["a unit", '/home/theo/T3 "Data"/100%\\x', BootService.renderBootServiceUnit],
   [

@@ -218,6 +218,11 @@
       "path": "apps/web/src/components/settings/BrowserImportWizard.tsx",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts shares the browser import quit step.",
       "purpose": "Reuse the browser quit step in the Accounts browser picker."
+    },
+    {
+      "path": "apps/server/src/testUtils/shardWeights.json",
+      "anchor": "\"src/assets/AssetAccess.test.ts\":",
+      "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
     }
   ],
   "scientMounts": [

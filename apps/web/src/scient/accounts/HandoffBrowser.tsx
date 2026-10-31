@@ -71,7 +71,7 @@ export function HandoffBrowser({
 /** Whether the element sits wholly inside its scroller and above the composer. */
 function useFullyInView(element: HTMLElement | null) {
   const [inView, setInView] = useState(true);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Native surfaces can't clip; visibility follows layout, scrolling and the composer.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Native surfaces can't clip; visibility follows layout, scrolling and the composer.
   useLayoutEffect(() => {
     if (!element) return;
     let scroller: HTMLElement | null = element.parentElement;

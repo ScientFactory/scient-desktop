@@ -57,7 +57,7 @@ export function useSessionOffer(input: {
       return false;
     },
   );
-  // oxlint-disable-next-line t3code/react-effect-budget -- Observe native cookie metadata across an IdP return; bound polling to five minutes and cancel on navigation or unmount.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe native cookie metadata across an IdP return; bound polling to five minutes and cancel on navigation or unmount.
   useEffect(() => {
     const bridge = window.desktopBridge?.accounts;
     if (!input.enabled || incognito || !bridge?.cookieMetadata) return;

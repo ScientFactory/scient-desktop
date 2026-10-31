@@ -22,7 +22,8 @@ import * as ServerConfig from "../config.ts";
 import type { ResolvedAnalysisArtifactRepresentation } from "../scient/analysis/LocalAnalysisStore.ts";
 import type { ResolvedComputeOutputResource } from "../scient/compute/LocalComputeStore.ts";
 import type { ResolvedGeneratedDocumentRevision } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
-import { decodeRelativePath, optionOnNotFound, type ResolvedAsset } from "./AssetAccess.ts";
+import { decodeRelativePath, type ResolvedAsset } from "./AssetAccess.ts";
+import { optionOnNotFound } from "../project/ProjectFaviconResolver.ts";
 import type { ScientAssetClaims } from "./ScientAssetClaims.ts";
 
 const ENVIRONMENT_HTML_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;

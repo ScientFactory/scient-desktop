@@ -31,6 +31,7 @@ export function ProjectSkillsSettings(props: {
   const projectSkills = inventory.data?.skills.filter((skill) => skill.scope === "project") ?? [];
 
   const { refresh: refreshInventory } = inventory;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the skills inventory from the server on mount
   useEffect(() => {
     refreshInventory();
   }, [refreshInventory]);

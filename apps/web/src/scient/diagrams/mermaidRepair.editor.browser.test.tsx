@@ -21,9 +21,9 @@ import {
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  ComposerPromptEditor,
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
-} from "~/components/ComposerPromptEditor";
+} from "~/components/ComposerPromptEditorTiptap";
 import { ComposerHandleContext, type ComposerHandleRef } from "~/composerHandleContext";
 import { AssistantCitationSource } from "~/components/chat/AssistantCitationSource";
 import { formatAssistantCitationForComposer } from "~/composer-logic";

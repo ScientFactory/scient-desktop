@@ -74,11 +74,6 @@ export interface ProviderMcpSignInAttempt {
 export interface ProviderPluginActions {
   readonly store?:
     | {
-        // SCIENT-FORK:START — server-only local root for Accounts-backed native MCP delivery.
-        readonly keyServerRoot?: (
-          id: string,
-        ) => Effect.Effect<string | undefined, ProviderPluginActionFailure>;
-        // SCIENT-FORK:END
         readonly contents?:
           | ((id: string) => Effect.Effect<ExtensionPluginContents, ProviderPluginActionFailure>)
           | undefined;
@@ -125,6 +120,18 @@ export interface ProviderPluginActions {
   readonly listPlugins: (input: {
     readonly cwd?: string | undefined;
   }) => Effect.Effect<ProviderPluginListing, ProviderPluginActionFailure>;
+  // SCIENT-FORK:START — plugin keys read installed plugins' own folders, never the catalog.
+  /**
+   * Installed plugins and their folders on disk, without catalog or app reads. Unless `fresh`, it
+   * may answer from the last listing; providers without it list folders through `listPlugins`.
+   */
+  readonly listPluginRoots?:
+    | ((input: {
+        readonly cwd?: string | undefined;
+        readonly fresh?: boolean | undefined;
+      }) => Effect.Effect<ReadonlyArray<ProviderPluginRoot>, ProviderPluginActionFailure>)
+    | undefined;
+  // SCIENT-FORK:END
   /** Fresh status of one configured MCP server; `undefined` when it is not configured. */
   readonly readMcpServer: (input: {
     readonly serverName: string;
@@ -148,6 +155,14 @@ export interface ProviderPluginActions {
   readonly isRetired: Effect.Effect<boolean>;
   /** Completes when this generation is retired. */
   readonly whenRetired: Effect.Effect<void>;
+}
+
+/** An installed plugin and its own folder, the only place a plugin declares keys. */
+export interface ProviderPluginRoot {
+  readonly id: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly root?: string | undefined;
 }
 
 /** A complete plugin listing and when it began, as `nextInventoryReadSequence` orders reads. */

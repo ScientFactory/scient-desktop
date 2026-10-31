@@ -28,6 +28,7 @@ export function PdfPageInsertion(props: {
   const picked = useRef<string | null>(null),
     mounted = useRef(false);
   const session = props.session;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the session's picked file on unmount and tracks mounted state
   useEffect(() => {
     mounted.current = true;
     return () => {

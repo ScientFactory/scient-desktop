@@ -33,8 +33,9 @@ import {
   ProviderAdapterOpenSessionError,
 } from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderContinuationRequest } from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import { makeReplayServerConfig } from "../testkit/ProviderReplayHarness.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
-import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 
 export const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 

@@ -151,6 +151,12 @@ describe("previewWindowOpenAction", () => {
     ).toBe("popup");
   });
 
+  it("opens HTTP links in preview tabs", () => {
+    for (const disposition of ["foreground-tab", "background-tab"] as const) {
+      expect(PreviewManager.previewWindowOpenAction(details({ disposition }))).toBe("new-tab");
+    }
+  });
+
   it("keeps a form POST with a body on the in-place path", () => {
     const postBody = { data: [], contentType: "application/x-www-form-urlencoded" };
     expect(
@@ -163,12 +169,29 @@ describe("previewWindowOpenAction", () => {
 
   it("does not hand a window to schemes that cannot be hardened", () => {
     for (const url of [
-      "javascript:alert(1)",
-      "file:///etc/passwd",
       "vscode://vscode-remote/ssh-remote+box/tmp",
-      "not a url",
+      "blob:https://example.com/0b6c6a5e-55d4-4b4c-9d47-8f1b0c1d2e3f",
     ]) {
       expect(PreviewManager.previewWindowOpenAction(details({ url }))).toBe("navigate");
+    }
+  });
+
+  it("denies local and inline schemes that no page could open in place itself", () => {
+    for (const url of [
+      "data:text/html,<h1>hi</h1>",
+      "DaTa:text/html,<h1>hi</h1>",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "view-source:https://example.com",
+      "chrome://gpu",
+      "about:srcdoc",
+      "devtools://devtools/bundled/inspector.html",
+      "filesystem:https://example.com/temporary/page.html",
+      "not a url",
+    ]) {
+      for (const disposition of ["new-window", "foreground-tab", "background-tab"] as const) {
+        expect(PreviewManager.previewWindowOpenAction(details({ url, disposition }))).toBe("deny");
+      }
     }
   });
 
@@ -2468,6 +2491,48 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect("shows picture-in-picture and keeps capturing after stalled captures", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const image = {
+          toJPEG: () => Buffer.from("preview-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        };
+        const stalledInitial = Promise.withResolvers<typeof image>();
+        const stalledLoop = Promise.withResolvers<typeof image>();
+        const capturePage = vi
+          .fn<() => Promise<typeof image>>()
+          .mockImplementationOnce(() => stalledInitial.promise)
+          .mockImplementationOnce(() => stalledLoop.promise)
+          .mockResolvedValue(image);
+        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const { pictureInPictureWindow, send } = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pictureInPictureWindow;
+        });
+        yield* manager.createTab("tab_pip_stalled_capture");
+        yield* manager.registerWebview("tab_pip_stalled_capture", 42);
+
+        try {
+          const open = yield* manager
+            .openPictureInPicture("tab_pip_stalled_capture")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* TestClock.adjust(1_000);
+          expect(pictureInPictureWindow.showInactive).toHaveBeenCalledOnce();
+          yield* Fiber.join(open);
+
+          expect(send).not.toHaveBeenCalled();
+          yield* TestClock.adjust(500);
+          expect(send).toHaveBeenCalled();
+        } finally {
+          // Release stalled native calls after a failing assertion against unchanged base.
+          stalledInitial.resolve(image);
+          stalledLoop.resolve(image);
+        }
+      }),
+    ),
+  );
+
   effectIt.effect("rejects picture-in-picture when its webview changes during initialization", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2870,12 +2935,12 @@ describe("PreviewManager", () => {
   );
 
   // SCIENT-FORK:START scient-preview
-  effectIt.effect("does not copy a CDP-attributed server download into local Downloads", () =>
+  effectIt.effect("copies a person's server download into Downloads, but not the agent's", () =>
     withManagerAndBrowserHost((manager, browserHost) =>
       Effect.gen(function* () {
         const key = { threadId: "thread-download", tabId: "server-tab" };
         const webContents = {
-          getURL: () => "https://example.com/report.csv",
+          getURL: () => "https://example.com/report.pdf",
           getTitle: () => "Report",
           getUserAgent: () => "Electron",
           on: vi.fn(),
@@ -2911,39 +2976,47 @@ describe("PreviewManager", () => {
           browserHost.handleCommandLine(
             JSON.stringify({ type: "cdp", ...key, message: JSON.stringify(message) }),
           );
+        const download = (guid: string) => {
+          debuggerMessage?.(
+            { preventDefault: () => undefined, defaultPrevented: false },
+            "Browser.downloadWillBegin",
+            { guid },
+            "",
+          );
+          const item = {
+            setSavePath: vi.fn(),
+            once: vi.fn(),
+            getSavePath: vi.fn(() => `/srv/downloads/${guid}`),
+            getFilename: vi.fn(() => "report.pdf"),
+          } as unknown as Electron.DownloadItem;
+          willDownload(
+            { preventDefault: () => undefined, defaultPrevented: false },
+            item,
+            webContents,
+          );
+          return item;
+        };
         yield* command({
           id: 1,
           method: "Browser.setDownloadBehavior",
           params: { behavior: "allowAndName", downloadPath: "/srv/downloads" },
         });
+
+        // Chrome's PDF viewer saves from a frame the guest preload never sees,
+        // so a download with no recent agent input must count as the person's.
+        const personal = download("person-report");
+        expect(personal.setSavePath).toHaveBeenCalledWith("/srv/downloads/person-report");
+        expect(personal.once).toHaveBeenCalledWith("done", expect.any(Function));
+
         yield* command({
           id: 2,
           method: "Input.dispatchMouseEvent",
           params: { type: "mousePressed", x: 10, y: 20, button: "left" },
           sessionId: "t3-preview-page",
         });
-        debuggerMessage?.(
-          { preventDefault: () => undefined, defaultPrevented: false },
-          "Browser.downloadWillBegin",
-          { guid: "agent-report" },
-          "",
-        );
-
-        const item = {
-          setSavePath: vi.fn(),
-          once: vi.fn(),
-          getSavePath: vi.fn(() => "/srv/downloads/agent-report"),
-          getFilename: vi.fn(() => "report.csv"),
-        } as unknown as Electron.DownloadItem;
-        willDownload(
-          { preventDefault: () => undefined, defaultPrevented: false },
-          item,
-          webContents,
-        );
-
-        expect(item.setSavePath).toHaveBeenCalledWith("/srv/downloads/agent-report");
-        expect(item.once).not.toHaveBeenCalled();
-        expect(showItemInFolder).not.toHaveBeenCalled();
+        const agents = download("agent-report");
+        expect(agents.setSavePath).toHaveBeenCalledWith("/srv/downloads/agent-report");
+        expect(agents.once).not.toHaveBeenCalled();
       }),
     ),
   );

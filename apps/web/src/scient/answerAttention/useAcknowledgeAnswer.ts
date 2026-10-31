@@ -30,6 +30,7 @@ export function useAcknowledgeAnswer(thread: EnvironmentThread | null | undefine
   const visit = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const dispatched = useRef<{ readonly key: string } | null>(null);
   const selectedKey = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the visit-acknowledgement RPC in step with window focus and document visibilitychange listeners until unmount
   useEffect(() => {
     if (selectedKey.current !== key) {
       selectedKey.current = key;

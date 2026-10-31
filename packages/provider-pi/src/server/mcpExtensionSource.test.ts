@@ -130,7 +130,10 @@ type InputHook = (
   ctx: { ui: { notify: (message: string, level: string) => void } },
 ) => Promise<{ action: string; text: string; images?: ReadonlyArray<unknown> } | undefined>;
 
-async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
+async function loadHooks(
+  commands: ReadonlyArray<SkillCommand> = [],
+  argv: ReadonlyArray<string> = [],
+) {
   const handlers = new Map<string, unknown>();
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
@@ -139,7 +142,7 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env: {} },
+    process: { env: {}, argv },
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
@@ -202,6 +205,93 @@ describe("Pi orchestration prompt section", () => {
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
     }
   });
+});
+
+describe("Pi project trust", () => {
+  it.each([
+    { name: "a trusted folder", trusted: true, argv: [], notices: 0 },
+    { name: "an untrusted folder", trusted: false, argv: [], notices: 1 },
+    { name: "--no-approve", trusted: false, argv: ["--approve", "-na"], notices: 0 },
+  ])("sends $notices trust notice per session for $name", async ({ trusted, argv, notices }) => {
+    const sent: string[] = [];
+    const ctx = {
+      cwd: "/repo",
+      isProjectTrusted: () => trusted,
+      ui: { notify: (message: string) => sent.push(message) },
+    };
+    // Pi reruns extension factories on session replacement without asking about trust again.
+    for (const _session of [1, 2]) {
+      const handlers = (await loadHooks([], ["node", "pi", ...argv])) as Map<
+        string,
+        (event: unknown, ctx: unknown) => unknown
+      >;
+      for (const _turn of [1, 2]) await handlers.get("before_agent_start")!({}, ctx);
+    }
+    assert.equal(sent.length, notices * 2);
+    for (const message of sent)
+      assert.include(message, "for /repo because the folder is not trusted");
+  });
+
+  // SCIENT-FORK:START — the notice shares the single system-prompt hook on each bridge path.
+  it("keeps guidance beside one notice per session when the MCP bridge is connected", async () => {
+    const sent: string[] = [];
+    const ctx = {
+      cwd: "/repo",
+      isProjectTrusted: () => false,
+      ui: { notify: (message: string) => sent.push(message) },
+    };
+    for (const _session of [1, 2]) {
+      const bridge = await loadMcpBridge({ argv: ["node", "pi"] });
+      const hook = bridge.handlers.get("before_agent_start")!;
+      for (const _turn of [1, 2]) {
+        const result = await hook({ systemPrompt: "base" }, ctx);
+        assert.include(result?.systemPrompt ?? "", "orchestrator_capabilities");
+      }
+    }
+    assert.equal(sent.length, 2);
+    for (const message of sent)
+      assert.include(message, "for /repo because the folder is not trusted");
+  });
+
+  it("stays quiet on the MCP path for --no-approve and a trusted folder", async () => {
+    const sent: string[] = [];
+    const ctx = (trusted: boolean) => ({
+      cwd: "/repo",
+      isProjectTrusted: () => trusted,
+      ui: { notify: (message: string) => sent.push(message) },
+    });
+    const quiet = await loadMcpBridge({ argv: ["node", "pi", "--no-approve"] });
+    await quiet.handlers.get("before_agent_start")!({ systemPrompt: "base" }, ctx(false));
+    const trusted = await loadMcpBridge({ argv: ["node", "pi"] });
+    await trusted.handlers.get("before_agent_start")!({ systemPrompt: "base" }, ctx(true));
+    assert.deepEqual(sent, []);
+  });
+
+  it.each([
+    { name: "connected", connected: true },
+    { name: "missing", connected: false },
+  ])(
+    "keeps the system prompt when the trust check fails and MCP is $name",
+    async ({ connected }) => {
+      const ctx = {
+        cwd: "/repo",
+        isProjectTrusted: () => {
+          throw new Error("This extension ctx is stale after session replacement.");
+        },
+        ui: { notify: assert.fail },
+      };
+      const hook = connected
+        ? (await loadMcpBridge()).handlers.get("before_agent_start")!
+        : ((await loadHooks()).get("before_agent_start") as (
+            event: { systemPrompt: string },
+            context: typeof ctx,
+          ) => { systemPrompt: string });
+      const result = await hook({ systemPrompt: "base" }, ctx);
+      assert.isTrue(result?.systemPrompt.startsWith("base"));
+      if (connected) assert.include(result?.systemPrompt ?? "", "orchestrator_capabilities");
+    },
+  );
+  // SCIENT-FORK:END
 });
 
 describe("Pi MCP tool results", () => {
@@ -1259,7 +1349,8 @@ describe("loaded native Pi serialized request guard", () => {
           mcpSession: undefined,
           extensionPath,
         });
-        assert.isFalse(launch.hasT3Mcp);
+        assert.notProperty(launch.env, "T3_MCP_URL");
+        assert.notProperty(launch.env, "T3_MCP_BEARER_TOKEN");
         assert.include(launch.args, extensionPath);
         const source = yield* fs.readFileString(extensionPath);
         const h = yield* Effect.tryPromise(() => loadContextGuard(source));

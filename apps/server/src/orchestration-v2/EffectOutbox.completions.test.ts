@@ -25,7 +25,6 @@ it.effect("broadcasts durable terminal transitions independently of worker avail
     ]);
     const claimed = yield* outbox.claimNext({
       workerId: "completion-test",
-      leaseDurationMs: 30_000,
     });
     assert.isTrue(Option.isSome(claimed));
     if (Option.isNone(claimed)) return;

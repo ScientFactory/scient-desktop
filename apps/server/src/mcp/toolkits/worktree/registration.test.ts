@@ -41,6 +41,10 @@ import * as PreviewManager from "../../../preview/Manager.ts";
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { DeviceToolkit } from "../device/tools.ts";
@@ -89,7 +93,7 @@ const StubServicesLive = Layer.mergeAll(
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(ProjectService.ProjectService)({}),
   Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
-  ServerSettings.layerTest({}),
+  ServerSettings.layerTest({ linkedEnvironmentsEnabled: true }),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
@@ -161,6 +165,14 @@ it.effect.each(
         Layer.provide(layerEnvironment),
         Layer.provide(PreviewAutomationBroker.layer),
         Layer.provide(StubServicesLive),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(PeerForwarding.PeerForwarding)({}),
+            Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+            Layer.mock(PeerLinks.PeerLinks)({}),
+            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          ),
+        ),
         Layer.build,
       );
 
@@ -216,12 +228,13 @@ it.effect.each(
       const toolNames = tools.map((tool) => tool.name);
       const deviceNames = new Set(Object.keys(DeviceToolkit.tools));
       const hostNames = McpHttpServer.hostMcpTools.map((tool) => tool.name);
-      expect(toolNames.filter((name) => name === "scient_thread_read")).toHaveLength(
+      expect(toolNames.filter((name) => name === "scient_handoff_summary_read")).toHaveLength(
         includeThreadRead ? 1 : 0,
       );
       if (includeThreadRead)
         expect(
-          tools.find((tool) => tool.name === "scient_thread_read")?.annotations?.readOnlyHint,
+          tools.find((tool) => tool.name === "scient_handoff_summary_read")?.annotations
+            ?.readOnlyHint,
         ).toBe(true);
       expect(toolNames.filter((name) => name === "scient_thread_inspect")).toHaveLength(1);
       expect(

@@ -1,4 +1,8 @@
-import * as NodePath from "@effect/platform-node/NodePath";
+// @effect-diagnostics nodeBuiltinImport:off - Clerk storage tests use a real temporary state directory.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
 // SCIENT-FORK:START scient-deferred-auth
 import { codexAuthHandoffUrl } from "@t3tools/shared/codexAuthHandoff";
 // SCIENT-FORK:END scient-deferred-auth
@@ -7,7 +11,12 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { beforeEach, vi } from "vite-plus/test";
+import { afterAll, beforeEach, vi } from "vite-plus/test";
+
+const clerkStateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-clerk-"));
+afterAll(() => {
+  NodeFS.rmSync(clerkStateDir, { recursive: true, force: true });
+});
 
 const { createClerkBridgeMock, requestSingleInstanceLockMock, storageAdapter, storageMock } =
   vi.hoisted(() => ({
@@ -61,7 +70,7 @@ const layerDesktopClerk = (
   listeners = new Map<string, (...args: unknown[]) => void>(),
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
-    stateDir: "/tmp/t3-state",
+    stateDir: clerkStateDir,
     isDevelopment,
     appDataDirectory: "/tmp/app-data",
     // SCIENT-FORK:START desktop-state-isolation
@@ -100,7 +109,7 @@ const layerDesktopClerk = (
   return DesktopClerk.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        NodePath.layerPosix,
+        NodePathLayer.layerPosix,
         Layer.succeed(DesktopEnvironment.DesktopEnvironment, environment),
         Layer.succeed(ElectronApp.ElectronApp, electronApp),
         Layer.succeed(ElectronShell.ElectronShell, shell),
@@ -109,6 +118,18 @@ const layerDesktopClerk = (
     ),
   );
 };
+
+// SCIENT-FORK:START restored-sole-guards - the bridge takes upstream's owner-only store around Clerk's storage.
+const assertBridgeConfigured = (renderer: { readonly scheme: string; readonly host: string }) => {
+  assert.equal(createClerkBridgeMock.mock.calls.length, 1);
+  const { storage, ...options } = createClerkBridgeMock.mock.calls[0]![0];
+  assert.deepEqual(options, { manageSingleInstanceLock: false, passkeys: true, renderer });
+  assert.notStrictEqual(storage, storageAdapter);
+  storageAdapter.getItem.mockReturnValueOnce("stored-token");
+  assert.equal(storage.getItem("session"), "stored-token");
+  assert.deepEqual(storageAdapter.getItem.mock.lastCall, ["session"]);
+};
+// SCIENT-FORK:END restored-sole-guards
 
 describe("DesktopClerk", () => {
   beforeEach(() => {
@@ -141,7 +162,7 @@ describe("DesktopClerk", () => {
       name: "development",
       isDevelopment: true,
       platform: "win32" as const,
-      userData: "/tmp/t3-state/electron-userdata",
+      userData: `${clerkStateDir}/electron-userdata`,
     },
     // SCIENT-FORK:END desktop-state-isolation
   ])(
@@ -166,8 +187,13 @@ describe("DesktopClerk", () => {
         `setPath:userData:${userData}`,
         "requestSingleInstanceLock",
         "on:second-instance",
+        "on:open-url",
         "createClerkBridge",
       ]);
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
+      ]);
+      assert.notStrictEqual(createClerkBridgeMock.mock.calls[0]?.[0]?.storage, storageAdapter);
     },
   );
 
@@ -225,21 +251,13 @@ describe("DesktopClerk", () => {
     return Effect.gen(function* () {
       yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
 
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme: "scient-next-dev", host: "app" },
-          },
-        ],
-      ]);
+      assertBridgeConfigured({ scheme: "scient-next-dev", host: "app" });
       assert.equal(cleanup.mock.calls.length, 1);
       assert.deepEqual(events, [
-        "setPath:userData:/tmp/t3-state/electron-userdata",
+        `setPath:userData:${clerkStateDir}/electron-userdata`,
         "requestSingleInstanceLock",
         "on:second-instance",
+        "on:open-url",
         "createClerkBridge",
       ]);
       storageMock.mockClear();
@@ -248,7 +266,7 @@ describe("DesktopClerk", () => {
   });
   // SCIENT-FORK:END restored-sole-guards
 
-  it.effect("delivers queued startup links and later links once in arrival order", () => {
+  it.effect("delivers each queued startup link once, before later links", () => {
     storageMock.mockReturnValue(storageAdapter);
     createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
     const listeners = new Map<string, (...args: unknown[]) => void>();
@@ -257,6 +275,7 @@ describe("DesktopClerk", () => {
     const first = "scient://new?prompt=first";
     const second = "scient://threads/env-1/thread-1";
     const later = "scient://new?prompt=later";
+    const launchPair = "scient://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
     // SCIENT-FORK:END scient-url-scheme
     const delivered = Promise.withResolvers<void>();
     const electronApp = {
@@ -270,13 +289,14 @@ describe("DesktopClerk", () => {
       const clerk = yield* DesktopClerk.DesktopClerk;
       listeners.get("second-instance")?.({}, ["t3", first]);
       listeners.get("second-instance")?.({}, ["t3", second]);
+      listeners.get("open-url")?.({ preventDefault: () => undefined }, launchPair);
       assert.deepEqual(received, []);
 
       yield* clerk.configure;
       listeners.get("second-instance")!({}, ["t3", later]);
       yield* Effect.promise(() => delivered.promise);
 
-      assert.deepEqual(received, [first, second, later]);
+      assert.deepEqual(received, [launchPair, first, second, later]);
     }).pipe(
       Effect.scoped,
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
@@ -316,17 +336,10 @@ describe("DesktopClerk", () => {
       createClerkBridgeMock.mockReturnValue(bridge);
 
       yield* Effect.scoped(Layer.build(layerDesktopClerk(isDevelopment)));
-      assert.deepEqual(storageMock.mock.calls, [[{ path: "/tmp/t3-state" }]]);
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme, host: "app" },
-          },
-        ],
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.join(NodePath.resolve(clerkStateDir), "clerk") }],
       ]);
+      assertBridgeConfigured({ scheme, host: "app" });
       storageMock.mockClear();
       createClerkBridgeMock.mockClear();
     }),
@@ -487,6 +500,7 @@ it.effect("hands Scient app links to the renderer while browser activation stays
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const received: Array<string> = [];
+    const pairLink = "scient://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
     yield* Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
       yield* clerk.configure;
@@ -501,6 +515,9 @@ it.effect("hands Scient app links to the renderer while browser activation stays
       assert.strictEqual(open("scient://new?prompt=hi"), 1);
       assert.strictEqual(open("scient-next-dev://threads/env-1/thread-1"), 1);
       assert.strictEqual(open("t3code://new?prompt=hi"), 0);
+      assert.strictEqual(open(pairLink), 1);
+      assert.strictEqual(open("scient://pair"), 0);
+      assert.strictEqual(open(pairLink.replace("scient:", "t3code:")), 0);
       // Unregistered app identities and other protocols retain their handling.
       assert.strictEqual(open("mailto:hello@example.com"), 0);
       assert.strictEqual(open("t3code://somewhere-else"), 0);
@@ -508,6 +525,7 @@ it.effect("hands Scient app links to the renderer while browser activation stays
       assert.deepStrictEqual(received, [
         "scient://new?prompt=hi",
         "scient-next-dev://threads/env-1/thread-1",
+        pairLink,
       ]);
     }).pipe(
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),

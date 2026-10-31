@@ -80,7 +80,7 @@ describe("Scient LaTeX file-preview seam", () => {
 
   it("finishes an active Visual transaction before a source reveal can unmount it", () => {
     expect(surfaceSource).toMatch(
-      /const visualRevealNeedsFinish =[\s\S]*?const finishVisualForReveal = useStableCallback\(\(requestId: number\) => \{\s*finishVisualEditingRef\.current\?\.\(\);\s*setFinishedVisualRevealRequestId\(requestId\);\s*\}\);\s*useLayoutEffect\(\(\) => \{\s*if \(!visualRevealNeedsFinish\) return;\s*finishVisualForReveal\(revealRequestId\);/u,
+      /const visualRevealNeedsFinish =[\s\S]*?const finishVisualForReveal = useStableCallback\(\(requestId: number\) => \{\s*finishVisualEditingRef\.current\?\.\(\);\s*setFinishedVisualRevealRequestId\(requestId\);\s*\}\);\s*(?:\/\/[^\n]*\n\s*)*useLayoutEffect\(\(\) => \{\s*if \(!visualRevealNeedsFinish\) return;\s*finishVisualForReveal\(revealRequestId\);/u,
     );
     expect(surfaceSource).toContain(
       "const revealPending = revealRequested && !visualRevealNeedsFinish;",

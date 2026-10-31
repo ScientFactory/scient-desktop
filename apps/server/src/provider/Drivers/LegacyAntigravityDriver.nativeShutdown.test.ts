@@ -45,6 +45,7 @@ import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
@@ -120,6 +121,7 @@ const providerDependenciesLayer = ServerConfig.layerTest(process.cwd(), {
   Layer.provideMerge(ModelManifest.layerTest),
   Layer.provideMerge(ProviderLatestVersions.layer),
   Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(Layer.mock(SecretResolver.SecretResolver)({})),
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
@@ -617,6 +619,7 @@ const managerLayer = Effect.fn("LegacyShutdown.managerLayer")(function* (h: Harn
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
+          Layer.succeed(ProviderInstanceRegistry, h.registry),
           Layer.succeed(EventSink.EventSinkV2, sink),
           Layer.succeed(ProjectionStore.ProjectionStoreV2, store),
           Layer.succeed(IdAllocator.IdAllocatorV2, allocator),

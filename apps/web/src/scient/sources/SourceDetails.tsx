@@ -331,6 +331,7 @@ function AbstractPreview(props: {
   }
 
   const measurement = { mode, text: props.text, sections: props.sections };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the content DOM node via ResizeObserver to detect expandability
   useEffect(() => {
     const node = contentRef.current;
     if (!node || measurement.mode !== "compact") return;
@@ -468,6 +469,7 @@ function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
   }
 
   const tagMeasurement = { expanded, identity };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the tag row DOM node via ResizeObserver to detect overflow
   useEffect(() => {
     if (tagMeasurement.expanded) return;
     const row = rowRef.current;

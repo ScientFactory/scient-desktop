@@ -115,10 +115,16 @@ export class ElectronWindow extends Context.Service<
       behavior?: { readonly auxiliary?: boolean },
     ) => Effect.Effect<Electron.BrowserWindow, ElectronWindowCreateError>;
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    // SCIENT-FORK:START — several app windows; `main` is the most recently focused one.
+    /** Live app windows, most recently focused first. */
+    readonly appWindows: Effect.Effect<ReadonlyArray<Electron.BrowserWindow>>;
+    // SCIENT-FORK:END
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    // SCIENT-FORK:START — setMain registers or promotes an app window; clearMain unregisters one.
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
+    // SCIENT-FORK:END
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
     readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly sendAll: (channel: string, ...args: readonly unknown[]) => Effect.Effect<void>;
@@ -142,7 +148,9 @@ export const make = Effect.gen(function* () {
   };
   const captureRevealWindows = new Set<number>();
   yield* Effect.addFinalizer(() => Effect.sync(() => windowsForegroundFocus?.close()));
-  const mainWindowRef = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  // SCIENT-FORK:START — app windows in most-recently-focused order; the head is main.
+  const appWindowsRef = yield* Ref.make<ReadonlyArray<Electron.BrowserWindow>>([]);
+  // SCIENT-FORK:END
   const auxiliaryWindows = new WeakSet<Electron.BrowserWindow>();
 
   const listWindows = Effect.try({
@@ -170,13 +178,17 @@ export const make = Effect.gen(function* () {
         }),
     }).pipe(Effect.orDie);
 
-  const liveMain = Effect.gen(function* () {
-    const main = yield* Ref.get(mainWindowRef);
-    if (Option.isNone(main) || (yield* isWindowDestroyed(main.value))) {
-      return Option.none<Electron.BrowserWindow>();
+  // SCIENT-FORK:START — several app windows; `main` is the most recently focused one.
+  const liveAppWindows = Effect.gen(function* () {
+    const live: Array<Electron.BrowserWindow> = [];
+    for (const window of yield* Ref.get(appWindowsRef)) {
+      if (!(yield* isWindowDestroyed(window))) live.push(window);
     }
-    return main;
+    return live;
   });
+
+  const liveMain = Effect.map(liveAppWindows, (windows) => Option.fromNullishOr(windows[0]));
+  // SCIENT-FORK:END
 
   const currentMainOrFirst = Effect.gen(function* () {
     const main = yield* liveMain;
@@ -246,22 +258,24 @@ export const make = Effect.gen(function* () {
       });
     }),
     main: liveMain,
+    // SCIENT-FORK:START — several app windows; `main` is the most recently focused one.
+    appWindows: liveAppWindows,
+    // SCIENT-FORK:END
     currentMainOrFirst,
     focusedMainOrFirst,
+    // SCIENT-FORK:START — setMain registers or promotes an app window; clearMain unregisters one.
     setMain: Effect.fn("ElectronWindow.setMain")(function (window) {
-      return Ref.set(mainWindowRef, Option.some(window));
+      return Ref.update(appWindowsRef, (windows) => [
+        window,
+        ...windows.filter((candidate) => candidate !== window),
+      ]);
     }),
     clearMain: Effect.fn("ElectronWindow.clearMain")(function (window) {
-      return Ref.update(mainWindowRef, (current) => {
-        if (Option.isNone(current)) {
-          return current;
-        }
-        if (Option.isSome(window) && current.value !== window.value) {
-          return current;
-        }
-        return Option.none();
-      });
+      return Ref.update(appWindowsRef, (windows) =>
+        Option.isNone(window) ? [] : windows.filter((candidate) => candidate !== window.value),
+      );
     }),
+    // SCIENT-FORK:END
     prepareReveal: Effect.fn("ElectronWindow.prepareReveal")(function (window) {
       return Effect.promise(async () => {
         if (platform !== "win32" || window.isDestroyed()) {

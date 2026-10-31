@@ -7,6 +7,9 @@ import {
   buildCodexAdditionalContext,
   CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
 } from "./CodexDeveloperInstructions.ts";
+// SCIENT-FORK:START — Scient awareness carries the device block.
+import { SCIENT_DEVICE_TOOL_INSTRUCTIONS } from "./ScientProviderInstructions.ts";
+// SCIENT-FORK:END
 
 describe("buildCodexAdditionalContext", () => {
   describe.each([
@@ -79,10 +82,6 @@ describe("Scient browser awareness", () => {
     NodeAssert.match(instructions, /Scient browser/);
     NodeAssert.match(instructions, /preview_status/);
     NodeAssert.match(instructions, /preview_open/);
-    NodeAssert.match(
-      instructions,
-      /Use another browser system only when these tools are unavailable/,
-    );
   });
 
   it("omits the browser block entirely when the preview tools are not attached", () => {
@@ -111,6 +110,27 @@ describe("Codex orchestration context", () => {
     NodeAssert.ok(!orchestration.includes("Prefer native"));
     // The ACP terminal fallback is ACP-only; Codex agents never need it.
     NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
+  });
+});
+
+describe("Codex device context", () => {
+  it("adds the shared device block only when the session holds device access", () => {
+    // SCIENT-FORK:START — Scient awareness carries the device block for granted capabilities.
+    const tools = (device: boolean) =>
+      Object.entries(
+        buildCodexAdditionalContext(
+          { model: "gpt-6.1-sol" },
+          new Set<McpCapability>(device ? ["preview", "device"] : ["preview"]),
+        ),
+      )
+        .filter(([key]) => key.startsWith("scient_awareness"))
+        .map(([, entry]) => entry.value)
+        .join("\n\n");
+
+    NodeAssert.ok(tools(true).includes(SCIENT_DEVICE_TOOL_INSTRUCTIONS));
+    NodeAssert.ok(!tools(true).includes("ToolSearch"));
+    NodeAssert.ok(!tools(false).includes("## Scient devices"));
+    // SCIENT-FORK:END
   });
 });
 

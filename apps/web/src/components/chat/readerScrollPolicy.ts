@@ -128,6 +128,19 @@ export function readingEndGapOnScreen(
 }
 
 /**
+ * How far the text end moved for a reader resting at it: the less of its move on screen and in
+ * the content. A scroll the record has not seen yet shifts only the first, and content above that
+ * the list already compensated for shifts only the second; neither is growth to follow.
+ */
+export function restingEndGrowth(
+  resting: { readonly gap: number; readonly contentEnd: number },
+  gap: number,
+  scrollTop: number,
+): number {
+  return Math.min(gap - resting.gap, gap + scrollTop - resting.contentEnd);
+}
+
+/**
  * Only the reading end decides whether the reader is at bottom; trailing tools, changed files,
  * timestamps, and busy indicators must not. Use the last non-padding row until measurements exist.
  */
@@ -283,11 +296,12 @@ export function resolveReadingRow(
 }
 
 /**
- * Recheck reveal eligibility when the latest queued prompt becomes delivered: delivery can arrive
- * before this window learns its send was queued. Require the same thread and a reader previously at
- * the end.
+ * Whether the thread's latest prompt just arrived for a reader at the end of the same thread: a new
+ * prompt from anywhere, or one already listed that V2 now reports delivered from the queue (its
+ * delivery can arrive before this window learns its send was queued). A thread's first listing is
+ * not an arrival.
  */
-export function shouldRevealArrivedPrompt(input: {
+export function shouldFollowArrivedPrompt(input: {
   previous: { threadKey: string | null; id: string | null; delivered: boolean } | null;
   threadKey: string | null;
   latestPromptId: string | null;
@@ -298,11 +312,10 @@ export function shouldRevealArrivedPrompt(input: {
   const { previous } = input;
   return (
     input.latestPromptId !== null &&
-    input.delivered &&
     previous !== null &&
     previous.threadKey === input.threadKey &&
     previous.id !== null &&
-    (previous.id !== input.latestPromptId || !previous.delivered) &&
+    (previous.id !== input.latestPromptId || (input.delivered && !previous.delivered)) &&
     input.readerAtEnd
   );
 }

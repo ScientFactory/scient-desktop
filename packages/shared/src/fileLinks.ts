@@ -57,7 +57,7 @@ function isWindowsPathStyle(value: string): boolean {
   return isWindowsAbsolutePath(value) || /[A-Za-z]:\\/.test(value);
 }
 
-function joinPath(base: string, next: string, separator: "/" | "\\"): string {
+export function joinPath(base: string, next: string, separator: "/" | "\\"): string {
   // SCIENT-FORK:START — preserve POSIX filename authority while joining links.
   // POSIX backslashes are filename characters, not directory separators.
   const cleanBase = base.replace(separator === "\\" ? /[\\/]+$/ : /\/+$/, "");

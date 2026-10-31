@@ -52,9 +52,10 @@ then selected individually; startup validation does not rescan the archive for e
 and hydrate the complete JSON snapshot again. Malformed legacy JSON stays untouched for
 verification/recovery to reject; it cannot abort source migration. Old summary-only handoffs retain their text and
 include it whole when it fits. Their JSON string is decoded in bounded byte chunks, preserving
-UTF-16 offsets and escapes. `scient_thread_read({threadId, contextHandoffId, textOffset,
-maxCharsPerItem})` reads retained legacy summary text deliberately, under the same project/read
-grant as the timeline. Continue with `textOffset=nextTextOffset` until null. Inherited summaries
+UTF-16 offsets and escapes. A summary too large to include is replaced by a pointer to
+`scient_handoff_summary_read({threadId, contextHandoffId, textOffset})`, which pages retained
+summary text under the `threads:read` grant within the caller's project. Continue with
+`textOffset=nextTextOffset` until null. Inherited summaries
 come from the fork's frozen version, including after a parent changes its summary. Routine startup,
 projection, single-item detail, inherited timeline and replay reads strip
 handoff bodies in SQL before the driver creates JavaScript strings. These compatibility sources
@@ -95,7 +96,7 @@ structured activity uses a conservative stored-byte estimate. It never collects 
 
 Historical messages retain item/run/thread/provider attribution. The handoff records omitted item
 IDs and counts and tells the agent that history is context, not a new request or execution authority.
-Its recovery pointer uses `scient_thread_read({threadId, view:"activity", limit:20,
+Its recovery pointer uses `scient_thread_inspect({threadId, view:"activity", limit:20,
 maxCharsPerItem:4000})`; paginate using `afterPosition=nextPosition`, or fetch an individual `itemId`
 with `textOffset=nextTextOffset`. Native tool/reasoning state and attachment bytes are not replayed
 by this textual history delivery. Submitted callback answers are inert historical facts; copied

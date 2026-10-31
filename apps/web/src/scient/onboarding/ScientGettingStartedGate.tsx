@@ -41,6 +41,7 @@ export function ScientGettingStartedGate(props: { readonly fallback: ReactNode }
 
   if (decision === "present" && !presentationActive) setPresentationActive(true);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- completes onboarding through the onboarding store when the gate decision requires it
   useEffect(() => {
     if (decision === "complete-silently") complete();
   }, [complete, decision]);

@@ -20,6 +20,7 @@ import {
 } from "@t3tools/client-runtime/operations/projects";
 import {
   type EnvironmentId,
+  type ProjectId,
   type EnvironmentMachineKind,
   type FilesystemBrowseEntry,
   type KeybindingCommand,
@@ -28,10 +29,13 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
+// SCIENT-FORK:START — pasted browse paths
+import { isHostPath } from "@t3tools/shared/path";
+// SCIENT-FORK:END
 import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
-import { isSidebarSubagentThread } from "./Sidebar.logic";
+import { isSidebarHiddenThread } from "./Sidebar.logic";
 
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
@@ -207,6 +211,14 @@ export interface CommandPaletteActionItem extends CommandPaletteItem {
   readonly kind: "action";
   readonly keepOpen?: boolean;
   readonly run: () => Promise<void>;
+  /** A pin toggle on the row, also reached with the pin shortcut while the row is highlighted. */
+  readonly pin?: CommandPaletteItemPin;
+}
+
+export interface CommandPaletteItemPin {
+  readonly name: string;
+  readonly pinned: boolean;
+  readonly toggle: () => void;
 }
 
 export interface CommandPaletteSubmenuItem extends CommandPaletteItem {
@@ -420,6 +432,18 @@ export function resolveBrowseEnterAction(input: {
   return "activate-highlighted";
 }
 
+// SCIENT-FORK:START — a pasted full path replaces the browse box
+/**
+ * The path a paste should replace the browse box with, or null to paste normally.
+ * Joined to the starting folder, a full path names a folder inside it instead of
+ * the one the person copied, and Add project would create it empty.
+ */
+export function resolvePastedBrowsePath(pastedText: string): string | null {
+  const path = pastedText.trim();
+  return isHostPath(path) && !/[\r\n]/.test(path) ? path : null;
+}
+// SCIENT-FORK:END
+
 export function shouldOfferProjectPathCreation(input: {
   readonly canSubmitBrowsePath: boolean;
   readonly isBrowsePending: boolean;
@@ -465,24 +489,29 @@ export function buildProjectActionItems(input: {
   searchTerms?: (project: CommandPaletteProject) => ReadonlyArray<string>;
   renderDescription?: (project: CommandPaletteProject) => ReactNode;
   shortcutCommand?: KeybindingCommand;
+  pin?: (project: CommandPaletteProject) => CommandPaletteItemPin | null;
 }): CommandPaletteActionItem[] {
-  return input.projects.map((project) => ({
-    kind: "action",
-    value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
-    searchTerms: [
-      project.displayName,
-      project.title,
-      project.workspaceRoot,
-      ...(input.searchTerms?.(project) ?? []),
-    ],
-    title: project.displayName,
-    description: input.renderDescription?.(project) ?? project.workspaceRoot,
-    icon: input.icon(project),
-    ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
-    run: async () => {
-      await input.runProject(project);
-    },
-  }));
+  return input.projects.map((project) => {
+    const pin = input.pin?.(project) ?? null;
+    return {
+      kind: "action",
+      value: `${input.valuePrefix}:${project.environmentId}:${project.id}`,
+      searchTerms: [
+        project.displayName,
+        project.title,
+        project.workspaceRoot,
+        ...(input.searchTerms?.(project) ?? []),
+      ],
+      title: project.displayName,
+      description: input.renderDescription?.(project) ?? project.workspaceRoot,
+      icon: input.icon(project),
+      ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),
+      ...(pin ? { pin } : {}),
+      run: async () => {
+        await input.runProject(project);
+      },
+    };
+  });
 }
 
 export type BuildThreadActionItemsThread = Pick<
@@ -527,7 +556,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
       // SCIENT-FORK:START — threads without a project (scratch) stay out of the palette.
       thread.projectId !== null &&
       // SCIENT-FORK:END
-      !isSidebarSubagentThread(thread),
+      !isSidebarHiddenThread(thread),
   );
 
   return visibleThreads.map((thread) => {
@@ -968,4 +997,34 @@ export function overlayModeForCommand(command: string | null): SearchOverlayMode
   return command in OVERLAY_MODE_BY_COMMAND
     ? OVERLAY_MODE_BY_COMMAND[command as keyof typeof OVERLAY_MODE_BY_COMMAND]
     : null;
+}
+
+export function resolveCommandPaletteProject<TProject>(
+  projects: ReadonlyMap<string, TProject>,
+  environmentId: EnvironmentId | null,
+  projectId: ProjectId | null,
+) {
+  return environmentId && projectId ? projects.get(`${environmentId}:${projectId}`) : undefined;
+}
+
+/**
+ * Where "No project" goes among the new-thread picker's real projects: at the
+ * scratch project's own place when it is pinned or current, else after the
+ * pinned projects and the first unpinned one.
+ */
+export function newThreadNoProjectIndex(
+  entries: ReadonlyArray<{
+    readonly isScratch: boolean;
+    readonly pinned: boolean;
+    readonly isPreferred: boolean;
+  }>,
+): number {
+  const projects = entries.filter((entry) => !entry.isScratch);
+  const scratchAt = entries.findIndex((entry) => entry.isScratch);
+  const scratch = entries[scratchAt];
+  if (scratch && (scratch.pinned || scratch.isPreferred)) {
+    return entries.slice(0, scratchAt).filter((entry) => !entry.isScratch).length;
+  }
+  const pinnedCount = projects.filter((entry) => entry.pinned).length;
+  return Math.min(pinnedCount + 1, projects.length);
 }

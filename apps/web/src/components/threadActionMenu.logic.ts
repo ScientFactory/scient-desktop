@@ -7,15 +7,19 @@ import {
   conversationExportMenuItem,
   type ConversationExportMenuId,
 } from "../scient/conversationExport/menu";
+import type { OpenInNewWindowMenuId } from "../scient/multiWindow/openInNewWindow";
 // SCIENT-FORK:END
 
 export type ThreadActionMenuId =
   // SCIENT-FORK:START
   | SectionMenuId
   | ConversationExportMenuId
+  | OpenInNewWindowMenuId
   // SCIENT-FORK:END
+  | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
+  | "turn-into-project"
   | "project-settings"
   | "pin"
   | "unpin"
@@ -34,11 +38,15 @@ export type ThreadActionMenuId =
   | "copy"
   | "copy-path"
   | "copy-branch"
+  | "copy-thread"
   | "copy-thread-id"
   | "archive"
   | "delete";
 
 export type DraftActionMenuId =
+  // SCIENT-FORK:START
+  | OpenInNewWindowMenuId
+  // SCIENT-FORK:END
   | "copy"
   | "copy-path"
   | "copy-branch"
@@ -49,8 +57,15 @@ export function buildDraftActionMenuItems(options: {
   readonly hasPath: boolean;
   readonly hasBranch: boolean;
   readonly hasProject: boolean;
+  // SCIENT-FORK:START
+  /** Present only where the app can open another window. */
+  readonly openInNewWindow?: ContextMenuItem<OpenInNewWindowMenuId> | null;
+  // SCIENT-FORK:END
 }): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
   return [
+    // SCIENT-FORK:START
+    ...(options.openInNewWindow ? [options.openInNewWindow] : []),
+    // SCIENT-FORK:END
     {
       id: "copy",
       label: "Copy",
@@ -78,6 +93,7 @@ export function buildDraftActionMenuItems(options: {
 
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
+  readonly canFind?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -101,14 +117,22 @@ export interface ThreadActionMenuState {
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   // SCIENT-FORK:START — the Section submenu, when the thread's server supports it.
   readonly sectionMenu?: ContextMenuItem<SectionMenuId> | null;
+  /** Present only where the app can open another window. */
+  readonly openInNewWindow?: ContextMenuItem<OpenInNewWindowMenuId> | null;
   // SCIENT-FORK:END
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
+  /** A No project thread with its own folder, on a server that can promote it. */
+  readonly canTurnIntoProject?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
+    "find",
+    // SCIENT-FORK:START
+    "open-in-new-window",
+    // SCIENT-FORK:END
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
@@ -116,6 +140,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy",
     "copy-path",
     "copy-branch",
+    "copy-thread",
     "copy-thread-id",
   ].includes(action);
 }
@@ -124,6 +149,12 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.canFind
+      ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
+      : []),
+    // SCIENT-FORK:START
+    ...(state.openInNewWindow ? [state.openInNewWindow] : []),
+    // SCIENT-FORK:END
     ...(state.branch
       ? [
           {
@@ -161,7 +192,11 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
-                  { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
+                  {
+                    id: "snooze:custom" as const,
+                    label: "Custom…",
+                    separatorBefore: state.snoozePresets.length > 0,
+                  },
                 ],
               },
         ]
@@ -197,6 +232,16 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    ...(state.canTurnIntoProject
+      ? [
+          {
+            id: "turn-into-project" as const,
+            label: "Turn into project",
+            icon: "folder-plus",
+            disabled: state.isRunning,
+          },
+        ]
+      : []),
     ...(state.supports.autoSettleOptOut
       ? [
           {
@@ -228,6 +273,7 @@ export function buildThreadActionMenuItems(
         ...(state.branch
           ? [{ id: "copy-branch" as const, label: "Branch", icon: "git-branch" }]
           : []),
+        { id: "copy-thread", label: "Thread", icon: "message-square" },
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
         // SCIENT-FORK:START
         COPY_CONVERSATION_MARKDOWN_MENU_ITEM,

@@ -112,6 +112,7 @@ export function useFileCitationTarget(
   const threadKey = ref ? `${ref.environmentId}\0${ref.threadId}` : null;
   const started = useRef<number | null>(null);
   const leaving = useRef<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons this hook's PDF citation activation on a deferred timer when the thread changes or it unmounts
   useEffect(() => {
     const abandonOwn = () => {
       if (started.current !== null && started.current === pdfCitationActivation()) {
@@ -136,6 +137,7 @@ export function useFileCitationTarget(
       };
     };
   }, [threadKey]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the cited PDF or file through the citation navigation registry when the router location changes
   useEffect(() => {
     if (
       !citation ||

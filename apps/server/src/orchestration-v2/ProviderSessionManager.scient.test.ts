@@ -1,6 +1,6 @@
 import { describe } from "vite-plus/test";
 import { assert, it } from "@effect/vitest";
-import { ConnectorId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import { ConnectorId, ContextHandoffId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -76,7 +76,8 @@ import {
   listScientSkillsForInvocation,
   loadScientSkillForInvocation,
 } from "../mcp/toolkits/skills/handlers.ts";
-import { readScientThreadForInvocation } from "../mcp/toolkits/threads/handlers.ts";
+import { readHandoffSummaryForInvocation } from "../mcp/toolkits/threads/handlers.ts";
+import { ScientHandoffSummaryReadToolError } from "../mcp/toolkits/threads/tools.ts";
 import type { ProviderAuthController } from "../provider/ProviderAuthService.ts";
 import { makeProviderAuthService } from "../provider/ProviderAuthService.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
@@ -2853,12 +2854,16 @@ it.effect(
           }),
         );
         assert.deepEqual(inventory, { languages: [] });
-        const history = yield* dispatchScientOperation(
-          "threads.read",
-          readScientThreadForInvocation({ threadId }),
-        ).pipe(Effect.provideService(AgentInvocationContext, invocation));
-        assert.equal(history.thread.threadId, threadId);
-        assert.deepEqual(history.items, []);
+        // The grant admits the reader; this thread simply retains no such handoff.
+        const missingSummary = yield* dispatchScientOperation(
+          "threads.handoff-summary.read",
+          readHandoffSummaryForInvocation({
+            threadId,
+            contextHandoffId: ContextHandoffId.make("handoff-missing"),
+          }),
+        ).pipe(Effect.provideService(AgentInvocationContext, invocation), Effect.flip);
+        assert.instanceOf(missingSummary, ScientHandoffSummaryReadToolError);
+        assert.equal(missingSummary.code, "thread_not_found");
         const release = BUILT_IN_SKILL_RELEASES.find(
           (candidate) => candidate.name === "improve-workspace-readiness",
         );

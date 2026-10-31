@@ -55,6 +55,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
 import {
+  knownProviderFailureMessage,
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
@@ -91,6 +92,7 @@ import {
 } from "./scient-fork/NativeWorkflowOwnership.ts";
 // SCIENT-FORK:END
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -555,6 +557,8 @@ export function routeProviderEvent(
             state.ownedProviderTurns.has(event.runtimeRequest.providerTurnId)),
         state,
       ];
+    case "background_work.updated":
+      return [state.ownedProviderTurns.has(event.providerTurnId), state];
     case "command_output.delta":
       // The session manager hands live output to the command output hub; runs never see it.
       return [false, state];
@@ -706,6 +710,7 @@ export const layer: Layer.Layer<
         };
       }) {
         const completedAt = input.completedAt ?? (yield* DateTime.now);
+        // SCIENT-FORK:START — a failed start receipt settles as the terminal provider turn.
         const terminalProviderTurn =
           input.abandonedProviderTurn ??
           (input.failedStartReceipt === undefined
@@ -715,7 +720,8 @@ export const layer: Layer.Layer<
                 status: "failed" as const,
                 completedAt,
               });
-        const finalizedAttempt: OrchestrationV2RunAttempt | null = {
+        // SCIENT-FORK:END
+        const finalizedAttempt: OrchestrationV2RunAttempt = {
           ...input.attempt,
           status: input.terminal.status,
           completedAt,
@@ -845,21 +851,19 @@ export const layer: Layer.Layer<
                     payload: terminalProviderTurn,
                   },
                 ]),
+            // SCIENT-FORK:START
             ...cascadedSubagentEvents,
-            ...(finalizedAttempt === null
-              ? []
-              : [
-                  {
-                    id: yield* allocateEventId(),
-                    type: "run-attempt.updated" as const,
-                    threadId: input.run.threadId,
-                    runId: input.run.id,
-                    nodeId: input.rootNode.id,
-                    providerInstanceId: input.run.providerInstanceId,
-                    occurredAt: completedAt,
-                    payload: finalizedAttempt,
-                  },
-                ]),
+            // SCIENT-FORK:END
+            {
+              id: yield* allocateEventId(),
+              type: "run-attempt.updated" as const,
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              nodeId: input.rootNode.id,
+              providerInstanceId: input.run.providerInstanceId,
+              occurredAt: completedAt,
+              payload: finalizedAttempt,
+            },
             ...(input.terminal.status === "interrupted"
               ? [
                   {
@@ -1040,24 +1044,27 @@ export const layer: Layer.Layer<
                   .responseStreamingMode,
             ),
           );
-          yield* checkpointService
-            .captureBaseline({
-              scope: input.checkpointScope,
-              ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-            })
-            .pipe(
-              Effect.catchCauseIf(
-                (cause) => !Cause.hasInterruptsOnly(cause),
-                (_cause) =>
-                  Effect.logWarning(
-                    "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                    { runId: input.run.id },
-                  ),
-              ),
-              // SCIENT-FORK:START — cancel only local preparation; retain native receipt safety.
-              (capture) => input.prepareBeforeProviderTurn?.(capture) ?? capture,
-              // SCIENT-FORK:END
-            );
+          // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
+          yield* (
+            input.appThread.lineage.sideChat === true
+              ? Effect.void
+              : checkpointService.captureBaseline({
+                  scope: input.checkpointScope,
+                  ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+                })
+          ).pipe(
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              (_cause) =>
+                Effect.logWarning(
+                  "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                  { runId: input.run.id },
+                ),
+            ),
+            // SCIENT-FORK:START — cancel only local preparation; retain native receipt safety.
+            (capture) => input.prepareBeforeProviderTurn?.(capture) ?? capture,
+            // SCIENT-FORK:END
+          );
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn()) &&
@@ -1190,6 +1197,7 @@ export const layer: Layer.Layer<
         const rootFinalizationOwnerLost = yield* Ref.make(false);
         // SCIENT-FORK:END
         const providerThreadOwnerLost = yield* Ref.make(false);
+        const pendingBackgroundProviderTurns = new Set<ProviderTurnId>();
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
         const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
         const activeBackgroundTurnItems = yield* Ref.make<
@@ -1417,6 +1425,9 @@ export const layer: Layer.Layer<
           ) {
             return true;
           }
+          if (pendingBackgroundProviderTurns.size > 0) {
+            return false;
+          }
           const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
           if (childProviderTurns.size > 0) {
             return false;
@@ -1516,6 +1527,10 @@ export const layer: Layer.Layer<
                   activeChildSubagents,
                   ownedProviderTurns: (yield* Ref.get(eventRouting)).ownedProviderTurns,
                 });
+                const { ownedProviderTurns } = yield* Ref.get(eventRouting);
+                for (const id of pendingBackgroundProviderTurns) {
+                  if (!ownedProviderTurns.has(id)) pendingBackgroundProviderTurns.delete(id);
+                }
               }
               // SCIENT-FORK:END
               // Route, persist, and track each frame in one sequential step.
@@ -1649,6 +1664,13 @@ export const layer: Layer.Layer<
                 yield* Ref.set(rootTerminalSeen, true);
                 yield* finalizeRootRun(event);
               }
+              if (event.type === "background_work.updated") {
+                if (event.pending) {
+                  pendingBackgroundProviderTurns.add(event.providerTurnId);
+                } else {
+                  pendingBackgroundProviderTurns.delete(event.providerTurnId);
+                }
+              }
               yield* trackChildLifecycle(event, deliveredEvent !== null);
             }),
           ),
@@ -1730,6 +1752,7 @@ export const layer: Layer.Layer<
                     : false;
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+                const squashed = Cause.squash(cause);
                 const receipt = yield* Ref.get(committedRootProviderTurn);
                 const abandonedProviderTurn = abandonedCommittedRootTurn({
                   receipt,
@@ -1757,7 +1780,13 @@ export const layer: Layer.Layer<
                   openRunOwnedSubagents: openSubagents,
                   completedAt,
                   terminal: makeFailedTerminalEvent(
-                    makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
+                    makeProviderFailure({
+                      cause: squashed,
+                      message:
+                        knownProviderFailureMessage(squashed) ??
+                        userFacingDatabaseErrorMessage(squashed),
+                      class: "unknown",
+                    }),
                     latestItemOrdinal + 1,
                     receipt?.id,
                   ),

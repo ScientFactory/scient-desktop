@@ -28,6 +28,7 @@ export function useLatexSourceRecovery(
   } | null>(null);
   const [storageFailed, setStorageFailed] = useState(false);
   const recovery = offered?.key === key ? offered.recovery : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the lease snapshot stream to checkpoint and confirm recovery drafts in the recovery store
   useEffect(() => {
     if (lease === null) return;
     let previous = lease.getSnapshot();

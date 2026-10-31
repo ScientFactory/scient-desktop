@@ -27,6 +27,7 @@ import {
   type RetainedMutationHooks,
 } from "./RetainedFileMutation.ts";
 import {
+  closeNativeHelperServers,
   ensureNativePrivateRetentionDirectory,
   nativeFilePublicationCapabilities,
   hasNativeFileAuthority,
@@ -52,7 +53,11 @@ function compileFilePublicationTestHelper(probe: boolean) {
     const directory = await NodeFSP.realpath(
       await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-publication-helper-")),
     );
-    afterAll(() => NodeFSP.rm(directory, { recursive: true, force: true }));
+    // A running helper locks its binary on Windows.
+    afterAll(async () => {
+      await closeNativeHelperServers();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    });
     const helper = NodePath.join(
       directory,
       platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication",

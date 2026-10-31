@@ -18,6 +18,7 @@ export function useScientDownloadProgress({
   const [display, setDisplay] = useState({ key, target, value: target });
   const engine = useRef({ key, target, value: target, velocity: 0 });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the rAF progress-animation loop and visibilitychange listener, snapping to real values
   useEffect(() => {
     let request: number | undefined;
     let disposed = false;

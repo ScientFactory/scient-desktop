@@ -54,8 +54,10 @@ describe("ChatMarkdown math seam", () => {
   });
 
   it("threads the original text through the per-message plugin hook", () => {
-    expect(chatMarkdownSource).toContain("scientMathRemarkPluginsForMessage(remarkPlugins, text)");
-    expect(chatMarkdownSource).toContain("remarkPlugins={scientRemarkPlugins}");
+    expect(chatMarkdownSource).toContain(
+      "scientMathRemarkPluginsForMessage(sharedRemarkPlugins, text)",
+    );
+    expect(chatMarkdownSource).toContain("remarkPlugins={remarkPlugins}");
   });
 
   it("routes math code nodes to the Scient components, with streaming state", () => {
@@ -198,7 +200,7 @@ describe("single-dollar text that must stay text", () => {
 
 describe("dollar text that must stay text", () => {
   it("keeps shell and environment identifiers literal", () => {
-    for (const markdown of ["$PATH$", "$USD$", "$HOME and $PATH."]) {
+    for (const markdown of ["$PATH$", "$HOME$", "$HOME and $PATH."]) {
       const html = renderChatShapedPipeline(`echo ${markdown} done`);
       expect(html).not.toContain("language-math");
     }

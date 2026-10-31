@@ -85,10 +85,9 @@ export interface ServerProviderPresentation {
   readonly displayName: string;
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
+  readonly reportsContextWindow?: boolean;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly supportsConversationRollback?: boolean;
-  readonly reportsContextWindow?: boolean;
-  readonly requiresNewThreadForModelChange?: boolean;
 }
 
 export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
@@ -285,18 +284,12 @@ export function buildServerProvider(input: {
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
       ? { showInteractionModeToggle: input.presentation.showInteractionModeToggle }
       : {}),
-    ...(input.presentation.supportedRuntimeModes !== undefined
-      ? { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }
-      : {}),
-    ...(input.presentation.supportsConversationRollback !== undefined
-      ? { supportsConversationRollback: input.presentation.supportsConversationRollback }
-      : {}),
     ...(typeof input.presentation.reportsContextWindow === "boolean"
       ? { reportsContextWindow: input.presentation.reportsContextWindow }
       : {}),
-    ...(typeof input.presentation.requiresNewThreadForModelChange === "boolean"
-      ? { requiresNewThreadForModelChange: input.presentation.requiresNewThreadForModelChange }
-      : {}),
+    ...(input.presentation.supportedRuntimeModes === undefined
+      ? {}
+      : { supportedRuntimeModes: [...input.presentation.supportedRuntimeModes] }),
     enabled: input.enabled,
     installed: input.probe.installed,
     version: input.probe.version,

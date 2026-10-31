@@ -30,7 +30,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
-import { checkpointRefForThreadTurn } from "../../checkpointing/Utils.ts";
 import { CheckpointServiceV2 } from "../CheckpointService.ts";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
@@ -51,6 +50,7 @@ import { EventSinkV2 } from "../EventSink.ts";
 import { OrchestratorV2 } from "../Orchestrator.ts";
 import { ProjectionStoreV2 } from "../ProjectionStore.ts";
 import { ConversationForkService } from "./ConversationForkService.ts";
+import { checkpointRefForThreadTurn } from "./ForkCheckpointBaseline.ts";
 import { observeCheckpointOwnership } from "./checkpointOwnershipCompletion.testkit.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import {

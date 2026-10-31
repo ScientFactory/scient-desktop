@@ -111,6 +111,7 @@ export function WordFileExportDialog(props: {
     if (operationFailure !== null) throw operationFailure.error;
   };
   const installed = tool.status?.installed === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the Pandoc export run once the tool reports installed
   useEffect(() => {
     if (!installed || startedRef.current) return;
     startedRef.current = true;

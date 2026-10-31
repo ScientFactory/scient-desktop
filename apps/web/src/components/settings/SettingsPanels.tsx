@@ -30,6 +30,9 @@ import {
   HOSTED_APP_CHANNEL,
   HOSTED_APP_CHANNEL_LABEL,
 } from "../../branding";
+// SCIENT-FORK:START — wrapped below so dev builds keep their stage beside the version.
+import { AboutVersionTitle as CopyableVersionTitle } from "./AboutVersionTitle";
+// SCIENT-FORK:END
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import {
   canCheckForUpdate,
@@ -56,17 +59,14 @@ import {
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ThreadTitleInstructionsSettings } from "./ThreadTitleInstructionsSettings";
+import { SnoozePresetsRow } from "./SnoozePresetsSettings";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
-import {
-  applyProviderInstanceSettings,
-  deriveProviderInstanceEntries,
-  sortProviderInstanceEntries,
-} from "../../providerInstances";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import { isMacPlatform } from "../../lib/utils";
 import { useEnvironmentProviders } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -98,7 +98,6 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { AnalyticsPrivacySettings } from "../../scient/analytics/AnalyticsPrivacySettings";
 // SCIENT-FORK: fork context size preference.
 import { ForkContextSettings } from "../../scient/fork/ForkContextSettings";
 import { ScientGettingStartedSettingsRow } from "../../scient/onboarding/ScientGettingStartedSettingsRow";
@@ -142,15 +141,11 @@ const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
 };
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
+// SCIENT-FORK:START — the version copies clean; dev builds still read "· Dev" beside it.
 function AboutVersionTitle() {
-  const versionLabel = formatAboutVersionLabel(APP_VERSION, APP_STAGE_LABEL);
-  return (
-    <span className="inline-flex items-baseline gap-2">
-      <span>Version</span>
-      <code className="text-2xs font-medium text-muted-foreground">{versionLabel}</code>
-    </span>
-  );
+  return <CopyableVersionTitle label={formatAboutVersionLabel(APP_VERSION, APP_STAGE_LABEL)} />;
 }
+// SCIENT-FORK:END
 
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
@@ -426,19 +421,6 @@ export function LegacyFeaturesSection() {
           />
         }
       />
-      <SettingsRow
-        {...searchableSetting("legacy-sidebar")}
-        description="Restore per-project thread trees instead of the default flat sidebar."
-        control={
-          <Switch
-            checked={settings.legacySidebarEnabled}
-            onCheckedChange={(checked) =>
-              updateSettings({ legacySidebarEnabled: Boolean(checked) })
-            }
-            aria-label="Sidebar (legacy)"
-          />
-        }
-      />
     </SettingsSection>
   );
 }
@@ -548,7 +530,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("working-shelf")}
-          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you. The boring sidebar in Labs has no Working section."
           resetAction={
             settings.sidebarWorkingShelfEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
@@ -827,32 +809,6 @@ export function ChatSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
-          }
-        />
-        <SettingsRow
-          {...searchableSetting("composer-collapse")}
-          description="Rest the composer of an existing thread into a single line when you scroll the conversation. Focus the composer or start typing to expand it again."
-          resetAction={
-            settings.composerCollapseOnScroll !==
-            DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll ? (
-              <SettingResetButton
-                label="collapse composer on scroll"
-                onClick={() =>
-                  updateSettings({
-                    composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.composerCollapseOnScroll}
-              onCheckedChange={(checked) =>
-                updateSettings({ composerCollapseOnScroll: Boolean(checked) })
-              }
-              aria-label="Collapse composer on scroll"
-            />
           }
         />
         <AdvancedSettings targetIds={[searchableSetting("skills-in-slash-menu").id]}>
@@ -1195,7 +1151,8 @@ export function ThreadsSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { environment, connectedEnvironments, target } = useSettingsScope();
+  const { environment, connectedEnvironments, target, scope } = useSettingsScope();
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
@@ -1204,11 +1161,6 @@ export function ThreadsSettingsPanel() {
     (environment?.serverConfig
       ? providersByEnvironment.get(environment.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const supportsAutoSettlement =
-    connectedEnvironments.length > 0 &&
-    connectedEnvironments.every(
-      (target) => target.serverConfig?.environment.capabilities.threadAutoSettlement === true,
-    );
   const supportsAutoSettlementScope = connectedEnvironments.every(
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
@@ -1223,12 +1175,10 @@ export function ThreadsSettingsPanel() {
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
-  const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(textGenerationProviders),
-      settings,
-      target?.projectId ?? null,
-    ),
+  const textGenerationModelInstanceEntries = providerInstanceEntriesFor(
+    textGenerationProviders,
+    settings,
+    target?.projectId ?? null,
   );
   const hasTextGenerationProvider = textGenerationModelInstanceEntries.some(
     (entry) => entry.enabled && entry.isAvailable,
@@ -1292,6 +1242,12 @@ export function ThreadsSettingsPanel() {
 
       <ProjectDefaultsSettings category="general" />
 
+      {!isProjectScope ? (
+        <SettingsSection id="snooze" title="Snooze">
+          <SnoozePresetsRow />
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection id="usage-limits" title="Usage limits">
         <SettingsRow
           serverScoped
@@ -1327,7 +1283,7 @@ export function ThreadsSettingsPanel() {
         />
       </SettingsSection>
 
-      {supportsAutoSettlement ? (
+      {hasServerTargets ? (
         <SettingsSection id="auto-settle" title="Auto-settle">
           <SettingsRow
             serverScoped
@@ -1606,11 +1562,7 @@ export function MaintenanceSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
-  const supportsRestartContinuation =
-    connectedEnvironments.length > 0 &&
-    connectedEnvironments.every(
-      (target) => target.serverConfig?.environment.capabilities.threadRestartContinuation === true,
-    );
+  const hasServerTargets = connectedEnvironments.length > 0;
 
   return (
     <SettingsPageContainer>
@@ -1650,12 +1602,12 @@ export function MaintenanceSettingsPanel() {
           settingKeys={["continueThreadsAfterServerUpdate"]}
           description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments."
           status={
-            !supportsRestartContinuation
+            !hasServerTargets
               ? "All selected connected environments must support restart continuation."
               : undefined
           }
           resetAction={
-            supportsRestartContinuation &&
+            hasServerTargets &&
             settings.continueThreadsAfterServerUpdate !==
               DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate ? (
               <SettingResetButton
@@ -1673,7 +1625,7 @@ export function MaintenanceSettingsPanel() {
             <ScopedSwitch
               settingKeys={["continueThreadsAfterServerUpdate"]}
               checked={settings.continueThreadsAfterServerUpdate}
-              disabled={!supportsRestartContinuation}
+              disabled={!hasServerTargets}
               onCheckedChange={(checked) =>
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
@@ -1731,9 +1683,7 @@ export function AboutSettingsPanel() {
         )}
       </SettingsSection>
 
-      <AnalyticsPrivacySettings />
-
-      {/* SCIENT-FORK: the external privacy-policy row is withheld; analytics controls stay above. */}
+      {/* SCIENT-FORK: the external privacy-policy row is withheld. */}
       <SettingsSection id="legal" title="Legal">
         <SettingsRow
           {...searchableSetting("open-source-licenses")}

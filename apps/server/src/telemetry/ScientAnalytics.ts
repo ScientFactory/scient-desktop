@@ -119,26 +119,6 @@ function packagedAnalyticsWorkerUrl(): URL {
     : new URL("../../dist/analytics-worker.mjs", moduleUrl);
 }
 
-async function readStoredConsent(path: string): Promise<AnalyticsConsent | null> {
-  try {
-    const parsed = JSON.parse(await NodeFSP.readFile(path, "utf8")) as unknown;
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      !("version" in parsed) ||
-      parsed.version !== 1 ||
-      !("consent" in parsed) ||
-      typeof parsed.consent !== "string"
-    ) {
-      return "off";
-    }
-    return AnalyticsConsent.find((candidate) => candidate === parsed.consent) ?? "off";
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-    return "off";
-  }
-}
-
 async function writeStoredConsent(path: string, consent: AnalyticsConsent): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true, mode: 0o700 });
   const temporaryPath = `${path}.tmp`;
@@ -167,13 +147,12 @@ export const make = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
   const outboxPath = NodePath.join(serverConfig.stateDir, "analytics", "outbox.sqlite");
   const preferencePath = NodePath.join(serverConfig.stateDir, "analytics", "preferences.json");
-  const storedConsent = analyticsConfig.enabled
-    ? yield* Effect.promise(() => readStoredConsent(preferencePath))
-    : null;
-  let consent = storedConsent ?? parseConsent(analyticsConfig.consent);
+  // Like T3, analytics is on for everyone; a saved preference no longer applies.
+  // SCIENT_ANALYTICS_ENABLED=false is the off switch.
+  let consent = parseConsent(analyticsConfig.consent);
   let sessionStartedAt = yield* Clock.currentTimeMillis;
 
-  if (storedConsent === null && consent === "off" && analyticsConfig.consent !== "off") {
+  if (consent === "off" && analyticsConfig.consent !== "off") {
     yield* Effect.logWarning("Invalid Scient analytics consent; analytics remains off");
   }
 
@@ -276,6 +255,19 @@ export const make = Effect.gen(function* () {
       },
       catch: () => "analytics-record-failed" as const,
     }).pipe(Effect.catch(() => Effect.logWarning("Scient analytics event could not be queued")));
+
+  const recordedOwners = new Set<string>();
+  const recordOwners: AnalyticsService["Service"]["recordOwners"] = (owners, observedBy) =>
+    Effect.forEach(
+      owners,
+      ({ source, ownerId }) => {
+        const key = `${observedBy}:${source}:${ownerId}`;
+        if (recordedOwners.has(key)) return Effect.void;
+        recordedOwners.add(key);
+        return record("install.owner_observed", { ownerSource: source, ownerId, observedBy });
+      },
+      { discard: true },
+    );
 
   const flush: AnalyticsService["Service"]["flush"] = Effect.tryPromise({
     try: () => runtimeHolder.current.flush(),
@@ -402,8 +394,7 @@ export const make = Effect.gen(function* () {
 
   return {
     record,
-    // Provider and installation owner identities are outside Scient's analytics contract.
-    recordOwners: disabledAnalyticsService.recordOwners,
+    recordOwners,
     flush,
     status,
     setConsent,

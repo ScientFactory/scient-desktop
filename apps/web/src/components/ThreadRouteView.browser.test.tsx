@@ -311,7 +311,7 @@ function makeTransport(input?: { active?: boolean }) {
         networkStatus: yield* SubscriptionRef.make<NetworkStatus>("online"),
         start: Effect.void,
         register: () => Effect.die("Unexpected registration"),
-        registerPlatform: () => Effect.die("Unexpected registration"),
+        assertKnownAddress: () => Effect.die("Unexpected address check"),
         reconcilePlatform: () => Effect.die("Unexpected reconciliation"),
         remove: () => Effect.die("Unexpected removal"),
         removeRoute: () => Effect.die("Unexpected route removal"),

@@ -415,8 +415,8 @@ function DeviceMiniPlayer({
   const device = deviceState.devices.find(
     (entry) => entry.hostId === source.hostId && entry.id === source.deviceId,
   );
-  const hostLabel =
-    deviceState.hosts.find((host) => host.id === source.hostId)?.label ?? "Device host";
+  const host = deviceState.hosts.find((entry) => entry.id === source.hostId);
+  const hostLabel = host?.label ?? "Device host";
   const cornerRadius = (player: PreviewMiniPlayerSize) =>
     resolveDeviceMiniPlayerCornerRadius(source.platform, player);
 
@@ -454,6 +454,7 @@ function DeviceMiniPlayer({
             deviceDescription={`${hostLabel} · ${device?.version ?? source.platform}`}
             visible
             viewId={viewId}
+            serveSimOnly={host?.kind === "simlock"}
           />
         </div>
       )}
@@ -538,6 +539,7 @@ function MiniPlayerShell({
   const [pillOpen, setPillOpen] = useState(false);
   const handleTappedRef = useRef(false);
   const handleRef = useRef<HTMLDivElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document pointerdown listener closes the open pill on an outside press
   useEffect(() => {
     if (!pillOpen) return;
     const dismiss = (event: PointerEvent) => {
@@ -619,7 +621,9 @@ function MiniPlayerShell({
           { x: gesture.frame.x + delta.x, y: gesture.frame.y + delta.y },
           container,
           gesture.frame,
+          // SCIENT-FORK:START — a self-laid-out player avoids the composer it measured
           obstacles,
+          // SCIENT-FORK:END
         ),
       );
       return;

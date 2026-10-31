@@ -80,7 +80,9 @@ function useAvailabilityNotice(notice: AvailabilityNotice) {
     void notice.update.run();
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the imperative toast on unmount
   useEffect(() => close, [close]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the imperative update-notification toast in step with the current notice
   useEffect(() => {
     if (active.current?.key !== notice.key) close();
     const key = notice.key;

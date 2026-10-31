@@ -381,6 +381,7 @@ export function ScientInlineWorkspaceImage(props: {
     url != null && (props.filePresentation ? retained !== null : loadedUrl === url) && !loadFailed;
   const revisionKey = `${props.threadRef.environmentId}:${retryKey}`;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the transient-message timer held in a ref on unmount
   useEffect(
     () => () => {
       if (messageTimerRef.current != null) clearTimeout(messageTimerRef.current);

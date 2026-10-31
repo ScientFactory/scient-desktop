@@ -37,7 +37,7 @@ export function useOverleafAgentRunWatch(environmentId: EnvironmentId, workspace
     .map((thread) => `${thread.id}:${thread.latestRun?.runId}:${thread.latestRun?.status}`)
     .toSorted()
     .join("\u0000");
-  // oxlint-disable-next-line t3code/react-effect-budget -- An agent's settled run is outside React: it tells the store to read the server's Overleaf status again.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- An agent's settled run is outside React: it tells the store to read the server's Overleaf status again.
   useEffect(() => {
     noteOverleafAgentRuns(environmentId, workspaceRoot, runs);
   }, [environmentId, workspaceRoot, runs]);

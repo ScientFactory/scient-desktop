@@ -58,6 +58,7 @@ import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
+import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
@@ -73,6 +74,9 @@ import { PreviewControlsToolkit } from "./previewControls/tools.ts";
 import { EnvironmentToolkit } from "./environment/tools.ts";
 import * as EnvironmentHandlers from "./environment/handlers.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
+import * as PeerForwarding from "../../peer/PeerForwarding.ts";
+import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
+import * as PeerLinks from "../../peer/PeerLinks.ts";
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -91,6 +95,9 @@ const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadR
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+  Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+  Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+  Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
 );
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
@@ -129,11 +136,11 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
   }
   expect(names.has("scient_thread_launch")).toBe(true);
   expect(names.has("scient_thread_start")).toBe(false);
-  expect(names.has("scient_thread_read")).toBe(true);
+  expect(names.has("scient_thread_read")).toBe(false);
   expect(names.has("scient_thread_inspect")).toBe(true);
   expect(names.has("t3_thread_read")).toBe(false);
   expect(
-    Context.get(ScientThreadsToolkit.tools.scient_thread_read.annotations, Tool.Readonly),
+    Context.get(ScientThreadsToolkit.tools.scient_handoff_summary_read.annotations, Tool.Readonly),
   ).toBe(true);
   expect(
     Context.get(OrchestratorToolkit.tools.scient_thread_inspect.annotations, Tool.Readonly),
@@ -491,6 +498,51 @@ it.effect("records only failed calls of tools that hand off no work", () => {
   );
 });
 // SCIENT-FORK:END
+
+it.effect("rejects an unknown organize target instead of archiving the calling thread", () => {
+  const dispatched: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const outcome = yield* server
+      .callTool({
+        // SCIENT-FORK: Scient's thread tools carry the scient_ prefix.
+        name: "scient_thread_organize",
+        arguments: { action: "archive", threadIds: ["other-thread"] },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.result,
+      );
+    expect(dispatched).toEqual([]);
+    expect(outcome).toMatchObject({
+      _tag: "Failure",
+      failure: { message: expect.stringContaining("Expected no excess property") },
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        // SCIENT-FORK: Scient thread tools read the caller's captured policy.
+        Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              Effect.succeed(
+                McpToolAccessTestkit.idleThreadProjection(McpToolAccessTestkit.liveThreadShell(id)),
+              ),
+            dispatch: (command) => {
+              dispatched.push(command);
+              return Effect.succeed({ sequence: 1 } as never);
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("keeps unexpected handler defects private through the production registration", () =>
   Effect.gen(function* () {
@@ -891,8 +943,12 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
   ),
@@ -949,6 +1005,10 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
         ),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
   ),
@@ -1034,6 +1094,10 @@ it.effect.each(["scient_thread_interrupt", "scient_workflow_stop"])(
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         ),
       ),
     ),
@@ -1125,8 +1189,12 @@ it.effect("discovers workflow stop targets and requires orchestration capability
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
         Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
         Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+        Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
       ),
     ),
   );
@@ -1216,4 +1284,58 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
       ),
     ),
   ),
+);
+
+it.effect(
+  "scient_thread_list settled:false with an empty statuses list lists the unsettled threads",
+  () => {
+    const unsettled = McpToolAccessTestkit.liveThreadShell(ThreadId.make("unsettled-thread"));
+    const settled = {
+      ...McpToolAccessTestkit.liveThreadShell(ThreadId.make("settled-thread")),
+      settledOverride: "settled",
+    } as const;
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "scient_thread_list",
+          arguments: { projectId: unsettled.projectId, settled: false, statuses: [] },
+        })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("full-access"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        threads: [{ threadId: unsettled.id, settled: false }],
+        total: 1,
+      });
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              listProjectThreads: () => Effect.succeed([unsettled, settled]),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+          Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        ),
+      ),
+    );
+  },
 );

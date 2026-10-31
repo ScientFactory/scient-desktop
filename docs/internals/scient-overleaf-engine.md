@@ -56,7 +56,9 @@ the same limits as before.
 `OverleafSync.bench.ts` syncs 1, 10 and 50 files each way, and 300 files
 from Overleaf into one folder, against a local bare repository with the real
 applier and prints the time of each stage. It runs in the explicit benchmark
-lane (`test:performance`), outside normal CI test discovery. From `apps/server`:
+lane (`test:performance`), outside normal CI test discovery. The Overleaf
+Windows CI job also runs the 1, 10 and 50 file cases on Windows, each of which
+must finish its sync. From `apps/server`:
 
 ```sh
 pnpm exec vp test bench --run --fileParallelism=false --maxWorkers=1 src/scient/overleaf/OverleafSync.bench.ts
@@ -104,6 +106,15 @@ record kept in the same folder):
   on macOS and Linux: both paths are canonical and name directories, not links,
   with those devices and inodes. The lease and each namespace command still bind
   them natively. A path that is not canonical, or Windows, still asks the helper.
+- A Windows process launch costs tens of milliseconds, and a sync asks the
+  helper hundreds of read-only questions (identity, flags, privacy and
+  directory binding). One long-lived helper process (`--serve=1`) answers them
+  one at a time, about a millisecond each; a question asked while it is busy
+  runs in its own process, so a slow question never holds up another. It answers
+  nothing else, so every lease and namespace change still runs in its own
+  process. It exits after a second idle, because a running helper locks its
+  binary against upgrade or deletion. Before this, receiving one file took about
+  950 launches and 50 seconds.
 - The helper's capabilities are asked once per helper binary (path, device,
   inode, size, change time) and root (canonical path and volume); a replaced
   helper or a root on another volume asks again.
@@ -112,7 +123,9 @@ record kept in the same folder):
   path, device, inode and change time as just before the helper looked. Mode
   bits alone are not enough, because only the helper reads access lists (a
   macOS ACL can open a 0700 folder to everyone), and any change to owner, mode
-  or access list moves the change time. A folder seen for the first time, or
+  or access list moves the change time; NTFS moves it on owner, access-list and
+  inheritance changes too. On Windows the folder must stand unchanged across
+  the helper's check, since the helper's identities are not Node's. A folder seen for the first time, or
   changed since, goes through the helper as before; a folder that gains
   entries changes too, so a record store is asked about on each write.
 
@@ -120,6 +133,15 @@ Retained-record discovery checks folders and journals afresh before and after
 ownership acquisition. POSIX scans read up to 16 independent records at a time,
 retiring the whole batch before propagating a failure and preserving record order.
 Windows retains serial discovery. Publication and recovery remain serialized.
+
+A retention vault proves its disk once per process: a later sync with the same
+vault folder (same device and inode) skips the probe but still creates and
+removes one file there, so a vault that has become read-only is refused as
+before; a replaced folder is proven again.
+
+Journal and state writes replace their file by rename; on Windows that rename
+is retried briefly while another program (an indexer or antivirus scan) holds
+the file, which otherwise surfaced as a sync stopped for retained attention.
 
 macOS journals and their publication order are unchanged. Linux creates use a separate
 `staged-create` record decoded beside the clone-create record. Before publication,

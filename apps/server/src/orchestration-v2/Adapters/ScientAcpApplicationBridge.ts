@@ -1,4 +1,5 @@
 import type { AcpAdapterV2ApplicationBridge } from "@t3tools/provider-acp/server/adapter";
+import type { T3AcpInstructionState } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 import { toMcpCapabilities } from "../../mcp/McpInvocationContext.ts";
 import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
@@ -29,8 +30,22 @@ export const scientAcpAwarenessBridge = {
     buildScientAwareness(capabilities === undefined ? undefined : toMcpCapabilities(capabilities)),
 } satisfies Pick<AcpAdapterV2ApplicationBridge, "scientAwareness">;
 
+const withoutDeviceTools = (state: T3AcpInstructionState): T3AcpInstructionState => ({
+  ...state,
+  hasDeviceTools: false,
+});
+
 /** Full bridge for ACP flavors that can deliver a Scient prompt. */
 export const scientAcpApplicationBridge = {
   ...scientAcpProviderBridge,
   ...scientAcpAwarenessBridge,
+  // Awareness already carries the device block, so the prompt does not repeat it.
+  composePrompt: (input) =>
+    buildScientAcpPromptWithInstructions({
+      ...input,
+      state: withoutDeviceTools(input.state),
+      ...(input.previousState === undefined
+        ? {}
+        : { previousState: withoutDeviceTools(input.previousState) }),
+    }),
 } satisfies AcpAdapterV2ApplicationBridge;

@@ -115,6 +115,7 @@ function ScientReleaseNotesDialog({
   }
 
   const focusRequest = { open, selected, view };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the dialog title via requestAnimationFrame when the view changes
   useEffect(() => {
     if (!focusRequest.open) return;
     // Re-focus when navigating between releases or the history view.

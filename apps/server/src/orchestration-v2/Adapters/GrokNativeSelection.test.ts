@@ -31,7 +31,7 @@ import * as ServerConfig from "../../config.ts";
 import * as ScientTestProviderHost from "../testkit/ScientTestProviderHost.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { McpCapability } from "../../mcp/McpInvocationContext.ts";
-import { execScriptSource, writeFakeCli } from "@t3tools/provider-testing/fakeCli";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterV2RuntimePolicy,
@@ -80,20 +80,23 @@ const harness = Effect.fn("GrokNativeSelection.harness")(function* (
   const directory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-grok-native-peer-" });
   const requestsPath = path.join(directory, "requests.ndjson");
   const argvLogPath = path.join(directory, "native-argv.txt");
+  const agentScriptPath = yield* path.fromFileUrl(
+    new URL(
+      environment.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1"
+        ? "../../../scripts/acp-mock-agent.ts"
+        : "../../../scripts/grok-v1-mock-agent.ts",
+      import.meta.url,
+    ),
+  );
   const binary = writeFakeCli({
     directory,
     name: "grok-native",
-    source: execScriptSource({
-      argvLogPath,
-      scriptPath: yield* path.fromFileUrl(
-        new URL(
-          environment.T3_ACP_EMIT_XAI_PROMPT_COMPLETE_THEN_HANG === "1"
-            ? "../../../scripts/acp-mock-agent.ts"
-            : "../../../scripts/grok-v1-mock-agent.ts",
-          import.meta.url,
-        ),
-      ),
-    }),
+    source: [
+      'import { appendFileSync } from "node:fs";',
+      'import { pathToFileURL } from "node:url";',
+      `appendFileSync(${JSON.stringify(argvLogPath)}, process.argv.slice(2).join("\\t") + "\\n");`,
+      `await import(pathToFileURL(${JSON.stringify(agentScriptPath)}).href);`,
+    ].join("\n"),
   });
   const instanceId = ProviderInstanceId.make("grok-native-selection");
   const threadId = ThreadId.make("grok-native-selection");

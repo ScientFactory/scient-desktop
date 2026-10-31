@@ -60,6 +60,8 @@ export interface DesktopAccountsBridge {
     readonly directory: string;
   }) => Promise<{ readonly content: string; readonly skipped: number } | null>;
   readonly sourceProfiles: () => Promise<ReadonlyArray<DesktopSourceProfileDetails>>;
+  /** The site's icon as an image data URI, from the site itself and cached on disk; null if none. */
+  readonly siteIcon?: (site: string) => Promise<string | null>;
   /** Omit environmentId for the primary local environment. */
   readonly signedInSites: (
     profileId: string,

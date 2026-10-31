@@ -18,6 +18,7 @@ import { isScientMessageCopyHtml } from "./messageCopyMarker";
 /** Rows the mocked list leaves unmounted, as LegendList does for rows out of view. */
 const virtualized = vi.hoisted(() => ({ rowIds: new Set<string>() }));
 vi.mock("@legendapp/list/react", () => ({
+  useSyncLayout: () => () => {},
   LegendList: (props: {
     data: Array<{ id: string }>;
     keyExtractor: (item: { id: string }) => string;
@@ -95,7 +96,6 @@ async function _cleanupFixture1(_fixture: _Fixture) {
 function timelineProps() {
   return {
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     listRef: createRef<LegendListRef | null>(),
     latestRun: null,
@@ -105,7 +105,6 @@ function timelineProps() {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: async () => {},
-    onRollbackCheckpoint: () => {},
     providerStatuses: [],
     runs: [],
     supportsConversationRollback: false,

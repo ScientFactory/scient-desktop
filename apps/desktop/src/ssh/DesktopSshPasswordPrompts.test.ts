@@ -91,6 +91,9 @@ function layerElectronWindow(window: ReturnType<typeof makeTestWindow>["window"]
     ElectronWindow.ElectronWindow.of({
       create: () => Effect.die("unexpected BrowserWindow creation"),
       main: Effect.succeedSome(window as Electron.BrowserWindow),
+      // SCIENT-FORK:START — several app windows share one desktop process.
+      appWindows: Effect.succeed([window as Electron.BrowserWindow]),
+      // SCIENT-FORK:END
       currentMainOrFirst: Effect.succeedSome(window as Electron.BrowserWindow),
       focusedMainOrFirst: Effect.succeedSome(window as Electron.BrowserWindow),
       setMain: () => Effect.void,

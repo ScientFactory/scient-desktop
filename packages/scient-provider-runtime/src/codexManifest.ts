@@ -123,7 +123,7 @@ export function resolveReviewedCodexArtifact(
     archiveFormat: "tar.gz",
     // Reserve the same bounded package headroom for Codex on every target.
     // Other providers retain the shared extraction default.
-    extractionLimits: { maxEntries: 128, maxExpandedBytes: 512 * 1024 * 1024 },
+    extractionLimits: { maxEntries: 128, maxExpandedBytes: 768 * 1024 * 1024 },
     executablePath: artifact.executablePath,
     auxiliaryExecutablePaths: artifact.auxiliaryExecutablePaths,
     auxiliaryExecutableRules: artifact.auxiliaryExecutablePaths.map((path) => ({

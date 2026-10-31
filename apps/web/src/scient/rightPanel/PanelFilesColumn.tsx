@@ -3,6 +3,7 @@ import { isHostPath } from "@t3tools/shared/path";
 import * as Schema from "effect/Schema";
 import { lazy, Suspense, type ReactNode } from "react";
 
+import { FileExplorerPane } from "~/components/files/FileExplorerPane";
 import { Button } from "~/components/ui/button";
 import { Kbd } from "~/components/ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -106,24 +107,27 @@ export function PanelFilesLayout(props: {
   ) {
     return props.children;
   }
+  // The file viewer's resizable explorer, so every tab shares the file list's width.
   return (
     <div className="@container/panel-files flex min-h-0 flex-1">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">{props.children}</div>
-      <aside className="flex min-h-0 w-[min(20rem,40%)] min-w-40 shrink-0 border-l border-border/60 bg-background @max-[30rem]/panel-files:hidden">
-        <Suspense fallback={null}>
-          <FileBrowserPanel
-            key={`${props.environmentId}:${props.cwd}`}
-            environmentId={props.environmentId}
-            cwd={props.cwd}
-            projectName={props.projectName}
-            selectedPath={null}
-            selectedPathRevealId={0}
-            onOpenFile={props.onOpenFile}
-            onOpenFileSource={props.onOpenFileSource}
-            workspaceMutationId={props.workspaceMutationId}
-          />
-        </Suspense>
-      </aside>
+      <div className="flex min-h-0 min-w-0 flex-1 @max-[30rem]/panel-files:[&>aside]:hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{props.children}</div>
+        <FileExplorerPane resizable>
+          <Suspense fallback={null}>
+            <FileBrowserPanel
+              key={`${props.environmentId}:${props.cwd}`}
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+              projectName={props.projectName}
+              selectedPath={null}
+              selectedPathRevealId={0}
+              onOpenFile={props.onOpenFile}
+              onOpenFileSource={props.onOpenFileSource}
+              workspaceMutationId={props.workspaceMutationId}
+            />
+          </Suspense>
+        </FileExplorerPane>
+      </div>
     </div>
   );
 }

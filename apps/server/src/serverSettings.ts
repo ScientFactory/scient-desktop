@@ -6,6 +6,7 @@ import {
   ModelSelection,
   ProjectId,
   ProjectScript,
+  keepUnknownOverrideKeys,
   ProjectSettingsOverrides,
   type ProviderInstanceConfig,
   type ProviderInstanceMutation,
@@ -61,6 +62,7 @@ import {
   isModelSelectionProviderEnabled,
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import { secretProviderDefinitions } from "./secrets/secretProviderDefinitions.ts";
 // SCIENT-FORK:START
 import { applyThreadSectionsPrecondition } from "./scient/threadSections/settingsPrecondition.ts";
 // SCIENT-FORK:END
@@ -161,11 +163,25 @@ const normalizeServerSettings = (
   );
 
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
-  return mapSettingsSecrets(settings, (secret) =>
+  const redacted = mapSettingsSecrets(settings, (secret) =>
     secret.sensitive
       ? { value: "", redacted: secret.redacted || secret.value.length > 0 }
       : { value: secret.value, redacted: false },
   );
+  return { ...redacted, secretProviders: withoutUnknownSecretProviderConfigs(redacted) };
+}
+
+// A newer kind's config may hold credentials this build cannot recognize, so it never leaves the server.
+function withoutUnknownSecretProviderConfigs(
+  settings: ServerSettings,
+): ServerSettings["secretProviders"] {
+  return Object.fromEntries(
+    Object.entries(settings.secretProviders).map(([id, entry]) => {
+      if (secretProviderConfigGuards.has(entry.kind)) return [id, entry];
+      const { config: _config, ...envelope } = entry;
+      return [id, envelope];
+    }),
+  ) as ServerSettings["secretProviders"];
 }
 
 export function applyProviderInstanceMutation(
@@ -179,6 +195,40 @@ export function applyProviderInstanceMutation(
     delete providerInstances[mutation.instanceId];
   }
   return { ...settings, providerInstances };
+}
+
+const secretProviderConfigGuards = new Map(
+  secretProviderDefinitions.definitions.map((definition) => [
+    definition.kind as string,
+    Schema.is(definition.configSchema),
+  ]),
+);
+
+// Rejects a kind this server has not loaded rather than storing a config it cannot check.
+function ensureSecretProviderWritesAllowed(
+  patch: ServerSettingsPatch,
+  settingsPath: string,
+): Effect.Effect<void, ServerSettingsError> {
+  for (const [id, entry] of Object.entries(patch.secretProviders ?? {})) {
+    if (entry === null) continue;
+    const isConfig = secretProviderConfigGuards.get(entry.kind);
+    const problem =
+      isConfig === undefined
+        ? `Unsupported secret provider kind: ${entry.kind}.`
+        : isConfig(entry.config)
+          ? undefined
+          : `Invalid ${entry.kind} config for secret provider ${id}.`;
+    if (problem !== undefined) {
+      return Effect.fail(
+        new ServerSettingsError({
+          settingsPath,
+          operation: "write-secret-provider",
+          cause: new Error(problem),
+        }),
+      );
+    }
+  }
+  return Effect.void;
 }
 
 function ensureProviderInstanceMutationAllowed(
@@ -356,10 +406,12 @@ const ServerSettingsJson = fromLenientJson(
     ),
     projectSettingsOverrides: Schema.Record(
       ProjectId,
-      Schema.Struct({
-        ...ProjectSettingsOverrides.fields,
-        responseStreamingMode: Schema.optionalKey(PersistedResponseStreamingMode),
-      }),
+      keepUnknownOverrideKeys(
+        Schema.Struct({
+          ...ProjectSettingsOverrides.fields,
+          responseStreamingMode: Schema.optionalKey(PersistedResponseStreamingMode),
+        }),
+      ),
     ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }),
 );
@@ -615,6 +667,7 @@ const ATOMIC_SETTINGS_KEYS: ReadonlySet<string> = new Set([
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
   "textGenerationModelSelection",
+  "fallbackModelSelection",
   "pullRequestMergeMethod",
 ]);
 
@@ -1081,6 +1134,31 @@ const make = Effect.gen(function* () {
     },
   );
 
+  // Background sweeps read settings every few seconds; reading secret files each time is wasted.
+  // Every secret write rewrites the settings file, so a new cached object implies fresh secrets.
+  // A read that overlaps a secret write may see files a rollback then restores, so it is not kept.
+  let materialized: { readonly source: ServerSettings; readonly value: ServerSettings } | null =
+    null;
+  let secretWriteGeneration = 0;
+  const invalidateMaterialized = Effect.sync(() => {
+    secretWriteGeneration++;
+    materialized = null;
+  });
+  const getMaterializedSettings = getSettingsFromCache.pipe(
+    Effect.flatMap((source) => {
+      if (materialized?.source === source) return Effect.succeed(materialized.value);
+      const generation = secretWriteGeneration;
+      return materializeSettingsSecrets(source).pipe(
+        Effect.map(resolveTextGenerationProvider),
+        Effect.tap((value) =>
+          Effect.sync(() => {
+            if (generation === secretWriteGeneration) materialized = { source, value };
+          }),
+        ),
+      );
+    }),
+  );
+
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>
     changes.pipe(
       Stream.mapEffect((settings) =>
@@ -1264,8 +1342,9 @@ const make = Effect.gen(function* () {
           });
         const persisted = yield* persistSettingsSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
-        const materialized = yield* Effect.uninterruptibleMask(() =>
+        const materializedNext = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
+            yield* invalidateMaterialized;
             const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
             const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
             if (Exit.isFailure(materializedExit)) {
@@ -1278,11 +1357,13 @@ const make = Effect.gen(function* () {
               return yield* Effect.failCause(writeExit.cause);
             }
             return materializedExit.value;
-          }),
+          }).pipe(Effect.ensuring(invalidateMaterialized)),
         );
         yield* cacheSettings(next);
+        const resolved = resolveTextGenerationProvider(materializedNext);
+        materialized = { source: next, value: resolved };
         yield* emitChange(next);
-        return resolveTextGenerationProvider(materialized);
+        return resolved;
       }),
     );
 
@@ -1292,17 +1373,11 @@ const make = Effect.gen(function* () {
     options,
   ) =>
     writeSemaphore.withPermits(1)(
-      getSettingsFromCache.pipe(
-        Effect.flatMap((settings) =>
-          materializeSettingsSecrets(settings).pipe(
-            Effect.catchIf(
-              (error) =>
-                options?.allowUnresolvedSecrets === true && error.operation === "read-secret",
-              () => Effect.succeed(settings),
-            ),
-          ),
+      getMaterializedSettings.pipe(
+        Effect.catchIf(
+          (error) => options?.allowUnresolvedSecrets === true && error.operation === "read-secret",
+          () => getSettingsFromCache.pipe(Effect.map(resolveTextGenerationProvider)),
         ),
-        Effect.map(resolveTextGenerationProvider),
         Effect.flatMap(use),
       ),
     );
@@ -1484,26 +1559,26 @@ const make = Effect.gen(function* () {
       committedCustomModels,
     }),
     // SCIENT-FORK:END
-    getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeSettingsSecrets),
-      Effect.map(resolveTextGenerationProvider),
-    ),
+    getSettings: getMaterializedSettings,
     updateSettings: (patch) =>
-      updateAndPersistSettings(
-        (current) =>
+      updateAndPersistSettings((current) =>
+        ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
           // SCIENT-FORK:START — thread-section edits apply only to the catalog they were based on.
-          translateLegacyProviderSettingsPatch(
-            current,
-            applyThreadSectionsPrecondition(current, patch),
-            settingsPath,
-          ).pipe(
-            Effect.map((translatedPatch) => applyServerSettingsPatch(current, translatedPatch)),
+          Effect.andThen(
+            translateLegacyProviderSettingsPatch(
+              current,
+              applyThreadSectionsPrecondition(current, patch),
+              settingsPath,
+            ),
           ),
-        // SCIENT-FORK:END
+          Effect.map((translatedPatch) => applyServerSettingsPatch(current, translatedPatch)),
+          // SCIENT-FORK:END
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings((current) =>
         Effect.gen(function* () {
+          yield* ensureSecretProviderWritesAllowed(patch, settingsPath);
           yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
           const translatedPatch = yield* translateLegacyProviderSettingsPatch(
             current,

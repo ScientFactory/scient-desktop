@@ -186,6 +186,7 @@ function makeHarness(options?: {
         ),
       reloadInstance: () => SubscriptionRef.get(providersRef),
       reloadInstanceStrict: () => SubscriptionRef.get(providersRef),
+      reloadSecretsAndRefresh: () => SubscriptionRef.get(providersRef),
       getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
         Effect.succeed(
           makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),

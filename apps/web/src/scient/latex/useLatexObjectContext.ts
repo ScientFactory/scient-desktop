@@ -129,6 +129,7 @@ export function useLatexObjectContext(
   const id = useId();
   const bar = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this object context and its DOM listeners with the shared editor context registry until unmount
   useEffect(() => {
     const element = root.current;
     if (!element) return;
@@ -154,6 +155,7 @@ export function useLatexObjectContext(
       element.removeEventListener("scient-latex-object-activate", entered);
     };
   }, [editor, id, root]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- activates this context on the editor DOM when selected
   useEffect(() => {
     if (selected) activateLatexContext(editor.view.dom, id);
   }, [editor, id, selected]);

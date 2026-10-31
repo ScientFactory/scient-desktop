@@ -88,6 +88,7 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
   const visibleCandidates = [...sections.recent, ...sections.results];
   const safeActiveIndex = Math.min(activeIndex, Math.max(0, visibleCandidates.length - 1));
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the picker's input DOM node on a timer after opening
   useEffect(() => {
     if (!open) return;
     const timeout = window.setTimeout(() => {
@@ -122,6 +123,7 @@ export function ScientWikiLinkPicker(props: ScientWikiLinkPickerProps) {
   const acknowledgeWikiLinkRequest = useEffectEvent((..._changes: readonly unknown[]) => {
     if (props.openRequest !== 0) props.controller.acknowledgeWikiLinkEditRequest(props.openRequest);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acknowledges the controller's wiki-link open request once candidates are ready
   useEffect(
     () =>
       acknowledgeWikiLinkRequest(

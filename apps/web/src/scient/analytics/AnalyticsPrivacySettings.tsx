@@ -34,6 +34,7 @@ export function AnalyticsPrivacySettings() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const clearStatus = useStableCallback(() => setStatus(null));
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads analytics consent status over the environment RPC connection while mounted, ignoring replies that land after unmount
   useEffect(() => {
     if (environmentId === null) {
       clearStatus();
@@ -57,6 +58,7 @@ export function AnalyticsPrivacySettings() {
     };
   }, [environmentId, clearStatus]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the settings surface.opened event to the imperative analytics recorder once consent status is available
   useEffect(() => {
     if (status?.available !== true) return;
     record({ name: "surface.opened", properties: { surface: "settings" } });

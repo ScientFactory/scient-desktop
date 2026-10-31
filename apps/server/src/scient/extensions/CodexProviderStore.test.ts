@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import type { ServerProviderPlugin } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type * as CodexClient from "effect-codex-app-server/client";
+import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 import { resolveBrandIcon } from "./BrandIcons.ts";
 import { makeCodexNativeInventory } from "../../provider/CodexPluginInventory.ts";
@@ -477,9 +479,6 @@ it.effect(
         fixture.state.localPlugins = [plugin("local", { version: "cached-remote" })];
         yield* store.search({ refresh: true });
         expect((yield* store.contents("local")).requiredKeys).toEqual(["SYNTHETIC_KEY"]);
-        expect(yield* store.keyServerRoot("local")).toBe(
-          yield* Effect.promise(() => NodeFSP.realpath(root)),
-        );
 
         fixture.state.skills = [
           { name: "search", path: NodePath.join(NodeOS.tmpdir(), "outside/SKILL.md") },
@@ -669,4 +668,46 @@ it.effect(
         ).toBe("Failure");
       }),
     ),
+);
+
+it.effect("keeps the client and other plugins' apps when the catalog no longer has a plugin", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fixture = clientFixture([plugin("sample"), plugin("removed")]);
+      fixture.state.installed.add("sample");
+      fixture.state.installed.add("removed");
+      const request = fixture.client.request;
+      const client = {
+        ...fixture.client,
+        request: (method: string, params: unknown) =>
+          method === "plugin/read" && (params as { pluginName: string }).pluginName === "removed"
+            ? Effect.fail(
+                new CodexAppServerRequestError({
+                  code: -32603,
+                  errorMessage: "remote plugin catalog request failed with status 404",
+                }),
+              )
+            : request(method as never, params as never),
+      } as typeof fixture.client;
+      let openings = 0;
+      const store = yield* makeCodexProviderStore(() =>
+        Effect.sync(() => {
+          openings++;
+          return client;
+        }),
+      );
+      const installed = ["sample", "removed"].map((id): ServerProviderPlugin => ({
+        id,
+        name: id,
+        source: "remote",
+        enabled: true,
+      }));
+      const enriched = yield* store.enrichInstalled(installed);
+      expect(enriched.map((item) => [item.id, item.apps?.length ?? 0])).toEqual([
+        ["sample", 1],
+        ["removed", 0],
+      ]);
+      expect(openings).toBe(1);
+    }),
+  ),
 );

@@ -46,6 +46,7 @@ export function RichFenceSourcePreview(props: {
 }) {
   const host = useRef<HTMLDivElement>(null);
   const mount = props.editor?.mount;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the fence source editor into the host DOM node while visible
   useLayoutEffect(() => {
     if (!props.visible || !mount || !host.current) return;
     return mount(host.current);

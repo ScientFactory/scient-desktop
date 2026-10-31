@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -262,7 +263,7 @@ export const resolveRemoteWebSocketConnectionUrl = Effect.fn(
   });
 
   const url = rpcSocketUrl(input.wsBaseUrl);
-  url.searchParams.set("wsTicket", issued.ticket);
+  url.searchParams.set("wsTicket", Redacted.value(issued.ticket));
   // SCIENT-FORK:START — authenticating a socket does not collect telemetry identities.
   appendClientConnectionParams(url, input.clientMetadata, input.connectionMethod);
   // SCIENT-FORK:END
@@ -312,9 +313,9 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
   const upgradeProof = yield* input.createProof({
     method: "GET",
     url: `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}${url.pathname}`,
-    accessToken: issued.ticket,
+    accessToken: Redacted.value(issued.ticket),
   });
-  url.searchParams.set("wsTicket", issued.ticket);
+  url.searchParams.set("wsTicket", Redacted.value(issued.ticket));
   url.searchParams.set("dpop", upgradeProof);
   // SCIENT-FORK:START — authenticating a socket does not collect telemetry identities.
   appendClientConnectionParams(url, input.clientMetadata, input.connectionMethod);

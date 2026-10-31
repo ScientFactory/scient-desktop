@@ -118,6 +118,7 @@ export function useReconcileAntigravityComposerSelection(input: {
     draftModelSelectionByProvider,
     providerModelPreferences,
   } = input;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the composer draft store's provider and model selection with the connected provider
   useLayoutEffect(() => {
     if (!selectedProviderEntry) return;
     if (draftActiveProvider && draftActiveProvider !== selectedProviderEntry.instanceId) return;

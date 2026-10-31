@@ -27,6 +27,7 @@ function fixture() {
   const mainContents = {
     id: 1,
     mainFrame: frame,
+    isDestroyed: () => false,
     send: (_channel: string, payload: unknown) => sent.push(payload),
   };
   const session = {} as Electron.Session;
@@ -71,10 +72,12 @@ function fixture() {
       },
     }),
     Layer.mock(ElectronWindow)({
-      main: Effect.succeedSome({
-        isDestroyed: () => false,
-        webContents: mainContents,
-      } as unknown as Electron.BrowserWindow),
+      appWindows: Effect.succeed([
+        {
+          isDestroyed: () => false,
+          webContents: mainContents,
+        } as unknown as Electron.BrowserWindow,
+      ]),
     }),
   );
   return {

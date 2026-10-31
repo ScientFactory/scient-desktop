@@ -167,6 +167,8 @@ export default function FileBrowserPanel({
         : { x: anchorRect.left, y: anchorRect.bottom };
       const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
+      context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
@@ -238,8 +240,6 @@ export default function FileBrowserPanel({
           }
         }
       }).then((result) => {
-        context.close();
-
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
       });
     },
@@ -297,6 +297,7 @@ export default function FileBrowserPanel({
     search: false,
     unsafeCSS: SCIENT_FILE_BROWSER_TREE_UNSAFE_CSS,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- makes the Pierre tree model re-render row decorations when loading directories change
   useEffect(() => {
     const next = treeSnapshot.loadingDirectories;
     if (areSamePaths(loadingDirectoriesRef.current, next)) return;
@@ -370,11 +371,13 @@ export default function FileBrowserPanel({
     onRefreshSelectedFile?.();
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to project file refresh requests for this workspace
   useEffect(
     () => subscribeProjectFilesRefresh(environmentId, cwd, refreshEntries),
     [environmentId, cwd, refreshEntries],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals an externally selected path in the Pierre tree model by expanding, selecting and scrolling
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;

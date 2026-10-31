@@ -25,7 +25,7 @@ import {
   makeCursorAdapterV2,
   type CursorAdapterV2DriverEnv,
   // SCIENT-FORK:START — type the optional host copy passed through the runtime resolver.
-  type CursorAdapterV2DriverOptions,
+  type CursorAdapterV2Options,
   // SCIENT-FORK:END
   type CursorTurnStartErrorMapper,
 } from "./adapter.ts";
@@ -104,9 +104,9 @@ export interface CursorRuntimeResolution<Requirements = never, Extension extends
   readonly turnStartError?: CursorTurnStartErrorMapper;
   // SCIENT-FORK:START — host-owned copy is optional and does not move runtime policy.
   /** Host-owned prompt policy; absent means the package's generic T3 default. */
-  readonly orchestrationPromptForFirstRun?: CursorAdapterV2DriverOptions["orchestrationPromptForFirstRun"];
+  readonly orchestrationPromptForFirstRun?: CursorAdapterV2Options["orchestrationPromptForFirstRun"];
   /** Host-owned runtime policy; absent means the package's generic T3 default. */
-  readonly runtimeInstructions?: CursorAdapterV2DriverOptions["runtimeInstructions"];
+  readonly runtimeInstructions?: CursorAdapterV2Options["runtimeInstructions"];
   // SCIENT-FORK:END
   /** Called after the package stamps the canonical provider-instance identity. */
   readonly decorateSnapshot?: (snapshot: ServerProvider) => ServerProvider;
@@ -268,7 +268,6 @@ export function makeCursorDriver<Requirements = never, Extension extends object 
       let catalogModels: ReadonlyArray<ServerProviderModel> = [];
       const orchestrationAdapter = yield* makeCursorAdapterV2({
         instanceId: input.instanceId,
-        settings: effectiveConfig,
         environment: effectiveEnvironment,
         ...(runtime.turnStartError ? { turnStartError: runtime.turnStartError } : {}),
         ...(runtime.orchestrationPromptForFirstRun === undefined

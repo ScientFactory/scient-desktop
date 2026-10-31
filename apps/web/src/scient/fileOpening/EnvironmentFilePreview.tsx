@@ -100,6 +100,7 @@ function useEnvironmentTextAsset(input: {
   const assetUrl = asset._tag === "Success" ? asset.url : null;
   const assetFailed = asset._tag === "Failure";
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the file asset over the environment connection when the refresh token changes
   useEffect(() => {
     if (previousRefreshTokenRef.current === input.refreshToken) return;
     previousRefreshTokenRef.current = input.refreshToken;
@@ -124,6 +125,7 @@ function useEnvironmentTextAsset(input: {
         : { _tag: "Loading" },
     );
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the preview bytes from the file server with an AbortController, retried once on a stale URL
   useEffect(() => {
     if (assetFailed || assetUrl === null) return;
 
@@ -210,6 +212,7 @@ function EnvironmentImageSurface(props: {
     setRefreshFailed(false);
     refreshAsset();
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the image asset over the environment connection when the refresh token changes
   useEffect(() => {
     if (previousRefreshTokenRef.current === props.refreshToken) return;
     previousRefreshTokenRef.current = props.refreshToken;
@@ -289,6 +292,7 @@ function EnvironmentMediaSurface(props: {
     readonly url: string;
   } | null>(null);
   const refreshAsset = asset.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the media asset over the environment connection when the refresh token changes
   useEffect(() => {
     if (previousRefreshTokenRef.current === props.refreshToken) return;
     previousRefreshTokenRef.current = props.refreshToken;

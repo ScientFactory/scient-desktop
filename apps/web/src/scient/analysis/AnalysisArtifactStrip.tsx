@@ -25,6 +25,8 @@ import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } f
 import { createPortal } from "react-dom";
 
 import { resolveAssetUrl, useAssetUrls } from "~/assets/assetUrls";
+import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { previewBridge } from "~/components/preview/previewBridge";
 import {
   applyPreviewServerSnapshot,
   readThreadPreviewState,
@@ -132,7 +134,6 @@ export function AnalysisArtifactStrip(props: {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(props.environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
-  const navigatePreview = useAtomCommand(previewEnvironment.navigate, { reportFailure: false });
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [dragPreview, setDragPreview] = useState<ArtifactDragPreview | null>(null);
   const [choiceMenu, setChoiceMenu] = useState<ArtifactChoiceMenu | null>(null);
@@ -161,6 +162,7 @@ export function AnalysisArtifactStrip(props: {
     ? (cards.find((card) => card.artifact.artifactId === choiceMenu.artifactId) ?? null)
     : null;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the document cursor if the strip unmounts during a drag
   useEffect(
     () => () => {
       if (previousBodyCursorRef.current === null) return;
@@ -170,12 +172,14 @@ export function AnalysisArtifactStrip(props: {
     [],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-expands the strip once per new run while keeping a collapse within the run
   useEffect(() => {
     if (expandedRunIdRef.current === props.run.receipt.runId) return;
     expandedRunIdRef.current = props.run.receipt.runId;
     setExpanded(true);
   }, [props.run.receipt.runId]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes static artifacts already open in the right panel and mini-player stores
   useEffect(() => {
     const rightPanel = useRightPanelStore.getState();
     const miniPlayer = usePreviewMiniPlayerStore.getState();
@@ -192,6 +196,7 @@ export function AnalysisArtifactStrip(props: {
     previousBodyCursorRef.current = null;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- redirects followed desktop browser tabs to the new run's artifacts
   useEffect(() => {
     if (!httpBaseUrl || followedRunIdRef.current === props.run.receipt.runId) return;
     followedRunIdRef.current = props.run.receipt.runId;
@@ -200,7 +205,12 @@ export function AnalysisArtifactStrip(props: {
     void (async () => {
       for (const [tabId, followed] of followedTabsRef.current) {
         const snapshot = readThreadPreviewState(props.threadRef).sessions[tabId];
-        if (!canFollowArtifactInTab(snapshot, followed.lastArtifactUrl)) {
+        // Only a desktop tab can be redirected; server tabs are driven by their own stream.
+        if (
+          !previewBridge ||
+          snapshot?.runtime === "server" ||
+          !canFollowArtifactInTab(snapshot, followed.lastArtifactUrl)
+        ) {
           followedTabsRef.current.delete(tabId);
           continue;
         }
@@ -223,16 +233,20 @@ export function AnalysisArtifactStrip(props: {
         if (disposed || assetResult._tag !== "Success") continue;
         const url = resolveAssetUrl(httpBaseUrl, assetResult.value.relativeUrl);
         if (!url) continue;
-        const navigation = await navigatePreview({
-          environmentId: props.environmentId,
-          input: { threadId: props.threadRef.threadId, tabId, url },
-        });
+        const runtimeTabId = previewRuntimeTabId(
+          props.threadRef,
+          readThreadPreviewState(props.threadRef).serverEpoch,
+          tabId,
+        );
+        const navigated = await previewBridge.navigate(runtimeTabId, url).then(
+          () => true,
+          () => false,
+        );
         if (disposed) return;
-        if (navigation._tag !== "Success") {
+        if (!navigated) {
           followedTabsRef.current.delete(tabId);
           continue;
         }
-        applyPreviewServerSnapshot(props.threadRef, navigation.value);
         rememberPreviewUrl(props.threadRef, url);
         followedTabsRef.current.set(tabId, {
           artifactId: artifact.artifactId,
@@ -245,14 +259,7 @@ export function AnalysisArtifactStrip(props: {
     return () => {
       disposed = true;
     };
-  }, [
-    createAssetUrl,
-    httpBaseUrl,
-    navigatePreview,
-    props.environmentId,
-    props.run,
-    props.threadRef,
-  ]);
+  }, [createAssetUrl, httpBaseUrl, props.environmentId, props.run, props.threadRef]);
 
   const reportFailure = (title: string, result?: AtomCommandFailure) => {
     toastManager.add(

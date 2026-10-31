@@ -508,8 +508,9 @@ jobs:
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     name: Test Server ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    # SCIENT-FORK:START — shard 1 also runs the Python bridge and performance steps (upstream: 10).
-    timeout-minutes: 15
+    # SCIENT-FORK:START — Scient's shards take 7-10 minutes, and shard 1 also runs the Python
+    # bridge and performance steps; upstream's 20-minute limit covers both.
+    timeout-minutes: 20
     # SCIENT-FORK:END
     strategy:
       fail-fast: false
@@ -732,7 +733,7 @@ jobs:
     name: Overleaf Windows
     needs: [release_notes]
     runs-on: windows-2025
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -770,6 +771,10 @@ jobs:
           git config --global credential.helper '!exit 91'
       - name: Require every Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
+      # Each case must finish its sync; 300 files is left to the Linux performance lane.
+      - name: Time real Overleaf syncs on Windows
+        working-directory: apps/server
+        run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=600000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) (1|10|50)$"
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — native qualification stays under the same required gate.

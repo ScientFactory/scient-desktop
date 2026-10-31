@@ -19,6 +19,7 @@ export function LatexContextTools(props: {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState<string | null>(null);
   const [inline, setInline] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- watches the slot DOM node for toolbar selection changes to mirror the active context toolbar
   useLayoutEffect(() => {
     const element = root.current;
     const destination = slot.current;

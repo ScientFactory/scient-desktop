@@ -67,6 +67,7 @@ export function useScientSources(input: {
   const stagedLocalKeys = useRef<ReadonlyArray<string>>([]);
   const contextKey = `${input.environmentId}\0${input.root}`;
   const contextKeyRef = useRef(contextKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps contextKeyRef holding the current context key
   useLayoutEffect(() => {
     contextKeyRef.current = contextKey;
   }, [contextKey]);
@@ -92,6 +93,7 @@ export function useScientSources(input: {
   const isCurrentRequest = (request: number) =>
     isCurrentContext() && requestRef.current === request;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state for async callbacks
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -99,6 +101,7 @@ export function useScientSources(input: {
     };
   }, []);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discards staged local source PDFs on unmount or environment change
   useEffect(() => {
     const environmentId = input.environmentId;
     const root = input.root;
@@ -250,6 +253,7 @@ export function useScientSources(input: {
       if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
     });
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the module-level source context when the context key changes
   useEffect(() => {
     resetSourceContext(contextKey);
   }, [contextKey, resetSourceContext]);
@@ -748,6 +752,7 @@ export function useScientSources(input: {
       });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resumes a running import operation when pending items remain
   useEffect(() => {
     const operation = state.operation;
     if (

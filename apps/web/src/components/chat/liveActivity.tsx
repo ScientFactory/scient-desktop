@@ -134,6 +134,7 @@ export function LiveStepElapsed({
   const textRef = useRef<HTMLSpanElement>(null);
   const initialText = liveStepElapsedSuffix(startedAt, formatElapsed);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the elapsed-time DOM node in step with a 1s interval via direct text writes
   useEffect(() => {
     const updateText = () => {
       if (textRef.current) {

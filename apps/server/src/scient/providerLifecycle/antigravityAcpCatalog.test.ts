@@ -26,7 +26,7 @@ it("hydrates only the five app-owned ACP targets and preserves the bundled relea
     );
     const bundled = bundledAntigravityAcpAsset(platform, arch);
     expect(bundled?.registryVersion).toBe(ANTIGRAVITY_ACP_REGISTRY_VERSION);
-    expect(bundled?.version).toBe("1.3.0");
+    expect(bundled?.version).toBe("1.4.1");
     expect(bundled?.sha256).toBe(asset?.sha256);
     expect(bundled).toEqual(asset);
   }
@@ -46,7 +46,7 @@ it.each(["1.0.0", "1.2.0"])(
     };
     for (const [platform, arch] of targets) {
       expect(resolveAntigravityAcpCatalogAsset(staleCatalog, platform, arch)).toBeUndefined();
-      expect(bundledAntigravityAcpAsset(platform, arch)?.registryVersion).toBe("1.3.0");
+      expect(bundledAntigravityAcpAsset(platform, arch)?.registryVersion).toBe("1.4.1");
     }
   },
 );

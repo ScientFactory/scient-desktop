@@ -43,7 +43,8 @@ block. What you typed is what the agent receives, markers and numbering
 included, and `#1234` without a space still looks up a pull request.
 
 Enter sends. In a list or quote, **Shift+Enter** continues it, and Shift+Enter
-on an empty line leaves it; **Tab** nests a list item. In a code block, Enter
+on an empty line moves out one level, then leaves it; **Tab** nests a list item
+under the one above and **Shift+Tab** moves it back out. In a code block, Enter
 starts a new line at the current indentation, **Tab** and **Shift+Tab** indent
 the selected lines, and a closing ` ``` ` followed by Enter, or two blank lines
 at the end, leave the block. **Backspace** at the start of a code block turns it
@@ -189,7 +190,9 @@ still come from the provider's own configuration.
 
 In a workspace Markdown file's rendered view, select text and choose **Ask in chat**.
 Scient adds a file-quote chip to the current chat and opens the same optional
-comment bubble used for assistant quotes. Text in paragraphs, lists, tables,
+comment bubble used for assistant quotes. **Ask in side chat**, offered beside it
+wherever a quote can be taken, adds the chip to the open side chat instead, or
+starts one. Text in paragraphs, lists, tables,
 and ordinary code blocks is supported; selecting an entire image, formula, or
 interactive chart is not part of this action. When an editable diagram's source
 is visible, selecting that source is supported like any other code block; selecting
@@ -314,7 +317,7 @@ The list mixes kinds (built-in, other wired, other Bluetooth, CarPlay) with wire
 Bluetooth devices you have dictated with, listed by name. Drag to rank them together:
 for example, put **Other Bluetooth** above your AirPods so a new headset is preferred
 while the AirPods microphone stays low. By default, CarPlay comes after the built-in
-microphone.
+microphone. Swipe a device left to forget it.
 
 Transcription runs on your device. Scient deletes the temporary audio after
 transcription or cancellation; only the message text is sent when you submit.
@@ -409,13 +412,16 @@ pull request is older than the recent list. Type a single word after `#` to sear
 the repository by text. Choose a result to insert it as a chip.
 
 Another thread can be context too. Type `@` followed by part of its title to pick one from
-the same server, or on web and desktop drag a thread out of the sidebar and drop it on the
-composer; a multi-selection drops together. The chip shows the thread's current title and
-opens it when selected. Your prompt only carries a reference: the agent reads the thread's
+the same server, or from a machine it links to while the Linked environments beta is on; those
+show the machine's name. On web and desktop you can also drag a thread out of the sidebar and
+drop it on the composer; a multi-selection drops together. On any client, **Copy thread** puts a
+thread on the clipboard that pastes into a composer as its chip. The chip shows the thread's
+current title and opens it when selected. Your prompt only carries a reference: the agent reads the thread's
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
-Dropping a thread from another environment attaches a saved transcript file. The source
+A thread from a linked machine, picked, pasted or dropped, stays a reference that the agent reads
+on that machine. Dropping a thread from any other environment attaches a saved transcript file. The source
 environment must be connected and up to date. The transcript includes the visible history and
 saved text context at the time of the drop; later messages and the contents of attached files
 are not copied. The agent can read the saved transcript after the source disconnects. Normal
@@ -454,7 +460,9 @@ file: a header row with the view toggle, **Copy contents** and **Save file**. On
 open in the same file screen as workspace files; its menu holds **Copy contents**, **Save or
 share** and **Open in file viewer**. Pictures, videos and PDFs keep their native viewers, and
 other document formats such as Word or Pages open in the device's own viewer when it has one.
-If nothing on the device can show a format, save or share it to open it elsewhere.
+If nothing on the device can show a format, save or share it to open it elsewhere. A ZIP up to
+50 MB opens as a folder list on every surface; on mobile, select a file inside it to preview,
+save, or add it to chat.
 
 ## Images and videos in messages
 
@@ -735,37 +743,40 @@ clients must update before sending to a server using the new queue protocol.
 
 ## Reading while an answer arrives
 
-By default, an answer grows below your reading position. Reaching the bottom
-or clicking Scroll to end does not enable automatic following, and tool
-activity does not pull the conversation downward. "The bottom" means the end
-of the latest answer's text, and you still count as at the bottom with up to
-its last three lines hidden behind the composer. A changed-files list, tool
-activity, timestamps or your own message sent after that answer do not count
-as unread. While the agent is working, everything it has produced since your
-latest message is new: when its latest step or answer is below you, **Scroll
-to end** appears. The same holds after you stop the turn or it fails, and
-when it finishes without writing an answer.
+While the agent works and you are at the bottom, the view follows it: thinking,
+tool steps and short progress notes scroll by at a calm pace, so you always see
+what it is doing now. It stops for things you read: when an answer, a plan or a
+card arrives, the view follows it only until its start reaches the top of the
+reading area, then stays there while the rest grows below. Work you opened
+yourself, such as an expanded tool group, counts as something you read too.
+After that stop, a newer message pushed below the screen shows just its first
+lines. "The bottom" means the end of the latest content, and you still count as
+at the bottom with up to its last three lines hidden behind the composer.
 
-Sending at the bottom (by that same rule) gently reveals your message and its
-answer. The first message retains its existing placement
-near the top. After a later message, the view follows everything the agent
-produces (thinking, tool steps and text) at a calm pace, staying at the bottom.
-Movement stops when your sent message's first line reaches the top
-of the reading area; only the bubble's padding may pass above it. It then stays there
-while the rest grows below the screen. When progress notes, reasoning or tool
-activity push the message the agent is writing below the screen, the reveal
-continues just far enough to show that message's first lines, never its end. A
-queued message that is sent while you are at the bottom is revealed the same way.
-Messages sent from another window are not followed.
-If you were reading earlier content, sending leaves that position alone.
-Scrolling back up cancels both pending placement and limited answer following,
-including during an upload; clicking, selecting text, or scrolling down does not.
+This works the same however the agent's turn started: from this window, another
+window or device, a schedule, another agent, or a queued message that starts
+while you are at the bottom. Opening a working thread at its end follows it too.
+Your own message is part of the work going by; it may scroll away above.
+
+Scrolling up stops following, and the agent's activity then never pulls the
+view down. Scroll back to the bottom, or click **Scroll to end**, and you follow
+it again; what you scrolled past is treated as read, except an answer still
+arriving, which is never followed down. Selecting text holds the view still
+until you clear the selection. Clicking does not stop following. If you send a
+message while reading earlier content, your position stays where it is.
+
+Your queued messages stay reachable. While you follow the agent they are part
+of the end it keeps in view; queuing a message at the bottom brings it and its
+**Send now** into view; and a queue that is fully in view stays in view when it
+grows or the composer grows while you edit. When your queue is below where you
+are reading, **Scroll to end** appears and says how many messages are queued.
 
 While nothing is running and you are at the end, the end stays in view when the
 window resizes or a diagram or image finishes rendering.
 
-Use the existing **Scroll to end** button for a single jump. It appears when more
-content remains below you, not just blank space reserved for message placement.
+**Scroll to end** jumps to the bottom. It appears when more content remains
+below you, not just blank space reserved for message placement, or when your
+queued messages are out of view.
 Its small count shows
 new answers below your view that you have not reached yet: once per response,
 not once per progress note or streaming update. It excludes your messages and

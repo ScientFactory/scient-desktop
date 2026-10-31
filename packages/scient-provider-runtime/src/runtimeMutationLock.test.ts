@@ -355,61 +355,67 @@ describe("managed runtime mutation lock ownership", () => {
     await expect(NodeFSP.access(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("never lets three concurrent contenders for a stale lock both become its owner", async () => {
-    const path = await lockPath();
-    for (let iteration = 0; iteration < 150; iteration += 1) {
-      await NodeFSP.writeFile(path, deadOwnerLock(`stale-${iteration}`));
-      const ready: Array<() => void> = [];
-      let changed = Promise.withResolvers<void>();
-      const notify = () => {
-        changed.resolve();
-        changed = Promise.withResolvers<void>();
-      };
-      fsHooks.schedule = <A>(operation: () => Promise<A>) =>
-        new Promise<A>((resolve, reject) => {
-          ready.push(() => {
-            operation().then(
-              (value) => {
-                resolve(value);
-                notify();
-              },
-              (error: unknown) => {
-                reject(error);
-                notify();
-              },
-            );
+  // 150 fixed schedules of about 50 real filesystem steps each, 30 per test, so each
+  // test's work fits the project time limit on a loaded runner.
+  it.each([0, 30, 60, 90, 120])(
+    "never lets three concurrent contenders for a stale lock both become its owner (seeds %i+)",
+    async (first) => {
+      const path = await lockPath();
+      for (let seed = first; seed < first + 30; seed += 1) {
+        // mulberry32: the seed alone picks each next step, so a failure names its schedule.
+        let state = seed;
+        const random = () => {
+          state = (state + 0x6d2b79f5) | 0;
+          let t = Math.imul(state ^ (state >>> 15), 1 | state);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+        await NodeFSP.writeFile(path, deadOwnerLock(`stale-${seed}`));
+        const ready: Array<() => void> = [];
+        let changed = Promise.withResolvers<void>();
+        const notify = () => {
+          changed.resolve();
+          changed = Promise.withResolvers<void>();
+        };
+        fsHooks.schedule = <A>(operation: () => Promise<A>) =>
+          new Promise<A>((resolve, reject) => {
+            ready.push(() => void operation().then(resolve, reject));
+            notify();
           });
-          notify();
+        let finished = 0;
+        const pending = Promise.allSettled(
+          Array.from({ length: 3 }, () =>
+            tryAcquireManagedRuntimeMutationLock(path).finally(() => {
+              finished += 1;
+              notify();
+            }),
+          ),
+        );
+        // One step runs at a time, chosen only once every contender waits on its next
+        // step or is done, so disk timing never decides the order.
+        // oxlint-disable-next-line eslint/no-unmodified-loop-condition -- The contenders' callbacks change finished while this scheduler awaits them.
+        while (finished < 3) {
+          const parked = changed.promise;
+          if (ready.length > 0 && ready.length + finished === 3)
+            ready.splice(Math.floor(random() * ready.length), 1)[0]!();
+          else await parked;
+        }
+        fsHooks.schedule = undefined;
+        const contenders = (await pending).map((outcome) => {
+          if (outcome.status === "rejected")
+            throw new Error(`seed ${seed}`, { cause: outcome.reason });
+          return outcome.value;
         });
-      let settled = false;
-      const pending = Promise.all(
-        Array.from({ length: 3 }, () => tryAcquireManagedRuntimeMutationLock(path)),
-      );
-      void pending.then(
-        () => {
-          settled = true;
-          notify();
-        },
-        () => {
-          settled = true;
-          notify();
-        },
-      );
-      // oxlint-disable-next-line eslint/no-unmodified-loop-condition -- The pending promise callbacks change settled while this scheduler awaits filesystem completions.
-      while (!settled) {
-        const completion = changed.promise;
-        if (ready.length > 0) ready.splice(Math.floor(Math.random() * ready.length), 1)[0]!();
-        else await completion;
-      }
-      fsHooks.schedule = undefined;
-      const contenders = await pending;
-      const owners = contenders.filter((lock) => lock !== undefined);
+        const owners = contenders.filter((lock) => lock !== undefined);
 
-      expect(owners, `iteration ${iteration}`).toHaveLength(1);
-      expect(owners[0]!.signal.aborted).toBe(false);
-      expect(JSON.parse(await NodeFSP.readFile(path, "utf8"))).toMatchObject({ pid: process.pid });
-      await Promise.all(owners.map((lock) => lock.release()));
-      await expect(NodeFSP.access(path)).rejects.toMatchObject({ code: "ENOENT" });
-    }
-  });
+        expect(owners, `seed ${seed}`).toHaveLength(1);
+        expect(owners[0]!.signal.aborted).toBe(false);
+        expect(JSON.parse(await NodeFSP.readFile(path, "utf8"))).toMatchObject({
+          pid: process.pid,
+        });
+        await Promise.all(owners.map((lock) => lock.release()));
+        await expect(NodeFSP.access(path)).rejects.toMatchObject({ code: "ENOENT" });
+      }
+    },
+  );
 });

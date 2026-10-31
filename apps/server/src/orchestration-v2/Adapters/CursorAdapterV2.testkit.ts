@@ -20,16 +20,15 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import type { OrchestratorV2ProviderReplayHarness } from "../testkit/ProviderReplayHarness.ts";
-import { makeCursorAdapterV2Driver } from "@t3tools/provider-cursor/server";
 import * as CursorAgentSdk from "@t3tools/provider-cursor/server/CursorAgentSdk";
-import { buildScientOrchestrationPromptForFirstRun } from "../../provider/ScientProviderInstructions.ts";
+import { buildScientOrchestrationPrompt } from "../../provider/ScientProviderInstructions.ts";
 import { buildScientRuntimeInstructions } from "../../provider/ScientRuntimeInstructions.ts";
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
 import {
   CURSOR_DEFAULT_INSTANCE_ID,
-  CURSOR_DRIVER_KIND,
   cursorSdkModelSelection,
   makeCursorAgentOptions,
+  makeCursorAdapterV2,
 } from "@t3tools/provider-cursor/testing";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { RuntimePolicyV2Override } from "../RuntimePolicy.ts";
@@ -519,12 +518,6 @@ export function layer(
     readonly assertCompleteOnFinalize?: boolean;
   },
 ) {
-  const replayDriver = makeCursorAdapterV2Driver({
-    orchestrationPromptForFirstRun: buildScientOrchestrationPromptForFirstRun,
-    runtimeInstructions: buildScientRuntimeInstructions,
-    turnStartError: (turnIdentity, cause) =>
-      turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),
-  });
   // Empty HOME prevents skill discovery from using the host's skills.
   const layerHostEnvironment = Layer.effect(
     HostProcess.Environment,
@@ -534,14 +527,21 @@ export function layer(
       return { HOME: home };
     }).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [replayDriver],
-    configMap: {
-      [CURSOR_DEFAULT_INSTANCE_ID]: {
-        driver: CURSOR_DRIVER_KIND,
-      },
-    },
-  }).pipe(
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    Effect.gen(function* () {
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId: CURSOR_DEFAULT_INSTANCE_ID,
+        environment: yield* HostProcess.Environment,
+        // SCIENT-FORK:START — replay through Scient's provider instructions and turn receipts.
+        orchestrationPromptForFirstRun: buildScientOrchestrationPrompt,
+        runtimeInstructions: buildScientRuntimeInstructions,
+        turnStartError: (turnIdentity, cause) =>
+          turnStartErrorKeepingReceipt(CursorAgentSdk.CURSOR_PROVIDER, turnIdentity)(cause),
+        // SCIENT-FORK:END
+      });
+      return [adapter];
+    }),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         layerCursorAgentSdkReplay(transcript, options),

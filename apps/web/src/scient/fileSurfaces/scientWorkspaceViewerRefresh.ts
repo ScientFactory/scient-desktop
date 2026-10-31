@@ -42,6 +42,7 @@ export function useScientViewerRefreshKey(
   setFailedUrl?: Dispatch<SetStateAction<string | null>>,
 ): void {
   const previousRefreshKey = useRef(refreshKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the viewer asset over the environment connection when the refresh key changes
   useEffect(() => {
     if (previousRefreshKey.current === refreshKey) return;
     previousRefreshKey.current = refreshKey;

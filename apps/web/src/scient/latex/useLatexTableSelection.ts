@@ -69,6 +69,7 @@ export function useLatexTableSelection(props: {
   const [selection, setSelection] = useState<LatexTableSelection | null>(null);
   const current = useRef(props);
   const selected = useRef(selection);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring props for the imperative selection session to read
   useLayoutEffect(() => {
     current.current = props;
   });
@@ -82,6 +83,7 @@ export function useLatexTableSelection(props: {
     root?.dispatchEvent(new CustomEvent("scient-latex-selection-change", { bubbles: true }));
   };
   const storeRef = useRef(store);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the store callback for the selection session to call
   useLayoutEffect(() => {
     storeRef.current = store;
   });
@@ -123,6 +125,7 @@ export function useLatexTableSelection(props: {
       head: { row: props.rowCount - 1, column: props.activeCell.column },
       whole: false,
     });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the selection registry entry when the table dimensions shrink below it
   useEffect(() => {
     const range = selected.current;
     if (
@@ -134,6 +137,7 @@ export function useLatexTableSelection(props: {
     )
       storeRef.current(null);
   }, [props.rowCount, props.columnCount]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the table selection session with pointer and keyboard listeners on the root DOM node until unmount
   useEffect(() => {
     if (!props.enabled) return;
     const root = props.root.current;

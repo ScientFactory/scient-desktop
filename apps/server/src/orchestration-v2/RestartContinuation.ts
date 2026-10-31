@@ -2,6 +2,7 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  isOrchestrationV2WorkActive,
   latestProviderTurnForAttempt,
   MessageId,
   type OrchestrationV2Run,
@@ -19,6 +20,7 @@ import {
   awaitingProviderThreadId,
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
+  continuationFailedBeforePrompt,
   isAwaitedWork,
   isRestartContinuationSource,
   cancelledBeforeStart,
@@ -180,14 +182,10 @@ export function restartContinuationRun(
 }
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
-  function* (input: {
-    readonly threadId: ThreadId;
-    readonly sourceRunId: RunId;
-    readonly updateRequested?: true;
-  }) {
+  function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
-    if (!enabled && input.updateRequested !== true) return;
+    if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(
@@ -195,27 +193,19 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       ["messages", "runs", "providerTurns", "attempts", "runtimeRequests", "turnItems"],
       { messageIds: [messageId], turnItemTypes: ["secret_request"] },
     );
-    // SCIENT-FORK:START — an update's authority covers only a turn the restart
-    // cut mid-way. A settled turn that lost awaited work follows the project's
-    // continuation preference, as it would after any other restart.
-    const requestedSource = projection.runs.find((run) => run.id === input.sourceRunId);
-    const updateAuthority =
-      input.updateRequested === true &&
-      requestedSource !== undefined &&
-      !isRestartNoteSource(requestedSource, projection.providerTurns);
-    // SCIENT-FORK:END
     if (
-      !updateAuthority &&
-      (enabled === null ||
-        !resolveProjectSettings(enabled, projection.thread.projectId).settings
-          .continueThreadsAfterServerUpdate)
+      !resolveProjectSettings(enabled, projection.thread.projectId).settings
+        .continueThreadsAfterServerUpdate
     )
       return;
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
     if (
       !source ||
-      !isRestartContinuationSource(source, projection.providerTurns) ||
+      !(
+        isRestartContinuationSource(source, projection.providerTurns) ||
+        continuationFailedBeforePrompt(source, projection.providerTurns)
+      ) ||
       restartContinuationBlocked(
         projection,
         source,
@@ -270,6 +260,32 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       )
     )
       return;
+    // A parent's Stop reaches its open delegated tasks through an effect a restart can cut short.
+    const { lineage, forkedFrom } = projection.thread;
+    const taskId =
+      source.delegatedTaskId ?? (forkedFrom?.type === "node" ? forkedFrom.nodeId : undefined);
+    if (
+      lineage.relationshipToParent === "subagent" &&
+      lineage.parentThreadId !== null &&
+      taskId !== undefined
+    ) {
+      const task = (yield* threads.getThreadRecords(lineage.parentThreadId, ["subagents"], {
+        subagentIds: [taskId],
+      })).subagents.find((candidate) => candidate.id === taskId);
+      // A settled task no longer owns later work in its thread.
+      const parentRunId =
+        task !== undefined && task.result === null && isOrchestrationV2WorkActive(task.status)
+          ? task.runId
+          : null;
+      if (
+        parentRunId !== null &&
+        (yield* threads.getThreadRecords(lineage.parentThreadId, ["turnItems"], {
+          turnItemTypes: ["run_interrupt_request"],
+          turnItemRunIds: [parentRunId],
+        })).turnItems.length > 0
+      )
+        return;
+    }
     const sourceMessage = sourceRecords.messages.find(
       (message) => message.id === source.userMessageId,
     );

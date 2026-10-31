@@ -172,7 +172,6 @@ describe("isOnlySendBusy", () => {
   const sendOnly = {
     isSendBusy: true,
     phase: "ready",
-    isConnecting: false,
     isCompacting: false,
     awaitingBootstrapTurn: false,
     isForkingThread: false,
@@ -185,7 +184,6 @@ describe("isOnlySendBusy", () => {
     expect(isOnlySendBusy({ ...sendOnly, isSendBusy: false })).toBe(false);
     expect(isOnlySendBusy({ ...sendOnly, phase: "running" })).toBe(false);
     for (const cause of [
-      "isConnecting",
       "isCompacting",
       "awaitingBootstrapTurn",
       "isForkingThread",

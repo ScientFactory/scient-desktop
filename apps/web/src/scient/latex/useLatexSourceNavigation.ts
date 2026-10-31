@@ -21,6 +21,7 @@ export function useLatexSourceNavigation({
   onUnavailable: (message: string) => void;
 }) {
   const handled = useRef<number | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls and marks the target line in the viewport DOM, dismissing the marker on user input until handled
   useEffect(() => {
     if (!editor || !target || handled.current === target.requestId) return;
     let frame = 0;

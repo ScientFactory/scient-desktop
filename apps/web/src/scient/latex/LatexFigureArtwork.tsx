@@ -13,11 +13,13 @@ export function LatexFigureArtwork({
   const box = useRef<HTMLDivElement>(null);
   const [rotatedHeight, setRotatedHeight] = useState<number | null>(null);
   const publishedHeight = useRef<number | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- dispatches a content-resized DOM event on the box node when the rotated height changes
   useLayoutEffect(() => {
     if (publishedHeight.current === rotatedHeight) return;
     publishedHeight.current = rotatedHeight;
     box.current?.dispatchEvent(new Event("scient-latex-content-resized", { bubbles: true }));
   }, [rotatedHeight]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the box DOM node under rotation with a ResizeObserver until unmount
   useLayoutEffect(() => {
     const element = box.current;
     if (!element || artwork.angle === 0) {

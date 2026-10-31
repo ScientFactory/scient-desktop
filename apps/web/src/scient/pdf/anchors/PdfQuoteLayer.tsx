@@ -1,12 +1,21 @@
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import type { PdfCitation, ScopedThreadRef } from "@t3tools/contracts";
 import { pdfCitationFits } from "@t3tools/shared/pdfCitations";
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import {
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 
-import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { useComposerHandleContext } from "~/composerHandleContext";
+import { CitationActionBar } from "~/scient/chat/CitationActionBar";
+import { SideChatCitationContext } from "~/scient/chat/sideChatCitation";
 import {
   observeSelectionActions,
   resolveSelectionActionPosition,
@@ -97,6 +106,7 @@ function PdfQuoteReveal(props: {
   const request = useOwnedPdfReveal(revealKey, owner);
   const clearHighlight = useRef<(() => void) | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- locates and paints the requested quote highlight in the container, aborting on cleanup
   useEffect(() => {
     if (!request || !ready || !container) return;
     const runtime = runtimeRef.current;
@@ -123,12 +133,14 @@ function PdfQuoteReveal(props: {
 
   // The highlight belongs to one document and lasts until the reader is used.
   const highlightedKey = useRef(revealKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the painted quote highlight when the reveal request changes
   useEffect(() => {
     if (highlightedKey.current === revealKey) return;
     highlightedKey.current = revealKey;
     clearHighlight.current?.();
     clearHighlight.current = null;
   }, [revealKey]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the painted quote highlight on pointerdown via a container listener
   useEffect(() => {
     if (!container) return;
     const clear = () => {
@@ -152,8 +164,9 @@ function PdfAskInChat(props: {
   readonly citeThread: ScopedThreadRef;
 }) {
   const composerRef = useComposerHandleContext();
+  const citeInSideChat = use(SideChatCitationContext);
   const [shown, setShown] = useState<(Captured & { position: SelectionActionPoint }) | null>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const buttonRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const { container, ready, runtimeRef, source, citeThread } = props;
   const identity = pdfDocumentIdentity(source);
@@ -183,10 +196,12 @@ function PdfAskInChat(props: {
       : { refusal: PDF_SELECTION_REFUSAL_COPY["selection-too-large"], range };
   };
   const captureRef = useRef(capture);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps captureRef holding the latest selection capture
   useLayoutEffect(() => {
     captureRef.current = capture;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes text selection in the container and document keydown/selectionchange listeners to place the quote action
   useEffect(() => {
     if (!container || !citable) return;
     const clear = () => setShown(null);
@@ -247,7 +262,7 @@ function PdfAskInChat(props: {
       }
       event.preventDefault();
       event.stopPropagation();
-      button.focus({ preventScroll: true });
+      button.querySelector("button")?.focus({ preventScroll: true });
     };
     document.addEventListener("keydown", focusAction, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
@@ -260,6 +275,7 @@ function PdfAskInChat(props: {
     };
   }, [citable, container]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the quote-action button DOM node within the viewport before paint
   useLayoutEffect(() => {
     const button = buttonRef.current;
     if (!button || !shown) return;
@@ -274,6 +290,19 @@ function PdfAskInChat(props: {
     setShown(null);
   };
   const refusal = "refusal" in shown ? shown.refusal : null;
+  const dismissOnEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      dismiss();
+    }
+  };
+  const askInSideChat = () => {
+    if (!("citation" in shown)) return;
+    citeInSideChat?.(shown.citation);
+    window.getSelection()?.removeAllRanges();
+    dismiss();
+  };
   const ask = () => {
     if (!("citation" in shown) || !container) return;
     const inserted =
@@ -295,29 +324,15 @@ function PdfAskInChat(props: {
     dismiss();
   };
   return createPortal(
-    <Button
+    <CitationActionBar
       ref={buttonRef}
-      type="button"
-      size="xs"
-      variant="glass"
-      // Stays focusable when refused, so the reason is read out, not skipped.
-      aria-disabled={refusal !== null || undefined}
-      aria-label={refusal ?? "Ask in chat"}
-      data-pdf-ask-in-chat=""
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+      pdf
       style={{ left: shown.position.x, top: shown.position.y }}
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={ask}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-          event.preventDefault();
-          dismiss();
-        }
-      }}
-    >
-      <span aria-live="polite">{refusal ?? "Ask in chat"}</span>
-    </Button>,
+      {...(refusal === null ? {} : { label: refusal, refused: true })}
+      onAskInChat={ask}
+      onAskInSideChat={citeInSideChat && refusal === null ? askInSideChat : undefined}
+      onKeyDown={dismissOnEscape}
+    />,
     document.body,
   );
 }

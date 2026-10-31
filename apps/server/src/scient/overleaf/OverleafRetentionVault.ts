@@ -126,12 +126,40 @@ async function ensurePrivate(
   if ((stat.mode & 0o077) !== 0) throw new Refused("unsafe-directory");
 }
 
+/** Folders whose disk was proven in this process, by identity; a replaced folder is proven again. */
+const proven = new Set<string>();
+async function probeCapability(
+  directory: string,
+  identity: StoredFileIdentity,
+  publicationHelper: string | null,
+) {
+  const key = JSON.stringify([publicationHelper, identity]);
+  if (!proven.has(key)) {
+    await proveCapability(directory, publicationHelper);
+    proven.add(key);
+    return;
+  }
+  // The disk's capability stands, but the folder can stop taking new files or folders
+  // (Windows grants the two separately).
+  const probe = NodePath.join(directory, `.probe-${NodeCrypto.randomUUID()}`);
+  try {
+    await NodeFSP.writeFile(probe, "", { flag: "wx", mode: 0o600 });
+    await NodeFSP.mkdir(`${probe}-folder`, { mode: 0o700 });
+  } catch (error) {
+    if (isReadOnly(error)) throw new Refused("read-only-parent");
+    throw error;
+  } finally {
+    await NodeFSP.rm(probe, { force: true });
+    await NodeFSP.rm(`${probe}-folder`, { recursive: true, force: true });
+  }
+}
+
 /**
  * Proves the folder's disk supports the replacement Scient will use: atomic
  * exchange through the publication helper, or hard links for the declared
  * development fallback when no helper is configured.
  */
-async function probeCapability(directory: string, publicationHelper: string | null) {
+async function proveCapability(directory: string, publicationHelper: string | null) {
   if (HostProcess.Platform.defaultValue() === "win32") {
     await probeWindowsRetention(directory, publicationHelper);
     return;
@@ -512,7 +540,7 @@ export async function locateOverleafRetention(input: {
       }
       found = match;
     }
-    await probeCapability(found.directory, input.publicationHelper);
+    await probeCapability(found.directory, found.identity, input.publicationHelper);
     // Another process may have swapped the folder while it was probed. This closes
     // the window up to here; the coordinator (step 3) must re-verify the identity
     // before each later use, because nothing below this module does.

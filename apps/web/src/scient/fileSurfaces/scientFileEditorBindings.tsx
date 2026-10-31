@@ -57,6 +57,7 @@ export function useScientFileEditorBindings<Annotation>({
   const reportExternalVersion = useStableCallback((version: number) =>
     externalBindings.current.onExternalVersionApplied?.(version),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers an external-projection applier with the editor persistence layer until unmount
   useLayoutEffect(
     () =>
       externalPersistence?.registerExternalProjection((update) => {
@@ -97,6 +98,7 @@ export function useScientFileEditorBindings<Annotation>({
     });
   };
   const mathEditable = useRef(!editingBlocked);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring whether editing is blocked for imperative math handlers to read
   useLayoutEffect(() => {
     mathEditable.current = !editingBlocked;
   });
@@ -109,20 +111,24 @@ export function useScientFileEditorBindings<Annotation>({
         : null;
     return format && editor ? sourceMathController(editor, format, canEditMath) : null;
   })();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the math input controller to the surface DOM node until unmount
   useEffect(() => {
     const host = surfaceRef.current;
     if (!host || !mathInput) return;
     return mathInput.attach(host, sourceMathOwnsEvent);
   }, [mathInput, surfaceRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs LaTeX completion on the editor and surface DOM node until unmount
   useEffect(() => {
     const host = surfaceRef.current;
     if (!host || !editor || !/\.tex$/iu.test(relativePath)) return;
     return installLatexFileCompletion(editor, host, () => mathEditable.current);
   }, [editor, relativePath, surfaceRef]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the selection reporter for the document listener to call
   useLayoutEffect(() => {
     reportEditorSelectionRef.current = reportEditorSelection;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for document selectionchange events and reports the editor selection until unmount
   useEffect(() => {
     if (onEditorSelectionChange === undefined) return;
     const handleSelectionChange = () => {

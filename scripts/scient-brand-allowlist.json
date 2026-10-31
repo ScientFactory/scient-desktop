@@ -479,7 +479,7 @@
   },
   {
     "path": "docs/user/telemetry.md",
-    "line": "have saved a different preference. Scient does not send usage events to T3's",
+    "line": "Usage data goes to Scient's own service, not to T3. Development builds do not send",
     "rules": ["bare-t3"],
     "kind": "upstream-reference",
     "reason": "States that Scient sends no usage events to T3's telemetry."
@@ -633,5 +633,55 @@
     "rules": ["bare-t3"],
     "kind": "internal",
     "reason": "Unchanged upstream CSS comment describes the donor theme colour; it is not rendered product copy. The alignment protocol preserves accurate upstream developer comments."
+  },
+  {
+    "path": "apps/web/src/components/settings/LinkMachineSelect.tsx",
+    "line": "{machine.connectOnly ? \"T3 Connect\" : \"Not connected\"}",
+    "rules": ["t3-connect"],
+    "kind": "dormant-cloud",
+    "reason": "Connect-only machines come from a T3 Connect account, which is unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false."
+  },
+  {
+    "path": "apps/web/src/components/sidebar/UpdateEverythingDialog.tsx",
+    "rules": ["inherited-brand", "bare-t3"],
+    "kind": "unmounted-upstream",
+    "reason": "Scient's SidebarUpdatePill replaces this upstream dialog and never mounts it; the file is kept unchanged for alignment."
+  },
+  {
+    "path": "packages/source-control-github/src/shared/definition.ts",
+    "line": "appName: \"T3 Code for GitHub\",",
+    "rules": ["inherited-brand", "bare-t3"],
+    "kind": "external-name",
+    "reason": "The registered name of T3's GitHub App. App sign-in stays off unless the operator sets T3CODE_GITHUB_APP_CLIENT_ID, which Scient builds do not ship."
+  },
+  {
+    "path": "apps/server/src/cloud/selfUpdate.ts",
+    "rules": ["t3-command"],
+    "kind": "dormant-service",
+    "reason": "Upstream's Stable/Nightly track-switch guard (trackSwitchBlockReason). Scient's Stable and Beta never cross tracks (crossesReleaseTrack), so it never answers."
+  },
+  {
+    "path": "apps/web/src/components/sidebar/updateEverything.logic.ts",
+    "rules": ["t3-command"],
+    "kind": "unmounted-upstream",
+    "reason": "Upstream's fleet track switch (every machine between Stable and Nightly). Scient keeps its Stable/Beta picker and never plans a switch; the module stays as upstream ships it so its changes merge."
+  },
+  {
+    "path": "apps/web/src/components/GitHubStarPrompt.tsx",
+    "rules": ["inherited-brand", "bare-t3"],
+    "kind": "unmounted-upstream",
+    "reason": "Upstream's request to star its own repository. Scient does not ask, so nothing calls it."
+  },
+  {
+    "path": "apps/server/src/cloud/npmRelease.ts",
+    "rules": ["t3-command"],
+    "kind": "unmounted-upstream",
+    "reason": "Upstream's server read of its npm package for the fleet track switch, which Scient does not mount."
+  },
+  {
+    "path": "apps/server/src/cli/up.ts",
+    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
+    "kind": "unmounted-upstream",
+    "reason": "Upstream's service and T3 Connect setup. Scient does not register `up`, so nobody reaches this text."
   }
 ]

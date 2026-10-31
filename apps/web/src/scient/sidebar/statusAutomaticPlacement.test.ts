@@ -37,12 +37,9 @@ it("builds the complete manual inbox with each environment's lifecycle capabilit
       },
     }),
   ];
-  expect(automaticPlacementThreads(threads, configs, now).map((thread) => thread.id)).toEqual([
-    "old-server",
-    "woke",
-    "first",
-    "later",
-  ]);
+  expect(
+    automaticPlacementThreads(threads, configs, now, new Set()).map((thread) => thread.id),
+  ).toEqual(["old-server", "woke", "first", "later"]);
 });
 
 const input = () => ({

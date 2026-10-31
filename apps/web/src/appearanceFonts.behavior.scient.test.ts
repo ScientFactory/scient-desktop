@@ -10,6 +10,7 @@ function applySizes(sizeInterface: number, sizePrompt: number, sizeCode: number)
     removeProperty: (key: string) => properties.delete(key),
   };
   applyAppearanceFontVariables({ style } as unknown as HTMLElement, {
+    separate: true,
     sans: "",
     code: "",
     composer: "",

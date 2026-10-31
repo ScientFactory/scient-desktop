@@ -15,7 +15,7 @@ export function useBrowserHistoryProjectLink(input: {
   readonly settingsHydrated: boolean;
 }): void {
   const { threadRef, projectKey, settingsHydrated } = input;
-  // oxlint-disable-next-line t3code/react-effect-budget -- Files the open thread's browser visits under its project once settings resolve the project key.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Files the open thread's browser visits under its project once settings resolve the project key.
   useEffect(() => {
     if (!settingsHydrated || !threadRef || !projectKey) return;
     useBrowserHistoryStore.getState().registerThreadProject(threadRef, projectKey);

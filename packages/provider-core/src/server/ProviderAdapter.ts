@@ -127,6 +127,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     turnItem: OrchestrationV2TurnItem,
   }),
+  // Start before the root terminal; clear only after the final covered projection.
+  // Consumer lifetime cannot depend on a producer probe that runs ahead of its queue.
+  Schema.Struct({
+    type: Schema.Literal("background_work.updated"),
+    driver: ProviderDriverKind,
+    providerTurnId: ProviderTurnId,
+    pending: Schema.Boolean,
+  }),
   /** Unpersisted deltas go only to clients showing the row; final output arrives in turn_item.updated. */
   Schema.Struct({
     type: Schema.Literal("command_output.delta"),
@@ -191,6 +199,7 @@ export class ProviderAdapterOpenSessionError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    requiresSignIn: Schema.optional(Schema.Literal(true)),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -336,6 +345,21 @@ export class ProviderAdapterInterruptError extends Schema.TaggedError<ProviderAd
   }
 }
 
+/** The provider did not confirm a stop in time; its processes may still be running. */
+export class ProviderAdapterInterruptTimeoutError extends Schema.TaggedError<ProviderAdapterInterruptTimeoutError>()(
+  "ProviderAdapterInterruptTimeoutError",
+  {
+    driver: ProviderDriverKind,
+    providerThreadId: ProviderThreadId,
+    providerTurnId: ProviderTurnId,
+    timeoutMs: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `The ${this.driver} provider did not confirm stopping turn ${this.providerTurnId} within ${this.timeoutMs} ms.`;
+  }
+}
+
 export class ProviderAdapterRuntimeRequestResponseError extends Schema.TaggedError<ProviderAdapterRuntimeRequestResponseError>()(
   "ProviderAdapterRuntimeRequestResponseError",
   {
@@ -397,6 +421,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterSteerRunError,
   ProviderAdapterInterruptError,
+  ProviderAdapterInterruptTimeoutError,
   ProviderAdapterRuntimeRequestResponseError,
   ProviderAdapterEventStreamError,
   ProviderAdapterProtocolError,
@@ -422,6 +447,7 @@ export interface ProviderAdapterV2EnsureThreadInput {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly providerSessionId?: ProviderSessionId;
   readonly existingProviderThread?: OrchestrationV2ProviderThread;
+  readonly forceNewNativeThread?: boolean;
 }
 
 export interface ProviderAdapterV2TurnInput {
@@ -466,7 +492,6 @@ export interface ProviderAdapterV2RuntimeRequestResponseInput {
   readonly decision?: ProviderApprovalDecision;
   readonly feedback?: string;
   readonly answers?: ProviderUserInputAnswers;
-  readonly response?: unknown;
 }
 
 export interface ProviderAdapterV2ThreadSnapshot {
@@ -627,9 +652,10 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
    * here so the session manager defers idle release while it is pending.
    */
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-  /** Overrides the session-wide probe so sibling threads cannot keep this root subscription open. */
+  /** Root-subscription probe; replacement checks opt in to subagents owned by the live process. */
   readonly hasPendingBackgroundWorkForThread?: (
     providerThread: OrchestrationV2ProviderThread,
+    options?: { readonly includeSubagents?: boolean },
   ) => Effect.Effect<boolean>;
   /** Trusted adapter-owned immutable hash of the actual native launch; never protocol metadata. */
   readonly modelContextWindowLaunchFingerprint?: string;

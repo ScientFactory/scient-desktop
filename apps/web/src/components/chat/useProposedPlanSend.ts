@@ -2,7 +2,6 @@ import { startFanoutThread } from "./chatViewSend";
 import { settleQueueAdmissionPreview } from "~/scient/threadQueue/optimisticQueuePresentation";
 import { CommandId } from "@t3tools/contracts";
 import { composerSubmissionMatchesDraft } from "../../scient/threadQueue/submission";
-import { prepareComposerContextMessage } from "../../lib/composerContextSend";
 import { MessageId } from "@t3tools/contracts";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { chatActionErrorMessage } from "../ChatView.logic";
@@ -64,7 +63,6 @@ interface PlanSendBase {
   readonly activeProposedPlan: LatestProposedPlanState | null;
   readonly isServerThread: boolean;
   readonly isSendBusy: boolean;
-  readonly isConnecting: boolean;
   readonly composerRef: ComposerHandleRef;
   readonly beginLocalDispatch: LocalDispatchActions["beginLocalDispatch"];
   readonly resetLocalDispatch: LocalDispatchActions["resetLocalDispatch"];
@@ -114,7 +112,6 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
     activeProposedPlan,
     isServerThread,
     isSendBusy,
-    isConnecting,
     beginLocalDispatch,
     resetLocalDispatch,
     localCheckoutBranchMismatch,
@@ -165,7 +162,7 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
       composerSnapshot?: string;
       sourceProposedPlan?: ScientThreadQueueItem["sourceProposedPlan"];
     }): Promise<string | null> => {
-      if (!activeThread || !isServerThread || isSendBusy || isConnecting) {
+      if (!activeThread || !isServerThread || isSendBusy) {
         return null;
       }
 
@@ -304,11 +301,8 @@ export function usePlanFollowUpSend(input: PlanFollowUpSendInput) {
               message: {
                 messageId: messageIdForSend,
                 role: "user",
-                ...prepareComposerContextMessage({
-                  environmentId,
-                  text: outgoingMessageText,
-                  context,
-                }),
+                text: outgoingMessageText,
+                ...(context ? { context } : {}),
                 attachments: [],
               },
               modelSelection: ctxSelectedModelSelection,
@@ -392,7 +386,6 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
     activeProposedPlan,
     isServerThread,
     isSendBusy,
-    isConnecting,
     composerRef,
     beginLocalDispatch,
     resetLocalDispatch,
@@ -414,7 +407,6 @@ export function useImplementPlanInNewThread(input: ImplementPlanInNewThreadInput
       !activeProposedPlan ||
       !isServerThread ||
       isSendBusy ||
-      isConnecting ||
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     ) {

@@ -61,33 +61,21 @@ export function useBrowserDefaults(): BrowserDefaults {
   return useClientSettings(toBrowserDefaults);
 }
 
-export function browserDefaultTabState(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): DesktopPreviewTabDefaults {
+export function browserDefaultTabState(defaults: BrowserDefaults): DesktopPreviewTabDefaults {
   return { zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance };
 }
 
-export function browserDefaultOpenViewport(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): PreviewViewportSetting {
-  return defaults.viewport;
-}
-
-export function browserDefaultOpenProfileId(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): string {
-  return defaults.profileId;
-}
-
+// SCIENT-FORK:START — agents receive the same resolved default profile as local opens.
 /** Browser profile list and resolved default sent to server-side agent tools. */
-export function browserProfileReportInput(defaults: BrowserDefaults = getBrowserDefaults()) {
+export function browserProfileReportInput(defaults: BrowserDefaults) {
   return {
     profiles: defaults.profiles,
-    defaultProfileId: browserDefaultOpenProfileId(defaults),
+    defaultProfileId: defaults.profileId,
   };
 }
+// SCIENT-FORK:END
 
-export const FALLBACK_RESPONSIVE_VIEWPORT_SIZE = { width: 1024, height: 768 } as const;
+const FALLBACK_RESPONSIVE_VIEWPORT_SIZE = { width: 1024, height: 768 } as const;
 
 export function browserResponsiveViewportForToggle(input: {
   readonly defaults?: BrowserDefaults;

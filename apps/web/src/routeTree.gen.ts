@@ -30,6 +30,7 @@ import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings
 import { Route as ChatSettingsSourceControlRouteImport } from './routes/_chat.settings.source-control'
 import { Route as ChatSettingsSnapShotRouteImport } from './routes/_chat.settings.snap-shot'
 import { Route as ChatSettingsSkillsRouteImport } from './routes/_chat.settings.skills'
+import { Route as ChatSettingsSecretsRouteImport } from './routes/_chat.settings.secrets'
 import { Route as ChatSettingsScientificComputingRouteImport } from './routes/_chat.settings.scientific-computing'
 import { Route as ChatSettingsScheduledTasksRouteImport } from './routes/_chat.settings.scheduled-tasks'
 import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settings.providers'
@@ -174,6 +175,11 @@ const ChatSettingsSnapShotRoute = ChatSettingsSnapShotRouteImport.update({
 const ChatSettingsSkillsRoute = ChatSettingsSkillsRouteImport.update({
   id: '/skills',
   path: '/skills',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsSecretsRoute = ChatSettingsSecretsRouteImport.update({
+  id: '/secrets',
+  path: '/secrets',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsScientificComputingRoute =
@@ -432,6 +438,7 @@ export interface FileRoutesByFullPath {
   '/settings/providers': typeof ChatSettingsProvidersRoute
   '/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/settings/scientific-computing': typeof ChatSettingsScientificComputingRoute
+  '/settings/secrets': typeof ChatSettingsSecretsRoute
   '/settings/skills': typeof ChatSettingsSkillsRoute
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
@@ -493,6 +500,7 @@ export interface FileRoutesByTo {
   '/settings/providers': typeof ChatSettingsProvidersRoute
   '/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/settings/scientific-computing': typeof ChatSettingsScientificComputingRoute
+  '/settings/secrets': typeof ChatSettingsSecretsRoute
   '/settings/skills': typeof ChatSettingsSkillsRoute
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
@@ -556,6 +564,7 @@ export interface FileRoutesById {
   '/_chat/settings/providers': typeof ChatSettingsProvidersRoute
   '/_chat/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/_chat/settings/scientific-computing': typeof ChatSettingsScientificComputingRoute
+  '/_chat/settings/secrets': typeof ChatSettingsSecretsRoute
   '/_chat/settings/skills': typeof ChatSettingsSkillsRoute
   '/_chat/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/_chat/settings/source-control': typeof ChatSettingsSourceControlRoute
@@ -619,6 +628,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/scheduled-tasks'
     | '/settings/scientific-computing'
+    | '/settings/secrets'
     | '/settings/skills'
     | '/settings/snap-shot'
     | '/settings/source-control'
@@ -680,6 +690,7 @@ export interface FileRouteTypes {
     | '/settings/providers'
     | '/settings/scheduled-tasks'
     | '/settings/scientific-computing'
+    | '/settings/secrets'
     | '/settings/skills'
     | '/settings/snap-shot'
     | '/settings/source-control'
@@ -742,6 +753,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/providers'
     | '/_chat/settings/scheduled-tasks'
     | '/_chat/settings/scientific-computing'
+    | '/_chat/settings/secrets'
     | '/_chat/settings/skills'
     | '/_chat/settings/snap-shot'
     | '/_chat/settings/source-control'
@@ -921,6 +933,13 @@ declare module '@tanstack/react-router' {
       path: '/skills'
       fullPath: '/settings/skills'
       preLoaderRoute: typeof ChatSettingsSkillsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/secrets': {
+      id: '/_chat/settings/secrets'
+      path: '/secrets'
+      fullPath: '/settings/secrets'
+      preLoaderRoute: typeof ChatSettingsSecretsRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/scientific-computing': {
@@ -1225,6 +1244,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsProvidersRoute: typeof ChatSettingsProvidersRoute
   ChatSettingsScheduledTasksRoute: typeof ChatSettingsScheduledTasksRoute
   ChatSettingsScientificComputingRoute: typeof ChatSettingsScientificComputingRoute
+  ChatSettingsSecretsRoute: typeof ChatSettingsSecretsRoute
   ChatSettingsSkillsRoute: typeof ChatSettingsSkillsRoute
   ChatSettingsSnapShotRoute: typeof ChatSettingsSnapShotRoute
   ChatSettingsSourceControlRoute: typeof ChatSettingsSourceControlRoute
@@ -1273,6 +1293,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsProvidersRoute: ChatSettingsProvidersRoute,
   ChatSettingsScheduledTasksRoute: ChatSettingsScheduledTasksRoute,
   ChatSettingsScientificComputingRoute: ChatSettingsScientificComputingRoute,
+  ChatSettingsSecretsRoute: ChatSettingsSecretsRoute,
   ChatSettingsSkillsRoute: ChatSettingsSkillsRoute,
   ChatSettingsSnapShotRoute: ChatSettingsSnapShotRoute,
   ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,

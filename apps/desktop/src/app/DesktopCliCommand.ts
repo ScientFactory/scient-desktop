@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- FileSystem.access has no execute check.
+import * as NodeFSP from "node:fs/promises";
+
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as Context from "effect/Context";
@@ -84,6 +87,19 @@ export const make = Effect.gen(function* () {
     environment.platform,
   );
 
+  // PATH can reach the regular launcher directly; removal still requires isOurLink.
+  const runsOurLauncher = Effect.fn("DesktopCliCommand.runsOurLauncher")(
+    function* (candidate: string) {
+      if (yield* isOurLink(candidate)) return true;
+      const [resolved, ours] = yield* Effect.all([fs.realPath(candidate), fs.realPath(launcher)]);
+      if (resolved !== ours) return false;
+      const info = yield* fs.stat(candidate);
+      if (info.type !== "File" || Number(info.size) > 16_384) return false;
+      return (yield* fs.readFileString(candidate)).includes(DesktopCliShim.MARKER);
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const powershell = (env: Record<string, string>) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -124,11 +140,20 @@ export const make = Effect.gen(function* () {
     return Option.some(entries);
   });
 
+  const isExecutableFile = Effect.fn("DesktopCliCommand.isExecutableFile")(
+    function* (target: string) {
+      if ((yield* fs.stat(target)).type !== "File") return false;
+      yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFSP.constants.X_OK));
+      return true;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   /** The `scient` a new shell runs, by PATH order, or none. */
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
       const candidate = path.join(directory, commandName);
-      if (yield* exists(candidate)) return Option.some(candidate);
+      if (yield* isExecutableFile(candidate)) return Option.some(candidate);
     }
     return Option.none<string>();
   });
@@ -137,7 +162,7 @@ export const make = Effect.gen(function* () {
   const foreignFirstOnPath = Effect.gen(function* () {
     if (windows) return Option.none<string>();
     const first = yield* firstOnPath;
-    if (Option.isNone(first) || (yield* isOurLink(first.value))) return Option.none<string>();
+    if (Option.isNone(first) || (yield* runsOurLauncher(first.value))) return Option.none<string>();
     return first;
   });
 
@@ -190,22 +215,12 @@ export const make = Effect.gen(function* () {
     const legacy = yield* legacyInstalled;
     const shadowedBy = yield* foreignFirstOnPath;
     const shadow = Option.isSome(shadowedBy) ? { shadowedBy: shadowedBy.value } : {};
-    if (Option.isNone(installed)) {
-      return {
-        supported: true,
-        installedPath: null,
-        legacyInstalled: legacy,
-        onPath: false,
-        launcherPath,
-        ...shadow,
-      };
-    }
     // first `scient` on PATH must be ours; a `scient` earlier on PATH would shadow it.
     const first = yield* firstOnPath;
-    const onPath = Option.isSome(first) && (yield* isOurLink(first.value));
+    const onPath = Option.isSome(first) && (yield* runsOurLauncher(first.value));
     return {
       supported: true,
-      installedPath: installed.value,
+      installedPath: Option.getOrNull(installed),
       legacyInstalled: legacy,
       onPath,
       launcherPath,

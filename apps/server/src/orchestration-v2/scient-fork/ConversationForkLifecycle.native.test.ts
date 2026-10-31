@@ -742,7 +742,6 @@ it.live.each(
           if (claimedBeforeRestart) {
             const claim = yield* outbox.claimNext({
               workerId: "interrupted-process",
-              leaseDurationMs: 30000,
             });
             assert.ok(Option.isSome(claim));
             assert.equal(claim.value.request.type, "scient-fork.provision");

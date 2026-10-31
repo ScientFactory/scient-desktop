@@ -265,6 +265,7 @@ export function GettingStartedPreferencesStep(props: {
   const otherInputRef = useRef<HTMLInputElement>(null);
   const wasOtherSelectedRef = useRef(props.otherSelected);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the 'other' input DOM node when that option becomes selected
   useEffect(() => {
     const wasJustSelected = props.otherSelected && !wasOtherSelectedRef.current;
     wasOtherSelectedRef.current = props.otherSelected;

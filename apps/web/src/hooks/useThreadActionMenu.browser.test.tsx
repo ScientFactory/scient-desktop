@@ -58,14 +58,8 @@ vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn
 vi.mock("../state/entities", () => ({
   useProjects: () => [],
   readThreadShell: () => boundary.shell,
-  readEnvironmentSupportsVisitedTracking: () => boundary.serverTracked,
+  readEnvironmentServerConfigLoaded: () => boundary.serverTracked,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
-  readEnvironmentSupportsPinning: () => true,
-  readEnvironmentSupportsSettlement: () => true,
-  readEnvironmentSupportsSnooze: () => true,
-  readEnvironmentSupportsTitleRegeneration: () => true,
-  readEnvironmentSupportsPinReorder: () => true,
-  readEnvironmentSupportsActiveReorder: () => true,
   readEnvironmentThreadRefs: () => [],
   readProject: () => null,
   readThreadShells: () => [],
@@ -80,12 +74,18 @@ vi.mock("../state/environments", () => ({
 vi.mock("../state/threads", () => ({
   threadEnvironment: { markUnread: { command: "mark-unread" } },
 }));
-vi.mock("../state/server", () => ({
-  environmentServerConfigsAtom: {},
-  primaryServerKeybindingsAtom: {},
-}));
+vi.mock("../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const settings = Atom.make(null);
+  return {
+    environmentServerConfigsAtom: Atom.make(new Map()),
+    primaryServerKeybindingsAtom: {},
+    serverEnvironment: { settingsValueAtom: () => settings },
+  };
+});
 vi.mock("../state/vcs", () => ({ vcsEnvironment: {} }));
 vi.mock("../state/orchestration", () => ({ orchestrationEnvironment: {} }));
+vi.mock("../state/projects", () => ({ projectEnvironment: { createFromThread: {} } }));
 vi.mock("../lib/archivedThreadsState", () => ({ refreshArchivedThreadsForEnvironment: vi.fn() }));
 vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.fn() }));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));

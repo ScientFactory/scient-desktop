@@ -17,6 +17,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as TextGeneration from "./TextGeneration.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as Layer from "effect/Layer";
+import * as ServerSettings from "../serverSettings.ts";
 import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
 
 const makeStubTextGeneration = (
@@ -52,9 +53,10 @@ const makeStubInstance = (
     },
     displayName: undefined,
     enabled: options?.enabled ?? true,
-    snapshot: options
-      ? ({ getSnapshot: options.snapshot } as ProviderInstance["snapshot"])
-      : ({} as ProviderInstance["snapshot"]),
+    snapshot: {
+      // Generation reads every snapshot for usage limits before choosing an instance.
+      getSnapshot: options?.snapshot ?? Effect.succeed({ instanceId } as ServerProvider),
+    } as ProviderInstance["snapshot"],
 
     orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
     textGeneration,
@@ -78,6 +80,7 @@ const makeStubRegistry = (
 
 const makeGeneration = (instances: ReadonlyArray<ProviderInstance>) =>
   TextGeneration.make.pipe(
+    Effect.provide(ServerSettings.layerTest()),
     Effect.provideService(
       ProviderInstanceRegistry.ProviderInstanceRegistry,
       makeStubRegistry(instances),
@@ -147,7 +150,20 @@ describe("TextGeneration.make", () => {
               const generation = yield* makeGeneration([
                 makeStubInstance(otherId, makeStubTextGeneration({}), {
                   driver,
-                  snapshot: Effect.die("Another instance's catalog must not determine the model"),
+                  // Usage checks read every snapshot; another catalog still must not pick the model.
+                  snapshot: Effect.succeed(
+                    nativeSnapshot(otherId, driver, {
+                      models: [
+                        {
+                          slug: "openai/other-default",
+                          name: "Other default",
+                          isCustom: false,
+                          isDefault: true,
+                          capabilities: null,
+                        },
+                      ],
+                    }),
+                  ),
                 }),
                 instance,
               ]);
@@ -204,7 +220,8 @@ describe("TextGeneration.make", () => {
                     return Effect.fail(nativeError);
                   },
                 }),
-                { driver, snapshot: Effect.die("Explicit choices must retain native validation") },
+                // Usage checks read the snapshot; its catalog must not replace the explicit model.
+                { driver, snapshot: Effect.succeed(nativeSnapshot(instanceId, driver)) },
               );
               const result = yield* (yield* makeGeneration([instance]))
                 .generateBranchName({
@@ -349,6 +366,7 @@ describe("TextGeneration.make", () => {
         }),
       );
       const generation = yield* TextGeneration.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([instance]),
@@ -395,6 +413,7 @@ describe("TextGeneration.make", () => {
       );
 
       const tg = yield* TextGeneration.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([personal, work]),
@@ -422,6 +441,7 @@ describe("TextGeneration.make", () => {
   it.effect("fails with TextGenerationError when the instance is unknown", () =>
     Effect.gen(function* () {
       const tg = yield* TextGeneration.make.pipe(
+        Effect.provide(ServerSettings.layerTest()),
         Effect.provideService(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([]),

@@ -23,9 +23,14 @@ export function countUnreadConversations(input: {
   readonly localVisits: Readonly<Record<string, string>>;
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly now: string;
+  readonly delegatedUnderParent: ReadonlySet<string>;
 }): number {
   let count = 0;
-  for (const thread of filterSidebarV2VisibleThreads(input.threads, null)) {
+  for (const thread of filterSidebarV2VisibleThreads(
+    input.threads,
+    null,
+    input.delegatedUnderParent,
+  )) {
     const capabilities = input.serverConfigs.get(thread.environmentId)?.environment.capabilities;
     const section = resolveSidebarThreadSection({
       snoozed: capabilities?.threadSnooze === true && effectiveSnoozed(thread, { now: input.now }),

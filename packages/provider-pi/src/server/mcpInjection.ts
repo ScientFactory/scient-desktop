@@ -265,7 +265,6 @@ export function buildPiRpcLaunch(input: {
 }): {
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
-  readonly hasT3Mcp: boolean;
 } {
   const hasT3Extension = input.disableExtensions !== true && input.extensionPath !== undefined;
   const hasT3Mcp = hasT3Extension && input.mcpSession !== undefined;
@@ -335,6 +334,5 @@ export function buildPiRpcLaunch(input: {
         : {}),
       // SCIENT-FORK:END
     },
-    hasT3Mcp,
   };
 }

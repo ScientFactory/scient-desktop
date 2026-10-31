@@ -2,6 +2,8 @@ import { terminalContextReference } from "../lib/composerContextRecords";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
 import {
   boundAttachmentIds,
+  buildExpiredTerminalContextToastCopy,
+  mergeDirectPreviewAnnotation,
   planComposerTurn,
   snapshotComposerSend,
   withMessageContext,
@@ -9,7 +11,6 @@ import {
   deriveWorkspaceMutationId,
   presentThreadShellFromProjection,
 } from "./ChatView.logic";
-import { mergeDirectPreviewAnnotation } from "./ChatView.logic";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { ProviderDriverKind, type ServerProvider, type ModelSelection } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
@@ -54,7 +55,6 @@ import {
   resolveComposerProviderSelection,
   resolveForkTargetAfterAttempt,
   resolveThreadWorkspaceRoot,
-  findRecordedWorktreeSetup,
   observeProactivePanelUserChoice,
   resolveWorktreeSetupProgress,
   peekRememberedThreadTimeline,
@@ -355,6 +355,23 @@ describe("resolveThreadWorkspaceRoot", () => {
     ).toBeUndefined();
   });
 });
+
+describe("buildExpiredTerminalContextToastCopy", () => {
+  it("refers to several expired contexts as them", () => {
+    expect(buildExpiredTerminalContextToastCopy(2, "empty")).toEqual({
+      title: "Expired terminal contexts won't be sent",
+      description: "Remove them or re-add them to include terminal output.",
+    });
+    expect(buildExpiredTerminalContextToastCopy(2, "omitted")).toEqual({
+      title: "Expired terminal contexts omitted from message",
+      description: "Re-add them if you want that terminal output included.",
+    });
+    expect(buildExpiredTerminalContextToastCopy(1, "omitted").description).toBe(
+      "Re-add it if you want that terminal output included.",
+    );
+  });
+});
+
 describe("hasServerAcknowledgedLocalDispatch", () => {
   it("acknowledges a settled newer background turn", () => {
     const localDispatch = createLocalDispatchSnapshot(
@@ -1261,26 +1278,6 @@ describe("worktree setup visibility", () => {
       isPreparingWorktree: false,
     });
   });
-  it("reads the settled snapshot back from the thread's activities", () => {
-    const activities = [
-      {
-        kind: "setup-script.started",
-        payload: {},
-      },
-      {
-        kind: "worktree-setup",
-        payload: settledDone,
-      },
-      {
-        kind: "worktree-setup",
-        payload: {
-          not: "a snapshot",
-        },
-      },
-    ];
-    expect(findRecordedWorktreeSetup(activities, threadId)).toEqual(settledDone);
-    expect(findRecordedWorktreeSetup(activities, ThreadId.make("other"))).toBeNull();
-  });
 });
 describe("waitForRevertedMessage", () => {
   const threadRef = {
@@ -1631,12 +1628,14 @@ describe("restorePlanFollowUpComposer", () => {
           title: "Related thread",
         },
       ],
+      environmentContexts: [],
     };
     const writePrompt = vi.fn();
     const writeTerminalContexts = vi.fn();
     const writeReviewComments = vi.fn();
     const writePreviewAnnotations = vi.fn();
     const writeThreadContexts = vi.fn();
+    const writeEnvironmentContexts = vi.fn();
     const resetCursor = vi.fn();
     restorePlanFollowUpComposer({
       snapshot,
@@ -1645,6 +1644,7 @@ describe("restorePlanFollowUpComposer", () => {
       writeReviewComments,
       writePreviewAnnotations,
       writeThreadContexts,
+      writeEnvironmentContexts,
       resetCursor,
     });
     expect(writePrompt).toHaveBeenCalledTimes(1);
@@ -1657,6 +1657,7 @@ describe("restorePlanFollowUpComposer", () => {
     expect(writePreviewAnnotations).toHaveBeenCalledWith(snapshot.previewAnnotations);
     expect(writeThreadContexts).toHaveBeenCalledTimes(1);
     expect(writeThreadContexts).toHaveBeenCalledWith(snapshot.threadContexts);
+    expect(writeEnvironmentContexts).toHaveBeenCalledWith(snapshot.environmentContexts);
     expect(resetCursor).toHaveBeenCalledTimes(1);
     expect(resetCursor).toHaveBeenCalledWith({
       cursor: expect.any(Number),
@@ -1780,6 +1781,7 @@ describe("snapshotComposerSend", () => {
       previewAnnotations: [],
       reviewComments: [],
       threadContexts: [],
+      environmentContexts: [],
     });
     expect(snapshot.terminalContexts).toEqual([live]);
     expect(snapshot.messageText).toBe(
@@ -1863,40 +1865,15 @@ describe("planComposerTurn", () => {
 });
 
 describe("withMessageContext", () => {
-  const context = {
-    records: [],
-  } as unknown as NonNullable<Parameters<typeof withMessageContext>[0]["context"]>;
-  it("sends the context inline when the server supports it", () => {
-    expect(
-      withMessageContext({
-        text: "hi",
-        context,
-        supportsInlineMessageContext: true,
-      }),
-    ).toEqual({
-      text: "hi",
-      context,
-    });
-  });
-  it("folds the context into the text for older servers", () => {
-    const result = withMessageContext({
-      text: "hi",
-      context,
-      supportsInlineMessageContext: false,
-    });
-    expect(result.context).toBeUndefined();
-    expect(result.text).toContain("hi");
+  const context = { records: [] } as unknown as NonNullable<
+    Parameters<typeof withMessageContext>[0]["context"]
+  >;
+
+  it("sends the context inline", () => {
+    expect(withMessageContext({ text: "hi", context })).toEqual({ text: "hi", context });
   });
   it("sends the text alone without context", () => {
-    expect(
-      withMessageContext({
-        text: "hi",
-        context: undefined,
-        supportsInlineMessageContext: false,
-      }),
-    ).toEqual({
-      text: "hi",
-    });
+    expect(withMessageContext({ text: "hi", context: undefined })).toEqual({ text: "hi" });
   });
 });
 

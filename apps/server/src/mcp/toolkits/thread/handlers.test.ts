@@ -27,6 +27,7 @@ import { ThreadToolkit } from "./tools.ts";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 
 const callerId = ThreadId.make("thread:tool-policy");
+const environmentId = EnvironmentId.make("environment:tool-policy");
 const projectId = ProjectId.make("project:mcp-test");
 const otherProjectId = ProjectId.make("project:other");
 const providerInstanceId = ProviderInstanceId.make("codex");
@@ -64,7 +65,7 @@ const matches = [projectId, otherProjectId].map((id) => ({
 const listed = (found: ReadonlyArray<(typeof matches)[number]>) => ({
   matches: found.map((match) => ({
     ...match,
-    link: formatThreadLink(match.threadId, match.title),
+    link: formatThreadLink({ environmentId, threadId: match.threadId }),
   })),
 });
 

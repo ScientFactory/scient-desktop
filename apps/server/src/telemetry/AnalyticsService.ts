@@ -27,7 +27,7 @@ export class AnalyticsService extends Context.Service<
     /** Attempt delivery of the currently due local outbox batch. */
     readonly flush: Effect.Effect<void>;
 
-    /** Compatibility only: Scient never records provider or installation owner identities. */
+    /** Report who an install belongs to, as hashed ids, once per owner per process. */
     readonly recordOwners: (
       owners: ReadonlyArray<TelemetryOwner>,
       observedBy: "server" | "client",
@@ -39,7 +39,6 @@ export class AnalyticsService extends Context.Service<
   // SCIENT-FORK:START — Scient first-party analytics replaces the PostHog client
   /** No-op layer for tests and callers that intentionally disable analytics. */
   static readonly layerDisabled = Layer.succeed(AnalyticsService, disabledAnalyticsService);
-  static readonly layerTest = AnalyticsService.layerDisabled;
   // SCIENT-FORK:END
 }
 

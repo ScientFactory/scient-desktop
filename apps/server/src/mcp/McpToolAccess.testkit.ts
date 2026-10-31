@@ -12,8 +12,13 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+// SCIENT-FORK:START — native-owner invocation policy and clone guard fixtures.
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import { isLiveCallerShell } from "./liveCallerShell.ts";
+// SCIENT-FORK:END
 
 const EPOCH = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
 
@@ -78,6 +83,41 @@ export const liveThreadsLayer = Layer.merge(
     getThreadShell: (threadId) => Effect.succeed(liveThreadShell(threadId)),
   }),
 );
+
+// SCIENT-FORK:START — native-owner invocation policy and clone guard fixtures.
+type ResolveMcpInvocationPolicy =
+  ProviderSessionManager.ProviderSessionManagerV2["Service"]["resolveMcpInvocationPolicy"];
+
+// Deferred to call time: the thread service is built by sibling layers, so
+// the lookup runs in the caller's context rather than at layer build.
+const resolvePolicyFromThreadShell = ((caller: Parameters<ResolveMcpInvocationPolicy>[0]) =>
+  ThreadManagement.ThreadManagementService.pipe(
+    Effect.flatMap((threads) => threads.getThreadShell(caller.threadId)),
+    Effect.orDie,
+    Effect.map((shell) =>
+      shell === null || !isLiveCallerShell(shell, caller.providerInstanceId)
+        ? Option.none()
+        : Option.some({
+            runtimeMode: shell.runtimeMode,
+            interactionMode: shell.interactionMode,
+          }),
+    ),
+  )) as unknown as ResolveMcpInvocationPolicy;
+
+/**
+ * The native owner's policy as the caller's live thread shell states it, for
+ * fixtures whose thread service stands in for real provider sessions.
+ */
+const threadShellPolicyLayer = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+  resolveMcpInvocationPolicy: resolvePolicyFromThreadShell,
+});
+
+/** Services Scient's MCP tools require beyond upstream's, with no clone in progress. */
+export const scientToolServicesLayer = Layer.merge(
+  threadShellPolicyLayer,
+  Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
+);
+// SCIENT-FORK:END
 
 export const idleThreadProjection = (
   shell: OrchestrationV2ThreadShell,

@@ -54,13 +54,7 @@ export const runProviderPluginCommand = Effect.fn("runProviderPluginCommand")(
 );
 
 export const runScientAgentPluginCommand = Effect.fn("runScientAgentPluginCommand")(
-  function* (
-    executable: string,
-    env: NodeJS.ProcessEnv,
-    cwd: string,
-    args: ReadonlyArray<string>,
-    useClaudePlugins = true,
-  ) {
+  function* (executable: string, env: NodeJS.ProcessEnv, cwd: string, args: ReadonlyArray<string>) {
     const resolved =
       (yield* resolveCommandPath(executable, { env, bypassCache: true })) ?? executable;
     const identity = yield* canonicalOmpExecutablePath(resolved);
@@ -73,10 +67,9 @@ export const runScientAgentPluginCommand = Effect.fn("runScientAgentPluginComman
       resolved,
       {
         ...env,
-        SCIENT_AGENT_ENABLE_SOURCES:
-          useClaudePlugins && supportsScientClaudePlugins(runtime.version)
-            ? "claude-plugins"
-            : undefined,
+        SCIENT_AGENT_ENABLE_SOURCES: supportsScientClaudePlugins(runtime.version)
+          ? "claude-plugins"
+          : undefined,
       },
       cwd,
       args,

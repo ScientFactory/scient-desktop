@@ -62,6 +62,7 @@ import {
   type RuntimeInstructionsInput,
   // SCIENT-FORK:END
 } from "@t3tools/provider-core/server/runtimeInstructions";
+import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
@@ -109,7 +110,10 @@ export interface OpenCode2AdapterOptions {
   readonly runtimeGuidance?: (capabilities: ReadonlySet<string> | undefined) => string;
   // SCIENT-FORK:START — optional host copy keeps the package generic by default.
   /** Host-owned orchestration text; the package keeps its generic T3 default. */
-  readonly orchestrationSystemPrompt?: (hasMcp: boolean) => string | undefined;
+  readonly orchestrationSystemPrompt?: (
+    hasMcp: boolean,
+    hasDeviceTools: boolean,
+  ) => string | undefined;
   /** Host-owned runtime text; the package keeps its generic T3 default. */
   readonly runtimeInstructions?: (input: RuntimeInstructionsInput) => string;
   // SCIENT-FORK:END
@@ -1137,7 +1141,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           retryDelayMs: Math.max(0, Math.trunc(delayMs)),
         },
         failure: makeProviderFailure({
-          message: error.message,
+          message: readableProviderErrorMessage(error.message, error.status, error.response?.body),
           code: error.type,
           class: "provider_error",
           retryable: true,
@@ -2203,7 +2207,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         case "session.execution.interrupted":
           return yield* endExecution(state, turn, { status: "interrupted" });
         case "session.execution.failed": {
-          const { type, message, status } = event.data.error;
+          const { type, message, status, response } = event.data.error;
           // OpenCode types an empty balance as provider.quota too, but it answers
           // that with HTTP 402 and it never resets. Usage windows and budgets are 429.
           const usageLimit =
@@ -2211,7 +2215,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           return yield* endExecution(state, turn, {
             status: "failed",
             failure: makeProviderFailure({
-              message,
+              message: readableProviderErrorMessage(message, status, response?.body),
               code: type,
               class: usageLimit ? "usage_limit" : "provider_error",
             }),
@@ -2574,10 +2578,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       for (const message of recent.toReversed()) {
         if (message.type !== "assistant" || state.active !== turn) continue;
         const ordinals = { text: 0, reasoning: 0 };
-        for (const part of message.content) {
+        for (const [index, part] of message.content.entries()) {
           if (part.type === "text" || part.type === "reasoning") {
             const block = { assistantMessageID: message.id, ordinal: ordinals[part.type]++ };
-            yield* emitText(state, turn, block, part.type, () => part.text, true);
+            // OpenCode saves a block's text only when the block ends, so the last block of a
+            // response still streaming stays open and keeps the text that already arrived.
+            const open =
+              message.time.streamed === undefined && index === message.content.length - 1;
+            yield* emitText(
+              state,
+              turn,
+              block,
+              part.type,
+              (text) => (open && !part.text.startsWith(text) ? text : part.text),
+              !open,
+            );
             continue;
           }
           if (part.type !== "tool") continue;
@@ -3220,7 +3235,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           harness: "OpenCode",
           model: turnInput.modelSelection.model,
         }),
-        (options.orchestrationSystemPrompt ?? t3OrchestrationSystemPrompt)(mcpAvailable),
+        (options.orchestrationSystemPrompt ?? t3OrchestrationSystemPrompt)(
+          mcpAvailable,
+          mcpSession?.capabilities?.has("device") === true,
+        ),
         // SCIENT-FORK:END
       ]
         .filter((part) => part !== undefined && part.length > 0)

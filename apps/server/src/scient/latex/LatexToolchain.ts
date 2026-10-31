@@ -11,6 +11,7 @@ import {
   type ScientLatexToolchainStatus,
   type ScientLatexUnusableToolchain,
 } from "@t3tools/contracts";
+import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
@@ -287,10 +288,7 @@ export const make = Effect.gen(function* () {
             // other Windows case: a `.cmd`/`.bat` shim that does resolve, runs
             // through cmd.exe, and cannot find what it wraps — which exits
             // 9009 with a diagnostic instead of failing to start.
-            const notFound = yield* ProcessRunner.isWindowsCommandNotFound(
-              result.code,
-              result.stderr,
-            );
+            const notFound = yield* isWindowsCommandNotFound(result.code, result.stderr);
             if (notFound) return { _tag: "missing" };
             if (result.timedOut || result.code !== 0) {
               return {
@@ -446,10 +444,7 @@ export const make = Effect.gen(function* () {
           .pipe(
             Effect.flatMap((result) =>
               Effect.gen(function* () {
-                const notFound = yield* ProcessRunner.isWindowsCommandNotFound(
-                  result.code,
-                  result.stderr,
-                );
+                const notFound = yield* isWindowsCommandNotFound(result.code, result.stderr);
                 if (result.timedOut || notFound || result.code !== 0) return missing;
                 const banner = `${result.stdout}\n${result.stderr}`;
                 return {

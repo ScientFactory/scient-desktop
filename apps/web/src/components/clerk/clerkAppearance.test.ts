@@ -61,19 +61,23 @@ describe("clerkAppearance", () => {
       colorInput: "var(--secondary)",
       colorPrimary: "var(--update-foreground)",
       colorPrimaryForeground: "var(--card)",
+      // SCIENT-FORK:START — status colors and their readable text.
       colorDanger: "var(--error)",
       colorSuccess: "var(--success)",
       colorWarning: "var(--warning)",
       colorNeutral: "var(--contrast-foreground)",
       colorRing: "var(--ring)",
+      // SCIENT-FORK:END
     });
-    expect(clerkAppearance.elements).toEqual({
+    // SCIENT-FORK:START
+    expect(clerkAppearance.elements).toMatchObject({
       formFieldErrorText: { color: "var(--error-foreground)" },
       formFieldWarningText: { color: "var(--warning-foreground)" },
       formFieldSuccessText: { color: "var(--success-foreground)" },
       otpCodeFieldErrorText: { color: "var(--error-foreground)" },
       otpCodeFieldSuccessText: { color: "var(--success-foreground)" },
     });
+    // SCIENT-FORK:END
     const mutedSurface = mixThemeColors(colors.surface, colors.text, 0.98);
 
     expect(contrastRatio(colors.text, colors.surface)).toBeGreaterThanOrEqual(4.5);

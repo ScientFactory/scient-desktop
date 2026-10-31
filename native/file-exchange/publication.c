@@ -61,6 +61,33 @@ int platform_windows_available(const char *root);
 void platform_windows_retire(void);
 #endif
 static int publication_main(int argc, char **argv);
+/* One framed command from stdin: a 4-byte big-endian length, then NUL-terminated
+ * arguments after command[0]. NULL at a clean end, or with *error on a bad frame. */
+static char *read_frame(char **command, int capacity, int *arguments, int *complete, int *error) {
+  unsigned char header[4];
+  size_t received = fread(header, 1, sizeof(header), stdin);
+  if (!received && feof(stdin)) return NULL;
+  if (received != sizeof(header)) { *error = platform_invalid(); return NULL; }
+  uint32_t length = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) |
+                    ((uint32_t)header[2] << 8) | header[3];
+  if (!length) return NULL;
+  if (length > 65536) { *error = platform_invalid(); return NULL; }
+  char *frame = malloc(length);
+  if (!frame) { *error = platform_invalid(); return NULL; }
+  if (fread(frame, 1, length, stdin) != length || frame[length - 1] != 0) {
+    free(frame); *error = platform_invalid(); return NULL;
+  }
+  size_t offset = 0;
+  *arguments = 1;
+  while (offset < length && *arguments < capacity - 1) {
+    char *end = memchr(frame + offset, 0, length - offset);
+    if (!end) break;
+    command[(*arguments)++] = frame + offset;
+    offset = (size_t)(end - frame) + 1;
+  }
+  *complete = offset == length;
+  return frame;
+}
 static int lease_main(int argc, char **argv) {
   if (argc < 10 || (argc - 3) % 7 || (argc - 3) / 7 > 256 ||
       (strcmp(argv[2], "shared") && strcmp(argv[2], "exclusive"))) return 64;
@@ -93,29 +120,11 @@ static int lease_main(int argc, char **argv) {
   printf("{\"version\":1,\"lease\":\"acquired\",\"code\":0,\"codeDomain\":\"%s\"}\n", platform_domain());
   if (fflush(stdout)) { error = platform_invalid(); goto done; }
   for (;;) {
-    unsigned char header[4];
-    size_t received = fread(header, 1, sizeof(header), stdin);
-    if (!received && feof(stdin)) break;
-    if (received != sizeof(header)) { error = platform_invalid(); break; }
-    uint32_t length = ((uint32_t)header[0] << 24) | ((uint32_t)header[1] << 16) |
-                      ((uint32_t)header[2] << 8) | header[3];
-    if (!length) break;
-    if (length > 65536) { error = platform_invalid(); break; }
-    char *frame = malloc(length);
-    if (!frame) { error = platform_invalid(); break; }
-    if (fread(frame, 1, length, stdin) != length || frame[length - 1] != 0) {
-      free(frame); error = platform_invalid(); break;
-    }
     char *command[16] = { argv[0] };
-    size_t offset = 0;
-    int arguments = 1;
-    while (offset < length && arguments < 15) {
-      char *end = memchr(frame + offset, 0, length - offset);
-      if (!end) break;
-      command[arguments++] = frame + offset;
-      offset = (size_t)(end - frame) + 1;
-    }
-    if (arguments == 6 && offset == length && !strcmp(command[1], "--remove=1")) {
+    int arguments = 0, complete = 0;
+    char *frame = read_frame(command, 16, &arguments, &complete, &error);
+    if (!frame) break;
+    if (arguments == 6 && complete && !strcmp(command[1], "--remove=1")) {
       LeaseParent *held = NULL;
       for (size_t i = 0; i < count; ++i)
         if (parents[i].exclusive && matches(&parents[i].parent, command[3], command[4])) {
@@ -144,7 +153,7 @@ static int lease_main(int argc, char **argv) {
       continue;
     }
     int covered = 0;
-    if (arguments == 15 && offset == length && !strcmp(command[1], "--protocol=1")) {
+    if (arguments == 15 && complete && !strcmp(command[1], "--protocol=1")) {
       int parent_covered = 0, record_covered = 0;
       for (size_t i = 0; i < count; ++i) {
         if (!parents[i].exclusive) continue;
@@ -156,7 +165,7 @@ static int lease_main(int argc, char **argv) {
         (!strcmp(command[2], "metadata") || !strcmp(command[2], "rmdir")) ? record_covered :
         parent_covered && record_covered;
     }
-    if (arguments == 11 && offset == length && !strcmp(command[1], "--directory=1") &&
+    if (arguments == 11 && complete && !strcmp(command[1], "--directory=1") &&
         (!strcmp(command[2], "private-create") || !strcmp(command[2], "private-check") || !strcmp(command[2], "mkdir"))) {
       for (size_t i = 0; i < count; ++i) {
         if (parents[i].exclusive && matches(&parents[i].root, command[6], command[7]) &&
@@ -276,12 +285,37 @@ result:
   if (context) platform_close(context);
   return ferror(stdout) ? 74 : 0;
 }
+#ifdef _WIN32
+static int read_only(int argc, char **argv) {
+  return (argc == 4 && !strcmp(argv[1], "--windows=1") &&
+          (!strcmp(argv[2], "info") || !strcmp(argv[2], "flags") || !strcmp(argv[2], "private"))) ||
+         (argc > 2 && !strcmp(argv[1], "--windows-flags=1")) ||
+         (argc == 11 && !strcmp(argv[1], "--directory=1") && !strcmp(argv[2], "bind"));
+}
+/* A Windows process launch costs tens of milliseconds, so one long-lived process answers
+ * read-only queries: each frame gets its usual reply, then a line with its exit code. */
+static int serve_main(char *program) {
+  int error = 0;
+  for (;;) {
+    char *command[260] = { program };
+    int arguments = 0, complete = 0;
+    char *frame = read_frame(command, 260, &arguments, &complete, &error);
+    if (!frame) break;
+    int exit_code = complete && read_only(arguments, command) ? publication_main(arguments, command) : 64;
+    free(frame);
+    printf("{\"version\":1,\"served\":%d}\n", exit_code);
+    if (fflush(stdout)) return 74;
+  }
+  return error ? 64 : 0;
+}
+#endif
 static int publication_main(int argc, char **argv) {
 #ifdef __linux__
   if (argc == 4 && !strcmp(argv[1], "--linux-folder=1"))
     return platform_linux_folder(argv[2], !strcmp(argv[3], "directory"));
 #endif
 #ifdef _WIN32
+  if (argc == 2 && !strcmp(argv[1], "--serve=1")) return serve_main(argv[0]);
   if (argc > 1 && !strcmp(argv[1], "--windows=1")) return platform_windows_main(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "--windows-flags=1")) return platform_windows_flags(argc, argv);
 #endif
@@ -418,7 +452,8 @@ result:
 }
 #ifdef _WIN32
 int wmain(int argc, wchar_t **wide) {
-  if (argc > 1 && !wcscmp(wide[1], L"--lease=1") && _setmode(_fileno(stdin), _O_BINARY) == -1) return 71;
+  if (argc > 1 && (!wcscmp(wide[1], L"--lease=1") || !wcscmp(wide[1], L"--serve=1")) &&
+      _setmode(_fileno(stdin), _O_BINARY) == -1) return 71;
   char **argv = calloc((size_t)argc, sizeof(*argv));
   if (!argv) return 71;
   int allocated = 0, result = 71;

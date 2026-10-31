@@ -85,10 +85,12 @@ export interface PreviewMiniPlayerObstacles {
   readonly detailsCard: (HorizontalSpan & { readonly bottom: number }) | null;
 }
 
+// SCIENT-FORK:START — exported: the Scient canvas frame opts out of obstacle avoidance.
 export const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = {
   composer: null,
   detailsCard: null,
 };
+// SCIENT-FORK:END
 
 const spanOf = (x: number, width: number): HorizontalSpan => ({ left: x, right: x + width });
 

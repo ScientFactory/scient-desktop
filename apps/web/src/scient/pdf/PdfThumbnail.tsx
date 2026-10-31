@@ -72,6 +72,7 @@ export function PdfThumbnail(props: {
   const [failed, setFailed] = useState(false);
   const [dropSide, setDropSide] = useState<"before" | "after" | null>(null);
   const suppressClick = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the thumbnail DOM node's viewport intersection via IntersectionObserver
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -82,6 +83,7 @@ export function PdfThumbnail(props: {
     observer.observe(root);
     return () => observer.disconnect();
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- renders the PDF page into the canvas DOM node via PDF.js and cancels the render task on cleanup
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!visible || !canvas) return;

@@ -72,7 +72,7 @@ async function _cleanupFixture1(_fixture: _Fixture) {
   _fixture.host = undefined;
   motionClock.now = realNow;
 }
-const working = { isWorking: true, activeTurnInProgress: true, runningRunId: RunId.make("run-1") };
+const working = { isWorking: true, runningRunId: RunId.make("run-1") };
 const sweeps = (_fixture: _Fixture) =>
   Array.from(_fixture.host!.querySelectorAll(".live-activity-focus"));
 const rowOf = (element: Element) =>
@@ -383,7 +383,6 @@ function _createFixture() {
   const base = {
     listRef,
     isWorking: false,
-    activeTurnInProgress: false,
     activeTurnStartedAt: null,
     latestRun: null,
     runningRunId: null,
@@ -391,7 +390,6 @@ function _createFixture() {
     onOpenTurnDiff: () => {},
     onOpenThread: () => {},
     onForkFromRun: () => Promise.resolve(),
-    onRollbackCheckpoint: () => {},
     supportsConversationRollback: false,
     onRevertToTurnCount: () => {},
     isRevertingCheckpoint: false,

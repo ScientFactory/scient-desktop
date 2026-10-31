@@ -77,6 +77,7 @@ function closeRequest() {
 
 export function ConversationExportDialogHost() {
   const { request, key } = useRequest();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- closes the hosted dialog request on unmount via the imperative request closer
   useEffect(() => closeRequest, []);
   return request ? <ConversationExportDialog key={key} request={request} /> : null;
 }
@@ -97,6 +98,7 @@ function ConversationExportDialog({ request }: { readonly request: OpenRequest }
   const registration = registrations.find((entry) => entry.format === request.format) ?? null;
   const label = registration?.label ?? request.format;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the export preparation over the environment connection, ignoring replies after unmount
   useEffect(() => {
     let cancelled = false;
     prepareConversationExport(threadRef.environmentId, threadRef.threadId).then(
@@ -377,12 +379,14 @@ export function ConversationExportForm(props: {
   const workLogRef = useRef<HTMLLabelElement>(null);
   const reasoningRef = useRef<HTMLLabelElement>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the include-caution auto-dismiss timer until it fires or unmount
   useEffect(() => {
     if (cautionFor === null) return;
     const timeout = window.setTimeout(() => setCautionFor(null), INCLUDE_CAUTION_MS);
     return () => window.clearTimeout(timeout);
   }, [cautionFor]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the anchor and popup DOM nodes to position the caution callout, tracking scroll and resize
   useLayoutEffect(() => {
     if (cautionFor === null) return;
     const anchor = (cautionFor === "workLog" ? workLogRef : reasoningRef).current;

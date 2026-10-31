@@ -16,12 +16,11 @@ describe("Scient Agent plugin process source gate", () => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped();
         const gate = yield* makeOmpExecutableGate();
-        for (const [version, enabled, expected] of [
-          ["0.1.2", true, ""],
-          ["0.1.3", true, "claude-plugins"],
-          ["0.1.3", false, ""],
+        for (const [version, expected] of [
+          ["0.1.2", ""],
+          ["0.1.3", "claude-plugins"],
         ] as const) {
-          const executable = path.join(root, `agent-${version}-${enabled}`);
+          const executable = path.join(root, `agent-${version}`);
           const info = {
             product: "scient-agent",
             version,
@@ -38,7 +37,6 @@ describe("Scient Agent plugin process source gate", () => {
             { PATH: process.env.PATH, SCIENT_AGENT_ENABLE_SOURCES: "untrusted" },
             root,
             ["plugin", "list", "--json"],
-            enabled,
           ).pipe(Effect.provideService(OmpExecutableGate, gate));
           expect(output.trim()).toBe(expected);
         }

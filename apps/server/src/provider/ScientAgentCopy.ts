@@ -27,11 +27,18 @@ export const SCIENT_AGENT_COPY_DIFFERENCES: ReadonlyArray<readonly [string, stri
   ],
   ["Send a message to any thread.", "Send a message to a thread in this project."],
   [
+    "List threads newest first, in one project or with `allProjects`.",
+    "List threads newest first: inside a thread, only yours; outside one, in one project or with `allProjects`.",
+  ],
+  [
     "`projectId`: one project, else yours, else all outside a thread.",
     "`projectId`: inside a thread, only yours; outside a thread, one project, else all.",
   ],
-  // Upstream's thread reader is `scient_thread_inspect`; `scient_thread_read` is Scient's own.
-  ["Read a T3 thread", "Inspect a Scient thread and its runs"],
+  // Scient chat renders chart and diagram fences inline.
+  [
+    "show any visual the user asks for here: pass its HTML to `html_preview`, then `html_render`.",
+    "show any visual the user asks for here: a fenced `mermaid`, `vega-lite` or `plotly` block when one fits, otherwise pass its HTML to `html_preview`, then `html_render`.",
+  ],
 ];
 
 /** Rename upstream agent copy and apply Scient's deliberate differences. */
@@ -41,8 +48,9 @@ export function scientAgentCopy(text: string): string {
     result = result.replaceAll(upstream, scient);
   return (
     result
+      // Scient names upstream's thread reader `scient_thread_inspect`.
       .replaceAll(/\bt3_thread_read\b/g, "scient_thread_inspect")
-      .replaceAll(/\bmcp__t3_code__/g, "mcp__scient__")
+      .replaceAll(/\bmcp__t3[-_]code__/g, "mcp__scient__")
       .replaceAll(/\bt3_(?=[a-z])/g, "scient_")
       .replaceAll(/\bt3-code\b/g, "scient")
       .replaceAll(/\bT3 Code\b/g, SCIENT_PRODUCT_NAME)

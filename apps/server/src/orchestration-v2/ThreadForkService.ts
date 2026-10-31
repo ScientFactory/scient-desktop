@@ -25,8 +25,12 @@ import { conversationForkBoundaryItem } from "./scient-fork/ConversationForkBoun
 export interface ThreadForkPlanV2 {
   readonly targetThread: OrchestrationV2AppThread;
   readonly transfer: OrchestrationV2ContextTransfer;
-  readonly history: Effect.Success<ReturnType<typeof planConversationFork>>;
-  readonly boundaryItem: Extract<OrchestrationV2TurnItem, { type: "fork" }>;
+  // SCIENT-FORK:START — a side chat shows only its own rows, so it freezes nothing.
+  readonly frozen: {
+    readonly history: Effect.Success<ReturnType<typeof planConversationFork>>;
+    readonly boundaryItem: Extract<OrchestrationV2TurnItem, { type: "fork" }>;
+  } | null;
+  // SCIENT-FORK:END
 }
 
 export class ThreadForkPlanError extends Schema.TaggedError<ThreadForkPlanError>()(
@@ -60,13 +64,15 @@ export interface ThreadForkServiceV2Shape {
     readonly sourceProjection: OrchestrationV2ThreadProjection;
     readonly commandId: CommandId;
     readonly cwd: string;
-    readonly sourceRun: OrchestrationV2Run;
+    /** Null only for a side chat whose parent has no stable run yet. */
+    readonly sourceRun: OrchestrationV2Run | null;
     readonly sourceProviderThread?: OrchestrationV2ProviderThread | undefined;
     readonly sourceTokenUsage?: OrchestrationV2ProviderTurnTokenUsage | undefined;
     readonly canonicalSourcePoint: OrchestrationV2ContextSourcePoint;
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
     readonly title?: string;
+    readonly sideChat?: boolean;
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -82,70 +88,127 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
   ThreadForkServiceV2,
   ThreadForkServiceV2.of({
     plan: Effect.fn("ThreadForkService.plan")(function* (input) {
-      if (!isForkableSourceRunStatus(input.sourceRun.status)) {
+      const { sourceRun } = input;
+      const sourceLineage = input.sourceProjection.thread.lineage;
+      // A task a linked environment delegated here is a subagent of a remote thread.
+      if (
+        input.sideChat &&
+        (sourceLineage.sideChat ||
+          sourceLineage.relationshipToParent === "subagent" ||
+          input.sourceProjection.thread.delegatedFrom !== undefined)
+      ) {
         return yield* new ThreadForkPlanError({
           sourceThreadId: input.sourceProjection.thread.id,
           targetThreadId: input.targetThreadId,
-          cause: forkableSourceRunStatusError(input.sourceRun),
+          cause: sourceLineage.sideChat
+            ? "A side chat cannot start another side chat."
+            : "A subagent cannot start a side chat.",
         });
       }
-      const history = yield* planConversationFork({
-        projection: input.sourceProjection,
-        targetThreadId: input.targetThreadId,
-        source: { kind: "settled-run", runId: input.sourceRun.id },
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ThreadForkPlanError({
-              sourceThreadId: input.sourceProjection.thread.id,
+      if (sourceRun !== null && !isForkableSourceRunStatus(sourceRun.status)) {
+        return yield* new ThreadForkPlanError({
+          sourceThreadId: input.sourceProjection.thread.id,
+          targetThreadId: input.targetThreadId,
+          cause: forkableSourceRunStatusError(sourceRun),
+        });
+      }
+      // SCIENT-FORK:START — a normal fork freezes its prefix; a side chat stays a live view.
+      if (sourceRun === null && input.sideChat !== true) {
+        return yield* new ThreadForkPlanError({
+          sourceThreadId: input.sourceProjection.thread.id,
+          targetThreadId: input.targetThreadId,
+          cause: "Only a side chat can start without a source run.",
+        });
+      }
+      const frozenRun = input.sideChat === true ? null : sourceRun;
+      const history =
+        frozenRun === null
+          ? null
+          : yield* planConversationFork({
+              projection: input.sourceProjection,
               targetThreadId: input.targetThreadId,
-              cause,
-            }),
-        ),
-      );
-      const native = freezeConversationForkNativeSource({
-        projection: input.sourceProjection,
-        retainedSourceItems: history.retained,
-        boundaryRunId: history.boundaryRunId,
-        sourceKind: "settled-run",
-      });
+              source: { kind: "settled-run", runId: frozenRun.id },
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ThreadForkPlanError({
+                    sourceThreadId: input.sourceProjection.thread.id,
+                    targetThreadId: input.targetThreadId,
+                    cause,
+                  }),
+              ),
+            );
+      const native =
+        history === null
+          ? null
+          : freezeConversationForkNativeSource({
+              projection: input.sourceProjection,
+              retainedSourceItems: history.retained,
+              boundaryRunId: history.boundaryRunId,
+              sourceKind: "settled-run",
+            });
+      // SCIENT-FORK:END
       const targetThread: OrchestrationV2AppThread = {
         ...input.sourceProjection.thread,
         createdBy: input.createdBy,
         creationSource: input.creationSource,
         id: input.targetThreadId,
         title: input.title ?? `${input.sourceProjection.thread.title} fork`,
+        // The source's title job completes only on the source thread.
+        titleRegeneration: null,
+        // Side chats share the parent's worktree, so they start supervised.
+        ...(input.sideChat ? { runtimeMode: "approval-required" as const } : {}),
         activeProviderThreadId: null,
         lineage: {
           parentThreadId: input.sourceProjection.thread.id,
           relationshipToParent: "fork",
           rootThreadId: input.sourceProjection.thread.lineage.rootThreadId,
+          ...(input.sideChat ? { sideChat: true } : {}),
         },
-        // Local frozen facts replace live source inheritance. Causal lineage
-        // and native optimization proof remain on the destination receipt.
-        forkedFrom: null,
-        historyOrigin: "scient_fork",
-        conversationImport: null,
-        forkLineage: {
-          originThreadId: input.sourceProjection.thread.id,
-          baselineAssistantMessageId: history.baselineAssistantMessageId,
-          ...(input.sourceProjection.thread.conversationImport != null
-            ? { sourceImport: input.sourceProjection.thread.conversationImport }
-            : input.sourceProjection.thread.forkLineage?.sourceImport === undefined
-              ? {}
-              : { sourceImport: input.sourceProjection.thread.forkLineage.sourceImport }),
-        },
-        conversationFork: {
-          commandId: input.commandId,
-          sourceThreadId: input.sourceProjection.thread.id,
-          workspaceMode: "local",
-          status: "ready",
-          cwd: input.cwd,
-          checkpointRef: null,
-          checkpointOid: null,
-          attachmentCopies: history.attachmentCopies,
-          error: null,
-        },
+        // SCIENT-FORK:START — frozen facts for a normal fork; a side chat keeps upstream's link.
+        ...(history === null
+          ? {
+              forkedFrom:
+                sourceRun === null
+                  ? null
+                  : {
+                      type: "run" as const,
+                      threadId: input.sourceProjection.thread.id,
+                      runId: sourceRun.id,
+                    },
+              historyOrigin: "native" as const,
+              conversationImport: null,
+              forkLineage: null,
+              conversationFork: null,
+            }
+          : {
+              // Local frozen facts replace live source inheritance. Causal lineage
+              // and native optimization proof remain on the destination receipt.
+              forkedFrom: null,
+              historyOrigin: "scient_fork" as const,
+              conversationImport: null,
+              forkLineage: {
+                originThreadId: input.sourceProjection.thread.id,
+                baselineAssistantMessageId: history.baselineAssistantMessageId,
+                ...(input.sourceProjection.thread.conversationImport != null
+                  ? { sourceImport: input.sourceProjection.thread.conversationImport }
+                  : input.sourceProjection.thread.forkLineage?.sourceImport === undefined
+                    ? {}
+                    : { sourceImport: input.sourceProjection.thread.forkLineage.sourceImport }),
+              },
+              conversationFork: {
+                commandId: input.commandId,
+                sourceThreadId: input.sourceProjection.thread.id,
+                workspaceMode: "local" as const,
+                status: "ready" as const,
+                cwd: input.cwd,
+                checkpointRef: null,
+                checkpointOid: null,
+                attachmentCopies: history.attachmentCopies,
+                error: null,
+              },
+            }),
+        // SCIENT-FORK:END
         createdAt: input.createdAt,
         updatedAt: input.createdAt,
         archivedAt: null,
@@ -161,7 +224,6 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         pinnedAt: null,
         pinOrderKey: null,
         activeOrderKey: null,
-        titleRegeneration: null,
         rollbackFailure: null,
         rollbackRequestId: undefined,
         // PR context follows the conversation; watching remains the source thread's responsibility.
@@ -179,18 +241,25 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         targetThreadId: input.targetThreadId,
         sourcePoint: input.canonicalSourcePoint,
         basePoint: null,
-        sourceProviderInstanceId: input.sourceRun.providerInstanceId,
+        sourceProviderInstanceId:
+          sourceRun?.providerInstanceId ?? input.sourceProjection.thread.providerInstanceId,
         // Only native forks retain this context; portable handoffs rebuild it.
         sourceTokenUsage:
-          (input.sourceRun.status === "completed" || input.sourceRun.status === "waiting") &&
-          native.strategy === "native_fork"
-            ? input.sourceTokenUsage
+          (sourceRun?.status === "completed" || sourceRun?.status === "waiting") &&
+          // SCIENT-FORK:START — a normal fork needs its exact native proof.
+          (native === null
+            ? input.sourceProviderThread?.nativeThreadRef?.strength === "strong"
+            : native.strategy === "native_fork")
+            ? // SCIENT-FORK:END
+              input.sourceTokenUsage
             : undefined,
         targetProviderInstanceId: null,
         targetRunId: null,
-        ...(native.strategy === "native_fork"
-          ? { frozenSource: native.frozenSource }
-          : { portableReason: native.reason }),
+        ...(native === null
+          ? {}
+          : native.strategy === "native_fork"
+            ? { frozenSource: native.frozenSource }
+            : { portableReason: native.reason }),
         status: "pending",
         resolution: null,
         createdBy: input.createdBy,
@@ -199,17 +268,25 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
         updatedAt: input.createdAt,
         consumedAt: null,
       };
-      const boundaryItem = conversationForkBoundaryItem({
-        targetThreadId: input.targetThreadId,
-        ordinal: history.history.length,
-        createdAt: input.createdAt,
-        source: {
-          type: "run",
-          threadId: input.sourceProjection.thread.id,
-          runId: input.sourceRun.id,
-        },
-      });
-      return { targetThread, transfer, history, boundaryItem };
+      // SCIENT-FORK:START
+      const frozen =
+        history === null || frozenRun === null
+          ? null
+          : {
+              history,
+              boundaryItem: conversationForkBoundaryItem({
+                targetThreadId: input.targetThreadId,
+                ordinal: history.history.length,
+                createdAt: input.createdAt,
+                source: {
+                  type: "run" as const,
+                  threadId: input.sourceProjection.thread.id,
+                  runId: frozenRun.id,
+                },
+              }),
+            };
+      return { targetThread, transfer, frozen };
+      // SCIENT-FORK:END
     }),
   }),
 );

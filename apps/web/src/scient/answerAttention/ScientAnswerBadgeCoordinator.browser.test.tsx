@@ -34,8 +34,10 @@ const shells = vi.hoisted(() => {
 vi.mock(import("../../state/entities"), async () => {
   const { useSyncExternalStore } = await import("react");
   const use = () => useSyncExternalStore(shells.subscribe, shells.get);
+  const delegatedUnderParent: ReadonlySet<string> = new Set();
   return {
     useAllEnvironmentShellsBootstrapped: () => use().bootstrapped,
+    useDelegatedUnderParent: () => delegatedUnderParent,
     useThreadShells: () => use().threads,
   } as never;
 });
@@ -59,6 +61,11 @@ vi.mock(import("@effect/atom-react"), async (original) => {
 const localEnvironment = vi.hoisted(() => ({ disabled: false }));
 vi.mock(import("../../localEnvironment"), () => ({
   isLocalEnvironmentDisabled: () => localEnvironment.disabled,
+}));
+// The election between app windows is covered on its own; tests choose this window's role.
+const presenter = vi.hoisted(() => ({ isPresenter: true }));
+vi.mock(import("../multiWindow/notificationPresenter"), () => ({
+  useIsNotificationPresenter: () => presenter.isPresenter,
 }));
 // The minute clock reads like `toISOString()` without its zone.
 vi.mock(import("../../hooks/useNowMinute"), () => ({ useNowMinute: () => "2026-10-22T12:00" }));
@@ -129,6 +136,7 @@ function setup() {
   useUiStateStore.setState({ threadLastVisitedAtById: {} });
   shells.set({ catalog: complete, bootstrapped: true, threads: [thread("one"), thread("two")] });
   platform = "darwin";
+  presenter.isPresenter = true;
   localEnvironment.disabled = false;
   setBadge.mockClear();
   stack.use(
@@ -206,6 +214,18 @@ it("follows the Settings switch", async () => {
   expect(setBadge).toHaveBeenLastCalledWith({ count: 0, image: null });
   await toggle();
   expect(setBadge).toHaveBeenLastCalledWith({ count: 2, image: null });
+});
+
+it("leaves the Dock badge to the presenter window, but overlays every Windows taskbar button", async () => {
+  using _fixture = setup();
+  presenter.isPresenter = false;
+  await using _screen = await renderBadge();
+  window.dispatchEvent(new Event("focus"));
+  expect(setBadge).not.toHaveBeenCalled();
+
+  platform = "win32";
+  await update({ threads: [thread("one")] });
+  expect(setBadge.mock.lastCall?.[0]).toMatchObject({ count: 1 });
 });
 
 it("does nothing without the desktop bridge", async () => {

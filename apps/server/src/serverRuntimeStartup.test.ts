@@ -8,6 +8,7 @@ import {
   CommandId,
   ThreadId,
   type Project,
+  type ProjectSnapshot,
   ProviderDriverKind,
   EnvironmentId,
   type ServerLifecycleStreamEvent,
@@ -19,6 +20,8 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { hashTelemetryId } from "@t3tools/shared/telemetryId";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Ref from "effect/Ref";
@@ -198,13 +201,8 @@ it.effect.each([
                 }),
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
-          getShellSnapshot: () =>
-            Effect.succeed({
-              threads: [],
-              archivedThreads: [],
-              schemaVersion: 1,
-              snapshotSequence: 0,
-            }),
+          countThreads: () => Effect.succeed(0),
+          listActiveShellIndex: () => Effect.succeed([]),
         }),
         Layer.mock(ThreadLaunch.ThreadLaunchService)({
           launch: (input) => {
@@ -450,17 +448,28 @@ it.effect("enqueueCommand fails queued work when readiness fails", () =>
   ),
 );
 
-it.effect("startup heartbeat records without querying project or thread counts", () =>
+it.effect("startup heartbeat reports thread and project counts and hashed account owners", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const events: string[] = [];
+      const fs = yield* FileSystem.FileSystem;
+      const homeDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "scient-heartbeat-" });
+      yield* fs.writeFileString(
+        `${homeDirectory}/.claude.json`,
+        '{"userID":"machine","oauthAccount":{"accountUuid":"claude-person"}}',
+      );
+      const events: Array<{ name: string; properties: unknown }> = [];
+      const owners: Array<{ owners: unknown; observedBy: string }> = [];
 
       yield* ServerRuntimeStartup.recordStartupHeartbeat.pipe(
+        Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
         Effect.provideService(AnalyticsService.AnalyticsService, {
-          recordOwners: () => Effect.void,
-          record: (name) =>
+          recordOwners: (recorded, observedBy) =>
             Effect.sync(() => {
-              events.push(name);
+              owners.push({ owners: recorded, observedBy });
+            }),
+          record: (name, properties) =>
+            Effect.sync(() => {
+              events.push({ name, properties });
             }),
           flush: Effect.void,
           status: Effect.succeed({ available: false, consent: "off" as const }),
@@ -468,10 +477,34 @@ it.effect("startup heartbeat records without querying project or thread counts",
           setConsent: () => Effect.succeed({ available: false, consent: "off" as const }),
           deleteData: Effect.succeed(false),
         }),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectService.ProjectService)({
+              snapshot: Effect.succeed({
+                projects: [{ id: "one" }, { id: "two" }],
+              } as unknown as ProjectSnapshot),
+            }),
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              countThreads: () => Effect.succeed(84),
+            }),
+            Layer.mock(ServerSecretStore.ServerSecretStore)({
+              get: () => Effect.succeedNone,
+            }),
+          ),
+        ),
       );
-      assert.deepStrictEqual(events, ["server.boot.heartbeat"]);
+
+      assert.deepStrictEqual(events, [
+        { name: "server.boot.heartbeat", properties: { threadCount: 84, projectCount: 2 } },
+      ]);
+      assert.deepStrictEqual(owners, [
+        {
+          owners: [{ source: "claude", ownerId: hashTelemetryId("claude-person") }],
+          observedBy: "server",
+        },
+      ]);
     }),
-  ),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
 
 const bootstrapProjectId = ProjectId.make("project-startup-bootstrap");

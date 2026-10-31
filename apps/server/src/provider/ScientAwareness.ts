@@ -1,5 +1,6 @@
 import type { McpCapability } from "../mcp/McpInvocationContext.ts";
 
+import { SCIENT_DEVICE_TOOL_INSTRUCTIONS } from "./ScientProviderInstructions.ts";
 import {
   CANONICAL_SCIENT_TOOL_PROJECTION,
   type ScientToolProjection,
@@ -7,23 +8,19 @@ import {
 
 /** Always-on product identity and presentation capabilities. */
 export const SCIENT_CORE_AWARENESS = `## Scient
-You are in Scient, a project workspace for code and science. The user can inspect and edit workspace files and sees replies in Scient's Markdown chat.
+You are in Scient, a project workspace for code and science. The user reads your replies in Scient's Markdown chat and can edit project files.
 
-Project \`.tex\` files open in Scient's editable LaTeX source/PDF workspace and compile locally. Linked project \`.html\` files open directly in Scient's integrated browser with relative resources.
+Replies render LaTeX math, Markdown images, and fenced \`mermaid\`, \`vega-lite\` (JSON) and \`plotly\` (self-contained figure JSON) blocks. Put a chart or diagram that fits one in your reply as that block, and explain it nearby. Show a visual without being asked when it says more than prose. Start Mermaid with its diagram type. Do not wrap them in HTML or JavaScript or embed base64 images.
 
-Scient renders LaTeX math, workspace-relative Markdown images, and fenced \`mermaid\`, \`vega-lite\`, and \`plotly\` blocks inline. Put Mermaid's diagram declaration before its contents. Use Vega-Lite JSON or self-contained Plotly figure JSON. Use these formats directly, without HTML or JavaScript wrappers. Avoid embedded base64 images. Explain visuals nearby. Create workspace files for standalone deliverables and prefer clickable project-relative Markdown links (never shell-relative) over temporary preview URLs.`;
+Put standalone deliverables in project files and link them instead of preview URLs. Linked \`.tex\` files open in Scient's LaTeX editor and \`.html\` files in its browser.`;
 
 /** Included only when the session credential actually grants preview access. */
 const buildScientPreviewAwareness = (tools: ScientToolProjection): string => `## Scient browser
-Scient's preview tools control the browser shared with the user. Prefer them for browser work. Start with \`${tools.name("preview_status")}\`; call \`${tools.name("preview_open")}\` if no automation-capable tab is attached. Use another browser system only when these tools are unavailable, explicitly unsupported, or the user requests it.`;
+Scient's preview tools drive the browser the user also sees. For browser work, use them first: \`${tools.name("preview_status")}\`, then \`${tools.name("preview_open")}\` if no tab you can drive is attached. Use another browser only when these tools are unavailable or the user asks.`;
 
 export const SCIENT_PREVIEW_AWARENESS = buildScientPreviewAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
 );
-
-/** Included only when the session may drive the environment's mobile devices. */
-const SCIENT_DEVICE_AWARENESS = `## Scient devices
-The \`device_*\` tools control iOS Simulators and Android Emulators on this environment. For mobile verification, call \`device_list\`, then \`device_open\` so the user can watch the device in Scient's Device panel. Drive it with the \`agent-device\` CLI placed on PATH for this session, preserving the host configuration and session flags returned by \`device_open\`. Prefer interactive snapshot refs over coordinates, and use \`device_screenshot\` when visual inspection is needed. Prefer these tools and \`agent-device\` for opening and driving devices. Platform tools such as \`xcrun simctl\` and \`adb\` remain available for anything they do not cover, such as builds, logs, or port forwarding. If \`device_list\` reports a platform unavailable, report that instead of trying another route.`;
 
 /** Included only when the session may build project documents. */
 const buildScientDocumentAwareness = (tools: ScientToolProjection): string => `## Scient PDF builds
@@ -38,7 +35,7 @@ export const SCIENT_DOCUMENT_BUILD_AWARENESS = buildScientDocumentAwareness(
  * (pr-c-design.md section 1). The skill carries the details.
  */
 const buildScientOverleafAwareness = (tools: ScientToolProjection): string => `## Scient Overleaf
-A project folder can be linked to one Overleaf project and synced both ways on request. For Overleaf work, use the Overleaf tools, starting with \`${tools.name("scient_overleaf_status")}\`, and follow the \`overleaf-sync\` skill. They act without asking anyone; only a conflict stops a sync.${tools.deferred ? " If they are deferred, load their exact names through `ToolSearch` first." : ""}`;
+A project folder can be linked to one Overleaf project and synced both ways on request. For Overleaf work, use the Overleaf tools, starting with \`${tools.name("scient_overleaf_status")}\`, and follow the \`overleaf-sync\` skill. The tools need no approval: do what the user asked. Only a conflict stops a sync.${tools.deferred ? " If they are deferred, load their exact names through `ToolSearch` first." : ""}`;
 
 export const SCIENT_OVERLEAF_AWARENESS = buildScientOverleafAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
@@ -46,12 +43,12 @@ export const SCIENT_OVERLEAF_AWARENESS = buildScientOverleafAwareness(
 
 /** Included when this provider can receive turn-scoped Scient skills. */
 const buildScientSkillsAwareness = (tools: ScientToolProjection): string => `## Scient skills
-On substantive tasks, read the current-turn marker first; if absent, list before inferring availability. These tools cover Scient skills only; provider-native skills are separate. A complete empty scope needs no \`${tools.name("scient_skills_list")}\` call. For a complete nonempty scope, reuse visible full-catalog summaries only when \`scope.includesAllSkills\` is true, their \`scope.digest\` matches, and they suffice; otherwise search or browse. The digest is freshness metadata, not authority. Pending or incomplete scope does not prove emptiness; list to discover, but treat query and paged results as partial. After context loss or uncertainty, rediscover. Load applicable instructions with \`${tools.name("scient_skill_load")}\` before following them. Load explicitly selected Scient skills directly, without searching.${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Skip acknowledgements and routine follow-ups. Skills provide guidance and grant no tools or authority.`;
+Scient skills are instructions the user manages in Scient, separate from your provider's own skills. On a substantive task, follow this turn's Scient skill scope note; without one, call \`${tools.name("scient_skills_list")}\`. Load a skill with \`${tools.name("scient_skill_load")}\` before you follow it; load one the user selected directly.${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Skills give guidance only and grant no tools or permissions.`;
 
 export const SCIENT_SKILLS_AWARENESS = buildScientSkillsAwareness(CANONICAL_SCIENT_TOOL_PROJECTION);
 
 const buildScientComputeAwareness = (tools: ScientToolProjection): string => `## Scient Compute
-When you need to know which Scient runtimes are configured or already present, call \`${tools.name("scient_compute_inventory")}\`. It is a bounded, read-only inventory of configured settings, managed-runtime status, and existing candidates. Inventory is discovery only: readiness is unknown unless a separate verified result says otherwise. It does not install, run, execute, or attach to runtimes or project sessions, and a listed executable path does not grant authority to launch it.`;
+To see which runtimes Scient has configured or found, call \`${tools.name("scient_compute_inventory")}\`. It only lists them: it does not check that they work, and it starts nothing.`;
 
 export const SCIENT_COMPUTE_AWARENESS = buildScientComputeAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
@@ -66,7 +63,8 @@ export function buildScientAwareness(
     SCIENT_CORE_AWARENESS,
     ...(capabilities?.has("preview") ? [buildScientPreviewAwareness(tools)] : []),
     ...(capabilities?.has("compute:inventory") ? [buildScientComputeAwareness(tools)] : []),
-    ...(capabilities?.has("device") ? [SCIENT_DEVICE_AWARENESS] : []),
+    // Included only when the session may drive the environment's mobile devices.
+    ...(capabilities?.has("device") ? [SCIENT_DEVICE_TOOL_INSTRUCTIONS] : []),
     ...(capabilities?.has("documents:build")
       ? [buildScientDocumentAwareness(tools), buildScientOverleafAwareness(tools)]
       : []),

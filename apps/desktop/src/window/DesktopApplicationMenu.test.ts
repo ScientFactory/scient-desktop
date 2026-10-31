@@ -93,6 +93,9 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     runMainContentsCommand: (command) =>
       Deferred.succeed(selectedAction, `main-${command}`).pipe(Effect.asVoid),
     syncAppearance: Effect.void,
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    openNewWindow: () => Effect.succeed(false),
+    // SCIENT-FORK:END
   } satisfies DesktopWindow.DesktopWindow["Service"]);
 
 const layerElectronMenu = (
@@ -103,6 +106,9 @@ const layerElectronMenu = (
       Deferred.succeed(applicationMenuTemplate, template).pipe(Effect.asVoid),
     popupTemplate: () => Effect.void,
     showContextMenu: () => Effect.succeedNone,
+    // SCIENT-FORK:START — the Dock menu opens another app window.
+    setDockMenu: () => Effect.void,
+    // SCIENT-FORK:END
   } satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const configureMenu = (

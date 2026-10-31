@@ -4,6 +4,11 @@ A permission mode controls how much the AI can do on its own and when it stops
 to ask you. It changes the approval boundary, not the quality of the model or
 the instructions you gave it.
 
+Choose a mode in the message composer; it applies to that thread. A new thread names its mode
+under the composer. In a thread on your default mode, open the model picker and choose
+**Permissions** at its bottom, or press `mod+shift+a`. A thread on another mode shows the mode
+next to the model.
+
 Set the default for new threads in **Settings → Threads → New threads → Permissions**.
 Projects can override the environment default. New threads use this setting rather than the
 mode of the thread you were viewing. The initial default is **Full access**; existing threads

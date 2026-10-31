@@ -45,8 +45,13 @@ import * as ServerSettingsModule from "../serverSettings.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+
+const layerUnusedMutator = Layer.mock(
+  ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+)({});
 
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
@@ -102,7 +107,6 @@ const TestHttpClientLive = Layer.merge(
 const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
   removeRpcClient: () => Effect.void,
-  reportHostPowerState: () => Effect.void,
   snapshot: Effect.succeed({
     hostPower: {
       source: "unknown",
@@ -122,8 +126,6 @@ const BackgroundPolicyAlwaysRunLayer = Layer.mock(BackgroundPolicy.BackgroundPol
     shouldRunOpportunisticWork: true,
     updatedAt: TEST_EPOCH,
   }),
-  streamChanges: Stream.empty,
-  hasDemand: () => Effect.succeed(true),
   shouldRunScopeWork: () => Effect.succeed(true),
   shouldRunOpportunisticWork: Effect.succeed(true),
 });
@@ -750,6 +752,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
             ProviderRegistryLive.pipe(
+              Layer.provide(layerUnusedMutator),
               Layer.provideMerge(instanceRegistryLayer),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
@@ -879,6 +882,7 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
             const runtimeServices = yield* Layer.build(
               ProviderRegistryLive.pipe(
+                Layer.provide(layerUnusedMutator),
                 Layer.provideMerge(instanceRegistryLayer),
                 Layer.provideMerge(
                   ServerConfig.layerTest(process.cwd(), {

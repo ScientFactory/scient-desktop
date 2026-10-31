@@ -193,6 +193,7 @@ function ProjectFileSession(props: {
   const refresh = query.refresh;
   const sessionOpen = lease !== null;
   const seenChange = useRef(change);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the file over the environment connection when the change watcher fires while no session owns it
   useEffect(() => {
     if (change === seenChange.current) return;
     seenChange.current = change;
@@ -243,12 +244,14 @@ function ProjectFileSession(props: {
 
   const { pending, failure, reported, update } = props;
   const isPending = snapshot?.pending ?? false;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports this file pending state into the parent registry until unmount
   useEffect(() => {
     pending(path, isPending);
     return () => pending(path, false);
   }, [path, isPending, pending]);
   const needsAttention =
     snapshot !== null && (snapshot.conflict !== null || snapshot.error !== null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports this file save-failure state into the parent registry when attention changes
   useEffect(() => {
     failure(
       path,
@@ -259,6 +262,7 @@ function ProjectFileSession(props: {
     confirmVisualDraft(`${environmentId}\0${cwd}\0${path}`, source);
     owner.onSaved();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the lease document-saved notifications until the lease changes
   useEffect(
     () => (lease === null ? undefined : onDocumentSaved(lease, ({ source }) => saved(source))),
     [lease],
@@ -267,6 +271,7 @@ function ProjectFileSession(props: {
   // comes from the surface, a session's from its snapshot, and a file that
   // cannot be written has none.
   const observed = selected || lease !== null || (sessionless && disk !== null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports this file observed state into the parent registry until unmount
   useEffect(() => {
     if (!observed) return;
     reported(path, true);
@@ -308,6 +313,7 @@ function ProjectFileSession(props: {
     truncated = file?.truncated;
   const ownerId = file?.owner?.documentId;
   const ownerVersion = file?.owner?.editVersion;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this file state into the parent file-state registry when its data changes
   useEffect(() => {
     update(path, {
       data:
@@ -345,6 +351,7 @@ function ProjectFileSession(props: {
   ]);
   // The project keeps a removed file's last text. It must not keep its session.
   const detach = props.detach;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- detaches this file session from the registry on unmount
   useEffect(() => () => detach(path), [path, detach]);
   return null;
 }
@@ -353,6 +360,7 @@ function ProjectFileSession(props: {
 export function LatexProjectVisualEditor(props: Props) {
   const analytics = useRef<ReturnType<typeof createVisualEditAnalytics> | null>(null);
   const environmentId = props.environmentId;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the visual-edit analytics observer resource until unmount
   useEffect(() => {
     const observer = createVisualEditAnalytics(() =>
       beginScientUiOperation(environmentId, "latex-visual-edit"),
@@ -365,6 +373,7 @@ export function LatexProjectVisualEditor(props: Props) {
   }, [environmentId]);
   const [states, setStates] = useState(new Map<string, FileState>());
   const registerSaveProject = props.registerSaveProject;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the save-project callback with the parent registry until unmount
   useEffect(() => {
     registerSaveProject?.(async () => {
       const results = await Promise.all([...states.values()].map((file) => file.flush()));
@@ -447,6 +456,7 @@ export function LatexProjectVisualEditor(props: Props) {
       ? projectVisualNavigation(document, files, props.sourceNavigation)
       : null;
   const warnedNavigation = useRef<number | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts an imperative warning toast when a source-navigation request cannot be located
   useEffect(() => {
     const request = props.sourceNavigation;
     if (!document || !request || visualNavigation || warnedNavigation.current === request.requestId)
@@ -489,11 +499,13 @@ export function LatexProjectVisualEditor(props: Props) {
     }),
   );
   const stateChanged = props.onProjectStateChange;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports project pending/error state to the parent through its imperative callback
   useEffect(() => {
     stateChanged({ pending: isPending, error: saveError, sourceKey });
   }, [stateChanged, isPending, saveError, sourceKey]);
   const draftKey = `${props.environmentId}\0${props.cwd}\0project-visual:${root ?? props.relativePath}`;
   const saversReady = paths.every((path) => reportedPaths.has(path));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- confirms the visual draft in the recovery registry once all savers are idle
   useEffect(() => {
     // Idle has to be an observed state, not the flags a component starts with.
     // Each session is also asked now: an edit accepted in this very update is
@@ -528,6 +540,7 @@ export function LatexProjectVisualEditor(props: Props) {
       );
   if (!keepsSnapshot)
     setEditorProjection({ root, document, files, source: props.source, editorSnapshot });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a snapshot ref of the projection for echo suppression across commits
   useLayoutEffect(() => {
     const previous = snapshot.current;
     const selected = files.get(props.relativePath);

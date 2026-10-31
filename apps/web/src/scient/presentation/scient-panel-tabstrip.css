@@ -85,9 +85,9 @@
 }
 
 /* Every page's first row starts 10px below the strip. Each value tops up
-   what the page already leaves: Browser and Diff about 1px, documents none,
-   Files about 5px, Scientific computing 8px. Terminal already sits at about
-   10px, and Sources sets its own. */
+   what the page already leaves: Browser and Diff about 1px, documents and
+   pull requests none, Files about 5px, Scientific computing 8px. Terminal
+   already sits at about 10px, and Sources sets its own. */
 [data-scient-surface="preview"],
 [data-scient-surface="diff"] {
   padding-top: 0.5625rem;
@@ -95,7 +95,8 @@
 }
 
 [data-scient-surface="file"],
-[data-scient-surface="scient-file"] {
+[data-scient-surface="scient-file"],
+[data-scient-surface="pull-request"] {
   padding-top: 0.625rem;
   background-color: var(--background);
 }

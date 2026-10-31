@@ -48,20 +48,39 @@ const macFlags: OverleafFileFlagReader = async (paths) => {
   return flags;
 };
 
-const windowsFlags = async (paths: ReadonlyArray<string>, helper?: string) => {
-  const flags: number[] = [];
+/** Each batch fits one helper question (64 KiB of UTF-8) and, when the long-lived
+ * helper is busy and the batch launches on its own, a Windows command line. */
+export const windowsFlagBatches = (paths: ReadonlyArray<string>) => {
+  const batches: string[][] = [];
   let batch: string[] = [],
-    length = 0;
+    bytes = 0,
+    characters = 0;
   for (const path of paths) {
-    if (batch.length && (batch.length >= STAT_BATCH || length + path.length > 24_000)) {
-      flags.push(...(await windowsNativeFlags(batch, helper)));
+    const pathBytes = Buffer.byteLength(path) + 1;
+    const pathCharacters = path.length + 3;
+    if (
+      batch.length &&
+      (batch.length >= STAT_BATCH ||
+        bytes + pathBytes > 60_000 ||
+        characters + pathCharacters > 24_000)
+    ) {
+      batches.push(batch);
       batch = [];
-      length = 0;
+      bytes = 0;
+      characters = 0;
     }
     batch.push(path);
-    length += path.length + 3;
+    bytes += pathBytes;
+    characters += pathCharacters;
   }
-  if (batch.length) flags.push(...(await windowsNativeFlags(batch, helper)));
+  if (batch.length) batches.push(batch);
+  return batches;
+};
+
+const windowsFlags = async (paths: ReadonlyArray<string>, helper?: string) => {
+  const flags: number[] = [];
+  for (const batch of windowsFlagBatches(paths))
+    flags.push(...(await windowsNativeFlags(batch, helper)));
   return flags;
 };
 

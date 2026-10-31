@@ -28,6 +28,7 @@ export function ProviderVersionLabel(props: {
   } | null>(null);
   const version = props.version;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver on the label element measures overflow for each version
   useEffect(() => {
     const element = ref.current;
     if (!element) return;

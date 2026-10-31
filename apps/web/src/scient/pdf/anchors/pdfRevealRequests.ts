@@ -132,9 +132,11 @@ export function useOwnedPdfReveal(documentKey: string, owner: object): PdfReveal
 export function usePdfRevealClaim(documentKey: string): object {
   const [owner] = useState(() => ({}));
   const request = usePdfRevealRequest(documentKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- claims the PDF reveal for this owner when a request arrives
   useEffect(() => {
     if (request) claimPdfReveal(documentKey, request.id, owner);
   }, [documentKey, owner, request]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases this owner's PDF reveal claim on unmount
   useEffect(() => () => releasePdfReveal(documentKey, owner), [documentKey, owner]);
   return owner;
 }

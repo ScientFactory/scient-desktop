@@ -136,14 +136,12 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    const rawRpcClient = yield* makeOmpCustomModelsClientFactory(
+    const makeRpcClient = yield* makeOmpCustomModelsClientFactory(
       scientAgentTarget,
       serverSettings,
       instanceId,
       serverConfig.stateDir,
     ).pipe(Effect.mapError(failure("Could not prepare Scient Agent custom models.")));
-    const makeRpcClient: typeof rawRpcClient = (options) =>
-      rawRpcClient({ ...options, useClaudePlugins: effectiveConfig.useClaudePlugins });
     const managedRuntime = yield* makeScientAgentManagedRuntimeResolution({
       settings: effectiveConfig,
       baseDir: serverConfig.baseDir,
@@ -176,8 +174,7 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
       const { accounts, ...draft } = snapshot;
       return {
         ...stampIdentity(draft),
-        usesClaudePlugins:
-          effectiveConfig.useClaudePlugins && supportsScientClaudePlugins(draft.version),
+        usesClaudePlugins: supportsScientClaudePlugins(draft.version),
         connection: {
           methods: [],
           canDisconnect: false,
@@ -224,7 +221,6 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         processEnv,
         cwd ?? serverConfig.stateDir,
         args,
-        effectiveConfig.useClaudePlugins,
       ).pipe(
         Effect.provideService(OmpExecutableGate, executableGate),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -305,12 +301,7 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
     const native = yield* makeScientAgentPluginInventory(
       runPluginCommand,
       (cwd) =>
-        readScientClaudePlugins(
-          (args) => runPluginCommand(cwd, args),
-          claudeHome,
-          effectiveConfig.useClaudePlugins,
-          cwd,
-        ).pipe(
+        readScientClaudePlugins((args) => runPluginCommand(cwd, args), claudeHome, cwd).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         ),
@@ -331,7 +322,6 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
           processEnv,
           serverConfig.stateDir,
           args,
-          effectiveConfig.useClaudePlugins,
         ).pipe(
           Effect.provideService(OmpExecutableGate, executableGate),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

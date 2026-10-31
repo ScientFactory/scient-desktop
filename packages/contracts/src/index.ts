@@ -34,6 +34,8 @@ export * from "./server.ts";
 export * from "./settings.ts";
 // SCIENT-FORK: conversation-fork preferences.
 export * from "./scientForkSettings.ts";
+// SCIENT-FORK: one-time resets of saved client preferences.
+export * from "./scientClientSettingsResets.ts";
 export * from "./git.ts";
 export * from "./vcs.ts";
 export * from "./sourceControl.ts";
@@ -68,6 +70,7 @@ export * from "./guestShare.ts";
 export * from "./guestStream.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
+export * from "./peerLink.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./threadPullRequest.ts";
 export * from "./threadSearch.ts";
@@ -102,6 +105,9 @@ export * from "./browserPdfExport.ts";
 export * from "./htmlPdfBuild.ts";
 export * from "./scientDocumentExport.ts";
 export * from "./scientMarkdown.ts";
+// SCIENT-FORK:START — Scient tool input schema checks (new file, no upstream edits).
+export * from "./scientToolSchemas.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient thread queue contracts (new file, no upstream edits).
 export * from "./scientThreadQueue.ts";
 // SCIENT-FORK:END
@@ -124,7 +130,6 @@ export * from "./device.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
 export * from "./previewCapture.ts";
-export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./scheduledTask.ts";
 export * from "./worktreeMcp.ts";
@@ -138,6 +143,8 @@ export * from "./worktreeSetup.ts";
 
 export * from "./providerCitationPresentation.ts";
 export * from "./secretRequest.ts";
+export * from "./secretReference.ts";
+export * from "./settingsSecretValue.ts";
 export * from "./clientRpcPermissions.ts";
 
 export * from "./scientDocumentHost.ts";

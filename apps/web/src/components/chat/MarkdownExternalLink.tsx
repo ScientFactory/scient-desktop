@@ -1,5 +1,5 @@
 import { GlobeIcon } from "lucide-react";
-import { Children, Fragment, memo, type ReactNode } from "react";
+import { Children, memo, type ReactNode } from "react";
 
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
@@ -36,13 +36,17 @@ function leadingExternalLinkTextLength(text: string): number {
   return Math.min(text.length, 1);
 }
 
+// Keep short labels such as PR numbers intact in narrow table columns.
 function breakableExternalLinkText(text: string): ReactNode[] {
-  return Array.from(text, (character, index) => (
-    <Fragment key={`${index}:${character}`}>
-      {character}
-      <wbr />
-    </Fragment>
-  ));
+  return Array.from(text.matchAll(/\s+|\S+/g), ({ 0: word, index: start }) =>
+    word.length <= 16 ? (
+      word
+    ) : (
+      <span key={start} className="[overflow-wrap:anywhere]">
+        {word}
+      </span>
+    ),
+  );
 }
 
 export function MarkdownExternalLinkContent({
@@ -86,7 +90,7 @@ export function MarkdownExternalLinkContent({
 
   return (
     <>
-      <span className="whitespace-nowrap">
+      <span className="[overflow-wrap:anywhere]">
         <MarkdownLinkFavicon host={host} />
         {firstChild}
       </span>

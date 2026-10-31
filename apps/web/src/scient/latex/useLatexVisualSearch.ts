@@ -94,6 +94,7 @@ export function useLatexVisualSearch(
   const returnFocus = useRef<HTMLElement | null>(null);
   // Replace all runs over several paints; closing the bar or starting again stops it.
   const stopReplacing = useRef(() => {});
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops the in-flight replace-all walk on unmount
   useEffect(() => () => stopReplacing.current(), []);
   const search = useEditorState({
     editor,

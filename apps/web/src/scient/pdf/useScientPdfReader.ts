@@ -192,6 +192,7 @@ export function useScientPdfReader(input: {
   >(null);
   const disposePresentedRef = useRef<(() => void) | null>(null);
   const invalidateRef = useRef(input.onSourceInvalidated);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps invalidateRef holding the latest onSourceInvalidated callback
   useLayoutEffect(() => {
     invalidateRef.current = input.onSourceInvalidated;
   });
@@ -202,6 +203,7 @@ export function useScientPdfReader(input: {
     candidateReady: input.candidateReady,
     loadAttempt: input.loadAttempt,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps requestedSourceRef holding the latest requested source identity
   useLayoutEffect(() => {
     requestedSourceRef.current = {
       documentKey: input.documentKey,
@@ -226,6 +228,7 @@ export function useScientPdfReader(input: {
   const resetDocumentSearch = useEffectEvent((..._changes: readonly unknown[]) => {
     activeSearchQueryRef.current = "";
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the document search state in the find controller when the document changes
   useLayoutEffect(() => resetDocumentSearch(input.documentKey), [input.documentKey]);
 
   const clearSyncMarker = useStableCallback(() => {
@@ -245,6 +248,7 @@ export function useScientPdfReader(input: {
     clearSyncMarker();
     return clearSyncMarker;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the sync source marker when the source URL changes
   useEffect(
     () => resetSourceMarker(clearSyncMarker, input.sourceUrl),
     [clearSyncMarker, input.sourceUrl],
@@ -260,11 +264,13 @@ export function useScientPdfReader(input: {
     responsiveZoomRef.current = null;
     setPresentedRequest(null);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retires the presented document's DOM layer when the container or document changes
   useEffect(
     () => retirePresentedDocument(input.container, input.viewerElement, input.documentKey),
     [input.container, input.viewerElement, input.documentKey],
   );
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the PDF via PDF.js into the container DOM node, wiring its eventBus, wheel listener, and teardown until the source changes or unmount
   useEffect(() => {
     if (!input.container || !input.viewerElement) return;
     // Render already moved the reader state: cleared, settled or updating.

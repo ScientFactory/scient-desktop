@@ -28,6 +28,7 @@ import {
   secretFields,
   siteMatchesUrl,
   matchExistingProfile,
+  changedSourceProfile,
   toggleScope,
 } from "./accountsView";
 
@@ -274,6 +275,35 @@ describe("matchExistingProfile", () => {
     ],
   ])("returns %s", (_, name, sources, expected) => {
     expect(matchExistingProfile(name, sources)?.profile.name).toBe(expected);
+  });
+});
+
+describe("changedSourceProfile", () => {
+  const record = {
+    ...defaultBrowserProfileRecord("profile-work"),
+    picture: "data:image/png;base64,AAAA",
+    source: {
+      browser: "chrome" as const,
+      profileName: "Work",
+      directory: "Profile 4",
+      importedAt: "2026-10-28T00:00:00.000Z",
+    },
+  };
+  const chrome = (profile: { name: string; picture?: string; directory?: string }) => [
+    {
+      id: "chrome" as const,
+      name: "Chrome",
+      profiles: [{ directory: "Profile 4", ...profile }],
+    },
+  ];
+
+  it.each([
+    ["a new picture", { name: "Work", picture: "data:image/png;base64,BBBB" }, "Work"],
+    ["a rename in the source browser, by folder", { name: "HUJI" }, "HUJI"],
+    ["nothing when unchanged", { name: "Work", picture: record.picture }, undefined],
+    ["nothing when the folder is gone", { name: "Work", directory: "Profile 9" }, undefined],
+  ])("returns %s", (_, profile, expected) => {
+    expect(changedSourceProfile(record, chrome(profile))?.name).toBe(expected);
   });
 });
 

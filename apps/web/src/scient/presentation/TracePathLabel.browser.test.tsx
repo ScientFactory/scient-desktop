@@ -150,7 +150,6 @@ it.each([false, true])(
         routeThreadKey="trace-path-browser"
         timelineEntries={[{ id: "read-path", kind: "work", createdAt: date, entry: read }]}
         isWorking={live}
-        activeTurnInProgress={live}
         activeTurnStartedAt={live ? date : null}
         latestRun={
           live
@@ -162,7 +161,6 @@ it.each([false, true])(
         onOpenTurnDiff={() => {}}
         onOpenThread={() => {}}
         onForkFromRun={() => Promise.resolve()}
-        onRollbackCheckpoint={() => {}}
         supportsConversationRollback={false}
         onRevertToTurnCount={() => {}}
         isRevertingCheckpoint={false}

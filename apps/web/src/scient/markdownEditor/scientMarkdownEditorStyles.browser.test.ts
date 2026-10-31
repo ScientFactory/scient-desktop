@@ -308,17 +308,13 @@ function _createFixture() {
 }
 
 // regression: c66c948db0 chore(upstream): merge t3 through 81dea7821d
-it("retains the established preview table expansion and export controls", async () => {
+it("retains the established preview table export controls", async () => {
   await using _fixture = _createFixture();
 
   expect(previewRendererSource).toContain('from "./chat/MarkdownTable"');
   expect(previewRendererSource).toContain("<MarkdownTable {...props} dir={tableDirection} />");
-  for (const label of [
-    '"Collapse table cells"',
-    '"Expand table cells"',
-    "Copy as Markdown",
-    "Copy as CSV",
-  ]) {
+  // Upstream removed the expand/collapse toggle: tables always open fitted.
+  for (const label of ["Copy as Markdown", "Copy as CSV"]) {
     expect(tableRendererSource).toContain(label);
   }
 });

@@ -380,7 +380,6 @@ describe("V2 Compute worktree cleanup lifecycle", () => {
       for (let claimedCount = 0; claimedCount < effects.length; claimedCount += 1) {
         const claimed = yield* outbox.claimNext({
           workerId: "cleanup-test",
-          leaseDurationMs: 60_000,
         });
         assert.isTrue(Option.isSome(claimed));
         if (Option.isNone(claimed)) return;

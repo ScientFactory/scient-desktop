@@ -61,6 +61,9 @@ import {
 } from "~/state/session";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+// SCIENT-FORK:START — several desktop windows share the saved client settings.
+import { createClientSettingsWindowSync } from "~/scient/multiWindow/clientSettingsSync";
+// SCIENT-FORK:END
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -75,6 +78,18 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+// SCIENT-FORK:START — several desktop windows share the saved client settings.
+const clientSettingsWindowSync = createClientSettingsWindowSync({
+  isHydrated: () => clientSettingsHydrationStatus === "ready",
+  current: getClientSettingsSnapshot,
+  replace: replaceClientSettingsSnapshot,
+  hydrateWith: (saved) => {
+    clientSettingsHydrationGeneration += 1;
+    replaceClientSettingsSnapshot(saved);
+    setClientSettingsHydrationStatus("ready");
+  },
+});
+// SCIENT-FORK:END
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -130,6 +145,9 @@ export function subscribeClientSettingsHydration(listener: () => void): () => vo
 }
 
 async function hydrateClientSettings(): Promise<void> {
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  clientSettingsWindowSync.listen();
+  // SCIENT-FORK:END
   if (clientSettingsHydrationStatus === "ready") {
     return;
   }
@@ -179,7 +197,9 @@ const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<voi
   ensureLocalApi().persistence.setClientSettings(settings);
 
 function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A> {
-  const result = clientSettingsPersistenceQueue.then(work);
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  const result = clientSettingsPersistenceQueue.then(clientSettingsWindowSync.queuedWrite(work));
+  // SCIENT-FORK:END
   clientSettingsPersistenceQueue = result.then(
     () => undefined,
     () => undefined,
@@ -199,6 +219,9 @@ export function persistClientSettingsPatch(
   } else {
     replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
   }
+  // SCIENT-FORK:START — settings another window saves meanwhile must keep unsaved patches.
+  clientSettingsWindowSync.holdPatch(patch);
+  // SCIENT-FORK:END
   return enqueueClientSettingsPersistence(async () => {
     if (deferPatch) {
       try {
@@ -383,14 +406,15 @@ export function useMergedSettings<T = UnifiedSettings>(
   });
 }
 
-export function resolveEnvironmentIdentificationMode(input: {
+function resolveEnvironmentIdentificationMode(input: {
   mode: EnvironmentIdentificationMode;
   settingsHydrated: boolean;
   paletteThemeActive?: boolean;
   paletteThemeAllowsArtwork?: boolean;
 }): EnvironmentIdentificationMode {
   if (!input.settingsHydrated) return "none";
-  return input.paletteThemeActive && !input.paletteThemeAllowsArtwork && input.mode === "artwork"
+  const isArtwork = input.mode !== "pill" && input.mode !== "none";
+  return input.paletteThemeActive && !input.paletteThemeAllowsArtwork && isArtwork
     ? "pill"
     : input.mode;
 }
@@ -414,11 +438,11 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
   });
 }
 
-/** Wait for hydration: swapping sidebar implementations after mount remounts the whole tree. */
-export function useLegacySidebarEnabled(): boolean {
-  const settingsHydrated = useClientSettingsHydrated();
-  const legacySidebarEnabled = useClientSettings((settings) => settings.legacySidebarEnabled);
-  return settingsHydrated && legacySidebarEnabled;
+/** Legacy sidebar opt-ins still count, so those users land in the boring sidebar. */
+export function useBoringSidebarEnabled(): boolean {
+  return useClientSettings(
+    (settings) => settings.boringSidebarEnabled || settings.legacySidebarEnabled,
+  );
 }
 
 export async function prepareModelPreferencesPatch(
@@ -573,7 +597,7 @@ function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<E
     if (includePending && result._tag === "Initial") {
       return [environmentId];
     }
-    const session = result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
+    const session = result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null);
     return session !== null && sessionGrantsScope(session, AuthSettingsWriteScope)
       ? [environmentId]
       : [];
@@ -650,7 +674,6 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
           const target = environments.find((candidate) => candidate.environmentId === targetId);
           const targetPatch = filterSharedServerPatch(
             sharedPatch,
-            target?.serverConfig?.environment.capabilities,
             target?.serverConfig?.settings,
             sourceSettings,
             targetId === environmentId,
@@ -738,6 +761,9 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  clientSettingsWindowSync.reset();
+  // SCIENT-FORK:END
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }

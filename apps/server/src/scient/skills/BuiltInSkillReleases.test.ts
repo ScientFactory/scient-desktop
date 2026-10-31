@@ -50,7 +50,7 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.pdf-authoring",
-        version: "0.3.0",
+        version: "0.3.1",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 40,
@@ -61,7 +61,7 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.html-pdf-authoring",
-        version: "0.3.0",
+        version: "0.3.1",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 50,
@@ -72,7 +72,7 @@ describe("Scient built-in skill releases", () => {
       },
       {
         id: "scient.latex-authoring",
-        version: "0.3.0",
+        version: "0.3.1",
         category: "Document creation",
         categoryDescription: "Create polished documents and reliable final outputs.",
         displayOrder: 60,
@@ -195,7 +195,7 @@ describe("Scient built-in skill releases", () => {
     expect(latexAuthoring.instructions).toContain("This skill grants no tools or authority");
     for (const authoringSkill of [pdfAuthoring, htmlPdfAuthoring, latexAuthoring]) {
       expect(authoringSkill.instructions).toContain("Scient chat");
-      expect(authoringSkill.instructions).toContain("clickable project-relative Markdown link");
+      expect(authoringSkill.instructions).toContain("clickable Markdown link");
     }
   });
 });

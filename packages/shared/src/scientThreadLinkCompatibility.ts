@@ -5,24 +5,7 @@ import * as Schema from "effect/Schema";
 const decodeEnvironmentId = Schema.decodeUnknownOption(EnvironmentId);
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
 
-/** Keeps a copied historical link bound to its recorded environment. */
-export function formatEnvironmentQualifiedThreadLink(
-  environmentId: string,
-  threadId: string,
-  title: string,
-): string {
-  const encodeSegment = (id: string) =>
-    encodeURIComponent(id).replace(/\(/g, "%28").replace(/\)/g, "%29");
-  const label =
-    title
-      .replace(/[[\]\\\r\n]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 120) || "Untitled thread";
-  return `[${label}](t3-thread://v1/${encodeSegment(environmentId)}/${encodeSegment(threadId)})`;
-}
-
-/** Reads environment-qualified links already stored in conversations and exports. */
+/** Reads environment-qualified v1 links already stored in conversations and exports. */
 export function parseEnvironmentQualifiedThreadLinkHref(
   href: string,
 ): { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null {

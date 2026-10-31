@@ -316,6 +316,10 @@ it.layer(TestLayer)("bounded immutable context sources", (it) => {
         alreadyDeliveredItemIds: new Set(),
       });
       assert.notInclude(small.context, "Unique original summary");
+      assert.include(
+        small.context,
+        `scient_handoff_summary_read({threadId:"${threadId}",contextHandoffId:"${handoff.id}"})`,
+      );
     }),
   );
 

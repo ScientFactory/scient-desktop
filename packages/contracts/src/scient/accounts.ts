@@ -290,6 +290,8 @@ export const ProfileColor = Schema.String.check(Schema.isPattern(/^#[0-9a-f]{6}$
 export const BrowserProfileSource = Schema.Struct({
   browser: BrowserImportSourceId,
   profileName: TrimmedNonEmptyString,
+  /** The source profile's folder; unlike its name, it survives a rename in that browser. */
+  directory: Schema.optional(TrimmedNonEmptyString),
   email: Schema.optional(TrimmedNonEmptyString),
   importedAt: IsoDateTime,
 });

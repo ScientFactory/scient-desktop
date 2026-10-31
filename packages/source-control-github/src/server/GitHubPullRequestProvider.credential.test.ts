@@ -12,6 +12,14 @@ import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
 import * as GitHubPullRequestProvider from "./GitHubPullRequestProvider.ts";
 import * as GitHubQuota from "./GitHubQuota.ts";
 import * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubAppAccess from "./GitHubAppAccess.ts";
+import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+
+const appSignedOut = Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({
+  enabled: false,
+  token: () => Effect.succeedNone,
+  invalidate: () => Effect.void,
+});
 
 // SCIENT-FORK:START pull-request-branch-deletion-gate — released clients cannot decode delete-branch.
 // Keep the offer and service gated while retaining deletion credential continuity checks.
@@ -31,6 +39,8 @@ it.effect(
               source: "gh" as const,
               fingerprint: `${host}:${activeToken}`,
             })),
+          saved: () => Effect.succeedNone,
+          fingerprint: (host, token) => Effect.succeed(`${host}:${token}`),
           invalidate: () => Effect.void,
         }),
       );
@@ -105,10 +115,11 @@ it.effect(
       const provider = yield* GitHubPullRequestProvider.make.pipe(
         Effect.provide(
           GitHubPullRequestApi.layer.pipe(
+            Layer.provideMerge(GitHubAppAccess.layer),
             // GraphQL reads go over `http` too, through the same credential and quota as REST.
             Layer.provide(
               GitHubRest.layer.pipe(
-                Layer.provideMerge(Layer.mergeAll(credentials, http)),
+                Layer.provideMerge(Layer.mergeAll(credentials, http, appSignedOut)),
                 Layer.provideMerge(GitHubQuota.layer),
                 Layer.provideMerge(SourceControlRateLimit.layer),
               ),

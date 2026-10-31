@@ -24,6 +24,7 @@ import * as ManagedRuntimeCatalog from "../../scient/providerLifecycle/ManagedRu
 import { CursorDriver, type CursorDriverCompositionEnv } from "./CursorDriverComposition.ts";
 import { makeProviderInstanceRegistry } from "../ProviderInstanceRegistry.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 
 const instanceId = ProviderInstanceId.make("cursor-scient-composition");
 const noApiKeyId = ProviderInstanceId.make("cursor-no-api-key");
@@ -41,6 +42,7 @@ const testLayer = Layer.mergeAll(
   ModelManifest.layerTest,
   ProviderLatestVersions.layer,
   McpProviderSessions.layer,
+  Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.succeed(CursorKeychain.CursorKeychain, {
     accessToken: Effect.die("Cursor composition must not read real Keychain credentials"),
   }),

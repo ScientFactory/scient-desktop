@@ -10,14 +10,13 @@ import {
 import type { McpPluginKeyPolicy } from "@t3tools/provider-core/server/mcpSession";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
-import * as Schema from "effect/Schema";
 import type { ProviderRegistryShape } from "../../provider/ProviderRegistry.ts";
 import type { ConnectorRuntimeShape, EligibleConnector } from "./ExtensionsServices.ts";
 import type { PluginKeyBindings } from "./PluginKeyBindings.ts";
 import { readLocalPluginContents, readLocalPluginKeyHttpServers } from "./LocalPluginContents.ts";
 import { pluginKeyHttpOrigins } from "./PluginKeyHttpServers.ts";
 import type { PluginKeyHttpServer } from "./PluginKeyHttpServers.ts";
-const pathOf = Schema.decodeUnknownOption(Schema.Struct({ path: Schema.String }));
+import { listPluginKeyRoots } from "./PluginKeyStartup.ts";
 const fingerprint = (input: unknown) =>
   NodeCrypto.createHash("sha256").update(JSON.stringify(input)).digest("hex");
 const denied = () =>
@@ -116,16 +115,10 @@ export const preparePluginKeyHttpDelivery = Effect.fn("PluginKeyHttpDelivery.pre
         if (!thread || thread.providerInstanceId !== input.agent) return yield* denied();
         const actions = yield* providers.getProviderPluginActionsForInstance(input.agent);
         if (!actions || (yield* actions.isRetired)) return yield* denied();
-        const current = (yield* actions.listPlugins(
-          input.cwd ? { cwd: input.cwd } : {},
-        )).plugins.find((plugin) => plugin.id === policy.bindingPluginId && plugin.enabled);
-        if (!current) return yield* denied();
-        const parsed = pathOf(current);
-        const currentRoot =
-          parsed._tag === "Some"
-            ? parsed.value.path
-            : yield* actions.store?.keyServerRoot?.(current.id) ?? Effect.void;
-        if (currentRoot !== root) return yield* denied();
+        const current = (yield* listPluginKeyRoots(actions, input.cwd, true)).find(
+          (plugin) => plugin.id === policy.bindingPluginId && plugin.enabled,
+        );
+        if (current?.root !== root) return yield* denied();
         const contents = yield* Effect.tryPromise(() => readLocalPluginContents(root));
         if (!(yield* bindings.checkBindings(target, contents.requiredKeys, expectedRefs)))
           return yield* denied();

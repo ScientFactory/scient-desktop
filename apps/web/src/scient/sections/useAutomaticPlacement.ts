@@ -101,12 +101,14 @@ export function useAutomaticPlacement(input: {
     new Map<string, { before: string | null; after: string; row: PlacementRow }>(),
   );
   const latest = useRef({ ...input, groups, state, storageKey, enabled, isFrozen });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the latest ref holding current placement inputs for timers
   useLayoutEffect(() => {
     latest.current = { ...input, groups, state, storageKey, enabled, isFrozen };
   });
 
   // Reconcile synchronized external snapshots before paint. Transient renderer updates
   // keep the same signature, so neither this reconciliation nor persistence repeats.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles optimistic writes and moves with the incoming groups snapshot into the placement reducer
   useLayoutEffect(() => {
     if (!enabled) {
       writes.current.clear();
@@ -176,6 +178,7 @@ export function useAutomaticPlacement(input: {
     storageKey,
   ]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- arms a timer that advances the placement clock at the next pending deadline
   useEffect(() => {
     if (!enabled || !input.ready || paused) return;
     // A frozen row's deadline waits for its environment, so it never arms the timer.
@@ -190,6 +193,7 @@ export function useAutomaticPlacement(input: {
     return () => window.clearTimeout(timer);
   }, [enabled, input.ready, isFrozen, paused, state.pending]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists placement groups to localStorage on a debounce timer
   useEffect(() => {
     if (!enabled || !input.ready || paused) return;
     const timer = window.setTimeout(() => {

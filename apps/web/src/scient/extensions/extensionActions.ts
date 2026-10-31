@@ -184,6 +184,7 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
   } | null>(null);
   if (tested !== null && tested.identity !== toolsIdentity) setTested(null);
   const liveToolsIdentity = useRef(toolsIdentity);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the tools identity for async sign-in handlers to read
   useEffect(() => {
     liveToolsIdentity.current = toolsIdentity;
   }, [toolsIdentity]);

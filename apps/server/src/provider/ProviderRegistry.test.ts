@@ -10,6 +10,7 @@ import { scientAntigravityInstallationLayer } from "../scient/providerLifecycle/
 import * as OmpExecutableGate from "./omp/OmpExecutableGate.ts";
 import { PtyAdapter } from "@t3tools/shared/PtyAdapter";
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
+import * as CodexErrors from "effect-codex-app-server/errors";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as CodexInstallation from "./CodexInstallation.ts";
@@ -46,6 +47,7 @@ import {
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -57,7 +59,6 @@ import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
 import * as ProviderLifecycleCoordinator from "../scient/providerLifecycle/ProviderLifecycleCoordinator.ts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ResetCreditCoordinator from "./resetCreditCoordinator.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -66,6 +67,7 @@ import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRunt
 import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderInstanceRegistryHydration from "./ProviderInstanceRegistryHydration.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettingsModule from "../serverSettings.ts";
 import {
@@ -79,6 +81,7 @@ import type {
   ProviderWorkspaceSnapshot,
 } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 // SCIENT-FORK: the shared driver error moved with the driver SPI.
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
@@ -103,6 +106,7 @@ const disabledDefaultSlots = (
   );
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
 
 process.env.T3CODE_CURSOR_ENABLED = "1";
@@ -125,6 +129,10 @@ const withoutLiveInventoryGeneration = ({
 };
 // SCIENT-FORK:END
 
+const layerUnusedMutator = Layer.mock(
+  ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
+)({});
+
 const layerTestHttpClient = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -135,7 +143,6 @@ const layerTestHttpClient = Layer.succeed(
 const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPolicy)({
   reportClientActivity: () => Effect.void,
   removeRpcClient: () => Effect.void,
-  reportHostPowerState: () => Effect.void,
   snapshot: Effect.succeed({
     hostPower: {
       source: "unknown",
@@ -155,8 +162,6 @@ const layerBackgroundPolicyAlwaysRun = Layer.mock(BackgroundPolicy.BackgroundPol
     shouldRunOpportunisticWork: true,
     updatedAt: TEST_EPOCH,
   }),
-  streamChanges: Stream.empty,
-  hasDemand: () => Effect.succeed(true),
   shouldRunScopeWork: () => Effect.succeed(true),
   shouldRunOpportunisticWork: Effect.succeed(true),
 });
@@ -238,6 +243,20 @@ function layerMockSpawner(
     }),
   );
 }
+
+// A Codex CLI on disk whose `app-server` and `--version` behave as `script` says.
+const writeFakeCodexCli = Effect.fn("writeFakeCodexCli")(function* (script: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-fake-codex-" });
+  const binaryPath = path.join(directory, "codex");
+  yield* fs.writeFileString(binaryPath, `#!/bin/sh\n${script}\n`);
+  yield* fs.chmod(binaryPath, 0o755);
+  return { directory, binaryPath };
+});
+
+// The npm `@openai/codex` 0.1 CLI treats `app-server` as a prompt and exits 1.
+const OBSOLETE_CODEX_APP_SERVER = `echo "Missing OpenAI API key." >&2; exit 1`;
 
 const codexModelCapabilities = createModelCapabilities({
   optionDescriptors: [
@@ -369,6 +388,13 @@ const layerTestNodeServices = Layer.mergeAll(
   Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
     getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
   }),
+  // An empty home, so the developer's own Claude settings never reach provider probes.
+  Layer.effect(
+    HostProcess.HomeDirectory,
+    Effect.gen(function* () {
+      return yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+    }),
+  ).pipe(Layer.provide(NodeServices.layer)),
 );
 
 function layerMockCommandSpawner(
@@ -509,6 +535,28 @@ it.layer(
       }),
     );
 
+    it.effect("labels the plan the usage read reports over the cached login plan", () =>
+      Effect.gen(function* () {
+        const statusWithUsagePlan = (planType: string | null) =>
+          checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                rateLimits: { snapshot: { planType }, resetCredits: null },
+              }),
+            ),
+          );
+
+        const downgraded = yield* statusWithUsagePlan("free");
+        assert.strictEqual(downgraded.auth.label, "ChatGPT Free Subscription");
+
+        const unreported = yield* statusWithUsagePlan(null);
+        assert.strictEqual(unreported.auth.label, "ChatGPT Pro 200 Subscription");
+
+        const unknown = yield* statusWithUsagePlan("unknown");
+        assert.strictEqual(unknown.auth.label, "ChatGPT Pro 200 Subscription");
+      }),
+    );
+
     it.effect("returns unauthenticated when app-server requires OpenAI auth", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
@@ -550,6 +598,137 @@ it.layer(
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+      }),
+    );
+
+    it.effect("reads the version of a Codex CLI too old to run app-server (#20351)", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const codexHome = yield* FileSystem.FileSystem.pipe(
+          Effect.flatMap((fs) => fs.makeTempDirectoryScoped({ prefix: "t3-codex-home-" })),
+        );
+        const { binaryPath } = yield* writeFakeCodexCli(
+          [
+            `if [ "$1" = "--version" ]; then`,
+            // The fallback runs with the provider's environment and CODEX_HOME.
+            `  [ "$CODEX_HOME" = "${codexHome}" ] && [ "$FAKE_CODEX_ENV" = "kept" ] || exit 2`,
+            `  echo 0.1.4161006; exit 0`,
+            `fi`,
+            OBSOLETE_CODEX_APP_SERVER,
+          ].join("\n"),
+        );
+        const settings = decodeCodexSettings({ binaryPath, homePath: codexHome });
+
+        const status = yield* checkCodexProviderStatus(settings, undefined, {
+          ...process.env,
+          FAKE_CODEX_ENV: "kept",
+        });
+
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.installed, true);
+        assert.strictEqual(status.version, "0.1.4161006");
+        assert.match(status.message ?? "", /^Codex app-server provider probe failed: /);
+        const classified = withBundledCompatibility({
+          ...status,
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+        });
+        assert.strictEqual(classified.compatibilityAdvisory?.status, "broken");
+      }),
+    );
+
+    it.effect("keeps a prerelease --version unclassified instead of reading it as stable", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const { binaryPath } = yield* writeFakeCodexCli(
+          [
+            `[ "$1" = "--version" ] && { echo "codex-cli 0.159.0-alpha.1"; exit 0; }`,
+            OBSOLETE_CODEX_APP_SERVER,
+          ].join("\n"),
+        );
+
+        const status = yield* checkCodexProviderStatus(decodeCodexSettings({ binaryPath }));
+
+        assert.strictEqual(status.version, "0.159.0-alpha.1");
+        const classified = withBundledCompatibility({
+          ...status,
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+        });
+        assert.strictEqual(classified.compatibilityAdvisory?.status, "unknown");
+      }),
+    );
+
+    it.effect("keeps the probe failure without a version when --version also fails", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const { binaryPath } = yield* writeFakeCodexCli(
+          [
+            `[ "$1" = "--version" ] && { echo "codex 0.1.0" >&2; exit 3; }`,
+            OBSOLETE_CODEX_APP_SERVER,
+          ].join("\n"),
+        );
+
+        const status = yield* checkCodexProviderStatus(decodeCodexSettings({ binaryPath }));
+
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.installed, true);
+        assert.strictEqual(status.version, null);
+        assert.match(status.message ?? "", /^Codex app-server provider probe failed: /);
+      }),
+    );
+
+    it.effect("bounds a hanging Codex --version fallback and releases its process scope", () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const released = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.gen(function* () {
+            yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
+            return ChildProcessSpawner.makeHandle({
+              ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+              exitCode: Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+            });
+          }),
+        );
+        const fiber = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.fail(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.forkChild,
+        );
+        yield* Deferred.await(started);
+        yield* TestClock.adjust("4 seconds");
+        const status = yield* Fiber.join(fiber);
+        assert.strictEqual(status.version, null);
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.installed, true);
+        assert.match(status.message ?? "", /^Codex app-server provider probe failed: /);
+        assert.isTrue(yield* Deferred.isDone(released));
+      }),
+    );
+
+    it.effect("does not run --version when the Codex executable cannot start", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { directory, binaryPath } = yield* writeFakeCodexCli(
+          `touch "$(dirname "$0")/ran"; echo 0.1.4161006`,
+        );
+
+        const status = yield* checkCodexProviderStatus(decodeCodexSettings({ binaryPath }), () =>
+          Effect.fail(
+            new CodexErrors.CodexAppServerSpawnError({
+              command: `${binaryPath} app-server`,
+              cause: new Error("spawn ENOENT"),
+            }),
+          ),
+        );
+
+        assert.strictEqual(status.installed, false);
+        assert.strictEqual(status.version, null);
+        assert.isFalse(yield* fs.exists(path.join(directory, "ran")));
       }),
     );
   });
@@ -1083,7 +1262,12 @@ it.layer(
                   retainedModels,
                 );
               }).pipe(
-                Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerInstanceRegistry))),
+                Effect.provide(
+                  ProviderRegistry.layer.pipe(
+                    Layer.provide(layerInstanceRegistry),
+                    Layer.provide(layerUnusedMutator),
+                  ),
+                ),
                 Effect.scoped,
               );
             }
@@ -1223,7 +1407,12 @@ it.layer(
                 retainedModels,
               );
             }).pipe(
-              Effect.provide(ProviderRegistry.layer.pipe(Layer.provide(layerInstanceRegistry))),
+              Effect.provide(
+                ProviderRegistry.layer.pipe(
+                  Layer.provide(layerInstanceRegistry),
+                  Layer.provide(layerUnusedMutator),
+                ),
+              ),
               Effect.scoped,
             );
           }
@@ -1497,6 +1686,7 @@ it.layer(
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
             ProviderRegistry.layer.pipe(
+              Layer.provide(layerUnusedMutator),
               Layer.provideMerge(layerInstanceRegistry),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
@@ -1586,6 +1776,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -1736,7 +1927,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderMaintenanceRunner.layer.pipe(
-            Layer.provideMerge(ProviderRegistry.layer),
+            Layer.provideMerge(ProviderRegistry.layer.pipe(Layer.provide(layerUnusedMutator))),
             Layer.provideMerge(ProviderLifecycleCoordinator.layer),
             Layer.provideMerge(
               Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
@@ -1818,9 +2009,10 @@ it.layer(
             events.filter((event) => event === "update"),
             ["update"],
           );
-          assert.strictEqual(events[0], "update");
+          // The version check before an update probes the instance; the caches refresh after it.
+          const afterUpdate = events.slice(events.indexOf("update"));
           assert.deepStrictEqual(
-            events.filter((event) => event.startsWith("probe:")).toSorted(),
+            afterUpdate.filter((event) => event.startsWith("probe:")).toSorted(),
             [
               "probe:personal",
               "probe:work",
@@ -1828,7 +2020,10 @@ it.layer(
             ].toSorted(),
           );
           for (const id of ["personal", "work"]) {
-            assert.isBelow(events.indexOf(`invalidate:${id}`), events.indexOf(`probe:${id}`));
+            assert.isBelow(
+              afterUpdate.indexOf(`invalidate:${id}`),
+              afterUpdate.indexOf(`probe:${id}`),
+            );
             assert.include(events, `invalidate:${id}`);
             const provider = result.providers.find((p) => p.instanceId === id);
             assert.deepStrictEqual(
@@ -1994,6 +2189,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2229,6 +2425,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2422,6 +2619,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2537,6 +2735,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(instanceRegistryLayer),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2651,6 +2850,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -2791,6 +2991,7 @@ it.layer(
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const runtimeServices = yield* Layer.build(
             ProviderRegistry.layer.pipe(
+              Layer.provide(layerUnusedMutator),
               Layer.provideMerge(layerInstanceRegistry),
               Layer.provideMerge(
                 ServerConfig.layerTest(process.cwd(), {
@@ -2896,6 +3097,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -3016,6 +3218,7 @@ it.layer(
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const runtimeServices = yield* Layer.build(
           ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
             Layer.provideMerge(layerInstanceRegistry),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
@@ -3075,14 +3278,16 @@ it.layer(
                     homePath: `/tmp/${missingBinary}_home`,
                   },
                 },
-              } as unknown as ContractServerSettings["providerInstances"],
+              } as unknown as (typeof ServerSettings.Encoded)["providerInstances"],
             }),
           ),
         );
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
-          Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+          Layer.provideMerge(
+            ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+          ),
           Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
@@ -3193,7 +3398,8 @@ it.layer(
         const mutableServerSettings = yield* makeMutableServerSettingsService(
           decodeServerSettings(
             deepMerge(encodedDefaultServerSettings, {
-              providerInstances,
+              providerInstances:
+                providerInstances as (typeof ServerSettings.Encoded)["providerInstances"],
             }),
           ),
         );
@@ -3208,7 +3414,9 @@ it.layer(
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
-          Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+          Layer.provideMerge(
+            ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+          ),
           Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
@@ -3347,14 +3555,16 @@ it.layer(
                   enabled: false,
                   config: { arbitrary: "payload" },
                 },
-              } as unknown as ContractServerSettings["providerInstances"],
+              } as unknown as (typeof ServerSettings.Encoded)["providerInstances"],
             }),
           ),
         );
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
-          Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+          Layer.provideMerge(
+            ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+          ),
           Layer.provideMerge(scientAntigravityInstallationLayer),
           Layer.provideMerge(
             Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
@@ -3511,9 +3721,9 @@ it.layer(
         ),
       );
       readSeed = false;
-      const services = yield* Layer.build(ProviderInstanceRegistryHydration.layer).pipe(
-        Effect.provide(dependencies),
-      );
+      const services = yield* Layer.build(
+        ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+      ).pipe(Effect.provide(dependencies));
       failCurrentRead = input.failCurrentRead ?? false;
       yield* PubSub.publish(changes, undefined);
       yield* Deferred.succeed(consume, undefined);
@@ -3578,7 +3788,10 @@ it.layer(
           const serverSettings = yield* makeMutableServerSettingsService(
             decodeServerSettings(
               deepMerge(encodedDefaultServerSettings, {
-                providerInstances: disabledDefaultSlots("codex", "grok"),
+                providerInstances: disabledDefaultSlots(
+                  "codex",
+                  "grok",
+                ) as (typeof ServerSettings.Encoded)["providerInstances"],
               }),
             ),
           );
@@ -3586,7 +3799,9 @@ it.layer(
           const scope = yield* Scope.make();
           yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
           const layerProviderRegistry = ProviderRegistry.layer.pipe(
-            Layer.provideMerge(ProviderInstanceRegistryHydration.layer),
+            Layer.provideMerge(
+              ProviderInstanceRegistryHydration.layer.pipe(Layer.provide(PortScanner.layerTest)),
+            ),
             Layer.provideMerge(scientAntigravityInstallationLayer),
             Layer.provideMerge(
               Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
@@ -3957,6 +4172,44 @@ it.layer(
       ),
     );
 
+    it.effect("tells a logged-out CLI which models need a Claude Code update", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+          { ANTHROPIC_BASE_URL: "" },
+          undefined,
+          {
+            models: [
+              {
+                model: { slug: "claude-next", name: "Next", isCustom: false, capabilities: null },
+                runtime: {},
+                compatibility: { minVersion: "1.1.0" },
+              },
+            ],
+          },
+        );
+        assert.strictEqual(status.auth.status, "unauthenticated");
+        assert.deepStrictEqual(status.updateRequiredModels, [
+          { slug: "claude-next", name: "Next", minVersion: "1.1.0" },
+        ]);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            if (joined === "auth status --json")
+              return { stdout: '{"loggedIn":false}\n', stderr: "", code: 1 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect.each([
       { source: "inherited HTTPS endpoint", baseUrl: "https://proxy.example/api", overrides: [] },
       {
@@ -3993,6 +4246,68 @@ it.layer(
           }),
         ),
       ),
+    );
+
+    it.effect.each([
+      {
+        settings: { env: { ANTHROPIC_BASE_URL: "https://hub.example.ts.net:8317" } },
+        baseUrl: "https://api.anthropic.com",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+      },
+      {
+        settings: { env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" } },
+        baseUrl: "https://proxy.example",
+        type: "apiKey",
+        label: "Claude API Key",
+      },
+      {
+        settings: {},
+        baseUrl: "https://proxy.example",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+      },
+    ])(
+      "uses the settings endpoint before the process endpoint: $type / $baseUrl",
+      ({ settings, baseUrl, type, label }) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const configDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-settings-",
+          });
+          yield* fileSystem.writeFileString(
+            path.join(configDir, "settings.json"),
+            JSON.stringify(settings),
+          );
+          const stateDir = yield* fileSystem.makeTempDirectoryScoped();
+          yield* fileSystem.makeDirectory(path.join(stateDir, ".claude"));
+          yield* fileSystem.writeFileString(
+            path.join(stateDir, ".claude", "settings.json"),
+            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://state-dir.example" } }),
+          );
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, homePath: configDir },
+            claudeCapabilities({
+              tokenSource: "ANTHROPIC_AUTH_TOKEN",
+              apiKeySource: "none",
+              apiProvider: "firstParty",
+            }),
+            { ANTHROPIC_BASE_URL: baseUrl },
+            stateDir,
+          );
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.type, type);
+          assert.strictEqual(status.auth.label, label);
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
     );
 
     it.effect.each([

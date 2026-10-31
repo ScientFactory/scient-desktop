@@ -11,9 +11,9 @@ import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
 import { acpMcpBridgeCommand, acpMcpCallCommand } from "./cli/acpMcpBridge.ts";
 import { authCommand } from "./cli/auth.ts";
+import { environmentCommand } from "./cli/environment.ts";
 import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
-import { connectCommand } from "./cli/connect.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
@@ -31,6 +31,10 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
+import { connectCommand, statusCommand, upCommand } from "./cli/up.ts";
+// SCIENT-FORK:START — connect without the service lifecycle.
+import { scientConnectCommand } from "./cli/connect.ts";
+// SCIENT-FORK:END
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -63,7 +67,7 @@ export const makeCli = ({
   serviceEnabled = !SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled,
 } = {}) =>
   Command.make(SCIENT_DESKTOP_IDENTITY.cliCommandName, { ...sharedServerCommandFlags }).pipe(
-    Command.withDescription("Run the Scient server."),
+    Command.withDescription("Run the Scient server. Opens it in your browser."),
     Command.withHandler(runDefaultServerCommand),
     Command.withSubcommands([
       Command.make("help").pipe(
@@ -84,6 +88,7 @@ export const makeCli = ({
       appCommand,
       pairCommand,
       authCommand,
+      environmentCommand,
       browserCommand,
       projectCommand,
       threadCommand,
@@ -91,6 +96,8 @@ export const makeCli = ({
       // Scient. Desktop updates use the owned desktop updater.
       ...(serviceEnabled
         ? [
+            upCommand,
+            statusCommand,
             serviceCommand,
             servicePreflightCommand,
             updateCommand,
@@ -105,7 +112,13 @@ export const makeCli = ({
       traceCommand,
       doctorCommand,
       triageCommand,
-      cloudEnabled ? connectCommand : connectUnavailableCommand,
+      // SCIENT-FORK:START — with the lifecycle dormant, connect must not install a service.
+      cloudEnabled
+        ? serviceEnabled
+          ? connectCommand
+          : scientConnectCommand
+        : connectUnavailableCommand,
+      // SCIENT-FORK:END
     ]),
   );
 

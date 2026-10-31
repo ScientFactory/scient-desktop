@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as CodexErrors from "effect-codex-app-server/errors";
 
 import { resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import { openCodexAppServerConnection } from "../../provider/CodexProvider.ts";
@@ -170,6 +171,22 @@ export function describeCodexCapabilityFailure(cause: Cause.Cause<unknown>): str
   return short ? `it failed to start: ${short}` : "it failed to start";
 }
 
+/** JSON-RPC codes for a request Codex could not take: a parse failure, unknown method or bad params. */
+const REJECTED_REQUEST_CODES: ReadonlySet<number> = new Set([-32700, -32600, -32601, -32602]);
+
+/**
+ * Codex took the account request but could not complete it. Signed in, Codex
+ * asks OpenAI before it answers, so a network failure lands here; the account
+ * API still exists, and connectivity is the provider status check's to report.
+ */
+export function isCodexAccountReadIncomplete(error: CodexErrors.CodexAppServerError): boolean {
+  return (
+    error._tag === "CodexAppServerRequestError" &&
+    error.operation === "receive-response" &&
+    !REJECTED_REQUEST_CODES.has(error.code)
+  );
+}
+
 /**
  * Prefer a Codex binary only when it can speak the app-server protocol used
  * for assisted login. `--version` alone is not enough: PATH shims and older
@@ -195,7 +212,10 @@ const hasCapableCodex = Effect.fn("CodexManagedRuntime.hasCapableCodex")(functio
       environment: input.environment,
     }).pipe(
       Effect.flatMap(({ client, version }) =>
-        client.request("account/read", {}).pipe(Effect.as(version ?? null)),
+        client.request("account/read", {}).pipe(
+          Effect.catchIf(isCodexAccountReadIncomplete, () => Effect.void),
+          Effect.as(version ?? null),
+        ),
       ),
     ),
   ).pipe(
@@ -612,6 +632,7 @@ export const makeCodexManagedRuntimeResolution = Effect.fn("CodexManagedRuntime.
         catalog: yield* catalogService.freshness,
         operation: null,
         message,
+        ...(latestSource === "scient_managed" ? { healthy: latestManagedRuntimeHealthy } : {}),
         diagnostics: buildDiagnostics({
           source: latestSource,
           executable: latestExecutable,

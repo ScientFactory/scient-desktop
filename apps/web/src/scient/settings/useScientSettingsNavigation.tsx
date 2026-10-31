@@ -58,7 +58,6 @@ const SETTINGS_PAGE_SECTIONS: Partial<
   ],
   "/settings/about": [
     { label: "App", targetId: "about" },
-    { label: "Privacy and analytics", targetId: "scient-analytics" },
     { label: "Legal", targetId: "legal" },
   ],
 };
@@ -112,6 +111,7 @@ export function useScientSettingsNavigation(
     visibility: sectionVisibility,
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes settings section visibility in the page container DOM and mirrors it into state
   useEffect(() => {
     if (!observedSettingsPath) return;
     const pageSections = SETTINGS_PAGE_SECTIONS[observedSettingsPath];

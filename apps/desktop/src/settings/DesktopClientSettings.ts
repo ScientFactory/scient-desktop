@@ -12,6 +12,9 @@ import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+// SCIENT-FORK:START — one-time resets of saved client preferences.
+import { withClientSettingsResets } from "../scient/clientSettingsResets.ts";
+// SCIENT-FORK:END
 
 const ClientSettingsJson = fromLenientJson(ClientSettingsSchema);
 const decodeClientSettingsDocument = Schema.decodeEffect(
@@ -219,7 +222,12 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopClientSettings, make);
+// SCIENT-FORK:START — one-time resets of saved client preferences.
+export const layer = Layer.effect(
+  DesktopClientSettings,
+  make.pipe(Effect.flatMap(withClientSettingsResets)),
+);
+// SCIENT-FORK:END
 
 export const layerTest = (initialSettings: Option.Option<ClientSettings> = Option.none()) =>
   Layer.effect(

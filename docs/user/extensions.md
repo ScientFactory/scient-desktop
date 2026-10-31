@@ -122,12 +122,10 @@ as well as skills and commands. They follow the installing agent's own
 lifecycle. Follow that agent's reload or restart instructions when new parts
 do not appear in an existing session.
 
-In **Settings → Providers → Scient**, **Use my Claude Code plugins in Scient
-Agent** is on by default. It appears with Scient Agent 0.1.3 or newer. It uses
-that server's `CLAUDE_CONFIG_DIR` or default Claude home; it does not combine
-separate Claude profiles. Scient Agent's own disabled-source settings still
-apply. Turning the preference off stops Scient's additional source request;
-it does not replace sources you enabled in Scient Agent yourself.
+Scient Agent 0.1.3 or newer uses your Claude Code plugins automatically. It
+reads that server's `CLAUDE_CONFIG_DIR` or default Claude home; it does not
+combine separate Claude profiles. Plugins you turn off in Claude Code stay off,
+and Scient Agent's own disabled-source settings still apply.
 
 ## Codex apps and Claude connectors
 

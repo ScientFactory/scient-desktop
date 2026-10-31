@@ -56,6 +56,7 @@ export function observeSidebarRow(element: Element, notify: (visible: boolean) =
 export function useSidebarRowVisibility() {
   const [element, setElement] = useState<HTMLElement | null>(null);
   const [isNearViewport, setIsNearViewport] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- IntersectionObserver subscription keeps isNearViewport in step with the row element's visibility
   useEffect(() => {
     if (!element) return;
     return observeSidebarRow(element, setIsNearViewport);

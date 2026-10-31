@@ -289,6 +289,11 @@ jobs:
             apps/server/src/scient/providerLifecycle/antigravityAcpCatalog.ts \
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
+            apps/server/src/secrets/secretProviderDefinitions.ts \
+            apps/server/src/secrets/settingsSecretValue.ts \
+            apps/server/src/secrets/SecretResolver.ts \
+            apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -315,6 +320,9 @@ jobs:
             packages/scient-document-artifacts \
             packages/scient-sources \
             packages/scient-project-init \
+            packages/secret-provider-core \
+            packages/secret-provider-definitions \
+            packages/secret-provider-onepassword \
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
@@ -347,6 +355,11 @@ jobs:
             apps/server/src/testUtils \
             packages/effect-acp \
             ':(glob)apps/server/src/*.ts' \
+            apps/server/src/secrets/secretProviderDefinitions.ts \
+            apps/server/src/secrets/settingsSecretValue.ts \
+            apps/server/src/secrets/SecretResolver.ts \
+            apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -388,6 +401,9 @@ jobs:
             packages/scient-operations \
             packages/scient-project-init \
             packages/scient-sources \
+            packages/secret-provider-core \
+            packages/secret-provider-definitions \
+            packages/secret-provider-onepassword \
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
@@ -406,6 +422,11 @@ jobs:
             apps/server/scripts/qualifyScientAgentManagedRuntime.ts \
             apps/server/package.json \
             ':(glob)apps/server/src/*.ts' \
+            apps/server/src/secrets/secretProviderDefinitions.ts \
+            apps/server/src/secrets/settingsSecretValue.ts \
+            apps/server/src/secrets/SecretResolver.ts \
+            apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -432,6 +453,9 @@ jobs:
             packages/scient-operations \
             packages/scient-project-init \
             packages/scient-sources \
+            packages/secret-provider-core \
+            packages/secret-provider-definitions \
+            packages/secret-provider-onepassword \
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
@@ -489,6 +513,11 @@ jobs:
             apps/server/src/imageMime.ts \
             apps/server/src/modelReasoning.ts \
             apps/server/src/scientServerSettings.ts \
+            apps/server/src/secrets/secretProviderDefinitions.ts \
+            apps/server/src/secrets/settingsSecretValue.ts \
+            apps/server/src/secrets/SecretResolver.ts \
+            apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/serverSettings.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
@@ -516,6 +545,9 @@ jobs:
             packages/provider-muse \
             packages/provider-opencode \
             packages/provider-pi \
+            packages/secret-provider-core \
+            packages/secret-provider-definitions \
+            packages/secret-provider-onepassword \
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \

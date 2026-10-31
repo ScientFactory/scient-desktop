@@ -53,6 +53,7 @@ export function useProjectScriptAutoPreview<E>(input: {
   const mountedRef = useRef(true);
   const activeThreadRefRef = useRef(input.activeThreadRef);
   const canFocusPreviewRef = useRef(input.canFocusPreview);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the active-thread and can-focus refs current for async launch guards
   useLayoutEffect(() => {
     activeThreadRefRef.current = input.activeThreadRef;
     canFocusPreviewRef.current = input.canFocusPreview;
@@ -73,6 +74,7 @@ export function useProjectScriptAutoPreview<E>(input: {
     return true;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mounted state and drops pending launch state on unmount
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -116,6 +118,7 @@ export function useProjectScriptAutoPreview<E>(input: {
     });
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending preview wait when the active thread no longer matches it
   useEffect(() => {
     if (pending === null) return;
     if (
@@ -128,6 +131,7 @@ export function useProjectScriptAutoPreview<E>(input: {
 
   const activePendingPreviewTabId =
     activePendingSurface?.kind === "preview" ? activePendingSurface.resourceId : undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending preview wait when sessions and tab selection show the user moved on
   useEffect(() => {
     if (
       pending === null ||
@@ -144,6 +148,7 @@ export function useProjectScriptAutoPreview<E>(input: {
     clearPending(pending.id);
   }, [activePendingPreviewTabId, clearPending, input.sessions, pending]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the preview once the discovered-ports state reports the dev server ready
   useEffect(() => {
     if (
       pending === null ||
@@ -155,6 +160,7 @@ export function useProjectScriptAutoPreview<E>(input: {
     void openRequest(pending.threadRef, pending.request, pending.id);
   }, [clearPending, discovered.servers, openRequest, pending]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- timer that turns a long preview start into an informational toast
   useEffect(() => {
     if (pending === null) return;
     const timeout = window.setTimeout(() => {

@@ -619,6 +619,7 @@ function LatexMathView({
       : null;
   });
   const hasEquationNumbers = display && equationRows?.some((row) => row.display !== null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions equation number DOM nodes in the math root while display rows exist
   useEffect(() => {
     const root = mathRoot.current;
     if (!root || !hasEquationNumbers || !equationRows) return;
@@ -652,6 +653,7 @@ function LatexMathView({
   const sourceDraftEdited = useRef(false);
   const commandContext = useContext(LatexCommandContext);
   const completionContext = useRef(commandContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the command context for the math field to read
   useLayoutEffect(() => {
     completionContext.current = commandContext;
   }, [commandContext]);
@@ -672,6 +674,7 @@ function LatexMathView({
     activeMath.deactivate(activationId);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for context-activate events on the latex context root DOM scope until unmount
   useEffect(() => {
     const deactivate = (event: Event) => {
       if ((event as CustomEvent<string>).detail !== activationId) dismiss();
@@ -704,9 +707,11 @@ function LatexMathView({
   };
 
   const activateRef = useRef(activate);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the activate callback for selection effects to call
   useLayoutEffect(() => {
     activateRef.current = activate;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- activates the math field when the node becomes selected and editable
   useEffect(() => {
     if (suppressSelectedActivation.current) {
       suppressSelectedActivation.current = false;
@@ -718,6 +723,7 @@ function LatexMathView({
       activateRef.current();
   }, [selected, editable]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for outside pointer and focus events on the document while editing
   useEffect(() => {
     if (!editing) return;
     const outside = (event: Event) => {
@@ -760,6 +766,7 @@ function LatexMathView({
     };
   }, [editing, editor, dismiss]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases pointer selection, external selection, and the active-math registration on unmount
   useEffect(
     () => () => {
       stopPointerSelection.current?.();
@@ -1016,9 +1023,11 @@ function LatexMathView({
     });
   };
   const completionApply = useRef(applyCompletion);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the completion apply callback for the textarea completion to call
   useLayoutEffect(() => {
     completionApply.current = applyCompletion;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs completion on the source textarea DOM node while the source editor is open
   useEffect(() => {
     const field = sourceEditor.current;
     if (!editing || !sourceOpen || !field) return;
@@ -1115,6 +1124,7 @@ function LatexMathView({
     }
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this active-math editor record into the active-math registry
   useLayoutEffect(() => {
     const next: ActiveMathEditor = {
       id: activationId,
@@ -1180,9 +1190,11 @@ function LatexMathView({
     });
     return true;
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the source shortcut callback for the shortcut host to call
   useLayoutEffect(() => {
     sourceShortcut.current = runSourceShortcut;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the math shortcut host to the source textarea DOM node while the source editor is open
   useEffect(() => {
     const field = sourceEditor.current;
     if (!field || !sourceOpen || !editing) return;
@@ -1739,6 +1751,7 @@ function LatexInlineCommandView({
     "hyperlink",
   ].includes(name);
   const hasLinkText = ["href", "hyperref", "hyperlink", "hypertarget"].includes(name);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for outside pointerdown on the owner document while footnote text editing is open
   useEffect(() => {
     const element = root.current;
     if (name !== "footnote" || !textEditing || !element) return;
@@ -1751,6 +1764,7 @@ function LatexInlineCommandView({
     element.ownerDocument.addEventListener("pointerdown", outside, true);
     return () => element.ownerDocument.removeEventListener("pointerdown", outside, true);
   }, [name, textEditing]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- positions the inline text editor panel DOM node against the paper and scroll viewport
   useLayoutEffect(() => {
     if (name !== "footnote" || !textEditing) return;
     const panel = root.current?.querySelector<HTMLElement>(".scient-latex-inline-text-editor");
@@ -2280,6 +2294,7 @@ function LatexRawBlockView({ node, editor, getPos }: NodeViewProps) {
   const livePosition = useLiveNodePosition(editor, getPos);
   const active = source?.active?.position === livePosition;
   const sourceField = useRef<HTMLTextAreaElement>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs the text selection session on the source textarea DOM node while active
   useEffect(() => {
     const field = sourceField.current;
     if (field && active) return installLatexTextSelectionSession(field);
@@ -2507,6 +2522,7 @@ function LatexFigureImage(props: {
     url: string;
     size: { width: number; height: number } | null;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the image physical size over the environment connection, aborted when the URL changes
   useEffect(() => {
     if (trimIdentity === "null" || !imageUrl) return;
     const controller = new AbortController();
@@ -2726,6 +2742,7 @@ function LatexRichPreviewView({
   const kind = String(node.attrs.kind ?? "description");
   const authoring = useContext(LatexAuthoringContext);
   const tablePreamble = authoring?.source.slice(0, latexPreambleEnd(authoring.source)) ?? "";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs table editing guides on the table root DOM node until unmount
   useEffect(() => {
     const root = tableRoot.current;
     if (kind !== "table" || !editorEditable || !root) return;
@@ -2736,6 +2753,7 @@ function LatexRichPreviewView({
     kind === "table" && objectActive
       ? `Table · row ${selectedCell.row + 1}, column ${selectedCell.column + 1}`
       : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the selected cell position to the footer position context until cleared
   useEffect(() => {
     if (cellPosition === null) return;
     setFooterPosition(cellPosition);
@@ -2831,6 +2849,7 @@ function LatexRichPreviewView({
   const [pagination, setPagination] = useState<PagedTableLayout>({ breaks: [], offsets: [] });
   const pageBreaks = pagination.breaks;
   const pageLeft = new Map(pagination.offsets.map(({ row, left }) => [row, left]));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for pagination events on the table wrapper DOM node until unmount
   useEffect(() => {
     const element = objectRoot.current?.parentElement;
     if (!element || !longtable) return;
@@ -3308,9 +3327,11 @@ function LatexRichPreviewView({
     else return false;
     return true;
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the table shortcut callback for the shortcut host to call
   useLayoutEffect(() => {
     tableShortcut.current = runTableShortcut;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the table shortcut host to the table root DOM node while editable
   useEffect(() => {
     const root = tableRoot.current;
     if (!root || !tableEditable) return;
@@ -5301,6 +5322,7 @@ function LatexScientificStatementView({
     if (typeof position === "number") enterLatexObjectBody(editor.view, position);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs presentation data attributes onto the node view DOM wrapper
   useLayoutEffect(() => {
     if (!updatePresentation) return;
     const attributes = {
@@ -5314,6 +5336,7 @@ function LatexScientificStatementView({
     };
     updatePresentation(attributes, Boolean(!quoted || displayTitle));
   }, [updatePresentation, environment, statement, quoted, displayTitle, node]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for clicks on the statement heading DOM node to enter the object body
   useEffect(() => {
     if (!statementHeading) return;
     const enter = (event: globalThis.MouseEvent) => {
@@ -5807,6 +5830,7 @@ function projectWithoutWorker(source: string, setup: string): LatexVisualDocumen
 export function LatexVisualEditor(props: LatexVisualEditorProps) {
   const identity = props.editorInstanceKey ?? props.draftKey;
   const requestIdentity = useRef(props);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring request props for async projection callbacks to read
   useLayoutEffect(() => {
     requestIdentity.current = props;
   }, [props]);
@@ -5830,6 +5854,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
     setStartedRecoveryRequest(recoveryRequest);
     if (recoveryPrepared !== identity) setRecoveryFailure(false);
   }
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prepares typing recovery storage asynchronously, ignoring replies after unmount
   useEffect(() => {
     if (recoveryPrepared === identity || recoveryFailure) return;
     let active = true;
@@ -5867,6 +5892,7 @@ export function LatexVisualEditor(props: LatexVisualEditorProps) {
   }
   const setupSource = props.sourceSnapshot.setupSource;
   const sourceSnapshotId = props.sourceSnapshot.id;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- projects the document in the background worker when the source identity changes
   useEffect(() => {
     if (prepared?.key === identity || failure || typeof Worker === "undefined") return;
     if (visualProjectionCache.get(props.source, setupSource)) return;
@@ -6033,6 +6059,7 @@ function LatexVisualEditorReady(
     colors: latexDocumentColors(mathSetupSource),
   };
   const completionContext = useRef(commandContext);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the command context for editor plugins to read
   useLayoutEffect(() => {
     completionContext.current = commandContext;
   }, [commandContext, completionContext]);
@@ -6116,8 +6143,10 @@ function LatexVisualEditorReady(
         }));
       });
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending draft report on unmount
   useEffect(() => () => cancelDraftReport.current?.(), []);
   const onLocalDraftChange = props.onLocalDraftChange;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports local draft state to the parent through its imperative callback until unmount
   useLayoutEffect(() => {
     localDraftReporter.current = onLocalDraftChange;
     onLocalDraftChange?.(pendingFields.current.size > 0);
@@ -6167,6 +6196,7 @@ function LatexVisualEditorReady(
     props.disabled || unsynced || rereadStartup || (recovery !== null && !recovery.parked);
   const readOnly = surfaceReadOnly || loading;
   const editBlocked = useRef(readOnly);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring read-only state for editor plugins to read
   useLayoutEffect(() => {
     editBlocked.current = readOnly;
   });
@@ -6196,6 +6226,7 @@ function LatexVisualEditorReady(
   } | null>(null);
   const queuedSourceHistory = useRef<LatexSourceHistory[]>([]);
   const compiledBibliographySource = useRef(props.compiledBibliography ?? null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the compiled bibliography for the citation reader to read
   useLayoutEffect(() => {
     compiledBibliographySource.current = props.compiledBibliography ?? null;
   });
@@ -6207,6 +6238,7 @@ function LatexVisualEditorReady(
   const sourceRevision = useRef(props.fileRevision);
   // Plugins live as long as the editor; they read the storage key here.
   const draftKeyRef = useRef(props.draftKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the draft storage key for editor plugins to read
   useLayoutEffect(() => {
     draftKeyRef.current = props.draftKey;
   }, [props.draftKey]);
@@ -6225,6 +6257,7 @@ function LatexVisualEditorReady(
   if (journalState.draftKey !== draftKey)
     setJournalState({ draftKey, journal: createVisualTypingJournal(draftKey) });
   const typingJournal = journalState.journal;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the typing journal storage resource on unmount
   useEffect(
     () => () => {
       void typingJournal.release();
@@ -6281,6 +6314,7 @@ function LatexVisualEditorReady(
     )
       processingContext.current = { rootSource, setupSource, allowRootUpdates };
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the processing-context module state in step with the snapshot id and edit permission
   useLayoutEffect(() => {
     updateProcessingContext(props.sourceSnapshot.id, props.canEditRoot);
   }, [props.sourceSnapshot.id, props.canEditRoot]);
@@ -6301,6 +6335,7 @@ function LatexVisualEditorReady(
     cwd: props.cwd,
     documentPath: props.rootRelativePath ?? props.relativePath,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the image context for editor plugins to read
   useLayoutEffect(() => {
     imageContext.current = {
       environmentId: props.environmentId,
@@ -6311,9 +6346,11 @@ function LatexVisualEditorReady(
   const [editorRevision, refreshToolbar] = useState(0);
   const [newHeadingNumbered, setNewHeadingNumbered] = useState(true);
   const cancelToolbarRefresh = useRef<(() => void) | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending toolbar refresh on unmount
   useEffect(() => () => cancelToolbarRefresh.current?.(), []);
   const [notice, setNotice] = useState<string | null>(null);
   const canEditRoot = props.canEditRoot === true;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps refs mirroring the source-edit projection functions for the editor to call
   useLayoutEffect(() => {
     explicitSourceChange.current = (edit, content) =>
       projectLatexSourceEdit(edit, content, currentSetupSource.current, projection.current);
@@ -6339,6 +6376,7 @@ function LatexVisualEditorReady(
     original: string;
     draft: string;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for recovery-error window events for this draft key until unmount
   useEffect(() => {
     const failed = (event: Event) => {
       const key: unknown = (event as CustomEvent).detail;
@@ -6395,6 +6433,7 @@ function LatexVisualEditorReady(
   const selectionActionOwnerId = useId();
   const [selectionViewport, setSelectionViewport] = useState<HTMLElement | null>(null);
   const selectionProps = useRef(props);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring selection props for the selection capture callback to read
   useLayoutEffect(() => {
     selectionProps.current = props;
   });
@@ -6417,6 +6456,7 @@ function LatexVisualEditorReady(
   );
   const sourceNavigationFrame = useRef<number | null>(null);
   const sourceNavigationRequest = useRef(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending source-navigation animation frame on unmount
   useEffect(
     () => () => {
       if (sourceNavigationFrame.current !== null)
@@ -6424,10 +6464,12 @@ function LatexVisualEditorReady(
     },
     [],
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the workspace DOM node as the selection viewport after mount
   useLayoutEffect(() => {
     setSelectionViewport(workspaceRef.current);
   }, []);
   const readerAction = useRef<(command: string) => boolean>(() => false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the pdf shortcut host to the workspace DOM node until unmount
   useEffect(() => {
     const workspace = workspaceRef.current;
     return workspace
@@ -6452,6 +6494,7 @@ function LatexVisualEditorReady(
   const syncZoomFrameRef = useRef<() => void>(() => {});
   const zoomFrame = useRef<HTMLDivElement | null>(null);
   const measuredStage = useRef<{ element: HTMLDivElement; height: number } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the onEdit callback for the editor update pipeline to call
   useLayoutEffect(() => {
     onEdit.current = props.onEdit;
   }, [props.onEdit]);
@@ -6640,6 +6683,7 @@ function LatexVisualEditorReady(
       });
     },
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for source-interaction and dblclick events on the split container DOM node until unmount
   useEffect(() => {
     const workspace = workspaceRef.current;
     if (!workspace) return;
@@ -6665,9 +6709,11 @@ function LatexVisualEditorReady(
       split?.removeEventListener("scient-latex-source-interaction", cancel);
     };
   }, [revealSourceAtPoint]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the source-edit flush callback for the pagehide flush to call
   useLayoutEffect(() => {
     flushSourceEditRef.current = flushSourceEdit;
   }, [flushSourceEdit]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flushes pending typing and drafts on pagehide and on unmount
   useEffect(() => {
     const flush = () => {
       flushTypingRef.current();
@@ -6758,6 +6804,7 @@ function LatexVisualEditorReady(
     },
   );
   const handleUpdateRef = useRef(handleUpdate);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the editor update handler for plugins to call
   useLayoutEffect(() => {
     handleUpdateRef.current = handleUpdate;
   }, [handleUpdate]);
@@ -6803,6 +6850,7 @@ function LatexVisualEditorReady(
     else retainOwnTyping(base, doc);
     return true;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the typing flush callback for scheduled flushes to call
   useLayoutEffect(() => {
     flushTypingRef.current = flushTyping;
   }, [flushTyping]);
@@ -7392,6 +7440,7 @@ function LatexVisualEditorReady(
     },
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the editor instance for callbacks to use
   useLayoutEffect(() => {
     editorRef.current = editor;
   }, [editor]);
@@ -7400,8 +7449,10 @@ function LatexVisualEditorReady(
     if (editor && !editor.isDestroyed) refreshMathReadingContext(editor);
   });
   // A context refresh cancels staged math admission; only a preamble change needs one.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the math reading context in the editor when the setup source changes
   useLayoutEffect(() => refreshReadingContext(editor, mathSetupSource), [editor, mathSetupSource]);
   const guidancePluginFactory = useRef(latexGuidancePlaceholders);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-registers the guidance plugin on the live editor when its factory changes
   useLayoutEffect(() => {
     if (!editor || editor.isDestroyed) return;
     // A renderer hot update keeps the existing editor and its original plugins.
@@ -7436,6 +7487,7 @@ function LatexVisualEditorReady(
     }
     editor.view.dispatch(editor.state.tr.setMeta(latexEquationReferencesKey, true));
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes equation references in the editor when the setup source or bibliography changes
   useLayoutEffect(
     () =>
       refreshEquationReferences(
@@ -7521,6 +7573,7 @@ function LatexVisualEditorReady(
   });
 
   const restoredTyping = useRef<typeof typingRecovery>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs recovered typing into the editor document once per recovery snapshot
   useLayoutEffect(() => {
     if (!editor || !typingRecovery || restoredTyping.current === typingRecovery) return;
     restoredTyping.current = typingRecovery;
@@ -7592,6 +7645,7 @@ function LatexVisualEditorReady(
     readonly element: HTMLElement;
     readonly selection: readonly [number, number] | null;
   } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs read-only state into the editor DOM, remembering and restoring DOM focus
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
     if (surfaceReadOnly && editor.isEditable) {
@@ -7741,6 +7795,7 @@ function LatexVisualEditorReady(
     }
     if (notice !== null) setNotice(sourceNotice);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- adopts the owner source into the editor document when the file revision changes
   useLayoutEffect(() => {
     adoptOwnerSource(
       editor,
@@ -7776,6 +7831,7 @@ function LatexVisualEditorReady(
     setTypingRecovery(typingToReinstall(next));
     setRecovery(next.recovery);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads startup recovery storage when the draft key or source changes
   useEffect(
     () => rereadStartupRecovery(rereadStartup, props.draftKey, props.source),
     [rereadStartup, props.draftKey, props.source],
@@ -7826,6 +7882,7 @@ function LatexVisualEditorReady(
       }),
     );
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reprojects the document in the editor when the parser or setup key changes
   useEffect(
     () =>
       reprojectForSetup(
@@ -7840,6 +7897,7 @@ function LatexVisualEditorReady(
 
   const registerFinishEditing = props.registerFinishEditing;
   const composingFields = useRef(new Set<EventTarget>());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks composition start and end events on the editor DOM scope until unmount
   useLayoutEffect(() => {
     if (!editor) return;
     const scope = editor.view.dom.closest(".scient-latex-visual-workspace") ?? editor.view.dom;
@@ -7869,6 +7927,7 @@ function LatexVisualEditorReady(
       composingFields.current.clear();
     };
   }, [editor, installProjection]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the finish-editing callback with the parent registry until unmount
   useLayoutEffect(() => {
     registerFinishEditing?.(() => {
       if (editor?.view.composing) return false;
@@ -7897,6 +7956,7 @@ function LatexVisualEditorReady(
   }, [editor, registerFinishEditing, activeMath]);
 
   const registerBackgroundCommit = props.registerBackgroundCommit;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the background-commit inspector with the parent registry until unmount
   useLayoutEffect(() => {
     const composing = () => {
       if (editor?.view.composing) return true;
@@ -7926,6 +7986,7 @@ function LatexVisualEditorReady(
   }, [editor, registerBackgroundCommit, activeMath]);
 
   const onEditingChange = props.onEditingChange;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports editing ended to the parent through its imperative callback on unmount
   useEffect(() => () => onEditingChange(false), [onEditingChange]);
 
   const insertMath = (display: boolean, tex = "") => {
@@ -8565,6 +8626,7 @@ function LatexVisualEditorReady(
     action.run();
     return true;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the latex and math shortcut host to the editor DOM node until unmount
   useEffect(() => {
     if (!editor) return;
     return attachShortcutHost(editor.view.dom, ["latex", "math"], {
@@ -8641,6 +8703,7 @@ function LatexVisualEditorReady(
     setNotice(null);
     return true;
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the rename label callback for the title block to call
   useLayoutEffect(() => {
     renameLabelRef.current = renameDocumentLabel;
   });
@@ -8748,6 +8811,7 @@ function LatexVisualEditorReady(
     });
   }
   const openReferenceManagerRef = useRef(openReferenceManager);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the reference-manager opener for the references context to call
   useLayoutEffect(() => {
     openReferenceManagerRef.current = openReferenceManager;
   }, [openReferenceManager]);
@@ -8855,6 +8919,7 @@ function LatexVisualEditorReady(
   const notifyLayoutConfig = useEffectEvent((..._changes: readonly unknown[]) => {
     editor?.view.dom.dispatchEvent(new Event("scient-latex-layout-config"));
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the layout configuration into the editor plugin state
   useLayoutEffect(() => {
     notifyLayoutConfig(editor, layout);
   }, [editor, layout]);
@@ -8961,6 +9026,7 @@ function LatexVisualEditorReady(
     return scale;
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the scroll DOM node width and observes its resize to keep fit-zoom current
   useLayoutEffect(() => {
     const scroll = visualScroll.current;
     if (!scroll) return;
@@ -8994,6 +9060,7 @@ function LatexVisualEditorReady(
     else return false;
     return true;
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the reader action callback for the shortcut host to call
   useLayoutEffect(() => {
     readerAction.current = runReaderAction;
   });
@@ -9007,6 +9074,7 @@ function LatexVisualEditorReady(
     const height = `${measuredStage.current.height * scale}px`;
     if (frame.style.height !== height) frame.style.height = height;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- syncs the zoom frame DOM height to the paper stage via a ResizeObserver until unmount
   useLayoutEffect(() => {
     syncZoomFrameRef.current = syncZoomFrame;
     const stage = paperStage.current;
@@ -9024,9 +9092,11 @@ function LatexVisualEditorReady(
     });
   }, [syncZoomFrame, editor]);
   // The resize observer cannot see a zoom change: the transform leaves the stage's size alone.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resizes the zoom frame DOM node when the zoom changes
   useLayoutEffect(() => syncZoomFrame(zoom), [syncZoomFrame, zoom]);
 
   // Load the rest of the document around its first blocks.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the progressive loading plan into the editor DOM and restores the reading position until unmount
   useLayoutEffect(() => {
     if (!editor || editor.isDestroyed) return;
     const view = editor.view;
@@ -9076,6 +9146,7 @@ function LatexVisualEditorReady(
   }, [editor, readingKey, installProjection]);
   // Page markers from the last build, placed while the source is exactly the
   // one that build compiled; afterwards they follow edits as hints.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- applies page anchor markers into the editor state when anchors for this source arrive
   useEffect(() => {
     const anchors = props.pageAnchors;
     if (!editor || editor.isDestroyed || loading || !anchors) return;
@@ -9089,6 +9160,7 @@ function LatexVisualEditorReady(
     if (markers) setLatexPageMarkers(editor.view, markers);
   }, [editor, loading, props.pageAnchors]);
   // Remember where the document is read, so reopening it returns there.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- remembers the reading position from scroll events on the scroll DOM node until unmount
   useEffect(() => {
     const scroll = visualScroll.current;
     if (!scroll || !editor || loading) return;
@@ -9123,6 +9195,7 @@ function LatexVisualEditorReady(
       selector: ({ editor: current }) =>
         current ? (latexPagedKey.getState(current.state)?.revision ?? null) : null,
     }) ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks the visible page from scroll position against the editor DOM until unmount
   useEffect(() => {
     const scroll = visualScroll.current;
     if (!scroll || !editor || pageCount === 0 || pageBuild === null) return;
@@ -9359,6 +9432,7 @@ function LatexVisualEditorReady(
     setBlockSource(null);
     return true;
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps a ref mirroring the raw-input checkpoint callback for handlers to call
   useLayoutEffect(() => {
     finishRawCheckpoint.current = finishRawInputCheckpoint;
   });

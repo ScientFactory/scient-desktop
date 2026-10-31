@@ -61,6 +61,7 @@ export function ScientFindBar({
   const focusRequestedFind = useEffectEvent((..._changes: readonly unknown[]) => {
     if (snapshot.findOpen) inputRef.current?.focus();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the find input DOM node when the controller requests it
   useEffect(
     () => focusRequestedFind(snapshot.findFocusRequest, snapshot.findOpen),
     [snapshot.findFocusRequest, snapshot.findOpen],

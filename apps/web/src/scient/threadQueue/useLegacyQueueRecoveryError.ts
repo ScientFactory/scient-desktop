@@ -26,7 +26,7 @@ export function useLegacyQueueRecoveryError(
     key,
     error: null,
   });
-  // oxlint-disable-next-line t3code/react-effect-budget -- Read retained recovery status when the connection or thread changes; cleanup rejects replies for a retired view.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read retained recovery status when the connection or thread changes; cleanup rejects replies for a retired view.
   useEffect(() => {
     if (!connected || environmentId === null || threadId === null) return;
     let current = true;

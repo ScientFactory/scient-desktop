@@ -2,9 +2,9 @@ import * as Tracer from "effect/Tracer";
 import { assert, it } from "@effect/vitest";
 import {
   ComposerContextId,
-  EnvironmentId,
-  ProviderInstanceId,
   EventId,
+  ProjectId,
+  ProviderInstanceId,
   type OrchestrationMessageContext,
   ThreadId,
 } from "@t3tools/contracts";
@@ -16,9 +16,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
-import { readScientThreadForInvocation } from "../../mcp/toolkits/threads/handlers.ts";
-import { AgentInvocationContext } from "../../scient/operations/AgentInvocationContext.ts";
-
 import { listLinkedPullRequestThreads } from "../../pullRequest/linkedThreads.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
@@ -233,6 +230,69 @@ it.effect("propagates interruption from transcript reads and retry-marker writes
       `,
       [],
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("caches the absent legacy transcript for a native V2 thread", () =>
+  Effect.gen(function* () {
+    const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:v2-born");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make("event:v2-born"),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: threadId,
+            projectId: ProjectId.make("project:v2-born"),
+            title: "Native V2 thread",
+            providerInstanceId,
+            modelSelection: { instanceId: providerInstanceId, model: "gpt-6" },
+            createdBy: "user",
+            creationSource: "web",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        },
+      ],
+    });
+    const before = yield* projections.getThreadProjection(threadId);
+    let legacyLookups = 0;
+    for (let read = 0; read < 3; read++) {
+      const summary = yield* importer.ensureTranscript(threadId).pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          const [query, parameters] = statement.compile();
+          if (
+            query.includes("FROM orchestration_v2_legacy_imports") &&
+            parameters[0] === threadId
+          ) {
+            legacyLookups++;
+          }
+          return Effect.succeed(statement);
+        }),
+      );
+      assert.deepStrictEqual(summary, { importedThreadCount: 0, importedMessageCount: 0 });
+    }
+    assert.equal(legacyLookups, 1);
+    assert.deepStrictEqual(yield* projections.getThreadProjection(threadId), before);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -741,7 +801,7 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
     }),
   );
 
-  it.effect("retrieves the oldest of 501 imported legacy activities through scoped MCP", () =>
+  it.effect("retrieves the oldest of 501 imported legacy activities through the timeline", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
@@ -790,26 +850,18 @@ it.layer(layerTest)("LegacyV1ThreadImporter", (it) => {
       );
       yield* Effect.logInfo("Legacy 501 imported oldest item", oldest);
       assert.isDefined(oldest);
-      const result = yield* readScientThreadForInvocation({
-        threadId,
+      const page = yield* projections.getTimelinePage(threadId, {
         view: "activity",
         itemId: oldest!.id,
-      }).pipe(
-        Effect.provideService(AgentInvocationContext, {
-          environmentId: EnvironmentId.make("review-environment"),
-          threadId,
-          providerSessionId: "review-session",
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          capabilities: new Set(["threads:read"] as const),
-          issuedAt: 1,
-        }),
+        limit: 1,
+      });
+      assert.strictEqual(page.totalItems, 501);
+      assert.strictEqual(page.items.length, 1);
+      assert.strictEqual(
+        page.items[0]?.sourceItemId,
+        "migration:v1:history:activity:review-tool-0",
       );
-      yield* Effect.logInfo("Legacy 501 scoped MCP result", result);
-      assert.strictEqual(result.thread.itemCount, 501);
-      assert.strictEqual(result.items.length, 1);
-      assert.strictEqual(result.items[0]?.itemId, "migration:v1:history:activity:review-tool-0");
-      assert.include(result.items[0]!.text, "Result 0");
-      assert.include(result.items[0]!.text, "review-tool-0");
+      assert.include(JSON.stringify(page.items[0]!.item), "Result 0");
     }),
   );
 });

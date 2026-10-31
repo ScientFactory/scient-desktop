@@ -173,8 +173,8 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       previewAnnotations: [],
       reviewComments: [],
       threadContexts: [],
+      environmentContexts: [],
       selectedPromptEffort: null,
-      selectedModelOptionsForDispatch: undefined,
       selectedModelSelection: modelSelection,
       multipleModelSelections: null,
       providerAvailable: true,
@@ -192,8 +192,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
     const handle: ChatComposerHandle = {
       focusAtEnd: noop,
       focusAt: noop,
-      restoreAfterTimelineReachedEnd: noop,
-      collapseForTimelineScrollKey: noop,
       addDroppedFiles: noop,
       addDroppedFolders: noop,
       hasPendingAttachments: () => countPreparingComposerImages(composerTargetKey(target)) > 0,
@@ -225,6 +223,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
     const composerFilesRef: Parameters<typeof useComposerAttachmentIntake>[0]["composerFilesRef"] =
       { current: [] };
     const input: ComposerSendInput = {
+      sideChatDisabledReason: null,
       environmentId,
       routeThreadKey: routeKey,
       currentRouteThreadKeyRef: route,
@@ -272,7 +271,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       composerDraftTarget: target,
       promptRef: { current: prompt },
       feedbackUploadsInFlightRef: { current: new Set() },
-      isConnecting: false,
       isRevertingCheckpoint: false,
       threadDetailLoading: false,
       activeEnvironmentUnavailable: false,
@@ -343,7 +341,6 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
         pendingUserInputs: [],
         supportsQuestionAttachments: false,
         isLiteralPendingAnswer: false,
-        isConnecting: false,
         projectSelectionRequired: false,
         questionAttachmentTarget: null,
         attachmentTargetKey: composerTargetKey(target),
@@ -468,6 +465,7 @@ function fanoutInput(fixture: Awaited<ReturnType<typeof setup>>) {
       previewAnnotations: [],
       reviewComments: [],
       threadContexts: [],
+      environmentContexts: [],
       messageText: fixture.context.prompt,
     },
     createdAt: "2026-10-20T00:00:00Z",

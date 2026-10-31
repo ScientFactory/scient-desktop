@@ -79,10 +79,12 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
       theme,
       title,
     });
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps latestMountIdentityRef holding the current mount identity
     useLayoutEffect(() => {
       latestMountIdentityRef.current = { initialState, parsed, theme, title };
     }, [initialState, parsed, theme, title]);
 
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps onError and onReady refs holding the latest callbacks
     useEffect(() => {
       onErrorRef.current = onError;
       onReadyRef.current = onReady;
@@ -131,6 +133,7 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
       [],
     );
 
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- embeds the Vega-Lite chart into the container DOM node and finalizes it on cleanup
     useEffect(() => {
       const container = containerRef.current;
       if (container == null) return;
@@ -188,6 +191,7 @@ export const VegaLiteView = forwardRef<VegaLiteViewController, VegaLiteViewProps
       };
     }, [initialState, parsed, renderPlan, theme, title]);
 
+    // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resizes the Vega-Lite view in step with the container DOM node's width via ResizeObserver
     useEffect(() => {
       const container = containerRef.current;
       if (container == null || !renderPlan.responsive) {

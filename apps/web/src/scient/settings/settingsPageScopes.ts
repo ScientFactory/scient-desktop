@@ -12,6 +12,8 @@ const SINGLE_ENVIRONMENT_SETTINGS_PATHS: Readonly<Record<string, true>> = {
   // SCIENT-FORK:END
   "/settings/extensions": true,
   "/settings/synced-folders": true,
+  // Upstream: secret providers are configured on one server.
+  "/settings/secrets": true,
 };
 
 const SERVER_ONLY_SETTINGS_PATHS: Readonly<Record<string, true>> = {

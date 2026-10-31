@@ -27,6 +27,7 @@ export interface DelayedStatusInput<A> {
   /** Compared by identity, so use strings or other stable values. */
   readonly value: A | null;
   readonly deadlinePassed: boolean;
+  readonly showDelayMs?: number | undefined;
 }
 
 /**
@@ -36,7 +37,7 @@ export interface DelayedStatusInput<A> {
  */
 export function stepDelayedStatus<A>(
   state: DelayedStatusState<A> | null,
-  { key, value, deadlinePassed }: DelayedStatusInput<A>,
+  { key, value, deadlinePassed, showDelayMs = STATUS_SHOW_DELAY_MS }: DelayedStatusInput<A>,
   now: () => number,
   // SCIENT-FORK:START delayed-status-show-delay
   options?: DelayedStatusOptions,
@@ -47,7 +48,7 @@ export function stepDelayedStatus<A>(
     phase: "pending",
     key,
     // SCIENT-FORK:START delayed-status-show-delay
-    showAt: now() + (options?.showDelayMs ?? STATUS_SHOW_DELAY_MS),
+    showAt: now() + (options?.showDelayMs ?? showDelayMs),
     // SCIENT-FORK:END delayed-status-show-delay
   });
   const shown = (shownValue: A): DelayedStatusState<A> => ({

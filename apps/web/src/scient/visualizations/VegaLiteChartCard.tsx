@@ -159,6 +159,7 @@ export function VegaLiteChartCard({
     if (isNearViewport && parsedSource.parsed != null) setStatus({ kind: "loading" });
   }
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the copy-reset timer on unmount
   useEffect(
     () => () => {
       if (copyResetTimerRef.current != null) clearTimeout(copyResetTimerRef.current);

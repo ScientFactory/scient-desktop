@@ -12,7 +12,7 @@ import { createNewThreadHandler, resolveDefaultProjectRef } from "../hooks/useHa
 import { createScratchProjectActions } from "../hooks/useScratchProject";
 import { getClientSettings } from "../hooks/useSettings";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { selectProjectGroupingSettings } from "../logicalProject";
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
@@ -40,6 +40,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       [...appAtomRegistry.get(environmentPresentations.presentationsAtom)].map(
         ([environmentId, presentation]) => ({ ...presentation, environmentId }),
       ),
+    primaryEnvironmentId: () => appAtomRegistry.get(primaryEnvironmentIdAtom),
     registry: appAtomRegistry,
     handleNewThread,
   });
@@ -76,13 +77,15 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       handleNewThread,
     };
   };
-  const readProjectGroupCount = () =>
+  // Grouped like the sidebar, so the shortcut and the New thread button agree.
+  const readProjectGroups = () =>
     buildSidebarProjectSnapshots({
       projects: readProjects(),
+      groupScratchProjects: true,
       settings: selectProjectGroupingSettings(getClientSettings()),
       primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
       resolveEnvironmentLabel: () => null,
-    }).length;
+    });
   const canOperatePreview = (environmentId: EnvironmentId) =>
     readEnvironmentScope(environmentId, AuthPreviewOperateScope);
 
@@ -93,7 +96,10 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
 
   const startNewLocal: CommandHandler = (event) => {
     claim(event);
-    void startNewThreadFromContext(readThreadContext());
+    // With no current or open project, such as when every project is archived, pick one.
+    void startNewThreadFromContext(readThreadContext()).then((started) => {
+      if (!started) openCommandPalette({ open: "new-thread-in" });
+    });
   };
 
   const previewCommand =
@@ -110,21 +116,25 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "chat.newWithoutProject": (event) => {
         const { activeThread, activeDraftThread } = readThreadContext();
         const environmentId = scratch.scratchEnvironmentId(
-          activeThread?.environmentId ??
-            activeDraftThread?.environmentId ??
-            appAtomRegistry.get(primaryEnvironmentIdAtom),
+          activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null,
         );
         if (environmentId === null) return;
         claim(event);
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
-        // Pre-hydration settings are the defaults, where the legacy sidebar is off.
+        // The boring sidebar's folders already show the context, so it starts in
+        // the current project like the legacy sidebar did.
+        const { boringSidebarEnabled, legacySidebarEnabled } = getClientSettings();
         if (
+          !boringSidebarEnabled &&
+          // SCIENT-FORK:START — Scient's target-picker rule: always open it, so Add
+          // project stays one step away (T3: only with more than one open project).
           shouldOpenNewThreadTargetPicker({
-            legacySidebarEnabled: getClientSettings().legacySidebarEnabled,
-            projectGroupCount: readProjectGroupCount(),
+            legacySidebarEnabled,
+            projectGroupCount: readProjectGroups().length,
           })
+          // SCIENT-FORK:END
         ) {
           claim(event);
           openCommandPalette({ open: "new-thread-in" });

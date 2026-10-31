@@ -62,8 +62,6 @@ it.each(["run", "message"] as const)(
       <V2LifecycleRow
         item={item}
         environmentId={EnvironmentId.make("test-env")}
-        createdAt={DateTime.formatIso(now)}
-        timestampFormat="locale"
         runs={[]}
         onOpenThread={onOpenThread}
       />,

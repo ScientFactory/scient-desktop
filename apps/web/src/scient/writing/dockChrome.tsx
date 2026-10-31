@@ -161,7 +161,7 @@ export function DockCommandCheckboxItem({
   const queue = useContext(DockCommandContext);
   return (
     <MenuCheckboxItem
-      variant="icon"
+      variant="icon-slot"
       {...props}
       closeOnClick
       onClick={() => {
@@ -196,6 +196,7 @@ export function DockMenu(props: {
   const queueCommand = useStableCallback((action: () => void) => {
     pendingCommand.current = action;
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores editor selection via a DOM event and runs the pending command when the chrome closes
   useEffect(() => {
     if (open) return;
     const command = pendingCommand.current;
@@ -390,6 +391,7 @@ export function DockOverflowRow(props: {
   const compactWidthsRef = useRef(new Map<string, number>());
   const fixedRef = useRef(props.fixed);
   const groupsRef = useRef(props.groups);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps fixed and groups refs holding the latest props
   useLayoutEffect(() => {
     fixedRef.current = props.fixed;
     groupsRef.current = props.groups;
@@ -461,6 +463,7 @@ export function DockOverflowRow(props: {
   const measureDockLayout = useEffectEvent((..._changes: readonly unknown[]) => {
     recompute();
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the dock DOM layout before paint and recomputes overflow
   useLayoutEffect(
     () =>
       measureDockLayout(
@@ -482,6 +485,7 @@ export function DockOverflowRow(props: {
       recompute,
     );
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the dock DOM layout and recomputes overflow when it changes
   useEffect(
     () =>
       observeDockLayout(

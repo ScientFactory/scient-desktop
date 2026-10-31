@@ -64,7 +64,13 @@ vi.mock("../../state/environments", () => ({
   }),
   useEnvironmentMachines: () => new Map([["local", "laptop"]]),
 }));
-vi.mock("../../state/entities", () => ({ readThreadShell: () => ({ projectId: "project-a" }) }));
+vi.mock("../../state/entities", () => {
+  const delegatedUnderParent: ReadonlySet<string> = new Set();
+  return {
+    readThreadShell: () => ({ projectId: "project-a" }),
+    useDelegatedUnderParent: () => delegatedUnderParent,
+  };
+});
 vi.mock("./NewSectionPopover", () => ({
   NewSectionPopover: (props: NonNullable<typeof mocks.popoverProps>) => {
     mocks.popoverProps = props;

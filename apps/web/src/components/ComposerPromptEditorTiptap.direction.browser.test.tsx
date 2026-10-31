@@ -5,7 +5,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { ContentDirectionScope } from "~/scient/bidi/ContentDirectionScope";
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import {
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+} from "./ComposerPromptEditorTiptap";
 
 function Prompt({ value, direction = "auto" }: { value: string; direction?: ContentDirection }) {
   const [draft, setDraft] = useState({ value, cursor: value.length });

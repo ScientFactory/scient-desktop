@@ -346,6 +346,25 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
+    it.effect("does not read server state files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(config.secretsDir, "example.bin", "example\n");
+        yield* writeTextFile(config.stateDir, "statev2.sqlite", "example\n");
+
+        for (const input of [
+          { cwd, relativePath: path.join(config.secretsDir, "example.bin") },
+          { cwd: config.stateDir, relativePath: "statev2.sqlite" },
+        ]) {
+          const error = yield* workspaceFileSystem.readFile(input).pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        }
+      }),
+    );
+
     it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       "rejects a FIFO without blocking on open",
       () =>
@@ -604,6 +623,26 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         });
         // Read-only for being reached through a link, not for where it lives.
         expect(result).not.toHaveProperty("outsideWorkspace");
+      }),
+    );
+
+    it.effect("drops a multibyte character split by the read limit", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const limit = 1024 * 1024;
+        const euro = new TextEncoder().encode("€");
+        const bytes = new Uint8Array(limit - 1 + euro.length).fill(0x61);
+        bytes.set(euro, limit - 1);
+        yield* fileSystem.writeFile(path.join(cwd, "large.txt"), bytes);
+
+        const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: "large.txt" });
+
+        expect(result.truncated).toBe(true);
+        expect(result.byteLength).toBe(bytes.length);
+        expect(result.contents).toBe("a".repeat(limit - 1));
       }),
     );
 
@@ -1446,6 +1485,107 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
 
         expect(error).toBeInstanceOf(KnownWorkspaces.UnknownWorkspaceError);
         expect(yield* fileSystem.readDirectory(cwd)).toEqual([]);
+      }),
+    );
+
+    it.effect("rejects writes by absolute path", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        const absolutePath = path.join(outsideDir, "cleanup-report.md");
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: absolutePath, contents: "# Edited\n" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+      }),
+    );
+
+    it.effect("invalidates workspace entry search cache after writes", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/existing.ts", "export {};\n");
+
+        const beforeWrite = yield* workspaceEntries.list({ cwd });
+        expect(beforeWrite.entries.some((entry) => entry.path === "plans/effect-rpc.md")).toBe(
+          false,
+        );
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "plans/effect-rpc.md",
+          contents: "# Plan\n",
+        });
+
+        const afterWrite = yield* workspaceEntries.list({ cwd });
+        expect(afterWrite.entries).toEqual(
+          expect.arrayContaining([expect.objectContaining({ path: "plans/effect-rpc.md" })]),
+        );
+        expect(afterWrite.truncated).toBe(false);
+      }),
+    );
+
+    it.effect("saves over an existing file without rescanning the workspace", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/main.ts", "export {};\n");
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "src/main.ts",
+          contents: "export const edited = true;\n",
+        });
+
+        expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
+          "export const edited = true;\n",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.fresh(WorkspaceFileSystem.layer).pipe(
+            Layer.provide(layerKnownWorkspacesTest),
+            Layer.provide(WorkspacePaths.layer),
+            Layer.provide(
+              Layer.mock(WorkspaceEntries.WorkspaceEntries)({
+                refresh: () => Effect.die("An overwrite rescanned the workspace."),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    it.effect("rejects writes outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "../escape.md",
+            contents: "# nope\n",
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
+
+        const escapedPath = path.resolve(cwd, "..", "escape.md");
+        const escapedStat = yield* fileSystem
+          .stat(escapedPath)
+          .pipe(Effect.orElseSucceed(() => null));
+        expect(escapedStat).toBeNull();
       }),
     );
 

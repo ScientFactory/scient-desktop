@@ -51,6 +51,7 @@ export function NewDocumentOnPage(props: {
   const onEdit = useEffectEvent(() => props.onEdit?.());
   const watching = props.onEdit !== null;
   const surface = page ? (page.kind === "latex" ? page.paper : page.host) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a capturing beforeinput listener to the page DOM node while edits are watched
   useEffect(() => {
     if (!surface || !watching) return;
     // An included file is edited on the same page, so the page is where to listen.
@@ -112,6 +113,7 @@ export function NewDocumentOnPage(props: {
  */
 function usePage(anchor: RefObject<HTMLElement | null>): Page | null {
   const [page, setPage] = useState<Page | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the anchor DOM subtree with a ResizeObserver to track the page element and zoom
   useEffect(() => {
     const scope = anchor.current?.parentElement;
     if (!scope) return;
@@ -165,6 +167,7 @@ function useLive<T>(root: HTMLElement, read: () => T, same: (a: T, b: T) => bool
     const next = read();
     setValue((current) => (same(current, next) ? current : next));
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the root DOM node with MutationObserver, resize, and selection listeners, refreshed per animation frame until unmount
   useEffect(() => {
     let frame = 0;
     const update = () => {

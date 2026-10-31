@@ -2,7 +2,7 @@ import { cn } from "~/lib/utils";
 
 import { profilePresentation } from "./accountsView";
 
-/** A browser profile's picture from its source browser, else its initial on its colour. */
+/** A browser profile's picture from its source browser, else its initial on its colour; round, like a person. */
 export function ProfilePicture({
   name,
   picture,
@@ -17,12 +17,12 @@ export function ProfilePicture({
   const visual = profilePresentation({ picture, color });
   const frame = size === "sm" ? "size-5 text-[10px]" : "size-10 text-sm";
   return visual.picture ? (
-    <img alt="" src={visual.picture} className={cn("shrink-0 rounded-[25%] object-cover", frame)} />
+    <img alt="" src={visual.picture} className={cn("shrink-0 rounded-full object-cover", frame)} />
   ) : (
     <span
       aria-hidden
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-[25%] bg-primary/10 text-primary",
+        "flex shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary",
         frame,
       )}
       style={

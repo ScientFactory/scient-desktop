@@ -138,6 +138,7 @@ export function ScientPdfReader(props: {
   const source = showingCopy ? savedCopy.source : props.source;
   const revealDocumentKey = pdfReaderSessionDocumentKey(source);
   const revealOwner = usePdfRevealClaim(revealDocumentKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists the show-original preference to the edited-copy store
   useEffect(() => {
     if (forceOriginal && savedCopy && !savedCopy.showOriginal)
       rememberPdfEditedCopy(copyKey, { ...savedCopy, showOriginal: true });
@@ -168,6 +169,7 @@ export function ScientPdfReader(props: {
     setLoadAttempt((attempt) => attempt + 1);
   };
   const previousRefreshKey = useRef(props.refreshKey);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reloads the PDF asset when the refresh key changes
   useEffect(() => {
     if (previousRefreshKey.current === props.refreshKey) return;
     previousRefreshKey.current = props.refreshKey;
@@ -309,6 +311,7 @@ function LoadedScientPdfReader(props: {
   const installRetainedSelection = useEffectEvent((..._changes: readonly unknown[]) =>
     container ? installPdfRetainedSelection(container) : undefined,
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- installs retained text-selection behavior on the viewer container DOM node
   useEffect(
     () => installRetainedSelection(container, props.documentKey),
     [container, props.documentKey],
@@ -338,6 +341,7 @@ function LoadedScientPdfReader(props: {
       .map((keys) => labelKeys(keys))
       .join(" / ");
   const keyboardAction = useRef<(command: string) => boolean>(() => false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the reader root as a PDF shortcut host until unmount
   useEffect(() => {
     const root = rootRef.current;
     return root
@@ -371,6 +375,7 @@ function LoadedScientPdfReader(props: {
     !edit.url &&
     reader.presentationCurrent &&
     editingPresentation !== reader.presentation;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the edit session when its cached presentation goes stale
   useEffect(() => {
     if (staleEditingCache) void editSession.reset();
   }, [staleEditingCache, editSession]);
@@ -383,6 +388,7 @@ function LoadedScientPdfReader(props: {
   } | null>(null);
   // The pages being dragged, faded in the sidebar while the drag lasts.
   const [draggedPages, setDraggedPages] = useState<readonly string[] | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- shows an imperative toast when an edited copy is saved separately
   useEffect(() => {
     if (!edit.copiedPath || copiedNotice.current === edit.copiedPath) return;
     copiedNotice.current = edit.copiedPath;
@@ -486,6 +492,7 @@ function LoadedScientPdfReader(props: {
     else return false;
     return true;
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps keyboardAction holding the latest shortcut handler
   useLayoutEffect(() => {
     keyboardAction.current = handleKeyboardAction;
   });
@@ -503,6 +510,7 @@ function LoadedScientPdfReader(props: {
     reader.presentation?.revisionId === requestedRevisionId &&
     reader.presentation.sourceUrl === props.sourceAsset.url;
   const thumbnailPages = Array.from({ length: state.pageCount }, (_, index) => index + 1);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prepares the edit session's page selection once the document is ready
   useEffect(() => {
     if (
       canEditPages &&
@@ -520,6 +528,7 @@ function LoadedScientPdfReader(props: {
     edit.frame.pages.length,
   ]);
   const restoredEditUrl = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the edited copy's page and moves DOM focus to the sidebar or edit session
   useEffect(() => {
     if (!currentPresentation) return;
     if (edit.url && restoredEditUrl.current !== edit.url) {
@@ -537,14 +546,17 @@ function LoadedScientPdfReader(props: {
   };
 
   const onSyncPageChange = props.syncNavigation?.onPageChange;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports viewer page changes to the sync-navigation callback
   useEffect(() => {
     if (state.phase === "ready" && !isEditedDocument) onSyncPageChange?.(state.page);
   }, [isEditedDocument, onSyncPageChange, state.page, state.phase]);
   const { prepareSearch, goToSyncPoint } = reader;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prepares the PDF.js find controller when search opens
   useEffect(() => {
     if (!searchOpen) return;
     prepareSearch();
   }, [prepareSearch, searchOpen]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the PDF viewer to the sync-navigation forward target when it changes
   useEffect(() => {
     const target = props.syncNavigation?.forwardTarget;
     if (isEditedDocument || target === null || target === undefined || !currentPresentation) return;

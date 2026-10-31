@@ -77,6 +77,7 @@ import {
 import { mediaUrlReference } from "@t3tools/client-runtime/media-reference";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { InlineAudioPreview } from "./files/InlineAudioPreview";
+import { HostImageUrlContext } from "./chat/hostImageUrl";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -84,6 +85,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import React, {
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
+  type MouseEvent as ReactMouseEvent,
   use,
   memo,
   useLayoutEffect,
@@ -96,19 +98,14 @@ import type {
   ExtraProps as ReactMarkdownExtraProps,
   Options as ReactMarkdownOptions,
 } from "react-markdown";
-import ReactMarkdown from "react-markdown";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
+import type { PluggableList } from "unified";
 import { defaultUrlTransform } from "react-markdown";
 // SCIENT-FORK:START — quotes from Markdown files render as citation chips too.
 import { parseComposerCitationHref } from "@t3tools/shared/composerCitations";
 // SCIENT-FORK:END
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
-// SCIENT-FORK:START — older saved links retain their explicit environment.
-import {
-  parseEnvironmentQualifiedThreadLinkHref,
-  parseThreadLinkHref,
-} from "@t3tools/shared/threadLinks";
-// SCIENT-FORK:END
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 // SCIENT-FORK:START — a streaming answer is revealed line by line (
@@ -245,6 +242,8 @@ import { environmentFileLinkResolution } from "../scient/fileOpening/environment
 // SCIENT-FORK:END
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { createMarkdownRenderer } from "./chat/markdownRenderer";
+import { splitMarkdownBlocks } from "./chat/markdownStreamBlocks";
 import { MarkdownTable } from "./chat/MarkdownTable";
 import { MarkdownDetails } from "./chat/MarkdownDetails";
 import {
@@ -258,6 +257,7 @@ import {
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
+import { rehypeChipPunctuation } from "./chat/markdownChipPunctuation";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
@@ -307,6 +307,7 @@ interface ChatMarkdownProps {
   // SCIENT-FORK:END
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
   /** Loads media a source control host keeps behind a credential through the server, which holds
@@ -473,14 +474,47 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
 const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
   ...CHAT_MARKDOWN_REHYPE_PLUGINS,
   rehypeHeadingIds,
+  rehypeChipPunctuation,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 // SCIENT-FORK:START — retain safe scientific images without opting into raw HTML.
 const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
   ...CHAT_MARKDOWN_REHYPE_PLUGINS_WITHOUT_RAW,
   rehypeHeadingIds,
+  rehypeChipPunctuation,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 // SCIENT-FORK:END
+
+// SCIENT-FORK:START — one stable list per direction keeps the shared renderer and its cache.
+const directionalRehypeLists = new Map<string, PluggableList>();
+function directionalRehypePlugins(
+  parseRawHtml: boolean,
+  options: Parameters<typeof rehypeScientBidi>[0],
+): PluggableList {
+  const key = `${parseRawHtml}\0${options.direction}\0${options.requestedDirection}`;
+  let plugins = directionalRehypeLists.get(key);
+  if (!plugins) {
+    plugins = [
+      ...(parseRawHtml
+        ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
+        : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS),
+      [rehypeScientBidi, options],
+    ];
+    directionalRehypeLists.set(key, plugins);
+  }
+  return plugins;
+}
+// SCIENT-FORK:END
+
+function markdownUrlTransform(href: string) {
+  // SCIENT-FORK:START — quotes from Markdown files are citations too.
+  if (parseComposerCitationHref(href)) return href;
+  // SCIENT-FORK:END
+  if (parseComposerContextHref(href)) return href;
+  if (parseThreadLinkHref(href)) return href;
+  if (isWindowsDrivePathHref(href)) return href;
+  return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
+}
 
 const NO_MARKDOWN_EDITORS: ReadonlyArray<EditorId> = [];
 
@@ -488,7 +522,7 @@ type MarkdownServerConfigFields = ReturnType<typeof markdownServerConfigFields>;
 
 function markdownServerConfigFields(config: ServerConfig | null) {
   return {
-    pullRequestsEnabled: config?.environment.capabilities.pullRequests === true,
+    pullRequestsEnabled: config !== null,
     availableEditors: config?.availableEditors ?? NO_MARKDOWN_EDITORS,
     revealInFileManagerLabel:
       config?.shellRevealInFileManager === true && config.availableEditors.includes("file-manager")
@@ -519,6 +553,54 @@ const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId
     return previous !== null && markdownServerConfigFieldsEqual(previous, next) ? previous : next;
   }).pipe(Atom.withLabel("markdown-server-config-fields")),
 );
+
+function fileLinkSourcesKey(
+  text: string,
+  cwd: string | undefined,
+  imageBaseDir: string | undefined,
+  // SCIENT-FORK:START — links resolve against the editable workspace root.
+  workspaceRoot: string | null | undefined,
+  // SCIENT-FORK:END
+): string {
+  const hrefs = extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))
+    .filter((href) => !parseComposerContextHref(href))
+    .map(normalizeMarkdownLinkHrefKey)
+    .filter((href) => resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd, workspaceRoot));
+  const spans = extractInlineCodeSpans(text).filter((span) =>
+    resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd, workspaceRoot),
+  );
+  return JSON.stringify([[...new Set(hrefs)], [...new Set(spans)]]);
+}
+
+function resolveFileLinkSources(
+  key: string,
+  cwd: string | undefined,
+  imageBaseDir: string | undefined,
+  // SCIENT-FORK:START — links resolve against the editable workspace root.
+  workspaceRoot: string | null | undefined,
+  // SCIENT-FORK:END
+) {
+  const [hrefs, spans] = JSON.parse(key) as [string[], string[]];
+  const markdownFileLinkMetaByHref = new Map<string, MarkdownFileLinkMeta>();
+  for (const href of hrefs) {
+    // SCIENT-FORK:START — looked up by the link's key (markdown-links.ts).
+    const lookupKey = markdownLinkLookupKey(href);
+    if (markdownFileLinkMetaByHref.has(lookupKey)) continue;
+    const meta = resolveMarkdownFileLinkMeta(href, cwd, imageBaseDir ?? cwd, workspaceRoot);
+    if (meta) markdownFileLinkMetaByHref.set(lookupKey, meta);
+    // SCIENT-FORK:END
+  }
+  const inlineCodeFileLinkMetaByText = new Map<string, MarkdownFileLinkMeta>();
+  for (const span of spans) {
+    const meta = resolveInlineCodeFileLinkMeta(span, cwd, imageBaseDir ?? cwd, workspaceRoot);
+    if (meta) inlineCodeFileLinkMetaByText.set(span, meta);
+  }
+  const fileLinkParentSuffixByPath = buildFileLinkParentSuffixByPath([
+    ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
+    ...[...inlineCodeFileLinkMetaByText.values()].map((meta) => meta.filePath),
+  ]);
+  return { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath };
+}
 
 function useChatMarkdownState({
   // SCIENT-FORK:START — math normalization keeps the authored text for Find.
@@ -597,6 +679,7 @@ function useChatMarkdownState({
     setLocalMedia(null);
   }
   // Layout cleanup blocks stale requests from reaching onImageExpand before paint.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- layout cleanup invalidates media requests still loading for the old scope before paint
   useLayoutEffect(
     () => () => {
       mediaRequestId.current += 1;
@@ -730,65 +813,6 @@ function useChatMarkdownState({
     });
   };
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
-  // SCIENT-FORK:START — links resolve against the editable workspace root and are looked up by
-  // their lookup key (markdown-links.ts).
-  const markdownFileLinkMetaByHref = (() => {
-    const metaByHref = new Map<
-      string,
-      NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
-    >();
-    for (const href of extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(text))) {
-      if (parseComposerContextHref(href)) continue;
-      const normalizedHref = normalizeMarkdownLinkHrefKey(href);
-      const lookupKey = markdownLinkLookupKey(normalizedHref);
-      if (metaByHref.has(lookupKey)) continue;
-      const meta = resolveMarkdownFileLinkMeta(
-        normalizedHref,
-        cwd,
-        imageBaseDir ?? cwd,
-        fileLinkWorkspaceRoot,
-      );
-      if (meta) {
-        metaByHref.set(lookupKey, meta);
-      }
-    }
-    return metaByHref;
-  })();
-  const inlineCodeFileLinkMetaByText = (() => {
-    const metaByText = new Map<string, MarkdownFileLinkMeta>();
-    for (const span of extractInlineCodeSpans(text)) {
-      if (metaByText.has(span)) continue;
-      const meta = resolveInlineCodeFileLinkMeta(
-        span,
-        cwd,
-        imageBaseDir ?? cwd,
-        fileLinkWorkspaceRoot,
-      );
-      if (meta) {
-        metaByText.set(span, meta);
-      }
-    }
-    return metaByText;
-  })();
-  // SCIENT-FORK:END
-  const fileLinkParentSuffixByPath = (() => {
-    const filePaths = [
-      ...[...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath),
-      ...[...inlineCodeFileLinkMetaByText.values()].map((meta) => meta.filePath),
-    ];
-    return buildFileLinkParentSuffixByPath(filePaths);
-  })();
-  const markdownUrlTransform = (href: string) => {
-    // SCIENT-FORK:START — quotes from Markdown files are citations too.
-    if (parseComposerCitationHref(href)) return href;
-    // SCIENT-FORK:END
-    if (parseComposerContextHref(href)) return href;
-    // SCIENT-FORK:START — keep saved qualified thread URLs through Markdown sanitization.
-    if (parseEnvironmentQualifiedThreadLinkHref(href) || parseThreadLinkHref(href)) return href;
-    // SCIENT-FORK:END
-    if (isWindowsDrivePathHref(href)) return href;
-    return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
-  };
   const handleCopy = (event: ReactClipboardEvent<HTMLElement>) => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !event.clipboardData) return;
@@ -808,6 +832,12 @@ function useChatMarkdownState({
   const openDeferredMarkdownLink = useOpenLink(threadRef);
   // Subscribe so hydrated settings apply before the anchor synchronously decides whether to intercept _blank.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
+  // Keyed by the file links found, not the text, so streamed text that adds none keeps the
+  // renderer context, and every block reading it, unchanged.
+  // A template literal marks the key as a string, so the compiler memoizes the maps on its value.
+  const fileLinksKey = `${fileLinkSourcesKey(text, cwd, imageBaseDir, fileLinkWorkspaceRoot)}`;
+  const { markdownFileLinkMetaByHref, inlineCodeFileLinkMetaByText, fileLinkParentSuffixByPath } =
+    resolveFileLinkSources(fileLinksKey, cwd, imageBaseDir, fileLinkWorkspaceRoot);
   const resolveThreadPullRequest = (
     href: string,
   ): (ThreadPullRequestKey & { readonly url: string }) | null => {
@@ -1108,7 +1138,6 @@ function useChatMarkdownState({
     // SCIENT-FORK:END
     handleCopy,
     markdownRef,
-    markdownUrlTransform,
     localMediaPreview,
     closeLocalMediaPreview,
   };
@@ -1135,6 +1164,11 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
       />
     );
   };
+}
+
+// Native word selection stops at hyphens and dots, so a double-click takes the whole span.
+function selectInlineCode(event: ReactMouseEvent<HTMLElement>) {
+  window.getSelection()?.selectAllChildren(event.currentTarget);
 }
 
 const CHAT_MARKDOWN_COMPONENTS = {
@@ -1261,24 +1295,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const citation = href ? parseComposerCitationHref(href) : null;
     // SCIENT-FORK:END
     if (citation) return <AssistantCitationChip citation={citation} />;
-    // SCIENT-FORK:START — older saved links retain their explicit environment.
-    const qualifiedThread = href ? parseEnvironmentQualifiedThreadLinkHref(href) : null;
-    const linkedThreadId = qualifiedThread?.threadId ?? (href ? parseThreadLinkHref(href) : null);
-    const linkedEnvironmentId = qualifiedThread?.environmentId ?? environmentId;
-    if (linkedThreadId) {
-      const label = hastPlainTextDeep(node) || linkedThreadId;
-      return linkedEnvironmentId ? (
-        <MarkdownThreadLink
-          environmentId={linkedEnvironmentId}
-          threadId={linkedThreadId}
-          label={label}
-          environmentQualified={qualifiedThread !== null}
-        />
+    const threadLink = href ? parseThreadLinkHref(href) : null;
+    if (threadLink) {
+      const written = hastPlainTextDeep(node);
+      // An autolink's text is its own URL, which is no label.
+      const label = written && parseThreadLinkHref(written) === null ? written : null;
+      return environmentId ? (
+        <MarkdownThreadLink environmentId={environmentId} link={threadLink} label={label} />
       ) : (
-        <span>{label}</span>
+        <span>{label ?? "Thread"}</span>
       );
     }
-    // SCIENT-FORK:END
     const contextReference = href ? parseComposerContextHref(href) : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;
@@ -1520,7 +1547,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       chip
     ) : (
       <span data-markdown-copy={copyMarkdown}>
-        {children} {chip}
+        <span className="whitespace-normal">{children} </span>
+        {chip}
       </span>
     );
   },
@@ -1567,7 +1595,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       if (inlineCssColor) {
         return (
           <ScientInlineColorCode
-            codeProps={{ ...props, className, dir: "ltr" }}
+            codeProps={{ ...props, className, dir: "ltr", onDoubleClick: selectInlineCode }}
             color={inlineCssColor}
           >
             {children}
@@ -1575,6 +1603,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
         );
       }
       // SCIENT-FORK:END
+      return (
+        // SCIENT-FORK: code stays left-to-right inside right-to-left prose.
+        <code {...props} className={className} dir="ltr" onDoubleClick={selectInlineCode}>
+          {children}
+        </code>
+      );
     }
     return (
       // SCIENT-FORK:START — code stays left-to-right inside right-to-left prose.
@@ -1786,6 +1820,24 @@ const CHAT_MARKDOWN_COMPONENTS = {
         />
       );
     }
+    const hostImageUrl = use(HostImageUrlContext);
+    if (imageSource._tag === "WorkspaceFile" && kind === "image" && hostImageUrl !== null) {
+      const hostSrc = hostImageUrl(imageSource.path);
+      return (
+        <ChatMarkdownImage
+          key={hostSrc}
+          src={hostSrc}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          className={className}
+          style={authoredSizeStyle}
+          imageProps={imageProps}
+          actionsSource={{ kind, name: altText || kind, src: hostSrc }}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
     if (imageSource._tag === "WorkspaceFile" && threadRef) {
       return (
         <ChatMarkdownAssetImage
@@ -1927,6 +1979,80 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
+
+// One combined list per pair, so a stable extra list shares a renderer and its parse cache.
+function withExtraPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
+  if (extra.length === 0) return shared;
+  let byShared = combinedPlugins.get(extra);
+  if (!byShared) combinedPlugins.set(extra, (byShared = new WeakMap()));
+  let combined = byShared.get(shared);
+  if (!combined) byShared.set(shared, (combined = [...shared, ...extra]));
+  return combined;
+}
+
+const markdownRenderers = new WeakMap<
+  PluggableList,
+  WeakMap<PluggableList, ReturnType<typeof createMarkdownRenderer>>
+>();
+
+function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: PluggableList) {
+  let byRehype = markdownRenderers.get(remarkPlugins);
+  if (!byRehype) markdownRenderers.set(remarkPlugins, (byRehype = new WeakMap()));
+  let renderer = byRehype.get(rehypePlugins);
+  if (!renderer) {
+    renderer = createMarkdownRenderer({
+      remarkPlugins,
+      rehypePlugins,
+      components: CHAT_MARKDOWN_COMPONENTS,
+      urlTransform: markdownUrlTransform,
+    });
+    byRehype.set(rehypePlugins, renderer);
+  }
+  return renderer;
+}
+
+const MarkdownSource = memo(function MarkdownSource({
+  text,
+  // SCIENT-FORK:START — math nodes read the source as authored.
+  authoredText,
+  // SCIENT-FORK:END
+  remarkPlugins,
+  rehypePlugins,
+  shared,
+  cache,
+}: {
+  text: string;
+  // SCIENT-FORK:START
+  authoredText: string;
+  // SCIENT-FORK:END
+  remarkPlugins: PluggableList;
+  rehypePlugins: PluggableList;
+  /** The plugins are one of the shared sets. */
+  shared: boolean;
+  /** The text will not change again; streamed text would only fill the cache with prefixes. */
+  cache: boolean;
+}) {
+  // Per-instance plugins, such as the incremental parser, set up their state on every render.
+  const render = shared
+    ? markdownRenderer(remarkPlugins, rehypePlugins)
+    : createMarkdownRenderer({
+        remarkPlugins,
+        rehypePlugins,
+        components: CHAT_MARKDOWN_COMPONENTS,
+        urlTransform: markdownUrlTransform,
+      });
+  return (
+    <ChatMarkdownTextContext value={text}>
+      {/* SCIENT-FORK:START — it changes per streamed token, so only math reads it. */}
+      <ScientAuthoredMathTextContext value={authoredText}>
+        {render(text, shared && cache)}
+      </ScientAuthoredMathTextContext>
+      {/* SCIENT-FORK:END */}
+    </ChatMarkdownTextContext>
+  );
+});
+
 function ChatMarkdown({
   text,
   className,
@@ -1945,25 +2071,47 @@ function ChatMarkdown({
     // SCIENT-FORK:END
     handleCopy,
     markdownRef,
-    markdownUrlTransform,
     localMediaPreview,
     closeLocalMediaPreview,
   } = useChatMarkdownState({ text, inline, ...props });
+  // SCIENT-FORK:START — authored math intent reads offsets in the whole message, so a message
+  // that needs it renders whole; every other message takes the shared, cached path.
+  const sharedRemarkPlugins = withExtraPlugins(
+    lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS,
+    extraRemarkPlugins,
+  );
+  const messageRemarkPlugins = scientMathRemarkPluginsForMessage(sharedRemarkPlugins, text);
+  const wholeMessage = messageRemarkPlugins !== sharedRemarkPlugins || markdownText !== text;
+  // SCIENT-FORK:END
+  // Streaming re-renders only the last block; offsets for task edits need the whole text.
+  // SCIENT-FORK: the split outlives the stream, so a web image the reader loaded stays loaded.
+  const streamingBlocks =
+    !inline && extraRemarkPlugins.length === 0 && !props.onTaskListChange && !wholeMessage
+      ? splitMarkdownBlocks(text)
+      : null;
   const incrementalParsing =
     props.isStreaming === true &&
+    streamingBlocks === null &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
   const Root = inline ? "span" : "div";
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  const remarkPlugins = (() => [
-    ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
-    ...extraRemarkPlugins,
-    ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
-  ])();
-  // SCIENT-FORK:START — the math refinements recover authored intent from the original text.
-  const scientRemarkPlugins = scientMathRemarkPluginsForMessage(remarkPlugins, text);
+  // The incremental parser keeps per-instance state, so its output is not shared.
+  const remarkPlugins = incrementalParsing
+    ? scientMathRemarkPluginsForMessage(
+        [...sharedRemarkPlugins, createIncrementalMarkdownPlugin()],
+        text,
+      )
+    : messageRemarkPlugins;
+  const uncachedPlugins = incrementalParsing || wholeMessage;
+  const blocks = streamingBlocks ?? [markdownText];
+  // SCIENT-FORK:START — the message direction, after the shared pipeline.
+  const rehypePlugins = directionalRehypePlugins(parseRawHtml, {
+    direction: resolvedContentDirection,
+    requestedDirection: effectiveContentDirection,
+  });
   // SCIENT-FORK:END
 
   return (
@@ -1983,38 +2131,21 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        <ChatMarkdownTextContext value={markdownText}>
-          {/* SCIENT-FORK:START — math nodes read the authored source; it changes per streamed token. */}
-          <ScientAuthoredMathTextContext value={text}>
-            {/* SCIENT-FORK:END */}
-            <ReactMarkdown
-              // SCIENT-FORK:START — math refinements, and the message direction after the pipeline.
-              remarkPlugins={scientRemarkPlugins}
-              rehypePlugins={[
-                ...(parseRawHtml
-                  ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-                  : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS),
-                [
-                  rehypeScientBidi,
-                  {
-                    direction: resolvedContentDirection,
-                    requestedDirection: effectiveContentDirection,
-                  },
-                ],
-              ]}
-              // SCIENT-FORK:END
-              skipHtml={false}
-              components={CHAT_MARKDOWN_COMPONENTS}
-              urlTransform={markdownUrlTransform}
-            >
-              {/* SCIENT-FORK:START — math delimiters are normalized length-preservingly. */}
-              {markdownText}
-              {/* SCIENT-FORK:END */}
-            </ReactMarkdown>
-            {/* SCIENT-FORK:START */}
-          </ScientAuthoredMathTextContext>
-          {/* SCIENT-FORK:END */}
-        </ChatMarkdownTextContext>
+        {blocks.map((source, index) => (
+          <MarkdownSource
+            // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
+            key={index}
+            text={source}
+            // SCIENT-FORK:START — a split message has no math normalization to undo.
+            authoredText={streamingBlocks ? source : text}
+            // SCIENT-FORK:END
+            remarkPlugins={remarkPlugins}
+            rehypePlugins={rehypePlugins}
+            shared={!uncachedPlugins}
+            // Every block before the last is finished, so its parse can be reused.
+            cache={!props.isStreaming || index < blocks.length - 1}
+          />
+        ))}
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />

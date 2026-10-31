@@ -17,12 +17,14 @@ export interface ScientMarkdownDocumentProps {
 export function ScientMarkdownDocument(props: ScientMarkdownDocumentProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the imperative markdown controller into the host DOM node
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     props.controller.mount(host);
   }, [props.controller]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes the mode to the imperative markdown controller when it changes
   useEffect(() => props.controller.setMode(props.mode), [props.controller, props.mode]);
 
   return (
