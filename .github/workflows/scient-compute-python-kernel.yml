@@ -7,8 +7,8 @@
 # `ipykernel`, matplotlib, pandas, and a live subprocess tree, which is why it
 # is conditionally called by CI and remains manually dispatchable.
 #
-# The real-kernel matrix deliberately spans macOS, Linux, and Windows. Managed
-# Python remains limited to targets with a published, sealed runtime recipe.
+# Every matrix spans the four computers Scient ships for: Apple Silicon, Intel
+# Mac, Windows x64 and Linux x64.
 name: Scient Compute Python Kernel
 
 on:

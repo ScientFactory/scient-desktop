@@ -1095,13 +1095,19 @@ export function makeComputeBridgeTransport(
             const ackPayload = ack.payload as {
               ownerToken: string;
               pid: number;
+              parentPid?: number;
               platform: string;
               capabilities: ComputeCapability[];
             };
             if (ackPayload.ownerToken !== ownerToken) {
               return yield* transportError("handshake", "Owner token mismatch.");
             }
-            if (ackPayload.pid !== handle.pid) {
+            // On Windows a virtual environment's python.exe is a launcher that starts the real
+            // Python as its child, so the process Scient started is the bridge's parent.
+            if (
+              ackPayload.pid !== handle.pid &&
+              !(ackPayload.platform === "win32" && ackPayload.parentPid === handle.pid)
+            ) {
               return yield* transportError("handshake", "Bridge PID mismatch.");
             }
             if (!hasCapabilities(ackPayload.capabilities, request.requiredCapabilities)) {

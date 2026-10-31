@@ -22,6 +22,19 @@ const PROBE = [
   'cat("\\n")',
 ].join("\n");
 
+function libraryPath(
+  platform: NodeJS.Platform,
+  home: string,
+  environment: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> {
+  const name =
+    platform === "linux" ? "LD_LIBRARY_PATH" : platform === "darwin" ? "DYLD_LIBRARY_PATH" : null;
+  if (name === null) return {};
+  const existing = environment[name];
+  const lib = `${home}/lib`;
+  return { [name]: existing ? `${lib}:${existing}` : lib };
+}
+
 export const R_KERNEL_LANGUAGE: KernelLanguage = {
   languageId: R_LANGUAGE_ID,
   displayName: "R",
@@ -97,7 +110,7 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
   setup: { version: ARK_VERSION, add: installArk },
   // IRkernel answers no interrupt on Windows, so Ark runs there even for people who have IRkernel.
   ownKernelUsable: (platform) => platform !== "win32",
-  launch: ({ executable, privateDirectory, platform, home }) =>
+  launch: ({ executable, privateDirectory, environment, platform, home }) =>
     privateDirectory === null
       ? {
           argv: [executable, ...R_FLAGS, "-e", "IRkernel::main()", "--args", "{connection_file}"],
@@ -117,7 +130,12 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
             "--",
             "--interactive",
           ],
-          environment: { R_HOME: home, RUST_LOG: "error" },
+          environment: {
+            R_HOME: home,
+            RUST_LOG: "error",
+            // R's launcher script sets these for R; Ark loads R's libraries itself.
+            ...libraryPath(platform, home, environment),
+          },
           interruptMode: "message",
           interruptedReplyIsOk: true,
         },

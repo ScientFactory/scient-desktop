@@ -290,7 +290,8 @@ describe.runIf(enabled)("kernel language integration", () => {
           const failed = yield* execute(session, 'stop("boom")');
           expect(errorOf(failed)?.value).toContain("boom");
           expect(completion(failed)).toMatchObject({ outcome: "failed" });
-          expect(hasMedia(yield* execute(session, "plot(1:10)"), "image/png")).toBe(true);
+          const plotted = yield* execute(session, "plot(1:10)");
+          expect(hasMedia(plotted, "image/png"), JSON.stringify(plotted)).toBe(true);
           const next = yield* interruptAndRestart(session, "Sys.sleep(60)");
           expect(text(yield* execute(session, 'exists("x")', next))).toContain("FALSE");
           yield* session.channel.shutdown({ expectedGeneration: next });
@@ -534,6 +535,8 @@ describe.runIf(Boolean(BARE_PYTHON))("running on what people have", () => {
             yield* binding.adapter.prepareLaunch(request),
           );
           expect(text(yield* execute(session, "print(40 + 2)"))).toContain("[1] 42");
+          const plotted = yield* execute(session, "plot(1:10)");
+          expect(hasMedia(plotted, "image/png"), JSON.stringify(plotted)).toBe(true);
           const next = yield* interruptAndRestart(session, "Sys.sleep(60)");
           yield* session.channel.shutdown({ expectedGeneration: next });
         }),
