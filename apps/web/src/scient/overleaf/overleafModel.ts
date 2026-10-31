@@ -206,6 +206,12 @@ export function overleafChipView(
           : "An earlier sync didn't finish. The next sync finishes it.",
     };
   }
+  if (status.connection.completedSyncCount === 0)
+    return {
+      state: "incoming",
+      label: "Not synced yet",
+      detail: "Sync to bring the project here.",
+    };
   if (remote === "changed")
     return { state: "incoming", label: "Changes in Overleaf", detail: "Sync to bring them here." };
   // "Up to date" is said only after asking Overleaf: the status reads the folder alone.

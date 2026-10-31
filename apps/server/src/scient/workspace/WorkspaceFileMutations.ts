@@ -612,6 +612,15 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       throw e;
     }
     const records: Stored[] = [];
+    /** A folder that is gone holds no record: one bad record can't stop every project's reads. */
+    const standing = (folder: string) =>
+      assertPrivateRetention(folder, deps.nativePublicationHelper).then(
+        () => true,
+        (cause: unknown) => {
+          if (isNodeError(cause, "ENOENT") || isNodeError(cause, "ENOTDIR")) return false;
+          throw cause;
+        },
+      );
     const readRecord = async (entry: (typeof entries)[number]): Promise<Stored | null> => {
       if (!entry.isDirectory() || !/^[a-zA-Z0-9_-]{1,100}$/u.test(entry.name)) return null;
       const indexed = NodePath.join(storage, entry.name);
@@ -619,13 +628,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       if (known && (await recordStand(indexed, known.stored.directory)) === known.stand) {
         return known.stored;
       }
-      await assertPrivateRetention(indexed, deps.nativePublicationHelper);
+      if (!(await standing(indexed))) return null;
       const reference = await readOptional(
         NodePath.join(indexed, "reference.json"),
         decodeReference,
       );
       const directory = reference?.recordDirectory ?? indexed;
-      await assertPrivateRetention(directory, deps.nativePublicationHelper);
+      if (!(await standing(directory))) return null;
       // Taken before the read: a change after it moves this on.
       const stand = await recordStand(indexed, directory);
       const text = await readOptional(NodePath.join(directory, "record.json"), (value) => value);

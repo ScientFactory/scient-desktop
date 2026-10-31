@@ -173,6 +173,16 @@ describe("overleafChipView", () => {
     ).toMatchObject({ label: "Edits to send", detail: "1 change to send. Overleaf changed too." });
   });
 
+  it("says a link that never synced hasn't, not that it has nothing to send", () => {
+    const fresh = status();
+    expect(
+      overleafChipView(
+        { ...fresh, connection: { ...fresh.connection, completedSyncCount: 0 } },
+        false,
+      ),
+    ).toMatchObject({ state: "incoming", label: "Not synced yet" });
+  });
+
   it("names a link whose folder is gone, with the way out", () => {
     expect(
       overleafChipView(status({ availability: "unavailable", local: null }), false).detail,

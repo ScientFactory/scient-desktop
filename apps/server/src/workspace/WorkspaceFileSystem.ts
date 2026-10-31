@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 
 import type {
   ProjectFilePublicationAttention,
@@ -225,8 +224,7 @@ export const make = Effect.gen(function* () {
     resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
   );
   const configuredRetentionStorageDirectory =
-    config.filePublicationRetentionRoot ??
-    path.join(NodeOS.homedir(), ".scient-next", "file-publications");
+    config.filePublicationRetentionRoot ?? path.join(config.baseDir, "file-publications");
   // Resolve only ancestors: the final private directory must still reject a symlink.
   // Missing optional storage stays absent until a publication provisions it.
   const canonicalAncestor = async (directory: string): Promise<string> => {
