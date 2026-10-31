@@ -74,4 +74,5 @@ it("takes the code from the message, never the sender's number or a year", () =>
   expect(codeInText("Your verification code is 482913", service, "Example")).toBe("482913");
   expect(codeInText("Example: your code is 482913", service, "32665")).toBe("482913");
   expect(codeInText("In 2026 Example code is 482913", service)).toBe("482913");
+  expect(codeInText("G-482913 is your Example verification code.", service)).toBe("482913");
 });

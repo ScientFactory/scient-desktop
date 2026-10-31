@@ -41,7 +41,12 @@ const account: AccountSummary = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 const requestedUrl = "https://example.com/report";
-const input = { requestedUrl, pageUrl: "https://example.com/login", tabId: "tab-fixture" };
+const input = {
+  requestedUrl,
+  pageUrl: "https://example.com/login",
+  tabId: "tab-fixture",
+  profileId: "default",
+};
 
 const run = (accounts: ReadonlyArray<AccountSummary>, signedIn = true) => {
   const navigated: unknown[] = [];
@@ -107,6 +112,46 @@ it.effect("signs in with the Allowed saved sign-in and returns to the page the a
     expect(result?.note).toBe("Signed in with Fixture.");
     expect(navigated).toEqual([{ url: requestedUrl }]);
     expect(uses[0]?.signInOutcome).toBe("signed-in");
+  }),
+);
+
+const inProfile = (
+  accountId: string,
+  name: string,
+  profileId: string | undefined,
+): AccountSummary => ({
+  ...account,
+  accountId: AccountId.make(accountId),
+  name,
+  details: {
+    kind: "website",
+    sites: ["example.com"],
+    username: name,
+    ...(profileId ? { profileId } : {}),
+  },
+});
+
+it.effect("uses the account of the tab's profile, never another profile's", () =>
+  Effect.gen(function* () {
+    const { result } = yield* run([
+      inProfile("acc_fixture2", "Personal", "personal"),
+      inProfile("acc_fixture3", "Work", "default"),
+    ]);
+    expect(result?.note).toBe("Signed in with Work.");
+    const other = yield* run([inProfile("acc_fixture2", "Personal", "personal")]);
+    expect(other.result).toBeUndefined();
+  }),
+);
+
+it.effect("leaves the choice to the agent when several accounts fit", () =>
+  Effect.gen(function* () {
+    const { result, uses } = yield* run([
+      inProfile("acc_fixture2", "First", undefined),
+      inProfile("acc_fixture3", "Second", undefined),
+    ]);
+    expect(result?.note).toContain("several saved accounts fit");
+    expect(result?.note).toContain("acc_fixture2 (First)");
+    expect(uses).toEqual([]);
   }),
 );
 

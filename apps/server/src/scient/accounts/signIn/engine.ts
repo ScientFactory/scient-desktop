@@ -142,6 +142,8 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   // continues with what is on screen.
   let filled: Array<{ origin: string; selector: string; expected: string }> = [];
   const submissions: SignInSubmission[] = [];
+  // A code sent in reply to a submit can arrive before the page shows it asks for one.
+  let submittedAt: number | undefined;
   // Cleared unless the sign-in succeeded or the user takes over, including on interruption.
   let clearFilled = true;
   let cleanupFailed = false;
@@ -336,7 +338,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
             yield* noteCodeNeeded;
             const found =
               action.kind === "code" && options.findCode
-                ? yield* options.findCode(startedAt)
+                ? yield* options.findCode(Math.min(startedAt, submittedAt ?? startedAt))
                 : undefined;
             if (found !== undefined) return yield* enterCode(found);
           }
@@ -398,6 +400,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         fields: action.fields.map(({ field }) => field),
         otpPeriod,
       });
+      submittedAt = yield* Clock.currentTimeMillis;
       if (action.submit) yield* invoke("click", { selector: action.submit }, target);
       else yield* invoke("press", { key: "Enter" }, target);
       yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);

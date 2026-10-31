@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Opaque request ids use the operating system CSPRNG.
 import * as NodeCrypto from "node:crypto";
-import type { AccountSummary } from "@t3tools/contracts";
+import type { AccountsError, AccountSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SIGN_IN_CODE_REQUEST_PREFIX } from "@t3tools/shared/scientAccountSecretRequest";
@@ -14,9 +14,9 @@ import { readMessageCode, serviceWords } from "../signIn/messageCodes.ts";
 const findSignInCode = Effect.fn("AccountsAgent.findSignInCode")(function* (
   sinceMs: number,
   service: ReadonlyArray<string>,
+  sources: Effect.Effect<{ readonly messages?: boolean | undefined } | undefined, AccountsError>,
 ) {
-  const sources = (yield* (yield* AccountsService).snapshot).codeSources;
-  if (!sources?.messages) return undefined;
+  if (!(yield* sources)?.messages) return undefined;
   return yield* Effect.try(() => readMessageCode(sinceMs, service)).pipe(
     Effect.orElseSucceed(() => undefined),
   );
@@ -38,6 +38,8 @@ export const signInCodes = Effect.fn("AccountsAgent.signInCodes")(function* (
     name: account.name,
     sites: "sites" in account.details ? account.details.sites : [],
   });
+  // Read once: a snapshot asks every source control tool, and the code is looked for every second.
+  const sources = yield* Effect.cached(accounts.snapshot.pipe(Effect.map((s) => s.codeSources)));
   return {
     askCode: (site: string): Effect.Effect<string> => {
       const { projectId } = scope;
@@ -67,9 +69,6 @@ export const signInCodes = Effect.fn("AccountsAgent.signInCodes")(function* (
         );
     },
     findCode: (sinceMs: number): Effect.Effect<string | undefined> =>
-      findSignInCode(sinceMs, service).pipe(
-        Effect.provideService(AccountsService, accounts),
-        Effect.orElseSucceed(() => undefined),
-      ),
+      findSignInCode(sinceMs, service, sources).pipe(Effect.orElseSucceed(() => undefined)),
   };
 });

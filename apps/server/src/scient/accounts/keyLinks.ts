@@ -32,17 +32,16 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
     if (!instance || !variable) return yield* failure("This variable no longer exists.");
     if (variable.value === Redacted.value(token)) return;
     yield* settings
-      .updateSettings({
-        providerInstances: {
-          ...current.providerInstances,
-          [instanceId]: {
-            ...instance,
-            environment: (instance.environment ?? []).map((item) =>
-              item.name === link.variable
-                ? { name: item.name, value: Redacted.value(token), sensitive: true }
-                : item,
-            ),
-          },
+      .updateProviderInstance({
+        operation: "upsert",
+        instanceId,
+        instance: {
+          ...instance,
+          environment: (instance.environment ?? []).map((item) =>
+            item.name === link.variable
+              ? { name: item.name, value: Redacted.value(token), sensitive: true }
+              : item,
+          ),
         },
       })
       .pipe(Effect.mapError(() => failure("The provider variable could not be updated.")));

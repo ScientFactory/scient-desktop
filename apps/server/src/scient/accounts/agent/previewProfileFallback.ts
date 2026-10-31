@@ -12,7 +12,7 @@ import { scientInvocationForMcp } from "../../../mcp/ScientMcpInvocation.ts";
 import type { AccountSessionScope } from "../AccountsService.ts";
 import { withAccountUse } from "./accountUse.ts";
 import { findProfiles } from "./findProfiles.ts";
-import { classifyProfilePage } from "./profileClassification.ts";
+import { classifyProfilePage, isAutomaticSignInPage } from "./profileClassification.ts";
 import { ProfileDetection, profileDetectionScript } from "./profileDetection.ts";
 import { profileOpenDecision } from "./profileOpenDecision.ts";
 import { signInOnPage } from "./signInOnPage.ts";
@@ -60,11 +60,12 @@ export const previewProfileFallback = Effect.fn("AccountsAgent.previewProfileFal
       "the current profile";
     // The saved sign-in for this page, once no signed-in profile can open it.
     const signInHere = Effect.gen(function* () {
-      if (result !== "sign-in") return undefined;
+      if (result !== "sign-in" || !isAutomaticSignInPage(url, page)) return undefined;
       const signedIn = yield* signInOnPage(scope, {
         requestedUrl: url,
         pageUrl: page.finalUrl,
         tabId,
+        profileId,
       }).pipe(Effect.provideService(AgentInvocationContext, invocation));
       return signedIn && { ...(signedIn.status ?? status), accountsNote: signedIn.note };
     });

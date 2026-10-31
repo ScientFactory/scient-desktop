@@ -7,8 +7,9 @@ import * as NodeSqlite from "node:sqlite";
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1);
 
 const CODE_WORDS = /code|otp|passcode|password|verif|one.?time|קוד|סיסמ|אימות/iu;
-const CODE = /(?<![\d/.:,-])\d{4,8}(?![\d/.:,-]*\d)/u;
-const SIX_DIGIT_CODE = /(?<![\d/.:,-])\d{6}(?![\d/.:,-]*\d)/u;
+// Not part of a date, price or phone number, though Google writes its codes as G-123456.
+const CODE = /(?<![\d/.:,]|(?<!\bG)-)\d{4,8}(?![\d/.:,-]*\d)/u;
+const SIX_DIGIT_CODE = /(?<![\d/.:,]|(?<!\bG)-)\d{6}(?![\d/.:,-]*\d)/u;
 
 const GENERIC_NAMES = new Set([
   "account",

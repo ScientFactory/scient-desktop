@@ -12,6 +12,15 @@ const savedSignIn = (account: AccountSummary, url: string) =>
   account.secrets.password !== undefined &&
   matchesAccountOrigin(url, account.details.sites);
 
+const profileOf = ({ details }: AccountSummary) =>
+  details.kind === "website" || details.kind === "library" ? details.profileId : undefined;
+
+/** The accounts of this tab's profile, else those of no profile; never another profile's. */
+const inProfile = (accounts: ReadonlyArray<AccountSummary>, profileId: string | undefined) => {
+  const own = accounts.filter((account) => profileOf(account) === profileId);
+  return own.length > 0 ? own : accounts.filter((account) => profileOf(account) === undefined);
+};
+
 /**
  * Signs in on a login page with the saved sign-in for this page or the page the agent asked for,
  * so an agent never chains list, find and sign-in. Only Allowed accounts: an Ask account waits for
@@ -19,22 +28,34 @@ const savedSignIn = (account: AccountSummary, url: string) =>
  */
 export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
   scope: AccountSessionScope,
-  input: { readonly requestedUrl: string; readonly pageUrl: string; readonly tabId: PreviewTabId },
+  input: {
+    readonly requestedUrl: string;
+    readonly pageUrl: string;
+    readonly tabId: PreviewTabId;
+    readonly profileId: string | undefined;
+  },
 ) {
   const accounts = yield* AccountsService;
   const session = yield* accounts.forSession(scope);
   if (!session.agentAccess) return undefined;
-  const saved = [
-    ...session.accounts.filter((account) => savedSignIn(account, input.pageUrl)),
-    ...session.accounts.filter((account) => savedSignIn(account, input.requestedUrl)),
-  ];
-  const allowed = saved.find(
-    (account) => authorizationDecision(true, account.controls, scope).decision === "allowed",
-  );
-  if (!allowed) {
-    const ask = saved.find(
-      (account) => authorizationDecision(true, account.controls, scope).decision === "ask",
+  const decided = (url: string, decision: "allowed" | "ask") =>
+    inProfile(
+      session.accounts.filter((account) => savedSignIn(account, url)),
+      input.profileId,
+    ).filter(
+      (account) => authorizationDecision(true, account.controls, scope).decision === decision,
     );
+  const onPage = decided(input.pageUrl, "allowed");
+  const allowedHere = onPage.length > 0 ? onPage : decided(input.requestedUrl, "allowed");
+  if (allowedHere.length > 1)
+    return {
+      note: `This page needs a sign-in and several saved accounts fit. Call scient_account_sign_in with the one to use: ${allowedHere
+        .map((account) => `${account.accountId} (${account.name})`)
+        .join(", ")}.`,
+    };
+  const allowed = allowedHere[0];
+  if (!allowed) {
+    const ask = [...decided(input.pageUrl, "ask"), ...decided(input.requestedUrl, "ask")][0];
     return ask
       ? {
           note: `This page needs a sign-in. Call scient_account_sign_in with ${ask.accountId} (${ask.name}) to ask the user.`,

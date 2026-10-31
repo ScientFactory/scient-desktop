@@ -24,9 +24,9 @@ const run = (value: string) => {
         },
       },
     }),
-    updateSettings: (patch: unknown) =>
+    updateProviderInstance: (mutation: unknown) =>
       Effect.sync(() => {
-        updates.push(patch);
+        updates.push(mutation);
         return {};
       }),
   } as unknown as ServerSettingsService["Service"];
@@ -43,9 +43,11 @@ const run = (value: string) => {
 it.effect("copies the saved key into the variable and leaves the others alone", () =>
   Effect.gen(function* () {
     const [update] = (yield* run("old")) as Array<{
-      providerInstances: Record<string, { environment: unknown }>;
+      instanceId: string;
+      instance: { environment: unknown };
     }>;
-    expect(update?.providerInstances[instanceId]?.environment).toEqual([
+    expect(update?.instanceId).toBe(instanceId);
+    expect(update?.instance.environment).toEqual([
       { name: "OPENAI_API_KEY", value: "saved-key", sensitive: true },
       { name: "CODEX_HOME", value: "/home", sensitive: false },
     ]);

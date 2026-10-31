@@ -307,7 +307,7 @@ Family `accounts`, capability `accounts`, granted to every provider session by
 
 | Tool                             | What it does                                                                                                                                                                 |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, access, whether readable, how to use it, status                                                           |
+| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, username (unless Off), access, whether readable, how to use it, status, last check                        |
 | `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps                                                  |
 | `scient_account_fill`            | Types one saved field into the agent's own tab on a page of the account's sites; the agent handles the page, in any language. One password fill per account every 15 minutes |
 | `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                                                                 |
@@ -347,7 +347,7 @@ CAPTCHA, passkey or push prompt is a hand-off, not a rejection. A returning code
 `code-rejected`; generated TOTP may retry once only after a new period starts. Static codes never
 retry. Rejected, failed and interrupted sign-ins clear the fields of the last submission, using
 origin-bound browser operations; a hand-off leaves them for the user to finish. The result tells
-the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-user`, `password-rejected`, `code-rejected` or `failed`
+the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-user`, `limited`, `password-rejected`, `code-rejected` or `failed`
 and records that outcome in activity. The 2FA code comes from the stored
 `totp` field (`otpauth://` URI or base32 key) via `otpauth`, or from 1Password
 (`?attribute=otp`). When an attended sign-in needs a CAPTCHA, phone approval, passkey or missing information,
@@ -431,7 +431,8 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 `AccountSummary.lastCheck` keeps what Scient last saw of a sign-in: `signed-in`, `signed-out`,
 `needs-you`, `rejected`, `limited` or `unknown`, with when and an optional message. Every sign-in outcome
 updates it (`outcomeCheckState`). `accounts.signInSeen` records the user's own sign-in, when a
-submitted saved password leaves no login form six seconds later. A saved secret resets it. Rows show
+submitted saved password leaves no login form six seconds later. A saved password, 2FA secret or
+key resets it. Rows show
 it through `accountStatusLabel`, after anything that needs the user.
 
 `accounts.check` (`checkAccounts.ts`) opens each account's site or library link in its own profile,
@@ -593,9 +594,10 @@ provider environment. The existing proxy redacts reflected values in responses.
 - **Which profile a tab opens in**: `pickBrowserProfile` (`@t3tools/shared/scientBrowserProfileChoice`)
   serves both the app (three marked hooks where upstream read the default profile) and
   `authorizePreviewProfile` for agents (allowed profiles only). Order: the user's switch for the
-  page's host in this conversation; the only profile with a website account covering the page
-  (ties: latest switch for the host anywhere, the conversation's, the project's, the default, list
-  order); the conversation's; the project's; the default. Choices live in Accounts state
+  page's host in this conversation; the only profile with evidence of a session on the page
+  (`profileSignIns`; ties: latest switch for the host anywhere, the conversation's, the project's,
+  the default, list order); the latest switch for the host anywhere; the conversation's; the
+  project's; the default. Choices live in Accounts state
   (`profileChoices`: projects, and threads with per-host switches, 500 threads and 50 hosts kept),
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. The
   menu names the profiles with a sign-in on the page. The toolbar makes no claim about the tab's

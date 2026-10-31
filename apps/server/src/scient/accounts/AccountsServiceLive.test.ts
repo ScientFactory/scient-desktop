@@ -257,6 +257,45 @@ describe("AccountsService persistence", () => {
   );
 });
 
+describe("AccountsService profiles and evidence", () => {
+  it.effect("keeps the same login imported into two profiles as two rows", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const content = `name,url,username,password,note\nSynthetic,https://login.example.com/,user,${syntheticValue()},\n`;
+      yield* service.importPasswords({ format: "auto", content, profileId: "profile-a" });
+      yield* service.importPasswords({ format: "auto", content, profileId: "profile-b" });
+      expect(
+        (yield* service.snapshot).accounts.map(({ details }) =>
+          details.kind === "website" ? details.profileId : undefined,
+        ),
+      ).toEqual(["profile-a", "profile-b"]);
+    }),
+  );
+
+  it.effect("ends a removed profile's sign-ins and keeps its saved passwords", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness();
+      const profileId = BrowserProfileId.make("profile-gone");
+      yield* service.googleSessionsSeen({
+        profileId,
+        sessions: [{ email: "a@example.com", valid: true }],
+      });
+      yield* service.importPasswords({
+        format: "auto",
+        content: `name,url,username,password,note\nSynthetic,https://login.example.com/,user,${syntheticValue()},\n`,
+        profileId,
+      });
+      yield* service.removeProfile(profileId);
+      const { accounts } = yield* service.snapshot;
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]?.name).toBe("Synthetic");
+      expect(accounts[0]?.details.kind === "website" && accounts[0].details.profileId).toBe(
+        undefined,
+      );
+    }),
+  );
+});
+
 describe("AccountsService source resolution", () => {
   it.effect(
     "resolves links, caches 1Password per account for five minutes, and clears it on disconnect",

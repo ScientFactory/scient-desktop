@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { classifyProfilePage } from "./profileClassification.ts";
+import { classifyProfilePage, isAutomaticSignInPage } from "./profileClassification.ts";
 import type { ProfileDetection } from "./profileDetection.ts";
 
 const url = "https://docs.example.com/sheet";
@@ -81,5 +81,32 @@ describe("browser profile page classification", () => {
     },
   ])("$name", ({ requested, page, result }) => {
     expect(classifyProfilePage(requested ?? url, page)).toBe(result);
+  });
+});
+
+describe("pages Scient may sign in on by itself", () => {
+  const passwordPage = { ...page, passwordField: true };
+  it.each([
+    { name: "a page made for signing in", finalUrl: "https://docs.example.com/login", yes: true },
+    { name: "a redirect to a password form", finalUrl: "https://docs.example.com/auth", yes: true },
+    { name: "another site's form", finalUrl: "https://idp.example.org/enter", yes: true },
+    { name: "the page the agent opened", finalUrl: url, yes: false },
+    { name: "the same page with a trailing slash", finalUrl: `${url}/`, yes: false },
+  ])("$name", ({ finalUrl, yes }) => {
+    expect(isAutomaticSignInPage(url, { ...passwordPage, finalUrl })).toBe(yes);
+  });
+
+  it("never submits a password for someone already signed in", () => {
+    const closeAccount = "https://docs.example.com/settings/close-account";
+    expect(isAutomaticSignInPage(closeAccount, { ...passwordPage, finalUrl: closeAccount })).toBe(
+      false,
+    );
+    expect(
+      isAutomaticSignInPage(url, {
+        ...passwordPage,
+        finalUrl: "https://docs.example.com/login",
+        signOutLink: true,
+      }),
+    ).toBe(false);
   });
 });

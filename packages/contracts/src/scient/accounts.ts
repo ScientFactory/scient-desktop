@@ -724,8 +724,8 @@ export type PasswordImportResult = typeof PasswordImportResult.Type;
 export const AccountFilledTab = Schema.Struct({
   threadId: ThreadId,
   tabId: PreviewTabId,
-  /** The page that was filled; the tab stays closed to agents that may not use it until it changes. */
-  url: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  /** The site that was filled, by origin; the tab stays closed to agents that may not use it until it changes. */
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
 });
 export type AccountFilledTab = typeof AccountFilledTab.Type;
 

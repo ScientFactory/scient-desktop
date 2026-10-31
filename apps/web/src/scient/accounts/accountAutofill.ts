@@ -24,7 +24,9 @@ function runtimeTab(id: string) {
 /** The server's record of a fill in a runtime tab, which keeps the page from agents that may not use it. */
 export function filledTabRecord(runtimeTabId: string, url: string) {
   const tab = runtimeTab(runtimeTabId);
-  return tab ? { threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, url } : undefined;
+  return tab
+    ? { threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, url: new URL(url).origin }
+    : undefined;
 }
 
 /** Signing back in is tried once per site in this long: a wrong password must not repeat. */
@@ -110,7 +112,7 @@ export function watchAccountAutofill(
       input: {
         accountId: account.accountId,
         origin: form.url,
-        tab: { threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, url: pageUrl },
+        tab: { threadId: ThreadId.make(tab.threadId), tabId: tab.tabId, url: form.url },
       },
     });
     if (values._tag !== "Success") return;

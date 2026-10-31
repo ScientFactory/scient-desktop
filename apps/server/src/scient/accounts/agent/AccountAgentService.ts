@@ -74,7 +74,9 @@ export const accountAgentOperations = {
             kind: account.details.kind,
             sites: "sites" in account.details ? account.details.sites : [],
             // A site can hold several accounts, and only this tells them apart.
-            ...("username" in account.details && account.details.username
+            ...(account.controls.access !== "off" &&
+            "username" in account.details &&
+            account.details.username
               ? { username: account.details.username }
               : {}),
             access: account.controls.access,

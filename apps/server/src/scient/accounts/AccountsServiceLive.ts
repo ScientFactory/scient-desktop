@@ -75,6 +75,16 @@ import { parsePasswordImport } from "./PasswordImport.ts";
 const failure = (reason: AccountsError["reason"], message: string) =>
   new AccountsError({ reason, message });
 const missing = () => failure("not-found", "The account no longer exists.");
+
+/** A removed profile's sign-ins ended with it; a saved password stays, free of the profile. */
+const withoutProfileSignIns = (accounts: ReadonlyArray<StoredAccount>, profileId: string) =>
+  accounts.flatMap((account) => {
+    const { details, secrets } = account.summary;
+    if (!("profileId" in details) || details.profileId !== profileId) return [account];
+    if (Object.keys(secrets).length === 0) return [];
+    const { profileId: _, ...rest } = details;
+    return [{ ...account, summary: { ...account.summary, details: rest } }];
+  });
 const valueName = () => `accounts-value-${NodeCrypto.randomUUID()}`;
 const decodeSave = Schema.decodeEffect(AccountSaveInput);
 const decodeMatch = Schema.decodeEffect(AccountMatchSignInInput);
@@ -535,7 +545,10 @@ export const layer = Layer.effect(
         ...(!input.secrets?.password && !input.secrets?.totp && existing?.summary.lastSignInOutcome
           ? { lastSignInOutcome: existing.summary.lastSignInOutcome }
           : {}),
-        ...(!input.secrets?.password && !input.secrets?.totp && existing?.summary.lastCheck
+        ...(!input.secrets?.password &&
+        !input.secrets?.totp &&
+        !input.secrets?.token &&
+        existing?.summary.lastCheck
           ? { lastCheck: existing.summary.lastCheck }
           : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,
@@ -848,6 +861,7 @@ export const layer = Layer.effect(
           Effect.suspend(() =>
             commit({
               ...state,
+              accounts: withoutProfileSignIns(state.accounts, profileId),
               profiles: state.profiles.filter((profile) => profile.profileId !== profileId),
               ...(state.profileChoices
                 ? { profileChoices: withoutProfile(state.profileChoices, profileId) }
@@ -1064,7 +1078,11 @@ export const layer = Layer.effect(
                   (account) =>
                     account.summary.details.kind === "website" &&
                     account.summary.details.sites.includes(entry.site) &&
-                    (account.summary.details.username ?? "") === entry.username,
+                    (account.summary.details.username ?? "") === entry.username &&
+                    // The same login in another profile is that profile's own row.
+                    (input.profileId === undefined ||
+                      account.summary.details.profileId === undefined ||
+                      account.summary.details.profileId === input.profileId),
                 );
                 if (existing) {
                   const current = yield* resolve(existing.summary.accountId, ["password", "totp"]);

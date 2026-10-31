@@ -4,6 +4,22 @@ import type { ProfileDetection } from "./profileDetection.ts";
 
 export const ProfileResult = Schema.Literals(["opens", "sign-in", "denied", "error"]);
 
+/**
+ * Whether Scient may submit a saved password here. A password field alone isn't enough: it also
+ * asks to confirm closing an account or changing settings. So a page the agent didn't ask for, or
+ * one made for signing in, and never one for someone already signed in.
+ */
+export function isAutomaticSignInPage(requestedUrl: string, page: ProfileDetection) {
+  if (page.signOutLink || !URL.canParse(requestedUrl) || !URL.canParse(page.finalUrl)) return false;
+  const requested = new URL(requestedUrl);
+  const final = new URL(page.finalUrl);
+  return (
+    isLoginPlace(final) ||
+    final.origin !== requested.origin ||
+    final.pathname.replace(/\/$/u, "") !== requested.pathname.replace(/\/$/u, "")
+  );
+}
+
 export function classifyProfilePage(
   requestedUrl: string,
   page: ProfileDetection | undefined,
