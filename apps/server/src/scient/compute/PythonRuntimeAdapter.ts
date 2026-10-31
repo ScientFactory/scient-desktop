@@ -30,7 +30,7 @@ import {
   type DiscoveredRuntime,
   type DiscoveryContext,
 } from "./RuntimeDiscovery.ts";
-import { kernelPrograms } from "./KernelSpecs.ts";
+import { PRIVATE_KERNEL_STARTER, kernelPrograms } from "./KernelSpecs.ts";
 import { readPythonFacts } from "./RuntimeFacts.ts";
 import { makeRuntimeProbeCache, type RuntimeProbeCache } from "./RuntimeProbeCache.ts";
 
@@ -232,6 +232,20 @@ export function checkReadiness(
   return { readiness: "ready", missing: [] };
 }
 
+/** Whether this checked Python can carry the bridge itself. */
+export function hostsBridge(verification: ComputeRuntimeVerification): boolean {
+  return (
+    verification.readiness === "ready" &&
+    checkReadiness({
+      implementation: "CPython",
+      version: verification.profile.languageVersion,
+      packages: Object.fromEntries(
+        verification.packages.map((entry) => [entry.name, entry.version]),
+      ),
+    }).readiness === "ready"
+  );
+}
+
 /** Stable, sorted package observations safe to expose through runtime inspection. */
 function observedPackages(probe: ProbeResult): ReadonlyArray<ComputeRuntimePackage> {
   return OBSERVED_PYTHON_PACKAGES.map((name) => ({
@@ -420,9 +434,26 @@ export function makePythonRuntimeAdapter(
       | undefined;
     /** Shared by adapters probing the same interpreters, so one probe answers both. */
     readonly probeCache?: RuntimeProbeCache<ProbeResult>;
+    /**
+     * Runs a Python that lacks Scient's packages: the bridge stays on a host and the person's
+     * interpreter runs their code as a kernel, with nothing written into it.
+     */
+    readonly host?: {
+      readonly executable: Effect.Effect<string, ComputeRuntimeError>;
+      readonly privateKernel: (
+        executable: string,
+        realExecutable: string,
+        version: string,
+      ) => Effect.Effect<string, ComputeRuntimeError>;
+    };
   } = {},
 ): ComputeLanguageAdapter {
   const probes = options.probeCache ?? makeRuntimeProbeCache<ProbeResult>();
+  /** With a host, what a Python lacks is added beside it, so it only has to be a CPython. */
+  const canRun = (result: ReturnType<typeof checkReadiness>) =>
+    options.host !== undefined && result.readiness === "missing-requirement"
+      ? { readiness: "ready" as const, missing: [] }
+      : result;
   /** Why a discovered runtime cannot run, for the verification of its unusable profile. */
   const problems = new Map<string, string>();
 
@@ -556,13 +587,15 @@ export function makePythonRuntimeAdapter(
         return [[name, fact.state === "present" ? (fact.version ?? "0") : null] as const];
       }),
     );
-    const { readiness, missing } = checkReadiness({
-      implementation: "CPython",
-      version: profile.languageVersion,
-      packages: Object.fromEntries(
-        REQUIRED_PACKAGES.flatMap((name) => (name in observed ? [[name, observed[name]!]] : [])),
-      ),
-    });
+    const { readiness, missing } = canRun(
+      checkReadiness({
+        implementation: "CPython",
+        version: profile.languageVersion,
+        packages: Object.fromEntries(
+          REQUIRED_PACKAGES.flatMap((name) => (name in observed ? [[name, observed[name]!]] : [])),
+        ),
+      }),
+    );
     return {
       profile,
       readiness,
@@ -620,7 +653,7 @@ export function makePythonRuntimeAdapter(
       }
       const probe = parsed.success;
 
-      const { readiness, missing } = checkReadiness(probe);
+      const { readiness, missing } = canRun(checkReadiness(probe));
 
       // `detected` is the MATLAB contract: inspect stays a probe, but
       // `compute.verifyRuntime` will start and close a real session. Omitting
@@ -637,11 +670,47 @@ export function makePythonRuntimeAdapter(
     },
   );
 
-  const prepareLaunch: ComputeLanguageAdapter["prepareLaunch"] = (request) =>
+  const launchPlan = (request: Parameters<ComputeLanguageAdapter["prepareLaunch"]>[0]) =>
     Effect.try({
       try: () => buildLaunchPlan(request, bridgePath),
       catch: (cause) => runtimeError("prepare", "The launch request was not usable.", cause),
     });
+
+  const prepareLaunch: ComputeLanguageAdapter["prepareLaunch"] = Effect.fn(
+    "PythonRuntimeAdapter.prepareLaunch",
+  )(function* (request) {
+    const { host } = options;
+    if (host === undefined) return yield* launchPlan(request);
+    const { executable } = request.profile;
+    const probe = yield* readProbe(executable).pipe(
+      Effect.mapError((cause) => runtimeError("prepare", cause.message, cause)),
+    );
+    if (checkReadiness(probe).readiness === "ready") return yield* launchPlan(request);
+    const ownKernel = probe.packages.ipykernel;
+    const argv =
+      typeof ownKernel === "string" && meetsPythonMinimumVersion(ownKernel, MIN_IPYKERNEL_VERSION)
+        ? [executable, "-m", "ipykernel_launcher"]
+        : [
+            executable,
+            "-c",
+            PRIVATE_KERNEL_STARTER,
+            yield* host.privateKernel(executable, probe.executableRealpath, probe.version),
+          ];
+    const plan = yield* launchPlan({
+      ...request,
+      profile: { ...request.profile, executable: yield* host.executable },
+    });
+    return {
+      ...plan,
+      kernel: {
+        argv,
+        language: "python",
+        interruptMode: "signal",
+        variablesExpression: null,
+        pythonFeatures: true,
+      },
+    };
+  });
 
   const normalizeDiagnostic: ComputeLanguageAdapter["normalizeDiagnostic"] = (report, context) =>
     normalizePythonDiagnostic(report, context);

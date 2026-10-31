@@ -7,7 +7,7 @@ import { parse } from "smol-toml";
 const Hash = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 const Version = Schema.String.check(Schema.isPattern(/^3\.\d+\.\d+$/));
 export const ComputeRecipe = Schema.Struct({
-  purpose: Schema.Literals(["python", "matlab-connection"]),
+  purpose: Schema.Literals(["python", "matlab-connection", "bridge-host"]),
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   toolkitRevision: Schema.String.check(Schema.isPattern(/^[a-z0-9.-]{1,128}$/)),
   contract: Schema.Literal(1),
@@ -134,7 +134,7 @@ export function sealComputeRecipe(
     projectSha256,
     lockSha256,
     capabilitySha256,
-    toolkitRevision: `${baseline.purpose === "python" ? "scientific-python" : "matlab-connection"}-${DateTime.formatIso(DateTime.makeUnsafe(revision * 1000)).slice(0, 10)}.${revision}`,
+    toolkitRevision: `${baseline.purpose === "python" ? "scientific-python" : baseline.purpose}-${DateTime.formatIso(DateTime.makeUnsafe(revision * 1000)).slice(0, 10)}.${revision}`,
   });
 }
 

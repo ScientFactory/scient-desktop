@@ -30,7 +30,7 @@ import * as Scope from "effect/Scope";
 
 import { sanitizeComputeEnvironment } from "./ComputeEnvironmentPolicy.ts";
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
-import { kernelPrograms } from "./KernelSpecs.ts";
+import { kernelPrograms, privateKernelDirectory } from "./KernelSpecs.ts";
 import { runOwnedProcess } from "./ManagedPythonProvisioner.ts";
 import type { KernelBridgeHost } from "./PythonComputeRuntime.ts";
 import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
@@ -72,6 +72,9 @@ export interface KernelInstallationFacts {
 export interface KernelLaunch {
   readonly argv: ReadonlyArray<string>;
   readonly environment: Readonly<Record<string, string>>;
+  /** Otherwise the language's own. */
+  readonly interruptMode?: "signal" | "message";
+  readonly interruptedReplyIsOk?: boolean;
 }
 
 /** A language whose Jupyter kernel is a package installed into the user's own runtime. */
@@ -93,6 +96,8 @@ export interface KernelLanguage {
   /** Prints the probe marker, version, architecture, home and its own kernel version, tab-separated. */
   readonly probeArgs: ReadonlyArray<string>;
   readonly readFacts: (context: DiscoveryContext, executable: string) => KernelInstallationFacts;
+  /** False where a person's kernel cannot do what Scient needs, so Scient's own is used. */
+  readonly ownKernelUsable?: (platform: NodeJS.Platform) => boolean;
   /** The language's own program, lowercase, as a kernel would start it. */
   readonly programName: string;
   /** Where installers recorded it, when that can be outside the usual folders. */
@@ -101,18 +106,29 @@ export interface KernelLanguage {
   readonly program?: (context: DiscoveryContext, executable: string) => string;
   /** Where the executable sits inside a conda-style environment. */
   readonly inEnvironment: (platform: NodeJS.Platform) => ReadonlyArray<string>;
-  /** Installs the kernel under `privateDirectory`; the last stdout line is its version. */
-  readonly setup: (
-    privateDirectory: string,
-    environment: Readonly<Record<string, string>>,
-    platform: NodeJS.Platform,
-  ) => { readonly args: ReadonlyArray<string>; readonly environment: Record<string, string> };
+  /** Installs the kernel under `privateDirectory`, running the language or adding a program. */
+  readonly setup:
+    | ((
+        privateDirectory: string,
+        environment: Readonly<Record<string, string>>,
+        platform: NodeJS.Platform,
+      ) => { readonly args: ReadonlyArray<string>; readonly environment: Record<string, string> })
+    | {
+        readonly version: string;
+        readonly add: (input: {
+          readonly directory: string;
+          readonly platform: NodeJS.Platform;
+          readonly arch: NodeJS.Architecture;
+          readonly signal: AbortSignal;
+        }) => Promise<void>;
+      };
   /** Null `privateDirectory` means the installation's own kernel. */
   readonly launch: (input: {
     readonly executable: string;
     readonly privateDirectory: string | null;
     readonly environment: Readonly<Record<string, string>>;
     readonly platform: NodeJS.Platform;
+    readonly home: string;
   }) => KernelLaunch;
   readonly interruptMode: (platform: NodeJS.Platform) => "signal" | "message";
 }
@@ -159,20 +175,6 @@ function parseKernelProbe(stdout: string): KernelInstallationProbe {
   };
 }
 
-/** Keeps a private kernel apart per installation and version, since packages are built for one. */
-function privateKernelDirectory(
-  computeDir: string,
-  languageId: string,
-  realExecutable: string,
-  version: string | null,
-): string {
-  const key = NodeCrypto.createHash("sha256")
-    .update([realExecutable, version ?? ""].join("\n"))
-    .digest("hex")
-    .slice(0, 16);
-  return NodePath.join(computeDir, "kernels", languageId, key);
-}
-
 interface Installation {
   readonly executable: string;
   readonly source: ComputeRuntimeSource;
@@ -204,6 +206,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
   const fileSystem = yield* FileSystem.FileSystem;
   const scope = yield* Scope.Scope;
   const platform = yield* HostProcess.Platform;
+  const arch = yield* HostProcess.Architecture;
   const hostEnvironment = yield* HostProcess.Environment;
   const { environment } = sanitizeComputeEnvironment(
     Object.fromEntries(
@@ -269,6 +272,10 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       add(executable, "conventional", false, `Kernel: ${kernel}`);
     return found;
   });
+
+  /** A person's own kernel, unless this language cannot use it on this computer. */
+  const ownKernelVersion = (state: KernelState) =>
+    language.ownKernelUsable?.(platform) === false ? null : state.probe.ownKernelVersion;
 
   const programOf = (executable: string) =>
     Effect.map(
@@ -426,22 +433,15 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       }
       const kernelVersion =
         state.success.probe.ownKernelVersion ?? state.success.privateKernelVersion;
-      const host = yield* Effect.result(hostExecutable());
-      const missing = [
-        ...(kernelVersion === null ? [language.kernelPackage] : []),
-        ...(host._tag === "Failure" ? ["Python with jupyter_client"] : []),
-      ];
+      const hostFound = yield* input.host.mayHost(yield* input.configuredExecutable("python"));
       return {
         profile: request.profile,
-        readiness: missing.length === 0 ? ("ready" as const) : ("missing-requirement" as const),
-        ...(missing.length === 0 ? { connection: "detected" as const } : {}),
-        missingRequirements: missing,
-        message:
-          kernelVersion === null
-            ? `${language.kernelPackage} is not set up.`
-            : host._tag === "Failure"
-              ? host.failure.message
-              : null,
+        readiness: hostFound ? ("ready" as const) : ("missing-requirement" as const),
+        ...(hostFound ? { connection: "detected" as const } : {}),
+        missingRequirements: hostFound ? [] : ["Python with jupyter_client"],
+        message: hostFound
+          ? null
+          : "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
         packages: [{ name: language.kernelPackage.toLowerCase(), version: kernelVersion }],
       };
     },
@@ -462,21 +462,14 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     const state = yield* fileState(profile.executable);
     const kernelVersion = state.probe.ownKernelVersion ?? state.privateKernelVersion;
     const hostFound = yield* input.host.mayHost(yield* input.configuredExecutable("python"));
-    const missing = [
-      ...(kernelVersion === null ? [language.kernelPackage] : []),
-      ...(hostFound ? [] : ["Python with jupyter_client"]),
-    ];
     return {
       profile,
-      readiness: missing.length === 0 ? ("ready" as const) : ("missing-requirement" as const),
-      ...(missing.length === 0 ? { connection: "detected" as const } : {}),
-      missingRequirements: missing,
-      message:
-        kernelVersion === null
-          ? `${language.kernelPackage} is not set up.`
-          : hostFound
-            ? null
-            : "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
+      readiness: hostFound ? ("ready" as const) : ("missing-requirement" as const),
+      ...(hostFound ? { connection: "detected" as const } : {}),
+      missingRequirements: hostFound ? [] : ["Python with jupyter_client"],
+      message: hostFound
+        ? null
+        : "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
       packages: [{ name: language.kernelPackage.toLowerCase(), version: kernelVersion }],
     };
   });
@@ -484,17 +477,22 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
   const prepareLaunch: ComputeLanguageAdapter["prepareLaunch"] = Effect.fn(
     "KernelComputeRuntime.prepareLaunch",
   )(function* (request) {
-    const state = yield* kernelState(request.profile.executable).pipe(
+    const readState = kernelState(request.profile.executable).pipe(
       Effect.mapError((cause) => runtimeError("prepare", cause.message, cause)),
     );
-    if (state.probe.ownKernelVersion === null && state.privateKernelVersion === null)
-      return yield* runtimeError("prepare", `${language.kernelPackage} is not set up.`);
+    let state = yield* readState;
+    // Run needs no setup step: a missing kernel is added here, in Scient's own folder.
+    if (ownKernelVersion(state) === null && state.privateKernelVersion === null) {
+      yield* addKernel(request.profile.executable, state.privateDirectory);
+      state = yield* readState;
+    }
     const host = yield* hostExecutable();
     const kernel = language.launch({
       executable: yield* programOf(request.profile.executable),
-      privateDirectory: state.probe.ownKernelVersion === null ? state.privateDirectory : null,
+      privateDirectory: ownKernelVersion(state) === null ? state.privateDirectory : null,
       environment: request.environment,
       platform,
+      home: state.probe.home,
     });
     const plan = yield* Effect.try({
       try: () =>
@@ -513,7 +511,8 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       kernel: {
         argv: kernel.argv,
         language: language.kernelLanguage,
-        interruptMode: language.interruptMode(platform),
+        interruptMode: kernel.interruptMode ?? language.interruptMode(platform),
+        ...(kernel.interruptedReplyIsOk ? { interruptedReplyIsOk: true } : {}),
         variablesExpression: language.variablesExpression,
         ...(language.startupTimeoutMs === undefined
           ? {}
@@ -621,23 +620,56 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     executable: string,
     privateDirectory: string,
   ) {
-    yield* fileSystem.remove(privateDirectory, { recursive: true }).pipe(Effect.ignore);
-    yield* fileSystem.makeDirectory(privateDirectory, { recursive: true });
-    const setup = language.setup(privateDirectory, environment, platform);
-    const stdout = yield* runOwnedProcess(input.processes, {
-      runId: `scient-${language.languageId}-kernel-setup-${NodeCrypto.randomUUID()}`,
-      executable: yield* programOf(executable),
-      args: setup.args,
-      cwd: privateDirectory,
-      environment: setup.environment,
-      stdoutOnly: true,
-    });
-    const kernelVersion = stdout.trim().split("\n").pop()?.trim();
-    if (!kernelVersion) return yield* manageError(`${language.kernelPackage} did not install.`);
-    yield* fileSystem.writeFileString(
-      NodePath.join(privateDirectory, MARKER_FILE),
-      encodeMarker({ kernelVersion }),
+    // A running session keeps the copy it started with. Windows refuses while files are in use,
+    // and the failure says so instead of breaking the session.
+    const previous = `${privateDirectory}.previous-${NodeCrypto.randomUUID()}`;
+    const replaced = yield* fileSystem.rename(privateDirectory, previous).pipe(
+      Effect.as(true),
+      Effect.catchIf(
+        (cause) => cause._tag === "PlatformError" && cause.reason._tag === "NotFound",
+        () => Effect.succeed(false),
+      ),
     );
+    const restore = fileSystem
+      .remove(privateDirectory, { recursive: true, force: true })
+      .pipe(
+        Effect.andThen(replaced ? fileSystem.rename(previous, privateDirectory) : Effect.void),
+        Effect.ignore,
+      );
+    const addKernelFiles = Effect.gen(function* () {
+      yield* fileSystem.makeDirectory(privateDirectory, { recursive: true });
+      const { setup } = language;
+      const kernelVersion =
+        typeof setup === "function"
+          ? (yield* runOwnedProcess(input.processes, {
+              runId: `scient-${language.languageId}-kernel-setup-${NodeCrypto.randomUUID()}`,
+              executable: yield* programOf(executable),
+              args: setup(privateDirectory, environment, platform).args,
+              cwd: privateDirectory,
+              environment: setup(privateDirectory, environment, platform).environment,
+              stdoutOnly: true,
+            }))
+              .trim()
+              .split("\n")
+              .pop()
+              ?.trim()
+          : yield* Effect.tryPromise({
+              try: (signal) =>
+                setup
+                  .add({ directory: privateDirectory, platform, arch, signal })
+                  .then(() => setup.version),
+              catch: (cause) =>
+                manageError(cause instanceof Error ? cause.message : String(cause), cause),
+            });
+      if (!kernelVersion) return yield* manageError(`${language.kernelPackage} did not install.`);
+      yield* fileSystem.writeFileString(
+        NodePath.join(privateDirectory, MARKER_FILE),
+        encodeMarker({ kernelVersion }),
+      );
+    });
+    yield* addKernelFiles.pipe(Effect.onError(() => restore));
+    if (replaced)
+      yield* fileSystem.remove(previous, { recursive: true, force: true }).pipe(Effect.ignore);
   });
 
   const manage = Effect.fn("KernelComputeRuntime.manage")(function* (
@@ -648,11 +680,33 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     if (operation !== null) return yield* status();
     const current = yield* target();
     if (current === null) return yield* manageError(`${language.displayName} was not found.`);
-    const { privateDirectory } = current.state;
+    yield* begin(action, current.installation.executable, current.state.privateDirectory);
+    return yield* status();
+  });
+
+  /** The kernel for a Run, sharing any setup already under way. */
+  const addKernel = Effect.fn("KernelComputeRuntime.addKernel")(function* (
+    executable: string,
+    privateDirectory: string,
+  ) {
+    if (operation !== null) yield* Fiber.await(operation.fiber);
+    const known = yield* fileState(executable);
+    if (known.privateKernelVersion !== null) return;
+    const fiber = yield* begin("install", executable, privateDirectory);
+    yield* Fiber.await(fiber);
+    if (failure !== null)
+      return yield* runtimeError("prepare", `${failure.summary}: ${failure.detail}`);
+  });
+
+  const begin = Effect.fn("KernelComputeRuntime.begin")(function* (
+    action: ComputeManagedRuntimeAction,
+    executable: string,
+    privateDirectory: string,
+  ) {
     const work = Effect.gen(function* () {
       if (action === "remove")
         return yield* fileSystem.remove(privateDirectory, { recursive: true });
-      yield* install(current.installation.executable, privateDirectory).pipe(
+      yield* install(executable, privateDirectory).pipe(
         Effect.onInterrupt(() =>
           fileSystem.remove(privateDirectory, { recursive: true }).pipe(Effect.ignore),
         ),
@@ -691,7 +745,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       startedAt: DateTime.formatIso(yield* DateTime.now),
       fiber,
     };
-    return yield* status();
+    return fiber;
   });
 
   const cancel = Effect.fn("KernelComputeRuntime.cancel")(function* () {

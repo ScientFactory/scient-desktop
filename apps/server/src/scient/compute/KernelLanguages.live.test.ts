@@ -16,6 +16,7 @@ import {
   nextComputeSessionGeneration,
   type ComputeChannel,
   type ComputeLaunchPlan,
+  type ComputeSessionGeneration,
   type ComputeTransport,
   type ComputeTransportEvent,
 } from "@scientfactory/compute";
@@ -26,6 +27,7 @@ import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
+import * as ServerConfig from "../../config.ts";
 import * as OwnedLocalEndpoints from "../../localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { DuplexProcess, layer as duplexProcessLayer } from "../execution/LocalDuplexProcess.ts";
 import {
@@ -36,9 +38,10 @@ import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
 import { JULIA_KERNEL_LANGUAGE } from "./JuliaComputeRuntime.ts";
 import { makeKernelRuntimeBinding, type KernelLanguage } from "./KernelComputeRuntime.ts";
+import { pythonRuntimeBinding } from "./PythonComputeRuntime.ts";
 import { JUPYTER_BRIDGE_TRANSPORT_KIND, buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
 import { R_KERNEL_LANGUAGE } from "./RComputeRuntime.ts";
-import { SQL_LANGUAGE_ID, sqlKernelSpec } from "./SqlComputeRuntime.ts";
+import { SQL_LANGUAGE_ID, makeSqlRuntimeBinding, sqlKernelSpec } from "./SqlComputeRuntime.ts";
 
 // Opt-in: the bridge host Python (for SQL it also needs duckdb) and a directory for Scient's private
 // kernels, which are set up there from CRAN and the Julia registry when missing.
@@ -270,6 +273,12 @@ const kernelSession = Effect.fn("KernelLanguages.kernelSession")(function* (
 const makeProject = () =>
   NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "scient-kernel-")));
 
+const inspectVariables = (session: Session, expectedGeneration: ComputeSessionGeneration) =>
+  session.channel.inspectVariables({
+    requestId: ComputeRequestId.make(`variables-${++requests}`),
+    expectedGeneration,
+  });
+
 describe.runIf(enabled)("kernel language integration", () => {
   it.live.runIf(hasR)(
     "runs R through IRkernel with plots, errors, interrupt and restart",
@@ -371,5 +380,164 @@ describe.runIf(enabled)("kernel language integration", () => {
           yield* session.channel.shutdown({ expectedGeneration: next });
         }),
       ).pipe(Effect.provide(Live)),
+  );
+});
+
+// Opt-in: a Python with no Jupyter packages, on a computer with nothing else that could host the
+// bridge. Scient's private Python and kernel come from the network, as they do for a person.
+const BARE_PYTHON = NodeProcess.env.SCIENT_TEST_BARE_PYTHON;
+
+describe.runIf(Boolean(BARE_PYTHON))("running on what people have", () => {
+  const stateDirectory = () => makeProject();
+  const bareLive = () =>
+    Live.pipe(
+      Layer.provideMerge(ServerConfig.layerTest(makeProject(), stateDirectory())),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+  it.live(
+    "runs a plain project environment with figures, Variables and Tables, and writes nothing into it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const project = makeProject();
+          const created = NodeChildProcess.spawnSync(BARE_PYTHON!, ["-m", "venv", ".venv"], {
+            cwd: project,
+          });
+          expect(created.status).toBe(0);
+          const python = NodePath.join(
+            project,
+            ".venv",
+            ...(NodeProcess.platform === "win32" ? ["Scripts", "python.exe"] : ["bin", "python"]),
+          );
+          const installed = NodeChildProcess.spawnSync(
+            python,
+            ["-m", "pip", "install", "--quiet", "numpy", "pandas", "matplotlib"],
+            { cwd: project },
+          );
+          expect(installed.status).toBe(0);
+          const binding = yield* pythonRuntimeBinding;
+          const [profile] = yield* binding.adapter.discover({
+            projectRoot: project,
+            configuredExecutable: null,
+            refresh: true,
+          });
+          expect(profile).toMatchObject({ source: "project" });
+          const request = { profile: profile!, cwd: project, environment: hostEnvironment() };
+          expect((yield* binding.adapter.verify(request)).readiness).toBe("ready");
+          const launch = yield* binding.adapter.prepareLaunch(request);
+          expect(launch.kernel?.pythonFeatures).toBe(true);
+          const session = yield* openSession(
+            ComputeLanguageId.make("python"),
+            binding.transport,
+            launch,
+          );
+          const run = (code: string, generation = INITIAL_COMPUTE_SESSION_GENERATION) =>
+            execute(session, code, generation);
+          const paths = text(
+            yield* run(
+              [
+                "import numpy, pandas, sys",
+                "frame = pandas.DataFrame({'a': [1, 2], 'b': ['x', 'y']})",
+                "print(sys.executable)",
+                "print(numpy.__file__)",
+              ].join("\n"),
+            ),
+          );
+          expect(paths).toContain(".venv");
+          expect(paths.split("\n")[1]).toContain(".venv");
+          const figure = "import matplotlib.pyplot as plt\nplt.plot([1, 2, 3])\nplt.show()";
+          expect(hasMedia(yield* run(figure), "image/png")).toBe(true);
+          const variables = yield* inspectVariables(session, INITIAL_COMPUTE_SESSION_GENERATION);
+          expect(variables.variables).toContainEqual(
+            expect.objectContaining({ name: "frame", typeName: "DataFrame" }),
+          );
+          const table = yield* session.channel.inspectTable({
+            requestId: ComputeRequestId.make(`table-${++requests}`),
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+            name: "frame",
+            query: { offset: 0, limit: 10, sort: null, search: "" },
+          });
+          expect(table.rowCount).toBe(2);
+          const next = yield* interruptAndRestart(session, "import time\ntime.sleep(60)");
+          // Display setup, Variables and figures all come back after a restart.
+          expect(hasMedia(yield* run(figure, next), "image/png")).toBe(true);
+          yield* run("kept = 1", next);
+          expect((yield* inspectVariables(session, next)).variables).toContainEqual(
+            expect.objectContaining({ name: "kept" }),
+          );
+          yield* session.channel.shutdown({ expectedGeneration: next });
+          const untouched = NodeChildProcess.spawnSync(python, [
+            "-c",
+            "import importlib.util, sys; sys.exit(importlib.util.find_spec('ipykernel') is not None)",
+          ]);
+          expect(untouched.status).toBe(0);
+        }),
+      ).pipe(Effect.provide(bareLive())),
+    SETUP_TIMEOUT_MS,
+  );
+
+  it.live(
+    "runs SQL with Scient's own DuckDB when no Python here has it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const project = makeProject();
+          const binding = yield* pythonRuntimeBinding;
+          const sql = makeSqlRuntimeBinding(binding.kernelHost);
+          const [profile] = yield* sql.adapter.discover({
+            projectRoot: project,
+            configuredExecutable: null,
+            refresh: true,
+          });
+          const request = { profile: profile!, cwd: project, environment: hostEnvironment() };
+          expect((yield* sql.adapter.verify(request)).readiness).toBe("ready");
+          const session = yield* openSession(
+            SQL_LANGUAGE_ID,
+            sql.transport,
+            yield* sql.adapter.prepareLaunch(request),
+          );
+          const result = yield* execute(session, "SELECT 40 + 2 AS answer;");
+          expect(text(result)).toContain("42");
+          yield* session.channel.shutdown({
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+        }),
+      ).pipe(Effect.provide(bareLive())),
+    SETUP_TIMEOUT_MS,
+  );
+
+  it.live.runIf(runs("R", ["--version"]))(
+    "runs R with nothing but R installed",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const project = makeProject();
+          const python = yield* pythonRuntimeBinding;
+          const config = yield* ServerConfig.ServerConfig;
+          const binding = yield* makeKernelRuntimeBinding(R_KERNEL_LANGUAGE, {
+            host: python.kernelHost,
+            computeDir: config.computeDir,
+            processes: yield* ExecutionProcess,
+            configuredExecutable: () => Effect.succeed(null),
+          });
+          const [profile] = yield* binding.adapter.discover({
+            projectRoot: null,
+            configuredExecutable: null,
+            refresh: true,
+          });
+          const request = { profile: profile!, cwd: project, environment: hostEnvironment() };
+          expect((yield* binding.adapter.verify(request)).readiness).toBe("ready");
+          const session = yield* openSession(
+            R_KERNEL_LANGUAGE.languageId,
+            binding.transport,
+            yield* binding.adapter.prepareLaunch(request),
+          );
+          expect(text(yield* execute(session, "print(40 + 2)"))).toContain("[1] 42");
+          const next = yield* interruptAndRestart(session, "Sys.sleep(60)");
+          yield* session.channel.shutdown({ expectedGeneration: next });
+        }),
+      ).pipe(Effect.provide(bareLive())),
+    SETUP_TIMEOUT_MS,
   );
 });

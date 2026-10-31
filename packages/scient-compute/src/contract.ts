@@ -404,6 +404,10 @@ export interface ComputeKernelSpec {
   /** An installed kernelspec's own environment and directory, as Jupyter would apply them. */
   readonly env?: Readonly<Record<string, string>>;
   readonly resourceDir?: string;
+  /** Another Python's ipykernel: the bridge adds its display setup, Variables and Tables. */
+  readonly pythonFeatures?: boolean;
+  /** The kernel answers `ok` for a run it stopped, so only the request tells them apart. */
+  readonly interruptedReplyIsOk?: boolean;
 }
 
 /**

@@ -35,6 +35,7 @@ import {
   layerWithRuntimeBindings,
   type ComputeRuntimeBinding,
 } from "./ComputeSessionService.ts";
+import { makeBridgeHost } from "./BridgeHost.ts";
 import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import { makeManagedPythonEnvironmentManager } from "./ManagedPythonEnvironment.ts";
 import {
@@ -43,9 +44,11 @@ import {
 } from "./ManagedPythonProvisioner.ts";
 import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
 import { ComputeRecipeNetwork, makeComputeRecipeSource } from "./ComputeRecipeSource.ts";
+import { makePythonPrivateKernels } from "./PythonPrivateKernel.ts";
 import {
   PROBE_SCRIPT,
   PYTHON_LANGUAGE_ID,
+  hostsBridge,
   makePythonRuntimeAdapter,
   type ProbeResult,
 } from "./PythonRuntimeAdapter.ts";
@@ -78,6 +81,8 @@ export interface KernelBridgeHost {
   ) => Effect.Effect<string, ComputeRuntimeError>;
   /** Whether the files show a Python that could host the bridge. Nothing starts. */
   readonly mayHost: (configuredExecutable: string | null) => Effect.Effect<boolean>;
+  /** Scient's own small Python, added on first use. It carries DuckDB and ipykernel. */
+  readonly privateExecutable?: () => Effect.Effect<string, ComputeRuntimeError>;
   /** Discovers Pythons with Scient-managed Python first, whatever Python's own default is. */
   readonly managedPythonAdapter: ComputeLanguageAdapter;
   readonly managedRuntime?: NonNullable<ComputeRuntimeBinding["managedRuntime"]>;
@@ -360,12 +365,54 @@ export const pythonRuntimeBinding: Effect.Effect<
   if (managedSetup !== null) {
     yield* Effect.addFinalizer(() => Effect.sync(() => managedSetup.managedRuntime.dispose()));
   }
+  const bridgeHost = yield* Effect.gen(function* () {
+    const specDirectory = yield* Effect.tryPromise(() =>
+      resolveManagedPythonSpecPath(moduleDirectory(), "bridge-host"),
+    );
+    const host = makeBridgeHost({
+      recipes: makeComputeRecipeSource({
+        computeDir: config.computeDir,
+        specDirectory,
+        purpose: "bridge-host",
+        target: `${hostPlatform}-${hostArchitecture}`,
+        network: recipeNetwork,
+      }),
+      computeDir: config.computeDir,
+      specDirectory,
+      processes,
+      environment,
+      platform: hostPlatform,
+      arch: hostArchitecture,
+    });
+    yield* Effect.tryPromise(() => host.reconcile());
+    return host;
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Scient's private Python host is unavailable on this computer", {
+        cause,
+      }).pipe(Effect.as(null)),
+    ),
+  );
+  if (bridgeHost !== null) yield* Effect.addFinalizer(() => Effect.sync(bridgeHost.dispose));
+  const privateKernels =
+    bridgeHost === null
+      ? null
+      : makePythonPrivateKernels({
+          computeDir: config.computeDir,
+          processes,
+          environment,
+          uv: bridgeHost.uv,
+        });
   const retain = (executable: string) =>
     Effect.tryPromise({
-      try: () =>
-        managedSetup === null
-          ? Promise.resolve(() => undefined)
-          : managedSetup.manager.acquire(executable),
+      try: async () => {
+        const held = await Promise.all(
+          [managedSetup?.manager, bridgeHost].map(
+            (holder) => holder?.acquire(executable) ?? (() => undefined),
+          ),
+        );
+        return () => held.forEach((release) => release());
+      },
       catch: (cause) =>
         runtimeError("The requested Python environment is unavailable or being removed.", cause),
     });
@@ -382,14 +429,24 @@ export const pythonRuntimeBinding: Effect.Effect<
             }),
         });
   const probeCache = makeRuntimeProbeCache<ProbeResult>();
+  const hostOption =
+    bridgeHost === null || privateKernels === null
+      ? {}
+      : {
+          host: {
+            executable: Effect.suspend(() => hostExecutable(null)),
+            privateKernel: privateKernels.ensure,
+          },
+        };
   const makeAdapter = (preferManaged: boolean) =>
     makePythonRuntimeAdapter(
       (executable) => spawnProbe(executable, retain(executable)),
       bridgePath,
       managedSetup === null
-        ? { probeCache }
+        ? { probeCache, ...hostOption }
         : {
             probeCache,
+            ...hostOption,
             managedRuntime: () =>
               inspectManaged().pipe(
                 Effect.map((status) =>
@@ -486,10 +543,11 @@ export const pythonRuntimeBinding: Effect.Effect<
           }),
         ),
     });
-  // Any ready Python can host the bridge for another language's kernel; prefer the managed one.
+  // Managed Python first, then any Python that can carry the bridge, then Scient's small private
+  // one, added the first time nothing else can.
   const hostExecutable = Effect.fn("PythonComputeRuntime.kernelHostExecutable")(function* (
     configuredExecutable: string | null,
-  ) {
+  ): Effect.fn.Return<string, ComputeRuntimeError> {
     const managed = yield* inspectManaged();
     if (managed?.available === true) return managed.executable;
     const profiles = yield* adapter.discover({ projectRoot: null, configuredExecutable });
@@ -499,8 +557,9 @@ export const pythonRuntimeBinding: Effect.Effect<
         cwd: NodeOS.tmpdir(),
         environment,
       });
-      if (verification.readiness === "ready") return profile.executable;
+      if (hostsBridge(verification)) return profile.executable;
     }
+    if (bridgeHost !== null) return yield* bridgeHost.executable();
     return yield* new ComputeRuntimeError({
       operation: "prepare",
       message: "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
@@ -508,7 +567,7 @@ export const pythonRuntimeBinding: Effect.Effect<
   });
   const mayHost = Effect.fn("PythonComputeRuntime.mayHost")(
     function* (configuredExecutable: string | null) {
-      if ((yield* inspectManaged())?.available === true) return true;
+      if (bridgeHost !== null || (yield* inspectManaged())?.available === true) return true;
       const profiles = yield* adapter.discover({ projectRoot: null, configuredExecutable });
       for (const profile of profiles) {
         const assessment = yield* adapter.assess!(profile);
@@ -528,6 +587,7 @@ export const pythonRuntimeBinding: Effect.Effect<
       transport: bridgeTransport,
       executable: hostExecutable,
       mayHost,
+      ...(bridgeHost === null ? {} : { privateExecutable: bridgeHost.executable }),
       managedPythonAdapter,
       ...(managedRuntime === undefined ? {} : { managedRuntime }),
     },

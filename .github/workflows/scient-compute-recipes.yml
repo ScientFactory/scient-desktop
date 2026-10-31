@@ -6,12 +6,13 @@ on:
     paths:
       - "apps/server/src/scient/compute/managed-python/pyproject.toml"
       - "apps/server/src/scient/compute/managed-python/uv.lock"
+      - "apps/server/src/scient/compute/managed-python/bridge-host/**"
       - ".github/workflows/scient-compute-recipes.yml"
   workflow_dispatch:
     inputs:
       purpose:
         type: choice
-        options: [python, matlab-connection]
+        options: [python, bridge-host, matlab-connection]
         default: python
         description: Independently qualified environment to publish
       withdraw:

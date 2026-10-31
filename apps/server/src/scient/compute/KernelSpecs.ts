@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- private kernel folders are named by a hash of the path.
+import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
+
 import * as Schema from "effect/Schema";
 
 import { pathModule, type DiscoveryContext } from "./RuntimeDiscovery.ts";
@@ -108,3 +112,35 @@ export function kernelPrograms(
     },
   );
 }
+
+/** Keeps a private kernel apart per installation and version, since packages are built for one. */
+export function privateKernelDirectory(
+  computeDir: string,
+  languageId: string,
+  realExecutable: string,
+  version: string | null,
+): string {
+  const key = NodeCrypto.createHash("sha256")
+    .update([realExecutable, version ?? ""].join("\n"))
+    .digest("hex")
+    .slice(0, 16);
+  return NodePath.join(computeDir, "kernels", languageId, key);
+}
+
+/**
+ * Starts ipykernel from Scient's folder for a Python that has none, or only an older one. The
+ * kernel loads its own dependencies first, then the folder moves behind the person's packages, so
+ * their code keeps seeing their versions. Removing the working directory matches ipykernel's own
+ * launcher: the kernel restores it, and a project file must not shadow what the kernel imports.
+ */
+export const PRIVATE_KERNEL_STARTER = [
+  "import sys",
+  "private = sys.argv.pop(1)",
+  'if sys.path[0] == "":',
+  "    del sys.path[0]",
+  "sys.path.insert(0, private)",
+  "from ipykernel import kernelapp",
+  "sys.path.remove(private)",
+  "sys.path.append(private)",
+  "kernelapp.launch_new_instance()",
+].join("\n");

@@ -669,7 +669,10 @@ def validate_kernel_spec(value: Any) -> Optional[dict[str, Any]]:
         or not argv
         or not all(isinstance(part, str) and part for part in argv)
         # Jupyter substitutes inside an argument too, as in --connection-file={connection_file}.
-        or not any("{connection_file}" in part for part in argv)
+        or not (
+            value.get("pythonFeatures")
+            or any("{connection_file}" in part for part in argv)
+        )
     ):
         raise ProtocolViolation("start-kernel kernel argv must name {connection_file}.")
     language = value.get("language")
@@ -692,6 +695,9 @@ def validate_kernel_spec(value: Any) -> Optional[dict[str, Any]]:
     resource_dir = value.get("resourceDir")
     if resource_dir is not None and (not isinstance(resource_dir, str) or not resource_dir):
         raise ProtocolViolation("start-kernel kernel resourceDir must be a non-empty string.")
+    for flag in ("pythonFeatures", "interruptedReplyIsOk"):
+        if value.get(flag) not in {None, True}:
+            raise ProtocolViolation(f"start-kernel kernel {flag} must be true when present.")
     return value
 
 
@@ -793,6 +799,8 @@ class ExecuteMapping:
         self.iopub_busy = False
         self.iopub_idle = False
         self.interrupt_requested = False
+        # Set per kernel, so it outlives each execution.
+        self.interrupted_reply_is_ok = False
 
     def is_complete(self) -> bool:
         """Whether both channels have said everything they are going to say.
@@ -825,7 +833,11 @@ class ExecuteMapping:
             return "cancelled" if self.interrupt_requested else "failed"
         status = reply.get("status")
         if status == "ok":
-            return "succeeded"
+            return (
+                "cancelled"
+                if self.interrupt_requested and self.interrupted_reply_is_ok
+                else "succeeded"
+            )
         if status == "abort":
             return "cancelled"
         evalue = reply.get("evalue")
@@ -1228,7 +1240,9 @@ class ScientBridge:
         interpreter: the server already chose the interpreter when it spawned the
         bridge.  Another language arrives as an exact command line, so no
         kernelspec installed elsewhere on the machine can redirect what runs the
-        user's code, and the bridge never has to know the language.
+        user's code, and the bridge never has to know the language.  Another
+        Python arrives the same way, marked ``pythonFeatures``, and gets the same
+        setup as this one.
         """
         from jupyter_client import AsyncKernelManager
         from jupyter_client.kernelspec import KernelSpec, KernelSpecManager
@@ -1241,12 +1255,14 @@ class ScientBridge:
             def get_kernel_spec(self, _kernel_name: str) -> Any:
                 return self._spec
 
-        if kernel is None:
+        if kernel is None or kernel.get("pythonFeatures"):
             spec = KernelSpec(
                 argv=[
-                    sys.executable,
-                    "-m",
-                    "ipykernel_launcher",
+                    *(
+                        [sys.executable, "-m", "ipykernel_launcher"]
+                        if kernel is None
+                        else kernel["argv"]
+                    ),
                     "--IPKernelApp.exec_lines="
                     + json.dumps(
                         ["exec(" + repr(PYTHON_RICH_DISPLAY_SETUP) + ", {})"]
@@ -1256,6 +1272,7 @@ class ScientBridge:
                 ],
                 display_name="Scient Python",
                 language="python",
+                env=dict((kernel or {}).get("env") or {}),
             )
         else:
             # An installed kernelspec keeps its own environment and resource
@@ -1343,10 +1360,12 @@ class ScientBridge:
         self._working_directory = os.path.realpath(working_directory)
 
         self._kernel_manager = self._make_kernel_manager(kernel, kernel_ports)
+        python_features = kernel is None or bool(kernel.get("pythonFeatures"))
         self._variables_expression = (
-            VARIABLE_INSPECTION_EXPRESSION if kernel is None else kernel["variablesExpression"]
+            VARIABLE_INSPECTION_EXPRESSION if python_features else kernel["variablesExpression"]
         )
-        self._serves_tables = kernel is None
+        self._serves_tables = python_features
+        self._mapping.interrupted_reply_is_ok = bool((kernel or {}).get("interruptedReplyIsOk"))
         # Kernels that compile on first start (IJulia) ask for longer than ipykernel needs.
         self._startup_timeout = (kernel or {}).get("startupTimeoutSeconds") or STARTUP_TIMEOUT
         # ``stdout=DEVNULL`` is the other half of keeping the protocol intact.

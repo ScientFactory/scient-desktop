@@ -13,7 +13,7 @@ const purpose = process.argv[2];
 const withdrawal = process.argv[3] || undefined;
 if (process.env.GITHUB_REPOSITORY !== repository || process.env.GITHUB_REF !== "refs/heads/main")
   throw new Error("Compute publication is restricted to this repository's main branch.");
-if (purpose !== "python" && purpose !== "matlab-connection")
+if (purpose !== "python" && purpose !== "matlab-connection" && purpose !== "bridge-host")
   throw new Error("Invalid recipe purpose.");
 const token = process.env.GH_TOKEN;
 if (!token) throw new Error("A scoped publication token is required.");
@@ -51,9 +51,9 @@ const candidate = Schema.decodeSync(Schema.fromJsonString(ComputeRecipeCatalog))
   ),
 );
 const qualifiedTargets =
-  purpose === "python"
-    ? ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]
-    : ["darwin-arm64"];
+  purpose === "matlab-connection"
+    ? ["darwin-arm64"]
+    : ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"];
 if (
   candidate.recipes.some(
     (recipe) => JSON.stringify([...recipe.targets].sort()) !== JSON.stringify(qualifiedTargets),

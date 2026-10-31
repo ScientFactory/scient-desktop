@@ -15,7 +15,7 @@ import * as Effect from "effect/Effect";
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
 import type { KernelBridgeHost } from "./PythonComputeRuntime.ts";
 import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
-import { PYTHON_LANGUAGE_ID } from "./PythonRuntimeAdapter.ts";
+import { PYTHON_LANGUAGE_ID, buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
 import { discoveryContext, type DiscoveryContext } from "./RuntimeDiscovery.ts";
 import { readPythonFacts } from "./RuntimeFacts.ts";
 
@@ -66,44 +66,66 @@ export function sqlKernelSpec(python: string, bridgePath: string): ComputeKernel
   };
 }
 
-/** Scient-managed Python carries DuckDB; any other Python counts when its files show it. */
-const mayHaveDuckdb = (context: DiscoveryContext, source: string, executable: string) =>
-  source === "managed" ||
-  source === "configured" ||
-  readPythonFacts(context, executable).packages("duckdb").state === "present";
+/** Stands for DuckDB in Scient's private Python, which is added the first time it runs. */
+const PRIVATE_DUCKDB = "scient-private-duckdb";
+
+/** Scient-managed Python carries DuckDB; any other counts when its files show DuckDB and a kernel. */
+const mayHaveDuckdb = (context: DiscoveryContext, source: string, executable: string) => {
+  if (source === "managed" || source === "configured") return true;
+  const { packages } = readPythonFacts(context, executable);
+  return packages("duckdb").state === "present" && packages("ipykernel").state !== "absent";
+};
 
 /** SQL is DuckDB in a small Python kernel, so its runtimes are Pythons that have DuckDB. */
 export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBinding {
   const python = host.managedPythonAdapter;
+  const privateVerification = (profile: ComputeRuntimeProfile): ComputeRuntimeVerification => ({
+    profile,
+    readiness: "ready",
+    connection: "detected",
+    missingRequirements: [],
+    message: null,
+    packages: [{ name: "duckdb", version: null }],
+  });
+  const privateProfile: ComputeRuntimeProfile = {
+    languageId: SQL_LANGUAGE_ID,
+    source: "managed",
+    executable: PRIVATE_DUCKDB,
+    languageVersion: "unknown",
+    architecture: null,
+    displayName: "DuckDB (Scient)",
+  };
 
   const verifyPython = (profile: ComputeRuntimeProfile) =>
     python.verify({ profile: asPython(profile), cwd: NodeOS.tmpdir(), environment: {} });
 
   const verify: ComputeLanguageAdapter["verify"] = (request) =>
-    verifyPython(request.profile).pipe(
-      Effect.map((verification): ComputeRuntimeVerification => {
-        const version = duckdbVersion(verification);
-        if (verification.readiness !== "ready" || version !== null)
-          return {
-            ...verification,
-            profile: request.profile,
-            packages: [{ name: "duckdb", version }],
-          };
-        return {
-          profile: request.profile,
-          readiness: "missing-requirement",
-          missingRequirements: ["duckdb"],
-          message: "DuckDB is not installed in this Python.",
-          packages: [{ name: "duckdb", version: null }],
-        };
-      }),
-    );
+    request.profile.executable === PRIVATE_DUCKDB
+      ? Effect.succeed(privateVerification(request.profile))
+      : verifyPython(request.profile).pipe(
+          Effect.map((verification): ComputeRuntimeVerification => {
+            const version = duckdbVersion(verification);
+            if (verification.readiness !== "ready" || version !== null)
+              return {
+                ...verification,
+                profile: request.profile,
+                packages: [{ name: "duckdb", version }],
+              };
+            return {
+              profile: request.profile,
+              readiness: "missing-requirement",
+              missingRequirements: ["duckdb"],
+              message: "DuckDB is not installed in this Python.",
+              packages: [{ name: "duckdb", version: null }],
+            };
+          }),
+        );
 
   const discover: ComputeLanguageAdapter["discover"] = Effect.fn("SqlComputeRuntime.discover")(
     function* (request) {
       const context = yield* discoveryContext;
       // Scient-managed Python carries DuckDB, so it leads unless a Python was chosen for SQL.
-      return (yield* python.discover(request))
+      const found = (yield* python.discover(request))
         .filter((profile) => mayHaveDuckdb(context, profile.source, profile.executable))
         .toSorted((a, b) => Number(b.source === "configured") - Number(a.source === "configured"))
         .map((profile) => {
@@ -116,12 +138,14 @@ export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBin
             displayName: `DuckDB ${version ?? ""} (${profile.source})`.replace("  ", " "),
           };
         });
+      return found.length === 0 && host.privateExecutable !== undefined ? [privateProfile] : found;
     },
   );
 
   const assess: NonNullable<ComputeLanguageAdapter["assess"]> = Effect.fn(
     "SqlComputeRuntime.assess",
   )(function* (profile) {
+    if (profile.executable === PRIVATE_DUCKDB) return privateVerification(profile);
     const context = yield* discoveryContext;
     const assessment = yield* python.assess!(asPython(profile));
     const duckdb = readPythonFacts(context, profile.executable).packages("duckdb");
@@ -150,24 +174,39 @@ export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBin
             listInstallations: Effect.fn("SqlComputeRuntime.listInstallations")(
               function* (request) {
                 const context = yield* discoveryContext;
-                return (yield* python.listInstallations!(request)).filter(
+                const found = (yield* python.listInstallations!(request)).filter(
                   (installation) =>
                     installation.configured === true ||
                     mayHaveDuckdb(context, installation.source, installation.executable),
                 );
+                return found.length === 0 && host.privateExecutable !== undefined
+                  ? [
+                      {
+                        executable: PRIVATE_DUCKDB,
+                        source: "managed" as const,
+                        version: null,
+                        problem: null,
+                      },
+                    ]
+                  : found;
               },
             ),
           }),
       discover,
       assess,
       verify,
-      prepareLaunch: (request) =>
-        python.prepareLaunch({ ...request, profile: asPython(request.profile) }).pipe(
-          Effect.map((plan) => ({
-            ...plan,
-            kernel: sqlKernelSpec(request.profile.executable, host.bridgePath),
-          })),
-        ),
+      prepareLaunch: Effect.fn("SqlComputeRuntime.prepareLaunch")(function* (request) {
+        const profile = asPython(request.profile);
+        if (request.profile.executable !== PRIVATE_DUCKDB && host.privateExecutable !== undefined) {
+          const plan = yield* python.prepareLaunch({ ...request, profile });
+          return { ...plan, kernel: sqlKernelSpec(request.profile.executable, host.bridgePath) };
+        }
+        const executable = yield* host.privateExecutable!();
+        return {
+          ...buildLaunchPlan({ ...request, profile: { ...profile, executable } }, host.bridgePath),
+          kernel: sqlKernelSpec(executable, host.bridgePath),
+        };
+      }),
       normalizeDiagnostic: (report) => [{ ...normalizeDiagnosticText(report), frames: [] }],
       fingerprintEnvironment: (profile) => python.fingerprintEnvironment(asPython(profile)),
     },

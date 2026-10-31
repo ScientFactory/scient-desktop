@@ -32,7 +32,7 @@ const sourceCommit = NodeChildProcess.execFileSync("git", ["rev-parse", "HEAD"],
 const recipes = await Promise.all(
   originalCatalog.recipes.map(async (original) => {
     const path =
-      original.purpose === "python" ? directory : NodePath.join(directory, "matlab-connection");
+      original.purpose === "python" ? directory : NodePath.join(directory, original.purpose);
     const project = await NodeFSP.readFile(NodePath.join(path, "pyproject.toml"), "utf8");
     const lock = await NodeFSP.readFile(NodePath.join(path, "uv.lock"), "utf8");
     if (mode === "catalog")
@@ -87,7 +87,7 @@ if (mode === "seal" && JSON.stringify(catalog) !== JSON.stringify(originalCatalo
 if (mode === "catalog") {
   const purpose = process.argv[3];
   if (!catalog.recipes.some((recipe) => recipe.purpose === purpose))
-    throw new Error("Choose python or matlab-connection.");
+    throw new Error("Choose python, bridge-host or matlab-connection.");
   // The publisher merges only the purpose actually qualified by this run.
   process.stdout.write(
     `${JSON.stringify(

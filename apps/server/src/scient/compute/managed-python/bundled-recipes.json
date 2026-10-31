@@ -29,6 +29,20 @@
       "capabilitySha256": "26f288dd9559ad361a80846a0828fbbea21263998059130c2918e9d3e168c479",
       "targets": ["darwin-arm64"],
       "summary": "Private connection helper for supported MATLAB installations."
+    },
+    {
+      "purpose": "bridge-host",
+      "revision": 1,
+      "toolkitRevision": "bridge-host-2026-10-31.1",
+      "contract": 1,
+      "pythonVersion": "3.14.7",
+      "uvVersion": "0.12.15",
+      "sourceCommit": null,
+      "projectSha256": "9b9f65a6bea0701d8f28097c8600742a7ffc8bad81ea175849915721242d1894",
+      "lockSha256": "869fb04e1c773c863dd0e7e88154eb2bae55ec9a114b56b8db252ca87171bbae",
+      "capabilitySha256": "8bcb57d2a90d292c0da1617dc6835641f0295c7c1e103b19a4b64cbaadc9d5ed",
+      "targets": ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"],
+      "summary": "Private Python that hosts Scient's bridge when a computer has none."
     }
   ],
   "withdrawn": []

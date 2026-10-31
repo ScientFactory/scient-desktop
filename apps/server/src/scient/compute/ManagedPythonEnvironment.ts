@@ -145,6 +145,7 @@ const decodeRecord = Schema.decodeUnknownSync(ManagedPythonEnvironmentRecord);
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(ManagedPythonEnvironmentRecord));
 
 function managedPurposeNoun(purpose: ManagedPythonPurpose): string {
+  if (purpose === "bridge-host") return "private Python host";
   return purpose === "matlab-connection"
     ? "MATLAB connection helper"
     : "managed Python environment";

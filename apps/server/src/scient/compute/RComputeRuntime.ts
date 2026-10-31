@@ -3,15 +3,13 @@ import * as NodePath from "node:path";
 
 import { ComputeLanguageId } from "@scientfactory/compute";
 
+import { ARK_VERSION, arkProgram, installArk } from "./ArkKernel.ts";
 import { KERNEL_PROBE_MARKER, type KernelLanguage } from "./KernelComputeRuntime.ts";
 import { readRFacts, rPackageVersion } from "./RuntimeFacts.ts";
 
 const R_LANGUAGE_ID = ComputeLanguageId.make("r");
 
 const R_FLAGS = ["--no-echo", "--no-save", "--no-restore"];
-/** The kernel's own library, added after the person's so their packages always win. */
-const KERNEL_LIBRARY_VARIABLE = "COMPUTE_R_KERNEL_LIBRARY";
-
 const PROBE = [
   "cat(",
   `  "${KERNEL_PROBE_MARKER}",`,
@@ -24,25 +22,12 @@ const PROBE = [
   'cat("\\n")',
 ].join("\n");
 
-// Installs into Scient's library only; packages the user already has are reused, never replaced.
-const SETUP = [
-  "lib <- commandArgs(TRUE)[1]",
-  "dir.create(lib, recursive = TRUE, showWarnings = FALSE)",
-  ".libPaths(c(lib, .libPaths()))",
-  'repos <- getOption("repos")',
-  'if (is.null(repos) || is.na(repos["CRAN"]) || repos["CRAN"] == "@CRAN@")',
-  '  repos["CRAN"] <- "https://cloud.r-project.org"',
-  'install.packages("IRkernel", lib = lib, repos = repos, quiet = TRUE)',
-  "suppressPackageStartupMessages(library(IRkernel))",
-  'cat("\\n", as.character(packageVersion("IRkernel", lib.loc = lib)), "\\n", sep = "")',
-].join("\n");
-
 export const R_KERNEL_LANGUAGE: KernelLanguage = {
   languageId: R_LANGUAGE_ID,
   displayName: "R",
   kernelLanguage: "R",
   programName: "r",
-  kernelPackage: "IRkernel",
+  kernelPackage: "Ark",
   sourceExtensions: [".r"],
   // IRkernel does not evaluate Jupyter user expressions.
   variablesExpression: null,
@@ -109,26 +94,32 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
   },
   inEnvironment: (platform) =>
     platform === "win32" ? [NodePath.join("Lib", "R", "bin", "R.exe")] : ["bin/R"],
-  setup: (privateDirectory, environment) => ({
-    args: [...R_FLAGS, "-e", SETUP, "--args", NodePath.join(privateDirectory, "library")],
-    environment: { ...environment },
-  }),
-  launch: ({ executable, privateDirectory }) => ({
-    argv: [
-      executable,
-      ...R_FLAGS,
-      "-e",
-      // After startup, because renv replaces the library paths while R starts.
-      privateDirectory === null
-        ? "IRkernel::main()"
-        : `.libPaths(c(.libPaths(), Sys.getenv("${KERNEL_LIBRARY_VARIABLE}"))); IRkernel::main()`,
-      "--args",
-      "{connection_file}",
-    ],
-    environment:
-      privateDirectory === null
-        ? {}
-        : { [KERNEL_LIBRARY_VARIABLE]: NodePath.join(privateDirectory, "library") },
-  }),
+  setup: { version: ARK_VERSION, add: installArk },
+  // IRkernel answers no interrupt on Windows, so Ark runs there even for people who have IRkernel.
+  ownKernelUsable: (platform) => platform !== "win32",
+  launch: ({ executable, privateDirectory, platform, home }) =>
+    privateDirectory === null
+      ? {
+          argv: [executable, ...R_FLAGS, "-e", "IRkernel::main()", "--args", "{connection_file}"],
+          environment: {},
+        }
+      : {
+          argv: [
+            arkProgram(privateDirectory, platform),
+            "--connection_file",
+            "{connection_file}",
+            // Console mode prints every top-level value, as R does; notebook mode only the last.
+            "--session-mode",
+            "console",
+            // Keep the person's own CRAN setting.
+            "--default-repos",
+            "none",
+            "--",
+            "--interactive",
+          ],
+          environment: { R_HOME: home, RUST_LOG: "error" },
+          interruptMode: "message",
+          interruptedReplyIsOk: true,
+        },
   interruptMode: () => "signal",
 };
