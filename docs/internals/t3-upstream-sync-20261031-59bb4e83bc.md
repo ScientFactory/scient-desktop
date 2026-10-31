@@ -49,9 +49,72 @@ Branch `codex/t3-sync-59bb4e83bc-20261031`; the `upstream` push URL remains `DIS
   full-access fence.
 - **Timeline.** Upstream's streaming row isolation applies; Scient's position restore, follow and
   reading-end hold are unchanged.
-- **Sidebar.** Upstream's back and forward buttons render and
-  enable after navigation, but a click through them was not exercised: Settings and Usage are
-  modals here. Force stop was not exercised.
+- **Sidebar.** Upstream's back and forward buttons sit beside Scient's brand and stage label.
+- **Signed-out Claude.** Scient's early signed-out path also names models that need an update.
+- **Pi.** Upstream's `clear_queue` before Stop shifts two recordings, so their pins follow. Its
+  trust notice joins Scient's single system-prompt hook and contains its own failure, so a stale
+  trust check cannot cost a turn its prompt.
+- **Browser requests.** Upstream's tab open gives a system task time to queue first, behind the
+  initial navigation. A request already past its deadline now answers before queueing, so it no
+  longer waits until the broker evicts the host.
+- **Checkpoints.** Scient's staging repository quotes its alternates path, so a repository with a
+  newline in its path captures, and capture keeps upstream's process savings.
+- **Legacy transcripts.** Absent rows are cached, as upstream does, on Scient's history path.
+- **Branch restore.** Status refreshes and focus is decided a frame later, as upstream does, through
+  Scient's composer focus path.
+- **Chat blocks.** The block split outlives the stream, so a finished reply keeps its elements and a
+  web image the reader loaded stays loaded.
+- **Add project.** The browse keys in Scient's capture handler honour a composition reported only by
+  key code, the same rule upstream added to the bubbling handler.
+- **CLI launcher.** Scient's absolute launcher and array arguments already give upstream's two
+  command fixes, so `resolveHostCliCommand` stays out.
+- **Scient copies of upstream paths.** The rescan fix applies in `WorkspaceFileMutations.ts` and the
+  Pi error handling in `textGenerationRun.ts`, where Scient moved those paths.
+- **Build.** Upstream's directory artifact copy follows Scient's packaged bundle checks.
+
+## Left out
+
+- **GitHub star prompt (#27832).** It asks people to star T3's repository. Nothing calls it.
+- **PDF viewer fixes (#25555, #23732).** They change `PdfViewer`, which Scient does not ship. Scient's
+  reader keeps its page, scroll and zoom through its own reload path.
+- **Keyboard focus on equations (#23954).** It changes `MarkdownMath`, which Scient's math replaces, so
+  every Scient equation stays a tab stop; porting it to `ScientMath` is open.
+- **Fleet track switch.** `npmRelease` and `UpdateTrackSwitchDialog` stay deleted; the server read
+  arrives unmounted, with `npmReleaseDatabaseMigration` restored for it.
+- **T3 Connect and service guides.** The user guides keep Scient's own text.
+
+## Migrations
+
+Upstream's 074 and 075 land as Scient 078 and 079. Scient's 073 is immutable and keeps its
+triggers; 078 replaces them on every database.
+
+## Verification
+
+Local: macOS arm64, Node 26.12.1, pnpm 12.14.0, isolated synthetic state.
+
+Formatting, lint, `knip:check`, brand, all seam manifests, provenance and every package's
+typecheck pass at the exact head. The dropped-upstream audit leaves only marked, absent or
+Scient-owned differences. The lockfile keeps main's 127 `hasBin` markers.
+
+Tests on the last full runs, with later fixes rerun per file:
+
+- Web: 14,003 of 14,004 run tests pass. The one failure is `ComposerBannerStack`'s nested-text
+  case, whose code and test match upstream exactly and which fails on this Mac.
+- Server: 13,312 passed before the fixes above; all merge failures from that run pass per file.
+  `ServerBrowser` passes 73 of 73. What remains fails locally without the merge: the SyncTeX helper,
+  the macOS pipe truncation in `NativeFilePublication`, `EnvironmentFileOpen`'s macOS file events,
+  and the `/private` path in `GitVcsDriverCore`. `checkoutIsolation` and the Claude web SDK case
+  fail only from the launch directory or inherited environment used for that run. A
+  `server.test.ts` shell snapshot case hung once in a full run; it is a test race with no merge
+  change, and passes alone and under load.
+- Packages: shared 1,456, client-runtime 1,798, provider-pi 298, provider-acp 111, ACP registry 68,
+  OpenCode 177, provider-core 196, contracts 490, desktop 1,334, `check:changed` 19.
+
+Live, in a dev app with Claude Haiku on isolated state: a new thread opens and stays on its first
+send; math and a table render in the prompt and the reply; Stop ends a running command with a
+queued message held, and Send now answers it; an image sent with text sits above the bubble in
+Scient's gallery. Upstream's back and forward buttons render and enable after navigation, but a click through them
+was not exercised, because Settings and Usage are modals. Force stop was not exercised.
 
 Exact-head hosted CI qualifies the repository-wide test aggregate; owner visual acceptance and
 release remain separate steps.
