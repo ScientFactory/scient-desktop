@@ -391,7 +391,6 @@ export function createNotebookController(transport: NotebookTransport) {
           revision = result.revision;
           const cell = result.cell;
           if (cell !== null) {
-            serverSources.set(cell.id, notebookCodeHash(cell.source));
             // Typing and a newer run may have moved on while this result was on its way.
             update(cellId, (current) => ({
               ...cell,

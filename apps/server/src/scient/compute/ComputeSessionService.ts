@@ -509,6 +509,8 @@ export class ComputeSessionService extends Context.Service<
     >;
     /** Every run that has finished, for work that must happen with no client attached. */
     readonly settledRuns: Stream.Stream<ComputeSettledRun>;
+    /** The notebook has what a run left, so its output can give way to newer runs. */
+    readonly settledRunRecorded: (executionId: ComputeExecutionId) => Effect.Effect<void>;
     /** Runs executing or waiting in any session. */
     readonly activeWork: Effect.Effect<number>;
   }
@@ -553,6 +555,8 @@ const make = Effect.gen(function* () {
   const recoveredProjectsRef = yield* Ref.make(new Set<string>());
   const notifications = yield* makeComputeSessionNotifications;
   const settledRuns = yield* PubSub.unbounded<ComputeSettledRun>();
+  /** Finished notebook runs whose notebook has not taken their output yet. */
+  const unrecordedRuns = new Set<ComputeExecutionId>();
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
   const sessionKey = (projectId: ComputeProjectId, sessionId: ComputeSessionId): string =>
@@ -1093,6 +1097,9 @@ const make = Effect.gen(function* () {
     const result = execution.result;
     const status = result?.status;
     if (status !== undefined && TERMINAL_COMPUTE_EXECUTION_STATUSES.has(status)) {
+      const { source } = execution.request;
+      if (source?._tag === "document" && source.cell !== undefined)
+        unrecordedRuns.add(execution.request.executionId);
       yield* PubSub.publish(settledRuns, {
         projectId: live.projectId,
         root: live.workspaceReceipt?.scope.workspaceRoot ?? live.workingDirectory,
@@ -1511,7 +1518,7 @@ const make = Effect.gen(function* () {
 
   /**
    * The session's ceiling rolls: the oldest finished runs give up their output, so the newest always
-   * has room. A notebook already holds its results in its own file by then.
+   * has room. A notebook run gives way only once its notebook has taken its results.
    */
   const reclaimSessionOutput = Effect.fn("ComputeSessionService.reclaimSessionOutput")(function* (
     live: LiveComputeSession,
@@ -1535,6 +1542,7 @@ const make = Effect.gen(function* () {
         result.outputCount === 0 ||
         (result.truncated && result.outputCount === 1) ||
         request.executionId === running ||
+        unrecordedRuns.has(request.executionId) ||
         !TERMINAL_COMPUTE_EXECUTION_STATUSES.has(result.status)
       )
         continue;
@@ -3762,6 +3770,10 @@ const make = Effect.gen(function* () {
           );
         return yield* action(input);
       });
+  const settledRunRecorded = (executionId: ComputeExecutionId): Effect.Effect<void> =>
+    Effect.sync(() => {
+      unrecordedRuns.delete(executionId);
+    });
   const activeWork = Effect.gen(function* () {
     let count = 0;
     for (const live of (yield* Ref.get(sessionsRef)).values()) {
@@ -3847,6 +3859,7 @@ const make = Effect.gen(function* () {
     resolveOutputResource,
     subscribeSessions: scopedSubscribe,
     settledRuns: Stream.fromPubSub(settledRuns),
+    settledRunRecorded,
     activeWork,
   });
 });

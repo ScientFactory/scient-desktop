@@ -6,7 +6,7 @@ import { computeEnvironment } from "~/state/compute";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
-const REPORT_EVERY_MS = 3000;
+const REPORT_EVERY_MS = 1000;
 
 /** Keeps the desktop app told how many runs quitting would stop, so Quit can ask first. */
 export function ComputeQuitGuardReport() {
@@ -30,6 +30,7 @@ function RunningWorkReport() {
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the server's running work to the desktop main process, which owns Quit
   useEffect(() => {
+    void report();
     const timer = setInterval(() => void report(), REPORT_EVERY_MS);
     return () => clearInterval(timer);
   }, [report]);

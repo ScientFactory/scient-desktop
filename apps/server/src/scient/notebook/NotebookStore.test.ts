@@ -283,16 +283,56 @@ describe("NotebookStore", () => {
     ),
   );
 
-  it.effect("a rerun whose output was not kept leaves the saved output in place", () =>
+  it.effect("a rerun whose output was not kept leaves the saved output as its own run's", () =>
     scoped(
       Effect.gen(function* () {
         const { cwd, store, onDisk } = yield* fixture;
-        yield* store.recordRun({ ...record, cwd, cellId: "first" }, () =>
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [{ _tag: "expect-run", cellId: "first", execution: run.execution }],
+        });
+        const recorded = yield* store.recordRun({ ...record, cwd, cellId: "first" }, () =>
           Effect.succeed({ outputs: [], executionCount: null, truncated: true }),
         );
+        expect(recorded.cell?.pendingExecution).toBeNull();
         yield* store.flush({ cwd, path });
         const saved = (yield* onDisk).cells[1] as unknown as Record<string, unknown>;
         expect(saved.outputs).toEqual(notebook.cells[1]?.outputs);
+        expect(saved.execution_count).toBe(1);
+        expect(saved.metadata).toMatchObject({ tags: ["keep"], scient: {} });
+        expect((saved.metadata as { scient: object }).scient).not.toHaveProperty("execution");
+      }),
+    ),
+  );
+
+  it.effect("keeps text waiting to be saved when the file's cell changes underneath it", () =>
+    scoped(
+      Effect.gen(function* () {
+        const { cwd, store, onDisk, writeOutside } = yield* fixture;
+        const base = notebookCodeHash("a = 1");
+        yield* store.read({ cwd, path });
+        yield* store.edit({
+          cwd,
+          path,
+          edits: [
+            { _tag: "set-source", cellId: "first", source: "mine", base },
+            {
+              _tag: "set-source",
+              cellId: "first",
+              source: "mine too",
+              base: notebookCodeHash("mine"),
+            },
+          ],
+        });
+        const outside = structuredClone(notebook);
+        outside.cells[1]!.source = ["from outside"];
+        yield* writeOutside(`${JSON.stringify(outside, null, 1)}\n`);
+        yield* store.flush({ cwd, path });
+        const saved = (yield* onDisk).cells;
+        expect(saved).toHaveLength(4);
+        expect(saved[1]?.source).toEqual(["from outside"]);
+        expect(saved[2]?.source).toEqual(["mine too"]);
       }),
     ),
   );

@@ -30,6 +30,8 @@ function fakeTransport(initial: NotebookView) {
   const errors: string[] = [];
   let current = initial;
   let refused: ReadonlyArray<string> = [];
+  let recorded: NotebookCellView | null = null;
+  let recordings = 0;
   let failEdits = false;
   let release: (() => void) | null = null;
   let hold = false;
@@ -44,7 +46,10 @@ function fakeTransport(initial: NotebookView) {
       refused = [];
       return answer;
     },
-    recordRun: async () => null,
+    recordRun: async () => {
+      recordings += 1;
+      return recorded === null ? null : { revision: "1.9", cell: recorded };
+    },
     onError: (title) => errors.push(title),
     onNotice: (title) => errors.push(title),
   };
@@ -53,6 +58,8 @@ function fakeTransport(initial: NotebookView) {
     sent,
     errors,
     setFailing: (failing: boolean) => (failEdits = failing),
+    recordResult: (cell: NotebookCellView) => (recorded = cell),
+    recorded: () => recordings,
     otherWriter: (next: NotebookView, cells: ReadonlyArray<string>) => {
       current = next;
       refused = cells;
@@ -101,6 +108,36 @@ describe("notebookController", () => {
     expect(state.cells[kept!]?.source).toBe("mine");
     expect(state.editing).toBe(kept);
     expect(fake.errors).toHaveLength(1);
+  });
+
+  it("keeps an edit's base when a run's result arrives while it waits to be sent", async () => {
+    const { fake, controller } = await opened([{ ...cell("a", "old"), pendingExecution: "run-1" }]);
+    fake.recordResult({ ...cell("a", "theirs") });
+    const settled = new Map([
+      [
+        "a",
+        {
+          request: {
+            executionId: "run-1",
+            sessionId: "session",
+            code: "old",
+            submittedAt: "2026-11-01T00:00:00.000Z",
+          },
+          result: {
+            status: "succeeded",
+            startedAt: "2026-11-01T00:00:00.000Z",
+            finishedAt: "2026-11-01T00:00:01.000Z",
+          },
+        } as never,
+      ],
+    ]);
+    controller.setSource("a", "mine");
+    controller.observeRuns(settled, new Set(["succeeded"]));
+    await vi.waitFor(() => expect(fake.recorded()).toBe(1));
+    await controller.flush();
+    expect(fake.sent.at(-1)).toEqual([
+      { _tag: "set-source", cellId: "a", source: "mine", base: notebookCodeHash("old") },
+    ]);
   });
 
   it("reads a file change that came during typing once the text has gone", async () => {

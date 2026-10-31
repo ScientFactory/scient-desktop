@@ -48,6 +48,7 @@ describe("recording a notebook's runs on the server", () => {
             };
           }),
         listOutputs: () => Effect.succeed({ outputs: [] }),
+        settledRunRecorded: () => Effect.void,
       };
       const notebooks = {
         recordRun: (

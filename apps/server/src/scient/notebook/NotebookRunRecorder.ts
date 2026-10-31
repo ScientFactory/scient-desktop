@@ -66,6 +66,7 @@ export const layer = Layer.effectDiscard(
       Stream.runForEach((run) =>
         record(run).pipe(
           Effect.catchCause((cause) => Effect.logWarning("notebook run not recorded", { cause })),
+          Effect.ensuring(compute.settledRunRecorded(run.execution.request.executionId)),
         ),
       ),
       Effect.forkScoped,

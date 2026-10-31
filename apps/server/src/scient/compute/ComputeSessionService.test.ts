@@ -3460,6 +3460,44 @@ describe("compute session execution", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("keeps a notebook run's output until its notebook has taken it", () =>
+    Effect.gen(function* () {
+      const oneOutput = computeOutputByteLength(streamOutput(0, "1\n"));
+      const test = yield* harness({
+        service: { maximumSessionOutputBytes: oneOutput * 2 - 1 },
+      });
+      const first = ComputeExecutionId.make("execution-1");
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("print(1)", "execution-1", INITIAL_COMPUTE_SESSION_GENERATION, {
+            _tag: "document",
+            origin: "cell",
+            path: "study.ipynb",
+            bufferState: "saved",
+            revision: null,
+            range: null,
+            cell: "c1",
+          });
+          yield* waitForExecution(first, "succeeded");
+          yield* submit("print(1)", "execution-2");
+          yield* waitForExecution(ComputeExecutionId.make("execution-2"), "succeeded");
+          expect((yield* outputsOf(first)).outputs).toEqual([streamOutput(0, "1\n")]);
+
+          yield* service.settledRunRecorded(first);
+          yield* submit("print(1)", "execution-3");
+          yield* waitForExecution(ComputeExecutionId.make("execution-3"), "succeeded");
+          expect((yield* outputsOf(first)).outputs[0]).toMatchObject({
+            _tag: "system",
+            event: "output-truncated",
+          });
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("counts output from before a runtime restart against the session's ceiling", () =>
     Effect.gen(function* () {
       const oneOutput = computeOutputByteLength(streamOutput(0, "1\n"));

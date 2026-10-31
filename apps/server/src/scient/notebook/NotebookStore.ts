@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- a notebook is held as its bytes, keyed by size and mtime.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 
 import {
@@ -104,6 +105,18 @@ interface RunResult {
 }
 type StoreEdit = NotebookEdit | RunResult;
 
+/** Output that was not kept is not a run that printed nothing: what was saved stays, as its run's. */
+function keepSavedOutput(cell: NotebookCellRecord, execution: string): NotebookCellRecord {
+  if (pendingExecution(cell.fields) !== execution) return cell;
+  const metadata = isRecord(cell.fields.metadata) ? cell.fields.metadata : {};
+  const { pending: _pending, ...scient } = isRecord(metadata.scient) ? metadata.scient : {};
+  return {
+    ...cell,
+    fields: { ...cell.fields, metadata: { ...metadata, scient } },
+    saved: null,
+  };
+}
+
 function applyRunResult(index: NotebookIndex, result: RunResult): NotebookIndex {
   const latest = Math.max(
     0,
@@ -115,6 +128,8 @@ function applyRunResult(index: NotebookIndex, result: RunResult): NotebookIndex 
     ...index,
     cells: index.cells.map((cell) => {
       if (cell.id !== result.cellId) return cell;
+      if (result.truncated && result.outputs.length === 0)
+        return keepSavedOutput(cell, result.run.execution);
       const metadata = isRecord(cell.fields.metadata) ? cell.fields.metadata : {};
       // A newer run submitted meanwhile must still be recorded when it ends.
       const pending = pendingExecution(cell.fields);
@@ -122,11 +137,9 @@ function applyRunResult(index: NotebookIndex, result: RunResult): NotebookIndex 
         pending === null || pending === result.run.execution
           ? result.run
           : { ...result.run, pending };
-      // Output that was not kept is not a run that printed nothing: what was saved stays.
-      const outputs =
-        result.truncated && result.outputs.length === 0
-          ? cell.outputs
-          : Buffer.from(JSON.stringify(result.outputs, null, 1).replaceAll("\n", "\n   "));
+      const outputs = Buffer.from(
+        JSON.stringify(result.outputs, null, 1).replaceAll("\n", "\n   "),
+      );
       return {
         ...cell,
         fields: {
@@ -135,7 +148,7 @@ function applyRunResult(index: NotebookIndex, result: RunResult): NotebookIndex 
           execution_count: result.executionCount ?? latest + 1,
         },
         outputs,
-        outputIndex: outputs === null ? [] : indexOutputs(outputs),
+        outputIndex: indexOutputs(outputs),
         saved: null,
       };
     }),
@@ -274,6 +287,44 @@ function applyEdit(
   }
 }
 
+/**
+ * Replays edits not yet written over a file that changed. An edit made from text the file no longer
+ * holds cannot go through, so what the file says stays and that edit's text gets a cell of its own.
+ */
+function replayPending(
+  read: NotebookIndex,
+  pending: ReadonlyArray<StoreEdit>,
+  removed: Map<string, NotebookCellRecord>,
+) {
+  let index = read;
+  const replayed: StoreEdit[] = [];
+  const movedTo = new Map<string, string>();
+  const apply = (edit: StoreEdit) => {
+    index = applyEdit(index, edit, removed);
+    replayed.push(edit);
+  };
+  for (const edit of pending) {
+    const moved = edit._tag === "set-source" ? movedTo.get(edit.cellId) : undefined;
+    if (edit._tag !== "set-source" || !(moved !== undefined || sourceMovedOn(index, edit))) {
+      apply(edit);
+    } else if (moved !== undefined) {
+      apply({ _tag: "set-source", cellId: moved, source: edit.source });
+    } else {
+      const cell = index.cells.find((entry) => entry.id === edit.cellId);
+      const cellId = NodeCrypto.randomUUID().slice(0, 12);
+      movedTo.set(edit.cellId, cellId);
+      apply({
+        _tag: "insert",
+        cellId,
+        afterCellId: edit.cellId,
+        cellType: cell?.fields.cell_type === "markdown" ? "markdown" : "code",
+        source: edit.source,
+      });
+    }
+  }
+  return { index, pending: replayed };
+}
+
 interface OpenNotebook {
   readonly cwd: string;
   readonly relativePath: string;
@@ -333,9 +384,9 @@ export const makeNotebookStore = Effect.gen(function* () {
     const state = yield* fileState(notebook.absolutePath);
     if (state.mtimeMs === notebook.mtimeMs && state.size === notebook.size) return;
     const { fileBytes, index: read } = yield* readNotebookFile(notebook.absolutePath);
-    let index = read;
-    for (const edit of notebook.pending) index = applyEdit(index, edit, notebook.removed);
-    notebook.index = index;
+    const replayed = replayPending(read, notebook.pending, notebook.removed);
+    notebook.index = replayed.index;
+    notebook.pending = replayed.pending;
     notebook.fileBytes = fileBytes;
     notebook.mtimeMs = state.mtimeMs;
     notebook.size = state.size;

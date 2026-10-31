@@ -339,7 +339,7 @@ describe("python compute surface model", () => {
         preferredRuntimeExecutable: null,
         scientificPackagesMissing: false,
       }),
-    ).toEqual({ kind: "setup", label: "Connect MATLAB", canRun: false });
+    ).toEqual({ kind: "setup", label: "Set up MATLAB", canRun: false });
     expect(isComputeCapacityReachedError({ reason: "capacity-reached" })).toBe(true);
     expect(isComputeCapacityReachedError(new Error("capacity-reached"))).toBe(false);
     expect(
