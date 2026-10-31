@@ -1828,3 +1828,52 @@ Two marked focus seams keep the caret where the person is typing:
   `shouldRefocusComposerOnWindowFocus` allows, so a browser page, field or editor keeps the caret.
 - `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
   takes the caret only if focus is still in the composer or nowhere in particular.
+
+## Multiple app windows
+
+Scient Desktop can run several full app windows in one Electron process
+([Multiple app windows](docs/internals/multi-window.md)). The behavior lives in
+`apps/desktop/src/scient/multiWindow` and `apps/web/src/scient/multiWindow`; T3
+files keep marked seams only. Paths below are relative to `apps/desktop/src`, or
+to `apps/web/src` after `web/`.
+
+| Area                      | T3 files with marked seams                                                                                                                              | What the seam does                                                                                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Window registry           | `electron/ElectronWindow.ts`                                                                                                                            | Keeps app windows in focus order; the head is the main window (`appWindows`)                                                                                                                         |
+| Window creation           | `window/DesktopWindow.ts`, `window/DesktopApplicationMenu.ts`, `electron/ElectronMenu.ts`, `ipc/channels.ts`, `preload.ts`, `ipc/DesktopIpcHandlers.ts` | `createWindow({ route, cascadeFrom, atCursor })`, `openNewWindow`, New Window in File and Dock menus, per-window bounds, focus; registers `scient/multiWindow/ipc.ts` and spreads its preload bridge |
+| Sender checks             | `ipc/DesktopIpc.ts`, `ipc/methods/{window,snapShot,appActivation,webLinks}.ts`, `app/DesktopAppActivation.ts`, `app/DesktopWebLinks.ts`                 | Accept any app window's renderer and act on its window; deliver to a ready renderer                                                                                                                  |
+| Shared settings           | `ipc/methods/{clientSettings,connectionCatalog}.ts`, `web/hooks/useSettings.ts`, `web/connection/storage.ts`                                            | Change notices to other windows; Web Lock around writes                                                                                                                                              |
+| Preview hosting           | `preview/Manager.ts`, `web/browser/ElectronBrowserHost.tsx`, `web/browser/desktopTabLifetime.ts`                                                        | Guests from any app window; one window mounts each tab's webview; another window's close waits                                                                                                       |
+| Persisted renderer stores | `web/composerDraftStore.ts`, `web/promptStashStore.ts`, `web/uiStateStore.ts`, `web/rightPanelStore.ts`                                                 | Merge on save with what other windows or web client tabs stored (the stash adopts it before each change); adopt their saves from `storage` events                                                    |
+| Notifications             | `web/components/ThreadNotificationCoordinator.tsx`                                                                                                      | Only the presenter window plays sounds and shows system notifications                                                                                                                                |
+| Open in new window        | `web/components/Sidebar.tsx`, `web/components/threadActionMenu.logic.ts`, `web/hooks/useThreadActionMenu.ts`                                            | Thread and draft menu item, shown only when the desktop bridge can open windows                                                                                                                      |
+| Side panel tab windows    | `web/components/RightPanelTabs.tsx`, `web/components/ChatView.tsx`, `web/appInit.tsx`                                                                   | Tab menu item, dragging a tab out of the strip, the shown page's opener, and the new window's request to show that tab                                                                               |
+| Page menus                | `web/components/preview/PreviewView.tsx`, `web/components/device/DeviceControlsRail.tsx`, `web/components/pullRequest/PullRequestActionsMenu.tsx`       | Open in new window in the browser, device and pull request menus: an import and one `PanelTabNewWindowItem` element each                                                                             |
+
+Desktop test files that build `ElectronWindow`, `DesktopWindow` or `ElectronMenu`
+fakes carry marked `appWindows`, `openNewWindow` and `setDockMenu` members;
+Scient cases live in
+`.scient.` siblings and `scient/multiWindow` tests.
+
+When aligning, check:
+
+- **Single-window assumptions.** A new T3 call to `electronWindow.main` or a
+  comparison of an IPC sender with the main window's renderer usually means
+  "the window that asked". Route it through `appWindowForSender` unless it really
+  concerns the most recently used window.
+- **Window construction.** T3 changes to `createWindow` (options, load, DevTools,
+  bounds persistence) apply to every app window. Keep the route and cascade
+  options, and keep DevTools opening only for the first window.
+- **Persisted stores.** A T3 change to a merged store's persisted shape or
+  version must keep its sync module's fields in step: `uiStateSync.ts` lists UI
+  state fields, `rightPanelSync.ts` reads `byThreadKey` and
+  `threadPanelVisibilityByThreadKey`, and `composerDraftSync.ts` lists draft
+  sections. A new field in a thread's side panel entry is shared with the tabs
+  by default; one that belongs to each window's view goes in `rightPanelSync.ts`'s
+  `splitView` and `withOwnView`. A new T3 store that persists shared state needs the same treatment or a reason
+  it does not.
+- **Preview manager.** T3 code that reads a single main window in
+  `preview/Manager.ts` must use the tab's host window (`PreviewHostWindows` in
+  `scient/multiWindow/previewHostWindows.ts`) or all `appWindows`.
+- **Shortcuts.** File > New Window uses `CmdOrCtrl+Alt+Shift+N`. If T3 binds it,
+  decide which command keeps the key and update `docs/user/multiple-windows.md`.

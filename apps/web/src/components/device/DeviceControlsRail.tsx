@@ -33,6 +33,9 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { DeviceStreamHandle, DeviceViewControls } from "./DeviceStreamView";
 import type { DeviceControls } from "./useDeviceControls";
+// SCIENT-FORK:START — a device tab can open in a new window from its menu.
+import { PanelTabNewWindowItem } from "~/scient/multiWindow/PanelTabNewWindowItem";
+// SCIENT-FORK:END
 
 export function DeviceControlsRail(props: {
   platform: DevicePlatform;
@@ -222,6 +225,9 @@ export function DeviceControlsRail(props: {
               <PictureInPicture2 />
               Float device over chat
             </MenuItem>
+            {/* SCIENT-FORK:START — a device tab can open in a new window from its menu. */}
+            <PanelTabNewWindowItem />
+            {/* SCIENT-FORK:END */}
             <MenuItem onClick={props.onClose}>
               <X />
               Close device panel

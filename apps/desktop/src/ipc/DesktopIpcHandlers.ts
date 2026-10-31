@@ -7,6 +7,9 @@ import { installUnreadAnswerBadge } from "../scient/answerAttention/ipc.ts";
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 import { noteSpellingSample } from "../scient/spelling/ipc.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+import { openNewWindow } from "../scient/multiWindow/ipc.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — conversation files the OS opened with Scient.
 import {
   cancelOpenedConversationFileUpload,
@@ -183,6 +186,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(reloadMainWindow);
   yield* ipc.handle(revealWindow);
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  yield* ipc.handle(openNewWindow);
+  // SCIENT-FORK:END
   yield* ipc.handle(probeRemoteEditors);
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

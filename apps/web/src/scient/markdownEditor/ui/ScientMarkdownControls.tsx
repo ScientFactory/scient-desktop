@@ -120,6 +120,7 @@ import {
   type DockGroup,
 } from "../../writing/dockChrome";
 import { ScientFindBar } from "../../writing/ScientFindBar";
+import { PanelTabNewWindowItem } from "../../multiWindow/PanelTabNewWindowItem";
 import { ScientWikiLinkPicker } from "./ScientWikiLinkPicker";
 
 const ignoreWikiLinkSelection = () => undefined;
@@ -1396,6 +1397,7 @@ export function ScientMarkdownControls({
               <Keyboard />
               <span>Keyboard shortcuts</span>
             </MenuItem>
+            <PanelTabNewWindowItem separated />
           </>
         }
       />

@@ -26,6 +26,8 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
+import { PanelTabNewWindowItem } from "../multiWindow/PanelTabNewWindowItem";
+
 import type { LazyWorkspaceTreeSnapshot } from "./LazyWorkspaceTreeController";
 
 export const FILE_SEARCH_LIMIT = 200;
@@ -115,6 +117,7 @@ export function WorkspaceFilesMenu(props: {
             ))}
           </MenuRadioGroup>
         </MenuGroup>
+        <PanelTabNewWindowItem separated />
       </MenuPopup>
     </Menu>
   );

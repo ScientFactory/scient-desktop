@@ -2,7 +2,11 @@ import { render as _fixtureRender, type Screen, act } from "../../../test/render
 import { type ComponentProps } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
+import { DropdownMenuItem } from "~/components/ui/menu";
+import type { RightPanelSurface } from "~/rightPanelStore";
+import { PanelTabNewWindowProvider } from "../multiWindow/PanelTabNewWindowItem";
 import { DocumentReaderControls, ReaderSearchField } from "../writing/DocumentReaderControls";
+import { ReaderBarHostContext, type ReaderBarHost } from "../writing/readerBarHost";
 
 describe("shared PDF and Visual controls", () => {
   async function _setupFixture0(_fixture: _Fixture) {
@@ -17,33 +21,30 @@ describe("shared PDF and Visual controls", () => {
     _fixture.host.remove();
     vi.unstubAllGlobals();
   }
+  const controls = (props: Partial<ComponentProps<typeof DocumentReaderControls>> = {}) => (
+    <DocumentReaderControls
+      label="Document"
+      ready
+      page={1}
+      pageCount={3}
+      scale={1}
+      sidebarOpen={false}
+      searchOpen={false}
+      onPage={vi.fn()}
+      onZoom={vi.fn()}
+      onActualSize={vi.fn()}
+      onFitWidth={vi.fn()}
+      onToggleSidebar={vi.fn()}
+      onToggleSearch={vi.fn()}
+      onShowSearch={vi.fn()}
+      shortcutLabel={() => ""}
+      {...props}
+    />
+  );
   const render = async (
     _fixture: _Fixture,
     props: Partial<ComponentProps<typeof DocumentReaderControls>> = {},
-  ) =>
-    await act(
-      async () =>
-        await _fixture.root0.rerender(
-          <DocumentReaderControls
-            label="Document"
-            ready
-            page={1}
-            pageCount={3}
-            scale={1}
-            sidebarOpen={false}
-            searchOpen={false}
-            onPage={vi.fn()}
-            onZoom={vi.fn()}
-            onActualSize={vi.fn()}
-            onFitWidth={vi.fn()}
-            onToggleSidebar={vi.fn()}
-            onToggleSearch={vi.fn()}
-            onShowSearch={vi.fn()}
-            shortcutLabel={() => ""}
-            {...props}
-          />,
-        ),
-    );
+  ) => await act(async () => await _fixture.root0.rerender(controls(props)));
   const click = async (_fixture: _Fixture, label: string) =>
     await act(() =>
       _fixture.host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click(),
@@ -150,6 +151,61 @@ describe("shared PDF and Visual controls", () => {
     });
     await act(() => field.blur());
     expect(onPage).toHaveBeenCalledExactlyOnceWith(3);
+  });
+  it("opens the tab it shows in a new window, unless a surface hosting the bar lists that", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const onOpen = vi.fn();
+    const paper: RightPanelSurface = {
+      id: "file:paper.pdf",
+      kind: "file",
+      relativePath: "paper.pdf",
+      revealLine: null,
+      revealRequestId: 0,
+    };
+    const notes: RightPanelSurface = { ...paper, id: "file:notes.pdf", relativePath: "notes.pdf" };
+    const show = async (surface: RightPanelSurface, host: ReaderBarHost | null = null) =>
+      await act(
+        async () =>
+          await _fixture.root0.rerender(
+            <PanelTabNewWindowProvider surface={surface} onOpen={onOpen}>
+              <ReaderBarHostContext value={host}>
+                {controls({
+                  moreActions: <DropdownMenuItem>Export</DropdownMenuItem>,
+                })}
+              </ReaderBarHostContext>
+            </PanelTabNewWindowProvider>,
+          ),
+      );
+    const openMenu = async () => {
+      await click(_fixture, "More Document actions");
+      await vi.waitFor(() => expect(menuItem("Export")).toBeDefined());
+    };
+    const menuItem = (label: string) =>
+      Array.from(document.body.querySelectorAll<HTMLElement>("[data-slot='menu-item']")).find(
+        (item) => item.textContent?.trim() === label,
+      );
+
+    await show(paper);
+    await openMenu();
+    await act(() => menuItem("Open in new window")!.click());
+    expect(onOpen).toHaveBeenLastCalledWith(paper);
+    await show(notes);
+    await openMenu();
+    await act(() => menuItem("Open in new window")!.click());
+    expect(onOpen).toHaveBeenLastCalledWith(notes);
+
+    const slot = document.createElement("div");
+    document.body.append(slot);
+    _fixture.cleanup.defer(() => slot.remove());
+    await show(paper, { slot, onHosted: vi.fn() });
+    await act(() =>
+      slot.querySelector<HTMLButtonElement>('button[aria-label="More Document actions"]')!.click(),
+    );
+    await vi.waitFor(() => expect(menuItem("Export")).toBeDefined());
+    expect(menuItem("Open in new window")).toBeUndefined();
   });
   it("searches in a quiet field: focus on request, count, arrows, keys and Escape", async () => {
     await using _fixture = _createFixture();

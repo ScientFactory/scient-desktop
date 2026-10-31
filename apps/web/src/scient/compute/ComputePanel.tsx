@@ -68,6 +68,7 @@ import { formatDateTimeTimestamp, formatTimestamp } from "~/timestampFormat";
 
 import { ComputeOutputView } from "./ComputeOutputView";
 import { ComputeSavedFileAction } from "./ComputeSavedFileAction";
+import { PanelTabNewWindowItem } from "../multiWindow/PanelTabNewWindowItem";
 import type { ComputePanelView } from "./computeFilePresentationStore";
 import {
   resolveComputeEmptyResultsState,
@@ -1610,6 +1611,8 @@ export function ComputePanel(props: {
                   <Power />
                   Stop session
                 </MenuItem>
+                {/* Embedded results belong to a file's page, not to this tab. */}
+                {props.embedded ? null : <PanelTabNewWindowItem separated />}
               </MenuPopup>
             </Menu>
           </div>
