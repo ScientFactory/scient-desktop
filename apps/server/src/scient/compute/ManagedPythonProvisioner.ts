@@ -227,10 +227,11 @@ export async function resolveManagedPythonSpecPath(
   purpose: ManagedPythonPurpose = "python",
 ): Promise<string> {
   const candidates = managedPythonSpecPathCandidates(directory, purpose);
-  const noun =
-    purpose === "matlab-connection"
-      ? "MATLAB connection helper specification"
-      : "managed Python specification";
+  const noun = {
+    python: "managed Python specification",
+    "matlab-connection": "MATLAB connection helper specification",
+    "bridge-host": "private Python host specification",
+  }[purpose];
   for (const candidate of candidates) {
     const present = await Promise.all(
       ["pyproject.toml", "uv.lock"].map((file) =>
@@ -419,9 +420,13 @@ export type ManagedPythonProvisionerOptions = ManagedPythonProvisionerBase &
       }
   );
 
-export function makeManagedPythonProvisioner(
-  options: ManagedPythonProvisionerOptions,
-): Pick<ManagedPythonEnvironmentDependencies, "provision" | "verify"> {
+export function makeManagedPythonProvisioner(options: ManagedPythonProvisionerOptions): Pick<
+  ManagedPythonEnvironmentDependencies,
+  "provision" | "verify"
+> & {
+  /** The pinned installer, fetched and checked the first time it is needed. */
+  readonly ensureUv: (signal: AbortSignal) => Promise<string>;
+} {
   const platform = options.platform;
   const target = detectManagedRuntimeTarget({ platform, arch: options.arch });
   const artifact = options.uvArtifact ?? managedPythonUvArtifactForTarget(target);
@@ -835,5 +840,5 @@ export function makeManagedPythonProvisioner(
     );
   };
 
-  return { provision, verify };
+  return { provision, verify, ensureUv };
 }

@@ -993,6 +993,19 @@ function renderReference(
         reference.comment,
       );
     }
+    case "compute-excerpt":
+      sink.citations.push({
+        _tag: "compute-excerpt",
+        id: `c${sink.citations.length + 1}`,
+        place: reference.place,
+        text: reference.text,
+        comment: reference.comment,
+      });
+      return excerpt(
+        `**Quote from ${inlineCode(reference.place)}:**`,
+        reference.text,
+        reference.comment,
+      );
     case "message-excerpt":
       sink.citations.push({
         _tag: "message-excerpt",

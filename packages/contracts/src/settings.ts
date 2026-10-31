@@ -12,7 +12,9 @@ import {
 import { ThreadSections, ThreadSectionsPrecondition } from "./scient/threadSections.ts";
 export {
   DEFAULT_SCIENTIFIC_COMPUTING_LANGUAGE_SETTINGS,
+  resolveScientificComputingExecutable,
   resolveScientificComputingLanguageSettings,
+  scientificComputingSelectionKey,
   ScientificComputingLanguageSettings,
   ScientificComputingSettings,
 } from "./scient/scientificComputingSettings.ts";

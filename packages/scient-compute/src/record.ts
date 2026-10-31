@@ -69,11 +69,24 @@ export const ComputeExecutionSource = Schema.Union([
     bufferState: Schema.Literals(["saved", "dirty"]),
     revision: Schema.NullOr(Label),
     range: Schema.NullOr(ComputeSourceRange),
+    /** The notebook cell this run belongs to. */
+    cell: Schema.optional(ShortText),
   }),
 ]);
 export type ComputeExecutionSource = typeof ComputeExecutionSource.Type;
 
 /** Whether a session's bulky data is still on disk. */
+/** What a session belongs to: a file tab, or an agent's own session in a thread. */
+export const ComputeSessionOwner = Schema.Union([
+  Schema.TaggedStruct("file", { path: ShortText }),
+  Schema.TaggedStruct("agent", { threadId: EntityId }),
+]);
+export type ComputeSessionOwner = typeof ComputeSessionOwner.Type;
+
+/** Who submitted an execution. Absent means the user. */
+export const ComputeExecutionActor = Schema.TaggedStruct("agent", { threadId: EntityId });
+export type ComputeExecutionActor = typeof ComputeExecutionActor.Type;
+
 export const ComputeSessionStorage = Schema.Struct({
   status: Schema.Literals(["retained", "metadata-only"]),
   outputBytes: ByteLength,
@@ -99,6 +112,8 @@ export const ComputeSessionRecord = Schema.Struct({
   sessionId: ComputeSessionId,
   projectId: ComputeProjectId,
   label: Label,
+  /** Absent on sessions from before ownership was recorded. */
+  owner: Schema.optional(ComputeSessionOwner),
   /** Absent on historical and persistent sessions. Fresh is a lifetime, not a sandbox. */
   lifetime: Schema.optional(Schema.Literal("fresh")),
   languageId: ComputeLanguageId,
@@ -137,6 +152,7 @@ export const ComputeExecutionRequestRecord = Schema.Struct({
   code: StreamText,
   codeHash: ContentHash,
   source: ComputeExecutionSource,
+  actor: Schema.optional(ComputeExecutionActor),
   submittedAt: ObservedAt,
   environmentFingerprint: Schema.NullOr(ComputeEnvironmentFingerprint),
 });
@@ -163,6 +179,8 @@ export const ComputeExecutionResultRecord = Schema.Struct({
   outputBytes: ByteLength,
   truncated: Schema.Boolean,
   failureReason: Schema.NullOr(ShortText),
+  /** The kernel's number for this run, for kernels that report one. */
+  executionCount: Schema.optional(Count),
 });
 export type ComputeExecutionResultRecord = typeof ComputeExecutionResultRecord.Type;
 

@@ -22,7 +22,10 @@ import {
   type ComputeStopProjectSessionInput,
   type ComputeProjectSessionInput,
   type ComputeStartProjectSessionInput,
+  type ComputeSubmitProjectCellsInput,
   type ComputeSubmitProjectExecutionInput,
+  type ComputeTableInput,
+  type ComputeRuntimeInventoryInput,
   type ComputeVerifyRuntimeInput,
   resolveScientificComputingLanguageSettings,
   type ServerSettings as ServerSettingsValue,
@@ -30,7 +33,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import type * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
-import type { ServerSettingsError } from "@t3tools/contracts";
+import { COMPUTE_LANGUAGE_CATALOG, type ServerSettingsError } from "@t3tools/contracts";
 import type { LocalAnalysisStoreError } from "../analysis/LocalAnalysisStore.ts";
 import type { ComputeSessionService } from "./ComputeSessionService.ts";
 import type { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
@@ -51,11 +54,13 @@ type ComputeGatewayService = Pick<
   | "listExecutions"
   | "listOutputs"
   | "submitExecution"
+  | "submitExecutions"
   | "cancelExecution"
   | "interruptSession"
   | "restartSession"
   | "stopSession"
   | "inspectVariables"
+  | "readTable"
   | "subscribeSessions"
 >;
 type ComputeGatewaySettings = {
@@ -63,6 +68,12 @@ type ComputeGatewaySettings = {
     ServerSettingsValue,
     ServerSettingsError | LocalAnalysisStoreError
   >;
+  readonly hostKey?: Effect.Effect<string | null>;
+  /** This machine's choice for one project, which wins over its host default. */
+  readonly projectExecutable?: (
+    languageId: string,
+    projectId: string,
+  ) => Effect.Effect<string | null, ServerSettingsError>;
 };
 type ComputeGatewayWorkspace = Pick<WorkspaceFileSystem.WorkspaceFileSystem["Service"], "readFile">;
 
@@ -160,7 +171,15 @@ export function makeComputeRpcGateway(input: {
     const project = yield* Effect.tryPromise({
       try: async () => {
         const inspection = await inspectScientProject(admission?.scope.workspaceRoot ?? cwd);
-        if (inspection.state !== "initialized") return null;
+        if (inspection.state !== "initialized") {
+          // Any registered folder can run code; history then belongs to its workspace binding.
+          return admission === null || admission === undefined
+            ? null
+            : {
+                root: admission.scope.workspaceRoot,
+                projectId: ComputeProjectId.make(admission.scope.bindingId),
+              };
+        }
         if (admission && inspection.root !== admission.scope.workspaceRoot) return null;
         const identity = await readScientProjectIdentity(inspection.root);
         return { root: inspection.root, projectId: ComputeProjectId.make(identity.projectId) };
@@ -181,7 +200,7 @@ export function makeComputeRpcGateway(input: {
     );
   });
 
-  const requireEnabledLanguage = Effect.fn("ComputeRpcGateway.requireEnabledLanguage")(function* (
+  const requireLanguage = Effect.fn("ComputeRpcGateway.requireLanguage")(function* (
     operation: GatewayOperation,
     languageId: ComputeLanguageId,
   ) {
@@ -200,41 +219,67 @@ export function makeComputeRpcGateway(input: {
       settings.scientificComputing,
       languageId,
     );
-    if (!preference.enabled) {
-      return yield* gatewayError(
-        operation,
-        "language-disabled",
-        `${descriptor.displayName} is disabled in Scientific Computing settings.`,
-      );
-    }
     return { descriptor, preference };
   });
 
-  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* () {
-    const settings = yield* readSettings("inspect");
-    const preferences = Object.fromEntries(
-      input.compute.runtimeDescriptors.map((descriptor) => [
-        descriptor.languageId,
-        resolveScientificComputingLanguageSettings(
-          settings.scientificComputing,
-          descriptor.languageId,
+  const projectExecutables = Effect.fn("ComputeRpcGateway.projectExecutables")(function* (
+    operation: GatewayOperation,
+    projectId: string | null,
+    languageIds: ReadonlyArray<string>,
+  ) {
+    const lookup = input.serverSettings.projectExecutable;
+    if (lookup === undefined || projectId === null) return {};
+    const entries = yield* Effect.forEach(languageIds, (languageId) =>
+      lookup(languageId, projectId).pipe(
+        Effect.map((executable) => [languageId, executable] as const),
+        Effect.mapError((cause) =>
+          gatewayError(
+            operation,
+            "settings-failed",
+            "Unable to read the project's runtime.",
+            cause,
+          ),
         ),
+      ),
+    );
+    return Object.fromEntries(entries.filter(([, executable]) => executable !== null)) as Record<
+      string,
+      string
+    >;
+  });
+
+  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* (
+    request: ComputeRuntimeInventoryInput = {},
+  ) {
+    const settings = yield* readSettings("inspect");
+    const hostKey =
+      input.serverSettings.hostKey === undefined ? null : yield* input.serverSettings.hostKey;
+    const languageIds = new Set([
+      ...input.compute.runtimeDescriptors.map((descriptor) => descriptor.languageId),
+      ...COMPUTE_LANGUAGE_CATALOG.flatMap((group) =>
+        group.languages.map((language) => language.languageId as ComputeLanguageId),
+      ),
+    ]);
+    const preferences = Object.fromEntries(
+      [...languageIds].map((languageId) => [
+        languageId,
+        resolveScientificComputingLanguageSettings(settings.scientificComputing, languageId),
       ]),
     );
-    const languages = yield* input.compute.runtimeInventory({
+    const { languages, incomplete } = yield* input.compute.runtimeInventory({
       configuredExecutables: Object.fromEntries(
         Object.entries(preferences).map(([id, preference]) => [id, preference.executable || null]),
       ),
-      enabledLanguageIds: new Set(
-        Object.entries(preferences).flatMap(([id, preference]) => (preference.enabled ? [id] : [])),
-      ),
+      ...(request.refresh === undefined ? {} : { refresh: request.refresh }),
     });
     return {
       languages: languages.map((language) => ({
         ...language,
-        enabled: preferences[language.descriptor.languageId]?.enabled ?? false,
+        enabled: true,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),
+      ...(incomplete ? { incomplete } : {}),
+      ...(hostKey === null ? {} : { hostKey }),
     };
   });
 
@@ -252,6 +297,13 @@ export function makeComputeRpcGateway(input: {
         ),
       ]),
     );
+    const projectChoices = yield* projectExecutables(
+      "inspect",
+      project?.projectId ?? null,
+      Object.keys(preferences),
+    );
+    for (const [languageId, executable] of Object.entries(projectChoices))
+      preferences[languageId] = { ...preferences[languageId]!, executable };
     const inspected = yield* input.compute.inspectRuntimes({
       projectRoot: project?.root ?? null,
       workingDirectory: project?.root ?? NodeOS.tmpdir(),
@@ -261,20 +313,17 @@ export function makeComputeRpcGateway(input: {
           preference.executable.length === 0 ? null : preference.executable,
         ]),
       ),
-      enabledLanguageIds: new Set(
-        Object.entries(preferences).flatMap(([languageId, preference]) =>
-          preference.enabled ? [languageId] : [],
-        ),
-      ),
+      chosenForProject: new Set(Object.keys(projectChoices)),
       refresh: request.refresh,
+      ...(request.languageIds === undefined ? {} : { languageIds: new Set(request.languageIds) }),
     });
     return {
       contractVersion: 1 as const,
       scope: project === null ? ("environment" as const) : ("project" as const),
       languages: inspected.map((language) => ({
         ...language,
+        enabled: true,
         managedRuntime: language.managedRuntime ?? null,
-        enabled: preferences[language.descriptor.languageId]?.enabled ?? false,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),
     };
@@ -283,7 +332,7 @@ export function makeComputeRpcGateway(input: {
   const verifyRuntime = Effect.fn("ComputeRpcGateway.verifyRuntime")(function* (
     request: ComputeVerifyRuntimeInput,
   ) {
-    yield* requireEnabledLanguage("verify", request.languageId);
+    yield* requireLanguage("verify", request.languageId);
     const project = request.cwd === null ? null : yield* projectFor("verify", request.cwd);
     const executable = request.executable.trim();
     if (executable.length === 0) {
@@ -329,15 +378,27 @@ export function makeComputeRpcGateway(input: {
     request: ComputeStartProjectSessionInput,
   ) {
     const project = yield* projectFor("start", request.cwd);
-    const { descriptor, preference } = yield* requireEnabledLanguage("start", request.languageId);
+    const { descriptor, preference: hostPreference } = yield* requireLanguage(
+      "start",
+      request.languageId,
+    );
+    const projectChoice = (yield* projectExecutables("start", project.projectId, [
+      request.languageId,
+    ]))[request.languageId];
+    const preference =
+      projectChoice === undefined
+        ? hostPreference
+        : { ...hostPreference, executable: projectChoice };
     if (request.runOnce !== undefined) yield* validateSource(project.root, request.runOnce);
     return yield* input.compute.startSession({
       projectId: project.projectId,
       sessionId: request.sessionId,
       languageId: request.languageId,
       label: descriptor.displayName,
+      ...(request.owner === undefined ? {} : { owner: request.owner }),
       workingDirectory: project.root,
       configuredExecutable: preference.executable.length === 0 ? null : preference.executable,
+      ...(projectChoice === undefined ? {} : { chosenForProject: true }),
       ...(request.executable === null ? {} : { requestedExecutable: request.executable }),
       ...(request.runOnce === undefined ? {} : { runOnce: request.runOnce }),
     });
@@ -368,14 +429,20 @@ export function makeComputeRpcGateway(input: {
     });
   });
 
-  const listExecutions = Effect.fn("ComputeRpcGateway.listExecutions")(function* (
-    request: ComputeListProjectExecutionsInput,
+  const listAllExecutions = Effect.fn("ComputeRpcGateway.listAllExecutions")(function* (
+    request: ComputeProjectSessionInput,
   ) {
     const project = yield* projectFor("list", request.cwd);
-    const executions = yield* input.compute.listExecutions({
+    return yield* input.compute.listExecutions({
       projectId: project.projectId,
       sessionId: request.sessionId,
     });
+  });
+
+  const listExecutions = Effect.fn("ComputeRpcGateway.listExecutions")(function* (
+    request: ComputeListProjectExecutionsInput,
+  ) {
+    const executions = yield* listAllExecutions(request);
     return executions.slice(-request.limit);
   });
 
@@ -443,11 +510,43 @@ export function makeComputeRpcGateway(input: {
       projectId: project.projectId,
       sessionId: request.sessionId,
     });
-    if (session !== null) yield* requireEnabledLanguage("submit", session.languageId);
+    if (session !== null) yield* requireLanguage("submit", session.languageId);
     yield* validateSource(project.root, request);
     return yield* input.compute.submitExecution({
       ...request,
       projectId: project.projectId,
+    });
+  });
+
+  const submitCells = Effect.fn("ComputeRpcGateway.submitCells")(function* (
+    request: ComputeSubmitProjectCellsInput,
+  ) {
+    const project = yield* projectFor("submit", request.cwd);
+    const session = yield* input.compute.getSession({
+      projectId: project.projectId,
+      sessionId: request.sessionId,
+    });
+    if (session !== null) yield* requireLanguage("submit", session.languageId);
+    return yield* input.compute.submitExecutions({
+      projectId: project.projectId,
+      sessionId: request.sessionId,
+      submissions: request.cells.map((cell) => ({
+        projectId: project.projectId,
+        sessionId: request.sessionId,
+        executionId: cell.executionId,
+        expectedGeneration: request.expectedGeneration,
+        code: cell.code,
+        ...(request.actor === undefined ? {} : { actor: request.actor }),
+        source: {
+          _tag: "document" as const,
+          origin: "cell" as const,
+          path: request.path,
+          bufferState: "saved" as const,
+          revision: null,
+          range: null,
+          cell: cell.cellId,
+        },
+      })),
     });
   });
 
@@ -483,6 +582,13 @@ export function makeComputeRpcGateway(input: {
     return yield* input.compute.inspectVariables({ ...request, projectId: project.projectId });
   });
 
+  const readTable = Effect.fn("ComputeRpcGateway.readTable")(function* (
+    request: ComputeTableInput,
+  ) {
+    const project = yield* projectFor("table", request.cwd);
+    return yield* input.compute.readTable({ ...request, projectId: project.projectId });
+  });
+
   return {
     runtimeInventory,
     inspectRuntimes: inWorkspace("inspect", inspectRuntimes),
@@ -494,8 +600,10 @@ export function makeComputeRpcGateway(input: {
     listSessions: inWorkspace("list", listSessions),
     getSession: inWorkspace("get", getSession),
     listExecutions: inWorkspace("list", listExecutions),
+    listAllExecutions: inWorkspace("list", listAllExecutions),
     listOutputs: inWorkspace("outputs", listOutputs),
     submitExecution: inWorkspace("submit", submitExecution),
+    submitCells: inWorkspace("submit", submitCells),
     cancelExecution: inWorkspace("cancel", cancelExecution),
     interruptSession: inWorkspace(
       "interrupt",
@@ -510,6 +618,7 @@ export function makeComputeRpcGateway(input: {
       }),
     ),
     inspectVariables: inWorkspace("variables", inspectVariables),
+    readTable: inWorkspace("table", readTable),
     subscribeSessions: inWorkspace("subscribe", subscribeSessions),
   };
 }

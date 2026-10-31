@@ -26,8 +26,8 @@ const ALL_MCP_CAPABILITIES = [
   "device",
   "pull-requests",
   "documents:build",
-  /** Read-only runtime discovery. Execution requires a separate, future authority. */
-  "compute:inventory",
+  /** Run code in Scient Compute sessions and read their results. */
+  "compute",
   "skills:read",
   "sources:read",
   "sources:write",

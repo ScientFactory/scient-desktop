@@ -8,7 +8,12 @@ import {
   ComputeSessionId,
 } from "./contract.ts";
 import { Count, Label, ShortText, StreamText } from "./primitives.ts";
-import { ComputeExecutionSource, ComputeProjectId } from "./record.ts";
+import {
+  ComputeExecutionActor,
+  ComputeExecutionSource,
+  ComputeProjectId,
+  ComputeSessionOwner,
+} from "./record.ts";
 
 /**
  * Commands bind project/session and expected generation so stale clients cannot mutate replacement
@@ -35,6 +40,7 @@ export class ComputeOperationError extends Schema.TaggedError<ComputeOperationEr
       "verify",
       "manage",
       "variables",
+      "table",
     ]),
     reason: Schema.Literals([
       // The session is not there, or is not in a state that can run code.
@@ -72,10 +78,13 @@ export class ComputeOperationError extends Schema.TaggedError<ComputeOperationEr
  * edge, not cwd inference inside the coordinator.
  */
 export const ComputeStartSessionInput = Schema.Struct({
+  /** The configured executable was chosen for this project, so it outranks its environment. */
+  chosenForProject: Schema.optional(Schema.Boolean),
   projectId: ComputeProjectId,
   sessionId: ComputeSessionId,
   languageId: ComputeLanguageId,
   label: Label,
+  owner: Schema.optional(ComputeSessionOwner),
   workingDirectory: ShortText,
   configuredExecutable: Schema.NullOr(ShortText),
   /** An explicit per-session choice, distinct from the environment's default preference. */
@@ -99,6 +108,7 @@ export const ComputeSubmitExecutionInput = Schema.Struct({
   expectedGeneration: ComputeSessionGeneration,
   code: StreamText,
   source: ComputeExecutionSource,
+  actor: Schema.optional(ComputeExecutionActor),
 });
 export type ComputeSubmitExecutionInput = typeof ComputeSubmitExecutionInput.Type;
 

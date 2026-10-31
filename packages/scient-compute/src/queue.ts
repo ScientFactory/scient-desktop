@@ -14,7 +14,7 @@ import { Count } from "./primitives.ts";
  * Bound pending executions so a stuck kernel cannot grow memory/backlog without limit. Allow a
  * useful cell burst while keeping the queue small enough to inspect.
  */
-export const MAXIMUM_PENDING_COMPUTE_EXECUTIONS = 16;
+export const MAXIMUM_PENDING_COMPUTE_EXECUTIONS = 512;
 
 export interface ComputeQueueState {
   readonly active: ComputeExecutionId | null;

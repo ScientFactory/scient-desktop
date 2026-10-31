@@ -66,6 +66,14 @@ describe("searchSettings", () => {
     expect(searchSettings("long lines", ITEMS).map((item) => item.id)).toEqual(["word-wrap"]);
   });
 
+  it("finds Scientific Computing by any language it lists", () => {
+    for (const language of ["python", "octave", "wolfram", "haskell", "spss"]) {
+      expect(searchSettings(language).map((item) => item.to)).toContain(
+        "/settings/scientific-computing",
+      );
+    }
+  });
+
   it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {
     expect(SETTINGS_NAV_GROUPS.flatMap((group) => group.paths)).not.toContain("/settings/secrets");
     expect(searchSettings("1password").map((item) => item.to)).not.toContain("/settings/secrets");

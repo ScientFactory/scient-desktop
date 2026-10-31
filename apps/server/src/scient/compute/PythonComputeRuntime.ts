@@ -9,6 +9,8 @@ import {
   ComputeRuntimeError,
   ComputeTransportError,
   REQUIRED_COMPUTE_CAPABILITIES,
+  type ComputeLanguageAdapter,
+  type ComputeTransport,
 } from "@scientfactory/compute";
 import { ExecutionRunId, type ExecutionProcessPort } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -33,6 +35,7 @@ import {
   layerWithRuntimeBindings,
   type ComputeRuntimeBinding,
 } from "./ComputeSessionService.ts";
+import { makeBridgeHost } from "./BridgeHost.ts";
 import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import { makeManagedPythonEnvironmentManager } from "./ManagedPythonEnvironment.ts";
 import {
@@ -41,11 +44,15 @@ import {
 } from "./ManagedPythonProvisioner.ts";
 import { makeManagedPythonRuntimeController } from "./ManagedPythonRuntimeController.ts";
 import { ComputeRecipeNetwork, makeComputeRecipeSource } from "./ComputeRecipeSource.ts";
+import { makePythonPrivateKernels } from "./PythonPrivateKernel.ts";
 import {
   PROBE_SCRIPT,
   PYTHON_LANGUAGE_ID,
+  hostsBridge,
   makePythonRuntimeAdapter,
+  type ProbeResult,
 } from "./PythonRuntimeAdapter.ts";
+import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
 import { PYTHON_TOOLKIT_CATALOG, assessPythonToolkits } from "./PythonToolkitCatalog.ts";
 
 /**
@@ -62,6 +69,24 @@ export const BRIDGE_SCRIPT_NAME = "scient_compute_bridge.py";
  * that copies the bridge there and the resolver below that looks for it.
  */
 export const STAGED_BRIDGE_DIRECTORY = "scient-compute-bridge";
+
+/** What another language needs from Python to run its Jupyter kernel behind the same bridge. */
+export interface KernelBridgeHost {
+  readonly bridgePath: string;
+  /** Reserves private kernel ports and keeps a managed host generation in use while it runs. */
+  readonly transport: (startupTimeoutMs?: number) => ComputeTransport;
+  /** A Python that can run the bridge, given the configured Python preference. */
+  readonly executable: (
+    configuredExecutable: string | null,
+  ) => Effect.Effect<string, ComputeRuntimeError>;
+  /** Whether the files show a Python that could host the bridge. Nothing starts. */
+  readonly mayHost: (configuredExecutable: string | null) => Effect.Effect<boolean>;
+  /** Scient's own small Python, added on first use. It carries DuckDB and ipykernel. */
+  readonly privateExecutable?: () => Effect.Effect<string, ComputeRuntimeError>;
+  /** Discovers Pythons with Scient-managed Python first, whatever Python's own default is. */
+  readonly managedPythonAdapter: ComputeLanguageAdapter;
+  readonly managedRuntime?: NonNullable<ComputeRuntimeBinding["managedRuntime"]>;
+}
 
 /**
  * Allow cold interpreter/disk startup but bound silence so an arbitrary configured interpreter
@@ -257,6 +282,7 @@ export const makeSpawnProbe = Effect.fn("PythonComputeRuntime.makeSpawnProbe")(f
 export const pythonRuntimeBinding: Effect.Effect<
   ComputeRuntimeBinding & {
     readonly managedRuntime?: ReturnType<typeof makeManagedPythonRuntimeController>;
+    readonly kernelHost: KernelBridgeHost;
   },
   ComputeRuntimeError,
   | DuplexProcess
@@ -339,131 +365,243 @@ export const pythonRuntimeBinding: Effect.Effect<
   if (managedSetup !== null) {
     yield* Effect.addFinalizer(() => Effect.sync(() => managedSetup.managedRuntime.dispose()));
   }
+  const bridgeHost = yield* Effect.gen(function* () {
+    const specDirectory = yield* Effect.tryPromise(() =>
+      resolveManagedPythonSpecPath(moduleDirectory(), "bridge-host"),
+    );
+    const host = makeBridgeHost({
+      recipes: makeComputeRecipeSource({
+        computeDir: config.computeDir,
+        specDirectory,
+        purpose: "bridge-host",
+        target: `${hostPlatform}-${hostArchitecture}`,
+        network: recipeNetwork,
+      }),
+      computeDir: config.computeDir,
+      specDirectory,
+      processes,
+      environment,
+      platform: hostPlatform,
+      arch: hostArchitecture,
+    });
+    yield* Effect.tryPromise(() => host.reconcile());
+    return host;
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Scient's private Python host is unavailable on this computer", {
+        cause,
+      }).pipe(Effect.as(null)),
+    ),
+  );
+  if (bridgeHost !== null) yield* Effect.addFinalizer(() => Effect.sync(bridgeHost.dispose));
+  const privateKernels =
+    bridgeHost === null
+      ? null
+      : makePythonPrivateKernels({
+          computeDir: config.computeDir,
+          processes,
+          environment,
+          uv: bridgeHost.uv,
+        });
   const retain = (executable: string) =>
     Effect.tryPromise({
-      try: () =>
-        managedSetup === null
-          ? Promise.resolve(() => undefined)
-          : managedSetup.manager.acquire(executable),
+      try: async () => {
+        const held = await Promise.all(
+          [managedSetup?.manager, bridgeHost].map(
+            (holder) => holder?.acquire(executable) ?? (() => undefined),
+          ),
+        );
+        return () => held.forEach((release) => release());
+      },
       catch: (cause) =>
         runtimeError("The requested Python environment is unavailable or being removed.", cause),
     });
-  const adapter = makePythonRuntimeAdapter(
-    (executable) => spawnProbe(executable, retain(executable)),
-    bridgePath,
+  const inspectManaged = () =>
     managedSetup === null
+      ? Effect.succeed(null)
+      : Effect.tryPromise({
+          try: () => managedSetup.manager.inspect(),
+          catch: (cause) =>
+            new ComputeRuntimeError({
+              operation: "discover",
+              message: "Unable to inspect Scientific Python.",
+              cause,
+            }),
+        });
+  const probeCache = makeRuntimeProbeCache<ProbeResult>();
+  const hostOption =
+    bridgeHost === null || privateKernels === null
       ? {}
       : {
-          managedRuntime: () =>
-            Effect.tryPromise({
-              try: () => managedSetup.manager.inspect(),
-              catch: (cause) =>
-                new ComputeRuntimeError({
-                  operation: "discover",
-                  message: "Unable to inspect Scientific Python.",
-                  cause,
-                }),
-            }).pipe(
-              Effect.map((status) =>
-                status === null
-                  ? null
-                  : {
-                      executable: status.executable,
-                      selected: status.record.selection === "managed",
-                      available: status.available,
-                      version: status.record.active.pythonVersion,
-                    },
+          host: {
+            executable: Effect.suspend(() => hostExecutable(null)),
+            privateKernel: privateKernels.ensure,
+          },
+        };
+  const makeAdapter = (preferManaged: boolean) =>
+    makePythonRuntimeAdapter(
+      (executable) => spawnProbe(executable, retain(executable)),
+      bridgePath,
+      managedSetup === null
+        ? { probeCache, ...hostOption }
+        : {
+            probeCache,
+            ...hostOption,
+            managedRuntime: () =>
+              inspectManaged().pipe(
+                Effect.map((status) =>
+                  status === null
+                    ? null
+                    : {
+                        executable: status.executable,
+                        selected: preferManaged || status.record.selection === "managed",
+                        chosen: status.record.chosen === true,
+                        available: status.available,
+                        version: status.record.active.pythonVersion,
+                        ...(status.movedFrom === undefined
+                          ? {}
+                          : {
+                              problem: `It was copied from another location and still points to ${status.movedFrom}. Repair rebuilds it here.`,
+                            }),
+                      },
+                ),
               ),
-            ),
-        },
-  );
-  const transport = makeComputeBridgeTransport(duplexProcesses, {
-    prepareKernelEndpoints: (request) =>
-      Effect.uninterruptible(
-        Effect.gen(function* () {
-          const releaseUsage = yield* retain(request.launch.executable).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ComputeTransportError({
-                  operation: "open",
-                  message: cause.message,
-                  cause,
-                }),
-            ),
-          );
-          return yield* ownedLocalEndpoints
-            .reserveProtectedLoopbackTcpPorts({
-              owner: `compute/${request.sessionId}`,
-              purpose: "jupyter-kernel-channels",
-              count: 5,
-            })
-            .pipe(
+          },
+    );
+  const adapter = makeAdapter(false);
+  const managedPythonAdapter = makeAdapter(true);
+  const bridgeTransport = (startupTimeoutMs?: number) =>
+    makeComputeBridgeTransport(duplexProcesses, {
+      ...(startupTimeoutMs === undefined ? {} : { startupTimeoutMs }),
+      prepareKernelEndpoints: (request) =>
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            const releaseUsage = yield* retain(request.launch.executable).pipe(
               Effect.mapError(
                 (cause) =>
                   new ComputeTransportError({
                     operation: "open",
-                    message: "Unable to reserve private kernel endpoints.",
+                    message: cause.message,
                     cause,
                   }),
               ),
-              Effect.flatMap((lease) => {
-                const [shell, iopub, stdin, heartbeat, control] = lease.ports;
-                if (
-                  shell === undefined ||
-                  iopub === undefined ||
-                  stdin === undefined ||
-                  heartbeat === undefined ||
-                  control === undefined
-                ) {
-                  return lease.release.pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        new ComputeTransportError({
-                          operation: "open",
-                          message: "The private kernel endpoint reservation was incomplete.",
-                        }),
+            );
+            return yield* ownedLocalEndpoints
+              .reserveProtectedLoopbackTcpPorts({
+                owner: `compute/${request.sessionId}`,
+                purpose: "jupyter-kernel-channels",
+                count: 5,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ComputeTransportError({
+                      operation: "open",
+                      message: "Unable to reserve private kernel endpoints.",
+                      cause,
+                    }),
+                ),
+                Effect.flatMap((lease) => {
+                  const [shell, iopub, stdin, heartbeat, control] = lease.ports;
+                  if (
+                    shell === undefined ||
+                    iopub === undefined ||
+                    stdin === undefined ||
+                    heartbeat === undefined ||
+                    control === undefined
+                  ) {
+                    return lease.release.pipe(
+                      Effect.andThen(
+                        Effect.fail(
+                          new ComputeTransportError({
+                            operation: "open",
+                            message: "The private kernel endpoint reservation was incomplete.",
+                          }),
+                        ),
+                      ),
+                    );
+                  }
+                  return Effect.succeed({
+                    ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
+                    handoff: lease.handoff.pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ComputeTransportError({
+                            operation: "handshake",
+                            message: "Unable to hand private endpoints to the Python kernel.",
+                            cause,
+                          }),
                       ),
                     ),
-                  );
-                }
-                return Effect.succeed({
-                  ports: { ip: "127.0.0.1" as const, shell, iopub, stdin, heartbeat, control },
-                  handoff: lease.handoff.pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ComputeTransportError({
-                          operation: "handshake",
-                          message: "Unable to hand private endpoints to the Python kernel.",
-                          cause,
-                        }),
-                    ),
-                  ),
-                  // The transport releases this composite lease only after the
-                  // process tree is confirmed stopped (or never started).
-                  release: lease.release.pipe(Effect.andThen(Effect.sync(releaseUsage))),
-                });
-              }),
-              Effect.onError(() => Effect.sync(releaseUsage)),
-            );
-        }),
-      ),
+                    // The transport releases this composite lease only after the
+                    // process tree is confirmed stopped (or never started).
+                    release: lease.release.pipe(Effect.andThen(Effect.sync(releaseUsage))),
+                  });
+                }),
+                Effect.onError(() => Effect.sync(releaseUsage)),
+              );
+          }),
+        ),
+    });
+  // Managed Python first, then any Python that can carry the bridge, then Scient's small private
+  // one, added the first time nothing else can.
+  const hostExecutable = Effect.fn("PythonComputeRuntime.kernelHostExecutable")(function* (
+    configuredExecutable: string | null,
+  ): Effect.fn.Return<string, ComputeRuntimeError> {
+    const managed = yield* inspectManaged();
+    if (managed?.available === true) return managed.executable;
+    const profiles = yield* adapter.discover({ projectRoot: null, configuredExecutable });
+    for (const profile of profiles) {
+      const verification = yield* adapter.verify({
+        profile,
+        cwd: NodeOS.tmpdir(),
+        environment,
+      });
+      if (hostsBridge(verification)) return profile.executable;
+    }
+    if (bridgeHost !== null) return yield* bridgeHost.executable();
+    return yield* new ComputeRuntimeError({
+      operation: "prepare",
+      message: "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
+    });
   });
+  const mayHost = Effect.fn("PythonComputeRuntime.mayHost")(
+    function* (configuredExecutable: string | null) {
+      if (bridgeHost !== null || (yield* inspectManaged())?.available === true) return true;
+      const profiles = yield* adapter.discover({ projectRoot: null, configuredExecutable });
+      for (const profile of profiles) {
+        const assessment = yield* adapter.assess!(profile);
+        if (assessment.readiness === "ready") return true;
+      }
+      return false;
+    },
+    Effect.orElseSucceed(() => false),
+  );
+  const managedRuntime =
+    managedSetup === null ? undefined : { ...managedSetup.managedRuntime, tracksUsage: true };
   return {
     adapter,
-    transport,
+    transport: bridgeTransport(),
+    kernelHost: {
+      bridgePath,
+      transport: bridgeTransport,
+      executable: hostExecutable,
+      mayHost,
+      ...(bridgeHost === null ? {} : { privateExecutable: bridgeHost.executable }),
+      managedPythonAdapter,
+      ...(managedRuntime === undefined ? {} : { managedRuntime }),
+    },
     descriptor: {
       languageId: PYTHON_LANGUAGE_ID,
       displayName: "Python",
       sourceExtensions: [".py"],
-      capabilities: [...REQUIRED_COMPUTE_CAPABILITIES, "variables"],
+      capabilities: [...REQUIRED_COMPUTE_CAPABILITIES, "variables", "tables"],
     },
     toolkitSupport: {
       descriptors: PYTHON_TOOLKIT_CATALOG,
       assess: assessPythonToolkits,
     },
-    ...(managedSetup === null
-      ? {}
-      : { managedRuntime: { ...managedSetup.managedRuntime, tracksUsage: true } }),
+    ...(managedRuntime === undefined ? {} : { managedRuntime }),
   };
 });
 

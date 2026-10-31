@@ -1068,9 +1068,8 @@ describe("compute runtime inspection", () => {
         yield* test.use(
           Effect.gen(function* () {
             const service = yield* ComputeSessionService;
-            const rows = yield* service.runtimeInventory({
+            const { languages: rows } = yield* service.runtimeInventory({
               configuredExecutables: {},
-              enabledLanguageIds: new Set([PYTHON, other.languageId]),
             });
             expect(rows[0]?.failureMessage).toBe("Python unavailable");
             expect(rows[1]?.installations[0]?.executable).toBe("/matlab");
@@ -1105,26 +1104,88 @@ describe("compute runtime inspection", () => {
       yield* test.use(
         Effect.gen(function* () {
           const service = yield* ComputeSessionService;
-          const input = {
-            configuredExecutables: { [PYTHON]: "/chosen/python" },
-            enabledLanguageIds: new Set([PYTHON]),
-          };
+          const input = { configuredExecutables: { [PYTHON]: "/chosen/python" } };
           const results = yield* Effect.forEach(
             Array.from({ length: 100 }),
             () => service.runtimeInventory(input),
             { concurrency: 8 },
           );
           expect(reads).toBe(100);
-          expect(results.every((result) => result[0]?.installations.length === 1)).toBe(true);
-          expect(results[0]?.[0]).not.toHaveProperty("runtimes");
-          const disabled = yield* service.runtimeInventory({
-            ...input,
-            enabledLanguageIds: new Set(),
-          });
-          expect(disabled[0]?.installations).toEqual([]);
+          expect(results.every((result) => result.languages[0]?.installations.length === 1)).toBe(
+            true,
+          );
+          expect(results[0]?.languages[0]).not.toHaveProperty("runtimes");
           expect(reads).toBe(100);
           expect(test.opened()).toEqual([]);
           expect(test.submitted()).toEqual([]);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a choice remembered for this project over a machine's managed selection", () =>
+    Effect.gen(function* () {
+      const profile = (executable: string, source: "managed" | "configured") => ({
+        languageId: PYTHON,
+        source,
+        executable,
+        languageVersion: "3.12.0",
+        architecture: null,
+        displayName: executable,
+      });
+      const test = yield* harness({
+        runtimeProfiles: [
+          profile("/scient/python", "managed"),
+          profile("/chosen/python", "configured"),
+        ],
+        adapter: { selectedExecutable: () => Effect.succeed("/scient/python") },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const inspect = (chosenForProject: ReadonlySet<string>) =>
+            service.inspectRuntimes({
+              projectRoot: null,
+              workingDirectory: process.cwd(),
+              configuredExecutables: { python: "/chosen/python" },
+              chosenForProject,
+              refresh: false,
+            });
+          const [chosen] = yield* inspect(new Set(["python"]));
+          expect(chosen?.selection?.executable).toBe("/chosen/python");
+          const [machine] = yield* inspect(new Set());
+          expect(machine?.selection?.executable).toBe("/scient/python");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("offers a language whose kernel appeared after startup, with no restart", () =>
+    Effect.gen(function* () {
+      const late = {
+        adapter: { ...adapterFor("ready"), languageId: ComputeLanguageId.make("haskell") },
+        transport: { open: () => Effect.never },
+      } satisfies ComputeRuntimeBinding;
+      let installed = false;
+      const test = yield* harness({
+        additionalBindings: [
+          {
+            ...late,
+            adapter: { ...late.adapter, languageId: ComputeLanguageId.make("host") },
+            lateBindings: () => Effect.succeed(installed ? [late] : []),
+          },
+        ],
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const known = () => service.runtimeDescriptors.map((row) => row.languageId as string);
+          expect(known()).not.toContain("haskell");
+          installed = true;
+          yield* service.runtimeInventory({ configuredExecutables: {} });
+          expect(known()).toContain("haskell");
+          yield* service.runtimeInventory({ configuredExecutables: {} });
+          expect(known().filter((languageId) => languageId === "haskell")).toHaveLength(1);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
@@ -1150,9 +1211,10 @@ describe("compute runtime inspection", () => {
         yield* test.use(
           Effect.gen(function* () {
             const service = yield* ComputeSessionService;
-            const [row] = yield* service.runtimeInventory({
+            const {
+              languages: [row],
+            } = yield* service.runtimeInventory({
               configuredExecutables: {},
-              enabledLanguageIds: new Set([PYTHON]),
             });
             expect(row?.descriptor.languageId).toBe(PYTHON);
             expect(row?.installations).toEqual([]);
@@ -1164,6 +1226,90 @@ describe("compute runtime inspection", () => {
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+  it.effect("Automatic inspection and start use the ready runtime, not the first one found", () =>
+    Effect.gen(function* () {
+      const unready: ComputeRuntimeProfile = { ...PROFILE, executable: "/usr/local/bin/python3" };
+      const managed: ComputeRuntimeProfile = {
+        ...PROFILE,
+        source: "managed",
+        executable: "/scient/managed/python",
+      };
+      let discoveries = 0;
+      const check = (profile: ComputeRuntimeProfile) =>
+        Effect.succeed({
+          profile,
+          readiness:
+            profile.executable === unready.executable
+              ? ("missing-requirement" as const)
+              : ("ready" as const),
+          missingRequirements: [],
+          message: null,
+          packages: [],
+        });
+      const test = yield* harness({
+        runtimeProfiles: [unready, managed],
+        adapter: {
+          discover: () => Effect.sync(() => (discoveries += 1)).pipe(Effect.as([unready, managed])),
+          assess: check,
+          verify: (request) => check(request.profile),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const inspect = (refresh: boolean) =>
+            service.inspectRuntimes({
+              projectRoot: null,
+              workingDirectory: process.cwd(),
+              configuredExecutables: {},
+              refresh,
+              languageIds: new Set([PYTHON]),
+            });
+          const [python] = yield* inspect(true);
+          expect(python?.selection).toEqual({
+            mode: "automatic",
+            executable: managed.executable,
+            problem: null,
+          });
+          expect(python?.runtimes.map((runtime) => runtime.profile.executable)).toEqual([
+            managed.executable,
+            unready.executable,
+          ]);
+          // Reopening is served from the last inspection without discovering again.
+          yield* inspect(false);
+          expect(discoveries).toBe(1);
+          const session = yield* service.startSession(startInput());
+          expect(session.runtime?.executable).toBe(managed.executable);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a failed check as a failure, never as nothing installed", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({
+        adapter: {
+          discover: () =>
+            Effect.fail(
+              new ComputeRuntimeError({ operation: "discover", message: "Probe host crashed." }),
+            ),
+        },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const [python] = yield* service.inspectRuntimes({
+            projectRoot: null,
+            workingDirectory: process.cwd(),
+            configuredExecutables: {},
+            refresh: true,
+          });
+          expect(python).toMatchObject({ runtimes: [], failure: "Probe host crashed." });
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps discovery passive and verifies a connection without retaining a session", () =>
     Effect.gen(function* () {
       const test = yield* harness({ connection: "detected" });
@@ -1174,7 +1320,6 @@ describe("compute runtime inspection", () => {
             projectRoot: null,
             workingDirectory: process.cwd(),
             configuredExecutables: {},
-            enabledLanguageIds: new Set([PYTHON]),
             refresh: true,
           });
           expect(inspection[0]?.runtimes[0]?.verification.connection).toBe("detected");
@@ -1347,7 +1492,6 @@ describe("compute runtime inspection", () => {
             projectRoot: null,
             workingDirectory: process.cwd(),
             configuredExecutables: {},
-            enabledLanguageIds: new Set([PYTHON]),
             refresh: false,
           });
 
@@ -1482,7 +1626,6 @@ describe("compute runtime inspection", () => {
             projectRoot: null,
             workingDirectory: process.cwd(),
             configuredExecutables: {},
-            enabledLanguageIds: new Set([PYTHON]),
             refresh: false,
           });
 
@@ -2081,7 +2224,11 @@ describe("compute session startup", () => {
         { requestedExecutable: managed.executable, expected: managed },
       ];
       for (const testCase of cases) {
-        const test = yield* harness({ runtimeProfiles: [managed, configured] });
+        // Scient-managed Python is the user's selection; a one-run choice still overrides it.
+        const test = yield* harness({
+          runtimeProfiles: [managed, configured],
+          adapter: { selectedExecutable: () => Effect.succeed(managed.executable) },
+        });
         yield* test.use(
           Effect.gen(function* () {
             const service = yield* ComputeSessionService;
@@ -3370,6 +3517,113 @@ describe("compute session execution", () => {
           expect(yield* journalEvents).toContain("queue-rejected");
           const session = yield* waitForSession("ready");
           expect(session.pendingCount).toBe(MAXIMUM_PENDING_COMPUTE_EXECUTIONS);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("stops a notebook's queued cells when one of its cells does not succeed", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const cell = (path: string, id: string): ComputeExecutionSource => ({
+        _tag: "document",
+        origin: "cell",
+        path,
+        bufferState: "saved",
+        revision: null,
+        range: null,
+        cell: id,
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("quiet-hold", "first", undefined, cell("a.ipynb", "1"));
+          yield* waitForExecution(ComputeExecutionId.make("first"), "running");
+          yield* submit("print(1)", "second", undefined, cell("a.ipynb", "2"));
+          yield* submit("print(1)", "other-notebook", undefined, cell("b.ipynb", "1"));
+          yield* submit("print(1)", "console");
+
+          yield* service.interruptSession({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+          });
+
+          yield* waitForExecution(ComputeExecutionId.make("second"), "cancelled");
+          yield* waitForExecution(ComputeExecutionId.make("other-notebook"), "succeeded");
+          yield* waitForExecution(ComputeExecutionId.make("console"), "succeeded");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("stops every later cell of a run submitted together", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const cell = (id: string, code: string) => ({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        executionId: ComputeExecutionId.make(id),
+        expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+        code,
+        source: {
+          _tag: "document" as const,
+          origin: "cell" as const,
+          path: "a.ipynb",
+          bufferState: "saved" as const,
+          revision: null,
+          range: null,
+          cell: id,
+        },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          const records = yield* service.submitExecutions({
+            projectId: PROJECT_ID,
+            sessionId: SESSION_ID,
+            submissions: [cell("one", "boom"), cell("two", "print(1)"), cell("three", "print(1)")],
+          });
+          expect(records).toHaveLength(3);
+          yield* waitForExecution(ComputeExecutionId.make("one"), "failed");
+          yield* waitForExecution(ComputeExecutionId.make("two"), "cancelled");
+          yield* waitForExecution(ComputeExecutionId.make("three"), "cancelled");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("refuses a whole run that does not fit in the queue", () =>
+    Effect.gen(function* () {
+      const test = yield* harness();
+      const cell = (id: string) => ({
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        executionId: ComputeExecutionId.make(id),
+        expectedGeneration: INITIAL_COMPUTE_SESSION_GENERATION,
+        code: "print(1)",
+        source: { _tag: "console" as const },
+      });
+
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          yield* start;
+          yield* submit("quiet-hold", "held");
+          yield* waitForExecution(ComputeExecutionId.make("held"), "running");
+          const submissions = Array.from(
+            { length: MAXIMUM_PENDING_COMPUTE_EXECUTIONS + 1 },
+            (_, index) => cell(`cell-${index}`),
+          );
+          const error = yield* Effect.flip(
+            service.submitExecutions({ projectId: PROJECT_ID, sessionId: SESSION_ID, submissions }),
+          );
+          expect(error.reason).toBe("queue-full");
+          expect((yield* waitForSession("ready")).pendingCount).toBe(0);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

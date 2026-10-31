@@ -9,8 +9,13 @@ import type {
 } from "@t3tools/contracts";
 import { classifyMatlabSource } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Columns2, Play, Rows2 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Columns2, LoaderCircle, Play, Rows2 } from "lucide-react";
 import { useRef, useState } from "react";
+
+import { Button } from "~/components/ui/button";
+
+import { observeResize } from "~/lib/observeResize";
 
 import { EditableFileSurface } from "~/components/files/FilePreviewPanel";
 import type { DraftId } from "~/composerDraftStore";
@@ -43,7 +48,7 @@ import {
   type ComputeBatchRunModel,
 } from "./ComputeBatchResults";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
-import { computeActiveCell } from "./computeSourceSlices";
+import { computeActiveCell, computeCellQuote } from "./computeSourceSlices";
 import {
   DEFAULT_COMPUTE_FILE_SPLIT,
   DEFAULT_COMPUTE_FILE_SPLIT_LAYOUT,
@@ -63,6 +68,9 @@ import {
   type ComputeFileResultsView,
   type ComputeFileView,
 } from "./computeFileSurfaceModel";
+
+/** Below this panel width, Split stacks code above results. */
+const NARROW_SPLIT_WIDTH = 640;
 
 const SEGMENT_BUTTON_CLASS =
   "flex h-5.5 cursor-pointer items-center justify-center rounded-[5px] text-[11px] leading-[18px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset";
@@ -135,14 +143,50 @@ function persist<T, E>(key: string, value: T, schema: Schema.Codec<T, E>): void 
 }
 
 export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
-  return props.language.languageId === "matlab" ? (
-    <MatlabComputeFileSurface {...props} />
+  return props.language.languageId === "matlab" || props.language.runOnly === true ? (
+    <BatchComputeFileSurface {...props} />
   ) : (
     <ComputeFileSurfaceContent {...props} />
   );
 }
 
-function MatlabComputeFileSurface(props: ScientComputeFileSurfaceProps) {
+/** A file that runs without a session: Run, or the way to its language's page when it is absent. */
+function RunFileButton(props: {
+  readonly batch: ComputeBatchRunModel;
+  readonly languageId: string;
+  readonly languageName: string;
+  readonly environmentId: EnvironmentId;
+  readonly onRun: () => void;
+}) {
+  const { batch } = props;
+  const missing = batch.profile?.availability === "missing";
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {missing ? (
+        <Button
+          size="xs"
+          variant="outline"
+          render={
+            <Link
+              to="/settings/scientific-computing/$languageId"
+              params={{ languageId: props.languageId }}
+              search={{ environmentId: props.environmentId }}
+            />
+          }
+        >
+          {props.languageName} not found
+        </Button>
+      ) : (
+        <Button size="xs" disabled={!batch.canStart} onClick={props.onRun}>
+          {batch.isStarting ? <LoaderCircle className="animate-spin" /> : <Play />}
+          Run
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function BatchComputeFileSurface(props: ScientComputeFileSurfaceProps) {
   const resultContextId = useComputeFilePresentationStore(
     (state) => state.presentations[props.contextId]?.resultsContextId ?? null,
   );
@@ -158,8 +202,8 @@ function MatlabComputeFileSurface(props: ScientComputeFileSurfaceProps) {
       relativePath: props.relativePath,
       sourceRevision: props.revision,
       sourcePending: props.sourcePending,
-      runtimeKind: "matlab",
-      runtimeLabel: "MATLAB",
+      runtimeKind: props.language.languageId,
+      runtimeLabel: props.language.displayName,
     },
     {
       runId: batchRunId,
@@ -277,10 +321,17 @@ function ComputeFileSurfaceContent(
     setSplit(next);
     persist(COMPUTE_FILE_SPLIT_STORAGE_KEY, next, Schema.Number);
   };
-  const isStacked = view === "split" && splitLayout === "stacked";
+  // Side by side needs room for both panes; a narrow panel stacks them without changing the choice.
+  const [narrow, setNarrow] = useState(false);
+  const observeWidth = (element: HTMLDivElement | null) => {
+    if (element === null) return;
+    return observeResize(element, () => setNarrow(element.clientWidth < NARROW_SPLIT_WIDTH));
+  };
+  const effectiveSplitLayout = narrow ? "stacked" : splitLayout;
+  const isStacked = view === "split" && effectiveSplitLayout === "stacked";
   const { containerRef, primaryPaneRef, separatorHandlers } = useScientSplit({
     active: view === "split",
-    axis: splitLayout === "stacked" ? "y" : "x",
+    axis: effectiveSplitLayout === "stacked" ? "y" : "x",
     fraction: split,
     minimum: MIN_COMPUTE_FILE_SPLIT,
     fallback: DEFAULT_COMPUTE_FILE_SPLIT,
@@ -311,7 +362,11 @@ function ComputeFileSurfaceContent(
   const showResults = view !== "code";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background" dir="ltr">
+    <div
+      ref={observeWidth}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      dir="ltr"
+    >
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 bg-muted/20 px-2 py-1">
         <div
           className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
@@ -334,7 +389,7 @@ function ComputeFileSurfaceContent(
             </button>
           ))}
         </div>
-        {view === "split" ? (
+        {view === "split" && !narrow ? (
           <div
             className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
             role="group"
@@ -373,26 +428,39 @@ function ComputeFileSurfaceContent(
           </div>
         ) : null}
         <div className="min-w-22 flex-1">
-          <ComputeFileActions
-            ref={actionsRef}
-            language={props.language}
-            environmentId={props.environmentId}
-            cwd={props.cwd}
-            relativePath={props.relativePath}
-            contents={props.contents}
-            sourceRevision={props.revision}
-            sourcePending={props.sourcePending}
-            selection={selection}
-            editorSelection={editorSelection}
-            contextId={props.contextId}
-            onRunRequested={handleRunRequested}
-            onShowMatlabOneShot={() => {
-              handleRunRequested();
-              void props.batch?.start();
-            }}
-            batchCanStart={props.batch?.canStart ?? false}
-            onExecutionSubmitted={handleExecutionSubmitted}
-          />
+          {props.language.runOnly === true && props.batch !== undefined ? (
+            <RunFileButton
+              batch={props.batch}
+              languageId={props.language.languageId}
+              languageName={props.language.displayName}
+              environmentId={props.environmentId}
+              onRun={() => {
+                handleRunRequested();
+                void props.batch?.start();
+              }}
+            />
+          ) : (
+            <ComputeFileActions
+              ref={actionsRef}
+              language={props.language}
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+              relativePath={props.relativePath}
+              contents={props.contents}
+              sourceRevision={props.revision}
+              sourcePending={props.sourcePending}
+              selection={selection}
+              editorSelection={editorSelection}
+              contextId={props.contextId}
+              onRunRequested={handleRunRequested}
+              onShowMatlabOneShot={() => {
+                handleRunRequested();
+                void props.batch?.start();
+              }}
+              batchCanStart={props.batch?.canStart ?? false}
+              onExecutionSubmitted={handleExecutionSubmitted}
+            />
+          )}
         </div>
       </div>
 
@@ -428,6 +496,9 @@ function ComputeFileSurfaceContent(
               saveResolution={props.saveResolution}
               onSelectionChange={setSelection}
               activeLineRange={activeCellRange}
+              caretQuote={(source, line) =>
+                computeCellQuote(source, line, props.language.cellMarker)
+              }
               onEditorSelectionChange={setEditorSelection}
               gutterUtilityVisibility="hover"
               {...(hasExplicitCells
@@ -490,11 +561,7 @@ function ComputeFileSurfaceContent(
                 threadRef={props.threadRef}
                 sourcePath={props.relativePath}
                 sourceRunUnavailableReason={sourceRunUnavailableReason}
-                sourceLanguageId={props.language.languageId}
-                sourceRevision={props.revision}
-                sourcePending={props.sourcePending}
                 contextId={resultsContextId}
-                focusSessionId={focusExecution?.sessionId ?? null}
                 focusExecutionId={focusExecution?.executionId ?? null}
                 onFocusConsumed={handleFocusConsumed}
                 onRunSource={handleEmptyResultsRun}

@@ -3681,7 +3681,11 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
 export const validatePackagedComputeBridges = Effect.fn("validatePackagedComputeBridges")(
   function* (asarPath: string) {
     const path = yield* Path.Path;
-    for (const name of ["scient_compute_bridge.py", "scient_matlab_engine_bridge.py"]) {
+    for (const name of [
+      "scient_compute_bridge.py",
+      "scient_matlab_engine_bridge.py",
+      "scient_sql_kernel.py",
+    ]) {
       const relativePath = path.join(COMPUTE_BRIDGE_ASAR_UNPACK_DIR, name);
       yield* Effect.tryPromise({
         try: async () => {

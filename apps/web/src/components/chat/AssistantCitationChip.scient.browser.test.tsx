@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { assistantCitationHash } from "~/lib/assistantCitationNavigation";
+import { computeCitationHash } from "~/scient/compute/computeCitationNavigation";
 import { fileCitationHash } from "~/scient/markdownEditor/fileCitationNavigation";
 
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -114,6 +115,53 @@ describe("citation hover content", () => {
       expect(popup.textContent).toContain("export const placeholder = true;");
       expect(popup.textContent).not.toContain("View source");
       expect(popup.querySelectorAll("wbr").length).toBeGreaterThan(5);
+    },
+  );
+  it.each([false, true])(
+    "names a Compute quote's place and links back to it (composer: %s)",
+    async (composer) => {
+      using _source = setup();
+      const onRemove = vi.fn();
+      const quote = {
+        kind: "compute" as const,
+        version: 1 as const,
+        environmentId: EnvironmentId.make("environment"),
+        threadId: ThreadId.make("thread"),
+        cwd: "/Users/someone/project",
+        place: { _tag: "cell" as const, path: "notes/analysis.ipynb", cellId: "a", number: 3 },
+        text: "mean  is\n2.0",
+        start: 0,
+        end: 12,
+        prefix: "",
+        suffix: "",
+      };
+      await using screen = await render(
+        <AssistantCitationChip
+          citation={quote}
+          composer={composer}
+          {...(composer ? { onRemove } : {})}
+        />,
+      );
+      expect(screen.container.querySelector("[data-compute-citation-chip]")).not.toBeNull();
+      expect(screen.container.querySelector("[data-assistant-citation-chip]")).toBeNull();
+      const link = sourceLink(screen.container);
+      expect(link.textContent).toBe("analysis.ipynb · Cell 3 · mean is 2.0");
+      expect(link.getAttribute("href")).toBe(`/environment/thread#${computeCitationHash(quote)}`);
+      const popup = await hoverFile(screen.container);
+      expect(popup.textContent).toContain("analysis.ipynb · Cell 3");
+      expect(popup.textContent).toContain("mean is 2.0");
+      await act(async () => link.click());
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        expect.objectContaining({ hash: computeCitationHash(quote) }),
+      );
+      if (composer) {
+        await act(async () => {
+          screen.container
+            .querySelector<HTMLButtonElement>('[aria-label="Remove Compute citation"]')!
+            .click();
+        });
+        expect(onRemove).toHaveBeenCalledOnce();
+      }
     },
   );
   // regression: 6a7466b588 fix(chat): show file-citation paths in a compact hover card

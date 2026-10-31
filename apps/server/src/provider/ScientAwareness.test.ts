@@ -17,11 +17,11 @@ const wordCount = (value: string): number => value.trim().split(/\s+/u).length;
 
 describe("Scient awareness", () => {
   it("composes device and read-only compute awareness without granting either implicitly", () => {
-    const combined = buildScientAwareness(new Set(["compute:inventory", "device"]));
+    const combined = buildScientAwareness(new Set(["compute", "device"]));
     expect(combined).toContain(SCIENT_COMPUTE_AWARENESS);
     expect(combined).toContain("## Scient devices");
     expect(buildScientAwareness(new Set(["device"]))).not.toContain(SCIENT_COMPUTE_AWARENESS);
-    expect(buildScientAwareness(new Set(["compute:inventory"]))).not.toContain("## Scient devices");
+    expect(buildScientAwareness(new Set(["compute"]))).not.toContain("## Scient devices");
   });
 
   it("keeps the always-on identity compact and free of tool-specific guidance", () => {
@@ -52,23 +52,20 @@ describe("Scient awareness", () => {
     );
   });
 
-  it("recommends read-only Compute inventory only with compute authority", () => {
-    expect(wordCount(SCIENT_COMPUTE_AWARENESS)).toBeLessThanOrEqual(40);
-    expect(SCIENT_COMPUTE_AWARENESS).toContain("`scient_compute_inventory`");
+  it("recommends Compute runs only with compute authority", () => {
+    expect(wordCount(SCIENT_COMPUTE_AWARENESS)).toBeLessThanOrEqual(50);
+    expect(SCIENT_COMPUTE_AWARENESS).toContain("`scient_compute_run`");
     expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
     expect(buildScientAwareness(new Set(["sources:read"]))).toBe(SCIENT_CORE_AWARENESS);
-    expect(buildScientAwareness(new Set(["compute:inventory"]))).toBe(
+    expect(buildScientAwareness(new Set(["compute"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_COMPUTE_AWARENESS}`,
     );
   });
-  it("projects the Compute inventory name for Claude's MCP namespace", () => {
-    const awareness = buildScientAwareness(
-      new Set(["compute:inventory"]),
-      CLAUDE_SCIENT_TOOL_PROJECTION,
-    );
+  it("projects the Compute tool names for Claude's MCP namespace", () => {
+    const awareness = buildScientAwareness(new Set(["compute"]), CLAUDE_SCIENT_TOOL_PROJECTION);
 
-    expect(awareness).toContain("`mcp__scient__scient_compute_inventory`");
-    expect(awareness).not.toContain("`scient_compute_inventory`");
+    expect(awareness).toContain("`mcp__scient__scient_compute_run`");
+    expect(awareness).not.toContain("`scient_compute_run`");
   });
 
   it("adds compact, truthful PDF build guidance only with document authority", () => {
