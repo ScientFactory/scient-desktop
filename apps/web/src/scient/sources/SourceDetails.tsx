@@ -745,13 +745,9 @@ export function SourceDetails(props: {
             size="xs"
             variant="ghost"
             disabled={gettingPdf}
-            onClick={async () => {
+            onClick={() => {
               setGettingPdf(true);
-              try {
-                await props.onGetPdf?.();
-              } finally {
-                setGettingPdf(false);
-              }
+              void Promise.resolve(props.onGetPdf?.()).finally(() => setGettingPdf(false));
             }}
           >
             {gettingPdf ? <LoaderCircle className="animate-spin" /> : <Download />}
