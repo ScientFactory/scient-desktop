@@ -31,7 +31,7 @@ const CapturedBatch = Schema.fromJsonString(
 );
 const decodeCapturedBatch = Schema.decodeSync(CapturedBatch);
 
-it("delivers from a relocated CLI chunk, preserves identity across restarts, and respects Off", async () => {
+it("delivers from a relocated CLI chunk, preserves identity across restarts, and respects the off switch", async () => {
   const scratch = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient analytics bundle-"));
   const batches: Array<typeof CapturedBatch.Type> = [];
   const server = NodeHttp.createServer(async (request, response) => {
@@ -172,12 +172,14 @@ it("delivers from a relocated CLI chunk, preserves identity across restarts, and
     assert.ok(events.every((event) => event.properties.appVersion === "9.9.9"));
     assert.ok(events.every((event) => event.properties.buildChannel === "stable"));
     assert.ok(events.every((event) => !("prompt" in event.properties)));
-    const beforeOff = batches.length;
+    const beforeSavedOff = batches.length;
     await NodeFSP.writeFile(
       NodePath.join(profile, "userdata/analytics/preferences.json"),
       JSON.stringify({ version: 1, consent: "off" }),
     );
-    await run(profile, "saved-off");
+    await run(profile, "collect");
+    assert.ok(batches.length > beforeSavedOff);
+    const beforeOff = batches.length;
     await run(NodePath.join(scratch, "disabled profile"), "master-off");
     assert.equal(batches.length, beforeOff);
   } finally {

@@ -479,7 +479,7 @@
   },
   {
     "path": "docs/user/telemetry.md",
-    "line": "have saved a different preference. Scient does not send usage events to T3's",
+    "line": "Usage data goes to Scient's own service, not to T3. Development builds do not send",
     "rules": ["bare-t3"],
     "kind": "upstream-reference",
     "reason": "States that Scient sends no usage events to T3's telemetry."

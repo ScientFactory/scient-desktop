@@ -178,6 +178,150 @@ describe("Scient analytics contract", () => {
     });
   });
 
+  it("reports thread and project counts on the startup heartbeat", () => {
+    const valid = normalizeInheritedEvent(
+      "server.boot.heartbeat",
+      { threadCount: 84, projectCount: 6 },
+      context,
+    );
+    expect(valid?.properties).toMatchObject({ threadCount: 84, projectCount: 6 });
+    const invalid = normalizeInheritedEvent(
+      "server.boot.heartbeat",
+      { threadCount: -1, projectCount: "6" },
+      context,
+    );
+    expect(invalid?.properties).not.toHaveProperty("threadCount");
+    expect(invalid?.properties).not.toHaveProperty("projectCount");
+  });
+
+  it("accepts only hashed owner ids from a known source", () => {
+    const ownerId = "a".repeat(64);
+    expect(
+      normalizeInheritedEvent(
+        "install.owner_observed",
+        { ownerSource: "claude", ownerId, observedBy: "server", email: "private@example.invalid" },
+        context,
+      )?.properties,
+    ).toEqual({
+      ownerSource: "claude",
+      ownerId,
+      observedBy: "server",
+      ...context,
+      contractRevision: ANALYTICS_CONTRACT_REVISION,
+    });
+    for (const properties of [
+      { ownerSource: "claude", ownerId: "user-raw-account-id" },
+      { ownerSource: "claude", ownerId: "A".repeat(64) },
+      { ownerSource: "email", ownerId },
+      {},
+    ])
+      expect(normalizeInheritedEvent("install.owner_observed", properties, context)).toBeNull();
+  });
+
+  it("keeps who started a turn on its usage event", () => {
+    const usage = normalizeInheritedEvent(
+      "provider.turn.completed",
+      {
+        provider: "codex",
+        terminalStatus: "completed",
+        createdBy: "agent",
+        creationSource: "mcp",
+        scheduled: true,
+        subagent: false,
+      },
+      context,
+    );
+    expect(usage).toMatchObject({
+      name: "provider.turn.usage",
+      properties: { createdBy: "agent", creationSource: "mcp", scheduled: true, subagent: false },
+    });
+    const unknown = normalizeInheritedEvent(
+      "provider.turn.completed",
+      { provider: "codex", terminalStatus: "completed", createdBy: "someone" },
+      context,
+    );
+    expect(unknown?.properties).not.toHaveProperty("createdBy");
+  });
+
+  it("records client and feature events without device or free-text details", () => {
+    const turn = normalizeInheritedEvent(
+      "client.turn.requested",
+      {
+        surface: "desktop",
+        clientDeviceType: "desktop",
+        clientOs: "macOS",
+        connectionMethod: "direct",
+        clientBrowser: "PRIVATE",
+        deviceModel: "PRIVATE",
+        appVersion: "9.9.9-private",
+      },
+      context,
+    );
+    expect(turn?.properties).toEqual({
+      surface: "desktop",
+      clientDeviceType: "desktop",
+      clientOs: "macOS",
+      connectionMethod: "direct",
+      ...context,
+      contractRevision: ANALYTICS_CONTRACT_REVISION,
+    });
+    const feature = normalizeInheritedEvent(
+      "feature.used",
+      { feature: "checkpoint.rollback", variant: "with_files", surface: "web" },
+      context,
+    );
+    expect(feature?.properties).toMatchObject({
+      feature: "checkpoint.rollback",
+      variant: "with_files",
+      surface: "web",
+    });
+    const unsafe = normalizeInheritedEvent(
+      "feature.used",
+      { feature: "/Users/private/file", variant: "a private sentence" },
+      context,
+    );
+    expect(unsafe?.properties).toMatchObject({ feature: "other", surface: "unknown" });
+    expect(unsafe?.properties).not.toHaveProperty("variant");
+  });
+
+  it("measures agent tools without arguments or free text", () => {
+    const tool = normalizeInheritedEvent(
+      "mcp.tool.invoked",
+      {
+        tool: "delegate_task",
+        callerProvider: "claudeAgent",
+        callerModel: "private-custom-model",
+        targetProvider: "codex",
+        outcome: "error",
+        errorCode: "a private error sentence",
+        durationMs: 1200,
+        crossProvider: true,
+        prompt: "PRIVATE",
+      },
+      context,
+    );
+    expect(tool?.properties).toMatchObject({
+      tool: "delegate_task",
+      callerProvider: "claudeAgent",
+      callerModel: "other",
+      targetProvider: "codex",
+      outcome: "error",
+      durationMs: 1200,
+      crossProvider: true,
+    });
+    expect(JSON.stringify(tool)).not.toMatch(/private|PRIVATE/u);
+    const finished = normalizeInheritedEvent(
+      "mcp.delegated_task.finished",
+      { status: "completed", callerProvider: "codex", targetProvider: "grok", durationSeconds: 90 },
+      context,
+    );
+    expect(finished?.properties).toMatchObject({
+      status: "completed",
+      targetProvider: "grok",
+      durationSeconds: 90,
+    });
+  });
+
   it("classifies project-registration failures without accepting raw errors", () => {
     const failure = normalizeInheritedEvent(
       "project.add.failed",
