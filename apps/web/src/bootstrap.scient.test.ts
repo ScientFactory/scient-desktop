@@ -82,6 +82,25 @@ describe("app startup failures", () => {
     expect(bootShell?.text.includes("internal module path")).toBe(dev);
   });
 
+  it("still shows the failure on a page that lost its body", () => {
+    const root = new BootElement("html");
+    vi.stubGlobal("document", {
+      body: null,
+      documentElement: {
+        appendChild: (body: BootElement) => {
+          root.append(body);
+          return body;
+        },
+      },
+      getElementById: () => null,
+      createElement: (tagName: string) => new BootElement(tagName),
+    });
+
+    showBootError(new Error("boot failed"));
+
+    expect(root.text).toContain("Scient could not load.");
+  });
+
   it("keeps native reload and a pending-file restart veto at the boot boundary", async () => {
     vi.useFakeTimers();
     const state = { enabled: true, status: "downloaded" } as DesktopUpdateState;
