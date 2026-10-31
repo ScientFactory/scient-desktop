@@ -12,7 +12,6 @@ import * as Schema from "effect/Schema";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
-import { signIn } from "../signIn/engine.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
 
 const isAccountsError = Schema.is(AccountsError);
@@ -22,8 +21,13 @@ import { accountRequest } from "./request.ts";
 import { accountSessionScope } from "./scope.ts";
 import { authorizePreviewProfile } from "./previewProfileAccess.ts";
 import { ScientAccountsToolkit } from "./tools.ts";
-import { authorize, withAccountUse } from "./accountUse.ts";
+import { accountUsage, authorize, withAccountUse } from "./accountUse.ts";
+import { fillField } from "./fillField.ts";
+import { guardedSignIn } from "./guardedSignIn.ts";
 import { findProfiles } from "./findProfiles.ts";
+import { addAccount } from "./accountAdd.ts";
+import { getPaper } from "../../papers/getPaper.ts";
+import { signInCodes } from "./signInCodes.ts";
 
 const decodeCookies = Schema.decodeUnknownEffect(AccountCookies);
 const encodeCookies = Schema.encodeEffect(Schema.fromJsonString(AccountCookies));
@@ -69,21 +73,17 @@ export const accountAgentOperations = {
             name: account.name,
             kind: account.details.kind,
             sites: "sites" in account.details ? account.details.sites : [],
+            // A site can hold several accounts, and only this tells them apart.
+            ...(account.controls.access !== "off" &&
+            "username" in account.details &&
+            account.details.username
+              ? { username: account.details.username }
+              : {}),
             access: account.controls.access,
             readable: account.controls.visibility === "readable",
             status: account.status,
-            usage:
-              account.controls.access === "off"
-                ? []
-                : [
-                    ...(account.controls.visibility === "readable"
-                      ? ["scient_account_credentials"]
-                      : []),
-                    ...(account.details.kind === "api-key" ? ["scient_account_request"] : []),
-                    ...(["website", "library"].includes(account.details.kind)
-                      ? ["scient_account_sign_in", "scient_account_browser_session"]
-                      : []),
-                  ],
+            usage: accountUsage(account),
+            ...(account.lastCheck ? { lastCheck: account.lastCheck.state } : {}),
           }))
         : [],
       profiles: session.agentAccess
@@ -125,7 +125,7 @@ export const accountAgentOperations = {
         if (account.controls.visibility !== "readable")
           return yield* fail(
             "denied",
-            "This account is hidden. The user can make it readable in Settings → Accounts.",
+            "This account is hidden. The user can make it readable in Settings → Accounts & secrets.",
           );
         const fields = Object.keys(account.secrets);
         const values = yield* accounts.resolveSecrets(accountId, fields);
@@ -144,6 +144,18 @@ export const accountAgentOperations = {
       }),
     );
   }),
+  scient_account_fill: Effect.fn("AccountsAgent.fillTool")(function* ({
+    accountId,
+    ...input
+  }: ToolInput<"scient_account_fill">) {
+    const scope = yield* accountSessionScope();
+    return yield* withAccountUse(
+      scope,
+      { type: "account", accountId },
+      "sign-in",
+      Effect.flatMap(getAccount(scope, accountId), (account) => fillField(scope, account, input)),
+    );
+  }),
   scient_account_sign_in: Effect.fn("AccountsAgent.signInTool")(function* ({
     accountId,
     tabId,
@@ -152,24 +164,11 @@ export const accountAgentOperations = {
     tabId?: PreviewTabId | undefined;
   }) {
     const scope = yield* accountSessionScope();
-    return yield* withAccountUse(
-      scope,
-      { type: "account", accountId },
-      "sign-in",
-      Effect.gen(function* () {
-        const accounts = yield* AccountsService;
-        const account = yield* getAccount(scope, accountId);
-        const values = yield* accounts.resolveSecrets(accountId, ["password", "totp"]);
-        return yield* signIn(scope, account, values, tabId);
-      }).pipe(
-        Effect.orElseSucceed(() => ({
-          outcome: "failed" as const,
-          message: "The browser sign-in could not be completed.",
-        })),
-      ),
-      (result) => result.outcome === "signed-in",
-      (result) => result.outcome,
-    );
+    const account = yield* getAccount(scope, accountId);
+    return yield* guardedSignIn(scope, account, {
+      tabId,
+      engine: yield* signInCodes(scope, account),
+    });
   }),
   scient_account_request: Effect.fn("AccountsAgent.request")(function* (
     input: ToolInput<"scient_account_request">,
@@ -204,10 +203,26 @@ export const accountAgentOperations = {
               ? cause
               : fail("denied", "The account request could not be completed."),
         });
+        // A refused key is worth saying once and clearing as soon as a key works again.
+        const refused = response.status === 401;
+        if (refused || account.lastCheck?.state === "rejected")
+          yield* accounts.recordCheck(accountId, {
+            state: refused ? "rejected" : "signed-in",
+            ...(refused ? { message: "The service refused this key." } : {}),
+          });
+        const note = refused
+          ? {
+              note: "The service refused this key. Call scient_account_add with this accountId to ask the user for a new one.",
+            }
+          : {};
         if (response.text && response.bytes.byteLength <= 256 * 1024)
-          return { status: response.status, body: new TextDecoder().decode(response.bytes) };
+          return {
+            status: response.status,
+            body: new TextDecoder().decode(response.bytes),
+            ...note,
+          };
         const path = yield* files.write(scope.threadId, `${accountId}-response`, response.bytes);
-        return { status: response.status, path };
+        return { status: response.status, path, ...note };
       }),
     );
   }),
@@ -333,6 +348,8 @@ export const accountAgentOperations = {
       ),
     );
   }),
+  scient_account_add: addAccount,
+  scient_paper_get: getPaper,
 } satisfies Parameters<typeof ScientAccountsToolkit.toLayer>[0];
 type ToolInput<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.Type<
   (typeof ScientAccountsToolkit.tools)[K]["parametersSchema"]

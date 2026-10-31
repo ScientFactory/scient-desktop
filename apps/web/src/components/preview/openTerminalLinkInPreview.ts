@@ -9,6 +9,9 @@ import { isPreviewAvailableFor, previewRuntimeFor } from "~/browser/previewRunti
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { applyPreviewServerSnapshot } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+// SCIENT-FORK:START — Scient Accounts: choose the profile a new tab opens in.
+import { openProfileId } from "~/scient/accounts/openProfile";
+// SCIENT-FORK:END
 
 const terminalLinkErrorContext = {
   environmentId: Schema.String,
@@ -63,7 +66,9 @@ export async function openTerminalLinkInPreview<E>(
       threadId: input.threadRef.threadId,
       url: input.url,
       viewport: defaults.viewport,
-      profileId: defaults.profileId,
+      // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
+      profileId: await openProfileId(input.threadRef, input.url, defaults),
+      // SCIENT-FORK:END
       ...(runtime === undefined ? {} : { runtime }),
     },
   });

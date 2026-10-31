@@ -7,7 +7,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
-  DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
@@ -101,6 +100,10 @@ import { PanelTabNewWindowItem } from "~/scient/multiWindow/PanelTabNewWindowIte
 import { observeResize } from "~/lib/observeResize";
 // SCIENT-FORK:START — Scient Accounts: browser profile switcher.
 import { ProfileSwitcher } from "~/scient/accounts/ProfileSwitcher";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient: Google, apps and shortcuts on an empty tab.
+import { BrowserHome } from "~/scient/browser/BrowserHome";
+import { recordSiteVisit } from "~/scient/browser/browserShortcuts";
 // SCIENT-FORK:END
 
 interface Props {
@@ -238,13 +241,22 @@ export function PreviewView({
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
   // IPC interprets undefined profile ids as all profiles.
-  const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
+  const activeProfileId = snapshot?.profileId ?? browserDefaults.profileId;
   const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
-  const navigateToResolvedUrl = async (resolvedUrl: string) => {
+  // SCIENT-FORK:START — Scient: shortcuts count what people open, never in an incognito tab.
+  const incognito =
+    browserDefaults.profiles.find((profile) => profile.id === activeProfileId)?.kind ===
+    "incognito";
+  const countSiteVisit = (visited: string) => {
+    if (!incognito) recordSiteVisit(visited);
+  };
+  // SCIENT-FORK:END
+
+  const navigateToResolvedUrl = async (resolvedUrl: string, profileId?: string) => {
     if (isServerTab && serverSurfaceRef.current) {
       if (serverInputDisabled) return false;
       serverSurfaceRef.current.navigate(resolvedUrl);
@@ -256,7 +268,12 @@ export function PreviewView({
       rememberPreviewUrl(threadRef, resolvedUrl);
       return true;
     }
-    const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
+    const result = await openPreviewSession({
+      openPreview: open,
+      threadRef,
+      url: resolvedUrl,
+      ...(profileId ? { profileId } : {}),
+    });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       if (error instanceof BrowserSettingsReadError) {
@@ -270,11 +287,12 @@ export function PreviewView({
     return result._tag === "Success";
   };
 
-  const handleSubmitUrl = async (next: string) => {
+  const handleSubmitUrl = async (next: string, profileId?: string) => {
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
-      if (await navigateToResolvedUrl(resolved)) {
+      if (await navigateToResolvedUrl(resolved, profileId)) {
         recordVisitForThread(threadRef, resolved);
+        countSiteVisit(resolved);
       }
     } catch (error) {
       toastManager.add({
@@ -289,14 +307,15 @@ export function PreviewView({
     }
   };
 
-  const handleOpenServerUrl = async (next: string) => {
+  const handleOpenServerUrl = async (next: string, profileId?: string) => {
     try {
       const resolved =
         isServerTab || !previewBridge
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
-      if (await navigateToResolvedUrl(resolved)) {
+      if (await navigateToResolvedUrl(resolved, profileId)) {
         recordVisitForThread(threadRef, next);
+        countSiteVisit(next);
       }
     } catch (error) {
       toastManager.add({
@@ -928,7 +947,8 @@ export function PreviewView({
         leadingActions={
           // SCIENT-FORK:START — Scient Accounts: profile switcher replaces the profile-name badge.
           <ProfileSwitcher
-            environmentId={threadRef.environmentId}
+            threadRef={threadRef}
+            url={url}
             activeProfileId={activeProfileId}
             onOpenInProfile={(profileId) =>
               void openPreviewSession({
@@ -1065,6 +1085,16 @@ export function PreviewView({
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
+            // SCIENT-FORK:START — Scient: these links open in the profile the toolbar shows.
+            home={
+              <BrowserHome
+                threadRef={threadRef}
+                profileId={activeProfileId}
+                onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
+                onSearch={(query) => void handleSubmitUrl(query, activeProfileId)}
+              />
+            }
+            // SCIENT-FORK:END
           />
         ) : null}
         {snapshot && desktopOverlay ? (

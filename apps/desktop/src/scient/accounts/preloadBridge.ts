@@ -18,6 +18,10 @@ export function makeDesktopAccountsBridge(
       ipc.invoke(Channels.SIGNED_IN_SITES, { profileId, environmentId }),
     cookieMetadata: (profileId, environmentId) =>
       ipc.invoke(Channels.COOKIE_METADATA, { profileId, environmentId }),
+    googleSessions: (profileId, environmentId) =>
+      ipc.invoke(Channels.GOOGLE_SESSIONS, { profileId, environmentId }),
+    quietVisit: (profileId, url, environmentId) =>
+      ipc.invoke(Channels.QUIET_VISIT, { profileId, url, environmentId }),
     signOutSite: (profileId, site, environmentId) =>
       ipc.invoke(Channels.SIGN_OUT_SITE, { profileId, site, environmentId }),
     fill: (input) => ipc.invoke(Channels.FILL, input),

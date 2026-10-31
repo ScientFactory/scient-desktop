@@ -5,18 +5,22 @@ import {
   ProfilePictureDataUri,
   INCOGNITO_BROWSER_PROFILE_ID,
   DEFAULT_BROWSER_PROFILE_ID,
+  GOOGLE_SITE,
   type DesktopLoginForm,
   ProfileColor,
   ACCOUNT_SECRET_FIELDS,
   defaultBrowserProfileRecord,
   resolveBrowserProfiles,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
+  type AccountActivityEntry,
   type AccountControls,
   type AccountDetails,
   type GrantScope,
   type ProjectId,
   type AccountStoresStatus,
+  type AccountsSnapshot,
   type AccountSummary,
+  type AccountUseAction,
   type AccountSaveInput,
   type DesktopCapturedSignIn,
   type BrowserProfile,
@@ -51,6 +55,20 @@ export function profileAccounts(
   );
 }
 
+/**
+ * Sites a browser refresh must leave alone in a profile: sign-ins that work, and Google, where a
+ * copy stops working and would replace the session and remembered device this profile has.
+ */
+export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
+  return accounts.flatMap(({ details, lastCheck }) =>
+    details.kind === "website" &&
+    details.profileId === profileId &&
+    (lastCheck?.state === "signed-in" || details.sites.includes(GOOGLE_SITE))
+      ? details.sites
+      : [],
+  );
+}
+
 export function matchingAccounts(
   accounts: ReadonlyArray<AccountSummary>,
   url: string,
@@ -78,7 +96,8 @@ export function matchingAccounts(
     );
 }
 
-export function canAutomaticallyFill(
+/** Whether the conversation's agent may use an account now, without asking. */
+export function agentMayUse(
   controls: AccountControls,
   agentAccess: boolean,
   projectId: ProjectId | null | undefined,
@@ -193,7 +212,7 @@ const ICON_NAME_ALIASES: Readonly<Record<string, string>> = {
 };
 
 /** The entry for the first site whose host is a key or a subdomain of one. */
-function byDomain<T>(
+export function byDomain<T>(
   sites: ReadonlyArray<string>,
   table: Readonly<Record<string, T>>,
 ): { readonly domain: string; readonly value: T } | undefined {
@@ -233,6 +252,13 @@ export const accountCatalogue = [
   { name: "Anthropic", kind: "api-key", site: "api.anthropic.com", envName: "ANTHROPIC_API_KEY" },
   { name: "Google", kind: "website", site: "accounts.google.com" },
   { name: "OpenAthens library", kind: "library", site: "openathens.net" },
+  {
+    name: "HUJI library",
+    kind: "library",
+    // OpenAthens hands HUJI sign-ins to the university's own page, idp.cc.huji.ac.il.
+    site: "huji.ac.il",
+    proxyUrl: "https://go.openathens.net/redirector/huji.ac.il?url={url}",
+  },
   { name: "HUJI", kind: "website", site: "huji.ac.il" },
   { name: "Moodle", kind: "website", site: "" },
   { name: "Postgres database", kind: "database", site: "" },
@@ -309,7 +335,10 @@ export const accountCatalogueGroups = [
       "ORCID",
     ],
   },
-  { name: "Universities & libraries", entries: ["HUJI", "OpenAthens library", "Moodle", "Google"] },
+  {
+    name: "Universities & libraries",
+    entries: ["HUJI", "HUJI library", "OpenAthens library", "Moodle", "Google"],
+  },
   {
     name: "Developer tools",
     entries: [
@@ -330,7 +359,11 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
     case "website":
       return { kind: "website", sites: entry.site ? [entry.site] : [] };
     case "library":
-      return { kind: "library", sites: [entry.site], proxyUrl: "" };
+      return {
+        kind: "library",
+        sites: [entry.site],
+        proxyUrl: "proxyUrl" in entry ? entry.proxyUrl : "",
+      };
     case "api-key":
       return {
         kind: "api-key",
@@ -356,6 +389,26 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
         variables: entry.variables.map((name) => ({ name, secret: true })),
       };
   }
+}
+
+/**
+ * A library's link pattern from any link the library gives, such as an OpenAthens redirector or an
+ * EZproxy login link: the article address becomes `{url}`.
+ */
+export function libraryLinkTemplate(text: string) {
+  const value = text.trim();
+  if (value.includes("{url}")) return value;
+  try {
+    const link = new URL(value);
+    for (const key of ["url", "qurl"]) {
+      if (!link.searchParams.has(key)) continue;
+      link.searchParams.delete(key);
+      return `${link.origin}${link.pathname}${link.search ? `${link.search}&` : "?"}${key}={url}`;
+    }
+  } catch {
+    // Not a link yet: keep what was typed.
+  }
+  return value;
 }
 
 export function secretFields(details: AccountDetails): ReadonlyArray<string> {
@@ -408,25 +461,14 @@ export function profilePresentation({
   };
 }
 
-export function automaticSignIn(
-  form: DesktopLoginForm,
-  current: { tabId: string; profileId: string; url: string },
-  attemptedDocumentId: string | null,
-) {
-  if (
-    current.profileId === INCOGNITO_BROWSER_PROFILE_ID ||
-    form.profileId !== current.profileId ||
-    form.tabId !== current.tabId ||
-    form.documentId === attemptedDocumentId ||
-    form.userEdited ||
-    form.hasValues
-  )
-    return false;
-  try {
-    return new URL(current.url).origin === form.url && form.url.startsWith("https://");
-  } catch {
-    return false;
-  }
+/** A login form Scient may fill on its own: a fresh, untouched HTTPS form outside incognito. */
+export function automaticSignIn(form: DesktopLoginForm) {
+  return (
+    form.profileId !== INCOGNITO_BROWSER_PROFILE_ID &&
+    !form.userEdited &&
+    !form.hasValues &&
+    form.url.startsWith("https://")
+  );
 }
 
 export function signInLabel(account: AccountSummary) {
@@ -476,6 +518,83 @@ export function matchExistingProfile(
 /** A website password, as a browser or a password export saves them; listed under Saved passwords. */
 export function isSavedPassword(account: AccountSummary) {
   return account.details.kind === "website" && account.secrets.password !== undefined;
+}
+
+/** A website account that is only a profile's session: no password, and no username but Google's. */
+export function isBrowserSignIn(account: AccountSummary) {
+  return (
+    account.details.kind === "website" &&
+    account.secrets.password === undefined &&
+    (account.details.username === undefined || account.details.sites.includes(GOOGLE_SITE))
+  );
+}
+
+/** The saved sign-ins a page can be filled with. A browser sign-in has nothing to type. */
+export function fillableAccounts(
+  accounts: ReadonlyArray<AccountSummary>,
+  url: string,
+  profileId: string,
+) {
+  return matchingAccounts(accounts, url, profileId).filter((account) => !isBrowserSignIn(account));
+}
+
+/** Signed out, Google shows its own sign-in here and comes back to the inbox afterwards. */
+export const GMAIL_URL = "https://mail.google.com/mail/";
+
+/**
+ * The domains that tie a browser profile to its owner's organisations: the address it was imported
+ * from, and the addresses and sites of its sign-ins.
+ */
+export function profileDomains(
+  snapshot: Pick<AccountsSnapshot, "accounts" | "profiles"> | null | undefined,
+  profileId: string,
+) {
+  const record = snapshot?.profiles.find((profile) => profile.profileId === profileId);
+  const signIns = (snapshot?.accounts ?? []).flatMap(({ details }) =>
+    details.kind === "website" && details.profileId === profileId ? [details] : [],
+  );
+  const addresses = [record?.source?.email, ...signIns.map(({ username }) => username)];
+  return [
+    ...addresses.flatMap((address) => address?.split("@").slice(1) ?? []),
+    ...signIns.flatMap(({ sites }) => sites),
+  ];
+}
+
+/** Google knows this profile's accounts, and none of them works here any more. */
+export function signedOutOfGoogle(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
+  const rows = accounts.filter(
+    ({ details }) =>
+      details.kind === "website" &&
+      details.profileId === profileId &&
+      details.sites.includes(GOOGLE_SITE),
+  );
+  return rows.length > 0 && rows.every(({ lastCheck }) => lastCheck?.state === "signed-out");
+}
+
+/**
+ * The Accounts list in order, with one entry per site for browser sign-ins: the same site signed
+ * in from several profiles is one group.
+ */
+export function accountListRows(
+  accounts: ReadonlyArray<AccountSummary>,
+): Array<AccountSummary | ReadonlyArray<AccountSummary>> {
+  const groups = new Map<string, Array<AccountSummary>>();
+  const rows: Array<AccountSummary | Array<AccountSummary>> = [];
+  for (const account of accounts) {
+    if (!isBrowserSignIn(account) || !("sites" in account.details)) {
+      rows.push(account);
+      continue;
+    }
+    const site = account.details.sites[0]?.replace(/^https:\/\//, "").toLowerCase() ?? "";
+    const group = groups.get(site);
+    if (group) group.push(account);
+    else {
+      const created = [account];
+      groups.set(site, created);
+      rows.push(created);
+    }
+  }
+  return rows.map((row) => (Array.isArray(row) && row.length === 1 ? row[0]! : row));
 }
 
 /** The source profile a linked profile came from, when its picture, colour or name changed there. */
@@ -605,3 +724,104 @@ export const CLI_LOGIN_COMMANDS: Readonly<Record<string, string>> = {
   gcloud: "gcloud auth login",
   glab: "glab auth login",
 };
+
+/** The account's sign-in state in a few words, or nothing when there is nothing to say. */
+export function accountStatusLabel(
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck" | "signedOut"> & {
+    readonly details?: AccountSummary["details"];
+  },
+  relativeTime: (iso: string) => string,
+) {
+  if (account.details?.kind === "api-key")
+    return account.lastCheck?.state === "rejected" ? "Key refused" : null;
+  if (account.lastSignInOutcome === "password-rejected") return "Password rejected";
+  if (account.lastSignInOutcome === "code-rejected") return "Code rejected";
+  if (account.signedOut) return "Signed out";
+  const check = account.lastCheck;
+  if (!check) return null;
+  if (check.state === "signed-in") return `Signed in · ${relativeTime(check.at)}`;
+  if (check.state === "signed-out") return "Signed out";
+  if (check.state === "needs-you") return "Needs you";
+  if (check.state === "rejected") return "Sign-in rejected";
+  if (check.state === "limited") return "Site is limiting access";
+  return "Couldn't check";
+}
+
+const ACTIVITY_LABELS: Readonly<Record<AccountUseAction, string>> = {
+  "sign-in": "Signed in",
+  credentials: "Read its credentials",
+  request: "Made a request",
+  "browser-session": "Used its sign-in in a script",
+  "open-profile": "Opened a browser tab",
+};
+const SIGN_IN_OUTCOME_LABELS: Readonly<
+  Record<NonNullable<AccountActivityEntry["signInOutcome"]>, string>
+> = {
+  "signed-in": "Signed in",
+  "needs-user": "Needed you",
+  "password-rejected": "Password rejected",
+  "code-rejected": "Code rejected",
+  limited: "Site limited access",
+  failed: "Sign-in failed",
+};
+
+/** One line of an account's activity; `where` names the conversation. */
+export function activityLine(entry: AccountActivityEntry, where: string | undefined) {
+  const what =
+    entry.decision === "denied"
+      ? `Denied: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+      : entry.signInOutcome
+        ? SIGN_IN_OUTCOME_LABELS[entry.signInOutcome]
+        : entry.outcome === "error"
+          ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
+          : ACTIVITY_LABELS[entry.action];
+  return where ? `${what} · ${where}` : what;
+}
+
+export interface KeyInUse {
+  readonly name: string;
+  readonly usedBy: ReadonlyArray<string>;
+  /** Provider variables can follow a saved key; Custom models keys already live in Accounts. */
+  readonly variables: ReadonlyArray<{ readonly instanceId: string; readonly variable: string }>;
+  readonly href: "/settings/providers" | "/settings/custom-models";
+}
+
+/** The keys Scient itself uses, by name: never their values. Same name, one row. */
+export function keysInUse(
+  instances: Readonly<
+    Record<
+      string,
+      {
+        readonly displayName?: string | undefined;
+        readonly driver: string;
+        readonly environment?:
+          | ReadonlyArray<{ readonly name: string; readonly sensitive: boolean }>
+          | undefined;
+      }
+    >
+  >,
+  customModelKeys: ReadonlyArray<{ readonly name: string }>,
+  driverName: (driver: string) => string,
+): ReadonlyArray<KeyInUse> {
+  const byName = new Map<string, KeyInUse>();
+  for (const [instanceId, instance] of Object.entries(instances))
+    for (const variable of instance.environment ?? []) {
+      if (!variable.sensitive) continue;
+      const existing = byName.get(variable.name);
+      byName.set(variable.name, {
+        name: variable.name,
+        usedBy: [...(existing?.usedBy ?? []), instance.displayName ?? driverName(instance.driver)],
+        variables: [...(existing?.variables ?? []), { instanceId, variable: variable.name }],
+        href: "/settings/providers",
+      });
+    }
+  return [
+    ...byName.values(),
+    ...customModelKeys.map((key) => ({
+      name: key.name,
+      usedBy: ["Custom models"],
+      variables: [],
+      href: "/settings/custom-models" as const,
+    })),
+  ];
+}

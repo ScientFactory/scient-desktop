@@ -678,6 +678,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: account grants are shared by RPC and agent consumers.
   Layer.provideMerge(ScientAccountsLayerLive),
+  // Account checks reach the browser from RPC; the broker is one instance by memoization.
+  Layer.provideMerge(PreviewAutomationBroker.layer),
   // SCIENT-FORK:END
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(ScientSkillsLayerLive),

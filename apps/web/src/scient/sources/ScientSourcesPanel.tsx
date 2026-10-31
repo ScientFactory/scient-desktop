@@ -76,6 +76,9 @@ import {
   type SourceRemovalAnchorPoint,
 } from "./SourceRemovalConfirmation";
 import { useScientSources } from "./useScientSources";
+import { accountsState } from "../accounts/accountsState";
+import { useAccountBrowser } from "../accounts/useAccountBrowser";
+import { useAccountCommand } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 type SourceContextAction = "view" | "edit" | "open-pdf" | "remove";
@@ -248,6 +251,8 @@ export function ScientSourcesPanel(props: {
   }) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
+  const openBrowser = useAccountBrowser(props.environmentId);
   const [query, setQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [sourceSort, setSourceSort] = useState<ScientSourceSort>("last-added");
@@ -951,6 +956,42 @@ export function ScientSourcesPanel(props: {
               "This source changed after you opened it. Review the latest version, then try again.",
             );
           }
+        }}
+        onGetPdf={async () => {
+          const doi = selectedRecord.identifiers.find(
+            (identifier) => identifier.scheme.toLowerCase() === "doi",
+          )?.value;
+          const result = await getPaper({
+            root: props.root,
+            sourceId: selectedRecord.sourceId,
+            expectedRevision: selectedRecord.revision,
+            ...(doi ? { doi } : {}),
+            ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
+          });
+          if (!result.ok) return;
+          if (result.value.status === "attached") {
+            await sources.refreshOverview();
+            toastManager.add({
+              type: "success",
+              title: result.value.published
+                ? "PDF attached"
+                : "PDF attached: an accepted manuscript or preprint",
+            });
+            return;
+          }
+          const { landingUrl: openUrl, profileId } = result.value;
+          toastManager.add({
+            type: "error",
+            title: result.value.message,
+            ...(openUrl
+              ? {
+                  actionProps: {
+                    children: "Open",
+                    onClick: () => void openBrowser(openUrl, profileId),
+                  },
+                }
+              : {}),
+          });
         }}
         onOpenPdf={props.onOpenPdf}
       />

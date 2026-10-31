@@ -117,7 +117,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/extensions": "Extensions",
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: name the Accounts section.
-  "/settings/accounts": "Accounts",
+  "/settings/accounts": "Accounts & secrets",
   // SCIENT-FORK:END
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
@@ -1034,9 +1034,17 @@ export const SETTINGS_SEARCH_ITEMS = [
   // SCIENT-FORK:START — Scient Accounts: index accounts and password stores.
   {
     id: "accounts-agent-access",
-    title: "Accounts",
+    title: "Accounts & secrets",
     to: "/settings/accounts",
-    searchTerms: ["passwords", "sign-in", "API keys", "keychain", "1Password", "browser profiles"],
+    searchTerms: [
+      "secrets",
+      "passwords",
+      "sign-in",
+      "API keys",
+      "keychain",
+      "1Password",
+      "browser profiles",
+    ],
   },
   {
     id: "accounts-password-stores",

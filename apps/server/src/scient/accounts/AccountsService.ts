@@ -4,6 +4,12 @@
  * `fillValues` to the user's authenticated client. See docs/internals/scient-accounts.md.
  */
 import type {
+  AccountCheck,
+  AccountCodeSources,
+  AccountGoogleSessions,
+  AccountKeyLink,
+  BrowserProfileChoiceInput,
+  BrowserProfileChoices,
   AccountHandoff,
   CliPasswordStoreInput,
   CliPasswordStoreResult,
@@ -12,6 +18,7 @@ import type {
   AccountActivityEntry,
   AccountApprovalDecision,
   AccountFillValues,
+  AccountFilledTab,
   AccountId,
   AccountSaveInput,
   AccountSaveResult,
@@ -68,6 +75,7 @@ export interface SessionAccounts {
   readonly accounts: ReadonlyArray<AccountSummary>;
   /** Every listed profile id with its effective record (defaults filled in). */
   readonly profiles: ReadonlyArray<BrowserProfileRecord>;
+  readonly profileChoices?: BrowserProfileChoices | undefined;
 }
 
 export type AccountAuthorization =
@@ -101,6 +109,16 @@ export interface AccountsServiceShape {
     input: BrowserProfileRecordUpdateInput,
   ) => Effect.Effect<void, AccountsError>;
   readonly removeProfile: (profileId: BrowserProfileId) => Effect.Effect<void, AccountsError>;
+  /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
+  readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;
+  readonly setCodeSources: (sources: AccountCodeSources) => Effect.Effect<void, AccountsError>;
+  /** Keeps one row per Google address in a profile, with the state Google reports. */
+  readonly googleSessionsSeen: (input: AccountGoogleSessions) => Effect.Effect<void, AccountsError>;
+  /** Without an account, the variable keeps its value and stops following one. */
+  readonly setKeyLink: (
+    target: Pick<AccountKeyLink, "instanceId" | "variable">,
+    accountId?: AccountId,
+  ) => Effect.Effect<void, AccountsError>;
   readonly respondApproval: (
     approvalId: string,
     decision: AccountApprovalDecision,
@@ -122,7 +140,15 @@ export interface AccountsServiceShape {
   readonly fillValues: (
     accountId: AccountId,
     origin: string,
+    tab?: AccountFilledTab,
   ) => Effect.Effect<AccountFillValues, AccountsError>;
+  /** The account autofill last put into this tab, while the tab still shows that page. */
+  readonly filledTab: (
+    threadId: ThreadId,
+    tabId: string,
+  ) => Effect.Effect<
+    (Pick<AccountFilledTab, "url"> & { readonly accountId: AccountId }) | undefined
+  >;
 
   readonly matchSignIn: (
     input: AccountMatchSignInInput,
@@ -169,8 +195,16 @@ export interface AccountsServiceShape {
     accountId: AccountId,
     fields: ReadonlyArray<string>,
   ) => Effect.Effect<Readonly<Record<string, Redacted.Redacted<string>>>, AccountsError>;
+  /** Keeps what Scient last saw of a sign-in, for the account's status. */
+  readonly recordCheck: (
+    accountId: AccountId,
+    check: Omit<AccountCheck, "at">,
+  ) => Effect.Effect<void, AccountsError>;
   /** Non-blocking; records the outcome of a use that `authorize` allowed. */
-  readonly recordUse: (entry: Omit<AccountActivityEntry, "at" | "decision">) => Effect.Effect<void>;
+  readonly recordUse: (
+    entry: Omit<AccountActivityEntry, "at" | "decision">,
+    message?: string,
+  ) => Effect.Effect<void>;
 }
 
 export class AccountsService extends Context.Service<AccountsService, AccountsServiceShape>()(

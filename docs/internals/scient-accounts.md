@@ -3,7 +3,7 @@
 Connect something once, and every agent can use it the way the user allows. Accounts covers website
 sign-ins, library access, API keys, databases, command-line logins and browser profiles. It owns
 Scient's encrypted store and the links to values kept in the system keychain, 1Password, Bitwarden (including Vaultwarden), Proton Pass or Custom
-models. Settings → Accounts is its page ([user guide](../user/accounts.md)); agents use it through `scient_account*` tools.
+models. Settings → Accounts & secrets is its page ([user guide](../user/accounts.md)); agents use it through `scient_account*` tools.
 
 Code: `apps/server/src/scient/accounts`, `apps/web/src/scient/accounts`,
 `apps/desktop/src/scient/accounts`, contracts in `packages/contracts/src/scient/accounts.ts`,
@@ -24,11 +24,17 @@ controls:
   them.
 - **Visibility**: `hidden` or `readable`. A readable value may be written to a per-session file for
   the agent's own scripts. Websites and libraries start hidden; API keys, databases and
-  command-line logins start readable because agents run them in scripts.
+  command-line logins start readable because agents run them in scripts. Hidden means the value
+  is never exported; a sign-in on a page an agent controls still puts the password into that page,
+  where the agent's scripts can read it. That is why agent tabs autofill only sign-ins the agent
+  may use.
 - **Scope**: `GrantScope`, shared with Extensions. A session gets all-projects grants plus those
   listing its project, checked again on every use. Subagents, forks and scheduled runs in the
   project get the same grants.
 
+Account controls govern stored credentials; profile controls govern the sessions in a browser
+profile. A website account turned Off stops agents using its password, but an Allowed profile still
+opens pages where that profile is already signed in, and its script sign-ins export those cookies.
 The global agent-access switch turns every account and profile off for agents without changing
 their settings. Grants and controls come only from the user's client, never from an agent or a
 project file.
@@ -136,7 +142,9 @@ browser nor the Keychain. A Scient profile still named after its source follows 
 name chosen in Scient stays. A picture that can't be read keeps the one shown. The manual refresh
 (the button beside Browser profiles, or Refresh in a profile's menu) also re-copies sign-ins, once
 the browser is closed, and imports saved passwords; it reports a running browser instead of
-skipping silently. An import writes the profile's record and the new-tab default before its
+skipping silently. It leaves sites that are working in that profile alone (`sitesToKeep`), and
+Google once the profile has a Google row, because a copy stops working and would replace the
+session and remembered device. An import writes the profile's record and the new-tab default before its
 passwords, so an interrupted import still leaves a complete profile.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
@@ -169,7 +177,8 @@ desktop. The count comes from Login Data without decrypting anything.
 - On Import, Electron main snapshots Login Data, decrypts it with the cookie importer's Safe Storage
   key (the macOS Keychain prompt appears here, not before) and returns CSV to the renderer, which
   sends it to `accountsImportPasswords` like a picked CSV file. Dedupe, controls and store writes
-  are the CSV importer's; new website accounts work in every profile.
+  are the CSV importer's. Each password stays linked to the profile it came from, and still fills
+  in every profile.
 - An import commits once: per-entry commits each rebuilt and published the whole snapshot (about
   3 s per password), and the uninterruptible write lock kept the server from quitting meanwhile.
   300 passwords now take about 3 s.
@@ -271,8 +280,24 @@ consumer's project. Activity names the plugin, variable and agent.
   legacy plaintext on its first read. Only Custom models uses this port; its rotation, removal and
   process lifetime rules stay with Custom models. An API key account links to a connection
   (`custom-model` source), so the key is stored once.
-- **`request_secret` values** (upstream, one use, 24 hours) and **sensitive provider environment
-  variables** (upstream settings) stay as they are.
+- **`request_secret` values** (upstream, one use, 24 hours) stay one-time secrets, sealed at rest
+  through `secretRequestStoreLayer`. Their salt stays plain, because it is read at startup and
+  startup must not wait for the keychain.
+  `scient_account_add` reuses upstream's card for keys worth keeping: it calls
+  `OrchestratorMcpService.requestSecret` with a server-written label and a `scient-account:`
+  `clientRequestId`, consumes the answer through `SecretRequests.consume`, and saves an API-key
+  account (or replaces one key, keeping name, details and controls). A matching account in the
+  session returns `exists` or `turned_off` with no card; a linked key returns `linked`. Two marked
+  upstream seams: the card's note and saved label (`client-runtime/src/secretRequest.ts`, via
+  `@t3tools/shared/scientAccountSecretRequest`), and `request_secret` rejecting the reserved
+  prefix. The orchestration sentence on secrets points to Accounts first (`ScientAgentCopy`).
+- **Sensitive provider environment variables** (upstream settings) stay in upstream's store. Sealing
+  them would make the server wait on the keychain at startup, and a denied or slow keychain must not
+  stop every provider from starting. `keyLinks.ts` lets one follow an API-key account: providers read
+  variables at start, so the value is copied in and copied again when the account changes.
+  **Keys used by Scient** lists them by name in the client (`keysInUse`); values stay on the server.
+- **Plain files** (`plainKeys.ts`): the page lists secrets in project `.env` files and shell profiles
+  by name. Keeping one copies it into an API-key account and leaves the file alone.
 - Server sign-in and session-signing material is never moved.
 
 ## Agent tools
@@ -280,14 +305,17 @@ consumer's project. Activity names the plugin, variable and agent.
 Family `accounts`, capability `accounts`, granted to every provider session by
 `prepareMcpSession`. Values never appear in tool output, thread items, logs, errors or exports.
 
-| Tool                             | What it does                                                                                                                                                                |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, access, whether readable, how to use it, status                                                          |
-| `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps                                                 |
-| `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                                                                |
-| `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                                                                             |
-| `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts |
-| `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                    |
+| Tool                             | What it does                                                                                                                                                                 |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, username (unless Off), access, whether readable, how to use it, status, last check                        |
+| `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps                                                  |
+| `scient_account_fill`            | Types one saved field into the agent's own tab on a page of the account's sites; the agent handles the page, in any language. One password fill per account every 15 minutes |
+| `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                                                                 |
+| `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                                                                              |
+| `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts  |
+| `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                     |
+| `scient_account_add`             | Upstream's private secret card, saved as an API-key account; returns its id and usage, or the matching account                                                               |
+| `scient_paper_get`               | A paper's PDF by DOI or link into `papers/`: OpenAlex's published free copy, the library account in the browser, then a preprint                                             |
 
 Every call runs `AccountsService.authorize`. Allowed proceeds; Ask shows the user a card ("Allow
 in this conversation", "Always in this project", "Always") and waits up to ten minutes.
@@ -313,13 +341,13 @@ Each step evaluates a detection script that reports the visible login form: user
 one-time-code fields, a submit control, CAPTCHA or passkey prompts. Scient fills only when the
 page's origin matches one of the account's sites (a bare domain matches its subdomains), so a
 look-alike page never receives the password. It types with `clear`, submits, waits for the
-navigation, and repeats for multi-step SSO up to six submissions. A password field returning on
+navigation, and repeats for multi-step SSO up to ten steps. A password field returning on
 the same origin after password submission returns `password-rejected` without resubmitting; a
 CAPTCHA, passkey or push prompt is a hand-off, not a rejection. A returning code field returns
 `code-rejected`; generated TOTP may retry once only after a new period starts. Static codes never
 retry. Rejected, failed and interrupted sign-ins clear the fields of the last submission, using
 origin-bound browser operations; a hand-off leaves them for the user to finish. The result tells
-the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-user`, `password-rejected`, `code-rejected` or `failed`
+the agent when cleanup could not finish. Sign-in returns `signed-in`, `needs-user`, `limited`, `password-rejected`, `code-rejected` or `failed`
 and records that outcome in activity. The 2FA code comes from the stored
 `totp` field (`otpauth://` URI or base32 key) via `otpauth`, or from 1Password
 (`?attribute=otp`). When an attended sign-in needs a CAPTCHA, phone approval, passkey or missing information,
@@ -338,6 +366,15 @@ only the account name, host, challenge kind and optional match number reach the 
 Account approvals and hand-offs use the thread notification settings, with desktop notifications
 when the app is unfocused; clicking opens the requesting thread.
 
+`preview_open` and `preview_navigate` run this without an agent call. `previewProfileFallback` first
+looks for another Allowed profile that opens the page (new tabs only), then `signInOnPage` signs in
+with the Allowed website or library account matching the page or the requested address, on the same
+tab, and navigates back to the requested address. `accountsNote` carries the result. Ask accounts
+get a note pointing at `scient_account_sign_in`, which asks; a `lastSignInOutcome` of
+`password-rejected` or `code-rejected` stops automatic attempts until the secret changes, since
+retries can lock an account. Login walls include a redirect to `/login`, `/sso` or a sign-in
+subdomain on the same site, before any password field shows.
+
 The pure parts (`signIn/` detection result → next action, origin matching, TOTP) are Node-tested;
 the detection script itself is exercised against fixture pages.
 
@@ -352,7 +389,10 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 
 ## The user's side
 
-- **Settings → Accounts**: accounts with the global switch, browser profiles, Other sign-ins, then password stores.
+- **Settings → Accounts & secrets**: the global switch and the accounts added on purpose, then one row
+  each for lists that grow on their own (Saved passwords, Browser sign-ins recorded while browsing,
+  Other sign-ins managed in Claude, Codex, Source Control or Extensions), each opening a dialog;
+  then browser profiles and password stores. The route stays `/settings/accounts`.
   Built from the existing settings components; labels say what a thing is and status appears only
   when something is wrong. It sits in the Agents group after Extensions. Profiles moved here from
   the Browser page, which links to Accounts; the rest of the browser settings stay there.
@@ -369,11 +409,15 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   reports the origin, username and password once. Server comparison chooses "Save sign-in?",
   "Update password?", or no prompt for an unchanged password, including Scient’s own fills. The
   prompt offers available stores; nothing is kept unless the user saves.
-- **Autofill**: the persistent desktop guest reports a visible login form after load. Exact-origin
-  accounts rank before bare-domain matches, then most recently used. Scient fills once per document
-  without submitting, only when fields remain empty, the user has not typed, and the thread agent
-  may use the account: global access on, in scope, and Allowed or Ask approved for its project.
-  Incognito never
+- **Autofill**: the persistent desktop guest reports a visible login form after load. One watcher
+  per environment (`accountAutofill.ts`, started by `accountWatchers.ts`) fills every
+  desktop tab, shown or hidden, the user's or an agent's, once per document, only when fields remain
+  empty and nobody typed. In the user's tabs agent access does not gate it
+  (owner, 2026-10-30); in a tab an agent controls (`automationOwner`) only sign-ins that agent may
+  use fill, since its scripts can read the page. Exact-origin accounts rank before bare-domain matches, then most recently used.
+  `fillValues` records the filled page per thread and tab in memory; `authorizePreviewTab`
+  refuses agent actions on that page while it is unchanged and the session may not use the
+  account, so a filled password is never readable by such an agent. Incognito never
   autofills. The toolbar chip identifies the filled sign-in and offers other matches; the key button
   remains available for manual filling. The desktop advertises `originBoundFill`; `expectedOrigin`
   and the isolated guest's document nonce reject navigation races, including same-origin reloads.
@@ -381,6 +425,75 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   account's profile (or the default profile). Rejected passwords and codes show a short row status;
   a later successful sign-in or editing the password or two-factor key clears it.
 - **Approval cards** appear above the composer of the thread that asked, and on the Accounts page.
+
+### Sign-in status and checks
+
+`AccountSummary.lastCheck` keeps what Scient last saw of a sign-in: `signed-in`, `signed-out`,
+`needs-you`, `rejected`, `limited` or `unknown`, with when and an optional message. Every sign-in outcome
+updates it (`outcomeCheckState`). `accounts.signInSeen` records the user's own sign-in, when a
+submitted saved password leaves no login form six seconds later. A saved password, 2FA secret or
+key resets it. Rows show
+it through `accountStatusLabel`, after anything that needs the user.
+
+`accounts.check` (`checkAccounts.ts`) opens each account's site or library link in its own profile,
+one at a time and 1.5 seconds apart, under a reserved thread that is no agent's
+(`userRunInvocation`), so agent access doesn't apply. A tab without a profile is a throwaway session,
+so the profile is always named. A session shows by a sign-out link, a login wall or sign-in link, then
+a protected cookie, which only counts for a sign-in known to have worked because anonymous visitors
+get those too; a library by leaving the university's pages on a publisher link. A signed-out
+account with a saved password gets one unattended sign-in, only if the last one worked or none was
+tried: one that needed the user or failed would do the same with nobody there. A whole
+run skips imported passwords with no history and stops at 40 accounts.
+
+Autofill submits only on the user's own tab, when the site has one saved sign-in whose
+`lastSignInOutcome` is `signed-in`, at most once per site every 10 minutes, and only a complete form.
+
+Google answers for itself. `googleSessions` (desktop) posts to the account list Chrome reads, with
+the profile's own session and no page, and `watchGoogleSessions`, started by `accountWatchers.ts`, sends the
+result to `accounts.googleSessions.seen` at startup, after a sign-in, and on focus at most every five
+minutes. A profile with no Google cookies isn't asked. The server keeps one password-free website
+row per address and profile, site `google.com`, with `lastCheck` set from what Google said. Those
+rows tell `pickBrowserProfile` where each account lives, and a saved password stays a separate row
+so autofill doesn't widen to every Google subdomain. Check my accounts leaves those rows to Google.
+
+### Sign-in codes
+
+When a page wants a code the account can't supply, the hand-off card appears and the engine also
+races two other sources (`agent/signInCodes.ts`). `askCode` opens upstream's private card, which
+reaches every device and is pending thread state, so it notifies the phone. It never completes when
+no one can answer. `findCode` runs on each two-second poll, using the sources in
+`AccountsSnapshot.codeSources`, off by default: `readMessageCode` reads Messages' `chat.db` (macOS,
+Full Disk Access; recent messages keep their text in `attributedBody`). Gmail's Atom feed is not a
+source: it answers 401 even with the inbox open in the same profile. Only messages newer than the
+hand-off count, and text must mention a code in English or Hebrew. A refused code is reported, never
+retried. The agent's result never contains the code.
+
+`ThreadAccountRequests` shows approvals and hand-offs on the phone; `AgentAwarenessRelay`
+marks those threads as waiting for approval so a push goes out (`accountRequestsByThread`).
+
+## Keeping sessions
+
+Sites mark many sign-ins as session cookies, and Electron does not store those: they are gone on
+quit. `keepSessionCookies`, attached where a persistent browser session is created, gives each one
+an expiry (90 days) as it appears, so restarts, updates and crashes keep it, as in a Chrome that
+reopens where you left off. Signing out and server-side expiry work as before, incognito is
+untouched, and imported cookies pass through the same listener. HttpOnly changes also flush the
+cookie store within 3 seconds instead of Chromium's roughly 30.
+
+`watchKeepSignedIn` stops sessions idling out while the app is open. Every ten minutes it asks at
+most one public HTTPS site for a page (`quietVisit`), with the session the profile already has, no
+page opened and at most four redirects followed, so nothing new is created and other devices aren't
+affected. Each sign-in is visited
+once a day; a session that ended sooner halves that gap, down to six hours. Shorter sessions are left
+alone, and Google is skipped because its sessions hold without visits. It never signs in. A session
+that ended is marked signed out and no longer visited, and the next real use signs in again. If that
+sign-in is needed again within 15 minutes, `automaticSignInOnHold` stops and tells the user, because
+something keeps ending it. No list of one-session sites is needed: the rule is the same whatever the
+reason.
+
+Sign-in and autofill tick the page's "Remember me" or "Trust this device" box
+(`shared/scientSignInPage` holds the wording) and sign-in answers "Stay signed in?" with Yes.
+Shared-computer options are left alone. A failed tick never fails a sign-in.
 
 ## Cookie encryption
 
@@ -401,7 +514,16 @@ always need Touch ID or the Mac password. Nothing else in Accounts depends on th
 - Hidden values stay out of the model's context, not out of reach of a same-user process.
 - An agent signed in to a site can do what that account can do there.
 - CAPTCHAs, push approvals, new-device checks and passkeys need the user.
-- Google refuses sign-in in embedded browsers; import a Chrome profile for Google.
+- Google's sign-in reaches its password step in this browser, with the default user agent; the rest
+  of the sign-in is unproven. Google sessions imported from Chrome don't reliably last: on 2026-10-30,
+  four of five imported profiles were signed out within four days, and the fifth came from a Chrome
+  profile idle for 12 days. Chrome's continued use is the likely cause, not yet proven.
+- Known values are not masked in chat or logs, and commits are not checked. These can get in the way
+  of real work, so they follow one at a time.
+- With the system keychain denied, a private card can't be sealed, so it reports that and saves
+  nothing.
+- Webhook signing secrets stay in the scheduler's database.
+- A CAPTCHA can't be solved from the phone.
 
 ## Alignment
 
@@ -462,10 +584,36 @@ provider environment. The existing proxy redacts reflected values in responses.
   password that uses that profile's session. Scient does not guess completion from cookies: many
   sites set session cookies before anyone signs in.
 - **Signing in while browsing**: returning from a known identity provider (Google, Microsoft, Apple,
-  GitHub, ORCID, Okta, Shibboleth) with a new HttpOnly cookie for the site offers "Save <site> to
-  Accounts?" once per site and profile, never in incognito or for a site already saved. Only cookie
-  domain, expiry and HttpOnly flags are read. Remote server browsers and browser-only clients can't
-  read cookie metadata, so they get neither offer.
+  GitHub, ORCID, Okta, Shibboleth) with a new HttpOnly cookie records a website account for that
+  profile without asking, with an Undo toast. The site is the new session cookie's domain; a
+  cookie that also covers the sign-in page is the provider's own session (Google's sign-in, then
+  Docs), so nothing is recorded. Never in incognito or for a site the profile already has. Only
+  cookie domain, expiry and HttpOnly flags are read. Remote server browsers and browser-only
+  clients can't read cookie metadata. The Accounts list shows one row per site for sign-ins from
+  several profiles (`accountListRows`).
+- **Which profile a tab opens in**: `pickBrowserProfile` (`@t3tools/shared/scientBrowserProfileChoice`)
+  serves both the app (three marked hooks where upstream read the default profile) and
+  `authorizePreviewProfile` for agents (allowed profiles only). Order: the user's switch for the
+  page's host in this conversation; the only profile with evidence of a session on the page
+  (`profileSignIns`; ties: latest switch for the host anywhere, the conversation's, the project's,
+  the default, list order); the latest switch for the host anywhere; the conversation's; the
+  project's; the default. Choices live in Accounts state
+  (`profileChoices`: projects, and threads with per-host switches, 500 threads and 50 hosts kept),
+  written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. The
+  menu names the profiles with a sign-in on the page. The toolbar makes no claim about the tab's
+  own profile: Scient has no record of most sites a profile is signed in to, so a missing record
+  doesn't mean signed out. An empty tab's Gmail link and the
+  Sign in link in `BrowserProfiles` open `GMAIL_URL` in the selected profile: signed out, Google
+  shows its own sign-in and returns to the inbox, so Scient adds no flow of its own, and the Google
+  check that follows clears the label. `/mail/u/<address>/` gives "Temporary Error", so it is not
+  used.
+- **Library access**: a library account's link pattern (`proxyUrl` with `{url}`, e.g. HUJI's
+  OpenAthens redirector) is how `scient_paper_get` reaches paywalled PDFs. Pasting any library
+  link derives the pattern. The tool opens the article through it in the library account's
+  profile, signs in with that account when its sign-in page asks, takes the page's
+  `citation_pdf_url` or PDF link, fetches the PDF inside the page so the session applies, and
+  checks `%PDF`. Library fetches are serialized per server, 10-20 s apart and capped at 100 a
+  day: libraries suspend access that looks like bulk downloading.
 - Browser-sign-in rows name the profile agents use; the usual Signed out / Sign in again applies.
 - **API keys**: Get a key opens the service's key page in the default browser. A pasted key with a
   known prefix picks its catalogue entry and goes straight into the key input, never into search
