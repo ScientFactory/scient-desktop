@@ -300,7 +300,7 @@ describe("actual picker provider setup", () => {
       )
       .toBeGreaterThan(100);
     expect(_fixture.host.querySelector("[data-model-picker-setup]")).toBeNull();
-    await page.getByRole("option", { name: "Model 0, cursor" }).click();
+    await page.getByRole("option").filter({ hasText: "Model 0" }).first().click();
     expect(selectModel).toHaveBeenCalledExactlyOnceWith(provider.instanceId, "model-0");
     await render(_fixture, { ...ready, auth: { status: "unauthenticated" } });
     await setupButton();
