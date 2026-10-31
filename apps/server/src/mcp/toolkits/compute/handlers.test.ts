@@ -67,17 +67,19 @@ it.effect("lets an agent without the compute grant read what is installed", () =
         capabilities: new Set<AgentInvocationContext.OperationCapability>(),
         issuedAt: 1,
       }),
-      Effect.provide(Layer.mock(ComputeMcpGateway)({ runtimeInventory, inspectRuntimes })),
       Effect.provide(
-        Layer.mock(WorkspaceBindingResolver)({
-          resolveThread: () =>
-            Effect.fail(
-              new WorkspaceBindingResolutionError({
-                operation: "test-resolve",
-                kind: "project-required",
-              }),
-            ),
-        }),
+        Layer.mergeAll(
+          Layer.mock(ComputeMcpGateway)({ runtimeInventory, inspectRuntimes }),
+          Layer.mock(WorkspaceBindingResolver)({
+            resolveThread: () =>
+              Effect.fail(
+                new WorkspaceBindingResolutionError({
+                  operation: "test-resolve",
+                  kind: "project-required",
+                }),
+              ),
+          }),
+        ),
       ),
     );
     expect(inventory).toEqual({

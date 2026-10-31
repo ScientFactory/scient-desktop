@@ -2852,26 +2852,26 @@ it.effect(
         ).pipe(
           Effect.provideService(AgentInvocationContext, invocation),
           Effect.provide(
-            Layer.mock(ComputeMcpGateway)({
-              runtimeInventory: () => Effect.succeed({ languages: [] }),
-              inspectRuntimes: () =>
-                Effect.succeed({
-                  contractVersion: 1 as const,
-                  scope: "environment" as const,
-                  languages: [],
-                }),
-            }),
-          ),
-          Effect.provide(
-            Layer.mock(WorkspaceBindingResolver)({
-              resolveThread: () =>
-                Effect.fail(
-                  new WorkspaceBindingResolutionError({
-                    operation: "test-resolve",
-                    kind: "project-required",
+            Layer.mergeAll(
+              Layer.mock(ComputeMcpGateway)({
+                runtimeInventory: () => Effect.succeed({ languages: [] }),
+                inspectRuntimes: () =>
+                  Effect.succeed({
+                    contractVersion: 1 as const,
+                    scope: "environment" as const,
+                    languages: [],
                   }),
-                ),
-            }),
+              }),
+              Layer.mock(WorkspaceBindingResolver)({
+                resolveThread: () =>
+                  Effect.fail(
+                    new WorkspaceBindingResolutionError({
+                      operation: "test-resolve",
+                      kind: "project-required",
+                    }),
+                  ),
+              }),
+            ),
           ),
         );
         assert.deepEqual(inventory, { languages: [], notFound: [] });
