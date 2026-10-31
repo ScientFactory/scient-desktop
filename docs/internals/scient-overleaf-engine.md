@@ -780,8 +780,16 @@ section 9):
 6. **Send** once, never forced, holding no section, so a pull or branch switch
    of the checkout does not wait for the network. `accepted` makes the
    publication tree the base in the same replacement. `out-of-date` keeps the adopted
-   base. Anything else stays `unknown`, as does an attempt whose finalizing
-   write fails.
+   base. Overleaf's rate limit answers before anything is sent, so after the waits
+   below it records `not-sent` (`send-refused`). Anything else stays `unknown`, as
+   does an attempt whose finalizing write fails.
+
+**Rate limit.** Overleaf answers about 40 Git requests a minute, then refuses for up
+to 30 s with `no git access` and `Rate-limit exceeded` (measured 2026-10-31). Its
+opening words match a missing project, so `isRateLimited` is checked first. Fetches,
+head reads and pushes for a sync or a connect ask again every 10 seconds, four times,
+then refuse `rate-limited`. The background check of Overleaf never waits: it reports
+`unknown`, because asking again only adds to the load.
 
 **Settling earlier sends.** Prepare (on the head it fetches) and recover (one
 fetch) check every unresolved attempt against Overleaf by positive evidence

@@ -259,6 +259,8 @@ export function refusalText(
       return "Overleaf has no Git access to a project at this link. Check the link, that the project is shared with you, and that your Overleaf plan includes Git.";
     case "project-invalid":
       return "That isn't an Overleaf project link or ID.";
+    case "rate-limited":
+      return `Overleaf is limiting Git requests right now. Nothing was lost. ${action === "connect" ? "Try connecting again" : "Sync again"} in a minute.`;
     case "unreachable":
       return action === "connect"
         ? "Overleaf couldn't be reached. Check the connection. Try connecting again."
@@ -568,7 +570,10 @@ function publicationLine(
       };
     case "not-sent":
       return {
-        line: "Nothing was sent: the Overleaf token changed during the sync. Sync again.",
+        line:
+          publication.reason === "rate-limited"
+            ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
+            : "Nothing was sent: the Overleaf token changed during the sync. Sync again.",
         tone: "warning",
       };
     case "out-of-date":

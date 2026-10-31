@@ -777,6 +777,11 @@ describe("Overleaf tool handlers", () => {
       expect(refused).toContain(
         "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
       );
+      expect(
+        yield* linesFor({ _tag: "not-sent", attemptNumber: 3, reason: "rate-limited" }),
+      ).toContain(
+        "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute.",
+      );
     }),
   );
 

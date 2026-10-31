@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
@@ -59,6 +60,22 @@ export class OverleafGitError extends Schema.TaggedError<OverleafGitError>()("Ov
 const isOverleafGitError = Schema.is(OverleafGitError);
 const fail = (reason: OverleafGitFailureReason, detail = "", exitCode: number | null = null) =>
   new OverleafGitError({ reason, detail, exitCode });
+
+/**
+ * Overleaf's answer to too many Git requests. It comes before anything is sent, and it
+ * opens with the words of a refused project ("no git access"), so check it first.
+ */
+export const isRateLimited = (error: unknown): boolean =>
+  isOverleafGitError(error) && /rate.?limit exceeded|returned error: 429\b/iu.test(error.detail);
+
+/**
+ * Waits out that limit for what a person asked for. Overleaf allows about 40 requests a
+ * minute and answers again within 30 s (measured 2026-10-31). Background checks skip this.
+ */
+export const waitOutRateLimit = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.retry({ while: isRateLimited, schedule: Schedule.spaced("10 seconds"), times: 4 }),
+  );
 
 export interface OverleafGitExecuteInput {
   readonly cwd: string;

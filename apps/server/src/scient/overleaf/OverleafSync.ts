@@ -33,6 +33,7 @@ import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolv
 import * as WorkspaceBindingStore from "../projectScope/WorkspaceBindingStore.ts";
 import {
   gitRefusal,
+  logGitFailure,
   makeOverleafConnections,
   type OverleafConnectionStatus,
   type OverleafConnectionSummary,
@@ -41,7 +42,7 @@ import {
 import type { OverleafConnectionDocument } from "./OverleafConnectionState.ts";
 import * as OverleafCoordinator from "./OverleafCoordinator.ts";
 import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
-import { newOverleafId } from "./OverleafGitExecutor.ts";
+import { newOverleafId, waitOutRateLimit } from "./OverleafGitExecutor.ts";
 import * as OverleafRepositoryModule from "./OverleafRepository.ts";
 import { OverleafRepository } from "./OverleafRepository.ts";
 import { OverleafEditorSave, type OverleafEditorSaveResult } from "./OverleafEditorSave.ts";
@@ -89,6 +90,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       "project-not-found",
       /** Overleaf could not be reached. */
       "unreachable",
+      /** Overleaf is refusing Git requests for a moment: too many in the last minute. */
+      "rate-limited",
       /** Git is missing or older than 2.39. */
       "git-unavailable",
       "git-failed",
@@ -112,6 +115,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
         return "Overleaf has no Git access to a project at this link. Check the link, that the project is shared with you, and that your Overleaf plan includes Git.";
       case "unreachable":
         return "Overleaf could not be reached.";
+      case "rate-limited":
+        return "Overleaf is limiting Git requests right now. Nothing was lost. Try again in a minute.";
       case "git-unavailable":
         return "Overleaf sync needs Git 2.39 or newer on this computer.";
       case "git-failed":
@@ -435,46 +440,52 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     credentialEpoch: () => credentialEpoch,
     gitUrl: (connection) => gitUrl(connection.remote.projectId),
     fetchRemote: (input) =>
-      credentialLock.withPermits(1)(
-        Effect.gen(function* () {
-          const token = yield* readToken;
-          if (token === null || token.length === 0) return yield* credentialUnavailable;
-          return yield* fetching.withPermits(1)(
-            repos.fetch({
+      waitOutRateLimit(
+        credentialLock.withPermits(1)(
+          Effect.gen(function* () {
+            const token = yield* readToken;
+            if (token === null || token.length === 0) return yield* credentialUnavailable;
+            return yield* fetching.withPermits(1)(
+              repos.fetch({
+                repo: input.repo,
+                branch: input.connection.remote.branch,
+                token,
+              }),
+            );
+          }),
+        ),
+      ),
+    remoteHead: (input) =>
+      waitOutRateLimit(
+        credentialLock.withPermits(1)(
+          Effect.gen(function* () {
+            const token = yield* readToken;
+            if (token === null || token.length === 0) return yield* credentialUnavailable;
+            return yield* repos.remoteHead({
               repo: input.repo,
               branch: input.connection.remote.branch,
               token,
-            }),
-          );
-        }),
-      ),
-    remoteHead: (input) =>
-      credentialLock.withPermits(1)(
-        Effect.gen(function* () {
-          const token = yield* readToken;
-          if (token === null || token.length === 0) return yield* credentialUnavailable;
-          return yield* repos.remoteHead({
-            repo: input.repo,
-            branch: input.connection.remote.branch,
-            token,
-          });
-        }),
+            });
+          }),
+        ),
       ),
     // Never under another token than the review's: a renewal between send admission and
     // here fails the push before Git runs, and the attempt stays unknown, never resent.
     pushRemote: (input) =>
-      credentialLock.withPermits(1)(
-        Effect.gen(function* () {
-          const token = yield* readToken;
-          if (token === null || token.length === 0 || credentialEpoch !== input.credentialEpoch)
-            return yield* credentialUnavailable;
-          return yield* repos.push({
-            repo: input.repo,
-            commit: input.commit,
-            branch: input.connection.remote.branch,
-            token,
-          });
-        }),
+      waitOutRateLimit(
+        credentialLock.withPermits(1)(
+          Effect.gen(function* () {
+            const token = yield* readToken;
+            if (token === null || token.length === 0 || credentialEpoch !== input.credentialEpoch)
+              return yield* credentialUnavailable;
+            return yield* repos.push({
+              repo: input.repo,
+              commit: input.commit,
+              branch: input.connection.remote.branch,
+              token,
+            });
+          }),
+        ),
       ),
   });
   const connections = yield* makeOverleafConnections({
@@ -514,6 +525,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
                 : category === "access-denied" ||
                     category === "project-not-found" ||
                     category === "unreachable" ||
+                    category === "rate-limited" ||
                     category === "git-unavailable"
                   ? category
                   : "git-failed";
@@ -526,7 +538,12 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   ) =>
     effect.pipe(
       Effect.provideService(OverleafCoordinator.OverleafAuthorityGuard, guard),
-      Effect.catchIf(isGitFailure<E>, (error) => Effect.fail(gitFailure(error))),
+      Effect.catchIf(isGitFailure<E>, (error) =>
+        Effect.andThen(
+          error._tag === "OverleafGitError" ? logGitFailure(error) : Effect.void,
+          Effect.fail(gitFailure(error)),
+        ),
+      ),
     );
 
   /** The caller's authority, as resolved for this request, still holds. */

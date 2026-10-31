@@ -23,7 +23,7 @@ import {
   type OverleafReservations,
   reserveOverleafConnection,
 } from "./OverleafCoordinator.ts";
-import { newOverleafId, type OverleafGitError } from "./OverleafGitExecutor.ts";
+import { newOverleafId, type OverleafGitError, waitOutRateLimit } from "./OverleafGitExecutor.ts";
 import { captureOverleafInventory } from "./OverleafInventory.ts";
 import { classifyProbeGitFailure } from "./OverleafProtocolProbe.ts";
 import { OverleafRepository, type OverleafRepositoryError } from "./OverleafRepository.ts";
@@ -71,6 +71,8 @@ export type OverleafConnectionRefusal =
   | "project-not-found"
   /** Overleaf could not be reached. */
   | "unreachable"
+  /** Overleaf is refusing Git requests for a moment: too many in the last minute. */
+  | "rate-limited"
   /** The project has no single `main` or `master` branch. */
   | "no-branch"
   /** Git is missing or older than 2.39. */
@@ -206,6 +208,8 @@ export const gitRefusal = (
       return "access-denied";
     case "project-not-found":
       return "project-not-found";
+    case "rate-limited":
+      return "rate-limited";
     case "timeout":
     case "dns":
     case "tls":
@@ -216,6 +220,13 @@ export const gitRefusal = (
       return "git-failed";
   }
 };
+
+/** Overleaf's own words, without URLs, stay in the log for diagnosis, never in a result. */
+export const logGitFailure = (error: OverleafGitError) =>
+  Effect.logWarning("Overleaf Git failed", {
+    category: classifyProbeGitFailure(error).category,
+    detail: error.detail.replace(/https?:\/\/\S+/gu, "[remote]").slice(0, 1000),
+  });
 
 /**
  * The physical identity (device and inode) of `path` and of every folder above it.
@@ -531,9 +542,11 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
           const repo = repositoryPath(id);
           const reached = yield* Effect.gen(function* () {
             yield* repos.initialize({ repo, gitUrl: gitUrl(input.projectId) });
-            const branch = yield* repos.discoverBranch({ repo, token: input.token });
+            const branch = yield* waitOutRateLimit(
+              repos.discoverBranch({ repo, token: input.token }),
+            );
             if (branch === null) return null;
-            yield* repos.fetch({ repo, branch, token: input.token });
+            yield* waitOutRateLimit(repos.fetch({ repo, branch, token: input.token }));
             return branch;
           }).pipe(
             Effect.map((branch) =>
@@ -543,17 +556,10 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
             ),
             Effect.catchTags({
               OverleafGitError: (error) =>
-                Effect.as(
-                  // Overleaf's wording for an unknown refusal is kept, without URLs, for diagnosis.
-                  ["server-refused", "unclassified"].includes(
-                    classifyProbeGitFailure(error).category,
-                  )
-                    ? Effect.logWarning("Overleaf connect refused in unrecognised words", {
-                        detail: error.detail.replace(/https?:\/\/\S+/gu, "[remote]").slice(0, 1000),
-                      })
-                    : Effect.void,
-                  { _tag: "refused", reason: gitRefusal(error) } as const,
-                ),
+                Effect.as(logGitFailure(error), {
+                  _tag: "refused",
+                  reason: gitRefusal(error),
+                } as const),
               OverleafRepositoryError: (error) =>
                 Effect.succeed({ _tag: "refused", reason: gitRefusal(error) } as const),
             }),

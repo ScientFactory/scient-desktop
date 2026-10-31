@@ -11,6 +11,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
+import { OverleafGitError } from "./OverleafGitExecutor.ts";
 import {
   CONNECTION,
   canApply,
@@ -366,6 +367,42 @@ describe.skipIf(!canApply)("OverleafCoordinator, publication", () => {
       }),
     ),
   );
+
+  it.live("records a send refused by Overleaf's rate limit as never sent", () => {
+    let limited = true;
+    return run(
+      Effect.gen(function* () {
+        const w = yield* world({
+          overleaf: "git",
+          synced: { "main.tex": "A" },
+          remote: { "main.tex": "A" },
+          push: (send) =>
+            limited
+              ? Effect.fail(
+                  new OverleafGitError({
+                    reason: "non-zero-exit",
+                    exitCode: 128,
+                    detail: "fatal: remote error: no git access\nRate-limit exceeded.",
+                  }),
+                )
+              : send,
+        });
+        yield* write(w.folder, { "main.tex": "A, edited here" });
+        expect(yield* w.sync()).toMatchObject({
+          publication: { _tag: "not-sent", attemptNumber: 1, reason: "rate-limited" },
+        });
+        expect((yield* w.connection).attempts).toMatchObject([
+          { outcome: "not-sent", evidence: "send-refused" },
+        ]);
+        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "A" });
+        limited = false;
+        expect(yield* w.sync("request-2")).toMatchObject({
+          publication: { _tag: "accepted", attemptNumber: 2 },
+        });
+        expect((yield* w.overleafNow).contents).toEqual({ "main.tex": "A, edited here" });
+      }),
+    );
+  });
 
   it.live("records an explicit out-of-date answer and keeps the base", () => {
     let collaborate: (() => Effect.Effect<void>) | undefined;

@@ -37,7 +37,7 @@ import {
   type OverleafOperationReceipt,
   type OverleafPublicationAttempt,
 } from "./OverleafConnectionState.ts";
-import { newOverleafId, type OverleafGitError } from "./OverleafGitExecutor.ts";
+import { isRateLimited, newOverleafId, type OverleafGitError } from "./OverleafGitExecutor.ts";
 import { manuscriptTreeProblem } from "./manuscriptPaths.ts";
 import {
   captureOverleafInventory,
@@ -222,8 +222,8 @@ export type OverleafPublication =
     }
   /** Not sent: the folder changed after the apply. The change is for the next review. */
   | { readonly _tag: "not-verified" }
-  /** Recorded, then refused before sending: the credential changed since the review. */
-  | { readonly _tag: "not-sent"; readonly attemptNumber: number }
+  /** Recorded, then refused before sending: the credential changed, or Overleaf's rate limit. */
+  | { readonly _tag: "not-sent"; readonly attemptNumber: number; readonly reason?: "rate-limited" }
   | { readonly _tag: "accepted"; readonly attemptNumber: number }
   /** Overleaf had moved on, so nothing was applied there. A new review is needed. */
   | { readonly _tag: "out-of-date"; readonly attemptNumber: number }
@@ -1738,16 +1738,34 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         commit: input.candidateCommit,
         credentialEpoch: input.review.binding.credentialEpoch,
       })
-      // A push that failed partway may still have reached Overleaf.
+      // A push that failed partway may still have reached Overleaf; a rate limit came first.
       .pipe(
-        Effect.orElseSucceed((): OverleafRepository.PushOutcome => ({
-          _tag: "unknown",
-          detail: "push failed",
-        })),
+        Effect.catch((error) =>
+          Effect.succeed<OverleafRepository.PushOutcome | { readonly _tag: "rate-limited" }>(
+            isRateLimited(error)
+              ? { _tag: "rate-limited" }
+              : { _tag: "unknown", detail: "push failed" },
+          ),
+        ),
       );
     yield* hook(options, "sent");
     if (pushed._tag === "unknown")
       return { _tag: "unknown", attemptNumber } satisfies OverleafPublication;
+    if (pushed._tag === "rate-limited") {
+      yield* resolveAttempts(
+        repo,
+        recorded,
+        new Map([
+          [attemptNumber, { outcome: "not-sent" as const, evidence: "send-refused" as const }],
+        ]),
+      );
+      const refused: OverleafPublication = {
+        _tag: "not-sent",
+        attemptNumber,
+        reason: "rate-limited",
+      };
+      return refused;
+    }
     // If this write fails, the attempt stays unknown for recovery to settle; never resent.
     yield* resolveAttempts(
       repo,

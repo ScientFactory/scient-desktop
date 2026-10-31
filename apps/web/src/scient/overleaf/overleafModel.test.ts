@@ -419,6 +419,13 @@ describe("refusalText", () => {
     expect(operationErrorText({ reason: "token-missing", message: "x" })).toContain(
       "No Overleaf token is saved",
     );
+    // Overleaf's rate limit is not a refused project.
+    expect(operationErrorText({ reason: "rate-limited" })).toBe(
+      "Overleaf is limiting Git requests right now. Nothing was lost. Sync again in a minute.",
+    );
+    expect(operationErrorText({ reason: "rate-limited" }, "connect")).toBe(
+      "Overleaf is limiting Git requests right now. Nothing was lost. Try connecting again in a minute.",
+    );
     // A typed refusal keeps its reason and path; anything else gets one fixed line.
     expect(
       operationErrorText({

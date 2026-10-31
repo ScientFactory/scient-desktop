@@ -309,6 +309,8 @@ the project.
   renamed file are dropped.
 - Overleaf recommends against very large projects, and won't take a file over
   50 MB.
+- Overleaf allows about 40 Git requests a minute. A sync or link that meets this
+  limit waits for up to 40 seconds, then stops without losing anything.
 
 ## Limits
 
@@ -343,6 +345,7 @@ old link is put away.
 | Overleaf has no such project.                                        | Check the link or ID.                                                      |
 | That isn't an Overleaf project link or ID.                           | Paste the address of the project on Overleaf.                              |
 | Overleaf couldn't be reached.                                        | Check the connection and sync again.                                       |
+| Overleaf is limiting Git requests right now.                         | Nothing was lost. Try again in a minute.                                   |
 | Overleaf sync needs Git 2.39 or newer.                               | Install the command line tools (`xcode-select --install`) or a newer Git.  |
 | The Overleaf project has no single main branch.                      | Ask Overleaf support; the project's Git history is unusual.                |
 | A folder with that name already has files.                           | Pick another name, or link that folder instead.                            |

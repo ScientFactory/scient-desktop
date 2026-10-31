@@ -62,6 +62,7 @@ export class ScientOverleafToolError extends Schema.TaggedError<ScientOverleafTo
       "overleaf-unreachable",
       "overleaf-access-denied",
       "overleaf-project-not-found",
+      "overleaf-rate-limited",
       "git-unavailable",
       "failed",
     ]),

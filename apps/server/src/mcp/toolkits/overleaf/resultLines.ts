@@ -239,7 +239,9 @@ const publicationLines = (
       ];
     case "not-sent":
       return [
-        "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
+        publication.reason === "rate-limited"
+          ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
+          : "Nothing was sent: the folder, the project's workspace or the Overleaf token changed before sending. Sync again.",
       ];
     case "out-of-date":
       return ["Overleaf changed again while sending, so nothing was sent. Sync again."];
@@ -264,6 +266,8 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
       return "Overleaf refused this project. Check the link, that the project is shared with your account, and your Overleaf token in Settings ▸ Synced folders.";
     case "project-not-found":
       return "Overleaf has no Git access to a project at this link. Check the link, that the project is shared with you, and that your Overleaf plan includes Git.";
+    case "rate-limited":
+      return "Overleaf is limiting Git requests right now. Nothing was lost. Try again in a minute.";
     case "remote-file-limit":
     case "candidate-file-limit":
       return "more than 2,000 files to sync. Choose a narrower folder.";

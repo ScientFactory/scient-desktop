@@ -8,7 +8,11 @@ import type { SchemaError } from "effect/Schema";
 import type * as Terminal from "effect/Terminal";
 import type * as Prompt from "effect/cli/Prompt";
 import type { OverleafGitError } from "./OverleafGitExecutor.ts";
-import { OverleafGitExecutor, type OverleafGitExecuteResult } from "./OverleafGitExecutor.ts";
+import {
+  isRateLimited,
+  OverleafGitExecutor,
+  type OverleafGitExecuteResult,
+} from "./OverleafGitExecutor.ts";
 import * as Repository from "./OverleafRepository.ts";
 
 const decodeProbeUrl = Schema.decodeOption(Schema.URLFromString);
@@ -92,30 +96,32 @@ export function classifyProbeGitFailure(error: OverleafGitError) {
   const category =
     error.reason === "timeout"
       ? "timeout"
-      : /authentication failed|invalid credentials|\b40[13]\b|access denied|permission denied|not authori[sz]ed|\bforbidden\b/iu.test(
-            detail,
-          )
-        ? "authentication-or-access-denied"
-        : // Overleaf answers "remote error: no git access" for a project that does not exist
-          // or has no Git access (found in a live check).
-          /(?:repository|project)\b[^\r\n]*\bnot found\b|\b404\b|\bno git access\b/iu.test(detail)
-          ? "project-not-found"
-          : /certificate|\bssl\b|\btls\b|schannel/iu.test(detail)
-            ? "tls"
-            : /could not resolve|name or service not known/iu.test(detail)
-              ? "dns"
-              : /redirect/iu.test(detail)
-                ? "redirect"
-                : /failed to connect|connection reset|connection refused|network is unreachable/iu.test(
-                      detail,
-                    )
-                  ? "connection"
-                  : /askpass|could not read username|could not read password/iu.test(detail)
-                    ? "credential-prompt"
-                    : // Overleaf's server answered, in words not listed above: it refused.
-                      /^(?:remote: \S|fatal: remote error:)/mu.test(detail)
-                      ? "server-refused"
-                      : "unclassified";
+      : isRateLimited(error)
+        ? "rate-limited"
+        : /authentication failed|invalid credentials|\b40[13]\b|access denied|permission denied|not authori[sz]ed|\bforbidden\b/iu.test(
+              detail,
+            )
+          ? "authentication-or-access-denied"
+          : // Overleaf answers "remote error: no git access" for a project that does not exist
+            // or has no Git access (found in a live check).
+            /(?:repository|project)\b[^\r\n]*\bnot found\b|\b404\b|\bno git access\b/iu.test(detail)
+            ? "project-not-found"
+            : /certificate|\bssl\b|\btls\b|schannel/iu.test(detail)
+              ? "tls"
+              : /could not resolve|name or service not known/iu.test(detail)
+                ? "dns"
+                : /redirect/iu.test(detail)
+                  ? "redirect"
+                  : /failed to connect|connection reset|connection refused|network is unreachable/iu.test(
+                        detail,
+                      )
+                    ? "connection"
+                    : /askpass|could not read username|could not read password/iu.test(detail)
+                      ? "credential-prompt"
+                      : // Overleaf's server answered, in words not listed above: it refused.
+                        /^(?:remote: \S|fatal: remote error:)/mu.test(detail)
+                        ? "server-refused"
+                        : "unclassified";
   return { reason: error.reason, exitCode: error.exitCode ?? -1, category };
 }
 
