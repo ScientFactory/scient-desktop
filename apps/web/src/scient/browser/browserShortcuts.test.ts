@@ -47,6 +47,15 @@ describe("visibleShortcuts", () => {
     expect(names()[0]).toBe("Drive");
   });
 
+  it("names and pictures a Google app reached from anywhere", () => {
+    visit("https://www.youtube.com/watch?v=abc", 2);
+    expect(visibleShortcuts(useBrowserShortcuts.getState())[0]).toMatchObject({
+      key: "youtube.com",
+      name: "YouTube",
+      icon: expect.stringMatching(/^data:image\//),
+    });
+  });
+
   it("leaves Google and Gmail to the row above", () => {
     visit("https://www.google.com/search?q=a", 5);
     visit("https://mail.google.com/mail/u/0/#inbox", 5);

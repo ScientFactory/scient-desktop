@@ -34,6 +34,9 @@ it("opens an app from the Apps menu and closes it", async () => {
   const onOpenUrl = vi.fn();
   await using _screen = await renderHome(onOpenUrl);
   await page.getByRole("button", { name: "Apps" }).click();
+  for (const app of ["Account", "Tasks", "YouTube"]) {
+    await expect.element(page.getByRole("button", { name: app, exact: true })).toBeVisible();
+  }
   await page.getByRole("button", { name: "Sheets" }).click();
   expect(onOpenUrl).toHaveBeenCalledWith("https://docs.google.com/spreadsheets/");
   await expect.element(page.getByRole("button", { name: "Sheets" })).not.toBeInTheDocument();

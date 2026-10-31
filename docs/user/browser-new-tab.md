@@ -1,8 +1,9 @@
 # New browser tab
 
-An empty browser tab starts with **Google**, **Gmail** and **Apps**, which holds Drive, Calendar,
-Docs, Sheets, Slides, Meet, Scholar, Maps and Translate. They open in the profile shown in the
-toolbar, so you reach that profile's account. If it isn't signed in, Google shows its sign-in first.
+An empty browser tab starts with **Google**, **Gmail** and **Apps**, which holds your Google
+Account, Drive, Calendar, Docs, Sheets, Slides, Meet, Tasks, YouTube, Scholar, Maps and Translate.
+They open in the profile shown in the toolbar, so you reach that profile's account. If it isn't
+signed in, Google shows its sign-in first.
 
 Shortcuts sit below them, above your local previews and recently used pages. Sites you add come
 first, then the sites you open most, then Scholar, PubMed, arXiv, Overleaf, Drive and Calendar.

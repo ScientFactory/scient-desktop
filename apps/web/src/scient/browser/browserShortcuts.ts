@@ -68,12 +68,15 @@ const SCHOLAR: HomeSite = {
 };
 
 export const GOOGLE_APPS: ReadonlyArray<HomeSite> = [
+  { name: "Account", url: "https://myaccount.google.com/", icon: ICONS.account },
   DRIVE,
   CALENDAR,
   { name: "Docs", url: "https://docs.google.com/document/", icon: ICONS.docs },
   { name: "Sheets", url: "https://docs.google.com/spreadsheets/", icon: ICONS.sheets },
   { name: "Slides", url: "https://docs.google.com/presentation/", icon: ICONS.slides },
   { name: "Meet", url: "https://meet.google.com/", icon: ICONS.meet },
+  { name: "Tasks", url: "https://tasks.google.com/", icon: ICONS.tasks },
+  { name: "YouTube", url: "https://www.youtube.com/", icon: ICONS.youtube },
   SCHOLAR,
   { name: "Maps", url: "https://maps.google.com/", icon: ICONS.maps },
   { name: "Translate", url: "https://translate.google.com/", icon: ICONS.translate },
