@@ -66,7 +66,7 @@ describe("Ask in chat for a clicked caret", () => {
     await click(20, 30);
     await vi.waitFor(() => expect(action()).not.toBeNull());
     const surface = document.querySelector('[data-testid="surface"]')!.getBoundingClientRect();
-    const { left, top } = action()!.getBoundingClientRect();
+    const { left, top } = action()!.closest('[role="group"]')!.getBoundingClientRect();
     expect([left - surface.left, top - surface.top]).toEqual([20, 30]);
   });
 
