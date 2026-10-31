@@ -5,9 +5,16 @@
  */
 export const ACCOUNT_SECRET_REQUEST_PREFIX = "scient-account:";
 
+/** A card asking for a sign-in code, which goes straight into a page and is never saved. */
+export const SIGN_IN_CODE_REQUEST_PREFIX = `${ACCOUNT_SECRET_REQUEST_PREFIX}sign-in-code:`;
+
 /** Card turn items end with the encoded request id (`turn-item:secret-request:<thread>:<id>`). */
+export const isSignInCodeRequest = (turnItemId: string | undefined) =>
+  turnItemId?.includes(`:${encodeURIComponent(SIGN_IN_CODE_REQUEST_PREFIX)}`) === true;
+
 export const isAccountSecretRequest = (turnItemId: string | undefined) =>
-  turnItemId?.includes(`:${encodeURIComponent(ACCOUNT_SECRET_REQUEST_PREFIX)}`) === true;
+  turnItemId?.includes(`:${encodeURIComponent(ACCOUNT_SECRET_REQUEST_PREFIX)}`) === true &&
+  !isSignInCodeRequest(turnItemId);
 
 /** Accounts cards' privacy note: new keys are readable by default, so the card says so. */
 export const ACCOUNT_SECRET_REQUEST_NOTE =

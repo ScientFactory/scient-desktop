@@ -21,7 +21,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../../components/ui/Button";
 // SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
-import { SIGN_IN_CODE_LABEL_PREFIX } from "@t3tools/shared/scientSignInPage";
+import { isSignInCodeRequest } from "@t3tools/shared/scientAccountSecretRequest";
 // SCIENT-FORK:END
 
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
@@ -116,7 +116,7 @@ function PendingSecretRequestForm(props: {
         onChangeText={setSecret}
         editable={!submitting}
         // SCIENT-FORK:START — Scient Accounts: a sign-in code is offered by the phone, one tap.
-        {...(item.label.startsWith(SIGN_IN_CODE_LABEL_PREFIX)
+        {...(isSignInCodeRequest(item.id)
           ? ({
               autoComplete: "one-time-code",
               textContentType: "oneTimeCode",

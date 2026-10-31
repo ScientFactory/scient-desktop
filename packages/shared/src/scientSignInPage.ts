@@ -13,9 +13,6 @@ export const isLoginPlace = (url: URL) =>
   /(?:^|[/_-])(?:log[\s_-]?in|sign[\s_-]?in|sso|auth)(?:[/_-]|$)/i.test(url.pathname) ||
   /^(?:login|signin|sso|auth|idp)\./i.test(url.hostname);
 
-/** Labels the private card that asks for a sign-in code, so phones can offer the code by itself. */
-export const SIGN_IN_CODE_LABEL_PREFIX = "Code for ";
-
 /** What the user has to do to finish a sign-in that is waiting for them. */
 export function accountHandoffInstruction(kind: AccountHandoff["kind"]) {
   switch (kind) {

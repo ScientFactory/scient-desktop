@@ -480,8 +480,9 @@ untouched, and imported cookies pass through the same listener. HttpOnly changes
 cookie store within 3 seconds instead of Chromium's roughly 30.
 
 `watchKeepSignedIn` stops sessions idling out while the app is open. Every ten minutes it asks at
-most one site for a page through `session.fetch`, with the session the profile already has and no
-page opened, so nothing new is created and other devices aren't affected. Each sign-in is visited
+most one public HTTPS site for a page (`quietVisit`), with the session the profile already has, no
+page opened and redirects read rather than followed, so nothing new is created and other devices
+aren't affected. Each sign-in is visited
 once a day; a session that ended sooner halves that gap, down to six hours. Shorter sessions are left
 alone, and Google is skipped because its sessions hold without visits. It never signs in. A session
 that ended is marked signed out and no longer visited, and the next real use signs in again. If that
@@ -518,6 +519,8 @@ always need Touch ID or the Mac password. Nothing else in Accounts depends on th
   profile idle for 12 days. Chrome's continued use is the likely cause, not yet proven.
 - Known values are not masked in chat or logs, and commits are not checked. These can get in the way
   of real work, so they follow one at a time.
+- With the system keychain denied, a private card can't be sealed, so it reports that and saves
+  nothing.
 - Webhook signing secrets stay in the scheduler's database.
 - A CAPTCHA can't be solved from the phone.
 

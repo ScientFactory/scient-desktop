@@ -13,9 +13,14 @@ const GENERIC_NAMES = new Set([
   "account",
   "accounts",
   "auth",
+  "com",
+  "edu",
+  "gov",
   "library",
   "login",
   "mail",
+  "net",
+  "org",
   "secure",
   "signin",
   "sso",
@@ -45,8 +50,8 @@ export function serviceWords(input: {
  * code from anyone else must never go into this site's page, so anything unclear goes to the card.
  */
 export function codeInText(text: string, service: ReadonlyArray<string>) {
-  const lower = text.toLowerCase();
-  if (!service.some((word) => lower.includes(word))) return undefined;
+  const words = new Set(text.toLowerCase().split(/[^\p{L}\p{N}]+/u));
+  if (!service.some((word) => words.has(word))) return undefined;
   return CODE_WORDS.test(text) ? CODE.exec(text)?.[0] : undefined;
 }
 

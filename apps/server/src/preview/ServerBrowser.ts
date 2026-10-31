@@ -1435,6 +1435,7 @@ const make = Effect.gen(function* () {
             tab.desktop !== null &&
             tab.threadId !== threadId &&
             tab.viewers.size === 0 &&
+            tab.recording === undefined &&
             // Never one an agent is using right now.
             tab.usedAt < Date.now() - RELEASE_IDLE_MS,
         )

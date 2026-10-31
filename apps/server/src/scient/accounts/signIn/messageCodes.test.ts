@@ -61,3 +61,10 @@ describe("sign-in codes in messages", () => {
     NodeFS.rmSync(directory, { recursive: true });
   });
 });
+
+it("needs the service's whole name, so a domain label can't match inside another word", () => {
+  const service = serviceWords({ name: "Sydney", sites: ["sydney.edu.au"] });
+  expect(service).not.toContain("edu");
+  expect(codeInText("Your Schedule code is 123456", service)).toBeUndefined();
+  expect(codeInText("Sydney University code 123456", service)).toBe("123456");
+});

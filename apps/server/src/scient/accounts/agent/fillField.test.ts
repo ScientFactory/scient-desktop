@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   defaultAccountControls,
+  defaultBrowserProfileRecord,
   type AccountSummary,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -42,7 +43,9 @@ const tabStatus = (ownedByCaller: boolean): PreviewAutomationStatus => ({
   title: null,
   loading: false,
   profiles: [{ id: BrowserProfileId.make("default"), name: "Default" }],
-  tabs: [{ tabId: "tab-fixture", url: null, ownedByCaller }],
+  tabs: [
+    { tabId: "tab-fixture", url: null, profileId: BrowserProfileId.make("default"), ownedByCaller },
+  ],
 });
 
 const run = (
@@ -75,7 +78,8 @@ const run = (
   return fillField(scope, account, { field }).pipe(
     Effect.map((result) => ({ result, typed, asked })),
     Effect.provideService(AccountsService, {
-      ...fakeAccounts({ profiles: [] }).service,
+      ...fakeAccounts({ profiles: [defaultBrowserProfileRecord(BrowserProfileId.make("default"))] })
+        .service,
       resolveSecrets: (_accountId, fields) => {
         asked.push(...fields);
         return Effect.succeed({ password: Redacted.make("synthetic-password") });

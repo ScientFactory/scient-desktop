@@ -16,6 +16,7 @@ import { AccountsService, type AccountSessionScope } from "../AccountsService.ts
 import { SignInDetection, signInDetectionScript } from "../signIn/detection.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
 import { accountOtp } from "../signIn/totp.ts";
+import { authorizePreviewTab } from "./previewProfileAccess.ts";
 
 /** Only the agent sees whether a password worked, so a refused one must not be able to repeat. */
 const PASSWORD_FILL_GAP_MS = 15 * 60 * 1000;
@@ -85,6 +86,7 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
   const tabId = input.tabId ?? status.tabId ?? undefined;
   if (!status.tabs?.some((tab) => tab.tabId === tabId && tab.ownedByCaller))
     return yield* denied("Fill only your own browser tab.");
+  yield* authorizePreviewTab(scope, status, tabId);
   const page = yield* decodeDetection(
     yield* invoke<unknown>("evaluate", { expression: signInDetectionScript }, tabId),
   ).pipe(

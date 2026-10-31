@@ -3,7 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import type { AccountSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { SIGN_IN_CODE_LABEL_PREFIX } from "@t3tools/shared/scientSignInPage";
+import { SIGN_IN_CODE_REQUEST_PREFIX } from "@t3tools/shared/scientAccountSecretRequest";
 import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
 import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
 import { SecretRequests } from "../../../secrets/SecretRequests.ts";
@@ -51,10 +51,10 @@ export const signInCodes = Effect.fn("AccountsAgent.signInCodes")(function* (
         return Effect.never;
       return orchestrator.value
         .requestSecret(caller.value, {
-          label: `${SIGN_IN_CODE_LABEL_PREFIX}${site}`,
+          label: `Code for ${site}`,
           reason: `${site} sent a sign-in code for ${account.name}. It goes straight into the page.`,
           placeholder: "123456",
-          clientRequestId: `scient-sign-in-code:${NodeCrypto.randomUUID()}`,
+          clientRequestId: `${SIGN_IN_CODE_REQUEST_PREFIX}${NodeCrypto.randomUUID()}`,
         })
         .pipe(
           Effect.flatMap((asked) =>
