@@ -50,7 +50,10 @@ const candidate = Schema.decodeSync(Schema.fromJsonString(ComputeRecipeCatalog))
     },
   ),
 );
-const qualifiedTargets = purpose === "python" ? ["darwin-arm64", "linux-x64"] : ["darwin-arm64"];
+const qualifiedTargets =
+  purpose === "python"
+    ? ["darwin-arm64", "darwin-x64", "linux-x64", "win32-x64"]
+    : ["darwin-arm64"];
 if (
   candidate.recipes.some(
     (recipe) => JSON.stringify([...recipe.targets].sort()) !== JSON.stringify(qualifiedTargets),
