@@ -23,7 +23,7 @@ import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
 import { readGoogleSessions } from "./googleSessions.ts";
-import { quietVisit } from "./quietVisit.ts";
+import { isPublicHttps, quietVisit } from "./quietVisit.ts";
 import * as Channels from "./protocol.ts";
 
 const Value = Schema.String.check(Schema.isMaxLength(65_536));
@@ -140,7 +140,7 @@ const visitQuietly = Effect.fn("DesktopAccounts.visitQuietly")(function* (
 ) {
   if (!(yield* mainSender(event))) return null;
   const input = decodeQuietVisit(raw);
-  if (Option.isNone(input)) return null;
+  if (Option.isNone(input) || !isPublicHttps(input.value.url)) return null;
   const manager = yield* PreviewManager;
   const scope = resolvePartitionScope(
     input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -148,7 +148,21 @@ const visitQuietly = Effect.fn("DesktopAccounts.visitQuietly")(function* (
   );
   return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
     Effect.flatMap((session) =>
-      Effect.tryPromise({ try: () => quietVisit(session, input.value.url), catch: unavailable }),
+      Effect.tryPromise({
+        try: () =>
+          quietVisit(
+            (url) =>
+              Electron.net.request({
+                url,
+                session,
+                credentials: "include",
+                useSessionCookies: true,
+                redirect: "manual",
+              }),
+            input.value.url,
+          ),
+        catch: unavailable,
+      }),
     ),
     Effect.orElseSucceed(() => null),
   );

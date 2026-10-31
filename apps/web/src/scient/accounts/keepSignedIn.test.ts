@@ -54,6 +54,9 @@ it("reads the end of a session from where the site sent the request", () => {
   expect(sessionEnded("https://github.com/", "https://github.com/login", 200)).toBe(true);
   expect(sessionEnded("https://a.example/", "https://sso.example/start", 200)).toBe(true);
   expect(sessionEnded("https://a.example/", "https://a.example/", 401)).toBe(true);
+  // A bot filter answers 403 to a live session too.
+  expect(sessionEnded("https://a.example/", "https://a.example/", 403)).toBe(false);
+  expect(sessionEnded("https://a.example/", "", 200)).toBe(false);
   expect(sessionEnded("https://github.com/", "https://github.com/", 200)).toBe(false);
   // A site whose own address looks like a sign-in page proves nothing by staying there.
   expect(sessionEnded("https://sso.example/", "https://sso.example/home", 200)).toBe(false);

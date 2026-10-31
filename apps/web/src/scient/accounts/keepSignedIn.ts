@@ -41,9 +41,10 @@ export function nextQuietVisit(
 }
 
 /** A site's answer that means the session is over. A site may also just show its public page. */
-export function sessionEnded(requestedUrl: string, finalUrl: string, status: number) {
-  if (status === 401 || status === 403) return true;
-  return isLoginPlace(new URL(finalUrl)) && !isLoginPlace(new URL(requestedUrl));
+export function sessionEnded(requestedUrl: string, answeredUrl: string, status: number) {
+  if (status === 401) return true;
+  if (!URL.canParse(answeredUrl)) return false;
+  return isLoginPlace(new URL(answeredUrl)) && !isLoginPlace(new URL(requestedUrl));
 }
 
 /** Sessions ended between visits get visited more often, down to the shortest gap. */
@@ -72,7 +73,8 @@ export function watchKeepSignedIn(
   const visit = window.desktopBridge?.accounts?.quietVisit;
   if (!visit) return () => undefined;
   const key = `scient:quiet-visits:${environmentId}`;
-  const tick = async () => {
+  let visiting = false;
+  const visitNext = async () => {
     const snapshot = await accountsState.readSnapshot.run(registry, { environmentId, input: {} });
     if (snapshot._tag !== "Success") return;
     const visits = readVisits(key);
@@ -94,6 +96,13 @@ export function watchKeepSignedIn(
         input: { accountId: target.accountId },
       });
   };
-  const timer = setInterval(() => void tick(), TICK_MS);
+  const tick = () => {
+    if (visiting) return;
+    visiting = true;
+    void visitNext().finally(() => {
+      visiting = false;
+    });
+  };
+  const timer = setInterval(tick, TICK_MS);
   return () => clearInterval(timer);
 }
