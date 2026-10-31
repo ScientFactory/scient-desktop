@@ -960,21 +960,22 @@ describe("ChatMarkdown math", () => {
     },
   );
 
-  it("keeps message formulas reachable by keyboard", async () => {
+  it("skips a message formula that fits when tabbing", async () => {
     setup();
     setMathRenderingEnabled(true);
     await using screen = await render(
       <>
         <button type="button">Before equation</button>
         <ChatMarkdown text="$x$" cwd={undefined} />
+        <button type="button">After equation</button>
       </>,
     );
-    const { container } = screen;
-    container.querySelector("button")!.focus();
+    await vi.waitFor(() => {
+      expect(screen.container.querySelector("[data-markdown-math]")).not.toBeNull();
+    });
+    await screen.getByRole("button", { name: "Before equation" }).click();
     await userEvent.tab();
-    expect(document.activeElement).toBe(
-      container.querySelector('[aria-label="Scroll inline equation"]'),
-    );
+    await expect.element(screen.getByRole("button", { name: "After equation" })).toHaveFocus();
   });
 
   it("fits inline formulas that end in a subscript or root without scrolling", async () => {
