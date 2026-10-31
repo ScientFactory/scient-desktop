@@ -341,26 +341,11 @@ describe.skipIf(!canApply)("OverleafSync", () => {
             w.service.sync({ caller: w.at(w.elsewhere), connectionId: id, requestId: "s2" }),
           ),
         ).toMatchObject({ reason: "workspace-not-authorized" });
-        // A checkout re-registered under a new binding needs relinking first.
+        // Registration changes; the folder is the same, so the link simply goes on working.
         w.bindings.set(w.main, {
           bindingId: "binding-main-2",
           hostProjectId: "project-1",
           generation: 1,
-        });
-        expect(
-          yield* Effect.flip(
-            w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
-          ),
-        ).toMatchObject({ reason: "relink-needed" });
-        expect(
-          yield* w.service.relink({
-            caller: w.at(w.main),
-            connectionId: id,
-            folder: "paper",
-            requestId: "m1",
-          }),
-        ).toMatchObject({
-          _tag: "done",
         });
         const after = yield* w.service.sync({
           caller: w.at(w.main),
@@ -1064,7 +1049,7 @@ describe.skipIf(!canApply)("OverleafSync", () => {
     ),
   );
 
-  it.live("lists a connection only for the project that owns its recorded binding", () =>
+  it.live("lists a link for the project at its folder, even one added again", () =>
     run(
       Effect.gen(function* () {
         const w = yield* world();
@@ -1079,13 +1064,16 @@ describe.skipIf(!canApply)("OverleafSync", () => {
         expect(yield* w.service.list(w.at(w.main))).toMatchObject([
           { connectionId: connected.connection.connectionId, linkedHere: true },
         ]);
-        // The same path registered again under another project does not inherit the link.
+        // The same folder added again as a project keeps its link, and others still don't see it.
         w.bindings.set(w.main, {
           bindingId: "binding-main-b",
-          hostProjectId: "project-2",
+          hostProjectId: "project-3",
           generation: 1,
         });
-        expect(yield* w.service.list(w.at(w.main))).toEqual([]);
+        expect(yield* w.service.list(w.at(w.main))).toMatchObject([
+          { connectionId: connected.connection.connectionId, linkedHere: true },
+        ]);
+        expect(yield* w.service.list(w.at(w.elsewhere))).toEqual([]);
       }),
     ),
   );

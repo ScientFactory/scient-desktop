@@ -81,8 +81,6 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
     reason: Schema.Literals([
       /** The caller's workspace could not be resolved, or is not this connection's project. */
       "workspace-not-authorized",
-      /** The connection's checkout is no longer the binding it recorded: relink it. */
-      "relink-needed",
       /** No Overleaf token is saved. */
       "token-missing",
       "project-invalid",
@@ -104,8 +102,6 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
         return "Repair or reinstall Scient on this project's server before syncing.";
       case "workspace-not-authorized":
         return "This Overleaf link does not belong to this project.";
-      case "relink-needed":
-        return "This project's folder changed since it was linked to Overleaf. Relink it.";
       case "token-missing":
         return "No Overleaf Git token is saved. Save one first.";
       case "project-invalid":
@@ -593,10 +589,21 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     );
 
   /**
-   * The connection, if the caller may use it: its checkout is still the binding it
-   * recorded, and the caller is in the same host project (another worktree acts on it).
-   * `guard` re-checks both authorities, as resolved now, before every change to the
-   * folder and inside send admission (contract rule 2).
+   * Whether a link is the caller's: it sits in the caller's checkout, or the project it
+   * recorded is the caller's. A link is its physical folders, proved before every change;
+   * registration comes and goes (a project added again, a new Git repository).
+   */
+  const isCallers =
+    (resolved: ResolvedThreadWorkspaceBinding) => (document: OverleafConnectionDocument) =>
+      document.checkout.canonicalRoot === resolved.binding.canonicalRoot
+        ? Effect.succeed(true)
+        : ownedBy(resolved)(document.binding.bindingId);
+
+  /**
+   * The connection, if the caller may use it: it is the caller's, and any project
+   * registered at its checkout is the caller's (another worktree acts on it). `guard`
+   * re-checks both as resolved now, before every change and inside send admission
+   * (contract rule 2). Seeing and unlinking need neither the checkout nor the folder.
    */
   const authorize = Effect.fn("OverleafSync.authorize")(function* (
     caller: OverleafCaller,
@@ -609,36 +616,36 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     const document = read.document;
     const linked = yield* resolver
       .resolveWorkspaceRoot(document.checkout.canonicalRoot)
-      .pipe(Effect.mapError(() => new OverleafSyncRefusedError({ reason: "relink-needed" })));
-    if (linked.binding.hostProjectId !== resolved.binding.hostProjectId)
-      return yield* new OverleafSyncRefusedError({ reason: "workspace-not-authorized" });
+      .pipe(Effect.option);
     if (
-      linked.binding.bindingId !== document.binding.bindingId ||
-      linked.binding.authorityGeneration !== document.binding.authorityGeneration
+      !(yield* isCallers(resolved)(document)) ||
+      Option.exists(
+        linked,
+        (found) => found.binding.hostProjectId !== resolved.binding.hostProjectId,
+      )
     )
-      return yield* new OverleafSyncRefusedError({ reason: "relink-needed" });
+      return yield* new OverleafSyncRefusedError({ reason: "workspace-not-authorized" });
+    const stillCaller = callerCurrent(caller, resolved);
     const guard = (connection: OverleafConnectionDocument) =>
       checkAuthority(connection).pipe(Effect.orElseSucceed(() => false));
     const checkAuthority = Effect.fn("OverleafSync.checkAuthority")(function* (
       connection: OverleafConnectionDocument,
     ) {
-      if (!(yield* callerCurrent(caller, resolved))) return false;
+      if (Option.isNone(linked) || !(yield* stillCaller)) return false;
       yield* resolver.assertCurrentWorkspaceScope({
         workspaceRoot: connection.checkout.canonicalRoot,
-        bindingId: linked.binding.bindingId,
-        authorityGeneration: linked.binding.authorityGeneration,
-        scopeRevision: linked.scopeRevision,
+        bindingId: linked.value.binding.bindingId,
+        authorityGeneration: linked.value.binding.authorityGeneration,
+        scopeRevision: linked.value.scopeRevision,
       });
-      return (
-        connection.binding.bindingId === linked.binding.bindingId &&
-        connection.binding.authorityGeneration === linked.binding.authorityGeneration
-      );
+      return true;
     });
     return {
       document,
       guard,
+      stillCaller,
       callerBindingId: resolved.binding.bindingId,
-      linkedElsewhere: linked.binding.bindingId !== resolved.binding.bindingId,
+      linkedElsewhere: document.checkout.canonicalRoot !== resolved.binding.canonicalRoot,
     };
   });
 
@@ -698,19 +705,17 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
 
   const list = Effect.fn("OverleafSync.list")(function* (caller: OverleafCaller) {
     const resolved = yield* resolveCaller(caller);
-    const owns = ownedBy(resolved);
     const result: Array<OverleafConnectionSummary & { readonly linkedHere: boolean }> = [];
     for (const document of yield* connections.documents) {
       if (document.state !== "active") continue;
-      // Ownership is the recorded binding's project, whatever the folder's path resolves to now.
-      if (!(yield* owns(document.binding.bindingId))) continue;
+      if (!(yield* isCallers(resolved)(document))) continue;
       const summary = (yield* connections.list({
         checkoutRoot: document.checkout.canonicalRoot,
       })).find((entry) => entry.connectionId === document.connectionId);
       if (summary !== undefined)
         result.push({
           ...summary,
-          linkedHere: document.binding.bindingId === resolved.binding.bindingId,
+          linkedHere: document.checkout.canonicalRoot === resolved.binding.canonicalRoot,
         });
     }
     return result;
@@ -1213,12 +1218,24 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     readonly connectionId: string;
     readonly requestId: string;
   }) {
-    const { guard, callerBindingId } = yield* authorize(input.caller, input.connectionId);
+    const { document, guard, stillCaller, callerBindingId } = yield* authorize(
+      input.caller,
+      input.connectionId,
+    );
+    // An interrupted sync finishes first when it can; unlinking never waits on it.
+    if (document.activeApply !== null)
+      yield* engine(
+        guard,
+        savingEditorsFirst(
+          input.connectionId,
+          coordinator.recover({ connectionId: input.connectionId }),
+        ),
+      ).pipe(Effect.exit);
     return yield* connections.disconnect({
       connectionId: input.connectionId,
       requestId: input.requestId,
       callerBindingId,
-      stillAuthorized: guard,
+      stillAuthorized: stillCaller,
     });
   });
 

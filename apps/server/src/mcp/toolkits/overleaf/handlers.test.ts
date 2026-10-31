@@ -523,7 +523,6 @@ describe("Overleaf tool handlers", () => {
           new OverleafFilesystemError({ reason: "online-only-file", path: "/private/path" }),
           "retention-unavailable",
         ],
-        [new OverleafSyncRefusedError({ reason: "relink-needed" }), "relink-needed"],
         [new OverleafSyncRefusedError({ reason: "access-denied" }), "overleaf-access-denied"],
         [new OverleafSyncRefusedError({ reason: "unreachable" }), "overleaf-unreachable"],
         [new OverleafSyncRefusedError({ reason: "git-failed" }), "failed"],

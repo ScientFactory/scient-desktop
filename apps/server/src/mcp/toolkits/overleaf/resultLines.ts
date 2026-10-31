@@ -636,7 +636,7 @@ const REASON_TEXT: Record<string, string> = {
   "conflict-marks": "files have conflict marks to merge",
   staging: "folders an interrupted change left in place; the next sync settles them",
   "folder-changed":
-    "the folder moved, its disk is away, or the project's link to this checkout changed; relink it",
+    "the folder moved, was deleted, or its disk is away; relink it to the folder at its new place, or disconnect it",
   "unresolved-sends": "earlier sends have no answer yet; a sync or recover checks them",
 };
 
