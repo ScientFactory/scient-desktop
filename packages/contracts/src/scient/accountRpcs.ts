@@ -19,6 +19,7 @@ import {
   AccountSaveResult,
   AccountSetControlsInput,
   AccountCodeSources,
+  AccountGoogleSessions,
   AccountCodeSourcesResult,
   AccountKeyLink,
   AccountPaperForSourceInput,
@@ -54,6 +55,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsTest: "accounts.test",
   accountsCheck: "accounts.check",
   accountsSignInSeen: "accounts.signInSeen",
+  accountsGoogleSessionsSeen: "accounts.googleSessions.seen",
   accountsSetCodeSources: "accounts.codeSources.set",
   accountsLinkKey: "accounts.keys.link",
   accountsPaperForSource: "accounts.papers.getForSource",
@@ -135,6 +137,11 @@ export const WsAccountsSignInSeenRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
   success: Empty,
   error: AccountsRpcError,
 });
+
+export const WsAccountsGoogleSessionsSeenRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsGoogleSessionsSeen,
+  { payload: AccountGoogleSessions, success: Schema.Struct({}), error: AccountsRpcError },
+);
 
 export const WsAccountsSetCodeSourcesRpc = Rpc.make(
   SCIENT_ACCOUNT_WS_METHODS.accountsSetCodeSources,

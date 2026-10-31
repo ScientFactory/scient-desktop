@@ -55,6 +55,9 @@ import {
 } from "./AccountPersistence.ts";
 import { AccountSources, type OnePasswordClient } from "./AccountSources.ts";
 import {
+  GOOGLE_RECHECK_WRITE_MS,
+  GOOGLE_SITE,
+  isGoogleSessionRow,
   applyApprovalDecision,
   agentAccessOff,
   authorizationDecision,
@@ -848,6 +851,50 @@ export const layer = Layer.effect(
               ...(state.profileChoices
                 ? { profileChoices: withoutProfile(state.profileChoices, profileId) }
                 : {}),
+            }),
+          ),
+        ),
+      ),
+      googleSessionsSeen: Effect.fn("AccountsService.googleSessionsSeen")((input) =>
+        locked(
+          batched(
+            Effect.gen(function* () {
+              const rows = () =>
+                state.accounts.filter(({ summary }) =>
+                  isGoogleSessionRow(summary, input.profileId),
+                );
+              const address = ({ summary }: StoredAccount) =>
+                summary.details.kind === "website" ? summary.details.username : undefined;
+              for (const { email } of input.sessions)
+                if (!rows().some((account) => address(account) === email))
+                  yield* save({
+                    name: "Google",
+                    details: {
+                      kind: "website",
+                      sites: [GOOGLE_SITE],
+                      username: email,
+                      profileId: input.profileId,
+                    },
+                    secrets: {},
+                  });
+              const at = yield* now;
+              const nowMs = Date.parse(at);
+              for (const account of rows()) {
+                const valid = input.sessions.some(
+                  (session) => session.email === address(account) && session.valid,
+                );
+                const seen = valid ? ("signed-in" as const) : ("signed-out" as const);
+                const last = account.summary.lastCheck;
+                if (last?.state === seen && nowMs - Date.parse(last.at) < GOOGLE_RECHECK_WRITE_MS)
+                  continue;
+                yield* commit(
+                  replaceAccount({
+                    ...account,
+                    summary: { ...account.summary, lastCheck: { state: seen, at } },
+                  }),
+                  true,
+                );
+              }
             }),
           ),
         ),

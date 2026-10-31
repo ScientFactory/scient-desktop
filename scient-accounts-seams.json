@@ -231,6 +231,11 @@
       "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
     },
     {
+      "path": "apps/web/src/appInit.tsx",
+      "anchor": "./scient/accounts/accountWatchers",
+      "purpose": "Start saved sign-in autofill with the app, whatever the notification settings."
+    },
+    {
       "path": "apps/web/src/components/ThreadNotificationCoordinator.tsx",
       "anchor": "../scient/accounts/accountNotifications",
       "purpose": "Present account approvals and sign-in hand-offs through the existing thread notification path."

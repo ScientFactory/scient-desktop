@@ -1,6 +1,5 @@
 // SCIENT-FORK:START — Account approvals and sign-in hand-offs use thread notifications.
 import { watchAccountNotifications } from "../scient/accounts/accountNotifications";
-import { watchAccountAutofill } from "../scient/accounts/accountAutofill";
 // SCIENT-FORK:END
 import {
   type EnvironmentThreadShell,
@@ -307,13 +306,10 @@ export function startThreadNotifications(
         }
       },
     );
-    // Autofill fills saved sign-ins in every tab of this environment, shown or hidden.
-    const unsubscribeAutofill = watchAccountAutofill(registry, environmentId);
     // SCIENT-FORK:END
     entry.unsubscribe = () => {
       // SCIENT-FORK:START — Dispose the account observers with their environment.
       unsubscribeAccounts();
-      unsubscribeAutofill();
       // SCIENT-FORK:END
       unsubscribeShell();
       unsubscribeRequests();

@@ -85,6 +85,7 @@ export function useSignInRecording(input: {
     }
     const previous = observation.current;
     if (!previous) return;
+    window.dispatchEvent(new Event("scient-accounts-session-changed"));
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = Date.now() + 300_000;

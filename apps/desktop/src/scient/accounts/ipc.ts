@@ -22,6 +22,7 @@ import { groupSignedInSites, siteCookieRemovals } from "./signedInSites.ts";
 import { loginFillScript, loginFormReportScript } from "./loginFields.ts";
 import { accountsSessionIdentity } from "./sessionIdentity.ts";
 import { DesktopAccountsError } from "./errors.ts";
+import { readGoogleSessions } from "./googleSessions.ts";
 import * as Channels from "./protocol.ts";
 
 const Value = Schema.String.check(Schema.isMaxLength(65_536));
@@ -123,6 +124,26 @@ export const signedInSites = Effect.fn("DesktopAccounts.signedInSites")(function
       ),
     ),
     Effect.orElseSucceed(() => []),
+  );
+});
+
+export const googleSessions = Effect.fn("DesktopAccounts.googleSessions")(function* (
+  raw: unknown,
+  event?: AccountsInvokeEvent,
+) {
+  if (!(yield* mainSender(event))) return null;
+  const input = decodeSites(raw);
+  if (Option.isNone(input)) return null;
+  const manager = yield* PreviewManager;
+  const scope = resolvePartitionScope(
+    input.value.environmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID,
+    input.value.profileId,
+  );
+  return yield* manager.getBrowserSession(scope.scope, scope.persistent, scope.namespace).pipe(
+    Effect.flatMap((session) =>
+      Effect.tryPromise({ try: () => readGoogleSessions(session), catch: unavailable }),
+    ),
+    Effect.orElseSucceed(() => null),
   );
 });
 
@@ -240,6 +261,7 @@ export const installAccountsIpc = Effect.fn("DesktopAccounts.installIpc")(functi
   yield* ipc.handle({ channel: Channels.SOURCE_PROFILES, handler: sourceProfiles });
   yield* ipc.handle({ channel: Channels.SIGNED_IN_SITES, handler: signedInSites });
   yield* ipc.handle({ channel: Channels.COOKIE_METADATA, handler: cookieMetadata });
+  yield* ipc.handle({ channel: Channels.GOOGLE_SESSIONS, handler: googleSessions });
   yield* ipc.handle({ channel: Channels.SIGN_OUT_SITE, handler: signOutSite });
   yield* ipc.handle({ channel: Channels.FILL, handler: fill });
   yield* ipc.handle({ channel: Channels.LOGIN_FORM, handler: inspectLoginForm });

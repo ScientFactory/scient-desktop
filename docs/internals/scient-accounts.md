@@ -406,7 +406,7 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
   "Update password?", or no prompt for an unchanged password, including Scient’s own fills. The
   prompt offers available stores; nothing is kept unless the user saves.
 - **Autofill**: the persistent desktop guest reports a visible login form after load. One watcher
-  per environment (`accountAutofill.ts`, mounted with the account notifications) fills every
+  per environment (`accountAutofill.ts`, started by `accountWatchers.ts`) fills every
   desktop tab, shown or hidden, the user's or an agent's, once per document, without submitting,
   only when fields remain empty and nobody typed. In the user's tabs agent access does not gate it
   (owner, 2026-10-30); in a tab an agent controls (`automationOwner`) only sign-ins that agent may
@@ -441,6 +441,14 @@ run skips imported passwords with no history and stops at 40 accounts.
 
 Autofill submits only on the user's own tab, when the site has one saved sign-in whose
 `lastSignInOutcome` is `signed-in`, at most once per site every 10 minutes, and only a complete form.
+
+Google answers for itself. `googleSessions` (desktop) posts to the account list Chrome reads, with
+the profile's own session and no page, and `watchGoogleSessions` (`accountWatchers.ts`) sends the
+result to `accounts.googleSessions.seen` at startup, after a sign-in, and on focus at most every five
+minutes. A profile with no Google cookies isn't asked. The server keeps one password-free website
+row per address and profile, site `google.com`, with `lastCheck` set from what Google said. Those
+rows tell `pickBrowserProfile` where each account lives, and a saved password stays a separate row
+so autofill doesn't widen to every Google subdomain.
 
 ### Sign-in codes
 

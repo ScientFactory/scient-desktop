@@ -276,6 +276,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsTest]: "accounts",
   [WS_METHODS.accountsCheck]: "accounts",
   [WS_METHODS.accountsSignInSeen]: "accounts",
+  [WS_METHODS.accountsGoogleSessionsSeen]: "accounts",
   [WS_METHODS.accountsSetCodeSources]: "accounts",
   [WS_METHODS.accountsLinkKey]: "accounts",
   [WS_METHODS.accountsPaperForSource]: "accounts",

@@ -56,6 +56,12 @@ export interface DesktopSignInFill {
 }
 
 /** Scient Accounts members of the desktop bridge (`ScientDesktopBridge.accounts`). */
+export interface DesktopGoogleSession {
+  readonly email: string;
+  /** False when Google remembers the account but no longer accepts its session. */
+  readonly valid: boolean;
+}
+
 export interface DesktopAccountsBridge {
   /** Set only when fill enforces expectedOrigin in the native guest before applying values. */
   readonly originBoundFill?: true;
@@ -81,6 +87,11 @@ export interface DesktopAccountsBridge {
     readonly httpOnly?: boolean;
     readonly expires?: number;
   }> | null>;
+  /** What Google says about this profile's accounts, or null when it couldn't be read. */
+  readonly googleSessions?: (
+    profileId: string,
+    environmentId?: string,
+  ) => Promise<ReadonlyArray<DesktopGoogleSession> | null>;
   /** Removes every cookie of one site (a registrable domain) from the profile. Optional for older desktops. */
   readonly signOutSite?: (
     profileId: string,

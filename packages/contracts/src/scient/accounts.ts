@@ -541,6 +541,15 @@ export const AccountKeyUnlinkInput = Schema.Struct({
   variable: EnvironmentVariableName,
 });
 
+/** The Google accounts a browser profile holds, as Google reports them. */
+export const AccountGoogleSessions = Schema.Struct({
+  profileId: BrowserProfileId,
+  sessions: Schema.Array(
+    Schema.Struct({ email: Schema.String.check(Schema.isMaxLength(256)), valid: Schema.Boolean }),
+  ),
+});
+export type AccountGoogleSessions = typeof AccountGoogleSessions.Type;
+
 /** Where Scient may look for a sign-in code. Off until the user turns it on. */
 export const AccountCodeSources = Schema.Struct({
   messages: Schema.Boolean,

@@ -11,6 +11,7 @@ export const LOGIN_FORM_DETECTED = "scient:accounts:login-form-detected";
 export const LOGIN_FORM_REPORT = "scient:accounts:login-form-report";
 
 export const COOKIE_METADATA = "scient:accounts:cookie-metadata";
+export const GOOGLE_SESSIONS = "scient:accounts:google-sessions";
 
 export const READ_BROWSER_PASSWORDS = "scient:accounts:read-browser-passwords";
 

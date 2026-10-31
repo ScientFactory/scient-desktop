@@ -90,6 +90,19 @@ export const outcomeCheckState = (
           ? "unknown"
           : "rejected";
 
+export const GOOGLE_SITE = "google.com";
+/** An unchanged answer from Google is written this often, to date it without constant writes. */
+export const GOOGLE_RECHECK_WRITE_MS = 60 * 60 * 1000;
+
+/** The row Scient keeps for a Google address in a profile. A saved password is a separate row. */
+export const isGoogleSessionRow = (account: AccountSummary, profileId: BrowserProfileId) =>
+  account.details.kind === "website" &&
+  account.details.profileId === profileId &&
+  account.details.username !== undefined &&
+  account.details.sites.length === 1 &&
+  account.details.sites[0] === GOOGLE_SITE &&
+  account.secrets.password === undefined;
+
 const LIMITED_PAUSE_MS = 60 * 60 * 1000;
 const RETRY_PAUSE_MS = 15 * 60 * 1000;
 

@@ -107,6 +107,12 @@ export const makeAccountsRpcHandlers = ({
           .pipe(Effect.as({})),
         attributes,
       ),
+    [WS_METHODS.accountsGoogleSessionsSeen]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsGoogleSessionsSeen,
+        accounts.googleSessionsSeen(input).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsSetCodeSources]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSetCodeSources,
@@ -296,6 +302,7 @@ export const accountsForRpc = Effect.serviceOption(AccountsService).pipe(
         remove: unavailable,
         test: unavailable,
         recordCheck: unavailable,
+        googleSessionsSeen: unavailable,
         setCodeSources: unavailable,
         setKeyLink: unavailable,
         setControls: unavailable,

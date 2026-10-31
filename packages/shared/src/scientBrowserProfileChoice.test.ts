@@ -119,6 +119,22 @@ describe("pickBrowserProfile", () => {
 });
 
 describe("profileSignIns", () => {
+  it("follows what a check found, in either direction", () => {
+    const row = {
+      details: { kind: "website", profileId: "work", sites: ["google.com"], username: "a@b.co" },
+      secrets: {},
+    };
+    expect(profileSignIns([{ ...row, lastCheck: { state: "signed-in" } }])).toEqual([
+      { profileId: "work", sites: ["google.com"] },
+    ]);
+    expect(profileSignIns([{ ...row, lastCheck: { state: "signed-out" } }])).toEqual([]);
+    expect(
+      profileSignIns([
+        { ...row, lastSignInOutcome: "signed-in", lastCheck: { state: "signed-out" } },
+      ]),
+    ).toEqual([]);
+  });
+
   it("counts recorded sessions and successful sign-ins, never a saved password alone", () => {
     const site = (patch: object) => ({
       details: { kind: "website", profileId: "work", sites: ["huji.ac.il"] },

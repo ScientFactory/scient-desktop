@@ -86,6 +86,7 @@ export function fakeAccounts(
     updateProfile: () => unavailable,
     removeProfile: () => unavailable,
     chooseProfile: () => unavailable,
+    googleSessionsSeen: () => unavailable,
     setCodeSources: () => unavailable,
     setKeyLink: () => Effect.void,
     respondApproval: () => unavailable,

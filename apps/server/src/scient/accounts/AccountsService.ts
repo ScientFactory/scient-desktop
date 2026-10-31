@@ -6,6 +6,7 @@
 import type {
   AccountCheck,
   AccountCodeSources,
+  AccountGoogleSessions,
   AccountKeyLink,
   BrowserProfileChoiceInput,
   BrowserProfileChoices,
@@ -111,6 +112,8 @@ export interface AccountsServiceShape {
   /** Remembers the profile the user chose for a conversation (and its page's site) or project. */
   readonly chooseProfile: (input: BrowserProfileChoiceInput) => Effect.Effect<void, AccountsError>;
   readonly setCodeSources: (sources: AccountCodeSources) => Effect.Effect<void, AccountsError>;
+  /** Keeps one row per Google address in a profile, with the state Google reports. */
+  readonly googleSessionsSeen: (input: AccountGoogleSessions) => Effect.Effect<void, AccountsError>;
   /** Without an account, the variable keeps its value and stops following one. */
   readonly setKeyLink: (
     target: Pick<AccountKeyLink, "instanceId" | "variable">,
