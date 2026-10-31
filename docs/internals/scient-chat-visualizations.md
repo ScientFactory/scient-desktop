@@ -18,7 +18,7 @@ they receive the same behavior without a second integration.
 This is a representation layer, not an artifact database. The fenced JSON is
 authoritative and `data-markdown-copy` preserves it during whole-message copy.
 SVG, PNG, the Vega and Plotly runtimes, and interaction state are disposable local
-representations. The [Scientific Artifact Studio roadmap](./scientific-artifact-studio.md)
+representations. The [Scient Compute architecture](./scient-compute.md)
 defines how a future adapter resolves a durable `.vl.json` or `.plotly.json`
 artifact and its project-relative datasets into these runtimes without moving identity,
 provenance, or persistence into the chat card. It also defines the shared
