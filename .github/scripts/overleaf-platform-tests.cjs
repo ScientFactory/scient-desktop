@@ -12,6 +12,7 @@ const FILES = [
   "src/scient/overleaf/manuscriptPaths.test.ts",
   "src/scient/overleaf/overleafHostPaths.test.ts",
   "src/scient/overleaf/overleafFileAvailability.test.ts",
+  "src/scient/overleaf/OverleafSync.stuck.test.ts",
   "src/scient/workspace/WindowsRetainedFileMutation.test.ts",
   "src/scient/workspace/NativeFilePublication.resource.test.ts",
 ];

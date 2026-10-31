@@ -9,6 +9,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ScientOverleafReview } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
@@ -877,6 +878,44 @@ describe.skipIf(!canApply)("OverleafSync", () => {
         ).toMatchObject({ _tag: "refused", reason: "project-already-linked" });
       }),
     ),
+  );
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+    "doesn't take a folder it can't read for a gone one",
+    () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const sub = NodePath.join(w.main, "sub");
+          yield* Effect.promise(() => NodeFSP.mkdir(sub));
+          const connected = yield* w.service.connect({
+            caller: w.at(w.main),
+            folder: "sub/paper",
+            create: true,
+            project: PROJECT,
+            requestId: "c1",
+          });
+          if (connected._tag !== "connected") return yield* Effect.die(connected);
+          const id = connected.connection.connectionId;
+          // A permission problem, not a deleted folder: the link stays, and still blocks.
+          yield* Effect.acquireRelease(
+            Effect.promise(() => NodeFSP.chmod(sub, 0o000)),
+            () => Effect.promise(() => NodeFSP.chmod(sub, 0o700)),
+          );
+          expect(
+            yield* w.service.connect({
+              caller: w.at(w.main),
+              folder: "second",
+              create: true,
+              project: PROJECT,
+              requestId: "c2",
+            }),
+          ).toMatchObject({ _tag: "refused", reason: "project-already-linked" });
+          const kept = yield* w.store.readConnection(id);
+          if (kept._tag !== "ready") return yield* Effect.die(kept);
+          expect(kept.document.state).toBe("active");
+        }),
+      ),
   );
 
   it.live("cancels a sync at its next stage boundary", () =>
