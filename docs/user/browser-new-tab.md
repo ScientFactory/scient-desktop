@@ -12,8 +12,8 @@ Below them is a search box that works like the address bar. Type a web address t
 anything else to search with the search engine chosen in Settings. It uses the profile shown in the
 toolbar.
 
-Shortcuts sit below the search box, above your local previews and recently used pages. Sites you add come
-first, then the sites you open most, then Scholar, PubMed, arXiv, Overleaf, Drive and Calendar.
+Shortcuts sit below the search box, above your local previews and recently used pages. Sites you add
+come first, then the sites you open most, then Scholar, PubMed, arXiv, Overleaf, Drive and Calendar.
 
 Press **Add** to add a site with a name of your choice. To change one, hover it, press **⋯** and
 choose **Edit** to rename it or change its link, or **Remove**. An edited shortcut becomes one of
