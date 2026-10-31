@@ -79,6 +79,8 @@ export type ComputeRuntimeCandidate = typeof ComputeRuntimeCandidate.Type;
 
 export const ComputeLanguageRuntimeInspection = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
+  /** Always true: a language that is found works. Older clients require the key. */
+  enabled: Schema.optionalKey(Schema.Boolean),
   configuredExecutable: Schema.NullOr(ComputeExecutable),
   managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
@@ -124,6 +126,8 @@ export type ComputeFoundTool = typeof ComputeFoundTool.Type;
 /** Cheap Settings data, deliberately separate from runnable candidates. */
 export const ComputeLanguageRuntimeInventory = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
+  /** Always true: a language that is found works. Older clients require the key. */
+  enabled: Schema.optionalKey(Schema.Boolean),
   configuredExecutable: Schema.NullOr(ComputeExecutable),
   managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus),
   toolkits: Schema.Array(ComputeToolkitDescriptor).check(Schema.isMaxLength(64)),

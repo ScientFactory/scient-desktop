@@ -275,6 +275,7 @@ export function makeComputeRpcGateway(input: {
     return {
       languages: languages.map((language) => ({
         ...language,
+        enabled: true,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),
       ...(incomplete ? { incomplete } : {}),
@@ -321,6 +322,7 @@ export function makeComputeRpcGateway(input: {
       scope: project === null ? ("environment" as const) : ("project" as const),
       languages: inspected.map((language) => ({
         ...language,
+        enabled: true,
         managedRuntime: language.managedRuntime ?? null,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),

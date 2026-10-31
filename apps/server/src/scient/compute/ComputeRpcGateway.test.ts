@@ -303,6 +303,8 @@ describe("compute RPC gateway", () => {
         workspaceFileSystem: workspace(),
       });
       expect((yield* gateway.runtimeInventory()).languages[0]).toMatchObject({
+        // Older clients reject a language without it.
+        enabled: true,
         configuredExecutable: null,
         installations: [],
       });
