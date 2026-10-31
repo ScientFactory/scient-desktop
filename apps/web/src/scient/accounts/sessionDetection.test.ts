@@ -71,6 +71,15 @@ it("records the new session's own site after an identity provider, never the pro
       after: [{ domain: "mail.google.com", httpOnly: true }],
     }),
   ).toBeNull();
+  // YouTube lives on its own domain and is still that one Google session.
+  expect(
+    signedInSite({
+      ...input,
+      url: "https://www.youtube.com/feed/subscriptions",
+      before: [],
+      after: [{ domain: ".youtube.com", httpOnly: true }],
+    }),
+  ).toBeNull();
   // A university sign-in, then a service of the same university, is a session of its own.
   expect(
     signedInSite({

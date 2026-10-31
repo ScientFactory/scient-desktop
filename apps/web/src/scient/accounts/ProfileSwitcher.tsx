@@ -49,10 +49,6 @@ export function ProfileSwitcher({
   const profileIds = profiles.map((profile) => profile.id);
   const signIns = profileSignIns(data?.accounts ?? []);
   const holders = profilesSignedIn(url, profileIds, signIns);
-  // This page is signed out here but signed in on another profile: one click, not a login page.
-  const signedInElsewhere = holders.includes(activeProfileId)
-    ? undefined
-    : profiles.find((profile) => profile.id === holders[0]);
   const projectProfileId = projectId ? data?.profileChoices?.projects[projectId] : undefined;
   return (
     <>
@@ -69,10 +65,9 @@ export function ProfileSwitcher({
         </MenuTrigger>
         <MenuPopup align="start">
           {profiles.map((profile) => {
-            const detail =
-              profile.id === activeProfileId && holders.includes(activeProfileId)
-                ? `Signed in to ${new URL(url).hostname}`
-                : profile.record.source?.email;
+            const detail = holders.includes(profile.id)
+              ? `Signed in to ${new URL(url).hostname}`
+              : profile.record.source?.email;
             return (
               <MenuItem
                 key={profile.id}
@@ -119,16 +114,6 @@ export function ProfileSwitcher({
           onClick={() => onOpenInProfile(activeProfileId, GMAIL_URL)}
         >
           <MailIcon />
-        </Button>
-      ) : null}
-      {signedInElsewhere ? (
-        <Button
-          size="xs"
-          variant="outline"
-          className="max-w-40"
-          onClick={() => openIn(signedInElsewhere.id)}
-        >
-          <span className="truncate">Signed in on {signedInElsewhere.name}</span>
         </Button>
       ) : null}
     </>

@@ -51,6 +51,8 @@ function newSessionDomains(
   });
 }
 
+const YOUTUBE_SITE = "youtube.com";
+
 export function isIdentityProvider(raw: string) {
   try {
     const url = new URL(raw);
@@ -95,7 +97,10 @@ export function signedInSite(input: {
     return null;
   // Google's own services are one session, which Scient asks Google about (`googleSessions`).
   const insideGoogle = (domain: string) =>
-    provider.endsWith(`.${GOOGLE_SITE}`) && domain.endsWith(`.${GOOGLE_SITE}`);
+    provider.endsWith(`.${GOOGLE_SITE}`) &&
+    (domain.endsWith(`.${GOOGLE_SITE}`) ||
+      domain === YOUTUBE_SITE ||
+      domain.endsWith(`.${YOUTUBE_SITE}`));
   const domains = newSessionDomains(input.before, input.after, input.url, input.now ?? Date.now())
     .filter(
       (domain) => provider !== domain && !provider.endsWith(`.${domain}`) && !insideGoogle(domain),

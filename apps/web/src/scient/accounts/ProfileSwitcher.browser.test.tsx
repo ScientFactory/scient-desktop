@@ -37,10 +37,10 @@ const signedInOnWork = {
   controls: defaultAccountControls("website"),
 };
 
-it("offers the profile that's signed in to the page, and acts on one click", async () => {
+it("names the profiles signed in to the page in the menu, and adds nothing to the toolbar", async () => {
   state.accounts = [signedInOnWork];
   const onOpenInProfile = vi.fn();
-  await render(
+  await using screen = await render(
     <ProfileSwitcher
       threadRef={threadRef}
       url="https://www.example.com/inbox"
@@ -48,23 +48,11 @@ it("offers the profile that's signed in to the page, and acts on one click", asy
       onOpenInProfile={onOpenInProfile}
     />,
   );
-  await page.getByRole("button", { name: "Signed in on Work" }).click();
+  expect(screen.container.textContent).not.toContain("Signed in");
+  await page.getByRole("button", { name: "Profile: Home" }).click();
+  await page.getByRole("menuitem", { name: /Work/ }).click();
   expect(onOpenInProfile).toHaveBeenCalledWith("work");
   expect(state.choose).toHaveBeenCalledWith(expect.objectContaining({ profileId: "work" }));
-});
-
-it("offers nothing when this profile already holds the sign-in", async () => {
-  state.accounts = [signedInOnWork];
-  const { container } = await render(
-    <ProfileSwitcher
-      threadRef={threadRef}
-      url="https://www.example.com/inbox"
-      activeProfileId="work"
-      onOpenInProfile={vi.fn()}
-    />,
-  );
-  await expect.element(page.getByRole("button", { name: "Profile: Work" })).toBeInTheDocument();
-  expect(container.textContent).not.toContain("Signed in on");
 });
 
 const googleRow = (state: "signed-in" | "signed-out") => ({
