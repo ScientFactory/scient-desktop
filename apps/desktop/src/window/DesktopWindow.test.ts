@@ -212,6 +212,9 @@ const layerElectronMenu = Layer.succeed(ElectronMenu.ElectronMenu, {
   setApplicationMenu: () => Effect.void,
   popupTemplate: () => Effect.void,
   showContextMenu: () => Effect.succeedNone,
+  // SCIENT-FORK:START — the Dock menu opens another app window.
+  setDockMenu: () => Effect.void,
+  // SCIENT-FORK:END
 } satisfies ElectronMenu.ElectronMenu["Service"]);
 
 const layerElectronTheme = Layer.succeed(ElectronTheme.ElectronTheme, {
@@ -340,6 +343,9 @@ function layerTest(input: {
         Effect.as(input.window),
       ),
     main: Ref.get(input.mainWindow),
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    appWindows: Ref.get(input.mainWindow).pipe(Effect.map(Option.toArray)),
+    // SCIENT-FORK:END
     currentMainOrFirst: Ref.get(input.mainWindow),
     focusedMainOrFirst:
       input.focusedWindow === undefined
@@ -381,6 +387,9 @@ function layerTest(input: {
           setApplicationMenu: () => Effect.void,
           showContextMenu: () => Effect.succeedNone,
           popupTemplate: input.onPopupTemplate ?? (() => Effect.void),
+          // SCIENT-FORK:START — the Dock menu opens another app window.
+          setDockMenu: () => Effect.void,
+          // SCIENT-FORK:END
         }),
         Layer.succeed(ElectronShell.ElectronShell, {
           openExternal: (url) =>
@@ -477,6 +486,9 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           return outcome;
         }),
       main: Ref.get(mainWindow),
+      // SCIENT-FORK:START — several app windows share one desktop process.
+      appWindows: Ref.get(mainWindow).pipe(Effect.map(Option.toArray)),
+      // SCIENT-FORK:END
       currentMainOrFirst,
       focusedMainOrFirst: currentMainOrFirst,
       setMain: (window) => Ref.set(mainWindow, Option.some(window)),

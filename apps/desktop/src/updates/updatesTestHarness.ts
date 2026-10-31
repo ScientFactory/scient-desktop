@@ -149,6 +149,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}): {
   const layerWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected BrowserWindow creation"),
     main: Effect.succeedNone,
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    appWindows: Effect.succeed([]),
+    // SCIENT-FORK:END
     currentMainOrFirst: Effect.succeedNone,
     focusedMainOrFirst: Effect.succeedNone,
     setMain: () => Effect.void,

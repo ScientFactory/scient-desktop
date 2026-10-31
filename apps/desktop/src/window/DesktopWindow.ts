@@ -43,6 +43,15 @@ export {
   resolveOneTimeNearFullMainWindowBounds,
 } from "./scientMainWindowSizing.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — several app windows share one desktop process.
+import * as Semaphore from "effect/Semaphore";
+import {
+  type AppWindowOptions,
+  additionalWindowBounds,
+  appWindowUrl,
+  parseAppWindowRoute,
+} from "../scient/multiWindow/appWindows.ts";
+// SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -123,6 +132,16 @@ export class DesktopWindow extends Context.Service<
       command: MainWindowContentsCommand,
     ) => Effect.Effect<void, DesktopWindowError>;
     readonly syncAppearance: Effect.Effect<void>;
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    /**
+     * Opens another app window beside the current one, or under the pointer with `atCursor`,
+     * at `route` when it is an app route.
+     */
+    readonly openNewWindow: (
+      route?: string,
+      options?: { readonly atCursor?: boolean | undefined },
+    ) => Effect.Effect<boolean, DesktopWindowError>;
+    // SCIENT-FORK:END
   }
 >()("@t3tools/desktop/window/DesktopWindow") {}
 
@@ -332,7 +351,12 @@ export const make = Effect.gen(function* () {
   const context = yield* Effect.context<DesktopWindowRuntimeServices>();
   const runFork = Effect.runForkWith(context);
   const runPromise = Effect.runPromiseWith(context);
-  let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
+  const flushWindowBounds = new Map<Electron.BrowserWindow, Effect.Effect<void>>();
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — New Window waits for a main window being created and opens beside it.
+  const windowCreation = yield* Semaphore.make(1);
+  // SCIENT-FORK:END
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -363,14 +387,21 @@ export const make = Effect.gen(function* () {
       direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
     );
     if (environment.platform === "darwin") syncMacosWindowButtons(window);
+    // SCIENT-FORK:START — Chromium zoom is per origin, so every app window changed with this one.
+    if (environment.platform === "darwin") {
+      for (const appWindow of yield* electronWindow.appWindows) syncMacosWindowButtons(appWindow);
+    }
+    // SCIENT-FORK:END
     // App zoom propagates to guests; restore each preview's own zoom.
     yield* previewManager.reapplyZoom();
   });
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Option.Option<Electron.BrowserWindow>,
-    DesktopWindowError
-  > {
+  // SCIENT-FORK:START — several app windows share one desktop process.
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (
+    options: AppWindowOptions = {},
+  ): Effect.fn.Return<Option.Option<Electron.BrowserWindow>, DesktopWindowError> {
+    const additionalWindow = options.cascadeFrom !== undefined;
+    // SCIENT-FORK:END
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
@@ -405,14 +436,32 @@ export const make = Effect.gen(function* () {
       );
     }
     // SCIENT-FORK:END
+    // SCIENT-FORK:START — an additional window neither restores nor maximizes to the saved state.
+    if (additionalWindow) {
+      persistedSettings = {
+        ...persistedSettings,
+        mainWindowBounds: null,
+        mainWindowMaximized: false,
+      };
+    }
+    // SCIENT-FORK:END
     const persistedBounds = persistedSettings.mainWindowBounds;
-    const initialBounds = resolveInitialMainWindowBounds(
-      persistedBounds,
-      displayBounds,
-      displayBoundsResult._tag === "Success"
-        ? displayBoundsResult.primaryDisplay.workArea
-        : undefined,
-    );
+    // SCIENT-FORK:START — an additional window opens beside its source or under the pointer.
+    const initialBounds =
+      additionalWindowBounds(
+        options,
+        displayBoundsResult._tag === "Success"
+          ? displayBoundsResult.displays.map((display) => display.workArea)
+          : [],
+      ) ??
+      resolveInitialMainWindowBounds(
+        persistedBounds,
+        displayBounds,
+        displayBoundsResult._tag === "Success"
+          ? displayBoundsResult.primaryDisplay.workArea
+          : undefined,
+      );
+    // SCIENT-FORK:END
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && !restoredPersistedBounds) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
@@ -452,7 +501,10 @@ export const make = Effect.gen(function* () {
     }
     let boundsPersistFiber: Fiber.Fiber<void, never> | undefined;
     let pendingBoundsPersistFiber: Fiber.Fiber<void, never> | undefined;
-    let boundsPersistenceEnabled = persistedBounds === null || restoredPersistedBounds;
+    // SCIENT-FORK:START — an additional window saves bounds only once the user moves it.
+    let boundsPersistenceEnabled =
+      !additionalWindow && (persistedBounds === null || restoredPersistedBounds);
+    // SCIENT-FORK:END
     const readPersistableBounds = (): DesktopAppSettings.DesktopWindowBounds | null => {
       if (window.isDestroyed()) {
         return null;
@@ -535,7 +587,9 @@ export const make = Effect.gen(function* () {
         fiber === undefined ? Effect.void : Fiber.join(fiber).pipe(Effect.asVoid),
       ),
     );
-    flushMainWindowBounds = flushBoundsPersist;
+    // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
+    flushWindowBounds.set(window, flushBoundsPersist);
+    // SCIENT-FORK:END
 
     yield* previewManager.setMainWindow(window);
     if (yield* Ref.get(desktopState.quitting)) {
@@ -722,6 +776,11 @@ export const make = Effect.gen(function* () {
     window.on("close", () => {
       runFork(flushBoundsPersist);
     });
+    // SCIENT-FORK:START — the most recently focused app window is main.
+    window.on("focus", () => {
+      void runPromise(electronWindow.setMain(window));
+    });
+    // SCIENT-FORK:END
 
     if (environment.platform === "darwin") {
       // Mouse drivers can deliver Back/Forward as macOS swipe gestures instead of buttons.
@@ -750,11 +809,16 @@ export const make = Effect.gen(function* () {
       developmentLoadRetryFiber = undefined;
       runFork(Fiber.interrupt(retryFiber));
     };
+    // SCIENT-FORK:START — an additional window can open at an app route.
+    const windowUrl = appWindowUrl(applicationUrl, options.route ?? Option.none());
+    // SCIENT-FORK:END
     const loadApplication = () => {
       if (window.isDestroyed()) {
         return;
       }
-      void window.loadURL(applicationUrl).catch(() => undefined);
+      // SCIENT-FORK:START — an additional window can open at an app route.
+      void window.loadURL(windowUrl).catch(() => undefined);
+      // SCIENT-FORK:END
     };
     const scheduleDevelopmentLoadRetry = () => {
       if (developmentLoadRetryFiber !== undefined || window.isDestroyed()) {
@@ -886,13 +950,18 @@ export const make = Effect.gen(function* () {
     });
 
     loadApplication();
-    if (environment.isDevelopment) {
+    // SCIENT-FORK:START — one detached DevTools window per development launch.
+    if (environment.isDevelopment && !additionalWindow) {
       window.webContents.openDevTools({ mode: "detach" });
     }
+    // SCIENT-FORK:END
 
     window.on("closed", () => {
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
+      // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
+      flushWindowBounds.delete(window);
+      // SCIENT-FORK:END
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
@@ -906,7 +975,9 @@ export const make = Effect.gen(function* () {
       yield* logWindowInfo("main window created");
     }
     return window;
-  }).pipe(Effect.withSpan("desktop.window.createMain"));
+    // SCIENT-FORK:START — New Window waits for a main window being created and opens beside it.
+  }).pipe(windowCreation.withPermits(1), Effect.withSpan("desktop.window.createMain"));
+  // SCIENT-FORK:END
 
   const ensureMain = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
@@ -1055,9 +1126,14 @@ export const make = Effect.gen(function* () {
     handleBackendNotReady: Ref.set(backendReadyRef, false).pipe(
       Effect.withSpan("desktop.window.handleBackendNotReady"),
     ),
-    flushMainWindowBounds: Effect.suspend(() => flushMainWindowBounds).pipe(
+    // SCIENT-FORK:START — each app window flushes its own bounds; quitting flushes the main one.
+    flushMainWindowBounds: electronWindow.main.pipe(
+      Effect.flatMap((main) =>
+        Option.isSome(main) ? (flushWindowBounds.get(main.value) ?? Effect.void) : Effect.void,
+      ),
       Effect.withSpan("desktop.window.flushMainWindowBounds"),
     ),
+    // SCIENT-FORK:END
     dispatchMenuAction: Effect.fn("desktop.window.dispatchMenuAction")(function* (action, options) {
       yield* Effect.annotateCurrentSpan({ action });
       yield* dispatchRendererEvent(MENU_ACTION_CHANNEL, action, options);
@@ -1103,6 +1179,31 @@ export const make = Effect.gen(function* () {
         syncWindowAppearance(window, shouldUseDarkColors, environment.platform),
       );
     }).pipe(Effect.withSpan("desktop.window.syncAppearance")),
+    // SCIENT-FORK:START — several app windows share one desktop process.
+    openNewWindow: Effect.fn("desktop.window.openNewWindow")(function* (route, options) {
+      if (yield* Ref.get(desktopState.quitting)) return false;
+      // Opening a window before backend confirmation can strand it on failed auth bootstrap.
+      if (yield* waitingForBackend) {
+        const splash = yield* Ref.get(splashWindowRef);
+        if (Option.isSome(splash)) yield* electronWindow.reveal(splash.value);
+        return false;
+      }
+      return yield* windowCreation.withPermits(1)(
+        Effect.gen(function* () {
+          const source = yield* electronWindow.main;
+          const window = yield* createWindow({
+            route: parseAppWindowRoute(route),
+            cascadeFrom: Option.getOrUndefined(source),
+            atCursor: options?.atCursor === true,
+          });
+          if (Option.isNone(window)) return false;
+          yield* electronWindow.setMain(window.value);
+          yield* logWindowInfo("app window created", { additional: Option.isSome(source) });
+          return true;
+        }),
+      );
+    }),
+    // SCIENT-FORK:END
   });
 });
 
