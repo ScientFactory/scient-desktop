@@ -238,8 +238,8 @@ export type ComputeRuntimeToolbarState =
       readonly note: string;
     };
 
-export function computeRuntimeSetupActionLabel(languageId: string, languageName: string): string {
-  return languageId === "matlab" ? `Connect ${languageName}` : `Set up ${languageName}`;
+export function computeRuntimeSetupActionLabel(languageName: string): string {
+  return `Set up ${languageName}`;
 }
 
 const SCIENTIFIC_PACKAGES_NOTE = "Some scientific packages are missing";
@@ -420,7 +420,7 @@ export function resolveComputeRuntimeToolbarState(input: {
   }
   return {
     kind: "setup",
-    label: computeRuntimeSetupActionLabel(languageId, languageName),
+    label: computeRuntimeSetupActionLabel(languageName),
     canRun: false,
   };
 }

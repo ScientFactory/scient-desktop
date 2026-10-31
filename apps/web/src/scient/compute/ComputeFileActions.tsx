@@ -621,7 +621,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
           stackedThreadToast({
             type: "error",
             title: `${languageName} is not ready`,
-            description: `Use ${computeRuntimeSetupActionLabel(props.language.languageId, languageName)} on this file, or choose another runtime in Scientific Computing settings.`,
+            description: `Use ${computeRuntimeSetupActionLabel(languageName)} on this file, or choose another runtime in Scientific Computing settings.`,
           }),
         );
         setOperation(null);

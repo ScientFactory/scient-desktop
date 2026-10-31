@@ -345,7 +345,7 @@ describe("current runtime summary", () => {
     ).toBe("ready");
   });
 
-  it("offers to connect a found MATLAB and says when none is here", () => {
+  it("calls a found MATLAB ready, since Run adds what it needs, and says when none is here", () => {
     const matlab = {
       ...inventory,
       descriptor: { ...inventory.descriptor, languageId: ComputeLanguageId.make("matlab") },
@@ -364,7 +364,7 @@ describe("current runtime summary", () => {
         preference: { executable: "" },
         managed: null,
       }).kind,
-    ).toBe("connect");
+    ).toBe("ready");
     expect(
       computeCurrentRuntimeSummary({
         language: { ...matlab, installations: [] },
@@ -509,7 +509,7 @@ describe("what a language shows", () => {
         language("sql", [{ ...found, source: "managed" as const, version: "3.14.7" }], status),
       ),
     ).toBe("Ready");
-    expect(detail(language("matlab", [found], { ...status, installed: false }))).toBe(
+    expect(detail(language("matlab", [found], { ...status, installed: false }))).not.toContain(
       "Not connected",
     );
   });
@@ -574,7 +574,7 @@ describe("what a language shows", () => {
     const absent = { ...status, installed: false };
     expect(action(language("python", [], absent))).toBe("Set up");
     expect(action(language("r", [found], absent))).toBe("Set up");
-    expect(action(language("matlab", [found], absent))).toBe("Connect MATLAB");
+    expect(action(language("matlab", [found], absent))).toBeUndefined();
     const managed = { ...found, source: "managed" as const };
     expect(action(language("python", [managed], { ...status, updateAvailable: true }))).toBe(
       "Update",

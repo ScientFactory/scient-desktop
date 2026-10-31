@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDownIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import type {
   ComputeFoundTool,
   ComputeLanguageRuntimeInventory,
@@ -8,6 +8,13 @@ import type {
 } from "@t3tools/contracts";
 import { SettingsRow } from "~/components/settings/settingsLayout";
 import { Button } from "~/components/ui/button";
+import {
+  Dialog,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { MenuItem } from "~/components/ui/menu";
 import {
@@ -367,38 +374,48 @@ function FoundInstallations({
             ? "Scient runs SQL in DuckDB. Agents can use these from a shell."
             : undefined
         }
-        open={open}
-        onToggle={() => setOpen((current) => !current)}
+        onOpen={() => setOpen(true)}
         refresh={refresh}
       />
       {open ? (
-        <FoundList languageId={languageId}>
-          {found.map((installation, index) => (
-            <ComputeInstallationRow
-              key={`${installation.executable}:${fingerprint}`}
-              id={`${languageId}-installation-${index}`}
-              title={computeRuntimePickerLabel(installation, name, language.installations)}
-              installation={installation}
-              environmentId={environmentId}
-              languageId={languageId}
-              inUse={installation.executable === selectedExecutable}
-              disabled={disabled}
-              forgetDisabled={selection.disabled}
-              onVersion={(version) => onVersion(installation.executable, version)}
-              onForget={
-                installation.source === "configured" &&
-                (installation.configured || installation.executable === chosen) &&
-                chosen
-                  ? () => void selection.select(null)
-                  : undefined
-              }
-            />
-          ))}
-          {tools.map((tool) => (
-            <FoundToolRow key={tool.executable} languageId={languageId} tool={tool} />
-          ))}
-          <AddLocationRow
-            languageId={languageId}
+        <FoundDialog
+          name={name}
+          onClose={() => setOpen(false)}
+          error={selection.error}
+          entries={[
+            ...found.map((installation, index) => ({
+              key: installation.executable,
+              text: `${installation.version ?? ""} ${installation.executable}`,
+              row: (
+                <ComputeInstallationRow
+                  key={`${installation.executable}:${fingerprint}`}
+                  id={`${languageId}-installation-${index}`}
+                  title={computeRuntimePickerLabel(installation, name, language.installations)}
+                  installation={installation}
+                  environmentId={environmentId}
+                  languageId={languageId}
+                  inUse={installation.executable === selectedExecutable}
+                  disabled={disabled}
+                  forgetDisabled={selection.disabled}
+                  onVersion={(version) => onVersion(installation.executable, version)}
+                  onForget={
+                    installation.source === "configured" &&
+                    (installation.configured || installation.executable === chosen) &&
+                    chosen
+                      ? () => void selection.select(null)
+                      : undefined
+                  }
+                />
+              ),
+            })),
+            ...tools.map((tool) => ({
+              key: tool.executable,
+              text: `${tool.name} ${tool.version ?? ""} ${tool.executable}`,
+              row: <FoundToolRow languageId={languageId} tool={tool} />,
+            })),
+          ]}
+        >
+          <AddLocationForm
             name={name}
             action="Use"
             path={path}
@@ -406,7 +423,7 @@ function FoundInstallations({
             disabled={disabled || selection.disabled}
             onAdd={selection.select}
           />
-        </FoundList>
+        </FoundDialog>
       ) : null}
     </>
   );
@@ -421,15 +438,13 @@ export function FoundRow({
   languageId,
   label,
   note,
-  open,
-  onToggle,
+  onOpen,
   refresh,
 }: {
   languageId: string;
   label: string;
   note?: string | undefined;
-  open: boolean;
-  onToggle: () => void;
+  onOpen: () => void;
   refresh: ReactNode;
 }) {
   return (
@@ -442,13 +457,12 @@ export function FoundRow({
           <Button
             size="xs"
             variant="ghost-muted"
-            aria-expanded={open}
-            aria-controls={`${languageId}-found-list`}
+            aria-haspopup="dialog"
             aria-label={`Found on this computer: ${label}`}
-            onClick={onToggle}
+            onClick={onOpen}
           >
             {label}
-            <ChevronDownIcon className={cn("transition-transform", open && "rotate-180")} />
+            <ChevronRightIcon />
           </Button>
           {refresh}
         </div>
@@ -457,14 +471,65 @@ export function FoundRow({
   );
 }
 
-export function FoundList({ languageId, children }: { languageId: string; children: ReactNode }) {
+/** A long list is worth searching. A short one is read at a glance. */
+const SEARCH_FROM = 8;
+
+/** Everything found for a language, and where to add what a scan cannot find. */
+export function FoundDialog({
+  name,
+  entries,
+  error,
+  onClose,
+  children,
+}: {
+  name: string;
+  entries: ReadonlyArray<{ readonly key: string; readonly text: string; readonly row: ReactNode }>;
+  error?: string | null | undefined;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  const [query, setQuery] = useState("");
+  const text = query.trim().toLowerCase();
+  const shown = entries.filter((entry) => entry.text.toLowerCase().includes(text));
   return (
-    <div
-      id={`${languageId}-found-list`}
-      className="[&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50"
-    >
-      {children}
-    </div>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{name} on this computer</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="grid gap-3">
+            {entries.length >= SEARCH_FROM ? (
+              <Input
+                type="search"
+                aria-label={`Find ${name} on this computer`}
+                placeholder={`Search ${entries.length} found`}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+            ) : null}
+            {entries.length > 0 ? (
+              <div className="max-h-[60vh] overflow-y-auto rounded-lg border [&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50">
+                {shown.map((entry) => (
+                  <div key={entry.key}>{entry.row}</div>
+                ))}
+                {shown.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    Nothing matches
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {children}
+            {error ? (
+              <p className="text-xs text-destructive" role="alert">
+                {error}
+              </p>
+            ) : null}
+          </div>
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
   );
 }
 
@@ -495,8 +560,7 @@ export function FoundToolRow({
 }
 
 /** A copy the scan cannot know about, wherever it lives. */
-export function AddLocationRow({
-  languageId,
+export function AddLocationForm({
   name,
   action,
   path,
@@ -504,7 +568,6 @@ export function AddLocationRow({
   disabled,
   onAdd,
 }: {
-  languageId: string;
   name: string;
   action: string;
   path: string;
@@ -516,33 +579,26 @@ export function AddLocationRow({
     if (await onAdd(path.trim())) onPathChange("");
   };
   return (
-    <SettingsRow
-      id={`${languageId}-custom-executable`}
-      title="Add a location"
-      control={
-        <form
-          className="flex min-w-0 items-center gap-1.5"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (path.trim()) void add();
-          }}
-        >
-          <Input
-            nativeInput
-            size="compact"
-            className="w-64 min-w-0"
-            value={path}
-            disabled={disabled}
-            placeholder="Program path"
-            aria-label={`${name} program path`}
-            onChange={(event) => onPathChange(event.currentTarget.value)}
-          />
-          <Button size="xs" variant="outline" type="submit" disabled={disabled || !path.trim()}>
-            {action}
-          </Button>
-        </form>
-      }
-    />
+    <form
+      className="flex min-w-0 items-center gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (path.trim()) void add();
+      }}
+    >
+      <Input
+        nativeInput
+        className="min-w-0 flex-1"
+        value={path}
+        disabled={disabled}
+        placeholder="Add a program path"
+        aria-label={`${name} program path`}
+        onChange={(event) => onPathChange(event.currentTarget.value)}
+      />
+      <Button variant="outline" type="submit" disabled={disabled || !path.trim()}>
+        {action}
+      </Button>
+    </form>
   );
 }
 

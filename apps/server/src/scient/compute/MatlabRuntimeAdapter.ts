@@ -246,7 +246,7 @@ function unavailableProfile(
   };
 }
 
-function engineHostRequirementIsMissing(cause: ComputeRuntimeError): boolean {
+export function engineHostRequirementIsMissing(cause: ComputeRuntimeError): boolean {
   return /no compatible (?:Python )?host could import its Engine API|no compatible Engine host/iu.test(
     cause.message,
   );
@@ -327,8 +327,6 @@ export function makeMatlabRuntimeAdapter(
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
   bridgePath?: string,
-  /** Whether the files show a helper or a Python that could reach the Engine. Nothing starts. */
-  mayConnect: () => Effect.Effect<boolean> = () => Effect.succeed(true),
 ): MatlabRuntimeAdapterResult {
   const cache = new Map<
     string,
@@ -450,27 +448,16 @@ export function makeMatlabRuntimeAdapter(
           { concurrency: 1 },
         ),
       ),
+    // Nothing is needed before Run: only starting MATLAB can prove the connection, and Run adds it.
     assess: (profile) =>
-      mayConnect().pipe(
-        Effect.map((connected) =>
-          connected
-            ? {
-                profile,
-                readiness: "ready" as const,
-                connection: "detected" as const,
-                missingRequirements: [],
-                message: null,
-                packages: [],
-              }
-            : {
-                profile,
-                readiness: "missing-requirement" as const,
-                missingRequirements: ["MATLAB Engine for Python"],
-                message: "MATLAB is installed, but nothing connects Scient to it yet.",
-                packages: [],
-              },
-        ),
-      ),
+      Effect.succeed({
+        profile,
+        readiness: "ready" as const,
+        connection: "detected" as const,
+        missingRequirements: [],
+        message: null,
+        packages: [],
+      }),
     verify: (request) =>
       readProbe(request.profile.executable).pipe(
         Effect.map((probe) => ({

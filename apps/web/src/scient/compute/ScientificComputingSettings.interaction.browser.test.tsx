@@ -394,24 +394,26 @@ describe("Scientific Computing settings interactions", () => {
   };
 
   const installationRow = (_fixture: _Fixture, executable: string) => {
-    const control = [
-      ..._fixture.container.querySelectorAll<HTMLElement>("[data-compute-installation]"),
-    ].find((node) => node.dataset.computeInstallation === executable);
+    const control = [...document.querySelectorAll<HTMLElement>("[data-compute-installation]")].find(
+      (node) => node.dataset.computeInstallation === executable,
+    );
     expect(control, executable).toBeDefined();
     return control!.closest<HTMLElement>("[data-slot=settings-row]")!;
   };
+  const foundCard = () => document.querySelector<HTMLElement>('[data-slot="dialog-popup"]');
   const openFound = async (_fixture: _Fixture, languageId = "python") => {
-    const toggle = _fixture.container.querySelector<HTMLButtonElement>(
-      `#${languageId}-found [aria-controls="${languageId}-found-list"]`,
+    if (foundCard() !== null) return;
+    const opener = _fixture.container.querySelector<HTMLButtonElement>(
+      `#${languageId}-found [aria-haspopup="dialog"]`,
     );
-    expect(toggle, `${languageId} found on this computer`).toBeDefined();
-    if (toggle!.getAttribute("aria-expanded") !== "true") await act(() => toggle!.click());
+    expect(opener, `${languageId} found on this computer`).toBeDefined();
+    await act(() => opener!.click());
+    await vi.waitFor(() => expect(foundCard()).not.toBeNull());
   };
-  const closeFound = async (_fixture: _Fixture, languageId = "python") => {
-    const toggle = _fixture.container.querySelector<HTMLButtonElement>(
-      `#${languageId}-found [aria-controls="${languageId}-found-list"]`,
-    )!;
-    if (toggle.getAttribute("aria-expanded") === "true") await act(() => toggle.click());
+  const closeFound = async (_fixture: _Fixture) => {
+    const close = foundCard()?.querySelector<HTMLButtonElement>('[aria-label="Close"]');
+    if (close) await act(() => close.click());
+    await vi.waitFor(() => expect(foundCard()).toBeNull());
   };
   /** The Runtime row's Test, shown once the language is ready. */
   const testRuntime = async (_fixture: _Fixture, languageName = "Python") => {
@@ -436,7 +438,7 @@ describe("Scientific Computing settings interactions", () => {
     });
   };
   const typePath = async (_fixture: _Fixture, value: string, languageName = "Python") => {
-    const input = _fixture.container.querySelector<HTMLInputElement>(
+    const input = document.querySelector<HTMLInputElement>(
       `input[aria-label="${languageName} program path"]`,
     )!;
     await act(() => {
@@ -480,7 +482,7 @@ describe("Scientific Computing settings interactions", () => {
     ).not.toBeNull();
     await openFound(_fixture);
     // Every runtime found on this computer; Scient's own Python has its own section.
-    expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(3);
+    expect(document.querySelectorAll("[data-compute-installation]")).toHaveLength(3);
     expect(installationRow(_fixture, systemPath).textContent).toContain("System");
     expect(installationRow(_fixture, systemPath).textContent).toContain(systemPath);
     expect(installationRow(_fixture, systemPath).textContent).not.toContain("In use");
@@ -520,6 +522,7 @@ describe("Scientific Computing settings interactions", () => {
     await act(() =>
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
     );
+    await openFound(_fixture);
     await testInstallation(_fixture, systemPath);
     expect(mocks.verify).toHaveBeenCalledWith({
       environmentId: "remote",
@@ -530,6 +533,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(runtimeValue(_fixture)).toBe(managedPath);
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.manage).not.toHaveBeenCalled();
+    await closeFound(_fixture);
     await act(() => runtimeSelect(_fixture).click());
     expect(
       [...document.querySelectorAll("[data-slot=select-item]")].find(
@@ -644,17 +648,15 @@ describe("Scientific Computing settings interactions", () => {
     await openFound(_fixture);
     await typePath(_fixture, "/new/python");
     await closeFound(_fixture);
-    expect(_fixture.container.querySelector('input[aria-label="Python program path"]')).toBeNull();
+    expect(document.querySelector('input[aria-label="Python program path"]')).toBeNull();
     await openFound(_fixture);
     expect(
-      _fixture.container.querySelector<HTMLInputElement>('input[aria-label="Python program path"]')!
-        .value,
+      document.querySelector<HTMLInputElement>('input[aria-label="Python program path"]')!.value,
     ).toBe("/new/python");
     expect(mocks.update).not.toHaveBeenCalled();
-    await click(_fixture, "Use", _fixture.container.querySelector("#python-custom-executable")!);
+    await click(_fixture, "Use", foundCard()!);
     expect(
-      _fixture.container.querySelector<HTMLInputElement>('input[aria-label="Python program path"]')!
-        .value,
+      document.querySelector<HTMLInputElement>('input[aria-label="Python program path"]')!.value,
     ).toBe("/new/python");
     expect(mocks.preferences.python?.executable).toBe("");
     expect(runtimeValue(_fixture)).toBe(managedPath);
@@ -671,9 +673,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(runtimeSelect(_fixture).textContent).toContain("Automatic · System");
     await openFound(_fixture);
     expect(installationRow(_fixture, systemPath).textContent).toContain("In use");
-    expect(
-      _fixture.container.querySelectorAll("#python-found-list [data-compute-installation]"),
-    ).toHaveLength(1);
+    expect(foundCard()!.querySelectorAll("[data-compute-installation]")).toHaveLength(1);
   });
 
   it("does not turn a MATLAB installation test into a helper retarget or a default change", async () => {
@@ -927,7 +927,7 @@ describe("Scientific Computing settings interactions", () => {
     await render(_fixture);
     expect(_fixture.container.querySelector('[id$="-trigger"]')).toBeNull();
     await openFound(_fixture);
-    expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(1);
+    expect(document.querySelectorAll("[data-compute-installation]")).toHaveLength(1);
     expect(_fixture.container.querySelector("#python-managed-runtime")?.textContent).toContain(
       "Private to Scient",
     );
@@ -937,9 +937,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(_fixture.container.querySelector("#scientific-computing-python")).toBeNull();
     expect(_fixture.container.querySelector("#scientific-computing-matlab")).not.toBeNull();
     await openFound(_fixture, "matlab");
-    expect(_fixture.container.querySelector("#matlab-installation-0")?.textContent).toContain(
-      "R2026a",
-    );
+    expect(document.querySelector("#matlab-installation-0")?.textContent).toContain("R2026a");
     expect(mocks.calls).toEqual([]);
   });
 
@@ -1109,7 +1107,8 @@ describe("Scientific Computing settings interactions", () => {
     await render(_fixture, "rust");
     expect(_fixture.container.querySelector("#rust-found")?.textContent).toContain("2");
     await openFound(_fixture, "rust");
-    expect(_fixture.container.querySelector("#rust-found-list")?.textContent).toContain("rustc");
+    expect(foundCard()?.textContent).toContain("rustc");
+    await closeFound(_fixture);
     expect(
       [..._fixture.container.querySelectorAll("h2")].map((heading) => heading.textContent),
     ).toEqual([]);
@@ -1950,44 +1949,6 @@ describe("Scientific Computing settings interactions", () => {
     expect(_fixture.container.querySelector("[data-compute-notice]")).not.toBeNull();
   });
 
-  it("replaces the MATLAB installation summary when connection setup fails immediately", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const matlab = "/MATLAB/bin/matlab";
-    const helper = {
-      ...status(),
-      installed: false,
-      selection: "existing" as const,
-      displayName: "MATLAB connection helper",
-      installationExecutable: matlab,
-    };
-    mocks.preferences = { matlab: { executable: matlab } };
-    mocks.statuses = { matlab: helper };
-    mocks.languages = [
-      {
-        ...python(),
-        descriptor: {
-          ...python().descriptor,
-          languageId: ComputeLanguageId.make("matlab"),
-          displayName: "MATLAB",
-        },
-        managedRuntime: helper,
-        configuredExecutable: matlab,
-        installations: [
-          { executable: matlab, source: "conventional", version: "R2026a", problem: null },
-        ],
-      },
-    ];
-    mocks.releaseFails = true;
-    await render(_fixture, "matlab");
-    await click(_fixture, "Connect MATLAB");
-    expect(_fixture.container.textContent).toContain("MATLAB connection failed");
-    expect(_fixture.container.textContent).toContain("Busy operation");
-    expect(button(_fixture, "Repair connection")).not.toBeNull();
-  });
-
   it("reports a MATLAB status-query failure without mislabeling the connection", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -2019,9 +1980,8 @@ describe("Scientific Computing settings interactions", () => {
     ];
     await render(_fixture, "matlab");
     await openFound(_fixture, "matlab");
-    expect(_fixture.container.querySelector("#matlab-installation-0")?.textContent).toContain(
-      "R2026a",
-    );
+    expect(document.querySelector("#matlab-installation-0")?.textContent).toContain("R2026a");
+    await closeFound(_fixture);
     expect(_fixture.container.textContent).toContain("MATLAB status unavailable");
     expect(_fixture.container.textContent).not.toContain("MATLAB connection failed");
     expect(() => button(_fixture, "Repair connection")).toThrow();
@@ -2079,7 +2039,7 @@ describe("Scientific Computing settings interactions", () => {
     },
   );
 
-  it("returns directly to Connect MATLAB after its helper is removed", async () => {
+  it("asks nothing of a found MATLAB after its helper is removed", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -2111,8 +2071,8 @@ describe("Scientific Computing settings interactions", () => {
     await openMaintenance(_fixture, "MATLAB connection");
     await clickMenuItem("Remove");
     await click(_fixture, "Remove", document.querySelector<HTMLElement>('[role="alertdialog"]')!);
-    await vi.waitFor(() => expect(button(_fixture, "Connect MATLAB")).toBeDefined());
-    expect(mocks.calls).toEqual(["remove"]);
+    await vi.waitFor(() => expect(mocks.calls).toEqual(["remove"]));
+    expect(_fixture.container.textContent).not.toContain("Not connected");
     expect(_fixture.container.textContent?.match(/Preparing MATLAB connection/gu)).toBeNull();
   });
 

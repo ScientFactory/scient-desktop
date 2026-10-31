@@ -29,11 +29,11 @@ import {
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { ComputeLanguageMark } from "./ComputeLanguageMark";
 import {
-  AddLocationRow,
+  AddLocationForm,
   ComputeLanguagePanel,
   ComputeScientPartSection,
   foundCountLabel,
-  FoundList,
+  FoundDialog,
   FoundRow,
   FoundToolRow,
   RefreshRuntimesButton,
@@ -252,33 +252,37 @@ function FoundPrograms({
       <FoundRow
         languageId={languageId}
         label={unknown ? "Couldn't check" : foundCountLabel(tools.length)}
-        open={open}
-        onToggle={() => setOpen((current) => !current)}
+        onOpen={() => setOpen(true)}
         refresh={<RefreshRuntimesButton busy={busy} onRefresh={onRefresh} />}
       />
       {open ? (
-        <FoundList languageId={languageId}>
-          {tools.map((tool) => (
-            <FoundToolRow
-              key={tool.executable}
-              languageId={languageId}
-              tool={tool}
-              control={
-                tool.origin === COMPUTE_ADDED_LOCATION ? (
-                  <Button
-                    size="xs"
-                    variant="ghost-muted"
-                    disabled={busy}
-                    onClick={() => void onChange({ ...preference, executable: "" })}
-                  >
-                    Remove
-                  </Button>
-                ) : undefined
-              }
-            />
-          ))}
-          <AddLocationRow
-            languageId={languageId}
+        <FoundDialog
+          name={name}
+          onClose={() => setOpen(false)}
+          entries={tools.map((tool) => ({
+            key: tool.executable,
+            text: `${tool.name} ${tool.version ?? ""} ${tool.executable}`,
+            row: (
+              <FoundToolRow
+                languageId={languageId}
+                tool={tool}
+                control={
+                  tool.origin === COMPUTE_ADDED_LOCATION ? (
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      disabled={busy}
+                      onClick={() => void onChange({ ...preference, executable: "" })}
+                    >
+                      Remove
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ),
+          }))}
+        >
+          <AddLocationForm
             name={name}
             action="Add"
             path={path}
@@ -286,7 +290,7 @@ function FoundPrograms({
             disabled={busy}
             onAdd={(executable) => onChange({ ...preference, executable })}
           />
-        </FoundList>
+        </FoundDialog>
       ) : null}
       {setup === undefined && url === undefined ? null : (
         <SettingsRow

@@ -140,9 +140,6 @@ export function computeLanguagePrimaryAction(input: {
       emphasis: false,
     };
   }
-  if (isMatlab && summary.kind === "connect") {
-    return { label: "Connect MATLAB", run: "setup", emphasis: false };
-  }
   if ((part === "managed-python" && !managed?.installed) || summary.kind === "setup") {
     return { label: "Set up", run: "setup", emphasis: false };
   }

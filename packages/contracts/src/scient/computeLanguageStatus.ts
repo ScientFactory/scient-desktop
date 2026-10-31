@@ -140,7 +140,6 @@ export type ComputeCurrentRuntimeSummary = {
   readonly kind:
     | "ready"
     | "setup"
-    | "connect"
     | "repair-connection"
     | "update-managed"
     | "repair-managed"
@@ -204,13 +203,6 @@ export function computeCurrentRuntimeSummary(input: {
       detail: "Scient-managed",
     };
   }
-  if (isMatlab && managed !== null && !managed.installed && selected !== undefined) {
-    return {
-      kind: "connect",
-      title: "Not connected",
-      detail: "Connect Scient to this MATLAB installation.",
-    };
-  }
   if (
     selected !== undefined &&
     computeScientPart(language.descriptor.languageId) === "kernel" &&
@@ -228,18 +220,13 @@ export function computeCurrentRuntimeSummary(input: {
     };
   }
   if (isMatlab) {
-    if (language.installations.length === 0) {
-      return {
-        kind: "missing",
-        title: "Not connected",
-        detail: "Requires a licensed MATLAB installation on this server.",
-      };
-    }
-    return {
-      kind: "connect",
-      title: "Not connected",
-      detail: "Connect the MATLAB already installed on this server.",
-    };
+    return language.installations.length > 0
+      ? { kind: "ready", title: "MATLAB", detail: "Ready" }
+      : {
+          kind: "missing",
+          title: "Not found",
+          detail: "Requires a licensed MATLAB installation on this server.",
+        };
   }
   return {
     kind: "setup",
@@ -292,8 +279,6 @@ export function computeLanguageDetail(
         ? "Needs setup"
         : computeRuntimePickerLabel(selected, language.descriptor.displayName);
     }
-    case "connect":
-      return "Not connected";
     case "missing":
       return "Not found";
     default:
