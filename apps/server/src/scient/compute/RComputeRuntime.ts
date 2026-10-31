@@ -41,6 +41,7 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
   kernelLanguage: "R",
   programName: "r",
   kernelPackage: "Ark",
+  ownKernelName: "IRkernel",
   sourceExtensions: [".r"],
   // IRkernel does not evaluate Jupyter user expressions.
   variablesExpression: null,

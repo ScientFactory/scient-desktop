@@ -211,7 +211,6 @@ describe("compute result surface seam", () => {
 it("keeps default selection separate from installation actions using shared settings rows", () => {
   expect(languagePageSource).toContain("SettingsRow");
   expect(languagePageSource).toContain("SettingsSection");
-  expect(languagePageSource).toContain('variant="plain"');
   expect(languagePageSource).toContain("SettingsSourcePanel");
   expect(settingsSource).not.toContain("Python & MATLAB");
   expect(settingsSource).not.toContain("Advanced");

@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronLeftIcon, ExternalLinkIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronLeftIcon, ExternalLinkIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
   COMPUTE_ADDED_LOCATION,
@@ -16,11 +16,26 @@ import {
 import { useOptionalSettingsScope } from "~/components/settings/SettingsScopeContext";
 import { SettingsSourcePanel } from "~/components/settings/SettingsSourceStrip";
 import { Button } from "~/components/ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { cn } from "~/lib/utils";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { useEnvironment, usePrimaryEnvironmentId } from "~/state/environments";
 import { ComputeLanguageMark } from "./ComputeLanguageMark";
-import { AddLocationRow, ComputeLanguagePanel } from "./ComputeLanguagePanel";
+import {
+  AddLocationRow,
+  ComputeLanguagePanel,
+  ComputeScientPartSection,
+  foundCountLabel,
+  FoundList,
+  FoundRow,
+  FoundToolRow,
+  RefreshRuntimesButton,
+} from "./ComputeLanguagePanel";
 import {
   useComputeManagedRuntime,
   type ComputeManagedRuntimeController,
@@ -53,24 +68,7 @@ export function ComputeSettingsUnavailable() {
 }
 
 export function FindRuntimesButton({ inventory }: { inventory: ComputeLanguages }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            disabled={inventory.busy}
-            aria-label="Refresh scientific runtimes"
-            onClick={() => void inventory.refresh()}
-          >
-            <RefreshCwIcon className={cn(inventory.busy ? "animate-spin" : undefined)} />
-          </Button>
-        }
-      />
-      <TooltipPopup side="top">Find runtimes again</TooltipPopup>
-    </Tooltip>
-  );
+  return <RefreshRuntimesButton busy={inventory.busy} onRefresh={inventory.refresh} />;
 }
 
 export function ComputeInventoryFailure({ inventory }: { inventory: ComputeLanguages }) {
@@ -99,6 +97,7 @@ function LanguageRuntime({
   return children(runtime);
 }
 
+/** Toolkits are what Scient-managed Python holds, so they sit inside its section. */
 function PythonToolkits({
   language,
   runtime,
@@ -112,51 +111,34 @@ function PythonToolkits({
   change: ToolkitChange | null;
   onChange: (change: ToolkitChange | null) => void;
 }) {
-  if (
-    language.descriptor.languageId !== "python" ||
-    language.toolkits.length === 0 ||
-    !runtime.status?.installed
-  )
-    return null;
+  if (language.toolkits.length === 0 || !runtime.status?.installed) return null;
   return (
-    <SettingsSection
-      id="scientific-computing-toolkits"
-      title="Toolkits"
-      headerAction={<span className="text-xs text-muted-foreground">Scient-managed Python</span>}
-      variant="plain"
-      className="-mx-3 sm:-mx-4"
-    >
-      <div className="px-3 sm:px-4">
-        <SettingsSourcePanel>
-          <PythonToolkitSettings
-            toolkits={language.toolkits}
-            runtime={runtime}
-            disabled={
-              runtime.status?.toolkitChanges === undefined
-                ? Boolean(busy || runtime.busy)
-                : Boolean(busy || runtime.status.operation?.action === "remove")
-            }
-            change={change}
-            onChange={onChange}
-          />
-        </SettingsSourcePanel>
-      </div>
-    </SettingsSection>
+    <SettingsSourcePanel id="scientific-computing-toolkits">
+      <PythonToolkitSettings
+        toolkits={language.toolkits}
+        runtime={runtime}
+        disabled={
+          runtime.status?.toolkitChanges === undefined
+            ? Boolean(busy || runtime.busy)
+            : Boolean(busy || runtime.status.operation?.action === "remove")
+        }
+        change={change}
+        onChange={onChange}
+      />
+    </SettingsSourcePanel>
   );
 }
 
 function LanguageHeader({
   languageId,
   name,
-  state,
+  checking,
   comingSoon = false,
-  inventory,
 }: {
   languageId: string;
   name: string;
-  state: string | null;
+  checking: boolean;
   comingSoon?: boolean;
-  inventory: ComputeLanguages;
 }) {
   return (
     <header className="flex items-center gap-4">
@@ -170,57 +152,134 @@ function LanguageHeader({
             <span className="shrink-0 text-sm text-muted-foreground">Coming soon</span>
           ) : null}
         </div>
-        {state ? <p className="text-sm text-muted-foreground">{state}</p> : null}
+        {checking ? <p className="text-sm text-muted-foreground">Checking…</p> : null}
       </div>
-      <FindRuntimesButton inventory={inventory} />
     </header>
   );
 }
 
-/** What is here for a language Scient has no runtime for: each file, and room to add another. */
-function FoundElsewhere({
+const AUTOMATIC_TOOL = "scient-tool:automatic";
+
+/** For a language that runs from its file: which program runs it, and everything found. */
+function FoundPrograms({
   language,
   url,
+  unknown,
   preference,
-  disabled,
+  busy,
   onChange,
+  onRefresh,
 }: {
   language: ComputeLanguageRuntimeInventory;
   url: string | undefined;
+  /** Some places could not be read, so finding nothing proves nothing. */
+  unknown: boolean;
   preference: ScientificComputingLanguageSettings;
-  disabled: boolean;
+  busy: boolean;
   onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
+  onRefresh: () => Promise<void>;
 }) {
   const languageId = language.descriptor.languageId;
   const name = language.descriptor.displayName;
   const setup = language.descriptor.setup;
+  const tools = language.tools ?? [];
   const [path, setPath] = useState("");
+  const [open, setOpen] = useState(false);
+  const chosen = preference.executable.trim();
+  const label = (tool: (typeof tools)[number]) =>
+    [tool.name, tool.version, tool.origin ?? "System"].filter(Boolean).join(" · ");
+  const chosenTool = tools.find((tool) => tool.executable === chosen);
+  const onlyTool = tools.length === 1 ? tools[0] : undefined;
   return (
     <SettingsSourcePanel id={`scientific-computing-${languageId}`}>
-      {(language.tools ?? []).map((tool) => (
+      {tools.length === 0 ? null : (
         <SettingsRow
-          key={tool.executable}
-          id={`${languageId}-found-${tool.executable}`}
-          title={tool.name}
-          description={tool.problem ?? tool.executable}
+          id={`${languageId}-runs-with`}
+          title="Runs with"
           control={
-            tool.origin === COMPUTE_ADDED_LOCATION ? (
-              <Button
-                size="xs"
-                variant="ghost-muted"
-                disabled={disabled}
-                onClick={() => void onChange({ ...preference, executable: "" })}
-              >
-                Remove
-              </Button>
+            onlyTool ? (
+              <span className="text-xs text-muted-foreground">{label(onlyTool)}</span>
             ) : (
-              <span className="text-xs text-muted-foreground">
-                {[tool.version, tool.origin ?? "System"].filter(Boolean).join(" · ")}
-              </span>
+              <Select
+                value={chosenTool === undefined ? AUTOMATIC_TOOL : chosen}
+                disabled={busy}
+                onValueChange={(next) => {
+                  if (next === null) return;
+                  void onChange({
+                    ...preference,
+                    executable: next === AUTOMATIC_TOOL ? "" : next,
+                  });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-auto max-w-64" aria-label={`${name} program`}>
+                  <SelectValue>
+                    {chosenTool === undefined
+                      ? `Automatic · ${tools[0]?.name ?? name}`
+                      : label(chosenTool)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup
+                  align="end"
+                  alignItemWithTrigger={false}
+                  matchTriggerWidth={false}
+                  className="max-w-[calc(100vw-1rem)]"
+                >
+                  <SelectItem hideIndicator value={AUTOMATIC_TOOL}>
+                    {`Automatic · ${tools[0]?.name ?? name}`}
+                  </SelectItem>
+                  <SelectSeparator />
+                  {tools.map((tool) => (
+                    <SelectItem key={tool.executable} hideIndicator value={tool.executable}>
+                      <span className="block max-w-[calc(100vw-3rem)] truncate sm:max-w-80">
+                        {label(tool)}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
             )
           }
         />
-      ))}
+      )}
+      <FoundRow
+        languageId={languageId}
+        label={unknown ? "Couldn't check" : foundCountLabel(tools.length)}
+        open={open}
+        onToggle={() => setOpen((current) => !current)}
+        refresh={<RefreshRuntimesButton busy={busy} onRefresh={onRefresh} />}
+      />
+      {open ? (
+        <FoundList languageId={languageId}>
+          {tools.map((tool) => (
+            <FoundToolRow
+              key={tool.executable}
+              languageId={languageId}
+              tool={tool}
+              control={
+                tool.origin === COMPUTE_ADDED_LOCATION ? (
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    disabled={busy}
+                    onClick={() => void onChange({ ...preference, executable: "" })}
+                  >
+                    Remove
+                  </Button>
+                ) : undefined
+              }
+            />
+          ))}
+          <AddLocationRow
+            languageId={languageId}
+            name={name}
+            action="Add"
+            path={path}
+            onPathChange={setPath}
+            disabled={busy}
+            onAdd={(executable) => onChange({ ...preference, executable })}
+          />
+        </FoundList>
+      ) : null}
       {setup === undefined && url === undefined ? null : (
         <SettingsRow
           id={`${languageId}-installation-missing`}
@@ -239,16 +298,46 @@ function FoundElsewhere({
           }
         />
       )}
-      <AddLocationRow
-        languageId={languageId}
-        name={name}
-        action="Add"
-        path={path}
-        onPathChange={setPath}
-        disabled={disabled}
-        onAdd={(executable) => onChange({ ...preference, executable })}
-      />
     </SettingsSourcePanel>
+  );
+}
+
+/** The sections one language adds to the shared page. New language settings go here. */
+function LanguageSpecifics({
+  language,
+  preference,
+  runtime,
+  environmentId,
+  inventory,
+  toolkitChange,
+  onToolkitChange,
+}: {
+  language: ComputeLanguageRuntimeInventory;
+  preference: ScientificComputingLanguageSettings;
+  runtime: ComputeManagedRuntimeController;
+  environmentId: EnvironmentId;
+  inventory: ComputeLanguages;
+  toolkitChange: ToolkitChange | null;
+  onToolkitChange: (change: ToolkitChange | null) => void;
+}) {
+  return (
+    <ComputeScientPartSection
+      language={language}
+      preference={preference}
+      runtime={runtime}
+      environmentId={environmentId}
+      refreshing={inventory.refreshing}
+    >
+      {language.descriptor.languageId === "python" ? (
+        <PythonToolkits
+          language={language}
+          runtime={runtime}
+          busy={inventory.pending || inventory.refreshing}
+          change={toolkitChange}
+          onChange={onToolkitChange}
+        />
+      ) : null}
+    </ComputeScientPartSection>
   );
 }
 
@@ -295,17 +384,18 @@ function LanguageDetail({
           <LanguageHeader
             languageId={languageId}
             name={name}
-            state={inventory.pending ? "Checking…" : (status?.detail ?? "")}
+            checking={inventory.pending}
             comingSoon={!inventory.pending && (status?.comingSoon ?? true)}
-            inventory={inventory}
           />
           {inventory.pending || language === undefined ? null : (
-            <FoundElsewhere
+            <FoundPrograms
               language={language}
               url={status?.getUrl}
+              unknown={status?.unknown ?? false}
               preference={inventory.preferenceFor(language)}
-              disabled={inventory.busy}
+              busy={inventory.busy}
               onChange={(next) => inventory.updateLanguage(language.descriptor.languageId, next)}
+              onRefresh={inventory.refresh}
             />
           )}
           <ComputeInventoryFailure inventory={inventory} />
@@ -322,12 +412,7 @@ function LanguageDetail({
         {(runtime) => (
           <div className="grid gap-6">
             {back}
-            <LanguageHeader
-              languageId={languageId}
-              name={name}
-              state={inventory.pending ? "Checking…" : null}
-              inventory={inventory}
-            />
+            <LanguageHeader languageId={languageId} name={name} checking={inventory.pending} />
             <SettingsSourcePanel id={`scientific-computing-${languageId}`} data-compute-settings="">
               <ComputeLanguagePanel
                 language={language}
@@ -342,12 +427,14 @@ function LanguageDetail({
                 toolkitChange={languageId === "python" ? toolkitChange : null}
               />
             </SettingsSourcePanel>
-            <PythonToolkits
+            <LanguageSpecifics
               language={language}
+              preference={preference}
               runtime={runtime}
-              busy={inventory.pending || inventory.refreshing}
-              change={toolkitChange}
-              onChange={setToolkitChange}
+              environmentId={environmentId}
+              inventory={inventory}
+              toolkitChange={toolkitChange}
+              onToolkitChange={setToolkitChange}
             />
             <ComputeInventoryFailure inventory={inventory} />
           </div>

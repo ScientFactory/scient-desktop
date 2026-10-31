@@ -46,6 +46,7 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
   kernelLanguage: "julia",
   programName: "julia",
   kernelPackage: "IJulia",
+  ownKernelName: "IJulia",
   sourceExtensions: [".jl"],
   variablesExpression: VARIABLES,
   // A first session may still compile code IJulia did not precompile.

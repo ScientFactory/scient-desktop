@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { ChevronDownIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronDownIcon, RefreshCwIcon } from "lucide-react";
 import type {
+  ComputeFoundTool,
   ComputeLanguageRuntimeInventory,
-  ComputeManagedRuntimeAction,
   EnvironmentId,
   ScientificComputingLanguageSettings,
 } from "@t3tools/contracts";
 import { SettingsRow } from "~/components/settings/settingsLayout";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { MenuItem } from "~/components/ui/menu";
 import {
   Select,
   SelectItem,
@@ -17,7 +18,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
+import { ExtensionsSection } from "~/scient/extensions/ExtensionsPage";
 import {
   ManagedRuntimeMaintenanceMenu,
   ManagedRuntimeNotice,
@@ -42,7 +46,7 @@ const AUTOMATIC_RUNTIME_OPTION = "scient-runtime:automatic";
 
 type InstallationSelection = ReturnType<typeof useComputeInstallationSelection>;
 
-/** What a language runs on, what Scient adds to it, and everything else found on this computer. */
+/** What a language runs on, and everything else found on this computer. */
 export function ComputeLanguagePanel({
   language,
   preference,
@@ -107,16 +111,19 @@ export function ComputeLanguagePanel({
     fingerprint: string;
     versions: Record<string, string>;
   } | null>(null);
-  const shown =
-    observedVersions?.fingerprint === runtimeFingerprint
-      ? {
-          ...language,
-          installations: language.installations.map((installation) => ({
-            ...installation,
-            version: observedVersions.versions[installation.executable] ?? installation.version,
-          })),
-        }
-      : language;
+  const observed =
+    observedVersions?.fingerprint === runtimeFingerprint ? observedVersions.versions : {};
+  const shown = {
+    ...language,
+    installations: language.installations.map((installation) => ({
+      ...installation,
+      // SQL's version would be its Python's, so it goes by what runs it.
+      version:
+        languageId === "sql"
+          ? "DuckDB"
+          : (observed[installation.executable] ?? installation.version),
+    })),
+  };
   const rememberVersion = (executable: string, version: string) => {
     setObservedVersions((previous) => ({
       fingerprint: runtimeFingerprint,
@@ -164,8 +171,6 @@ export function ComputeLanguagePanel({
     (Boolean(runtime.failure) || (runtime.status?.operation != null && !inlineProgress));
   const needs =
     loading || summary.kind === "ready" || summary.kind === "update-managed" ? null : summary.title;
-  const keptAction: ComputeManagedRuntimeAction | null =
-    primary?.run === "repair" || primary?.run === "install" ? primary.run : null;
 
   return (
     <>
@@ -230,51 +235,6 @@ export function ComputeLanguagePanel({
           </p>
         ) : null}
       </SettingsRow>
-      {part !== null && runtime.status?.installed ? (
-        <ComputeInstallationRow
-          key={`scient:${runtimeFingerprint}`}
-          id={`${languageId}-managed-runtime`}
-          title={
-            part === "connection"
-              ? "MATLAB connection"
-              : part === "kernel"
-                ? (runtime.status.displayName ?? name)
-                : "Scient-managed Python"
-          }
-          description={
-            part === "connection"
-              ? "Connects Scient to MATLAB"
-              : languageId === "sql"
-                ? "Includes DuckDB"
-                : part === "kernel" && runtime.status.runtimeVersion
-                  ? `${runtime.status.runtimeVersion} · Private to Scient`
-                  : "Private to Scient"
-          }
-          installation={
-            part === "managed-python"
-              ? language.installations.find((installation) => installation.source === "managed")
-              : undefined
-          }
-          testable={false}
-          environmentId={environmentId}
-          languageId={languageId}
-          disabled={disabled}
-          renderMenu={(installationActions) => (
-            <ManagedRuntimeMaintenanceMenu
-              installationActions={installationActions}
-              runtime={runtime}
-              connection={part === "connection"}
-              {...(part === "kernel" ? { kernel: runtime.status?.displayName ?? name } : {})}
-              omitAction={keptAction}
-              canProvision={selected !== undefined}
-              disabled={refreshing || !environmentId}
-              connectionNeedsRetarget={
-                part === "connection" && computeConnectionNeedsRetarget(runtime.status, selected)
-              }
-            />
-          )}
-        />
-      ) : null}
       <FoundInstallations
         language={shown}
         preference={preference}
@@ -284,6 +244,7 @@ export function ComputeLanguagePanel({
         disabled={unavailable}
         fingerprint={runtimeFingerprint}
         onVersion={rememberVersion}
+        refresh={<RefreshRuntimesButton busy={unavailable} onRefresh={onRefresh} />}
       />
     </>
   );
@@ -377,6 +338,7 @@ function FoundInstallations({
   disabled,
   fingerprint,
   onVersion,
+  refresh,
 }: {
   language: ComputeLanguageRuntimeInventory;
   preference: ScientificComputingLanguageSettings;
@@ -386,34 +348,31 @@ function FoundInstallations({
   disabled: boolean;
   fingerprint: string;
   onVersion: (executable: string, version: string) => void;
+  refresh: ReactNode;
 }) {
   const languageId = language.descriptor.languageId;
   const name = language.descriptor.displayName;
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState("");
   const found = language.installations.filter((installation) => installation.source !== "managed");
+  const tools = language.tools ?? [];
   const chosen = preference.executable.trim();
   return (
     <>
-      <SettingsRow
-        id={`${languageId}-found`}
-        title="Found on this computer"
-        control={
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            aria-expanded={open}
-            aria-controls={`${languageId}-found-list`}
-            aria-label={`${found.length} found on this computer`}
-            onClick={() => setOpen((current) => !current)}
-          >
-            {found.length}
-            <ChevronDownIcon className={cn("transition-transform", open && "rotate-180")} />
-          </Button>
+      <FoundRow
+        languageId={languageId}
+        label={foundCountLabel(found.length + tools.length)}
+        note={
+          languageId === "sql" && tools.length > 0
+            ? "Scient runs SQL in DuckDB. Agents can use these from a shell."
+            : undefined
         }
+        open={open}
+        onToggle={() => setOpen((current) => !current)}
+        refresh={refresh}
       />
       {open ? (
-        <div id={`${languageId}-found-list`} className="[&>:not(:first-child)]:border-t">
+        <FoundList languageId={languageId}>
           {found.map((installation, index) => (
             <ComputeInstallationRow
               key={`${installation.executable}:${fingerprint}`}
@@ -435,6 +394,9 @@ function FoundInstallations({
               }
             />
           ))}
+          {tools.map((tool) => (
+            <FoundToolRow key={tool.executable} languageId={languageId} tool={tool} />
+          ))}
           <AddLocationRow
             languageId={languageId}
             name={name}
@@ -444,9 +406,91 @@ function FoundInstallations({
             disabled={disabled || selection.disabled}
             onAdd={selection.select}
           />
-        </div>
+        </FoundList>
       ) : null}
     </>
+  );
+}
+
+export function foundCountLabel(count: number): string {
+  return count === 0 ? "None" : String(count);
+}
+
+/** The one row that says what was found. Opening it shows the list. */
+export function FoundRow({
+  languageId,
+  label,
+  note,
+  open,
+  onToggle,
+  refresh,
+}: {
+  languageId: string;
+  label: string;
+  note?: string | undefined;
+  open: boolean;
+  onToggle: () => void;
+  refresh: ReactNode;
+}) {
+  return (
+    <SettingsRow
+      id={`${languageId}-found`}
+      title="Found on this computer"
+      description={note}
+      control={
+        <div className="flex items-center gap-1">
+          <Button
+            size="xs"
+            variant="ghost-muted"
+            aria-expanded={open}
+            aria-controls={`${languageId}-found-list`}
+            aria-label={`Found on this computer: ${label}`}
+            onClick={onToggle}
+          >
+            {label}
+            <ChevronDownIcon className={cn("transition-transform", open && "rotate-180")} />
+          </Button>
+          {refresh}
+        </div>
+      }
+    />
+  );
+}
+
+export function FoundList({ languageId, children }: { languageId: string; children: ReactNode }) {
+  return (
+    <div
+      id={`${languageId}-found-list`}
+      className="[&>:not(:first-child)]:border-t [&>:not(:first-child)]:border-border/50"
+    >
+      {children}
+    </div>
+  );
+}
+
+/** A program a scan found: what it is, where it lives, and where it came from. */
+export function FoundToolRow({
+  languageId,
+  tool,
+  control,
+}: {
+  languageId: string;
+  tool: ComputeFoundTool;
+  control?: ReactNode;
+}) {
+  return (
+    <SettingsRow
+      id={`${languageId}-found-${tool.executable}`}
+      title={tool.name}
+      description={tool.problem ?? tool.executable}
+      control={
+        control ?? (
+          <span className="text-xs text-muted-foreground">
+            {[tool.version, tool.origin ?? "System"].filter(Boolean).join(" · ")}
+          </span>
+        )
+      }
+    />
   );
 }
 
@@ -499,5 +543,130 @@ export function AddLocationRow({
         </form>
       }
     />
+  );
+}
+
+/** Looks again. It belongs with the list it refreshes. */
+export function RefreshRuntimesButton({
+  busy,
+  onRefresh,
+}: {
+  busy: boolean;
+  onRefresh: () => Promise<void>;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            disabled={busy}
+            aria-label="Refresh scientific runtimes"
+            onClick={() => void onRefresh()}
+          >
+            <RefreshCwIcon className={cn(busy ? "animate-spin" : undefined)} />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">Find runtimes again</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+/**
+ * What Scient itself adds to a language, as a section of its own: Scient-managed Python and its
+ * Toolkits, a private kernel, or the MATLAB connection. A kernel a person already has is named too.
+ */
+export function ComputeScientPartSection({
+  language,
+  preference,
+  runtime,
+  environmentId,
+  refreshing,
+  children,
+}: {
+  language: ComputeLanguageRuntimeInventory;
+  preference: ScientificComputingLanguageSettings;
+  runtime: ComputeManagedRuntimeController;
+  environmentId: EnvironmentId | null;
+  refreshing: boolean;
+  children?: ReactNode;
+}) {
+  const languageId = language.descriptor.languageId;
+  const name = language.descriptor.displayName;
+  const part = computeScientPart(languageId);
+  const status = runtime.status;
+  const ownKernel = part === "kernel" && status?.selection === "existing";
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "runtime path" });
+  if (part === null || (!status?.installed && !ownKernel)) return null;
+  const selected = defaultComputeInstallation(language, preference, status);
+  const summary = computeCurrentRuntimeSummary({ language, preference, managed: status });
+  const primary = computeLanguagePrimaryAction({
+    language,
+    summary,
+    managed: status,
+    selected,
+    failureRetry: runtime.failure?.retryAction,
+  });
+  const managed =
+    part === "managed-python"
+      ? language.installations.find((installation) => installation.source === "managed")
+      : undefined;
+  const title =
+    part === "connection"
+      ? "MATLAB connection"
+      : part === "kernel"
+        ? (status?.displayName ?? name)
+        : "Scient-managed Python";
+  const owner = ownKernel ? `Your ${name}` : "Private to Scient";
+  const detail =
+    part === "connection"
+      ? "Connects Scient to MATLAB"
+      : languageId === "sql"
+        ? "Includes DuckDB"
+        : part === "kernel" && status?.runtimeVersion
+          ? `${status.runtimeVersion} · ${owner}`
+          : owner;
+  return (
+    <ExtensionsSection
+      id={`${languageId}-managed-runtime`}
+      title={title}
+      action={
+        status?.installed ? (
+          <ManagedRuntimeMaintenanceMenu
+            installationActions={
+              managed ? (
+                <MenuItem onClick={() => copyToClipboard(managed.executable, undefined)}>
+                  {isCopied ? "Copied" : "Copy path"}
+                </MenuItem>
+              ) : null
+            }
+            runtime={runtime}
+            connection={part === "connection"}
+            {...(part === "kernel" ? { kernel: status.displayName ?? name } : {})}
+            omitAction={
+              primary?.run === "repair" || primary?.run === "install" ? primary.run : null
+            }
+            canProvision={selected !== undefined}
+            disabled={refreshing || !environmentId}
+            connectionNeedsRetarget={
+              part === "connection" && computeConnectionNeedsRetarget(status, selected)
+            }
+          />
+        ) : undefined
+      }
+    >
+      <div className="-mt-2 grid gap-3">
+        {managed?.problem ? (
+          <p className="text-sm text-destructive" role="alert">
+            {managed.problem}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">{detail}</p>
+        )}
+        {children}
+      </div>
+    </ExtensionsSection>
   );
 }

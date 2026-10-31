@@ -97,6 +97,8 @@ export interface KernelLanguage {
   /** Prints the probe marker, version, architecture, home and its own kernel version, tab-separated. */
   readonly probeArgs: ReadonlyArray<string>;
   readonly readFacts: (context: DiscoveryContext, executable: string) => KernelInstallationFacts;
+  /** The kernel a person may already have, by the name they know it. */
+  readonly ownKernelName: string;
   /** False where a person's kernel cannot do what Scient needs, so Scient's own is used. */
   readonly ownKernelUsable?: (platform: NodeJS.Platform) => boolean;
   /** The language's own program, lowercase, as a kernel would start it. */
@@ -588,11 +590,11 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
 
   const status = Effect.fn("KernelComputeRuntime.status")(function* () {
     const current = yield* target().pipe(Effect.orElseSucceed(() => null));
-    const own = current?.state.probe.ownKernelVersion ?? null;
+    const own = current === null ? null : ownKernelVersion(current.state);
     const installed = current?.state.privateKernelVersion ?? null;
     const kernelVersion = own ?? installed;
     return {
-      displayName: language.kernelPackage,
+      displayName: own === null ? language.kernelPackage : language.ownKernelName,
       ...(current === null ? {} : { installationExecutable: current.installation.executable }),
       installed: installed !== null,
       selection: own === null ? ("managed" as const) : ("existing" as const),

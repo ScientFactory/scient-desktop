@@ -119,7 +119,7 @@ export function ComputeRuntimeTest({
   return (
     <Button
       size="xs"
-      variant="ghost-muted"
+      variant="outline"
       disabled={disabled}
       aria-label={`Test ${label}`}
       onClick={() => void run()}

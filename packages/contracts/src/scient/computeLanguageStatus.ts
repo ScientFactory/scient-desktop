@@ -218,7 +218,7 @@ export function computeCurrentRuntimeSummary(input: {
     !managed.installed &&
     managed.selection !== "existing"
   ) {
-    return { kind: "setup", title: "Not set up", detail: "" };
+    return { kind: "setup", title: "Scient adds its kernel the first time you run", detail: "" };
   }
   if (selected !== undefined) {
     return {

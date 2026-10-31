@@ -666,7 +666,7 @@ const make = Effect.gen(function* () {
           toolkits: [],
           installations: [],
           tools:
-            added !== null
+            added !== null && !tools.some((tool) => tool.executable === added)
               ? [
                   {
                     name: pathModule(context.platform).basename(added),

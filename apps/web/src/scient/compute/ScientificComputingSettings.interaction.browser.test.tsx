@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   statuses: {} as Record<string, ComputeManagedRuntimeStatus | null>,
   queryErrors: {} as Record<string, string | null>,
   inventoryPending: false,
+  incomplete: false,
   hostKey: null as string | null,
   revision: 0,
   listeners: new Set<() => void>(),
@@ -130,7 +131,11 @@ vi.mock("~/state/query", async (importOriginal) => {
           atom?.kind === "inventory"
             ? mocks.inventoryPending
               ? null
-              : { languages: mocks.languages, ...(mocks.hostKey ? { hostKey: mocks.hostKey } : {}) }
+              : {
+                  languages: mocks.languages,
+                  incomplete: mocks.incomplete,
+                  ...(mocks.hostKey ? { hostKey: mocks.hostKey } : {}),
+                }
             : atom?.languageId
               ? (mocks.statuses[atom.languageId] ?? null)
               : null,
@@ -258,6 +263,7 @@ describe("Scientific Computing settings interactions", () => {
     mocks.statuses = { python: status() };
     mocks.queryErrors = {};
     mocks.inventoryPending = false;
+    mocks.incomplete = false;
     mocks.hostKey = null;
     mocks.saveFails = false;
     mocks.releaseFails = false;
@@ -470,11 +476,11 @@ describe("Scientific Computing settings interactions", () => {
     await render(_fixture);
     expect(_fixture.container.querySelector("#python-installation-0")).toBeNull();
     expect(
-      _fixture.container.querySelector('[aria-label="3 found on this computer"]'),
+      _fixture.container.querySelector('[aria-label="Found on this computer: 3"]'),
     ).not.toBeNull();
     await openFound(_fixture);
-    // Scient's own Python plus every runtime found on this computer.
-    expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(4);
+    // Every runtime found on this computer; Scient's own Python has its own section.
+    expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(3);
     expect(installationRow(_fixture, systemPath).textContent).toContain("System");
     expect(installationRow(_fixture, systemPath).textContent).toContain(systemPath);
     expect(installationRow(_fixture, systemPath).textContent).not.toContain("In use");
@@ -665,7 +671,6 @@ describe("Scientific Computing settings interactions", () => {
     expect(runtimeSelect(_fixture).textContent).toContain("Automatic · System");
     await openFound(_fixture);
     expect(installationRow(_fixture, systemPath).textContent).toContain("In use");
-    expect(installationRow(_fixture, managedPath).textContent).not.toContain("In use");
     expect(
       _fixture.container.querySelectorAll("#python-found-list [data-compute-installation]"),
     ).toHaveLength(1);
@@ -877,7 +882,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.preferences.python?.executable).toBe("");
   });
 
-  it("opens each language on its own page, with independent enablement", async () => {
+  it("opens each language on its own page", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -922,7 +927,7 @@ describe("Scientific Computing settings interactions", () => {
     await render(_fixture);
     expect(_fixture.container.querySelector('[id$="-trigger"]')).toBeNull();
     await openFound(_fixture);
-    expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(2);
+    expect(_fixture.container.querySelectorAll("[data-compute-installation]")).toHaveLength(1);
     expect(_fixture.container.querySelector("#python-managed-runtime")?.textContent).toContain(
       "Private to Scient",
     );
@@ -978,7 +983,9 @@ describe("Scientific Computing settings interactions", () => {
     // Scient's kernel row appears once it is installed; until then the Runtime row sets it up.
     expect(_fixture.container.querySelector("#r-managed-runtime")).toBeNull();
     const row = _fixture.container.querySelector<HTMLElement>("#r-runtime")!;
-    expect(row.querySelector("[data-compute-summary='r']")?.textContent).toBe("Not set up");
+    expect(row.querySelector("[data-compute-summary='r']")?.textContent).toBe(
+      "Scient adds its kernel the first time you run",
+    );
     await click(_fixture, "Set up", row);
     expect(mocks.manage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -999,6 +1006,99 @@ describe("Scientific Computing settings interactions", () => {
     expect(overviewRow.textContent).toContain("Not found");
     expect(overviewRow.querySelector('a[aria-label="Get R"]')?.getAttribute("href")).toBe(
       "https://cloud.r-project.org/",
+    );
+  });
+
+  it("says each thing once on a language's page and keeps what was found in one list", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const language = (
+      languageId: string,
+      displayName: string,
+      installations: ComputeLanguageRuntimeInventory["installations"],
+      tools: NonNullable<ComputeLanguageRuntimeInventory["tools"]>,
+    ): ComputeLanguageRuntimeInventory => ({
+      ...python(),
+      descriptor: {
+        ...python().descriptor,
+        languageId: ComputeLanguageId.make(languageId),
+        displayName,
+      },
+      managedRuntime: null,
+      installations,
+      tools,
+    });
+    const program = (name: string) => ({
+      name,
+      executable: `/usr/bin/${name}`,
+      version: null,
+      origin: null,
+    });
+    mocks.languages = [
+      python(),
+      language("cpp", "C++", [], [program("clang++"), program("g++")]),
+      language("perl", "Perl", [], [program("perl")]),
+      language("stata", "Stata", [], []),
+      language(
+        "rust",
+        "Rust",
+        [{ executable: "/kernels/rust", source: "conventional", version: null, problem: null }],
+        [program("rustc")],
+      ),
+      language(
+        "sql",
+        "SQL",
+        [{ executable: managedPath, source: "managed", version: "3.14.7", problem: null }],
+        [program("psql")],
+      ),
+    ];
+
+    await render(_fixture, "cpp");
+    expect(_fixture.container.querySelector("header")?.textContent).toBe("C++");
+    expect(_fixture.container.querySelector("#cpp-runs-with")?.textContent).toContain(
+      "Automatic · clang++",
+    );
+    expect(_fixture.container.querySelector("#cpp-found")?.textContent).toContain("2");
+
+    // One program leaves nothing to choose.
+    await render(_fixture, "perl");
+    expect(_fixture.container.querySelector("#perl-runs-with")?.textContent).toContain(
+      "perl · System",
+    );
+    expect(_fixture.container.querySelector('[aria-label="Perl program"]')).toBeNull();
+
+    await render(_fixture, "stata");
+    expect(_fixture.container.querySelector("header")?.textContent).toBe("Stata");
+    expect(_fixture.container.querySelector("#stata-runs-with")).toBeNull();
+    expect(_fixture.container.querySelector("#stata-found")?.textContent).toContain("None");
+
+    // Finding nothing proves nothing when some places were not read.
+    mocks.incomplete = true;
+    notify();
+    await render(_fixture, "stata");
+    expect(_fixture.container.querySelector("#stata-found")?.textContent).toContain(
+      "Couldn't check",
+    );
+    mocks.incomplete = false;
+    notify();
+
+    // A kernel and the language's own programs are all found things.
+    await render(_fixture, "rust");
+    expect(_fixture.container.querySelector("#rust-found")?.textContent).toContain("2");
+    await openFound(_fixture, "rust");
+    expect(_fixture.container.querySelector("#rust-found-list")?.textContent).toContain("rustc");
+    expect(
+      [..._fixture.container.querySelectorAll("h2")].map((heading) => heading.textContent),
+    ).toEqual([]);
+
+    await render(_fixture, "sql");
+    expect(_fixture.container.querySelector("#sql-runtime")?.textContent).toContain(
+      "DuckDB · Scient-managed",
+    );
+    expect(_fixture.container.querySelector("#sql-found")?.textContent).toContain(
+      "Scient runs SQL in DuckDB",
     );
   });
 
@@ -1074,13 +1174,12 @@ describe("Scientific Computing settings interactions", () => {
     const runtimePanel = _fixture.container.querySelector<HTMLElement>(
       "#scientific-computing-python",
     )!;
-    const toolkitSection = _fixture.container.querySelector<HTMLElement>(
-      "#scientific-computing-toolkits",
-    )!;
+    const toolkitSection =
+      _fixture.container.querySelector<HTMLElement>("#python-managed-runtime")!;
     const toolkitCard = toolkitSection.querySelector<HTMLElement>("[data-source-panel]")!;
     expect(runtimePanel.contains(toolkitSection)).toBe(false);
-    expect(runtimePanel.querySelectorAll("[data-slot=settings-row]")).toHaveLength(3);
-    expect(toolkitSection.querySelector("h2")?.textContent).toBe("Toolkits");
+    expect(runtimePanel.querySelectorAll("[data-slot=settings-row]")).toHaveLength(2);
+    expect(toolkitSection.querySelector("h2")?.textContent).toBe("Scient-managed Python");
     expect(toolkitCard.querySelectorAll("[data-slot=settings-row]")).toHaveLength(toolkits.length);
 
     await render(_fixture, "matlab");
@@ -1090,7 +1189,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(_fixture.container.querySelector("#scientific-computing-python")).not.toBeNull();
     expect(
       _fixture.container
-        .querySelector("#scientific-computing-toolkits [data-source-panel]")
+        .querySelector("#python-managed-runtime [data-source-panel]")
         ?.querySelectorAll("[data-slot=settings-row]"),
     ).toHaveLength(toolkits.length);
   });
@@ -2164,7 +2263,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.verify).not.toHaveBeenCalled();
   });
 
-  it("keeps enablement and runtime selection usable while packages are being prepared", async () => {
+  it("keeps runtime selection usable while packages are being prepared", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
