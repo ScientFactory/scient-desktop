@@ -504,9 +504,10 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             // Resource copies intentionally bypass the journal write lease. Give each write a
             // private temporary directory so concurrent identical figures cannot race the same
-            // rename; scope cleanup must remove failed partial copies.
+            // rename; scope cleanup must remove failed partial copies. The name stays short because
+            // Windows applies its path limit to creating this folder, though not to the rename.
             const temporaryDirectory = yield* fs
-              .makeTempDirectoryScoped({ directory, prefix: `${fileName}.` })
+              .makeTempDirectoryScoped({ directory, prefix: ".write-" })
               .pipe(mapStoreError(input.operation, directory));
             yield* Effect.tryPromise({
               try: async () => {
