@@ -73,8 +73,7 @@ export function watchKeepSignedIn(
   const visit = window.desktopBridge?.accounts?.quietVisit;
   if (!visit) return () => undefined;
   const key = `scient:quiet-visits:${environmentId}`;
-  let visiting = false;
-  const visitNext = async () => {
+  const tick = async () => {
     const snapshot = await accountsState.readSnapshot.run(registry, { environmentId, input: {} });
     if (snapshot._tag !== "Success") return;
     const visits = readVisits(key);
@@ -96,13 +95,6 @@ export function watchKeepSignedIn(
         input: { accountId: target.accountId },
       });
   };
-  const tick = () => {
-    if (visiting) return;
-    visiting = true;
-    void visitNext().finally(() => {
-      visiting = false;
-    });
-  };
-  const timer = setInterval(tick, TICK_MS);
+  const timer = setInterval(() => void tick(), TICK_MS);
   return () => clearInterval(timer);
 }

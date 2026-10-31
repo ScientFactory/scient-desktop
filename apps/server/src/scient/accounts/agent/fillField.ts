@@ -48,15 +48,6 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
       filled: false,
       message: "The site refused this sign-in or is limiting access. Tell the user.",
     };
-  const lastPassword = passwordFills.get(account.accountId);
-  if (input.field === "password") {
-    if (lastPassword !== undefined && now - lastPassword < PASSWORD_FILL_GAP_MS)
-      return {
-        filled: false,
-        message: "This password was filled moments ago. If the site refused it, tell the user.",
-      };
-    passwordFills.set(account.accountId, now);
-  }
   const accounts = yield* AccountsService;
   const broker = yield* PreviewAutomationBroker;
   const invocation = yield* AgentInvocationContext;
@@ -118,6 +109,22 @@ export const fillField = Effect.fn("AccountsAgent.fillField")(function* (
   const text = input.field === "username" ? details.username : yield* secretText(input.field);
   if (text === undefined)
     return { filled: false, message: `This account has no saved ${input.field}.` };
-  yield* invoke("accountType", { origin: page.origin, selector, text, clear: true }, tabId);
+  // Checked and set with nothing in between, so two fills at once can't both pass.
+  const lastPassword = passwordFills.get(account.accountId);
+  if (input.field === "password") {
+    if (lastPassword !== undefined && now - lastPassword < PASSWORD_FILL_GAP_MS)
+      return {
+        filled: false,
+        message: "This password was filled moments ago. If the site refused it, tell the user.",
+      };
+    passwordFills.set(account.accountId, now);
+  }
+  yield* invoke("accountType", { origin: page.origin, selector, text, clear: true }, tabId).pipe(
+    Effect.tapError(() =>
+      Effect.sync(() => {
+        if (input.field === "password") passwordFills.delete(account.accountId);
+      }),
+    ),
+  );
   return { filled: true };
 });

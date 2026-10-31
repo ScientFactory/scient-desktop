@@ -84,7 +84,11 @@ export function watchAccountAutofill(
     )?.projectId;
     const matches = fillableAccounts(accounts.accounts, form.url, form.profileId);
     const account = matches.find(
-      (match) => !agentTab || agentMayUse(match.controls, accounts.agentAccess, projectId),
+      (match) =>
+        !agentTab ||
+        (agentMayUse(match.controls, accounts.agentAccess, projectId) &&
+          match.lastSignInOutcome !== "password-rejected" &&
+          match.lastCheck?.state !== "limited"),
     );
     if (!account) return;
     const lastSubmitted = signedBackIn.get(form.url) ?? 0;

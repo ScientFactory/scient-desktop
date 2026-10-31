@@ -26,9 +26,7 @@ export function ThreadAccountRequests(props: {
   const answer = (approval: AccountApproval, decision: "once" | "always" | "deny") =>
     void respond({ environmentId, input: { approvalId: approval.approvalId, decision } });
   const approvals = data?.approvals.filter((item) => item.threadId === threadId) ?? [];
-  // A code has its own private card; the rest are shown here.
-  const handoffs =
-    data?.handoffs?.filter((item) => item.threadId === threadId && item.kind !== "code") ?? [];
+  const handoffs = data?.handoffs?.filter((item) => item.threadId === threadId) ?? [];
   if (approvals.length === 0 && handoffs.length === 0) return null;
   return (
     <View className="gap-2 px-4 pb-2">

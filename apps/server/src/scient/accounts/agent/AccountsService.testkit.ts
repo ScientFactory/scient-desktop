@@ -1,6 +1,7 @@
 import {
   AccountId,
   AccountsError,
+  type AccountsSnapshot,
   defaultAccountControls,
   type AccountSaveInput,
   type AccountActivityEntry,
@@ -53,7 +54,7 @@ export function fakeAccounts(
         cancelled.add(id);
       }),
     passwordStore: () => unavailable,
-    snapshot: unavailable,
+    snapshot: Effect.sync(() => ({ accounts }) as unknown as AccountsSnapshot),
     changes: Stream.empty,
     save: (input) =>
       Effect.sync(() => {

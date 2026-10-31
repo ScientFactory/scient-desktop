@@ -180,6 +180,8 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (listed: AccountSummar
       engine: { userRun: true },
     });
     if ("tabId" in result) tabs.add(result.tabId);
+    // Nothing reached the site, so nothing else says what was seen here.
+    else yield* accounts.recordCheck(account.accountId, { state, message: result.message });
   }).pipe(
     Effect.ensuring(
       Effect.forEach(tabs, (tab) => invoke("close", {}, tab).pipe(Effect.ignore), {

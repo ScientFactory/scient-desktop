@@ -148,7 +148,13 @@ const fetchPaper = Effect.fn("Papers.fetch")(function* (
     const result = yield* (
       userRun
         ? fetch
-        : withAccountUse(scope, { type: "account", accountId: account.accountId }, "sign-in", fetch)
+        : withAccountUse(
+            scope,
+            { type: "account", accountId: account.accountId },
+            "sign-in",
+            fetch,
+            (done) => done?.status === "saved",
+          )
     ).pipe(
       Effect.catchTags({
         AccountsError: (error) =>

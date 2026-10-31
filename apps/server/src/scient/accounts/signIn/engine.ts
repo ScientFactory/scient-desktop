@@ -205,7 +205,13 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       if (
         details.kind === "library" &&
         submissions.some(({ fields }) => fields.includes("password")) &&
-        !matchesAccountOrigin(page.origin, details.sites)
+        !matchesAccountOrigin(page.origin, details.sites) &&
+        !page.broken &&
+        !page.limited &&
+        !page.challenge &&
+        !page.username &&
+        !page.password &&
+        !page.otp
       ) {
         clearFilled = false;
         return { outcome: "signed-in" as const, tabId: target };
@@ -235,7 +241,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         if (options.stopAtCode && action.kind === "code")
           return {
             outcome: "needs-user" as const,
-            message: `It needs a code. Call scient_account_sign_in with ${account.accountId} on this tab, which asks the user privately.`,
+            message: "It needs a code.",
             tabId: target,
           };
         const handoffId = NodeCrypto.randomUUID();
@@ -251,7 +257,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         const enterCode = Effect.fn("accounts.signIn.enterCode")(function* (code: string) {
           const field = yield* inspect(step);
           if (!field.page.otp || field.page.origin !== codeOrigin) {
-            ({ page, timestamp, otpPeriod, continuation } = field);
+            ({ page, timestamp } = field);
             return "continue" as const;
           }
           yield* invoke(
@@ -267,7 +273,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           if (field.page.submit) yield* invoke("click", { selector: field.page.submit }, target);
           else yield* invoke("press", { key: "Enter" }, target);
           yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
-          ({ page, timestamp, otpPeriod, continuation } = yield* inspect(step));
+          ({ page, timestamp } = yield* inspect(step));
           return "continue" as const;
         });
         // A push or CAPTCHA can turn into a code partway, so the card waits until one is needed.
@@ -351,7 +357,12 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         // A code belongs to the page that asked for it; another site asking gets the user.
         if (page.otp && codeOrigin !== undefined && page.origin !== codeOrigin)
           return { outcome: "needs-user" as const, message: action.message, tabId: target };
+        if (decide(page).type === "signed-in") {
+          clearFilled = false;
+          return { outcome: "signed-in" as const, tabId: target };
+        }
         // Back to the top: it waits for a slow answer, and catches a limit or a refusal.
+        yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
         continue;
       }
       clearFilled = true;

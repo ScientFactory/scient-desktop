@@ -177,6 +177,16 @@ describe("what a check leaves on an account", () => {
     );
   });
 
+  it("keeps the hold when a session ends moments after signing in", () => {
+    const signedIn = summary({ lastCheck: { state: "signed-in", at } });
+    const after = withCheck(signedIn, { state: "signed-out", at }, now + 60_000);
+    expect(after.lastCheck?.state).toBe("needs-you");
+    expect(automaticSignInOnHold(after, now + 60_000)).toBe(true);
+    expect(withCheck(signedIn, { state: "signed-out", at }, now + 3_600_000).lastCheck?.state).toBe(
+      "signed-out",
+    );
+  });
+
   it("clears a result that only needed a person, never a refused password", () => {
     expect(
       withCheck(summary({ lastSignInOutcome: "needs-user" }), { state: "signed-in", at }, now)

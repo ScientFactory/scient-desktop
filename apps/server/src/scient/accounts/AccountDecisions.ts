@@ -168,11 +168,13 @@ export const agentSignInOnHold = (
  */
 export const withCheck = (summary: AccountSummary, check: AccountCheck, nowMs: number) => {
   if (check.state !== "signed-in" && siteLimiting(summary, nowMs)) return summary;
+  // Ended moments after signing in: saying only "signed out" would lift the hold on signing back in.
+  const seen =
+    check.state === "signed-out" && signedInMomentsAgo(summary, nowMs)
+      ? { ...check, state: "needs-you" as const }
+      : check;
   const { lastSignInOutcome, ...rest } = summary;
-  return check.state === "signed-in" &&
-    (lastSignInOutcome === "needs-user" ||
-      lastSignInOutcome === "failed" ||
-      lastSignInOutcome === "limited")
-    ? { ...rest, lastCheck: check }
-    : { ...summary, lastCheck: check };
+  return seen.state === "signed-in" && lastSignInOutcome !== "signed-in" && !signInRefused(summary)
+    ? { ...rest, lastCheck: seen }
+    : { ...summary, lastCheck: seen };
 };

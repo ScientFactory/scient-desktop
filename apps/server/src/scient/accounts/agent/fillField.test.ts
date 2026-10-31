@@ -51,7 +51,7 @@ const tabStatus = (ownedByCaller: boolean): PreviewAutomationStatus => ({
 const run = (
   account: AccountSummary,
   field: "username" | "password",
-  page: { origin?: string; ownedByCaller?: boolean } = {},
+  page: { origin?: string; ownedByCaller?: boolean; noFields?: boolean } = {},
 ) => {
   const typed: Array<{ readonly selector: string; readonly origin: string }> = [];
   const asked: Array<string> = [];
@@ -66,8 +66,8 @@ const run = (
           typed.push(request.input as (typeof typed)[number]);
         return {
           origin: page.origin ?? "https://login.example.com",
-          username: "#user",
-          password: "#pass",
+          username: page.noFields ? null : "#user",
+          password: page.noFields ? null : "#pass",
           otp: null,
           submit: null,
           challenge: null,
@@ -138,5 +138,18 @@ it.effect("won't fill for an account on hold", () =>
     const { result, typed } = yield* run(held, "username");
     expect(result.filled).toBe(false);
     expect(typed).toEqual([]);
+  }),
+);
+
+it.effect("only counts a password fill that reached a field", () =>
+  Effect.gen(function* () {
+    const account = accountNamed("six");
+    const first = yield* run(account, "password", { noFields: true });
+    expect(first.result.filled).toBe(false);
+    const second = yield* run(account, "password");
+    expect(second.result).toEqual({ filled: true });
+    const third = yield* run(account, "password");
+    expect(third.result.filled).toBe(false);
+    expect(third.typed).toEqual([]);
   }),
 );

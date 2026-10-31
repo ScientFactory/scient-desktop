@@ -398,6 +398,16 @@ it.effect(
 
 it.effect("treats a library that sends the reader on to a publisher as signed in", () =>
   Effect.gen(function* () {
+    // A two-step page on another site is still the sign-in, not the publisher.
+    const twoStep = yield* librarySignIn({ origin: "https://api.duosecurity.com", otp: "#code" });
+    expect(twoStep.outcome).toBe("needs-user");
+    const publisher = yield* librarySignIn({ origin: "https://www.nature.com" });
+    expect(publisher.outcome).toBe("signed-in");
+  }),
+);
+
+const librarySignIn = (landing: { readonly origin: string; readonly otp?: string }) =>
+  Effect.gen(function* () {
     const library: AccountSummary = {
       accountId: AccountId.make("acc_fixture5"),
       name: "Library",
@@ -435,10 +445,10 @@ it.effect("treats a library that sends the reader on to a publisher as signed in
           if (request.operation === "click") submitted = true;
           if (request.operation !== "evaluate") return status as A;
           return {
-            origin: submitted ? "https://www.nature.com" : "https://library.example.edu",
+            origin: submitted ? landing.origin : "https://library.example.edu",
             username: submitted ? null : "#user",
             password: submitted ? null : "#password",
-            otp: null,
+            otp: submitted ? (landing.otp ?? null) : null,
             submit: submitted ? null : "button",
             challenge: null,
             signedIn: false,
@@ -467,6 +477,5 @@ it.effect("treats a library that sends the reader on to a publisher as signed in
         issuedAt: 0,
       }),
     );
-    expect(result.outcome).toBe("signed-in");
-  }),
-);
+    return result;
+  });

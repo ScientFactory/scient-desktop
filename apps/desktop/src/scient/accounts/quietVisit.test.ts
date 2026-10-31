@@ -5,25 +5,39 @@ import { isPublicHttps, quietVisit } from "./quietVisit.ts";
 
 const fakeRequest = (act: (request: NodeEvents.EventEmitter) => void) => {
   const request = new NodeEvents.EventEmitter();
-  let aborted = 0;
+  let followed = 0;
   Object.assign(request, {
     end: () => act(request),
-    abort: () => {
-      aborted++;
+    abort: () => undefined,
+    followRedirect: () => {
+      followed++;
     },
   });
-  return { open: () => request as unknown as ClientRequest, aborted: () => aborted };
+  return { open: () => request as unknown as ClientRequest, followed: () => followed };
 };
 
-it("reads a redirect instead of following it", async () => {
+it("follows a single sign-on bounce and reports where it ended", async () => {
+  const fake = fakeRequest((request) => {
+    request.emit("redirect", 302, "GET", "https://sso.example.com/start");
+    request.emit("redirect", 302, "GET", "https://example.com/home");
+    request.emit("response", { statusCode: 200 });
+  });
+  await expect(quietVisit(fake.open, "https://example.com/")).resolves.toEqual({
+    url: "https://example.com/home",
+    status: 200,
+  });
+  expect(fake.followed()).toBe(2);
+});
+
+it("stops at a redirect to a private address", async () => {
   const fake = fakeRequest((request) =>
-    request.emit("redirect", 302, "GET", "https://example.com/login"),
+    request.emit("redirect", 302, "GET", "https://192.168.1.1/"),
   );
   await expect(quietVisit(fake.open, "https://example.com/")).resolves.toEqual({
-    url: "https://example.com/login",
+    url: "https://192.168.1.1/",
     status: 302,
   });
-  expect(fake.aborted()).toBe(1);
+  expect(fake.followed()).toBe(0);
 });
 
 it("reports the answer, and nothing when the request fails", async () => {

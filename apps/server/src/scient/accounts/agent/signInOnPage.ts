@@ -48,7 +48,11 @@ export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
   });
   if (result.outcome !== "signed-in" || !("tabId" in result))
     return {
-      note: `This page needs a sign-in. ${result.message ?? "Signing in with the saved account did not finish."}`,
+      note: `This page needs a sign-in. ${result.message ?? "Signing in with the saved account did not finish."}${
+        result.outcome === "needs-user"
+          ? ` Call scient_account_sign_in with ${allowed.accountId} on this tab, which asks the user privately.`
+          : ""
+      }`,
     };
   const tabId = result.tabId;
   const broker = yield* PreviewAutomationBroker;

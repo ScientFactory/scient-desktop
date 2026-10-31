@@ -1,7 +1,13 @@
-import { AccountsError, type AccountSummary, type PreviewTabId } from "@t3tools/contracts";
+import {
+  AccountsError,
+  type AccountId,
+  type AccountSummary,
+  type PreviewTabId,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import {
   agentSignInOnHold,
   automaticSignInOnHold,
@@ -14,13 +20,23 @@ import { authorize } from "./accountUse.ts";
 
 const isAccountsError = Schema.is(AccountsError);
 
+const signInLocks = new Map<AccountId, Semaphore.Semaphore>();
+const lockFor = (accountId: AccountId) => {
+  const known = signInLocks.get(accountId);
+  if (known) return known;
+  const lock = Semaphore.makeUnsafe(1);
+  signInLocks.set(accountId, lock);
+  return lock;
+};
+
 /**
- * The one way into the sign-in engine. A hold is checked first and leaves the account's record
- * alone, because recording a blocked attempt would replace the result that caused the hold.
+ * The one way into the sign-in engine, one attempt per account at a time. Each attempt reads the
+ * account afresh, because another may have just been refused. A hold is checked first and leaves
+ * the record alone: recording a blocked attempt would replace the result that caused the hold.
  */
-export const guardedSignIn = Effect.fn("AccountsAgent.guardedSignIn")(function* (
+export const guardedSignIn = (
   scope: AccountSessionScope,
-  account: AccountSummary,
+  listed: AccountSummary,
   input: {
     readonly tabId?: PreviewTabId | undefined;
     /** Nobody asked for this sign-in by name: Scient decided to try. */
@@ -29,8 +45,22 @@ export const guardedSignIn = Effect.fn("AccountsAgent.guardedSignIn")(function* 
     readonly authorized?: boolean;
     readonly engine?: SignInOptions;
   } = {},
+) => attempt(scope, listed, input).pipe(lockFor(listed.accountId).withPermits(1));
+
+const attempt = Effect.fn("AccountsAgent.guardedSignIn")(function* (
+  scope: AccountSessionScope,
+  listed: AccountSummary,
+  input: {
+    readonly tabId?: PreviewTabId | undefined;
+    readonly automatic?: boolean;
+    readonly authorized?: boolean;
+    readonly engine?: SignInOptions;
+  },
 ) {
   const accounts = yield* AccountsService;
+  const account =
+    (yield* accounts.snapshot).accounts.find((item) => item.accountId === listed.accountId) ??
+    listed;
   const now = yield* Clock.currentTimeMillis;
   if (siteLimiting(account, now))
     return {
@@ -40,14 +70,14 @@ export const guardedSignIn = Effect.fn("AccountsAgent.guardedSignIn")(function* 
   if (input.automatic && signedInMomentsAgo(account, now))
     return {
       outcome: "failed" as const,
-      message: `${account.name} signed in moments ago, so something keeps ending it. Scient won't repeat it by itself; tell the user.`,
+      message: `${account.name} signed in moments ago, so something keeps ending it. Scient won't repeat it by itself.`,
     };
   if (
     input.automatic ? automaticSignInOnHold(account, now) : agentSignInOnHold(account, scope, now)
   )
     return {
       outcome: "failed" as const,
-      message: `${account.name}'s last sign-in didn't go through (${account.lastCheck?.message ?? account.lastSignInOutcome ?? "see Accounts"}), so Scient won't repeat it. Tell the user.`,
+      message: `${account.name}'s last sign-in didn't go through, so Scient won't repeat it by itself.`,
     };
   const target = { type: "account", accountId: account.accountId } as const;
   if (!input.authorized) yield* authorize(scope, target, "sign-in");

@@ -467,7 +467,7 @@ source: it answers 401 even with the inbox open in the same profile. Only messag
 hand-off count, and text must mention a code in English or Hebrew. A refused code is reported, never
 retried. The agent's result never contains the code.
 
-`ThreadAccountRequests` shows approvals and non-code hand-offs on the phone; `AgentAwarenessRelay`
+`ThreadAccountRequests` shows approvals and hand-offs on the phone; `AgentAwarenessRelay`
 marks those threads as waiting for approval so a push goes out (`accountRequestsByThread`).
 
 ## Keeping sessions
@@ -481,8 +481,8 @@ cookie store within 3 seconds instead of Chromium's roughly 30.
 
 `watchKeepSignedIn` stops sessions idling out while the app is open. Every ten minutes it asks at
 most one public HTTPS site for a page (`quietVisit`), with the session the profile already has, no
-page opened and redirects read rather than followed, so nothing new is created and other devices
-aren't affected. Each sign-in is visited
+page opened and at most four redirects followed, so nothing new is created and other devices aren't
+affected. Each sign-in is visited
 once a day; a session that ended sooner halves that gap, down to six hours. Shorter sessions are left
 alone, and Google is skipped because its sessions hold without visits. It never signs in. A session
 that ended is marked signed out and no longer visited, and the next real use signs in again. If that

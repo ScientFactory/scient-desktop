@@ -202,10 +202,11 @@ function DesktopBrowserAccountControls({
         // The saved password went in; once the login form is gone, it worked.
         const { accountId } = result.value;
         if (result.value.result === "same" && accountId) {
+          const submittedFrom = currentUrl.current;
           await new Promise((settled) => setTimeout(settled, SIGN_IN_SETTLE_MS));
           const form = await window.desktopBridge?.accounts?.loginForm?.(tabId);
           // No form could also mean the tab closed or the page is reloading.
-          const moved = currentUrl.current !== "" && currentUrl.current !== capture.url;
+          const moved = currentUrl.current !== "" && currentUrl.current !== submittedFrom;
           if (form === null && moved && generation === captureGeneration.current)
             void signInSeen({ accountId, outcome: "signed-in" });
         }

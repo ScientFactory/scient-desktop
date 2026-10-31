@@ -2,7 +2,6 @@ import {
   AccountsError,
   type AccountTarget,
   type AccountUseAction,
-  type AccountActivityEntry,
   type AccountSummary,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -29,7 +28,6 @@ export const withAccountUse = Effect.fn("AccountsAgent.use")(function* <A, E, R>
   action: AccountUseAction,
   operation: Effect.Effect<A, E, R>,
   succeeded: (result: A) => boolean = () => true,
-  signInOutcome?: (result: A) => AccountActivityEntry["signInOutcome"],
 ) {
   const accounts = yield* AccountsService;
   yield* authorize(scope, target, action);
@@ -40,9 +38,6 @@ export const withAccountUse = Effect.fn("AccountsAgent.use")(function* <A, E, R>
         action,
         threadId: scope.threadId,
         ...(scope.projectId === undefined ? {} : { projectId: scope.projectId }),
-        ...(exit._tag === "Success" && signInOutcome
-          ? { signInOutcome: signInOutcome(exit.value) }
-          : {}),
         outcome: exit._tag === "Success" && succeeded(exit.value) ? "ok" : "error",
       }),
     ),

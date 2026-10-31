@@ -5,8 +5,6 @@ import { accountsState } from "./accountsState";
 
 /** Coming back to the app asks again at most this often. */
 const FOCUS_CHECK_GAP_MS = 5 * 60 * 1000;
-/** A sign-in asks straight away, but browsing around one must not. */
-const CHANGE_CHECK_GAP_MS = 30 * 1000;
 const FIRST_CHECK_DELAY_MS = 3_000;
 
 /**
@@ -22,8 +20,12 @@ export function watchGoogleSessions(
   if (!read) return () => undefined;
   let lastCheck = 0;
   let checking = false;
+  let checkAgain = false;
   const check = async () => {
-    if (checking) return;
+    if (checking) {
+      checkAgain = true;
+      return;
+    }
     checking = true;
     lastCheck = Date.now();
     try {
@@ -39,13 +41,16 @@ export function watchGoogleSessions(
       }
     } finally {
       checking = false;
+      if (checkAgain) {
+        checkAgain = false;
+        void check();
+      }
     }
   };
-  const checkAfter = (gapMs: number) => () => {
-    if (Date.now() - lastCheck >= gapMs) void check();
+  const onFocus = () => {
+    if (Date.now() - lastCheck >= FOCUS_CHECK_GAP_MS) void check();
   };
-  const onFocus = checkAfter(FOCUS_CHECK_GAP_MS);
-  const onChange = checkAfter(CHANGE_CHECK_GAP_MS);
+  const onChange = () => void check();
   const first = setTimeout(onChange, FIRST_CHECK_DELAY_MS);
   window.addEventListener("focus", onFocus);
   window.addEventListener("scient-accounts-session-changed", onChange);

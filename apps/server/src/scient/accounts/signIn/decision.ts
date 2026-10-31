@@ -133,8 +133,7 @@ export function decideSignInContinuation(
   )
     return {
       type: "code-rejected",
-      message:
-        "The site did not accept the sign-in code. Ask the user to check it in Settings → Accounts & secrets.",
+      message: "The site did not accept the sign-in code.",
     } as const;
   if (step >= MAX_SIGN_IN_STEPS) return { type: "failed", message: SIGN_IN_TOO_LONG } as const;
   return { type: "continue" } as const;
