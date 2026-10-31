@@ -77,6 +77,8 @@ import {
   completeUtf8PrefixByteLength,
 } from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
+import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
+import { makeRunTableAdapters } from "./RunTableAdapter.ts";
 
 const RUN_HISTORY_DEFAULT_LIMIT = 20;
 const OUTPUT_COALESCE_MAX_CHUNK = 64;
@@ -197,10 +199,26 @@ class AnalysisRuntimeAdapters extends Context.Reference<ReadonlyArray<AnalysisRu
 const make = Effect.gen(function* () {
   const hostCapacity = yield* ComputeHostCapacity.ComputeHostCapacity;
   const observeOperation = yield* makeOperationAnalytics;
-  const runtimeAdapters = yield* AnalysisRuntimeAdapters;
   const crypto = yield* Crypto.Crypto;
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
+  const toolDiscovery = yield* ToolDiscovery;
+  const runWith = Effect.runPromiseWith(yield* Effect.context<never>());
+  const runtimeAdapters = [
+    ...(yield* AnalysisRuntimeAdapters),
+    ...(toolDiscovery === null
+      ? []
+      : makeRunTableAdapters({
+          tools: () =>
+            runWith(toolDiscovery.snapshot(false).pipe(Effect.map((snapshot) => snapshot.tools))),
+          environment: Object.fromEntries(
+            Object.entries(hostEnvironment).filter(
+              (entry): entry is [string, string] => entry[1] !== undefined,
+            ),
+          ),
+          platform: hostPlatform,
+        })),
+  ];
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
   const workspaceFiles = yield* WorkspaceFileSystem.WorkspaceFileSystem;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -1099,35 +1117,42 @@ const make = Effect.gen(function* () {
           });
         }
         const prepared = adapter.prepare(runContext);
-        const handle = yield* processes.start({
-          runId: startingRun.receipt.runId,
-          executable: prepared.executable,
-          args: prepared.args,
-          cwd: prepared.cwd,
-          environment: prepared.environment,
-        });
-        yield* Ref.update(handlesRef, (handles) => new Map(handles).set(runId, handle));
-        const running = yield* updateReceipt(runId, "start", (run) => ({
-          ...run,
-          phase: "running",
-          receipt: {
-            ...run.receipt,
-            status: transitionExecutionStatus(run.receipt.status, "running"),
-          },
-        }));
-        if (running.receipt.cancellationRequested) {
-          yield* handle.cancel;
+        let exitCode: number | null = 0;
+        for (const [index, step] of [...(prepared.before ?? []), prepared].entries()) {
+          const handle = yield* processes.start({
+            runId: startingRun.receipt.runId,
+            executable: step.executable,
+            args: step.args,
+            cwd: step.cwd,
+            environment: step.environment,
+          });
+          yield* Ref.update(handlesRef, (handles) => new Map(handles).set(runId, handle));
+          const running =
+            index === 0
+              ? yield* updateReceipt(runId, "start", (run) => ({
+                  ...run,
+                  phase: "running",
+                  receipt: {
+                    ...run.receipt,
+                    status: transitionExecutionStatus(run.receipt.status, "running"),
+                  },
+                }))
+              : (yield* Ref.get(runsRef)).get(runId);
+          if (running?.receipt.cancellationRequested) {
+            yield* handle.cancel;
+          }
+          [, exitCode] = yield* Effect.all(
+            [
+              handle.output.pipe(
+                Stream.groupedWithin(OUTPUT_COALESCE_MAX_CHUNK, OUTPUT_COALESCE_WINDOW),
+                Stream.runForEach((outputs) => appendOutput(runId, outputs)),
+              ),
+              handle.exitCode,
+            ],
+            { concurrency: 2 },
+          );
+          if (exitCode !== 0) break;
         }
-        const [, exitCode] = yield* Effect.all(
-          [
-            handle.output.pipe(
-              Stream.groupedWithin(OUTPUT_COALESCE_MAX_CHUNK, OUTPUT_COALESCE_WINDOW),
-              Stream.runForEach((outputs) => appendOutput(runId, outputs)),
-            ),
-            handle.exitCode,
-          ],
-          { concurrency: 2 },
-        );
         yield* updateReceipt(runId, "start", (run) => ({ ...run, phase: "capturing" }));
         if (adapter.collectDiagnostics) {
           const diagnostics = yield* Effect.promise(() =>
@@ -1369,7 +1394,9 @@ const make = Effect.gen(function* () {
             `Enable ${adapter.kind} in Scientific Computing settings before running it.`,
           );
         const lowerPath = input.relativePath.toLowerCase();
-        if (!adapter.fileExtensions.some((extension) => lowerPath.endsWith(extension))) {
+        if (
+          !adapter.fileExtensions.some((extension) => lowerPath.endsWith(extension.toLowerCase()))
+        ) {
           return yield* analysisError(
             "start",
             "invalid-source",

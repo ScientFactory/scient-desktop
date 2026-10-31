@@ -555,10 +555,11 @@ describe("what a language shows", () => {
     expect(computeLanguageDownloadUrl(language("spss", []))).toBeUndefined();
   });
 
-  it("says coming soon only of a language that is not here and has nowhere to come from", () => {
+  it("says coming soon only of a language Scient has no way to run", () => {
     expect(computeLanguageComingSoon(undefined)).toBe(true);
-    expect(computeLanguageComingSoon(language("spss", []))).toBe(true);
-    expect(computeLanguageComingSoon(language("spss", [found]))).toBe(false);
+    expect(computeLanguageComingSoon(language("brainfuck", []))).toBe(true);
+    expect(computeLanguageComingSoon(language("brainfuck", [found]))).toBe(false);
+    expect(computeLanguageComingSoon(language("spss", []))).toBe(false);
     expect(computeLanguageComingSoon(language("r", []))).toBe(false);
     expect(computeLanguageComingSoon(language("python", []))).toBe(false);
   });
@@ -570,14 +571,14 @@ describe("what a language shows", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("leads each group with what can be used now and otherwise keeps its order", () => {
+  it("leads each group with what is on this computer and otherwise keeps its order", () => {
     const computerScience = (languages: ReadonlyArray<ComputeLanguageRuntimeInventory>) =>
       computeLanguageGroups(languages)
         .find((group) => group.title === "Computer science")!
         .entries.map((entry) => entry.languageId);
     expect(computerScience([]).slice(0, 2)).toEqual(["apl", "csharp"]);
     expect(computerScience([language("haskell", [found])]).slice(0, 2)).toEqual(["haskell", "apl"]);
-    // A kernel removed since Scient started is listed but gone, so its language is still to come.
+    // A kernel removed since Scient started is listed but gone.
     expect(computerScience([language("haskell", [])])[0]).toBe("apl");
   });
 

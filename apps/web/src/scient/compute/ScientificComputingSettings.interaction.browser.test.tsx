@@ -1049,13 +1049,11 @@ describe("Scientific Computing settings interactions", () => {
     ]);
     const mostUsed = _fixture.container.querySelector("#scientific-computing")!;
     expect(mostUsed.querySelector('[data-compute-language="python"]')).not.toBeNull();
-    // Every language opens a page; Coming soon is a word beside its name.
+    // Every language opens a page, and one with a route says what this computer has.
     const spss = mostUsed.querySelector('[data-compute-language="spss"]')!;
-    expect(spss.textContent).toBe("SPSSComing soon");
+    expect(spss.textContent).toBe("SPSSNot found");
     expect(spss.querySelector("a")?.textContent).toBe("SPSS");
     expect(_fixture.container.querySelector("[data-language-icon]")).toBeNull();
-    // What a scan found stays beside it, and a found kernel leads its field.
-    expect(spss.querySelector("p")).toBeNull();
     const computerScience = _fixture.container.querySelector('ul[aria-label="Computer science"]')!;
     expect(
       computerScience.querySelector('[data-compute-language="haskell"]')?.textContent,

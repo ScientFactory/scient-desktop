@@ -3,6 +3,7 @@ import type {
   ComputeLanguageRuntimeInventory,
   ComputeManagedRuntimeStatus,
 } from "../scientCompute.ts";
+import { COMPUTE_RUN_TABLE } from "./computeRunTable.ts";
 import type { ScientificComputingLanguageSettings } from "./scientificComputingSettings.ts";
 
 export type ComputeSettingsInstallation = ComputeLanguageRuntimeInventory["installations"][number];
@@ -88,13 +89,15 @@ export function computeLanguageAbsent(language: ComputeLanguageRuntimeInventory)
   );
 }
 
-/** Nothing here Scient can use, and nothing Scient can use once it is. A fact about Scient. */
+/** No session, no file route and nowhere to send anyone. A fact about Scient, not this computer. */
 export function computeLanguageComingSoon(
   runtime: ComputeLanguageRuntimeInventory | undefined,
 ): boolean {
   return (
     runtime === undefined ||
-    (computeLanguageAbsent(runtime) && computeLanguageDownloadUrl(runtime) === undefined)
+    (computeLanguageAbsent(runtime) &&
+      computeLanguageDownloadUrl(runtime) === undefined &&
+      !COMPUTE_RUN_TABLE.some((route) => route.languageId === runtime.descriptor.languageId))
   );
 }
 

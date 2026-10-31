@@ -90,6 +90,7 @@ export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
 export * from "./scient/computeLanguages.ts";
 export * from "./scient/computeLanguageStatus.ts";
+export * from "./scient/computeRunTable.ts";
 export * from "./scientData.ts";
 export * from "./scientNotebook.ts";
 export * from "./scientSkills.ts";

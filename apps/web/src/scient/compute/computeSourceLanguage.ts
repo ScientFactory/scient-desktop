@@ -1,10 +1,16 @@
-import { ComputeLanguageId } from "@t3tools/contracts";
+import {
+  COMPUTE_LANGUAGE_CATALOG,
+  ComputeLanguageId,
+  computeRunRouteForPath,
+} from "@t3tools/contracts";
 
 export interface ComputeSourceLanguage {
   readonly languageId: ComputeLanguageId;
   readonly displayName: string;
   readonly extensions: ReadonlyArray<`.${string}`>;
   readonly cellMarker: RegExp;
+  /** Runs from its file with a record of each run, and has no session. */
+  readonly runOnly?: true;
 }
 
 const HASH_CELL_MARKER = /^\s*#\s*%%(?:\s|$)/;
@@ -52,13 +58,28 @@ const COMPUTE_SOURCES = [
   SQL_COMPUTE_SOURCE,
 ] as const;
 
+const NO_CELLS = /$^/;
+
 export function computeSourceLanguageForPath(path: string): ComputeSourceLanguage | null {
   const normalized = path.toLowerCase();
-  return (
-    COMPUTE_SOURCES.find((source) =>
-      source.extensions.some((extension) => normalized.endsWith(extension)),
-    ) ?? null
+  const session = COMPUTE_SOURCES.find((source) =>
+    source.extensions.some((extension) => normalized.endsWith(extension)),
   );
+  if (session !== undefined) return session;
+  const route = computeRunRouteForPath(path);
+  if (route === undefined) return null;
+  const language = COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages).find(
+    (candidate) => candidate.languageId === route.languageId,
+  );
+  return {
+    languageId: ComputeLanguageId.make(route.languageId),
+    displayName: language?.name ?? route.languageId,
+    extensions: route.extensions.filter((extension) =>
+      extension.startsWith("."),
+    ) as ReadonlyArray<`.${string}`>,
+    cellMarker: NO_CELLS,
+    runOnly: true,
+  };
 }
 
 /** A notebook runs in any language; one Scient has no source file type for is named from its id. */

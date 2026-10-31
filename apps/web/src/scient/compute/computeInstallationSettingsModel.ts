@@ -1,7 +1,6 @@
 import {
   COMPUTE_LANGUAGE_CATALOG,
   computeLanguageAbsent,
-  computeLanguageComingSoon,
   computeScientPart,
   managedFailureNeedsRepair,
   type ComputeCatalogLanguage,
@@ -45,7 +44,10 @@ const CATALOG_IDS: ReadonlySet<string> = new Set(
   ),
 );
 
-/** Every language in its one place, with what can be used now leading each group. */
+const onThisComputer = (runtime: ComputeLanguageRuntimeInventory | undefined) =>
+  runtime !== undefined && (!computeLanguageAbsent(runtime) || (runtime.tools?.length ?? 0) > 0);
+
+/** Every language in its one place, with what is on this computer leading each group. */
 export function computeLanguageGroups(
   languages: ReadonlyArray<ComputeLanguageRuntimeInventory>,
 ): ReadonlyArray<ComputeLanguageGroup> {
@@ -56,11 +58,7 @@ export function computeLanguageGroups(
     title,
     entries: named
       .map((language) => ({ ...language, runtime: reported.get(language.languageId) }))
-      .toSorted(
-        (a, b) =>
-          Number(computeLanguageComingSoon(a.runtime)) -
-          Number(computeLanguageComingSoon(b.runtime)),
-      ),
+      .toSorted((a, b) => Number(onThisComputer(b.runtime)) - Number(onThisComputer(a.runtime))),
   }));
   // A kernel the catalog does not name is real while it is here, and promises nothing once gone.
   const other = languages.filter(

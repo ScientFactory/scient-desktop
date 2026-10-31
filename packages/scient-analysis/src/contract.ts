@@ -544,6 +544,13 @@ export interface AnalysisRuntimeAdapter {
     readonly args: ReadonlyArray<string>;
     readonly cwd: string;
     readonly environment: Readonly<Record<string, string>>;
+    /** Steps that must succeed first, such as a compile. Each one streams its output. */
+    readonly before?: ReadonlyArray<{
+      readonly executable: string;
+      readonly args: ReadonlyArray<string>;
+      readonly cwd: string;
+      readonly environment: Readonly<Record<string, string>>;
+    }>;
   };
   readonly collectArtifacts?: (context: AnalysisRunContext) => Promise<AnalysisArtifactCollection>;
   readonly collectDiagnostics?: (

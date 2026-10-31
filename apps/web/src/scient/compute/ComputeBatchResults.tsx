@@ -1016,7 +1016,7 @@ export function ComputeBatchResults({
               ? `Set up ${props.runtimeLabel}`
               : props.sourcePending
                 ? "Saving…"
-                : "Run MATLAB batch"}
+                : `Run ${props.runtimeLabel} batch`}
           </Button>
         ) : null}
         <ScientTooltip content={runtimeStatusText}>
@@ -1136,7 +1136,9 @@ export function ComputeBatchResults({
             />
           ) : !projectNotInitialized && (model.isStarting || awaitingOwnedRun) ? (
             <div role="status" className="p-3 text-xs text-muted-foreground">
-              {model.isStarting ? "Starting MATLAB batch…" : "Waiting for this batch run…"}
+              {model.isStarting
+                ? `Starting ${props.runtimeLabel} batch…`
+                : "Waiting for this batch run…"}
             </div>
           ) : !projectNotInitialized && runtimeReady ? (
             <div className="p-3 text-xs text-muted-foreground">

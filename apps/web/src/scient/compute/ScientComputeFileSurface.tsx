@@ -9,8 +9,11 @@ import type {
 } from "@t3tools/contracts";
 import { classifyMatlabSource } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Columns2, Play, Rows2 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { Columns2, LoaderCircle, Play, Rows2 } from "lucide-react";
 import { useRef, useState } from "react";
+
+import { Button } from "~/components/ui/button";
 
 import { observeResize } from "~/lib/observeResize";
 
@@ -140,14 +143,50 @@ function persist<T, E>(key: string, value: T, schema: Schema.Codec<T, E>): void 
 }
 
 export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
-  return props.language.languageId === "matlab" ? (
-    <MatlabComputeFileSurface {...props} />
+  return props.language.languageId === "matlab" || props.language.runOnly === true ? (
+    <BatchComputeFileSurface {...props} />
   ) : (
     <ComputeFileSurfaceContent {...props} />
   );
 }
 
-function MatlabComputeFileSurface(props: ScientComputeFileSurfaceProps) {
+/** A file that runs without a session: Run, or the way to its language's page when it is absent. */
+function RunFileButton(props: {
+  readonly batch: ComputeBatchRunModel;
+  readonly languageId: string;
+  readonly languageName: string;
+  readonly environmentId: EnvironmentId;
+  readonly onRun: () => void;
+}) {
+  const { batch } = props;
+  const missing = batch.profile?.availability === "missing";
+  return (
+    <div className="flex items-center justify-end gap-2">
+      {missing ? (
+        <Button
+          size="xs"
+          variant="outline"
+          render={
+            <Link
+              to="/settings/scientific-computing/$languageId"
+              params={{ languageId: props.languageId }}
+              search={{ environmentId: props.environmentId }}
+            />
+          }
+        >
+          {props.languageName} not found
+        </Button>
+      ) : (
+        <Button size="xs" disabled={!batch.canStart} onClick={props.onRun}>
+          {batch.isStarting ? <LoaderCircle className="animate-spin" /> : <Play />}
+          Run
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function BatchComputeFileSurface(props: ScientComputeFileSurfaceProps) {
   const resultContextId = useComputeFilePresentationStore(
     (state) => state.presentations[props.contextId]?.resultsContextId ?? null,
   );
@@ -163,8 +202,8 @@ function MatlabComputeFileSurface(props: ScientComputeFileSurfaceProps) {
       relativePath: props.relativePath,
       sourceRevision: props.revision,
       sourcePending: props.sourcePending,
-      runtimeKind: "matlab",
-      runtimeLabel: "MATLAB",
+      runtimeKind: props.language.languageId,
+      runtimeLabel: props.language.displayName,
     },
     {
       runId: batchRunId,
@@ -389,26 +428,39 @@ function ComputeFileSurfaceContent(
           </div>
         ) : null}
         <div className="min-w-22 flex-1">
-          <ComputeFileActions
-            ref={actionsRef}
-            language={props.language}
-            environmentId={props.environmentId}
-            cwd={props.cwd}
-            relativePath={props.relativePath}
-            contents={props.contents}
-            sourceRevision={props.revision}
-            sourcePending={props.sourcePending}
-            selection={selection}
-            editorSelection={editorSelection}
-            contextId={props.contextId}
-            onRunRequested={handleRunRequested}
-            onShowMatlabOneShot={() => {
-              handleRunRequested();
-              void props.batch?.start();
-            }}
-            batchCanStart={props.batch?.canStart ?? false}
-            onExecutionSubmitted={handleExecutionSubmitted}
-          />
+          {props.language.runOnly === true && props.batch !== undefined ? (
+            <RunFileButton
+              batch={props.batch}
+              languageId={props.language.languageId}
+              languageName={props.language.displayName}
+              environmentId={props.environmentId}
+              onRun={() => {
+                handleRunRequested();
+                void props.batch?.start();
+              }}
+            />
+          ) : (
+            <ComputeFileActions
+              ref={actionsRef}
+              language={props.language}
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+              relativePath={props.relativePath}
+              contents={props.contents}
+              sourceRevision={props.revision}
+              sourcePending={props.sourcePending}
+              selection={selection}
+              editorSelection={editorSelection}
+              contextId={props.contextId}
+              onRunRequested={handleRunRequested}
+              onShowMatlabOneShot={() => {
+                handleRunRequested();
+                void props.batch?.start();
+              }}
+              batchCanStart={props.batch?.canStart ?? false}
+              onExecutionSubmitted={handleExecutionSubmitted}
+            />
+          )}
         </div>
       </div>
 

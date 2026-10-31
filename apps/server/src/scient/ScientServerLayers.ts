@@ -16,6 +16,7 @@ import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifec
 import * as ProviderActivity from "./providerLifecycle/ProviderActivity.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
 import * as ManagedRuntimeCatalogReconciler from "./providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
+import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
 import * as DataTables from "./data/DataTables.ts";
@@ -124,6 +125,7 @@ export function makeScientRouteServices<
   );
 
   const AnalysisServiceLive = AnalysisService.layer.pipe(
+    Layer.provide(ToolDiscovery.layer),
     Layer.provide(LocalAnalysisStore.layer),
     Layer.provide(AnalysisRunIndexLive),
     Layer.provide(LocalExecutionProcess.layer),
