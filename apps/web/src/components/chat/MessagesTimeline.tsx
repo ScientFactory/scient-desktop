@@ -767,12 +767,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // sub-agent stops reading as live work.
   const subagentWorkflowIds = subagentWorkflowIdsFor(agentPanelModel);
   // SCIENT-FORK:END
-  const pendingApprovalsByRequestId = new Map(
-    pendingApprovals
-      .filter((approval) => !heldApprovalRequestIds?.has(approval.requestId))
-      .map((approval) => [approval.requestId, approval]),
+  const isVisiblePendingApproval = (approval: PendingApproval) =>
+    !heldApprovalRequestIds?.has(approval.requestId);
+  const pendingApprovalRequestIds = new Set(
+    pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
   );
-  const pendingApprovalRequestIds = new Set(pendingApprovalsByRequestId.keys());
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
     pendingApprovalRequestIds,
@@ -800,17 +799,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const stableRows = useStableRows(rawRows, listIdentityKey);
   const { rows, exit: workingRowExit } = useWorkingRowExit(stableRows, listIdentityKey);
   // SCIENT-FORK:END
-  const unmatchedPendingApprovals = new Map(pendingApprovalsByRequestId);
-  if (unmatchedPendingApprovals.size > 0) {
-    for (const row of rows) {
-      const entries =
-        row.kind === "work" ? row.groupedEntries : row.kind === "work-live" ? [row.entry] : [];
-      for (const entry of entries) {
-        const item = entry.projectedItem?.item;
-        if (item?.type === "approval_request") unmatchedPendingApprovals.delete(item.requestId);
-      }
+  const matchedApprovalRequestIds = new Set<string>();
+  for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
+    const entries =
+      row.kind === "work" ? row.groupedEntries : row.kind === "work-live" ? [row.entry] : [];
+    for (const entry of entries) {
+      const item = entry.projectedItem?.item;
+      if (item?.type === "approval_request") matchedApprovalRequestIds.add(item.requestId);
     }
   }
+  const unmatchedPendingApprovals = pendingApprovals.filter(
+    (approval) =>
+      isVisiblePendingApproval(approval) && !matchedApprovalRequestIds.has(approval.requestId),
+  );
   // SCIENT-FORK:START — ChatView owns the follow; a finished one ends there too.
   // A finished reveal (revealed or cancelled) no longer holds off idle end keeping.
   const [finishedRevealPromptId, setFinishedRevealPromptId] = useState<string | null>(null);
@@ -1249,6 +1250,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Rows and chat width resize the content without resizing the viewport.
   }, [timelineViewportElement, rows.length, chatWidth]);
 
+  // Built from props after the last hook so the compiler can memoize the row context; a map
+  // made before a hook would rebuild it, and re-render every row, on each streamed update.
+  const pendingApprovalsByRequestId = new Map(
+    pendingApprovals
+      .filter(isVisiblePendingApproval)
+      .map((approval) => [approval.requestId, approval]),
+  );
   const sharedState: TimelineRowSharedState = {
     pendingApprovals: pendingApprovalsByRequestId,
     respondingRequestIds,
@@ -1465,12 +1473,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onGrow={onFooterGrow}
     >
       {footer}
-      {unmatchedPendingApprovals.size > 0 ? (
+      {unmatchedPendingApprovals.length > 0 ? (
         <TimelineRowCtx value={sharedState}>
           <div className="messages-timeline-row-frame">
             <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
               <WorkLogBlock>
-                {[...unmatchedPendingApprovals.values()].map((approval) => (
+                {unmatchedPendingApprovals.map((approval) => (
                   <TimelinePendingApprovalRow key={approval.requestId} approval={approval} />
                 ))}
               </WorkLogBlock>
@@ -1488,7 +1496,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   if (
     rows.length === 0 &&
-    unmatchedPendingApprovals.size === 0 &&
+    unmatchedPendingApprovals.length === 0 &&
     !isWorking &&
     parentThreadLink === null &&
     historyControls === undefined &&
@@ -1684,19 +1692,21 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           ? undefined
           : row.kind === "turn-fold" || row.kind === "working"
             ? "pb-1.5"
-            : (row.kind === "message" &&
-                  row.message.role === "assistant" &&
-                  // SCIENT-FORK:START — a kept answer is spaced like the final answer.
-                  !row.showAssistantMeta &&
-                  row.keptAnswer !== true) ||
-                // SCIENT-FORK:END
-                row.kind === "worktree-setup" ||
-                row.kind === "event" ||
-                row.kind === "attempt-fold" ||
-                row.kind === "html-render" ||
-                row.kind === "mcp-app"
-              ? "pb-2"
-              : "pb-4",
+            : row.kind === "message" && row.groupedWithNext
+              ? "pb-1"
+              : (row.kind === "message" &&
+                    row.message.role === "assistant" &&
+                    // SCIENT-FORK:START — a kept answer is spaced like the final answer.
+                    !row.showAssistantMeta &&
+                    row.keptAnswer !== true) ||
+                  // SCIENT-FORK:END
+                  row.kind === "worktree-setup" ||
+                  row.kind === "event" ||
+                  row.kind === "attempt-fold" ||
+                  row.kind === "html-render" ||
+                  row.kind === "mcp-app"
+                ? "pb-2"
+                : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
           row.kind === "assistant-meta"
           ? "group/assistant"

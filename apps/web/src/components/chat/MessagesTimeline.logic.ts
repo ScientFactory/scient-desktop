@@ -1,4 +1,5 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
@@ -650,6 +651,10 @@ type MessagesTimelineRowContent =
       // SCIENT-FORK:START — a settled earlier answer of its turn, kept visible with its copy row.
       keptAnswer?: boolean | undefined;
       // SCIENT-FORK:END
+      /** Another of your messages follows directly, so the two sit closer together. */
+      groupedWithNext?: boolean;
+      /** Set when the message above is a steer too, so the label shows once. */
+      continuesSteer?: boolean;
     }
   | {
       kind: "assistant-meta";
@@ -2366,11 +2371,34 @@ export function deriveMessagesTimelineRows(input: {
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
-  return result.map((row, index) =>
-    timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
-      ? { ...row, continuesWorkLog: true }
-      : row,
+  return result.map((row, index) => {
+    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
+      return { ...row, continuesWorkLog: true };
+    }
+    if (!timelineRowIsOwnUserMessage(row)) return row;
+    const previous = result[index - 1];
+    const groupedWithNext = timelineRowIsOwnUserMessage(result[index + 1]);
+    const continuesSteer =
+      timelineRowIsOwnUserMessage(previous) &&
+      messageIsSteer(row.message) &&
+      messageIsSteer(previous.message);
+    if (!groupedWithNext && !continuesSteer) return row;
+    return { ...row, groupedWithNext, continuesSteer };
+  });
+}
+
+function timelineRowIsOwnUserMessage(
+  row: MessagesTimelineRow | undefined,
+): row is Extract<MessagesTimelineRow, { kind: "message" }> {
+  return (
+    row?.kind === "message" &&
+    row.message.role === "user" &&
+    resolveUserMessagePresentation(row.message).attribution === null
   );
+}
+
+function messageIsSteer(message: ChatMessage): boolean {
+  return message.inputIntent === "steer" || message.inputIntent === "promoted_queued_to_steer";
 }
 
 function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
@@ -2730,7 +2758,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         // SCIENT-FORK:START
         a.keptAnswer === bm.keptAnswer &&
         // SCIENT-FORK:END
-        a.revertTurnCount === bm.revertTurnCount
+        a.revertTurnCount === bm.revertTurnCount &&
+        a.groupedWithNext === bm.groupedWithNext &&
+        a.continuesSteer === bm.continuesSteer
       );
     }
   }

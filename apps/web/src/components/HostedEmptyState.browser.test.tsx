@@ -86,7 +86,13 @@ function linked(availability: Record<string, Availability>): DiscoveredEnvironme
 }
 
 async function publish(environments: DiscoveredEnvironments) {
-  discovery.state = { environments, refreshing: false, offline: false, error: Option.none() };
+  discovery.state = {
+    environments,
+    listed: true,
+    refreshing: false,
+    offline: false,
+    error: Option.none(),
+  };
   await act(async () => {
     for (const listener of discovery.listeners) listener();
   });
@@ -101,6 +107,7 @@ function setup() {
   discovery.listeners.clear();
   discovery.state = {
     environments: new Map(),
+    listed: true,
     refreshing: false,
     offline: false,
     error: Option.none(),

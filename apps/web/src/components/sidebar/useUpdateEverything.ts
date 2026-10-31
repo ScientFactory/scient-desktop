@@ -19,8 +19,8 @@ import {
   collectUpdateEverythingResult,
   describeUpdateEverything,
   runUpdateEverything,
-  type SkippedMachine,
   type UpdateRunMachine,
+  type SkippedMachine,
 } from "./updateEverything.logic";
 import {
   clearSavedUpdateEverythingResult,
@@ -87,11 +87,10 @@ export function useUpdateEverything(localUpdateVersion: string | null) {
     canMaintain: canUpdateServer(sessionStates[index]!),
     updateState: updateStates[index]!,
   }));
-  // SCIENT-FORK: npm waits do not apply; exact artifact availability below gates servers.
+  // SCIENT-FORK: exact artifact availability below gates servers.
   const { targets: behindServers, skipped: unreachable } = collectServerUpdateTargets(
     machines,
     targetVersion,
-    localUpdateVersion !== null,
   );
   // SCIENT-FORK:START — do not advertise or dispatch an unqualified exact artifact target.
   const needsExactArtifact = behindServers.some(

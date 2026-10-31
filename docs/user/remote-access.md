@@ -302,8 +302,22 @@ any missing libraries and system fonts with apt; pages that load without text
 can mean the host has no fonts. It is safe to run again. Without `sudo`, it only
 reports what it would change.
 
-The browser always runs in Chrome's sandbox. Where you cannot change the host,
-set `T3CODE_SERVER_BROWSER_SANDBOX=0` for the environment to run without it.
+The browser runs in Chrome's sandbox by default. Chrome cannot start that sandbox
+as root. If your Scient server runs as root, run it as a nonroot user to keep
+sandboxing enabled. `scient browser setup` does not fix this root restriction.
+
+If you need to run as root, or cannot enable the sandbox on your host, set
+`T3CODE_SERVER_BROWSER_SANDBOX=0` in the **Scient server's environment** and restart
+the server. This disables Chrome's sandbox. For a manual launch:
+
+```sh
+T3CODE_SERVER_BROWSER_SANDBOX=0 npx --yes --allow-scripts=node-pty@1.1.0,msgpackr-extract@3.0.4 --package="$SCIENT_SERVER_PACKAGE" scient serve
+```
+
+If you run the server under your own systemd unit, add
+`Environment=T3CODE_SERVER_BROWSER_SANDBOX=0` under `[Service]` in its configuration,
+run `sudo systemctl daemon-reload`, then restart that unit. Setting the variable in an
+agent's terminal does not change the environment of an already running Scient server.
 
 ## Connect an outside agent
 

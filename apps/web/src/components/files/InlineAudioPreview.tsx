@@ -14,6 +14,7 @@ export function InlineAudioPreview(props: {
   readonly src?: string;
   readonly copyMarkdown?: string;
   readonly onOpen?: () => void;
+  readonly variant?: "chip" | "bubble";
 }) {
   const container = useRef<HTMLSpanElement>(null);
   const [visible, setVisible] = useState(false);
@@ -52,6 +53,7 @@ export function InlineAudioPreview(props: {
       ) : (
         <AudioPreview
           compact
+          variant={props.variant ?? "chip"}
           name={props.name}
           src={src ?? ""}
           revision={

@@ -10,6 +10,8 @@ import { AsyncResult } from "effect/reactivity";
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
+import { dismissContextMenu, showContextMenuFallback } from "~/contextMenuFallback";
 import { act, render } from "../../../test/render";
 
 import FileBrowserPanel from "./FileBrowserPanel";
@@ -24,6 +26,7 @@ const files = vi.hoisted(() => ({
   searchError: null as string | null,
   listDirectory: vi.fn(),
   refresh: vi.fn(),
+  localApi: undefined as unknown,
 }));
 
 vi.mock("~/state/use-atom-command", () => ({
@@ -42,8 +45,10 @@ vi.mock("~/state/queries", () => ({
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: vi.fn() }));
 vi.mock("~/composerHandleContext", () => ({ useComposerHandleContext: () => null }));
-vi.mock("~/fileContextMenu", () => ({ useFileContextMenu: () => ({}) }));
-vi.mock("~/localApi", () => ({ readLocalApi: () => undefined }));
+vi.mock("~/fileContextMenu", () => ({
+  useFileContextMenu: () => ({ buildItems: () => [], activate: () => Promise.resolve() }),
+}));
+vi.mock("~/localApi", () => ({ readLocalApi: () => files.localApi }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
 // SCIENT-FORK:START — Overleaf links of the workspace, for the Connect dialog and the marks
@@ -329,6 +334,45 @@ describe("Files panel search", () => {
     await chooseFromFilesMenu(screen.container, "Collapse all folders");
     await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
   });
+  it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
+    setup();
+    files.directories = { "": [entry("README.md")] };
+    files.localApi = { contextMenu: { show: showContextMenuFallback } };
+    await using screen = await renderPanel();
+    using _menu = {
+      [Symbol.dispose]: () => {
+        dismissContextMenu();
+        files.localApi = undefined;
+      },
+    };
+    using clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    await expect.poll(screen.visiblePaths).toEqual(["README.md"]);
+    const findRow = () =>
+      screen.container
+        .querySelector("file-tree-container")!
+        .shadowRoot!.querySelector<HTMLElement>('[data-item-path="README.md"]')!;
+    findRow().dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        button: 2,
+      }),
+    );
+    const action = page.getByRole("menuitem", { name: "Copy mention", exact: true });
+    await expect.element(action).toBeVisible();
+    await userEvent.click(action);
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("[README.md](README.md)"));
+
+    const row = findRow();
+    await userEvent.keyboard("{Tab}");
+    row.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await expect.element(action).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
+  });
+
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
     setup();
     files.directories = { "": [entry("README.md")] };

@@ -2680,9 +2680,17 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       };
     }
     const resolved = yield* resolveTarget(input);
+    const replacesFile = yield* Effect.promise(() =>
+      NodeFSP.lstat(resolved.target).then(
+        () => true,
+        () => false,
+      ),
+    );
     const result = yield* publish(input, resolved, intent);
     yield* receipt(input, resolved, result);
-    yield* workspaceEntries.refresh(input.cwd);
+    // Autosave leaves the indexed paths unchanged and the watcher applies new contents,
+    // so only a new path needs the forced rescan a save would otherwise wait for.
+    if (!replacesFile) yield* workspaceEntries.refresh(input.cwd);
     return {
       relativePath: resolved.named.relativePath,
       revision: result.revision!,

@@ -151,6 +151,9 @@ Antigravity does not support conversation rewind. Reverting a thread or editing
 and resubmitting an earlier turn is therefore unavailable; send a follow-up or
 start a new thread instead.
 
+Manual context compaction is unavailable through Antigravity's ACP runtime, even
+though its CLI has `/compact`. Start a new thread when you need a fresh context.
+
 ## Skills and subagents
 
 Project skills should use `.agents/skills`. Scient also discovers `.gemini/skills`

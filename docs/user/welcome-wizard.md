@@ -4,7 +4,7 @@ Choose **Import projects and conversations** on the final **Start working** step
 It is optional: **Add project** continues to work as before. Import checks the primary machine
 only after you open it.
 
-Scient finds directories that Claude Code or Codex has used. The default
+Scient finds directories that Claude Code, Codex or Pi has used. The default
 selection includes git repositories active within the last 30 days with at least three conversations. Select **Choose**
 to include older projects or change the selection.
 
@@ -15,8 +15,12 @@ directories under `Downloads` are not offered.
 A large or malformed history can reach the scan limit. Scient keeps the
 projects it found and warns when projects or conversations may be missing.
 
-Imported projects include Codex and Claude conversations active within the last
-30 days. You can continue those conversations in Scient.
+Imported projects include Claude, Codex and Pi conversations active within the last
+30 days. You can continue those conversations in Scient. Pi is off by default:
+enable it in Settings, then open `/welcome` to import its sessions. Pi sessions
+are read from each enabled Pi provider's session directory, which follows
+`PI_CODING_AGENT_SESSION_DIR` and `PI_CODING_AGENT_DIR` in its environment. A
+Pi conversation imports its active branch, the one Pi reopens.
 
 Conversation import is best effort. Scient keeps the first user prompt and the
 newest remaining visible user and assistant messages, with 200 messages total.

@@ -63,7 +63,7 @@ handoff is also a good choice when the old conversation contains conflicting ins
 Before a major server update, stop the server and copy its entire configured `userdata` directory
 (or its development-state directory) to a safe location. Include both `state.sqlite` and
 `statev2.sqlite`, any SQLite `-wal`/`-shm` files, attachments, settings, and `scient/thread-queue`.
-A server started with `--home-dir <path>` normally uses `<path>/userdata`; use the actual state
+A server started with `--base-dir <path>` normally uses `<path>/userdata`; use the actual state
 directory for development or desktop-managed profiles. Do not copy just one database while a
 server is writing to it. For an online database-only snapshot, use SQLite's backup API separately
 for each database; this does not back up attachments or other profile files.

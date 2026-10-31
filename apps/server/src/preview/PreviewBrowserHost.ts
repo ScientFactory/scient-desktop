@@ -77,7 +77,7 @@ export class PreviewBrowserRootError extends Schema.TaggedError<PreviewBrowserRo
 ) {
   override get message(): string {
     // SCIENT-FORK: root diagnostics name the host product.
-    return "Chrome will not start its sandbox as root, so Scient's browser cannot run while the Scient server runs as root. Run the server as a nonroot user (for example `User=` in its systemd service), or set `T3CODE_SERVER_BROWSER_SANDBOX=0` to run the browser unsandboxed as root.";
+    return "Scient server is running as root; Chrome's sandbox cannot start. Run Scient as a nonroot user. Otherwise set `T3CODE_SERVER_BROWSER_SANDBOX=0` in the Scient server's environment and restart the server; this disables Chrome's sandbox. Manual: `T3CODE_SERVER_BROWSER_SANDBOX=0 scient serve`. Systemd: add `Environment=T3CODE_SERVER_BROWSER_SANDBOX=0` under `[Service]`, reload systemd, then restart the service. `scient browser setup` cannot fix root sandboxing.";
   }
 }
 

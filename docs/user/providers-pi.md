@@ -199,6 +199,13 @@ resources, review the project and save its trust decision through Pi's interacti
 then restart the Pi session and refresh Scient. Selecting Full access in Scient does not create a
 Pi trust decision. See Pi's [project settings and trust documentation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/settings.md).
 
+If Pi skips project settings, extensions, skills, prompts, MCP servers, or system prompt files
+because the folder is not trusted, the thread shows a notice on the first turn of the Pi session.
+Run the configured Pi binary in that folder on the server machine, using the same provider
+environment, including `PI_CODING_AGENT_DIR` if set. Trust the folder or its parent with `/trust`,
+then start a new thread using that same worktree. Launch arguments with `--no-approve` keep
+project files off without the notice.
+
 Recognized native commands are sent verbatim: their extensions, skills, or templates own argument
 handling and prompt expansion. Scient still applies the conversation's tool and skill permissions,
 but does not append model-directed skill instructions to native command arguments. Send attachments

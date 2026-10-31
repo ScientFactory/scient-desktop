@@ -24,6 +24,7 @@ describe("cssFontFamilyName", () => {
 });
 
 const preferences: AppearanceFontPreferences = {
+  separate: true,
   sans: "",
   code: "",
   composer: "",

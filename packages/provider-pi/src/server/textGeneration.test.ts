@@ -398,3 +398,66 @@ it.effect("accepts the adopted thinking option while preserving explicit off", (
     assert.equal(client.promptCalls, 1);
   });
 });
+
+const failedTurnWith = (errorMessage: string): PiRpcEvent => ({
+  type: "message_end",
+  message: { role: "assistant", stopReason: "error", errorMessage },
+});
+
+const failedTurn = failedTurnWith(
+  '401: {"error":{"message":"Incorrect API key provided: sk-test-SECRET123"}}',
+);
+
+const answeredTurn = (text?: string): PiRpcEvent => ({
+  type: "message_end",
+  message: {
+    role: "assistant",
+    stopReason: "stop",
+    content: text === undefined ? [] : [{ type: "text", text }],
+  },
+});
+
+const generateAfter = (events: ReadonlyArray<PiRpcEvent>) => {
+  const client = new FakeClient();
+  client.promptEvents = [...events, { type: "agent_settled" }];
+  return makeHarness(client, []);
+};
+
+it.effect("reports Pi's turn error when the reply is empty", () =>
+  Effect.gen(function* () {
+    const error = yield* generateAfter([failedTurn]).pipe(Effect.flip);
+
+    assert.equal(error._tag, "TextGenerationError");
+    assert.equal(error.detail, "Pi could not generate text: the model provider returned HTTP 401.");
+  }),
+);
+
+it.effect("keeps Pi's raw error text out of the error", () =>
+  Effect.gen(function* () {
+    const error = yield* generateAfter([failedTurnWith("Invalid API key sk-test-SECRET123")]).pipe(
+      Effect.flip,
+    );
+
+    assert.equal(error.detail, "Pi could not generate text: the model provider reported an error.");
+    assert.equal(error.message.includes("SECRET123"), false);
+  }),
+);
+
+it.effect("keeps the reply when Pi answers after a failed attempt", () =>
+  Effect.gen(function* () {
+    const result = yield* generateAfter([
+      failedTurn,
+      answeredTurn(JSON.stringify({ subject: "Update README", body: "" })),
+    ]);
+
+    assert.equal(result.subject, "Update README");
+  }),
+);
+
+it.effect("drops an earlier error once a later attempt succeeds", () =>
+  Effect.gen(function* () {
+    const error = yield* generateAfter([failedTurn, answeredTurn()]).pipe(Effect.flip);
+
+    assert.equal(error.detail, "Pi returned empty output.");
+  }),
+);

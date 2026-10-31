@@ -55,6 +55,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { upsertProviderTurn } from "./ProjectionStore.ts";
 import {
+  knownProviderFailureMessage,
   makeProviderFailure,
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
@@ -91,6 +92,7 @@ import {
 } from "./scient-fork/NativeWorkflowOwnership.ts";
 // SCIENT-FORK:END
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -555,6 +557,8 @@ export function routeProviderEvent(
             state.ownedProviderTurns.has(event.runtimeRequest.providerTurnId)),
         state,
       ];
+    case "background_work.updated":
+      return [state.ownedProviderTurns.has(event.providerTurnId), state];
     case "command_output.delta":
       // The session manager hands live output to the command output hub; runs never see it.
       return [false, state];
@@ -1190,6 +1194,7 @@ export const layer: Layer.Layer<
         const rootFinalizationOwnerLost = yield* Ref.make(false);
         // SCIENT-FORK:END
         const providerThreadOwnerLost = yield* Ref.make(false);
+        const pendingBackgroundProviderTurns = new Set<ProviderTurnId>();
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
         const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
         const activeBackgroundTurnItems = yield* Ref.make<
@@ -1416,6 +1421,9 @@ export const layer: Layer.Layer<
             !childTurnsContinue(terminal)
           ) {
             return true;
+          }
+          if (pendingBackgroundProviderTurns.size > 0) {
+            return false;
           }
           const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
           if (childProviderTurns.size > 0) {
@@ -1649,6 +1657,13 @@ export const layer: Layer.Layer<
                 yield* Ref.set(rootTerminalSeen, true);
                 yield* finalizeRootRun(event);
               }
+              if (event.type === "background_work.updated") {
+                if (event.pending) {
+                  pendingBackgroundProviderTurns.add(event.providerTurnId);
+                } else {
+                  pendingBackgroundProviderTurns.delete(event.providerTurnId);
+                }
+              }
               yield* trackChildLifecycle(event, deliveredEvent !== null);
             }),
           ),
@@ -1730,6 +1745,7 @@ export const layer: Layer.Layer<
                     : false;
                 const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                 const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+                const squashed = Cause.squash(cause);
                 const receipt = yield* Ref.get(committedRootProviderTurn);
                 const abandonedProviderTurn = abandonedCommittedRootTurn({
                   receipt,
@@ -1757,7 +1773,13 @@ export const layer: Layer.Layer<
                   openRunOwnedSubagents: openSubagents,
                   completedAt,
                   terminal: makeFailedTerminalEvent(
-                    makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
+                    makeProviderFailure({
+                      cause: squashed,
+                      message:
+                        knownProviderFailureMessage(squashed) ??
+                        userFacingDatabaseErrorMessage(squashed),
+                      class: "unknown",
+                    }),
                     latestItemOrdinal + 1,
                     receipt?.id,
                   ),
