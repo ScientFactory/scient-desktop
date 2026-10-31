@@ -8,6 +8,7 @@ import {
   type TimelineListMeasurementState,
 } from "./timelineScrollAnchoring";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
+import { isInSideChatPane } from "../../lib/sideChatPane";
 import { motionClock } from "./motionClock";
 import { streamingRevealActive, subscribeStreamingReveal } from "./useStreamingBlockEntrance";
 import { keepsSettledAnswerVisible } from "~/scient/threadTimeline/keptAnswers";
@@ -471,8 +472,9 @@ export function useBoundedAnswerFollow({
       if (
         !(target instanceof Node) ||
         (!viewport.contains(target) &&
-          target !== document.body &&
-          target !== document.documentElement) ||
+          // Body keys belong to the main timeline; a side chat's hears only its own.
+          ((target !== document.body && target !== document.documentElement) ||
+            isInSideChatPane(viewport))) ||
         event.defaultPrevented ||
         event.isComposing ||
         event.altKey ||

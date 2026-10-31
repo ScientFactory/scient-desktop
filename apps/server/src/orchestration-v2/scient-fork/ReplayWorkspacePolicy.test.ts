@@ -55,6 +55,8 @@ const project = (workspaceRoot: string) => ({
   workspaceRoot,
   defaultModelSelection: null,
   defaultThreadEnvMode: null,
+  pinnedAt: null,
+  archivedAt: null,
   autoPull: false,
   faviconPath: null,
   projectIcon: null,

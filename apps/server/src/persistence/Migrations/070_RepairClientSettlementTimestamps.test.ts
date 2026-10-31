@@ -363,6 +363,7 @@ layer("070_RepairClientSettlementTimestamps", (it) => {
       yield* Migration0070;
       assert.deepEqual(yield* snapshot, repaired);
 
+      yield* runMigrations();
       yield* runScientMigrations(sql);
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
       assert.isTrue((yield* maintenance.rebuild).valid);

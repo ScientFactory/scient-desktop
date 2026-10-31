@@ -619,6 +619,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`79f1fadfc6020b820d541ca4691d2feebb15dd1b` is recorded in
+[the 2026-10-31 79f1fadfc6 receipt](docs/internals/t3-upstream-sync-20261031-79f1fadfc6.md).
+Literal merge `5589000e86b47f1c227daa57521779cb8e93d5f9` has owned base
+`f91025e88ce96d5f26bb4e7485af2db2f62d768c` (#718) and the frozen official target as parents,
+retaining the 103 official commits after `59bb4e83bc`. Side chats are real threads on upstream's
+lineage beside Scient's frozen forks, and a forked parent gives them its frozen history. Model
+and effort share one control on Scient's picker. Upstream's migration 076 lands as Scient 080.
+Release remains separate.
+
+The previous committed alignment through
 `59bb4e83bcf753e6ebb99b63b5232f5f41251c8a` is recorded in
 [the 2026-10-31 59bb4e83bc receipt](docs/internals/t3-upstream-sync-20261031-59bb4e83bc.md).
 Literal merge `bcf7bf08725b71e805949d4d7e757947b8c4bffd` has owned base
@@ -629,7 +639,7 @@ cache and last-block streaming; Scient's math, direction, image gallery and gene
 display stay. Upstream's migrations 074 and 075 land as Scient 078 and 079. Release remains
 separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `97e35bcf23e4dcf34c2dcffadd37c08db0e01e52` is recorded in
 [the 2026-10-30 97e35bcf23 receipt](docs/internals/t3-upstream-sync-20261030-97e35bcf23.md).
 Literal merge `fa47084190dd8c156172c23678b2e84bbea8a4a6` has owned base

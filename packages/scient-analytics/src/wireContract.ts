@@ -607,6 +607,7 @@ export const EVENT_DEFINITIONS = {
           "diff",
           "pull-request",
           "agents",
+          "side-chat",
           "sources",
           "compute",
           "source-pdf",

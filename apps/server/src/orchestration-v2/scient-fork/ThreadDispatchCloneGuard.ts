@@ -41,6 +41,7 @@ export const withProjectCloneGuard = Effect.fn("ThreadDispatchCloneGuard.withPro
           ? command.projectId
           : command.type === "message.dispatch" ||
               command.type === "queue.resume" ||
+              command.type === "queued-run.start" ||
               command.type === "queued-message.promote-to-steer"
             ? (yield* orchestrator.getThreadShell(command.threadId))?.projectId
             : undefined;

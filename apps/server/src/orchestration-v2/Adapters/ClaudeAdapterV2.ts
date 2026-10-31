@@ -3370,6 +3370,7 @@ function isClaudeTypedToolResultErrorContent(content: ClaudeTypedToolResultConte
   }
 
   switch (content.type) {
+    case "advisor_tool_result_error":
     case "bash_code_execution_tool_result_error":
     case "code_execution_tool_result_error":
     case "text_editor_code_execution_tool_result_error":
@@ -10686,17 +10687,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // SCIENT-FORK:START — an older system-installed CLI that cannot apply
             // the change live keeps the previous behavior: the replacement path
             // below restarts it, or refuses while it runs background work.
-            const appliedLive = yield* live.query.setModel(compiledSelection.apiModelId).pipe(
+            // Preserve launcher-selected models unless the model changed or a failed update left it unknown.
+            const appliedLive = yield* (
+              live.selection.queryIdentity === "" ||
+              live.selection.apiModelId !== compiledSelection.apiModelId
+                ? live.query.setModel(compiledSelection.apiModelId)
+                : Effect.void
+            ).pipe(
               Effect.andThen(
                 live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(compiledSelection)),
               ),
               Effect.as(true),
-              Effect.catch((cause) =>
-                Effect.logWarning("orchestration-v2.claude-live-selection-change-failed", {
-                  providerSessionId: input.providerSessionId,
-                  nativeThreadId,
-                  cause,
-                }).pipe(Effect.as(false)),
+              // A CLI too old for the request restarts; any other failure fails this turn.
+              Effect.catchIf(
+                (cause) => String(cause.cause).includes("Unsupported control request"),
+                (cause) =>
+                  Effect.logWarning("orchestration-v2.claude-live-selection-change-failed", {
+                    providerSessionId: input.providerSessionId,
+                    nativeThreadId,
+                    cause,
+                  }).pipe(Effect.as(false)),
+              ),
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  live.selection = { ...live.selection, queryIdentity: "" };
+                }),
               ),
             );
             // A partial change leaves the process state unknown. A blank

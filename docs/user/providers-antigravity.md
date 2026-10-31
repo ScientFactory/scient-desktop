@@ -108,8 +108,9 @@ remove a runtime while it is in use.
 ## Models, files, and permissions
 
 The official agent reports the models available to the selected account,
-including Claude and GPT models when your plan has them. Pick a thinking level in
-the composer's effort menu; it shows only the levels the selected model supports.
+including Claude and GPT models when your plan has them. Pick a thinking level
+beside the model list in the model picker; it shows only the levels the selected
+model supports.
 Scient keeps the thread's selected model when it resumes and asks for another
 selection if that model disappears. Older model generations remain available
 under **Legacy models** when the provider still offers them.

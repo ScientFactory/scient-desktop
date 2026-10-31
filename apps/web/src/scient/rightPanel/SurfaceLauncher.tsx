@@ -11,6 +11,7 @@ import {
   Sigma,
   Smartphone,
   TerminalSquare,
+  MessagesSquareIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
@@ -37,6 +38,9 @@ export interface ScientSurfaceLauncherProps {
   /** Called after a choice opens something; the New tab closes itself here. */
   readonly onPicked?: () => void;
   readonly onAddFiles: () => void;
+  readonly onAddSideChat?: (() => void) | undefined;
+  readonly sideChatAvailable?: boolean | undefined;
+  readonly sideChatDisabledReason?: string | null | undefined;
   readonly onAddBrowser: () => void;
   readonly onAddBrowserInProfile: (profileId: string) => void;
   readonly onAddDocuments?: ((format: NewDocumentFormat) => void) | undefined;
@@ -170,6 +174,20 @@ export function ScientSurfaceLauncher(props: ScientSurfaceLauncherProps) {
   };
 
   const main: readonly LauncherEntry[] = [
+    ...(props.onAddSideChat
+      ? [
+          {
+            id: "side-chat",
+            label: "Side chat",
+            icon: MessagesSquareIcon,
+            // Upstream's S is Sources here.
+            shortcut: "A",
+            available: props.sideChatAvailable !== false,
+            unavailableHint: props.sideChatDisabledReason ?? "Available in a server thread.",
+            onClick: pick(props.onAddSideChat),
+          },
+        ]
+      : []),
     {
       id: "files",
       label: "Files",

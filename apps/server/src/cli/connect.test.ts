@@ -40,7 +40,9 @@ it.effect("does not offer the inherited global service during Scient onboarding"
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
-        NodeServices.layer,
+        ServerConfig.layerTest("/tmp", { prefix: "t3-connect-test-" }).pipe(
+          Layer.provideMerge(NodeServices.layer),
+        ),
         TestConsole.layer,
         Layer.succeed(BootService.BootService, unreachableBootService),
       ),

@@ -223,6 +223,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
     const composerFilesRef: Parameters<typeof useComposerAttachmentIntake>[0]["composerFilesRef"] =
       { current: [] };
     const input: ComposerSendInput = {
+      sideChatDisabledReason: null,
       environmentId,
       routeThreadKey: routeKey,
       currentRouteThreadKeyRef: route,
