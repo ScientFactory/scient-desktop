@@ -26,23 +26,47 @@ function cssColor(color: string) {
   return resolved;
 }
 
-function renderHome(onOpenUrl: (url: string) => void = vi.fn()) {
+function renderHome(
+  onOpenUrl: (url: string) => void = vi.fn(),
+  onSearch: (query: string) => void = vi.fn(),
+) {
   useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
   accounts.data = null;
-  return render(<BrowserHome threadRef={threadRef} profileId="main" onOpenUrl={onOpenUrl} />);
+  return render(
+    <BrowserHome
+      threadRef={threadRef}
+      profileId="main"
+      onOpenUrl={onOpenUrl}
+      onSearch={onSearch}
+    />,
+  );
 }
 
-it("opens Google, Gmail, Drive and each shortcut", async () => {
+it("searches what was typed, and ignores an empty box", async () => {
+  const onSearch = vi.fn();
+  await using _screen = await renderHome(undefined, onSearch);
+  await expect.element(page.getByText("Scient Browser")).toBeVisible();
+  const search = page.getByRole("searchbox", { name: "Search or enter an address" });
+  await expect.element(search).not.toHaveFocus();
+
+  await userEvent.fill(search, "   ");
+  await userEvent.keyboard("{Enter}");
+  expect(onSearch).not.toHaveBeenCalled();
+
+  await userEvent.fill(search, "protein folding");
+  await userEvent.keyboard("{Enter}");
+  expect(onSearch).toHaveBeenCalledExactlyOnceWith("protein folding");
+});
+
+it("opens Google, Gmail and each shortcut", async () => {
   const onOpenUrl = vi.fn();
   await using _screen = await renderHome(onOpenUrl);
   await page.getByRole("button", { name: "Google", exact: true }).click();
   await page.getByRole("button", { name: "Gmail" }).click();
-  await page.getByRole("button", { name: "Drive", exact: true }).click();
   await page.getByRole("button", { name: "PubMed" }).first().click();
   expect(onOpenUrl.mock.calls.map(([url]) => url)).toEqual([
     "https://www.google.com/",
     "https://mail.google.com/mail/",
-    "https://drive.google.com/",
     "https://pubmed.ncbi.nlm.nih.gov/",
   ]);
 });
@@ -54,7 +78,12 @@ it("shows the university's Moodle only on that university's profile", async () =
     accounts: [],
   };
   const home = (profileId: string) => (
-    <BrowserHome threadRef={threadRef} profileId={profileId} onOpenUrl={onOpenUrl} />
+    <BrowserHome
+      threadRef={threadRef}
+      profileId={profileId}
+      onOpenUrl={onOpenUrl}
+      onSearch={vi.fn()}
+    />
   );
   useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
   await using screen = await render(home("uni"));
@@ -68,9 +97,6 @@ it("opens an app from the Apps menu and closes it", async () => {
   const onOpenUrl = vi.fn();
   await using _screen = await renderHome(onOpenUrl);
   await page.getByRole("button", { name: "Apps" }).click();
-  for (const app of ["Account", "Tasks", "YouTube", "Photos", "Notebook", "Colab"]) {
-    await expect.element(page.getByRole("button", { name: app, exact: true })).toBeVisible();
-  }
   await page.getByRole("button", { name: "Sheets" }).click();
   expect(onOpenUrl).toHaveBeenCalledWith("https://docs.google.com/spreadsheets/");
   await expect.element(page.getByRole("button", { name: "Sheets" })).not.toBeInTheDocument();
@@ -80,6 +106,31 @@ async function chooseFromMenu(shortcut: string, action: string) {
   await page.getByRole("button", { name: `${shortcut} options` }).click();
   await page.getByRole("menuitem", { name: action }).click();
 }
+
+it("shows three apps across and four rows, with the rest a scroll away", async () => {
+  await using _screen = await renderHome();
+  await page.getByRole("button", { name: "Apps" }).click();
+  await expect.element(page.getByRole("button", { name: "Account", exact: true })).toBeVisible();
+  const list = page
+    .getByRole("button", { name: "Account", exact: true })
+    .element()
+    .closest('[data-slot="scroll-area-viewport"]')!;
+  const top = (name: string) =>
+    [...list.querySelectorAll("button")]
+      .find((button) => button.textContent === name)!
+      .getBoundingClientRect();
+  expect(top("Drive").top).toBe(top("Account").top);
+  expect(top("Calendar").top).toBe(top("Account").top);
+  expect(top("Docs").top).toBeGreaterThan(top("Account").top);
+
+  const { bottom } = list.getBoundingClientRect();
+  expect(top("YouTube").bottom).toBeLessThanOrEqual(bottom);
+  expect(top("Photos").top).toBeGreaterThan(top("YouTube").bottom);
+  expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+
+  list.scrollTop = list.scrollHeight;
+  await vi.waitFor(() => expect(top("Vids").bottom).toBeLessThanOrEqual(bottom + 1));
+});
 
 it("keeps a shortcut lit under its stronger menu button, and while the menu is open", async () => {
   await using _screen = await renderHome();
@@ -159,7 +210,7 @@ it("keeps every label inside its circle at a narrow panel width", async () => {
   });
   await using screen = await render(
     <div data-testid="narrow" style={{ width: 260 }}>
-      <BrowserHome threadRef={threadRef} profileId="main" onOpenUrl={vi.fn()} />
+      <BrowserHome threadRef={threadRef} profileId="main" onOpenUrl={vi.fn()} onSearch={vi.fn()} />
     </div>,
   );
   const panel = screen.container.querySelector("[data-testid=narrow]")!;

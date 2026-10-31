@@ -21,7 +21,7 @@ beforeEach(() => {
 
 describe("visibleShortcuts", () => {
   it("starts with the scientific sites and Google's apps", () => {
-    expect(names()).toEqual(["Scholar", "PubMed", "arXiv", "Overleaf", "Calendar"]);
+    expect(names()).toEqual(["Scholar", "PubMed", "arXiv", "Overleaf", "Drive", "Calendar"]);
   });
 
   it("puts added sites first, then the most opened, then the starting set", () => {
@@ -62,11 +62,9 @@ describe("visibleShortcuts", () => {
     });
   });
 
-  it("leaves Google, Gmail and Drive to the row above", () => {
+  it("leaves Google and Gmail to the row above", () => {
     visit("https://www.google.com/search?q=a", 5);
     visit("https://mail.google.com/mail/u/0/#inbox", 5);
-    visit("https://drive.google.com/drive/my-drive", 5);
-    expect(names()).not.toContain("Drive");
     expect(names()).not.toContain("google.com");
     expect(names()).not.toContain("mail.google.com");
     expect(names()).not.toContain("Gmail");
@@ -103,8 +101,10 @@ describe("visibleShortcuts", () => {
   });
 });
 
-it("fills a four by four Apps menu with different apps", () => {
-  expect(new Set(GOOGLE_APPS.map(({ name }) => name)).size).toBe(16);
+it("fills every row of the Apps menu with different apps", () => {
+  expect(new Set(GOOGLE_APPS.map(({ name }) => name)).size).toBe(GOOGLE_APPS.length);
+  expect(GOOGLE_APPS.length % 3).toBe(0);
+  expect(GOOGLE_APPS.map(({ name }) => name)).toContain("Drive");
   expect(GOOGLE_APPS.every(({ icon }) => icon?.startsWith("data:image/"))).toBe(true);
 });
 

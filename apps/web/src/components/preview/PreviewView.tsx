@@ -285,10 +285,10 @@ export function PreviewView({
     return result._tag === "Success";
   };
 
-  const handleSubmitUrl = async (next: string) => {
+  const handleSubmitUrl = async (next: string, profileId?: string) => {
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
-      if (await navigateToResolvedUrl(resolved)) {
+      if (await navigateToResolvedUrl(resolved, profileId)) {
         recordVisitForThread(threadRef, resolved);
         countSiteVisit(resolved);
       }
@@ -1086,6 +1086,7 @@ export function PreviewView({
                 threadRef={threadRef}
                 profileId={activeProfileId}
                 onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
+                onSearch={(query) => void handleSubmitUrl(query, activeProfileId)}
               />
             }
             // SCIENT-FORK:END

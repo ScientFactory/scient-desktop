@@ -1,9 +1,10 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { GripIcon, MoreVerticalIcon, PlusIcon } from "lucide-react";
+import { GripIcon, MoreVerticalIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
 import { useFaviconForThreadUrl } from "~/browserFaviconStore";
 import { FaviconImage } from "~/components/preview/PreviewFaviconIcon";
+import { ScientSymbol } from "~/components/ScientSymbol";
 import { Button } from "~/components/ui/button";
 import {
   Dialog,
@@ -14,15 +15,16 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import { Label } from "~/components/ui/label";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { ScrollArea } from "~/components/ui/scroll-area";
 import { profileDomains } from "~/scient/accounts/accountsView";
 import { useAccounts } from "~/scient/accounts/useAccounts";
 
 import {
   canAddShortcut,
-  DRIVE,
   GMAIL,
   GOOGLE,
   GOOGLE_APPS,
@@ -44,6 +46,8 @@ const SHORTCUT_TILE_CLASS = `${TILE_CLASS} group-hover/row:bg-accent group-has-d
 /** Darker than the tile in both themes, whatever the tile beneath it shows. */
 const SHORTCUT_MENU_CLASS =
   "absolute end-0.5 top-0.5 flex size-5 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-foreground/10 data-popup-open:text-foreground data-popup-open:opacity-100 group-focus-within/row:opacity-100 group-hover/row:opacity-100 pointer-coarse:opacity-100";
+/** Four rows of apps, and the fade that shows there are more. */
+const APPS_HEIGHT_CLASS = "h-[17.75rem]";
 const MAX_NAME_LENGTH = 60;
 
 function SiteIcon({
@@ -84,22 +88,24 @@ function GoogleApps({
         Apps
       </PopoverTrigger>
       <PopoverPopup padding="tight">
-        <div className="grid w-80 grid-cols-4 gap-1">
-          {GOOGLE_APPS.map((app) => (
-            <button
-              key={app.name}
-              type="button"
-              className={TILE_CLASS}
-              onClick={() => {
-                setOpen(false);
-                onOpenUrl(app.url);
-              }}
-            >
-              <SiteIcon threadRef={threadRef} site={app} className="size-7 object-contain" />
-              <span className={TILE_LABEL_CLASS}>{app.name}</span>
-            </button>
-          ))}
-        </div>
+        <ScrollArea scrollFade className={APPS_HEIGHT_CLASS}>
+          <div className="grid w-64 grid-cols-3 gap-1">
+            {GOOGLE_APPS.map((app) => (
+              <button
+                key={app.name}
+                type="button"
+                className={TILE_CLASS}
+                onClick={() => {
+                  setOpen(false);
+                  onOpenUrl(app.url);
+                }}
+              >
+                <SiteIcon threadRef={threadRef} site={app} className="size-7 object-contain" />
+                <span className={TILE_LABEL_CLASS}>{app.name}</span>
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
       </PopoverPopup>
     </Popover>
   );
@@ -219,15 +225,54 @@ function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onCl
   );
 }
 
-/** What an empty browser tab offers first: Google's main apps and the user's shortcuts. */
+function HomeSearch({ onSearch }: { onSearch: (query: string) => void }) {
+  const [query, setQuery] = useState("");
+  return (
+    <div className="flex w-full flex-col items-center gap-4">
+      <p className="flex items-center gap-2 text-2xl tracking-tight">
+        <ScientSymbol className="size-7" />
+        <span>
+          <span className="font-semibold">Scient</span>{" "}
+          <span className="text-muted-foreground">Browser</span>
+        </span>
+      </p>
+      <form
+        role="search"
+        className="w-full max-w-md"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (query.trim()) onSearch(query);
+        }}
+      >
+        <InputGroup className="h-11 [--control-radius:9999px]">
+          <InputGroupAddon align="inline-start">
+            <SearchIcon />
+          </InputGroupAddon>
+          <InputGroupInput
+            type="search"
+            aria-label="Search or enter an address"
+            placeholder="Search or enter an address"
+            spellCheck={false}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </InputGroup>
+      </form>
+    </div>
+  );
+}
+
+/** What an empty browser tab offers first: Google's main apps, search and the user's shortcuts. */
 export function BrowserHome({
   threadRef,
   profileId,
   onOpenUrl,
+  onSearch,
 }: {
   threadRef: ScopedThreadRef;
   profileId: string;
   onOpenUrl: (url: string) => void;
+  onSearch: (query: string) => void;
 }) {
   const { data } = useAccounts(threadRef.environmentId);
   const moodle = universityMoodle(profileDomains(data, profileId));
@@ -240,14 +285,15 @@ export function BrowserHome({
   return (
     <div className="flex flex-col items-center gap-5">
       <div className="flex flex-wrap items-center justify-center gap-1">
-        {[GOOGLE, GMAIL, DRIVE, ...(moodle ? [moodle] : [])].map((site) => (
+        {[GOOGLE, GMAIL, ...(moodle ? [moodle] : [])].map((site) => (
           <Button key={site.name} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
-            <SiteIcon threadRef={threadRef} site={site} className="size-4 object-contain" />
+            <SiteIcon threadRef={threadRef} site={site} className="size-5 object-contain" />
             {site.name}
           </Button>
         ))}
         <GoogleApps threadRef={threadRef} onOpenUrl={onOpenUrl} />
       </div>
+      <HomeSearch onSearch={onSearch} />
       <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-1">
         {visibleShortcuts({ added, names, hidden, visits }, moodle ? [moodle] : []).map(
           (shortcut) => (

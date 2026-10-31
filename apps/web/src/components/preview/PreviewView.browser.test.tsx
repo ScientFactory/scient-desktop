@@ -306,6 +306,40 @@ describe("PreviewView", () => {
     );
   });
 
+  it("searches from the empty page in the profile the toolbar shows", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    mocks.noTab = true;
+    vi.mocked(openPreviewSession).mockResolvedValueOnce({
+      _tag: "Success",
+      value: { tabId: "tab-1" },
+    } as never);
+    await using _screen = await render(
+      <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
+    );
+    await userEvent.fill(page.getByRole("searchbox"), "protein folding");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(openPreviewSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: expect.stringMatching(/\/search\?q=protein(%20|\+)folding/),
+          profileId: DEFAULT_BROWSER_PROFILE_ID,
+        }),
+      ),
+    );
+  });
+
+  it("opens an address typed in the empty page's search box directly", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    await using _screen = await render(view());
+    await userEvent.fill(page.getByRole("searchbox"), "example.org");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, "https://example.org/"),
+    );
+  });
+
   it("leaves Recently used to choose its own profile when there is no tab yet", async () => {
     setup();
     mocks.showEmptyState = true;
