@@ -128,3 +128,15 @@ export const signInOnHold = (
     (recent && (account.lastCheck?.state === "needs-you" || account.lastSignInOutcome === "failed"))
   );
 };
+
+/**
+ * True while Scient must not sign in by itself. A sign-in that worked moments ago and is needed
+ * again means something keeps ending it, and signing back in would only fight whatever that is.
+ */
+export const automaticSignInOnHold = (
+  account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck">,
+  nowMs: number,
+) =>
+  signInOnHold(account, nowMs) ||
+  (account.lastCheck?.state === "signed-in" &&
+    nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS);

@@ -92,6 +92,12 @@ export interface DesktopAccountsBridge {
     profileId: string,
     environmentId?: string,
   ) => Promise<ReadonlyArray<DesktopGoogleSession> | null>;
+  /** Asks a site for a page with the profile's session and no page opened; null if that failed. */
+  readonly quietVisit?: (
+    profileId: string,
+    url: string,
+    environmentId?: string,
+  ) => Promise<{ readonly url: string; readonly status: number } | null>;
   /** Removes every cookie of one site (a registrable domain) from the profile. Optional for older desktops. */
   readonly signOutSite?: (
     profileId: string,

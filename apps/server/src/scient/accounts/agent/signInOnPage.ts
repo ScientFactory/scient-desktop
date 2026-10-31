@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { AccountsError } from "@t3tools/contracts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
-import { authorizationDecision, signInOnHold } from "../AccountDecisions.ts";
+import { authorizationDecision, automaticSignInOnHold } from "../AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
 import { signIn } from "../signIn/engine.ts";
 import { matchesAccountOrigin } from "../signIn/origin.ts";
@@ -48,7 +48,7 @@ export const signInOnPage = Effect.fn("AccountsAgent.signInOnPage")(function* (
         }
       : undefined;
   }
-  if (signInOnHold(allowed, yield* Clock.currentTimeMillis))
+  if (automaticSignInOnHold(allowed, yield* Clock.currentTimeMillis))
     return {
       note: `This page needs a sign-in, and ${allowed.name}'s last attempt did not go through (${allowed.lastCheck?.message ?? allowed.lastSignInOutcome ?? "see Accounts"}). Scient won't retry it by itself; tell the user.`,
     };

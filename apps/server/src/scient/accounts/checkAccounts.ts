@@ -17,7 +17,11 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
-import { isGoogleSessionRow, outcomeCheckState, signInOnHold } from "./AccountDecisions.ts";
+import {
+  automaticSignInOnHold,
+  isGoogleSessionRow,
+  outcomeCheckState,
+} from "./AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "./AccountsService.ts";
 import { AccountCookies } from "./agent/cookies.ts";
 import { classifyProfilePage } from "./agent/profileClassification.ts";
@@ -157,7 +161,7 @@ const checkOne = Effect.fn("AccountsCheck.one")(function* (account: AccountSumma
       page,
       cookies.some((cookie) => cookie.httpOnly),
     );
-    const onHold = signInOnHold(account, yield* Clock.currentTimeMillis);
+    const onHold = automaticSignInOnHold(account, yield* Clock.currentTimeMillis);
     if (state !== "signed-out" || account.secrets.password === undefined || onHold) {
       if (onHold && state === "signed-out") return;
       return yield* accounts.recordCheck(account.accountId, {

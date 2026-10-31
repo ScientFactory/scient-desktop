@@ -3,6 +3,7 @@ import { ProjectId, ThreadId, defaultAccountControls } from "@t3tools/contracts"
 import {
   applyApprovalDecision,
   authorizationDecision,
+  automaticSignInOnHold,
   effectiveProfile,
   inScope,
   isGoogleSessionRow,
@@ -112,6 +113,12 @@ describe("sign-in holds", () => {
       ),
     ).toBe(true);
     expect(signInOnHold({ lastCheck: { state: "signed-in", at } }, minutes(1))).toBe(false);
+  });
+
+  it("won't sign back in by itself right after a sign-in that worked", () => {
+    const worked = { lastCheck: { state: "signed-in", at } } as const;
+    expect(automaticSignInOnHold(worked, minutes(5))).toBe(true);
+    expect(automaticSignInOnHold(worked, minutes(16))).toBe(false);
   });
 });
 

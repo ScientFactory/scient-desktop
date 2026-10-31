@@ -82,6 +82,11 @@ export const accountsState = {
     tag: WS_METHODS.accountsGoogleSessionsSeen,
     ...lane,
   }),
+  sessionEnded: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "accounts:sessionEnded",
+    tag: WS_METHODS.accountsSessionEnded,
+    ...lane,
+  }),
   setCodeSources: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "accounts:setCodeSources",
     tag: WS_METHODS.accountsSetCodeSources,

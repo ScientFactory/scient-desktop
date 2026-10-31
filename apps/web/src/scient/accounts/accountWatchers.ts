@@ -3,6 +3,7 @@ import type { AtomRegistry } from "effect/reactivity";
 import { environmentSummaries } from "~/state/presentation";
 import { watchAccountAutofill } from "./accountAutofill";
 import { watchGoogleSessions } from "./googleSessions";
+import { watchKeepSignedIn } from "./keepSignedIn";
 
 /** Saved sign-ins and session checks run for every environment, whatever the notification settings. */
 export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
@@ -18,9 +19,11 @@ export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
       if (watched.has(environmentId)) continue;
       const stopAutofill = watchAccountAutofill(registry, environmentId);
       const stopGoogleSessions = watchGoogleSessions(registry, environmentId);
+      const stopKeepSignedIn = watchKeepSignedIn(registry, environmentId);
       watched.set(environmentId, () => {
         stopAutofill();
         stopGoogleSessions();
+        stopKeepSignedIn();
       });
     }
   };

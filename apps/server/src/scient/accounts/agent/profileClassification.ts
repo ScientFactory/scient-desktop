@@ -1,12 +1,8 @@
+import { isLoginPlace } from "@t3tools/shared/scientSignInPage";
 import * as Schema from "effect/Schema";
 import type { ProfileDetection } from "./profileDetection.ts";
 
 export const ProfileResult = Schema.Literals(["opens", "sign-in", "denied", "error"]);
-
-/** Sign-in pages live at addresses like /login or sso.example.com, often before any password field. */
-const isLoginPlace = (url: URL) =>
-  /(?:^|[/_-])(?:log[\s_-]?in|sign[\s_-]?in|sso|auth)(?:[/_-]|$)/i.test(url.pathname) ||
-  /^(?:login|signin|sso|auth|idp)\./i.test(url.hostname);
 
 export function classifyProfilePage(
   requestedUrl: string,

@@ -477,6 +477,16 @@ reopens where you left off. Signing out and server-side expiry work as before, i
 untouched, and imported cookies pass through the same listener. HttpOnly changes also flush the
 cookie store within 3 seconds instead of Chromium's roughly 30.
 
+`watchKeepSignedIn` stops sessions idling out while the app is open. Every ten minutes it asks at
+most one site for a page through `session.fetch`, with the session the profile already has and no
+page opened, so nothing new is created and other devices aren't affected. Each sign-in is visited
+once a day; a session that ended sooner halves that gap, down to six hours. Shorter sessions are left
+alone, and Google is skipped because its sessions hold without visits. It never signs in. A session
+that ended is marked signed out and no longer visited, and the next real use signs in again. If that
+sign-in is needed again within 15 minutes, `automaticSignInOnHold` stops and tells the user, because
+something keeps ending it. No list of one-session sites is needed: the rule is the same whatever the
+reason.
+
 Sign-in and autofill tick the page's "Remember me" or "Trust this device" box
 (`shared/scientSignInPage` holds the wording) and sign-in answers "Stay signed in?" with Yes.
 Shared-computer options are left alone. A failed tick never fails a sign-in.

@@ -28,6 +28,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsCheck]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSignInSeen]: AuthSettingsWriteScope,
   [WS_METHODS.accountsGoogleSessionsSeen]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsSessionEnded]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetCodeSources]: AuthSettingsWriteScope,
   [WS_METHODS.accountsLinkKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsPaperForSource]: AuthSettingsWriteScope,

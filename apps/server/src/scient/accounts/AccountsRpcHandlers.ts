@@ -113,6 +113,12 @@ export const makeAccountsRpcHandlers = ({
         accounts.googleSessionsSeen(input).pipe(Effect.as({})),
         attributes,
       ),
+    [WS_METHODS.accountsSessionEnded]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsSessionEnded,
+        accounts.recordCheck(input.accountId, { state: "signed-out" }).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsSetCodeSources]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsSetCodeSources,
