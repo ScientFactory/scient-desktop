@@ -308,6 +308,16 @@
   ],
   "scientMounts": [
     {
+      "path": "apps/web/src/scient/browser/BrowserHome.tsx",
+      "anchor": "~/scient/accounts/useAccounts",
+      "purpose": "Show a university's Moodle on the empty tab from the addresses a profile signs in with."
+    },
+    {
+      "path": "apps/web/src/scient/browser/browserShortcuts.ts",
+      "anchor": "~/scient/accounts/sessionDetection",
+      "purpose": "Keep identity providers out of suggested shortcuts, and take the Gmail link from accounts."
+    },
+    {
       "path": "apps/server/src/provider/ScientAgentCopy.ts",
       "anchor": "scient_account_add",
       "purpose": "Agents look in Accounts first and keep a new key there; one-time secrets stay with request_secret."
