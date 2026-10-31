@@ -7,8 +7,9 @@ import {
   PersistedComposerImageAttachment,
 } from "./composerDraftStore";
 import { createMemoryStorage, type StateStorage } from "./lib/storage";
-// SCIENT-FORK:START — app windows share the stash; act on the entries other windows wrote.
+// SCIENT-FORK:START — app windows share the stash; merge with the entries other windows wrote.
 import { onStorageKey } from "./scient/multiWindow/crossWindowMerge";
+import { createPromptStashWindowSync } from "./scient/multiWindow/promptStashSync";
 // SCIENT-FORK:END
 
 export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v2";
@@ -100,13 +101,16 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
   durable: boolean;
 } {
   try {
+    // SCIENT-FORK:START — app windows share the stash; a save keeps what other windows changed.
     baseStashStorage.setItem(
       PROMPT_STASH_STORAGE_KEY,
       JSON.stringify({
         version: PROMPT_STASH_STORAGE_VERSION,
-        state: { entries },
+        state: { entries: stashWindowSync.mergeForWrite(entries) },
       }),
     );
+    stashWindowSync.didWrite(entries);
+    // SCIENT-FORK:END
     return { written: true, durable: storageIsDurable };
   } catch (error) {
     console.error("[PROMPT-STASH] Could not persist stash (storage quota?).", error);
@@ -114,7 +118,7 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
   }
 }
 
-// SCIENT-FORK:START — another app window may still be encoding an entry's images.
+// SCIENT-FORK:START — app windows share the stash; another may still be encoding an entry's images.
 function readPersistedEntries(clearPendingImages = true): ReadonlyArray<PromptStashEntry> | null {
   try {
     const raw = baseStashStorage.getItem(PROMPT_STASH_STORAGE_KEY);
@@ -128,6 +132,8 @@ function readPersistedEntries(clearPendingImages = true): ReadonlyArray<PromptSt
     return null;
   }
 }
+
+const stashWindowSync = createPromptStashWindowSync(() => readPersistedEntries(false));
 // SCIENT-FORK:END
 
 interface PromptStashStoreState {
@@ -203,14 +209,19 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
   }
 }
 
-// SCIENT-FORK:START — app windows share the stash; act on the entries other windows wrote.
+// SCIENT-FORK:START — app windows share the stash; adopt the entries other windows wrote.
+stashWindowSync.setBaseline(usePromptStashStore.getState().entries);
 onStorageKey(PROMPT_STASH_STORAGE_KEY, () => {
-  const entries = readPersistedEntries(false);
-  if (entries) usePromptStashStore.setState({ entries });
+  const local = usePromptStashStore.getState().entries;
+  const entries = stashWindowSync.adoptStored(local);
+  if (entries !== local) usePromptStashStore.setState({ entries });
 });
 // SCIENT-FORK:END
 
 export function writePromptStashStorageForTest(raw: string): void {
   baseStashStorage.setItem(PROMPT_STASH_STORAGE_KEY, raw);
   usePromptStashStore.setState({ entries: readPersistedEntries() ?? [] });
+  // SCIENT-FORK:START — app windows share the stash; memory now reflects what is stored.
+  stashWindowSync.setBaseline(usePromptStashStore.getState().entries);
+  // SCIENT-FORK:END
 }
