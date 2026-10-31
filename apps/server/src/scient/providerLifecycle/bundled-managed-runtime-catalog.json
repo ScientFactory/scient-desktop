@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "providers": {
     "codex": {
-      "contractRevision": 4,
+      "contractRevision": 5,
       "channel": "stable",
       "version": "0.153.4",
       "artifacts": {

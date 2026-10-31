@@ -105,7 +105,7 @@ describe("reviewed Codex runtime manifest", () => {
     for (const { target } of reviewedPackages) {
       expect(resolveReviewedCodexArtifact(target)?.extractionLimits).toEqual({
         maxEntries: 128,
-        maxExpandedBytes: 512 * 1024 * 1024,
+        maxExpandedBytes: 768 * 1024 * 1024,
       });
     }
   });

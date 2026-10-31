@@ -542,7 +542,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const removeKept = async (lease: NativeFilePublicationLease, directory: string, name: string) => {
     const path = NodePath.join(directory, name);
     await deps.retainedHooks?.removal?.("before", path);
-    await removeNativeRetainedEntry(lease, directory, name, deps.nativePublicationHelper);
+    await removeNativeRetainedEntry(lease, directory, name);
     await deps.retainedHooks?.removal?.("after", path);
   };
   /**

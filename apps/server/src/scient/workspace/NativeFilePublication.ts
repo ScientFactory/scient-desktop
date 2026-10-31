@@ -733,6 +733,8 @@ export async function runNativeFilePublication(
 export type NativeFilePublicationParentBinding = Omit<NativeFileLeaseBinding, "mode">;
 export interface NativeFilePublicationLease {
   readonly processId?: number;
+  /** The helper holding this lease; later checks use it instead of looking one up again. */
+  readonly helperPath: string;
   /** Namespace work runs inside the bounded lock holder's owned retirement protocol. */
   readonly run: (request: NativeFilePublicationRequest) => Promise<NativeFilePublicationResult>;
   readonly runDirectory: (
@@ -974,6 +976,7 @@ export async function withNativeFilePublicationLease<T>(
     return command.result.promise;
   };
   const lease: NativeFilePublicationLease = {
+    helperPath,
     ...(child.pid === undefined ? {} : { processId: child.pid }),
     assertHeld: () => {
       if (!alive || !acquired || releasing || protocolError)
@@ -1036,7 +1039,6 @@ export async function removeNativeRetainedEntry(
   lease: NativeFilePublicationLease,
   directory: string,
   name: string,
-  helper?: string,
 ) {
   let result = await lease.remove(directory, name, "unlink");
   if (
@@ -1057,7 +1059,7 @@ export async function removeNativeRetainedEntry(
   const current =
     HostProcess.Platform.defaultValue() === "win32"
       ? await import("./WindowsNativeFile.ts").then(({ windowsFileIdentity }) =>
-          windowsFileIdentity(directory, helper),
+          windowsFileIdentity(directory, lease.helperPath),
         )
       : await NodeFSP.stat(directory, { bigint: true });
   if (
