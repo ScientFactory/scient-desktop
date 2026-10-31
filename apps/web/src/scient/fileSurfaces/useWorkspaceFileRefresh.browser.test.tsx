@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
     data: ProjectReadFileResult | null;
     error: string | null;
     isPending: boolean;
+    failureReason?: string;
   },
 }));
 
@@ -186,6 +187,17 @@ describe("workspace refresh ownership", () => {
     mocks.watcher = AsyncResult.success({ _tag: "file-changed", relativePath: "paper.tex" });
     expect((await watch(_fixture)).unavailable).toBe(false);
     expect(mocks.refreshFile).not.toHaveBeenCalled();
+  });
+
+  it("does not call a missing file's watcher paused", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    mocks.watcher = AsyncResult.failure(Cause.fail(new Error("watch unavailable")));
+    expect((await render(_fixture)).automaticRefreshUnavailable).toBe(true);
+    mocks.file = { ...mocks.file, failureReason: "not_found" };
+    expect((await render(_fixture)).automaticRefreshUnavailable).toBe(false);
   });
 
   it("leaves a dirty file's conflicts to the save, which cannot mistake its own write", async () => {

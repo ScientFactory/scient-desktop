@@ -376,7 +376,8 @@ export function useWorkspaceFileRefresh(input: {
   });
 
   return {
-    automaticRefreshUnavailable: fileChanges.unavailable,
+    // A missing file has nothing to follow, which is not a paused watcher.
+    automaticRefreshUnavailable: fileChanges.unavailable && file.failureReason !== "not_found",
     cancelReloadNotice,
     file,
     handleExternalConflict,
