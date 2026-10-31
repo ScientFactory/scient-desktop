@@ -17,6 +17,7 @@ import { HttpServer } from "effect/http";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { layerMemory as SqlitePersistenceMemory } from "../persistence/Sqlite.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -66,6 +67,7 @@ const testLayer = Layer.mergeAll(
   McpProviderSessions.layer,
   ThreadCommandExecutor.layer,
   NodeServices.layer,
+  Layer.mock(SecretResolver.SecretResolver)({}),
 );
 
 type NativeHarness = Effect.Success<ReturnType<typeof harness>>;

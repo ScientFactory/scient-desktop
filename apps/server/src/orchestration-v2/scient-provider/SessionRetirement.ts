@@ -10,6 +10,7 @@ import * as Semaphore from "effect/Semaphore";
 import type { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import {
   ProviderAdapterInterruptError,
+  ProviderAdapterInterruptTimeoutError,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2InterruptInput,
 } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -38,10 +39,25 @@ export const interruptAndJoinRetirement = Effect.fn("SessionRetirement.interrupt
     readonly request: ProviderAdapterV2InterruptInput;
     readonly readEntry: Effect.Effect<PumpOwner | undefined>;
     readonly closeTimeoutMs: number;
+    /** Bounds the native interrupt alone; the pump/close join keeps its own bound. */
+    readonly interruptTimeoutMs: number;
     readonly joinRetainedClose: () => Effect.Effect<void, E, R>;
   }) {
     const entry = yield* input.readEntry;
-    yield* input.runtime.interruptTurn(input.request);
+    yield* input.runtime.interruptTurn(input.request).pipe(
+      Effect.timeoutOrElse({
+        duration: input.interruptTimeoutMs,
+        orElse: () =>
+          Effect.fail(
+            new ProviderAdapterInterruptTimeoutError({
+              driver: input.runtime.driver,
+              providerThreadId: input.request.providerThread.id,
+              providerTurnId: input.request.providerTurnId,
+              timeoutMs: input.interruptTimeoutMs,
+            }),
+          ),
+      }),
+    );
     if (input.runtime.providerSession.status !== "stopped") return;
     yield* Effect.gen(function* () {
       if (entry?.runtime === input.runtime && entry.eventPump.fiber)

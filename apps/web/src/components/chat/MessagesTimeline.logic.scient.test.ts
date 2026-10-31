@@ -857,7 +857,7 @@ describe("v2 run and attempt history", () => {
           "Worked for 12s",
           "Worked for 21s",
           "Worked for 30s",
-          ...(hasNativeRun ? ["Worked for 5.0s"] : []),
+          ...(hasNativeRun ? ["Worked for 5s"] : []),
         ]);
         const historyOnlyTimeline = deriveTimelineEntriesFromVisibleTurnItems({
           visibleTurnItems: visibleTurnItems.filter(({ item }) => item.runId === null),
@@ -1032,7 +1032,7 @@ describe("v2 run and attempt history", () => {
         ),
       ).toEqual(["unknown-tool"]);
       const folds = collapsed.filter((row) => row.kind === "turn-fold");
-      expect(folds.map((row) => row.label)).toEqual(["Worked for 3.0s"]);
+      expect(folds.map((row) => row.label)).toEqual(["Worked for 3s"]);
       const first = folds[0];
       if (!first) throw new Error("Expected only the matched history fold");
       const expanded = deriveMessagesTimelineRows({

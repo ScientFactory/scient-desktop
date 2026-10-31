@@ -59,9 +59,39 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
-import { backgroundWorkNowItem, childInputNowItem, goalNowItem } from "./ThreadActivityBanners";
+import {
+  backgroundWorkNowItem,
+  childInputNowItem,
+  goalNowItem,
+  runStopNowItem,
+} from "./ThreadActivityBanners";
+import { useForceStopThread } from "./useForceStopThread";
+import { useAtomValue } from "@effect/atom-react";
+import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-execution";
+import { Atom } from "effect/reactivity";
+import { resolveThreadDetailRef } from "../../state/entities";
+import { environmentThreadDetails } from "../../state/threads";
 import type { LocalDispatchActions } from "./useLocalDispatchState";
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
+const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
+  Atom.withLabel("web-thread-run-stop:empty"),
+);
+
+// SCIENT-FORK:START — a draft's reserved id does not exist yet, and asking the server for it
+// would mark the thread deleted before its first send creates it.
+export function useActiveRunStop(
+  ref: ScopedThreadRef | null,
+  shell: EnvironmentThreadShell | null,
+): RunStopPresentation | null {
+  const listedRef = resolveThreadDetailRef(ref, {
+    shellExists: shell !== null,
+    waitForShell: true,
+  });
+  return useAtomValue(
+    listedRef ? environmentThreadDetails.runStopAtom(listedRef) : NO_RUN_STOP_ATOM,
+  );
+}
+// SCIENT-FORK:END
 
 interface ThreadLifecycleInput {
   readonly environmentId: EnvironmentId;
@@ -519,6 +549,20 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         })
       : null;
 
+  const forceStop = useForceStopThread(environmentId);
+  const anyRunStop = useActiveRunStop(activeThreadRef, activeThreadShell);
+  // A background Stop matters only while that work is still pending.
+  const runStop = anyRunStop?.background && activeBackgroundTasks.length === 0 ? null : anyRunStop;
+  const runStopNow =
+    activeThread && runStop !== null
+      ? runStopNowItem({
+          threadId: activeThread.id,
+          stop: runStop,
+          canForceStop: forceStop.canForceStop,
+          forceStopping: forceStop.stoppingThreadId === activeThread.id,
+          onForceStop: () => void forceStop.forceStopThread(activeThread.id, runStop.runId),
+        })
+      : null;
   const backgroundWorkNow = activeThread
     ? backgroundWorkNowItem({
         threadId: activeThread.id,
@@ -602,7 +646,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     shortcuts,
     acknowledgeActiveThreadWoke,
     activeBranchMismatchKey,
-    backgroundWorkNow,
+    // A Stop that went unanswered needs the user; one in progress is the thread's work.
+    attentionNow: runStop?.state === "unresponsive" ? runStopNow : childInputNow,
+    workNow: runStop?.state === "stopping" ? runStopNow : backgroundWorkNow,
     childInputNow,
     goalNow,
     handleSwitchCheckoutToThread,

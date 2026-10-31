@@ -2014,5 +2014,5 @@ it("renders elapsed time for a completed turn", async () => {
     expect(screen.container.querySelector("[data-timeline-row-kind]")).not.toBeNull(),
   );
   const markup = screen.container.innerHTML;
-  expect(markup).toContain("Worked for 8.0s");
+  expect(markup).toContain("Worked for 8s");
 });

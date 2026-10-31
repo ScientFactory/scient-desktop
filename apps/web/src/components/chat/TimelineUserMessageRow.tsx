@@ -354,9 +354,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       : null,
   );
   const senderLabel = senderShell?.title.trim() || "Agent";
-  const resolvedContext = resolveUserMessageContext(
-    userMessage.attribution === "guest" ? { ...row.message, text: userMessage.text } : row.message,
-  );
+  const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
   const chippedAttachmentIds = new Set(
@@ -367,6 +365,16 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
+  // Images or videos sent without words show as media, not as a bubble around them.
+  const mediaOnly =
+    !folded &&
+    userMessage.attribution !== "guest" &&
+    resolvedContext.text.trim() === "" &&
+    userAudio.length === 0 &&
+    unchippedFiles.length === 0 &&
+    unknownAttachments.length === 0 &&
+    regularImages.length + userVideos.length > 0;
+  // SCIENT-FORK: the image gallery owns media layout, so upstream's lone/collage shapes are unused.
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
@@ -501,8 +509,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         className={cn(
           "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
           BUBBLE_CHIP_CLASS_NAME,
-          userMessage.attribution === "guest" ? guestBubbleClassName(false) : "bg-message",
-          !folded && "p-3",
+          userMessage.attribution === "guest"
+            ? guestBubbleClassName(false)
+            : !mediaOnly && "bg-message",
+          !folded && !mediaOnly && "p-3",
           folded && expanded && "w-full",
         )}
       >
@@ -535,7 +545,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           >
             {/* SCIENT-FORK:START — the folded shell retains the image gallery and video controls. */}
             <ScientChatImageGallery
-              className="mb-2 max-w-[420px]"
+              className={cn("max-w-[420px]", (!mediaOnly || userVideos.length > 0) && "mb-2")}
               images={regularImages}
               onExpand={(imageId) => {
                 const preview = buildExpandedImagePreview(regularImages, imageId);
@@ -543,7 +553,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               }}
             />
             {userVideos.length > 0 && (
-              <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+              <div className={cn("grid max-w-[420px] grid-cols-2 gap-2", !mediaOnly && "mb-2")}>
                 {userVideos.map((file) => (
                   <UserVideoAttachment key={file.id} file={file} />
                 ))}
