@@ -119,6 +119,34 @@ it.layer(NodeServices.layer)("operational CLI commands", (it) => {
   );
 
   it.effect.skipIf(nativePlatform === "win32")(
+    "keeps the arguments, so root runs setup on the same home",
+    () =>
+      Effect.gen(function* () {
+        const args = ["browser", "setup", "--base-dir", "/srv/t3 home"];
+        const rootCommand = (node: string, entry: string, executable: boolean) =>
+          resolveRootCliCommand(args).pipe(
+            Effect.provideService(HostProcess.ExecutablePath, node),
+            Effect.provideService(HostProcess.Arguments, [node, entry]),
+            Effect.provideService(HostProcess.Environment, {}),
+            Effect.provideService(HostProcess.IsExecutable, executable),
+            Effect.provideService(HostProcess.Platform, "linux"),
+          );
+        expect(
+          yield* rootCommand(
+            "/home/theo/.local/node/bin/node",
+            "/home/theo/.local/lib/node_modules/t3/dist/bin.mjs",
+            false,
+          ),
+        ).toBe(
+          "sudo /home/theo/.local/node/bin/node /home/theo/.local/lib/node_modules/t3/dist/bin.mjs browser setup --base-dir '/srv/t3 home'",
+        );
+        expect(yield* rootCommand("/opt/t3/t3", "/opt/t3/t3", true)).toBe(
+          "sudo /opt/t3/t3 browser setup --base-dir '/srv/t3 home'",
+        );
+      }),
+  );
+
+  it.effect.skipIf(nativePlatform === "win32")(
     "falls back from a stale or unusable launcher and restores Electron Node mode under sudo",
     () =>
       Effect.gen(function* () {

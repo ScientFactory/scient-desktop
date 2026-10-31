@@ -486,20 +486,23 @@ it("keeps the end of the answer's text in view while idle, not the end of what f
   });
   await scroll(() => _fixture.listRef.current!.scrollToEnd({ animated: false }));
   await advanceClock(_fixture, 96);
+  // Measured on screen, like the product: the list's positions can trail the rendered rows.
+  const readingGap = () => {
+    const now = _fixture.listRef.current!.getState();
+    const gap = readingEndGapOnScreen(now, node(_fixture), COMPOSER_INSET);
+    expect(gap).not.toBeNull();
+    return gap!;
+  };
+  await vi.waitFor(() => readingGap());
   // Rest exactly at the end of the answer's text, above its trailing rows.
-  const state = _fixture.listRef.current!.getState();
-  const trailing = state.contentLength - withReadingEnd(state, COMPOSER_INSET)!.contentLength;
   await scroll(() =>
     _fixture.listRef.current!.scrollToOffset({
-      offset: node(_fixture).scrollTop - trailing,
+      offset: node(_fixture).scrollTop + readingGap(),
       animated: false,
     }),
   );
   await advanceClock(_fixture, 96);
-  const readingGap = () => {
-    const now = _fixture.listRef.current!.getState();
-    return withReadingEnd(now, COMPOSER_INSET)!.contentLength - now.scroll - now.scrollLength;
-  };
+  expect(gapToListEnd(_fixture)).toBeGreaterThan(20);
   const before = readingGap();
   // The answer's content grows late (an image or diagram finishing its render).
   await render(_fixture, key, [...entries, answer(paragraph(30).repeat(3))]);

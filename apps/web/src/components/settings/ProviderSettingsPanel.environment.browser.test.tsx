@@ -346,7 +346,7 @@ describe("EnvironmentProviderSettings routing", () => {
     await userEvent.click(refreshButton());
     expect(state.refresh).toHaveBeenCalledWith({
       environmentId,
-      input: { refreshModels: true, refreshManagedRuntimeCatalog: true },
+      input: { refreshModels: true, refreshManagedRuntimeCatalog: true, reloadSecrets: true },
     });
 
     await userEvent.click(page.getByRole("button", { name: /view details/ }).last());

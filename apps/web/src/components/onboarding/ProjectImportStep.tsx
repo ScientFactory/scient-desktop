@@ -422,6 +422,7 @@ export function ProjectImportStep({
   );
 }
 
-function formatSource(source: "claudeAgent" | "codex"): string {
-  return source === "claudeAgent" ? "Claude" : "Codex";
+function formatSource(source: "claudeAgent" | "codex" | "pi"): string {
+  if (source === "pi") return "Pi";
+  return source === "codex" ? "Codex" : "Claude Code";
 }

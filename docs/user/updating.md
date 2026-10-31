@@ -175,6 +175,15 @@ choose **Update** to install it. If not, the window links to the last version
 that started on your computer. Download and install it to go back. Use **Copy
 details** to include the error in a bug report.
 
+## Registries and proxies
+
+Each server checks providers installed with npm through its own npm, so the
+checks use npm's configured registry, authentication, and proxy settings.
+Providers installed with Homebrew or pnpm check through those tools. Configure
+npm on the server's machine. If that registry cannot be reached, the release
+shows as unavailable; Scient does not try the public registry instead. Machines
+without npm check the public npm registry directly.
+
 ## Update providers
 
 The sidebar's update circle lists provider updates for every connected

@@ -30,6 +30,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { layer as ProviderRegistryLive } from "../provider/ProviderRegistry.ts";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "../provider/ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Claude from "./Adapters/ClaudeAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
@@ -214,6 +215,7 @@ it.effect.each(
       Layer.provide(
         Layer.mergeAll(
           instanceLayer,
+          Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({}),
           ModelManifest.layerTest,
           ProviderLatestVersions.layer,
           Layer.succeed(ServerConfig.ServerConfig, config),

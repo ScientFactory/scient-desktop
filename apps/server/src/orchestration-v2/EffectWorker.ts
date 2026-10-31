@@ -253,6 +253,11 @@ export const layerExecutor: Layer.Layer<
                 ),
                 Effect.catch((cause) =>
                   Effect.gen(function* () {
+                    // Settling here would end the run while the agent may still be running; the
+                    // user decides with Force stop instead.
+                    if (request.subagent === undefined && cause.unresponsive === true) {
+                      return "unresponsive" as const;
+                    }
                     if (
                       !isNonRetryableProviderTurnControlFailure(
                         request.type,
@@ -274,6 +279,16 @@ export const layerExecutor: Layer.Layer<
                 ),
                 // A native outcome and physical session release are distinct proofs.
                 Effect.flatMap((outcome) => {
+                  if (outcome === "unresponsive")
+                    return threads
+                      .dispatch({
+                        type: "thread.interrupt.unresponsive",
+                        commandId: CommandId.make(`${effect.id}:unresponsive`),
+                        threadId: effect.threadId,
+                        providerThreadId: request.providerThreadId,
+                        providerTurnId: request.providerTurnId,
+                      })
+                      .pipe(Effect.asVoid);
                   if (
                     request.subagent !== undefined &&
                     outcome !== "session-absent" &&

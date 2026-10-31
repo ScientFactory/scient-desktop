@@ -222,13 +222,13 @@ export const piReplayFixtureProvenance = {
     initialResponseAfterModelsRequest: true,
   },
   thread_rollback_after_stop: {
-    liveDigest: "eef1cfbf3585818ad3272d100c657f2d7aaf28ab56be0c7aea8df6097b20e542",
-    originalDigest: "e66dc46f638aa02af9d14817ece8cf4c8cd245613695ef596237b75a938f8f25",
+    liveDigest: "01aa9e84e1d176f3370b6eb047e97e2e2a4df6b05d5235066bb2e270748709e4",
+    originalDigest: "420436a24d114174256b91f3b696f1c657a99200238f2b459287aab58e9a3a49",
     reopened: true,
   },
   turn_interrupt_mid_tool: {
-    liveDigest: "8f277a8a8ebe2acbbd7b3c0d9797692759ade416550f53a019886957e4a79a6d",
-    originalDigest: "b50659656021ebc140cfe82ca309bff241a6dcb6853360ed13c1af709e0ab373",
+    liveDigest: "5a539ef96af7cb403f1407107cd7a3d5830ff46b8bcf4d34e6863175dd50a562",
+    originalDigest: "5f0a1b2a4afa36d9dbd2b431a60de7ecfdaada61bc132ef7ddc01bfb5f10ced2",
     reopened: false,
   },
 } as const;
@@ -280,7 +280,7 @@ export function restorePiOriginalSkillDiscoveryRecording(input: {
     provider_thread_resume: [18, 84],
     message_steering: [18],
     thread_rollback: [18, 64, 116],
-    thread_rollback_after_stop: [18, 54, 180, 243],
+    thread_rollback_after_stop: [18, 54, 182, 245],
     turn_interrupt_mid_tool: [18],
   };
   for (const index of queuedStartPromptLines[input.scenario] ?? []) {
@@ -509,11 +509,11 @@ const recordedPiSchedules: Readonly<
     states: [52, 85, 169],
   },
   thread_rollback_after_stop: {
-    digest: "be829d74fdb991dc79c1362d58ae72861bc84cbbc06b1c738e275d6c9309bd8c",
-    states: [42, 212, 282],
+    digest: "0313a3bfec863b763e8cc9c31fcb5da1f8db790c445009d1389be9db1edaa500",
+    states: [42, 214, 284],
   },
   turn_interrupt_mid_tool: {
-    digest: "7e4284f2f36bd7aa9586e3f800e82660152b11d35388af0126e13d5ee2846077",
+    digest: "e956bbd48a11fbf7454cbb7381ea4608c017320806e50ac1d7dddda609360158",
     states: [],
   },
 };
@@ -889,7 +889,7 @@ export function reconcilePiBoundLaunchProtocol(input: {
     input.scenario === "provider_thread_resume"
       ? 62
       : input.scenario === "thread_rollback_after_stop"
-        ? 158
+        ? 160
         : undefined;
   const historicalRPCFrames: Array<ProviderReplayEntry> = [];
   if (start === undefined) return { entries: prepared, historicalRPCFrames };

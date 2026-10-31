@@ -24,6 +24,7 @@ import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { makeNativeSessionAdapterV2 } from "../orchestration-v2/Adapters/NativeSessionAdapterV2.ts";
@@ -282,7 +283,9 @@ it.effect.each(["remove", "disable"] as const)(
             created.filter(({ instanceId }) => instanceId === second).map(({ key }) => key),
             ["second-key", "second-key"],
           );
-        }).pipe(Effect.provide(settingsLayer));
+        }).pipe(
+          Effect.provide(Layer.merge(settingsLayer, Layer.mock(SecretResolver.SecretResolver)({}))),
+        );
       }),
     ).pipe(TestClock.withLive),
 );

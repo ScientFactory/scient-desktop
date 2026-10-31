@@ -385,7 +385,7 @@ export function scientBrowseKeyDownCapture({
       canSubmitBrowsePath,
       forceSubmitCurrentPath: isNewProjectFolderDraft,
       key: event.key,
-      isComposing: event.nativeEvent.isComposing,
+      isComposing: event.nativeEvent.isComposing || event.keyCode === 229,
       isPrimaryModifierPressed: isPrimaryModifierPressed(event),
       highlightedItemValue: highlightedItemValueRef.current,
       highlightReason: highlightedItemReasonRef.current,

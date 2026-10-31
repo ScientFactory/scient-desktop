@@ -26,6 +26,7 @@ import * as ServerConfig from "../config.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "./providerStatusCache.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import { nextInventoryReadSequence } from "./ProviderNativeInventory.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import type { ScientProviderInstance } from "./ScientProviderInstance.ts";
@@ -246,6 +247,9 @@ const makeHarness = Effect.fn("ProviderRegistryNativeInventory.makeHarness")(fun
   });
   const services = yield* Layer.build(
     ProviderRegistry.layer.pipe(
+      Layer.provide(
+        Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({}),
+      ),
       Layer.provideMerge(instanceRegistryLayer),
       Layer.provideMerge(
         ServerConfig.layerTest(process.cwd(), { prefix: "scient-provider-native-inventory-" }),

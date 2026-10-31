@@ -665,5 +665,17 @@
     "rules": ["t3-command"],
     "kind": "unmounted-upstream",
     "reason": "Upstream's fleet track switch (every machine between Stable and Nightly). Scient keeps its Stable/Beta picker and never plans a switch; the module stays as upstream ships it so its changes merge."
+  },
+  {
+    "path": "apps/web/src/components/GitHubStarPrompt.tsx",
+    "rules": ["inherited-brand", "bare-t3"],
+    "kind": "unmounted-upstream",
+    "reason": "Upstream's request to star its own repository. Scient does not ask, so nothing calls it."
+  },
+  {
+    "path": "apps/server/src/cloud/npmRelease.ts",
+    "rules": ["t3-command"],
+    "kind": "unmounted-upstream",
+    "reason": "Upstream's server read of its npm package for the fleet track switch, which Scient does not mount."
   }
 ]

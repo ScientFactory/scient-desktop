@@ -10,7 +10,9 @@ import { useImperativeHandle, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
+import { deriveComposerSendState } from "../ChatView.logic";
+import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry";
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
 
@@ -32,6 +34,10 @@ const mocks = await vi.hoisted(async () => {
 
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.editQueuedRun,
+}));
+
+vi.mock("../../hooks/useSettings", () => ({
+  useEnvironmentIdentificationMode: () => "none",
 }));
 
 const runsKey = (ref: ScopedThreadRef) => `${ref.environmentId}:${ref.threadId}`;
@@ -88,7 +94,33 @@ function Harness(props: {
     composerRef: { current: null },
   });
   useImperativeHandle(props.hookRef, () => result);
-  return null;
+  const draft = useComposerThreadDraft(result.draftTarget);
+  const sendState = deriveComposerSendState({
+    prompt: draft.prompt,
+    imageCount: draft.images.length + draft.files.length,
+    existingAttachmentCount: result.editingAttachments?.length ?? 0,
+    terminalContexts: draft.terminalContexts,
+  });
+  return result.isEditing ? (
+    <ComposerPrimaryActions
+      compact={false}
+      canOperateThread
+      pendingAction={null}
+      isRunning={false}
+      canInterrupt={false}
+      showPlanFollowUpPrompt={false}
+      promptHasText={draft.prompt.trim().length > 0}
+      isSendBusy={result.isSaving}
+      sendDisabledReason={null}
+      isEnvironmentUnavailable={false}
+      isPreparingWorktree={false}
+      hasSendableContent={sendState.hasSendableContent}
+      onSubmitMessage={() => void result.saveEdit(savedContent(draft.prompt), () => {})}
+      onPreviousPendingQuestion={() => {}}
+      onInterrupt={() => {}}
+      onImplementPlanInNewThread={() => {}}
+    />
+  ) : null;
 }
 
 function view(threadRef: ScopedThreadRef, runStatus: string, hook: { current: HookResult | null }) {

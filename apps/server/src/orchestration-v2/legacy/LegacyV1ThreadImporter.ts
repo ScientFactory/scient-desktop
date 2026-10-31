@@ -992,10 +992,10 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // Confirm only after both transcript and historical-artifact hydration.
-  // Reconciliation resets completion before this process starts, so thread
-  // reads and command dispatches can avoid the lock and lookup after the
-  // first successful confirmation in this process.
+  // Confirm a legacy thread only after transcript and historical-artifact
+  // hydration; a thread with no legacy row is confirmed by that first lookup.
+  // Both are final for this process: reconciliation resets completion before
+  // it starts, and only startup shell reconciliation creates legacy rows.
   const confirmedTranscriptThreadIds = new Set<ThreadId>();
 
   const ensureTranscriptBase = (threadId: ThreadId) =>
@@ -1010,6 +1010,7 @@ const make = Effect.gen(function* () {
         `.pipe(NodeSqliteClient.readOnly);
         const imported = imports[0];
         if (imported === undefined) {
+          confirmedTranscriptThreadIds.add(threadId);
           return { importedThreadCount: 0, importedMessageCount: 0 };
         }
         if (

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
-import { canApplySendAnchor, readingIdentity, resolveReadingRow } from "./readerScrollPolicy";
+import {
+  canApplySendAnchor,
+  readingIdentity,
+  resolveReadingRow,
+  restingEndGrowth,
+} from "./readerScrollPolicy";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 function message(
@@ -108,5 +113,22 @@ describe("reader-owned scrolling", () => {
         exact: false,
       });
     }
+  });
+});
+
+describe("restingEndGrowth", () => {
+  const resting = { gap: 0, contentEnd: 1000 };
+
+  it("follows the text end as far as it grew", () => {
+    expect(restingEndGrowth(resting, 525, 1000)).toBe(525);
+  });
+
+  it("leaves out a scroll the resting record has not seen", () => {
+    // Up 64 px and 525 px of growth in one frame: following 589 px would pass the text end.
+    expect(restingEndGrowth(resting, 589, 936)).toBe(525);
+  });
+
+  it("leaves out growth above that the list already compensated for", () => {
+    expect(restingEndGrowth(resting, 40, 1200)).toBe(40);
   });
 });

@@ -1,5 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import { isAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import type {
   ChatAttachment as ContractChatAttachment,
   EnvironmentId,
@@ -296,7 +297,9 @@ export function QueuedRunsControl({
       <ol className="flex flex-col items-end gap-3" id={queueListId}>
         {visibleItems.map((item, position) => {
           // SCIENT-FORK:START queue-scient-preview
-          const previewText = queuePreviewText(item.text, item.thumbnails.length > 0);
+          const previewText = isAttachmentOnlyBootstrapPrompt(item.text)
+            ? ""
+            : queuePreviewText(item.text, item.thumbnails.length > 0);
           // SCIENT-FORK:END queue-scient-preview
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
           // SCIENT-FORK:START queue-scient-parts — a refused held Send stays hidden.

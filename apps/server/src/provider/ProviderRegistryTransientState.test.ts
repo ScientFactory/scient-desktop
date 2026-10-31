@@ -24,6 +24,7 @@ import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
 import { readProviderStatusCache, resolveProviderStatusCachePath } from "./providerStatusCache.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { layer as ProviderRegistryLive } from "./ProviderRegistry.ts";
@@ -209,6 +210,9 @@ const makeHarness = Effect.fn("ProviderRegistryTransientState.makeHarness")(func
   });
   const services = yield* Layer.build(
     ProviderRegistryLive.pipe(
+      Layer.provide(
+        Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({}),
+      ),
       Layer.provideMerge(instanceRegistryLayer),
       Layer.provideMerge(
         ServerConfig.layerTest(process.cwd(), {

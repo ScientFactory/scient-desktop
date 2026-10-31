@@ -98,6 +98,7 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
       const queuedIds = new Set(queued.map((candidate) => candidate.id));
       const admissionSequences = new Map<RunId, number>();
       const releaseReceipts = new Map<CommandId, number>();
+      const heldRuns = new Set<RunId>();
       yield* Stream.concat(
         eventStore.read({ threadId, eventType: "run.created", throughSequence }),
         eventStore.read({ threadId, eventType: "run.updated", throughSequence }),
@@ -124,7 +125,17 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
               );
               return;
             }
-            if (payload.queueHeld !== false || entry.commandId == null) return;
+            if (payload.queueHeld === true) heldRuns.add(payload.id);
+            if (payload.queueHeld !== false) return;
+            if (entry.commandId == null) {
+              // Only the release of unattended messages after a completed run has no command.
+              if (heldRuns.delete(payload.id))
+                queueBoundaries.set(
+                  payload.id,
+                  Math.max(queueBoundaries.get(payload.id) ?? 0, entry.sequence),
+                );
+              return;
+            }
             let released = releaseReceipts.get(entry.commandId);
             if (released === undefined) {
               const receipt = yield* commandReceipts.getByCommandId(entry.commandId);
