@@ -48,7 +48,7 @@ const MIN_VISITS_TO_SUGGEST = 2;
 const MAX_REMEMBERED_SITES = 100;
 const STORAGE_KEY = "scient:browser-shortcuts:v1";
 
-export const GOOGLE: HomeSite = {
+const GOOGLE: HomeSite = {
   name: "Google",
   url: "https://www.google.com/",
   icon: ICONS.google,
@@ -67,10 +67,11 @@ const SCHOLAR: HomeSite = {
   icon: ICONS.scholar,
 };
 
-/** Sites with their own place at the top of the page, so never a shortcut too. */
-const TOP_ROW: ReadonlyArray<HomeSite> = [GOOGLE, GMAIL];
+/** Gmail has its place at the top of the page, and every Google search would count as Google. */
+const NEVER_SUGGESTED: ReadonlyArray<HomeSite> = [GOOGLE, GMAIL];
 
 export const GOOGLE_APPS: ReadonlyArray<HomeSite> = [
+  GOOGLE,
   { name: "Account", url: "https://myaccount.google.com/", icon: ICONS.account },
   DRIVE,
   CALENDAR,
@@ -79,10 +80,10 @@ export const GOOGLE_APPS: ReadonlyArray<HomeSite> = [
   { name: "Slides", url: "https://docs.google.com/presentation/", icon: ICONS.slides },
   SCHOLAR,
   { name: "Notebook", url: "https://notebook.google.com/", icon: ICONS.notebook },
-  { name: "Gemini", url: "https://gemini.google.com/", icon: ICONS.gemini },
   { name: "Meet", url: "https://meet.google.com/", icon: ICONS.meet },
   { name: "Tasks", url: "https://tasks.google.com/", icon: ICONS.tasks },
   { name: "YouTube", url: "https://www.youtube.com/", icon: ICONS.youtube },
+  { name: "Gemini", url: "https://gemini.google.com/", icon: ICONS.gemini },
   { name: "Photos", url: "https://photos.google.com/", icon: ICONS.photos },
   { name: "Maps", url: "https://maps.google.com/", icon: ICONS.maps },
   { name: "Translate", url: "https://translate.google.com/", icon: ICONS.translate },
@@ -97,7 +98,6 @@ export const GOOGLE_APPS: ReadonlyArray<HomeSite> = [
   { name: "Books", url: "https://books.google.com/", icon: ICONS.books },
   { name: "News", url: "https://news.google.com/", icon: ICONS.news },
   { name: "Earth", url: "https://earth.google.com/", icon: ICONS.earth },
-  { name: "Vids", url: "https://docs.google.com/videos", icon: ICONS.vids },
 ];
 
 const STARTING_SITES: ReadonlyArray<HomeSite> = [
@@ -160,8 +160,10 @@ export function visibleShortcuts(
   { added, names, hidden, visits }: SavedShortcuts,
   alsoOnTopRow: ReadonlyArray<HomeSite> = [],
 ): Shortcut[] {
-  const onTopRow = [...TOP_ROW, ...alsoOnTopRow].flatMap((site) => siteKeyOf(site.url) ?? []);
-  const taken = new Set([...hidden, ...onTopRow]);
+  const notSuggested = [...NEVER_SUGGESTED, ...alsoOnTopRow].flatMap(
+    (site) => siteKeyOf(site.url) ?? [],
+  );
+  const taken = new Set([...hidden, ...notSuggested]);
   const shortcuts = added.flatMap((url) => {
     const key = siteKeyOf(url);
     if (!key) return [];

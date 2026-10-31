@@ -26,7 +26,6 @@ import { useAccounts } from "~/scient/accounts/useAccounts";
 import {
   canAddShortcut,
   GMAIL,
-  GOOGLE,
   GOOGLE_APPS,
   type HomeSite,
   parseSiteUrl,
@@ -285,7 +284,7 @@ export function BrowserHome({
   return (
     <div className="flex flex-col items-center gap-5">
       <div className="flex flex-wrap items-center justify-center gap-1">
-        {[GOOGLE, GMAIL, ...(moodle ? [moodle] : [])].map((site) => (
+        {[GMAIL, ...(moodle ? [moodle] : [])].map((site) => (
           <Button key={site.name} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
             <SiteIcon threadRef={threadRef} site={site} className="size-5 object-contain" />
             {site.name}

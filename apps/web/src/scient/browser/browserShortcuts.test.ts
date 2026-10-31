@@ -62,12 +62,16 @@ describe("visibleShortcuts", () => {
     });
   });
 
-  it("leaves Google and Gmail to the row above", () => {
+  it("doesn't turn searches or Gmail into shortcuts", () => {
     visit("https://www.google.com/search?q=a", 5);
     visit("https://mail.google.com/mail/u/0/#inbox", 5);
-    expect(names()).not.toContain("google.com");
-    expect(names()).not.toContain("mail.google.com");
+    expect(names()).not.toContain("Google");
     expect(names()).not.toContain("Gmail");
+  });
+
+  it("keeps Google as a shortcut when the user adds it", () => {
+    useBrowserShortcuts.getState().save(null, "google.com", "");
+    expect(names()[0]).toBe("Google");
   });
 
   it("keeps a removed site away until the user adds it back", () => {

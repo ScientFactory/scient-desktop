@@ -1,8 +1,8 @@
 # New browser tab
 
-An empty browser tab starts with **Google**, **Gmail** and **Apps**, a scrolling list of Google's
-apps from Drive, Docs and Scholar to Colab, Classroom and Earth. They open in the profile shown in
-the toolbar, so you reach that profile's account. If it isn't signed in, Google shows its sign-in
+An empty browser tab starts with **Gmail** and **Apps**, a scrolling list of Google and its apps,
+from Drive, Docs and Scholar to Colab, Classroom and Earth. They open in the profile shown in the
+toolbar, so you reach that profile's account. If it isn't signed in, Google shows its sign-in
 first.
 
 On a Hebrew University profile, **Moodle** joins them. Scient recognises the profile from its email

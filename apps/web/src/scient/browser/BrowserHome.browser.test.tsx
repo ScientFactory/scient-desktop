@@ -58,16 +58,19 @@ it("searches what was typed, and ignores an empty box", async () => {
   expect(onSearch).toHaveBeenCalledExactlyOnceWith("protein folding");
 });
 
-it("opens Google, Gmail and each shortcut", async () => {
+it("opens Gmail, each shortcut and Google from Apps", async () => {
   const onOpenUrl = vi.fn();
   await using _screen = await renderHome(onOpenUrl);
-  await page.getByRole("button", { name: "Google", exact: true }).click();
+  const google = page.getByRole("button", { name: "Google", exact: true });
+  await expect.element(google).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Gmail" }).click();
   await page.getByRole("button", { name: "PubMed" }).first().click();
+  await page.getByRole("button", { name: "Apps" }).click();
+  await google.click();
   expect(onOpenUrl.mock.calls.map(([url]) => url)).toEqual([
-    "https://www.google.com/",
     "https://mail.google.com/mail/",
     "https://pubmed.ncbi.nlm.nih.gov/",
+    "https://www.google.com/",
   ]);
 });
 
@@ -119,9 +122,9 @@ it("shows three apps across and four rows, with the rest a scroll away", async (
     [...list.querySelectorAll("button")]
       .find((button) => button.textContent === name)!
       .getBoundingClientRect();
+  expect(top("Google").top).toBe(top("Account").top);
   expect(top("Drive").top).toBe(top("Account").top);
-  expect(top("Calendar").top).toBe(top("Account").top);
-  expect(top("Docs").top).toBeGreaterThan(top("Account").top);
+  expect(top("Calendar").top).toBeGreaterThan(top("Account").top);
 
   const { bottom } = list.getBoundingClientRect();
   expect(top("YouTube").bottom).toBeLessThanOrEqual(bottom);
@@ -129,7 +132,7 @@ it("shows three apps across and four rows, with the rest a scroll away", async (
   expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
 
   list.scrollTop = list.scrollHeight;
-  await vi.waitFor(() => expect(top("Vids").bottom).toBeLessThanOrEqual(bottom + 1));
+  await vi.waitFor(() => expect(top("Earth").bottom).toBeLessThanOrEqual(bottom + 1));
 });
 
 it("keeps a shortcut lit under its stronger menu button, and while the menu is open", async () => {
@@ -149,7 +152,7 @@ it("keeps a shortcut lit under its stronger menu button, and while the menu is o
   expect(strong).not.toBe("rgba(0, 0, 0, 0)");
 
   await options.click();
-  await page.getByRole("button", { name: "Google", exact: true }).hover({ force: true });
+  await page.getByRole("button", { name: "Gmail" }).hover({ force: true });
   expect(background(tile.element())).toBe(lit);
   expect(background(options.element())).toBe(strong);
   await userEvent.keyboard("{Escape}");
