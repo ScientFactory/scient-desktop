@@ -112,6 +112,7 @@ import { SCIENT_PANEL_TAB_CLASS, useScientTabStrip } from "~/scient/rightPanel/t
 import { canDuplicatePanelSurface } from "~/scient/rightPanel/panelTabCommands";
 import { PanelFilesToggle } from "~/scient/rightPanel/PanelFilesColumn";
 import { AllTabsMenu } from "~/scient/rightPanel/AllTabsMenu";
+import { useTabDragOut } from "~/scient/multiWindow/tabDragOut";
 // SCIENT-FORK:END
 import { useScientAnalyticsView } from "~/scient/analytics/client";
 import { panelCategory } from "~/scient/analytics/viewCategories";
@@ -164,6 +165,10 @@ export interface RightPanelTabsProps {
   onAddNewTab?: ((options?: { readonly whenEmpty?: boolean }) => void) | undefined;
   /** Opens a second copy of a browser or terminal tab. */
   onDuplicateSurface?: ((surface: RightPanelSurface) => void) | undefined;
+  /** Shows a tab in a new app window; `atCursor` puts the window where a dragged tab was dropped. */
+  onOpenSurfaceInNewWindow?:
+    | ((surface: RightPanelSurface, options?: { readonly atCursor?: boolean }) => void)
+    | undefined;
   // SCIENT-FORK:END
   onCopyFilePath: (path: FileSurfacePath, format: FilePathCopyFormat) => void;
   onAddBrowser: () => void;
@@ -259,6 +264,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
 
 type TabContextMenuAction =
   // SCIENT-FORK:START
+  | "open-in-new-window"
   | "duplicate"
   // SCIENT-FORK:END
   | "rename"
@@ -1035,11 +1041,17 @@ function PullRequestSurfaceIcon({
 function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
   onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
+  // SCIENT-FORK:START — a tab dropped outside the app window opens in a window of its own
+  onOpenInNewWindow: RightPanelTabsProps["onOpenSurfaceInNewWindow"];
+  // SCIENT-FORK:END
   children: ReactNode;
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
   const { onMove, surfaces } = props;
+  // SCIENT-FORK:START
+  const dragOut = useTabDragOut(surfaces, props.onOpenInNewWindow);
+  // SCIENT-FORK:END
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
     const toIndex = surfaces.findIndex((surface) => surface.id === over.id);
@@ -1050,7 +1062,9 @@ function SortableTabList(props: {
       sensors={sensors}
       collisionDetection={closestCenter}
       modifiers={TAB_DRAG_MODIFIERS}
-      onDragEnd={handleDragEnd}
+      // SCIENT-FORK:START — the tab strip's drag handlers also open a tab dropped outside the window
+      {...dragOut.handlers(handleDragEnd)}
+      // SCIENT-FORK:END
     >
       <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
         {props.children}
@@ -1490,6 +1504,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const menuFilePath = surface.kind === "file" ? fileSurfacePath(surface) : null;
     const items: readonly ContextMenuItem<TabContextMenuAction>[] = [
       // SCIENT-FORK:START
+      ...(props.onOpenSurfaceInNewWindow
+        ? ([{ id: "open-in-new-window", label: "Open in new window" }] as const)
+        : []),
       ...(props.onDuplicateSurface &&
       canDuplicatePanelSurface(surface, { browserAvailable: props.browserAvailable })
         ? ([{ id: "duplicate", label: "Duplicate" }] as const)
@@ -1517,6 +1534,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
     switch (action) {
       // SCIENT-FORK:START
+      case "open-in-new-window":
+        props.onOpenSurfaceInNewWindow?.(surface);
+        break;
       case "duplicate":
         props.onDuplicateSurface?.(surface);
         break;
@@ -1675,7 +1695,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             }
           >
             {/* SCIENT-FORK:END */}
-            <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
+            {/* SCIENT-FORK:START — a tab dropped outside the window opens in a window of its own */}
+            <SortableTabList
+              surfaces={props.surfaces}
+              onMove={props.onMoveSurface}
+              onOpenInNewWindow={props.onOpenSurfaceInNewWindow}
+            >
+              {/* SCIENT-FORK:END */}
               {props.surfaces.map((surface) => {
                 const previewTabId = previewTabIdOf(surface, props.previewSessions);
                 const favicon = previewFaviconOf(

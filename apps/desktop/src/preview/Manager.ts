@@ -1,6 +1,9 @@
 // SCIENT-FORK:START — Scient Accounts: remember the identity of browser sessions.
 import { rememberAccountsSession } from "../scient/accounts/sessionIdentity.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
+import { PreviewHostWindows } from "../scient/multiWindow/previewHostWindows.ts";
+// SCIENT-FORK:END
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewRecordingInputSchema,
@@ -577,7 +580,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   let pendingRecording: PendingRecording | null = null;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
-  let currentMainWindow: BrowserWindow | undefined;
+  // SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
+  const hostWindows = new PreviewHostWindows();
+  // SCIENT-FORK:END
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
@@ -681,9 +686,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
   const setFrameCaptureBackgroundThrottling = Effect.fnUntraced(function* (enabled: boolean) {
-    const mainWindow = yield* Ref.get(mainWindowRef);
-    if (Option.isNone(mainWindow)) return;
-    yield* setWindowBackgroundThrottling(mainWindow.value, enabled);
+    // SCIENT-FORK:START — Multi-window: capture keeps every app window unthrottled.
+    yield* Effect.forEach(
+      hostWindows.windows,
+      (window) => setWindowBackgroundThrottling(window, enabled),
+      { discard: true },
+    );
+    // SCIENT-FORK:END
   });
   const setFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     wc: Electron.WebContents,
@@ -1607,15 +1616,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.gen(function* () {
         // Cleanup or lock acquisition can outlive the replacement window.
         if (window.isDestroyed()) return [undefined, sessions] as const;
+        // SCIENT-FORK:START — Multi-window: registering a window adds it beside the others.
+        if (hostWindows.has(window)) return [undefined, sessions] as const;
+        // SCIENT-FORK:END
         if (sessions.size > 0) {
           yield* setWindowBackgroundThrottling(window, false);
         }
         yield* Ref.set(mainWindowRef, Option.some(window));
-        currentMainWindow = window;
+        // SCIENT-FORK:START — Multi-window: registering a window adds it beside the others.
+        hostWindows.add(window);
+        // SCIENT-FORK:END
         frameCaptureWindowOpen = true;
         window.once("closed", () => {
-          if (currentMainWindow !== window) return;
-          currentMainWindow = undefined;
+          // SCIENT-FORK:START — Multi-window: a closing window releases only its own tabs' captures.
+          const closed = hostWindows.close(window);
+          if (closed === undefined) return;
+          if (closed !== "last") {
+            if (closed.size > 0) runFork(releaseTabCaptures(closed).pipe(Effect.ignore));
+            return;
+          }
+          // SCIENT-FORK:END
           frameCaptureWindowOpen = false;
           mainWindowCleanupFiber = runFork(
             Effect.all([closeAllPictureInPicture(), stopAllRecordings()], {
@@ -1628,6 +1648,31 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       }),
     ).pipe(Effect.uninterruptible);
   });
+
+  // SCIENT-FORK:START — Multi-window: release picture-in-picture and recordings of selected tabs.
+  const releaseTabCaptures = Effect.fn("PreviewManager.releaseTabCaptures")(function* (
+    tabIds: ReadonlySet<string>,
+  ) {
+    for (const tabId of tabIds) clearPendingRecording(tabId);
+    const pictureInPictureSessions = yield* SynchronizedRef.get(pictureInPictureSessionsRef);
+    const frameCaptureSessions = yield* SynchronizedRef.get(frameCaptureSessionsRef);
+    yield* Effect.all(
+      [
+        Effect.forEach(
+          [...pictureInPictureSessions.keys()].filter((tabId) => tabIds.has(tabId)),
+          closePictureInPicture,
+          { concurrency: "unbounded", discard: true },
+        ),
+        Effect.forEach(
+          [...frameCaptureSessions.keys()].filter((tabId) => tabIds.has(tabId)),
+          (tabId) => stopFrameCapture(tabId, "recording"),
+          { concurrency: "unbounded", discard: true },
+        ),
+      ],
+      { concurrency: "unbounded", discard: true },
+    );
+  });
+  // SCIENT-FORK:END
 
   const createTabUnlocked = Effect.fn("PreviewManager.createTabUnlocked")(function* (
     tabId: string,
@@ -1686,6 +1731,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) return;
     clearPendingRecording(tabId);
     annotationSendEnabled.delete(tabId);
+    // SCIENT-FORK:START — Multi-window: forget the closed tab's host window.
+    hostWindows.forgetTab(tabId);
+    // SCIENT-FORK:END
     yield* Effect.all(
       [
         cancelPickElement(tabId),
@@ -1770,14 +1818,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     }
     const wc = webContents.fromId(webContentsId);
     const mainWindow = yield* Ref.get(mainWindowRef);
+    // SCIENT-FORK:START — Multi-window: accept guests hosted by any live app window.
+    const hostWindow = hostWindows.hostOf(wc);
     if (
       !wc ||
       wc.isDestroyed() ||
       wc.getType() !== "webview" ||
-      (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)
+      (Option.isSome(mainWindow) && hostWindow === undefined)
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
+    hostWindows.setTabHost(tabId, hostWindow);
+    // SCIENT-FORK:END
     yield* rendererHistory.register(wc, { surface: "preview", tabId });
     const attached = yield* Ref.get(attachedRef);
     const annotationTheme = yield* Ref.get(annotationThemeRef);
@@ -2639,7 +2691,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       frameCaptureSessionsRef,
       (sessions) => {
         return Effect.gen(function* () {
-          if (!frameCaptureWindowOpen) {
+          // SCIENT-FORK:START — Multi-window: gate on the tab's own host window.
+          if (!frameCaptureWindowOpen || hostWindows.isTabHostClosed(tabId)) {
+            // SCIENT-FORK:END
             return yield* new PreviewMainWindowClosedError({ tabId });
           }
           const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
@@ -3127,7 +3181,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             webContentsId: wc.id,
           });
         }
-        if (!frameCaptureWindowOpen || requestWebContents.isDestroyed()) {
+        // SCIENT-FORK:START — Multi-window: gate on the tab's own host window.
+        if (
+          !frameCaptureWindowOpen ||
+          hostWindows.isTabHostClosed(tabId) ||
+          requestWebContents.isDestroyed()
+        ) {
+          // SCIENT-FORK:END
           return yield* new PreviewMainWindowClosedError({ tabId });
         }
         installDisplayMediaRequestHandler(requestWebContents.session);

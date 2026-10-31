@@ -39,6 +39,9 @@ export type {
   OpenFileOptions,
 } from "./scient/rightPanel/scientRightPanelStore";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — app windows share the persisted side panel state.
+import { createRightPanelWindowSync } from "./scient/multiWindow/rightPanelSync";
+// SCIENT-FORK:END
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 
 const RIGHT_PANEL_KINDS = [
@@ -742,6 +745,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
   return { byThreadKey, threadPanelVisibilityByThreadKey };
 }
 
+// SCIENT-FORK:START — app windows share the persisted side panel state; saves merge per thread.
+const rightPanelWindowSync = createRightPanelWindowSync({
+  key: RIGHT_PANEL_STORAGE_KEY,
+  version: RIGHT_PANEL_STORAGE_VERSION,
+  storage: resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+});
+// SCIENT-FORK:END
+
 export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set, get) => ({
@@ -1334,9 +1345,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
     {
       name: RIGHT_PANEL_STORAGE_KEY,
       version: RIGHT_PANEL_STORAGE_VERSION,
-      storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
-      ),
+      // SCIENT-FORK:START — app windows share the persisted side panel state; saves merge per thread.
+      storage: createJSONStorage(() => rightPanelWindowSync.storage),
+      // SCIENT-FORK:END
       partialize: (state) => ({
         byThreadKey: Object.fromEntries(
           Object.entries(state.byThreadKey)
@@ -1362,6 +1373,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
     },
   ),
 );
+// SCIENT-FORK:START — adopt what other app windows save.
+rightPanelWindowSync.attach(useRightPanelStore);
+// SCIENT-FORK:END
 
 useRightPanelStore.subscribe((next, previous) => {
   if (next.closeRevisionByThreadKey === previous.closeRevisionByThreadKey) return;

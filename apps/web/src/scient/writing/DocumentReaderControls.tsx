@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
+import { PanelTabNewWindowItem } from "../multiWindow/PanelTabNewWindowItem";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { formatPdfZoom, parsePdfPageInput, stepPdfZoom } from "../pdf/pdfReaderModel";
 import { ReaderBarHostContext } from "./readerBarHost";
@@ -392,6 +393,9 @@ export function DocumentReaderControls(props: {
         <DropdownMenuContent align="end" finalFocus={() => !searchOwnsFocus.current}>
           {/* Only what the row does not show right now, and what has no button. */}
           <ReaderRowContext value={menuRow}>
+            {/* First, so no separator leads the menu when the row shows every other item. A
+                surface that hosts the bar lists this in its own menus. */}
+            {host ? null : <PanelTabNewWindowItem />}
             <IfRowHidden selector=".scient-pdf-action-zoom-step">
               <DropdownMenuItem
                 disabled={!props.ready}

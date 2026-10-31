@@ -258,6 +258,7 @@ import { useBrowserHistoryProjectLink } from "~/scient/browser/useBrowserHistory
 import { renameInTabHistory, useRightPanelTabHistory } from "~/scient/rightPanel/tabHistory";
 import { PanelFilesLayout } from "~/scient/rightPanel/PanelFilesColumn";
 import { usePanelTabShortcuts } from "~/scient/rightPanel/usePanelTabShortcuts";
+import { PanelTabNewWindowProvider } from "~/scient/multiWindow/PanelTabNewWindowItem";
 // SCIENT-FORK:END
 import {
   ThreadPreviewMiniPlayer,
@@ -4933,6 +4934,7 @@ function ChatViewContent(props: ChatViewProps) {
           // SCIENT-FORK:START — "+" and its shortcut open the launcher as a tab
           onAddNewTab={addNewTabSurface}
           onDuplicateSurface={panelTabs.duplicateSurface}
+          onOpenSurfaceInNewWindow={panelTabs.openSurfaceInNewWindow}
           // SCIENT-FORK:END
           onAddDocuments={addDocumentsSurface}
           documentsAvailable={activeWorkspaceRoot !== undefined}
@@ -4953,7 +4955,7 @@ function ChatViewContent(props: ChatViewProps) {
           sideChatAvailable={sideChat.available}
           sideChatDisabledReason={sideChatDisabledReason}
         >
-          {/* SCIENT-FORK:START — the project's file list can sit beside any tab */}
+          {/* SCIENT-FORK:START — the project's file list can sit beside any tab, whose page can open it in a new window */}
           {forkPdfContinuityPending ? null : (
             <PanelFilesLayout
               surface={renderedRightPanelSurface}
@@ -4964,7 +4966,12 @@ function ChatViewContent(props: ChatViewProps) {
               onOpenFile={openFileSurfaceStable}
               onOpenFileSource={openFileSourceSurface}
             >
-              {rightPanelContent}
+              <PanelTabNewWindowProvider
+                surface={renderedRightPanelSurface}
+                onOpen={panelTabs.openSurfaceInNewWindow}
+              >
+                {rightPanelContent}
+              </PanelTabNewWindowProvider>
             </PanelFilesLayout>
           )}
           {/* SCIENT-FORK:END */}

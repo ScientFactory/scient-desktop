@@ -273,6 +273,10 @@ import {
   useSidebarNewThreadRowActions,
 } from "../scient/sidebar/SidebarNewThreadRow";
 import { handleConversationExportMenuAction } from "../scient/conversationExport/menu";
+import {
+  handleOpenInNewWindowMenuAction,
+  openInNewWindowMenuItem,
+} from "../scient/multiWindow/openInNewWindow";
 // SCIENT-FORK:END
 import { TooltipProvider } from "./ui/tooltip";
 import { composerDraftHasUserContent, DraftId, useComposerDraftStore } from "../composerDraftStore";
@@ -2694,11 +2698,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasPath: Boolean(workspacePath),
               hasBranch: Boolean(session.branch),
               hasProject: projectGroup != null,
+              // SCIENT-FORK:START
+              openInNewWindow: openInNewWindowMenuItem(),
+              // SCIENT-FORK:END
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        // SCIENT-FORK:START
+        if (handleOpenInNewWindowMenuAction(clicked.value, draftId)) return;
+        // SCIENT-FORK:END
         switch (clicked.value) {
           case "project-settings":
             if (projectGroup)
@@ -2802,6 +2812,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               snoozePresets,
               // SCIENT-FORK:START
               sectionMenu: sectionMenuFor([thread]),
+              openInNewWindow: openInNewWindowMenuItem(),
               // SCIENT-FORK:END
             }),
             position,
@@ -2814,6 +2825,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         // SCIENT-FORK:START
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
+        if (handleOpenInNewWindowMenuAction(clicked.value, threadRef)) return;
         // SCIENT-FORK:END
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {

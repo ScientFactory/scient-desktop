@@ -72,6 +72,7 @@ import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
 import { documentBindingChanges } from "./bindingChanges";
 import { DockCommandItem } from "../writing/dockChrome";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "~/components/ui/menu";
+import { PanelTabNewWindowItem } from "~/scient/multiWindow/PanelTabNewWindowItem";
 import { ReaderButton, IfRowHidden, ReaderRowContext } from "../writing/DocumentReaderControls";
 import { DocumentExportMenuItems } from "../documentExport/DocumentExportMenuItems";
 import type { DocumentDownloadActions } from "../documentExport/DocumentDownloadMenu";
@@ -1885,9 +1886,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
     />
   );
   const exportItems = exportMenu(false);
-  const documentMenuItems = (withExport = true) => (
+  const documentMenuItems = (withDocumentCommands = true) => (
     <>
-      {withExport ? <LatexCompilerMenu {...compilerControlProps} /> : null}
+      {withDocumentCommands ? <LatexCompilerMenu {...compilerControlProps} /> : null}
       {mode === "split" ? (
         // Here only while the row has no room for its PDF/Visual switch.
         <IfRowHidden selector=".scient-latex-split-modes">
@@ -1906,8 +1907,9 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
           </DockCommandItem>
         </IfRowHidden>
       ) : null}
-      {withExport ? exportItems : null}
-      {withExport ? props.templateActions : null}
+      {withDocumentCommands ? exportItems : null}
+      {withDocumentCommands ? props.templateActions : null}
+      {withDocumentCommands ? <PanelTabNewWindowItem separated /> : null}
     </>
   );
   // The view switch and the build status. With reader controls in the row they
@@ -2111,6 +2113,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               <LatexCompilerMenu {...compilerControlProps} plain />
               {exportMenu(true)}
               {props.templateActions}
+              <PanelTabNewWindowItem plain separated />
             </>
           ),
         }

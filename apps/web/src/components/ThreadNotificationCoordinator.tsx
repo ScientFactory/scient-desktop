@@ -1,6 +1,9 @@
 // SCIENT-FORK:START — Account approvals and sign-in hand-offs use thread notifications.
 import { watchAccountNotifications } from "../scient/accounts/accountNotifications";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+import { acquireNotificationPresenter } from "../scient/multiWindow/notificationPresenter";
+// SCIENT-FORK:END
 import {
   type EnvironmentThreadShell,
   type PendingSubagentRequest,
@@ -64,6 +67,9 @@ export function startThreadNotifications(
 ): () => void {
   const pending = new Map<string, { environmentId: EnvironmentId; notification: Notification }>();
   const watched = new Map<EnvironmentId, WatchedEnvironment>();
+  // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+  const presenter = acquireNotificationPresenter();
+  // SCIENT-FORK:END
 
   const trackNotification = (environmentId: EnvironmentId, notification: Notification) => {
     pending.get(notification.tag)?.notification.close();
@@ -109,11 +115,13 @@ export function startThreadNotifications(
                 ? "Guest request"
                 : "Input needed");
     // SCIENT-FORK:END
-    if (hasNotificationSound(mode)) {
+    // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+    if (hasNotificationSound(mode) && presenter.isPresenter()) {
       void playNotificationSound(kind, () =>
         hasNotificationSound(getClientSettings().notificationMode),
       );
     }
+    // SCIENT-FORK:END
     if (
       inAppNotificationsEnabled &&
       document.visibilityState === "visible" &&
@@ -152,6 +160,9 @@ export function startThreadNotifications(
       });
       return;
     }
+    // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+    if (!presenter.isPresenter()) return;
+    // SCIENT-FORK:END
     if (
       !hasDesktopNotifications(mode) ||
       (document.visibilityState === "visible" && document.hasFocus()) ||
@@ -404,5 +415,8 @@ export function startThreadNotifications(
     for (const entry of watched.values()) entry.unsubscribe();
     watched.clear();
     stopModeListeners();
+    // SCIENT-FORK:START — one desktop window plays sounds and shows system notifications.
+    presenter.stop();
+    // SCIENT-FORK:END
   };
 }

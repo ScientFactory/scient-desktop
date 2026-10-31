@@ -4,6 +4,8 @@ import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
 import type { ChatShortcutCommands } from "~/components/chat/useChatShortcuts";
 import type { RightPanelSurface } from "~/rightPanelStore";
 
+import { canOpenNewWindow } from "../multiWindow/openInNewWindow";
+import { openPanelTabInNewWindow } from "../multiWindow/panelTabWindow";
 import { panelFilesToggleApplies, usePanelFilesOpen } from "./PanelFilesColumn";
 import { adjacentPanelSurface, canDuplicatePanelSurface } from "./panelTabCommands";
 import { duplicatePanelSurface } from "./panelTabDuplication";
@@ -11,8 +13,9 @@ import type { TabDepartureGuard } from "./tabHistory";
 
 /**
  * The side panel's tab shortcuts for the chat's shortcut map (a new tab, the next
- * and previous tab, a second copy of a tab, the file list beside it), and the
- * duplicate action the tab bar's menu shares with them.
+ * and previous tab, a second copy of a tab, the file list beside it), the
+ * duplicate action the tab bar's menu shares with them, and opening a tab in a
+ * new window where the app can.
  */
 export function usePanelTabShortcuts<E>(input: {
   readonly threadRef: ScopedThreadRef | null;
@@ -46,6 +49,17 @@ export function usePanelTabShortcuts<E>(input: {
     });
   };
 
+  // The new window reads the file from disk, so a pending save lands first.
+  const openSurfaceInNewWindow = (
+    surface: RightPanelSurface,
+    options?: { readonly atCursor?: boolean },
+  ) => {
+    if (!threadRef) return;
+    input.runAfterPendingFileSave(null, () => {
+      openPanelTabInNewWindow({ threadRef, surfaceId: surface.id, ...options });
+    });
+  };
+
   const activateAdjacent = (step: 1 | -1) => {
     if (!panelOpen) return false;
     const target = adjacentPanelSurface(input.surfaces, activeSurface?.id ?? null, step);
@@ -73,5 +87,9 @@ export function usePanelTabShortcuts<E>(input: {
     },
   };
 
-  return { shortcuts, duplicateSurface };
+  return {
+    shortcuts,
+    duplicateSurface,
+    openSurfaceInNewWindow: canOpenNewWindow() ? openSurfaceInNewWindow : undefined,
+  };
 }
