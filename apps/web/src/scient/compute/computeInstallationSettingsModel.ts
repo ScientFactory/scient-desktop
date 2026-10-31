@@ -342,14 +342,24 @@ export function computeLanguageDetail(
   managed: ComputeManagedRuntimeStatus | null,
 ): string {
   switch (summary.kind) {
-    case "disabled":
-      return "Off";
+    case "disabled": {
+      // Turning a language off says nothing about what is installed.
+      const installed = defaultComputeInstallation(language, preference, managed);
+      return installed === undefined
+        ? "Off"
+        : `${computeRuntimePickerLabel(installed, language.descriptor.displayName)} · Off`;
+    }
     case "ready":
     case "update-managed": {
       // SQL's version would be its Python's. A kernel with no version has not been started yet.
       if (language.descriptor.languageId === "sql") return "Ready";
       const selected = defaultComputeInstallation(language, preference, managed);
-      if (selected === undefined || selected.version === null) return "Found";
+      if (selected === undefined) return "Found";
+      if (selected.version === null) {
+        return computeScientPart(language.descriptor.languageId) === null
+          ? "Kernel found"
+          : runtimeOriginLabel(selected);
+      }
       return computeRuntimePickerLabel(selected, language.descriptor.displayName);
     }
     case "setup":
@@ -357,7 +367,7 @@ export function computeLanguageDetail(
     case "connect":
       return "Not connected";
     case "missing":
-      return "Not installed";
+      return "Not found";
     default:
       return summary.title;
   }

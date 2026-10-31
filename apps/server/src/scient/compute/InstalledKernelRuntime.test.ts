@@ -55,6 +55,7 @@ const binding = (hostReady = true) =>
     {
       host: {
         bridgePath: "/bridge.py",
+        mayHost: () => Effect.succeed(true),
         transport: () => ({ open: () => Effect.die("unused") }),
         executable: () =>
           hostReady

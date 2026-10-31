@@ -322,6 +322,8 @@ export function makeMatlabRuntimeAdapter(
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
   bridgePath?: string,
+  /** Whether the files show a helper or a Python that could reach the Engine. Nothing starts. */
+  mayConnect: () => Effect.Effect<boolean> = () => Effect.succeed(true),
 ): MatlabRuntimeAdapterResult {
   const cache = new Map<
     string,
@@ -419,13 +421,41 @@ export function makeMatlabRuntimeAdapter(
       Effect.forEach(
         discoverMatlabCandidates(request.configuredExecutable, environment, platform),
         (candidate) =>
-          readProbe(candidate.executable, request.refresh).pipe(
-            Effect.map((probe) => matlabProfile(probe, candidate.source)),
+          readMatlabInstallation(candidate.executable).pipe(
+            Effect.map((installation): ComputeRuntimeProfile => ({
+              languageId: MATLAB_LANGUAGE_ID,
+              source: candidate.source,
+              executable: installation.executableRealpath,
+              languageVersion: installation.release || installation.version,
+              architecture: null,
+              displayName: `MATLAB ${installation.release || installation.version} (${candidate.source})`,
+            })),
             // Discovery already checked the executable. A broken helper or license
             // must remain visible with its actionable verification failure.
             Effect.orElseSucceed(() => unavailableProfile(candidate.executable, candidate.source)),
           ),
         { concurrency: 1 },
+      ),
+    assess: (profile) =>
+      mayConnect().pipe(
+        Effect.map((connected) =>
+          connected
+            ? {
+                profile,
+                readiness: "ready" as const,
+                connection: "detected" as const,
+                missingRequirements: [],
+                message: null,
+                packages: [],
+              }
+            : {
+                profile,
+                readiness: "missing-requirement" as const,
+                missingRequirements: ["MATLAB Engine for Python"],
+                message: "MATLAB is installed, but nothing connects Scient to it yet.",
+                packages: [],
+              },
+        ),
       ),
     verify: (request) =>
       readProbe(request.profile.executable).pipe(

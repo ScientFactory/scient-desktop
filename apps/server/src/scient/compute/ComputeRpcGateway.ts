@@ -254,9 +254,7 @@ export function makeComputeRpcGateway(input: {
     >;
   });
 
-  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* (
-    request: { readonly versions?: boolean } = {},
-  ) {
+  const runtimeInventory = Effect.fn("ComputeRpcGateway.runtimeInventory")(function* () {
     const settings = yield* readSettings("inspect");
     const hostKey =
       input.serverSettings.hostKey === undefined ? null : yield* input.serverSettings.hostKey;
@@ -273,7 +271,6 @@ export function makeComputeRpcGateway(input: {
       configuredExecutables: Object.fromEntries(
         Object.entries(preferences).map(([id, preference]) => [id, preference.executable || null]),
       ),
-      ...(request.versions === true ? { probeVersions: true } : {}),
     });
     return {
       languages: languages.map((language) => ({
@@ -315,6 +312,7 @@ export function makeComputeRpcGateway(input: {
           preference.executable.length === 0 ? null : preference.executable,
         ]),
       ),
+      chosenForProject: new Set(Object.keys(projectChoices)),
       enabledLanguageIds: new Set(
         Object.entries(preferences).flatMap(([languageId, preference]) =>
           preference.enabled ? [languageId] : [],
@@ -404,6 +402,7 @@ export function makeComputeRpcGateway(input: {
       ...(request.owner === undefined ? {} : { owner: request.owner }),
       workingDirectory: project.root,
       configuredExecutable: preference.executable.length === 0 ? null : preference.executable,
+      ...(projectChoice === undefined ? {} : { chosenForProject: true }),
       ...(request.executable === null ? {} : { requestedExecutable: request.executable }),
       ...(request.runOnce === undefined ? {} : { runOnce: request.runOnce }),
     });

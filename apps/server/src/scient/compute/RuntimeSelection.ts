@@ -11,8 +11,9 @@ export interface CheckedRuntime {
 }
 
 /**
- * Automatic runs the best ready runtime. An explicit choice and a project's own environment are
- * intent: they are used or their failure is shown, never silently replaced by another runtime.
+ * A choice made for this project comes first, then the project's own environment, then a choice
+ * for this machine, then the best ready runtime. A choice and a project's environment are intent:
+ * they are used or their failure is shown, never silently replaced by another runtime.
  */
 export interface RuntimeChoice {
   readonly mode: "automatic" | "explicit" | "project";
@@ -29,6 +30,7 @@ export const chooseRuntime = Effect.fn("RuntimeSelection.chooseRuntime")(functio
   profiles: ReadonlyArray<ComputeRuntimeProfile>,
   explicitExecutable: string | null,
   verify: (profile: ComputeRuntimeProfile) => Effect.Effect<CheckedRuntime, ComputeOperationError>,
+  options: { readonly chosenForProject?: boolean } = {},
 ): Effect.fn.Return<RuntimeChoice, ComputeOperationError> {
   const decide = (mode: RuntimeChoice["mode"], runtime: CheckedRuntime): RuntimeChoice =>
     ready(runtime)
@@ -39,6 +41,9 @@ export const chooseRuntime = Effect.fn("RuntimeSelection.chooseRuntime")(functio
           blocker: runtime,
           problem: runtime.verification.message ?? `${runtime.profile.displayName} cannot run.`,
         };
+  const project = profiles.find((profile) => profile.source === "project");
+  if (project !== undefined && options.chosenForProject !== true)
+    return decide("project", yield* verify(project));
   if (explicitExecutable !== null) {
     const chosen =
       profiles.find((profile) => profile.executable === explicitExecutable) ??
@@ -52,8 +57,6 @@ export const chooseRuntime = Effect.fn("RuntimeSelection.chooseRuntime")(functio
       };
     return decide("explicit", yield* verify(chosen));
   }
-  const project = profiles.find((profile) => profile.source === "project");
-  if (project !== undefined) return decide("project", yield* verify(project));
   let first: CheckedRuntime | null = null;
   for (const profile of profiles) {
     const checked = yield* verify(profile);

@@ -76,6 +76,8 @@ export interface KernelBridgeHost {
   readonly executable: (
     configuredExecutable: string | null,
   ) => Effect.Effect<string, ComputeRuntimeError>;
+  /** Whether the files show a Python that could host the bridge. Nothing starts. */
+  readonly mayHost: (configuredExecutable: string | null) => Effect.Effect<boolean>;
   /** Discovers Pythons with Scient-managed Python first, whatever Python's own default is. */
   readonly managedPythonAdapter: ComputeLanguageAdapter;
   readonly managedRuntime?: NonNullable<ComputeRuntimeBinding["managedRuntime"]>;
@@ -396,6 +398,7 @@ export const pythonRuntimeBinding: Effect.Effect<
                     : {
                         executable: status.executable,
                         selected: preferManaged || status.record.selection === "managed",
+                        chosen: status.record.chosen === true,
                         available: status.available,
                         version: status.record.active.pythonVersion,
                         ...(status.movedFrom === undefined
@@ -503,6 +506,18 @@ export const pythonRuntimeBinding: Effect.Effect<
       message: "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
     });
   });
+  const mayHost = Effect.fn("PythonComputeRuntime.mayHost")(
+    function* (configuredExecutable: string | null) {
+      if ((yield* inspectManaged())?.available === true) return true;
+      const profiles = yield* adapter.discover({ projectRoot: null, configuredExecutable });
+      for (const profile of profiles) {
+        const assessment = yield* adapter.assess!(profile);
+        if (assessment.readiness === "ready") return true;
+      }
+      return false;
+    },
+    Effect.orElseSucceed(() => false),
+  );
   const managedRuntime =
     managedSetup === null ? undefined : { ...managedSetup.managedRuntime, tracksUsage: true };
   return {
@@ -512,6 +527,7 @@ export const pythonRuntimeBinding: Effect.Effect<
       bridgePath,
       transport: bridgeTransport,
       executable: hostExecutable,
+      mayHost,
       managedPythonAdapter,
       ...(managedRuntime === undefined ? {} : { managedRuntime }),
     },

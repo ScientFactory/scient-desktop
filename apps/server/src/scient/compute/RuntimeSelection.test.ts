@@ -73,6 +73,33 @@ describe("runtime choice", () => {
     }),
   );
 
+  it.effect("a project's environment outranks a choice made for this machine", () =>
+    Effect.gen(function* () {
+      const managed = profile("/scient/python", "managed");
+      const project = profile("/p/.venv/bin/python", "project");
+      const choice = yield* chooseRuntime(
+        [managed, project],
+        managed.executable,
+        checker({}).verify,
+      );
+      expect(choice).toMatchObject({ mode: "project", selected: { profile: project } });
+    }),
+  );
+
+  it.effect("a choice made for this project outranks its environment", () =>
+    Effect.gen(function* () {
+      const managed = profile("/scient/python", "managed");
+      const project = profile("/p/.venv/bin/python", "project");
+      const choice = yield* chooseRuntime(
+        [managed, project],
+        managed.executable,
+        checker({}).verify,
+        { chosenForProject: true },
+      );
+      expect(choice).toMatchObject({ mode: "explicit", selected: { profile: managed } });
+    }),
+  );
+
   it.effect("a broken project environment blocks instead of falling through to PATH", () =>
     Effect.gen(function* () {
       const { verify } = checker({ "/p/.venv/bin/python": "unusable" });

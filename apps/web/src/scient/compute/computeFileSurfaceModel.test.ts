@@ -370,7 +370,7 @@ describe("python compute surface model", () => {
     ).toEqual({ kind: "status", label: "Python", canRun: true });
   });
 
-  it("says a language with its own kernel is not installed, rather than offering setup", () => {
+  it("says a language with its own kernel was not found, rather than offering setup", () => {
     expect(
       resolveComputeRuntimeToolbarState({
         languageId: "wolfram-language",
@@ -383,9 +383,9 @@ describe("python compute surface model", () => {
       }),
     ).toEqual({
       kind: "status",
-      label: "Not installed",
+      label: "Not found",
       canRun: false,
-      note: "Wolfram Language is not installed",
+      note: "Wolfram Language was not found on this computer",
     });
   });
 

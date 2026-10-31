@@ -413,9 +413,9 @@ export function resolveComputeRuntimeToolbarState(input: {
   if (computeScientPart(languageId) === null) {
     return {
       kind: "status",
-      label: "Not installed",
+      label: "Not found",
       canRun: false,
-      note: `${languageName} is not installed`,
+      note: `${languageName} was not found on this computer`,
     };
   }
   return {

@@ -212,7 +212,7 @@ function LanguageDetail({
           <LanguageHeader
             languageId={languageId}
             name={name}
-            state={inventory.pending ? "Checking…" : "Not installed"}
+            state={inventory.pending ? "Checking…" : "Not found"}
             inventory={inventory}
           />
           {inventory.pending ? null : (

@@ -232,6 +232,7 @@ const kernelSession = Effect.fn("KernelLanguages.kernelSession")(function* (
       bridgePath,
       transport: () => transport,
       executable: () => Effect.succeed(TEST_PYTHON!),
+      mayHost: () => Effect.succeed(true),
     },
     computeDir: KERNEL_DIR!,
     processes: yield* ExecutionProcess,

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { enumeratePythonRuntimes, parseWindowsPythonRegistry } from "./RuntimeDiscovery.ts";
+import {
+  condaPrefixes,
+  enumeratePythonRuntimes,
+  parseWindowsPythonRegistry,
+} from "./RuntimeDiscovery.ts";
 import { fakeDiscoveryContext, fakeDiscoveryHost } from "./RuntimeDiscoveryTestHost.ts";
 
 const summary = (runtimes: ReturnType<typeof enumeratePythonRuntimes>) =>
@@ -10,7 +14,7 @@ describe("Python discovery on macOS and Linux", () => {
   it("finds every PATH match, managers, conda environments and Homebrew without launching", () => {
     const host = fakeDiscoveryHost({
       files: [
-        "/usr/local/bin/python3",
+        "/usr/local/Cellar/python@3.13/3.13.1/bin/python3",
         "/opt/homebrew/bin/python3",
         "/home/ada/.pyenv/versions/3.11.9/bin/python",
         "/home/ada/.local/share/uv/python/cpython-3.13.1-macos-aarch64-none/bin/python3",
@@ -23,6 +27,7 @@ describe("Python discovery on macOS and Linux", () => {
         "/srv/shared/env/conda-meta/history",
       ],
       text: { "/home/ada/.conda/environments.txt": "/srv/shared/env\n" },
+      links: { "/usr/local/bin/python3": "/usr/local/Cellar/python@3.13/3.13.1/bin/python3" },
     });
     const runtimes = enumeratePythonRuntimes(
       fakeDiscoveryContext("darwin", host, { PATH: "/usr/local/bin:/opt/homebrew/bin" }),
@@ -40,7 +45,95 @@ describe("Python discovery on macOS and Linux", () => {
       ],
       ["/home/ada/miniforge3/bin/python", "conventional", "conda: base", null],
       ["/home/ada/miniforge3/envs/analysis/bin/python", "conventional", "conda: analysis", null],
-      ["/srv/shared/env/bin/python", "conventional", "conda: base", null],
+      ["/srv/shared/env/bin/python", "conventional", "conda: env", null],
+    ]);
+  });
+
+  it("names a shared link by what it points to, not by the folder it sits in", () => {
+    const framework = "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3";
+    const host = fakeDiscoveryHost({
+      files: [framework],
+      links: { "/usr/local/bin/python3": framework },
+    });
+    const runtimes = enumeratePythonRuntimes(fakeDiscoveryContext("darwin", host, {}), {
+      projectRoot: null,
+      windowsRegistrations: [],
+    });
+    expect(runtimes[0]).toMatchObject({
+      executable: "/usr/local/bin/python3",
+      origin: "python.org",
+    });
+  });
+
+  it("finds a versioned Homebrew Python, whose plain python3 is not in its bin", () => {
+    const host = fakeDiscoveryHost({
+      files: ["/opt/homebrew/opt/python@3.12/bin/python3.12"],
+      links: {},
+    });
+    const runtimes = enumeratePythonRuntimes(fakeDiscoveryContext("darwin", host, {}), {
+      projectRoot: null,
+      windowsRegistrations: [],
+    });
+    expect(runtimes.map((runtime) => runtime.executable)).toEqual([
+      "/opt/homebrew/opt/python@3.12/bin/python3.12",
+    ]);
+  });
+
+  it("finds python3.11 beside an older python3 on PATH", () => {
+    const host = fakeDiscoveryHost({ files: ["/usr/bin/python3", "/usr/bin/python3.11"] });
+    const runtimes = enumeratePythonRuntimes(
+      fakeDiscoveryContext("linux", host, { PATH: "/usr/bin" }),
+      { projectRoot: null, windowsRegistrations: [] },
+    );
+    expect(runtimes.map((runtime) => runtime.executable)).toEqual([
+      "/usr/bin/python3",
+      "/usr/bin/python3.11",
+    ]);
+  });
+
+  it("treats a lone venv/ as the project's, and several as choices it does not assume", () => {
+    const venv = (name: string) => ({
+      [`/p/${name}/pyvenv.cfg`]: "home = /usr/bin\n",
+    });
+    const files = ["/usr/bin/python3", "/p/venv/bin/python", "/p/tools/bin/python"];
+    const lone = enumeratePythonRuntimes(
+      fakeDiscoveryContext("linux", fakeDiscoveryHost({ files, text: venv("venv") })),
+      { projectRoot: "/p", windowsRegistrations: [] },
+    );
+    expect(lone[0]).toMatchObject({ executable: "/p/venv/bin/python", source: "project" });
+    const several = enumeratePythonRuntimes(
+      fakeDiscoveryContext(
+        "linux",
+        fakeDiscoveryHost({ files, text: { ...venv("venv"), ...venv("tools") } }),
+      ),
+      { projectRoot: "/p", windowsRegistrations: [] },
+    );
+    expect(several.filter((runtime) => runtime.source === "project")).toEqual([]);
+    expect(several.map((runtime) => runtime.origin)).toEqual(
+      expect.arrayContaining(["venv/", "tools/"]),
+    );
+  });
+
+  it("finds environments kept outside the project, and conda environments with no Python", () => {
+    const host = fakeDiscoveryHost({
+      files: [
+        "/home/ada/.virtualenvs/lab/bin/python",
+        "/home/ada/.cache/pypoetry/virtualenvs/demo-py3.12/bin/python",
+        "/home/ada/miniforge3/envs/r-only/conda-meta/history",
+      ],
+      text: {
+        "/home/ada/.virtualenvs/lab/pyvenv.cfg": "home = /usr/bin\n",
+        "/home/ada/.cache/pypoetry/virtualenvs/demo-py3.12/pyvenv.cfg": "home = /usr/bin\n",
+      },
+    });
+    const context = fakeDiscoveryContext("linux", host);
+    expect(
+      enumeratePythonRuntimes(context, { projectRoot: null, windowsRegistrations: [] }).map(
+        (runtime) => runtime.origin,
+      ),
+    ).toEqual(["virtualenv: lab", "Poetry: demo-py3.12"]);
+    expect(condaPrefixes(context)).toEqual([
+      { prefix: "/home/ada/miniforge3/envs/r-only", origin: "conda: r-only" },
     ]);
   });
 

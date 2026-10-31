@@ -158,9 +158,10 @@ export function makeManagedPythonRuntimeController(input: {
     return input.toolkitIds.filter((toolkitId) => selected.has(toolkitId));
   };
 
+  // Checked once at startup, never from a status read: looking starts nothing and sends nothing.
+  void input.recipes?.refresh();
+
   const readStatus = async (): Promise<ComputeManagedRuntimeStatus> => {
-    // Refresh never blocks Settings or changes an installed environment.
-    void input.recipes?.refresh();
     for (;;) {
       const operationSnapshot = operation;
       const observedRevision = revision;

@@ -69,14 +69,9 @@ export function useComputeLanguages(environmentId: EnvironmentId) {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [refreshFailure, setRefreshFailure] = useState<string | null>(null);
-  // The list is instant; versions run each Python, so they arrive a moment later.
-  const listed = useEnvironmentQuery(
+  const runtimes = useEnvironmentQuery(
     computeEnvironment.runtimeInventory({ environmentId, input: {} }),
   );
-  const withVersions = useEnvironmentQuery(
-    computeEnvironment.runtimeInventory({ environmentId, input: { versions: true } }),
-  );
-  const runtimes = withVersions.data ? withVersions : listed;
   const hostKey = runtimes.data?.hostKey ?? null;
   const pending = runtimes.data === null && runtimes.error === null;
 

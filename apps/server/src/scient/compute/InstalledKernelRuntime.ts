@@ -271,7 +271,12 @@ export function kernelLaunch(
 }
 
 /** Whether a kernel's own program is present, without running it. */
-function kernelProgramPresent(context: DiscoveryContext, spec: InstalledKernelSpec): boolean {
+function kernelProgramPresent(base: DiscoveryContext, spec: InstalledKernelSpec): boolean {
+  // A kernel may name its own PATH.
+  const context =
+    spec.env.PATH === undefined
+      ? base
+      : { ...base, environment: { ...base.environment, PATH: spec.env.PATH } };
   const path = pathModule(context.platform);
   const program = kernelLaunch(context, spec).argv[0]!.replaceAll(
     "{resource_dir}",
@@ -298,7 +303,7 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
       readonly setup?: KernelLanguage["setup"];
     },
     input: {
-      readonly host: Pick<KernelBridgeHost, "bridgePath" | "transport" | "executable">;
+      readonly host: Pick<KernelBridgeHost, "bridgePath" | "transport" | "executable" | "mayHost">;
       readonly configuredExecutable: (languageId: string) => Effect.Effect<string | null>;
     },
   ): Effect.fn.Return<ComputeRuntimeBinding> {
@@ -389,6 +394,45 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
       },
     );
 
+    const assess: NonNullable<ComputeLanguageAdapter["assess"]> = Effect.fn(
+      "InstalledKernelRuntime.assess",
+    )(function* (profile) {
+      const context = yield* discoveryContext;
+      const spec = known.get(profile.executable);
+      const problem =
+        spec === undefined
+          ? "This kernel is no longer installed."
+          : kernelProgramPresent(context, spec)
+            ? null
+            : `The kernel's program ${spec.argv[0]} was not found.`;
+      if (problem !== null)
+        return {
+          profile,
+          readiness: "unusable" as const,
+          missingRequirements: [],
+          message: problem,
+          packages: [],
+        };
+      const hostFound = yield* input.host.mayHost(yield* input.configuredExecutable("python"));
+      return hostFound
+        ? {
+            profile,
+            readiness: "ready" as const,
+            connection: "detected" as const,
+            missingRequirements: [],
+            message: null,
+            packages: [],
+          }
+        : {
+            profile,
+            readiness: "missing-requirement" as const,
+            missingRequirements: ["Python with jupyter_client"],
+            message:
+              "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
+            packages: [],
+          };
+    });
+
     const prepareLaunch: ComputeLanguageAdapter["prepareLaunch"] = Effect.fn(
       "InstalledKernelRuntime.prepareLaunch",
     )(function* (request) {
@@ -436,14 +480,16 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
     const listInstallations: NonNullable<ComputeLanguageAdapter["listInstallations"]> = Effect.fn(
       "InstalledKernelRuntime.listInstallations",
     )(function* (request) {
-      const { specs } = yield* specsFor(request.projectRoot);
+      const { context, specs } = yield* specsFor(request.projectRoot);
       const configured = request.configuredExecutable?.trim() || null;
       const rows: ComputeRuntimeInstallation[] = specs.map((spec) => ({
         executable: spec.resourceDir,
         source: "conventional",
         ...(spec.resourceDir === configured ? { configured: true } : {}),
         version: null,
-        problem: null,
+        problem: kernelProgramPresent(context, spec)
+          ? null
+          : `The kernel's program ${spec.argv[0]} was not found.`,
         origin: spec.displayName,
       }));
       return configured !== null && !specs.some((spec) => spec.resourceDir === configured)
@@ -466,6 +512,7 @@ export const makeInstalledKernelBinding = Effect.fn("InstalledKernelRuntime.make
         transportKind: JUPYTER_BRIDGE_TRANSPORT_KIND,
         listInstallations,
         discover,
+        assess,
         verify,
         prepareLaunch,
         normalizeDiagnostic: (report) => [{ ...normalizeDiagnosticText(report), frames: [] }],

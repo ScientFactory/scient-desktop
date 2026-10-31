@@ -20,7 +20,6 @@ import {
 import type { ExecutionProcessPort } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
-import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -35,7 +34,15 @@ import { runOwnedProcess } from "./ManagedPythonProvisioner.ts";
 import type { KernelBridgeHost } from "./PythonComputeRuntime.ts";
 import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
 import { JUPYTER_BRIDGE_TRANSPORT_KIND, buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
-import { discoveryContext, pathMatches, pathModule, versionedEntries } from "./RuntimeDiscovery.ts";
+import {
+  condaPrefixes,
+  discoveryContext,
+  originFromPath,
+  pathMatches,
+  pathModule,
+  versionedEntries,
+  type DiscoveryContext,
+} from "./RuntimeDiscovery.ts";
 import { makeRuntimeProbeCache } from "./RuntimeProbeCache.ts";
 
 /** A directory whose newest `prefix*` entry holds the executable at `relative`. */
@@ -49,9 +56,15 @@ export interface KernelVersionedPath {
 export interface KernelInstallationProbe {
   readonly version: string;
   readonly architecture: string | null;
-  /** Identifies the installation; private kernels are kept per installation. */
   readonly home: string;
   /** The kernel package the installation already has for the user, if any. */
+  readonly ownKernelVersion: string | null;
+}
+
+/** What an installation's files say, without starting it. */
+export interface KernelInstallationFacts {
+  readonly version: string | null;
+  readonly architecture: string | null;
   readonly ownKernelVersion: string | null;
 }
 
@@ -78,6 +91,9 @@ export interface KernelLanguage {
   ) => ReadonlyArray<string | KernelVersionedPath>;
   /** Prints the probe marker, version, architecture, home and its own kernel version, tab-separated. */
   readonly probeArgs: ReadonlyArray<string>;
+  readonly readFacts: (context: DiscoveryContext, executable: string) => KernelInstallationFacts;
+  /** Where the executable sits inside a conda-style environment. */
+  readonly inEnvironment: (platform: NodeJS.Platform) => ReadonlyArray<string>;
   /** Installs the kernel under `privateDirectory`; the last stdout line is its version. */
   readonly setup: (
     privateDirectory: string,
@@ -139,10 +155,11 @@ function parseKernelProbe(stdout: string): KernelInstallationProbe {
 function privateKernelDirectory(
   computeDir: string,
   languageId: string,
-  probe: KernelInstallationProbe,
+  realExecutable: string,
+  version: string | null,
 ): string {
   const key = NodeCrypto.createHash("sha256")
-    .update([probe.home, probe.version, probe.architecture ?? ""].join("\n"))
+    .update([realExecutable, version ?? ""].join("\n"))
     .digest("hex")
     .slice(0, 16);
   return NodePath.join(computeDir, "kernels", languageId, key);
@@ -153,10 +170,11 @@ interface Installation {
   readonly source: ComputeRuntimeSource;
   /** The installation the user selected, whatever its source label. */
   readonly configured?: true;
+  readonly origin: string | null;
 }
 
 interface KernelState {
-  readonly probe: KernelInstallationProbe;
+  readonly probe: KernelInstallationFacts;
   readonly privateDirectory: string;
   /** Scient's private kernel version, when one is installed for this installation. */
   readonly privateKernelVersion: string | null;
@@ -169,7 +187,7 @@ interface KernelState {
 export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBinding")(function* (
   language: KernelLanguage,
   input: {
-    readonly host: Pick<KernelBridgeHost, "bridgePath" | "transport" | "executable">;
+    readonly host: Pick<KernelBridgeHost, "bridgePath" | "transport" | "executable" | "mayHost">;
     readonly computeDir: string;
     readonly processes: ExecutionProcessPort;
     readonly configuredExecutable: (languageId: string) => Effect.Effect<string | null>;
@@ -197,7 +215,12 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     const context = yield* discoveryContext;
     const path = pathModule(platform);
     const found: Array<Installation & { readonly identity: string }> = [];
-    const add = (name: string, source: ComputeRuntimeSource, configuredInstallation = false) => {
+    const add = (
+      name: string,
+      source: ComputeRuntimeSource,
+      configuredInstallation = false,
+      origin: string | null = null,
+    ) => {
       const bare = !path.isAbsolute(name);
       // A bare name is every PATH match, except a configured one, which means what a shell runs.
       const matches = bare ? pathMatches(context, [name]) : [name];
@@ -210,6 +233,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
           executable,
           source: bare ? "path" : source,
           identity,
+          origin: origin ?? originFromPath(context, executable),
           ...(configuredInstallation ? { configured: true as const } : {}),
         });
       }
@@ -221,6 +245,9 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
         for (const directory of versionedEntries(context, candidate.directory, candidate.prefix))
           add(path.join(directory, candidate.relative), "conventional");
     }
+    for (const { prefix, origin } of condaPrefixes(context))
+      for (const relative of language.inEnvironment(platform))
+        add(path.join(prefix, relative), "conventional", false, origin);
     return found;
   });
 
@@ -253,36 +280,54 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       }),
     );
 
-  const kernelState = Effect.fn("KernelComputeRuntime.kernelState")(function* (executable: string) {
-    const installationProbe = yield* probe(executable);
+  const privateKernelVersion = (privateDirectory: string) =>
+    fileSystem.readFileString(NodePath.join(privateDirectory, MARKER_FILE)).pipe(
+      Effect.map((text) => decodeMarker(text).kernelVersion),
+      Effect.orElseSucceed(() => null),
+    );
+
+  /** An installation's state from its files; nothing starts. */
+  const fileState = Effect.fn("KernelComputeRuntime.fileState")(function* (executable: string) {
+    const context = yield* discoveryContext;
+    const facts = language.readFacts(context, executable);
     const privateDirectory = privateKernelDirectory(
       input.computeDir,
       language.languageId,
-      installationProbe,
+      context.host.realPath(executable) ?? executable,
+      facts.version,
     );
-    const marker = yield* fileSystem
-      .readFileString(NodePath.join(privateDirectory, MARKER_FILE))
-      .pipe(
-        Effect.map((text) => decodeMarker(text).kernelVersion),
-        Effect.orElseSucceed(() => null),
-      );
+    return {
+      probe: facts,
+      privateDirectory,
+      privateKernelVersion: yield* privateKernelVersion(privateDirectory),
+    } satisfies KernelState;
+  });
+
+  /** The same state as a running installation reports it: a Test or a Run asks this. */
+  const kernelState = Effect.fn("KernelComputeRuntime.kernelState")(function* (executable: string) {
+    const installationProbe = yield* probe(executable);
+    const { privateDirectory, privateKernelVersion: version } = yield* fileState(executable);
     return {
       probe: installationProbe,
       privateDirectory,
-      privateKernelVersion: marker,
+      privateKernelVersion: version,
     } satisfies KernelState;
   });
 
   const profileFor = (
     installation: Installation,
-    installationProbe: KernelInstallationProbe,
+    facts: KernelInstallationFacts,
   ): ComputeRuntimeProfile => ({
     languageId: language.languageId,
     source: installation.source,
     executable: installation.executable,
-    languageVersion: installationProbe.version,
-    architecture: installationProbe.architecture,
-    displayName: `${language.displayName} ${installationProbe.version} (${installation.source})`,
+    languageVersion: facts.version ?? "unknown",
+    architecture: facts.architecture,
+    displayName: `${language.displayName} ${facts.version ?? ""} (${installation.source})`.replace(
+      "  ",
+      " ",
+    ),
+    ...(installation.origin === null ? {} : { origin: installation.origin }),
   });
 
   const unusable = (
@@ -304,6 +349,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
   const discover: ComputeLanguageAdapter["discover"] = Effect.fn("KernelComputeRuntime.discover")(
     function* (request) {
       if (request.refresh === true) probes.clear();
+      const context = yield* discoveryContext;
       const configured = request.configuredExecutable?.trim() || null;
       const found = yield* installations(configured);
       // The selected installation keeps its own failure first; alternatives stay listed after it.
@@ -317,24 +363,13 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
               ),
             ]
           : [];
-      const profiles = yield* Effect.forEach(
-        found,
-        (installation) =>
-          probe(installation.executable).pipe(
-            Effect.map((result) => profileFor(installation, result)),
-            Effect.catch((cause) =>
-              Effect.succeed(
-                unusable(
-                  installation.executable,
-                  installation.configured ? "configured" : installation.source,
-                  cause.message,
-                ),
-              ),
-            ),
-          ),
-        { concurrency: 2 },
-      );
-      return [...missing, ...profiles];
+      return [
+        ...missing,
+        ...found.map((installation) => {
+          problems.delete(installation.executable);
+          return profileFor(installation, language.readFacts(context, installation.executable));
+        }),
+      ];
     },
   );
 
@@ -345,7 +380,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
   const verify: ComputeLanguageAdapter["verify"] = Effect.fn("KernelComputeRuntime.verify")(
     function* (request) {
       const known = problems.get(request.profile.executable);
-      if (request.profile.languageVersion === "unknown" && known !== undefined) {
+      if (known !== undefined) {
         return {
           profile: request.profile,
           readiness: "unusable" as const,
@@ -386,6 +421,40 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       };
     },
   );
+
+  const assess: NonNullable<ComputeLanguageAdapter["assess"]> = Effect.fn(
+    "KernelComputeRuntime.assess",
+  )(function* (profile) {
+    const known = problems.get(profile.executable);
+    if (known !== undefined)
+      return {
+        profile,
+        readiness: "unusable" as const,
+        missingRequirements: [],
+        message: known,
+        packages: [],
+      };
+    const state = yield* fileState(profile.executable);
+    const kernelVersion = state.probe.ownKernelVersion ?? state.privateKernelVersion;
+    const hostFound = yield* input.host.mayHost(yield* input.configuredExecutable("python"));
+    const missing = [
+      ...(kernelVersion === null ? [language.kernelPackage] : []),
+      ...(hostFound ? [] : ["Python with jupyter_client"]),
+    ];
+    return {
+      profile,
+      readiness: missing.length === 0 ? ("ready" as const) : ("missing-requirement" as const),
+      ...(missing.length === 0 ? { connection: "detected" as const } : {}),
+      missingRequirements: missing,
+      message:
+        kernelVersion === null
+          ? `${language.kernelPackage} is not set up.`
+          : hostFound
+            ? null
+            : "Set up Scientific Python, or choose a Python with jupyter_client and ipykernel.",
+      packages: [{ name: language.kernelPackage.toLowerCase(), version: kernelVersion }],
+    };
+  });
 
   const prepareLaunch: ComputeLanguageAdapter["prepareLaunch"] = Effect.fn(
     "KernelComputeRuntime.prepareLaunch",
@@ -436,29 +505,29 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     );
     const data = [
       profile.executable,
-      state.probe.home,
       state.probe.version,
       state.probe.architecture ?? "",
       state.probe.ownKernelVersion ?? `private:${state.privateKernelVersion ?? ""}`,
     ].join("|");
     return {
       hash: `sha256:${NodeCrypto.createHash("sha256").update(data).digest("hex")}`,
-      contributors: ["executable", "home", "languageVersion", "architecture", "kernel"],
+      contributors: ["executable", "languageVersion", "architecture", "kernel"],
     };
   });
 
   const listInstallations: NonNullable<ComputeLanguageAdapter["listInstallations"]> = Effect.fn(
     "KernelComputeRuntime.listInstallations",
   )(function* (request) {
+    const context = yield* discoveryContext;
     const configured = request.configuredExecutable?.trim() || null;
-    const now = yield* Clock.currentTimeMillis;
     const found: ComputeRuntimeInstallation[] = (yield* installations(configured)).map(
       (installation) => ({
         executable: installation.executable,
         source: installation.source,
         ...(installation.configured ? { configured: true } : {}),
-        version: probes.peek(installation.executable, now)?.version ?? null,
+        version: language.readFacts(context, installation.executable).version,
         problem: null,
+        ...(installation.origin === null ? {} : { origin: installation.origin }),
       }),
     );
     if (configured !== null && !found.some((installation) => installation.configured))
@@ -485,8 +554,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     const configured = yield* input.configuredExecutable(language.languageId);
     for (const installation of yield* installations(configured)) {
       if (configured !== null && installation.configured !== true) return null;
-      const state = yield* Effect.result(kernelState(installation.executable));
-      if (state._tag === "Success") return { installation, state: state.success };
+      return { installation, state: yield* fileState(installation.executable) };
     }
     return null;
   });
@@ -614,6 +682,7 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
       transportKind: JUPYTER_BRIDGE_TRANSPORT_KIND,
       listInstallations,
       discover,
+      assess,
       verify,
       prepareLaunch,
       normalizeDiagnostic: (report) => [{ ...normalizeDiagnosticText(report), frames: [] }],

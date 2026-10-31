@@ -529,9 +529,9 @@ describe("what a language shows", () => {
   it("says what a language runs on, or what it needs", () => {
     const kernel = { ...status, selection: "existing" as const };
     expect(detail(language("r", [found], kernel))).toBe("4.6.2 · System");
-    expect(detail(language("r", [found], kernel), false)).toBe("Off");
+    expect(detail(language("r", [found], kernel), false)).toBe("4.6.2 · System · Off");
     expect(detail(language("r", [found], { ...status, installed: false }))).toBe("Needs setup");
-    expect(detail(language("rust", [{ ...found, version: null }]))).toBe("Found");
+    expect(detail(language("rust", [{ ...found, version: null }]))).toBe("Kernel found");
     expect(
       detail(language("r", [{ ...found, problem: "The selected R executable was not found." }])),
     ).toBe("The selected R executable was not found.");

@@ -101,7 +101,7 @@ function LanguageEntry({
     return (
       <LanguageRow
         {...row}
-        detail="Not installed"
+        detail={runtime.descriptor.setup === undefined ? "Not found" : "No kernel found"}
         trailing={
           <Button
             size="xs"

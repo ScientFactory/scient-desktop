@@ -714,8 +714,6 @@ export interface ComputeDiscoveryRequest {
   readonly configuredExecutable: string | null;
   /** Explicit user refresh bypasses the adapter's short probe cache. */
   readonly refresh?: boolean;
-  /** Listing never runs anything unless a page asks for versions, within a short budget. */
-  readonly probeVersions?: boolean;
 }
 
 export interface ComputeLaunchRequest {
@@ -740,7 +738,6 @@ export class ComputeRuntimeError extends Schema.TaggedError<ComputeRuntimeError>
 export interface ComputeLanguageAdapter {
   readonly languageId: ComputeLanguageId;
   readonly transportKind: ComputeTransportKind;
-  /** Settings discovery must not spawn a runtime or import its execution bridge. */
   /**
    * The runtime the user chose for new sessions, if any. Automatic selection may pick any ready
    * runtime; an explicit choice keeps its own failure. Absent means the configured executable.
@@ -751,9 +748,18 @@ export interface ComputeLanguageAdapter {
   readonly listInstallations?: (
     request: ComputeDiscoveryRequest,
   ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInstallation>, ComputeRuntimeError>;
+  /** Listing and discovery read files only: nothing starts until someone runs or tests. */
   readonly discover: (
     request: ComputeDiscoveryRequest,
   ) => Effect.Effect<ReadonlyArray<ComputeRuntimeProfile>, ComputeRuntimeError>;
+  /**
+   * What the files say about a runtime, without starting anything. Ready here means nothing is
+   * known to be missing, so it is `detected` at most. Absent means nothing is known.
+   */
+  readonly assess?: (
+    profile: ComputeRuntimeProfile,
+  ) => Effect.Effect<ComputeRuntimeVerification, ComputeRuntimeError>;
+  /** May start the runtime: this is the check a Test or a Run makes. */
   readonly verify: (
     request: ComputeLaunchRequest,
   ) => Effect.Effect<ComputeRuntimeVerification, ComputeRuntimeError>;

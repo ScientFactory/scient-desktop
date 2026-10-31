@@ -4,10 +4,13 @@ import * as NodePath from "node:path";
 import { ComputeLanguageId } from "@scientfactory/compute";
 
 import { KERNEL_PROBE_MARKER, type KernelLanguage } from "./KernelComputeRuntime.ts";
+import { readRFacts, rPackageVersion } from "./RuntimeFacts.ts";
 
 const R_LANGUAGE_ID = ComputeLanguageId.make("r");
 
 const R_FLAGS = ["--no-echo", "--no-save", "--no-restore"];
+/** The kernel's own library, added after the person's so their packages always win. */
+const KERNEL_LIBRARY_VARIABLE = "COMPUTE_R_KERNEL_LIBRARY";
 
 const PROBE = [
   "cat(",
@@ -77,22 +80,38 @@ export const R_KERNEL_LANGUAGE: KernelLanguage = {
             "/usr/bin/R",
             { directory: "/opt/R", prefix: "", relative: "bin/R" },
           ],
-  probeArgs: [...R_FLAGS, "-e", PROBE],
+  // A probe answers about R itself, so it skips the startup files a session would run.
+  probeArgs: [...R_FLAGS, "--no-site-file", "--no-init-file", "-e", PROBE],
+  readFacts: (context, executable) => {
+    const facts = readRFacts(context, executable);
+    return {
+      version: facts.version,
+      architecture: facts.architecture,
+      ownKernelVersion: rPackageVersion(context, facts, "IRkernel"),
+    };
+  },
+  inEnvironment: (platform) =>
+    platform === "win32" ? [NodePath.join("Lib", "R", "bin", "R.exe")] : ["bin/R"],
   setup: (privateDirectory, environment) => ({
     args: [...R_FLAGS, "-e", SETUP, "--args", NodePath.join(privateDirectory, "library")],
     environment: { ...environment },
   }),
-  launch: ({ executable, privateDirectory, environment, platform }) => ({
-    argv: [executable, ...R_FLAGS, "-e", "IRkernel::main()", "--args", "{connection_file}"],
-    // R_LIBS comes before the user's libraries, so only the kernel's packages are added.
+  launch: ({ executable, privateDirectory }) => ({
+    argv: [
+      executable,
+      ...R_FLAGS,
+      "-e",
+      // After startup, because renv replaces the library paths while R starts.
+      privateDirectory === null
+        ? "IRkernel::main()"
+        : `.libPaths(c(.libPaths(), Sys.getenv("${KERNEL_LIBRARY_VARIABLE}"))); IRkernel::main()`,
+      "--args",
+      "{connection_file}",
+    ],
     environment:
       privateDirectory === null
         ? {}
-        : {
-            R_LIBS: [NodePath.join(privateDirectory, "library"), environment.R_LIBS]
-              .filter(Boolean)
-              .join(platform === "win32" ? ";" : ":"),
-          },
+        : { [KERNEL_LIBRARY_VARIABLE]: NodePath.join(privateDirectory, "library") },
   }),
   interruptMode: () => "signal",
 };

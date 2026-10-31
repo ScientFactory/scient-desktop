@@ -192,6 +192,8 @@ export interface ComputeRuntimeInspectionRequest {
   readonly projectRoot: string | null;
   readonly workingDirectory: string;
   readonly configuredExecutables: Readonly<Record<string, string | null>>;
+  /** Languages whose configured executable was chosen for this project, not this machine. */
+  readonly chosenForProject?: ReadonlySet<string>;
   readonly enabledLanguageIds: ReadonlySet<string>;
   readonly refresh: boolean;
   /** Absent means every language. */
@@ -268,6 +270,16 @@ function computeError(
 }
 
 /** Durable text fields are bounded by their schemas; clamp before encoding. */
+/** A language with no file check: nothing is known to be missing, so Run finds out. */
+const unassessed = (profile: ComputeRuntimeProfile): ComputeRuntimeVerification => ({
+  profile,
+  readiness: "ready",
+  connection: "detected",
+  missingRequirements: [],
+  message: null,
+  packages: [],
+});
+
 function shortText(value: string): string {
   return value.slice(0, 4096);
 }
@@ -365,7 +377,12 @@ interface LiveComputeSession {
   readonly sessionOutputRef: Ref.Ref<{ readonly bytes: number; readonly truncated: boolean }>;
   readonly startRequest: Pick<
     ComputeStartSessionInput,
-    "languageId" | "workingDirectory" | "configuredExecutable" | "requestedExecutable" | "runOnce"
+    | "languageId"
+    | "workingDirectory"
+    | "configuredExecutable"
+    | "chosenForProject"
+    | "requestedExecutable"
+    | "runOnce"
   >;
 }
 
@@ -382,9 +399,7 @@ export class ComputeSessionService extends Context.Service<
   {
     readonly runtimeDescriptors: ReadonlyArray<ComputeRuntimeDescriptor>;
     readonly runtimeInventory: (
-      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables"> & {
-        readonly probeVersions?: boolean;
-      },
+      input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables">,
     ) => Effect.Effect<ReadonlyArray<ComputeRuntimeInventoryResult>, ComputeOperationError>;
     readonly inspectRuntimes: (
       input: ComputeRuntimeInspectionRequest,
@@ -543,9 +558,7 @@ const make = Effect.gen(function* () {
     });
 
   const runtimeInventory = Effect.fn("ComputeSessionService.runtimeInventory")(function* (
-    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables"> & {
-      readonly probeVersions?: boolean;
-    },
+    input: Pick<ComputeRuntimeInspectionRequest, "configuredExecutables">,
   ) {
     return yield* Effect.forEach(
       bindings,
@@ -570,7 +583,6 @@ const make = Effect.gen(function* () {
                     configuredExecutable:
                       input.configuredExecutables[binding.adapter.languageId] ?? null,
                     refresh: true,
-                    ...(input.probeVersions === true ? { probeVersions: true } : {}),
                   })
                   .pipe(
                     Effect.catch((cause) => {
@@ -618,10 +630,10 @@ const make = Effect.gen(function* () {
       readonly projectRoot: string | null;
       readonly workingDirectory: string;
       readonly configuredExecutable: string | null;
+      readonly chosenForProject: boolean;
       readonly refresh: boolean;
     },
   ): Effect.fn.Return<ComputeRuntimeInspectionResult> {
-    const { environment } = runtimeEnvironment();
     const managedRuntime = yield* managedStatusOrFallback(binding);
     const base = {
       descriptor: descriptorFor(binding),
@@ -635,10 +647,12 @@ const make = Effect.gen(function* () {
     };
     return yield* Effect.gen(function* () {
       const profiles = yield* binding.adapter.discover(request);
+      // Inspecting reads files. Nothing starts until someone presses Run or Test.
+      const assess = binding.adapter.assess;
       const runtimes = yield* Effect.forEach(
         profiles,
         (profile) =>
-          binding.adapter.verify({ profile, cwd: input.workingDirectory, environment }).pipe(
+          (assess === undefined ? Effect.succeed(unassessed(profile)) : assess(profile)).pipe(
             Effect.catch((cause) =>
               Effect.succeed({
                 profile,
@@ -660,8 +674,11 @@ const make = Effect.gen(function* () {
         binding.adapter.selectedExecutable === undefined
           ? input.configuredExecutable
           : yield* binding.adapter.selectedExecutable(request);
-      const choice = yield* chooseRuntime(profiles, explicit, (profile) =>
-        Effect.succeed(runtimes.find((runtime) => runtime.profile === profile)!),
+      const choice = yield* chooseRuntime(
+        profiles,
+        explicit,
+        (profile) => Effect.succeed(runtimes.find((runtime) => runtime.profile === profile)!),
+        { chosenForProject: input.chosenForProject },
       );
       return {
         ...base,
@@ -736,11 +753,18 @@ const make = Effect.gen(function* () {
           });
         const configuredExecutable = input.configuredExecutables[languageId] ?? null;
         return inspectionSnapshot(
-          JSON.stringify([languageId, projectRoot, workingDirectory, configuredExecutable]),
+          JSON.stringify([
+            languageId,
+            projectRoot,
+            workingDirectory,
+            configuredExecutable,
+            input.chosenForProject?.has(languageId) === true,
+          ]),
           inspectLanguage(binding, {
             projectRoot,
             workingDirectory,
             configuredExecutable,
+            chosenForProject: input.chosenForProject?.has(languageId) === true,
             refresh: input.refresh,
           }),
           input.refresh,
@@ -2449,7 +2473,9 @@ const make = Effect.gen(function* () {
                 : { selected: null, problem: checked.verification.message, blocker: checked },
             ),
           )
-        : yield* chooseRuntime(profiles, explicit, verifyCandidate);
+        : yield* chooseRuntime(profiles, explicit, verifyCandidate, {
+            chosenForProject: input.chosenForProject === true,
+          });
     if (choice.selected === null) {
       const blocker = "blocker" in choice ? choice.blocker : null;
       return yield* computeError(
@@ -2604,6 +2630,7 @@ const make = Effect.gen(function* () {
         languageId: input.languageId,
         workingDirectory: input.workingDirectory,
         configuredExecutable: input.configuredExecutable,
+        chosenForProject: input.chosenForProject,
         requestedExecutable: input.requestedExecutable,
         ...(input.runOnce === undefined ? {} : { runOnce: input.runOnce }),
       },
@@ -2680,6 +2707,7 @@ const make = Effect.gen(function* () {
               existing.startRequest.languageId !== input.languageId ||
               existing.startRequest.workingDirectory !== input.workingDirectory ||
               existing.startRequest.configuredExecutable !== input.configuredExecutable ||
+              existing.startRequest.chosenForProject !== input.chosenForProject ||
               existing.startRequest.requestedExecutable !== input.requestedExecutable ||
               !sameRunOnce(existing.startRequest.runOnce, input.runOnce)
             ) {

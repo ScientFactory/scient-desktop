@@ -24,6 +24,7 @@ const inventory = (
     const binding = yield* makeKernelRuntimeBinding(language, {
       host: {
         bridgePath: "/bridge.py",
+        mayHost: () => Effect.succeed(true),
         transport: () => ({ open: () => Effect.die("unused") }),
         executable: () => Effect.die("unused"),
       },

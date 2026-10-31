@@ -1,9 +1,7 @@
 // @effect-diagnostics preferSchemaOverJson:off -- test data uses JSON for probe simulation.
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
@@ -134,7 +132,7 @@ describe("Python filesystem inventory", () => {
     }).pipe(onHost(fakeDiscoveryHost({ files: ["/managed/python"] }))),
   );
 
-  it.effect("reports versions only when asked, and never waits on a Python that hangs", () =>
+  it.effect("reads versions from files, and never waits on a Python that hangs", () =>
     Effect.gen(function* () {
       const adapter = makePythonRuntimeAdapter(
         (executable) =>
@@ -145,16 +143,15 @@ describe("Python filesystem inventory", () => {
       );
       const request = { projectRoot: null, configuredExecutable: null };
       const listed = yield* adapter.listInstallations!(request);
-      expect(listed.map((row) => row.version)).toEqual([null, null]);
-      const fiber = yield* adapter.listInstallations!({ ...request, probeVersions: true }).pipe(
-        Effect.forkChild,
-      );
-      yield* TestClock.adjust("3 seconds");
-      const versions = yield* Fiber.join(fiber);
-      expect(versions.map((row) => row.version)).toEqual(["3.12.0", null]);
+      expect(listed.map((row) => row.version)).toEqual(["3.12.0", null]);
     }).pipe(
       onHost(
-        fakeDiscoveryHost({ files: ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"] }),
+        fakeDiscoveryHost({
+          files: ["/opt/homebrew/bin/python3", "/usr/local/bin/python3"],
+          text: {
+            "/opt/homebrew/include/python3.12/patchlevel.h": '#define PY_VERSION "3.12.0"\n',
+          },
+        }),
         {
           PATH: "/opt/homebrew/bin:/usr/local/bin",
         },
@@ -223,7 +220,6 @@ describe("Python filesystem inventory", () => {
         },
         {
           executable: "/usr/local/bin/python3",
-          origin: "Homebrew",
           source: "path",
           version: null,
           problem: null,
@@ -516,9 +512,9 @@ it.layer(Layer.succeed(RuntimeDiscoveryHostReference, fakeDiscoveryHost({})))(
         const profiles = yield* adapter.discover({ projectRoot: "/p", configuredExecutable: null });
         expect(profiles.map((candidate) => [candidate.source, candidate.languageVersion])).toEqual([
           ["project", "unknown"],
-          ["path", "3.12.0"],
+          ["path", "unknown"],
         ]);
-        expect(probed).toEqual(["/usr/local/bin/python3"]);
+        expect(probed).toEqual([]);
         const verification = yield* adapter.verify({
           profile: profiles[0]!,
           cwd: "/p",
@@ -545,7 +541,7 @@ it.layer(Layer.succeed(RuntimeDiscoveryHostReference, fakeDiscoveryHost({})))(
         expect(profiles).toMatchObject([{ source: "path", languageVersion: "unknown" }]);
         expect(
           (yield* adapter.verify({ profile: profiles[0]!, cwd: "/p", environment: {} })).message,
-        ).toBe("This Python cannot run: Probe failed.");
+        ).toContain("Probe failed");
       }).pipe(
         onHost(fakeDiscoveryHost({ files: ["/usr/local/bin/python3"] }), {
           PATH: "/usr/local/bin",
@@ -553,7 +549,7 @@ it.layer(Layer.succeed(RuntimeDiscoveryHostReference, fakeDiscoveryHost({})))(
       ),
     );
 
-    it.effect("reuses the selected probe across discovery, verification, and fingerprinting", () =>
+    it.effect("starts nothing in discovery, and shares one probe for a Run's checks", () =>
       Effect.gen(function* () {
         let calls = 0;
         const adapter = makePythonRuntimeAdapter(
@@ -569,10 +565,10 @@ it.layer(Layer.succeed(RuntimeDiscoveryHostReference, fakeDiscoveryHost({})))(
           configuredExecutable: "/usr/bin/python3",
         });
         const selected = profiles[0]!;
-        const afterDiscovery = calls;
+        expect(calls).toBe(0);
         yield* adapter.verify({ profile: selected, cwd: "/project", environment: {} });
         yield* adapter.fingerprintEnvironment(selected);
-        expect(calls).toBe(afterDiscovery);
+        expect(calls).toBe(1);
       }),
     );
 
@@ -587,17 +583,13 @@ it.layer(Layer.succeed(RuntimeDiscoveryHostReference, fakeDiscoveryHost({})))(
             }),
           "/app/bridge.py",
         );
-        yield* adapter.discover({
-          projectRoot: null,
-          configuredExecutable: "/usr/bin/python3",
-        });
-        const afterFirstInspection = calls;
-        yield* adapter.discover({
-          projectRoot: null,
-          configuredExecutable: "/usr/bin/python3",
-          refresh: true,
-        });
-        expect(calls).toBeGreaterThan(afterFirstInspection);
+        const request = { projectRoot: null, configuredExecutable: "/usr/bin/python3" };
+        const profile = (yield* adapter.discover(request))[0]!;
+        yield* adapter.verify({ profile, cwd: "/project", environment: {} });
+        const afterFirstCheck = calls;
+        yield* adapter.discover({ ...request, refresh: true });
+        yield* adapter.verify({ profile, cwd: "/project", environment: {} });
+        expect(calls).toBeGreaterThan(afterFirstCheck);
       }),
     );
 

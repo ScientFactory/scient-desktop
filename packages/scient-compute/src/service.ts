@@ -78,6 +78,8 @@ export class ComputeOperationError extends Schema.TaggedError<ComputeOperationEr
  * edge, not cwd inference inside the coordinator.
  */
 export const ComputeStartSessionInput = Schema.Struct({
+  /** The configured executable was chosen for this project, so it outranks its environment. */
+  chosenForProject: Schema.optional(Schema.Boolean),
   projectId: ComputeProjectId,
   sessionId: ComputeSessionId,
   languageId: ComputeLanguageId,

@@ -63,17 +63,12 @@ export const ownedSession = Effect.fn("ScientComputeToolkit.ownedSession")(funct
       JSON.stringify(session.owner) === JSON.stringify(owner),
   );
   if (existing !== undefined) return existing;
-  // An agent-started session uses Scient-managed Python when it is installed: it carries the
-  // scientific packages, and the user's default stays theirs.
-  const inventory = yield* scope.gateway.runtimeInventory();
-  const managed = inventory.languages
-    .find((language) => language.descriptor.languageId === languageId)
-    ?.installations.find((installation) => installation.source === "managed");
+  // The same order as a person's Run: the project's environment comes first.
   return yield* scope.gateway.startSession({
     cwd: scope.cwd,
     sessionId: ComputeSessionId.make(`agent-${NodeCrypto.randomUUID()}`),
     languageId,
-    executable: managed?.problem === null ? managed.executable : null,
+    executable: null,
     owner,
   });
 }, Effect.mapError(computeFailed));

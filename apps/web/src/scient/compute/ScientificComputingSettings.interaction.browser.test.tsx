@@ -1002,7 +1002,7 @@ describe("Scientific Computing settings interactions", () => {
     expect(missing?.getAttribute("href")).toBe("https://cloud.r-project.org/");
     await renderOverview(_fixture);
     const overviewRow = _fixture.container.querySelector('li[data-compute-language="r"]')!;
-    expect(overviewRow.textContent).toContain("Not installed");
+    expect(overviewRow.textContent).toContain("Not found");
     expect(overviewRow.querySelector('a[aria-label="Get R"]')?.getAttribute("href")).toBe(
       "https://cloud.r-project.org/",
     );

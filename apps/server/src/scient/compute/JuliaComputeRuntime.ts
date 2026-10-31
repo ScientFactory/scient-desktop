@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 import { ComputeLanguageId } from "@scientfactory/compute";
 
 import { KERNEL_PROBE_MARKER, type KernelLanguage } from "./KernelComputeRuntime.ts";
+import { juliaPackagePresent, readJuliaFacts } from "./RuntimeFacts.ts";
 
 const JULIA_LANGUAGE_ID = ComputeLanguageId.make("julia");
 
@@ -92,6 +93,15 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
         ];
   },
   probeArgs: [...JULIA_FLAGS, "-e", PROBE],
+  readFacts: (context, executable) => {
+    const facts = readJuliaFacts(context, executable);
+    return {
+      version: facts.version,
+      architecture: null,
+      ownKernelVersion: juliaPackagePresent(context, facts, "IJulia") ? "installed" : null,
+    };
+  },
+  inEnvironment: () => ["bin/julia"],
   setup: (privateDirectory, environment) => ({
     args: [...JULIA_FLAGS, "-e", SETUP],
     // Only Scient's depot and project are written; no kernelspec is registered with Jupyter.
@@ -106,6 +116,8 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
   }),
   launch: ({ executable, privateDirectory, environment, platform }) => {
     const separator = platform === "win32" ? ";" : ":";
+    // The project folder's Project.toml, unless the person already named an environment.
+    const project = environment.JULIA_PROJECT ? {} : { JULIA_PROJECT: "@." };
     return {
       argv: [
         executable,
@@ -119,8 +131,9 @@ export const JULIA_KERNEL_LANGUAGE: KernelLanguage = {
       // first and keep receiving their package changes.
       environment:
         privateDirectory === null
-          ? {}
+          ? project
           : {
+              ...project,
               JULIA_DEPOT_PATH: `${environment.JULIA_DEPOT_PATH ?? ""}${separator}${NodePath.join(privateDirectory, "depot")}`,
               JULIA_LOAD_PATH: `${environment.JULIA_LOAD_PATH ?? ""}${separator}${NodePath.join(privateDirectory, "environment")}`,
             },

@@ -1163,21 +1163,23 @@ describe("compute runtime inspection", () => {
         executable: "/scient/managed/python",
       };
       let discoveries = 0;
+      const check = (profile: ComputeRuntimeProfile) =>
+        Effect.succeed({
+          profile,
+          readiness:
+            profile.executable === unready.executable
+              ? ("missing-requirement" as const)
+              : ("ready" as const),
+          missingRequirements: [],
+          message: null,
+          packages: [],
+        });
       const test = yield* harness({
         runtimeProfiles: [unready, managed],
         adapter: {
           discover: () => Effect.sync(() => (discoveries += 1)).pipe(Effect.as([unready, managed])),
-          verify: (request) =>
-            Effect.succeed({
-              profile: request.profile,
-              readiness:
-                request.profile.executable === unready.executable
-                  ? ("missing-requirement" as const)
-                  : ("ready" as const),
-              missingRequirements: [],
-              message: null,
-              packages: [],
-            }),
+          assess: check,
+          verify: (request) => check(request.profile),
         },
       });
       yield* test.use(

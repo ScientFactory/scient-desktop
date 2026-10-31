@@ -22,8 +22,8 @@ export interface RuntimeDiscoveryHost {
   /** Small text files only; null when absent or unreadable. */
   readonly readText: (path: string) => string | null;
   readonly realPath: (path: string) => string | null;
-  /** PEP 514 executables; empty off Windows. */
-  readonly windowsPythonRegistrations: () => Promise<ReadonlyArray<string>>;
+  /** PEP 514 executables; empty off Windows. A refresh reads the registry again. */
+  readonly windowsPythonRegistrations: (refresh?: boolean) => Promise<ReadonlyArray<string>>;
 }
 
 const MAX_TEXT_BYTES = 64 * 1024;
@@ -47,7 +47,13 @@ const REG_KEYS = [
 ];
 
 /** Reads `reg query /s` output: ExecutablePath values, else InstallPath defaults plus python.exe. */
-export function parseWindowsPythonRegistry(output: string): ReadonlyArray<string> {
+export function parseWindowsPythonRegistry(
+  output: string,
+  environment: Readonly<Record<string, string | undefined>> = {},
+): ReadonlyArray<string> {
+  // REG_EXPAND_SZ values name variables such as %LOCALAPPDATA%.
+  const expanded = (value: string) =>
+    value.replace(/%([^%]+)%/gu, (match, name: string) => environment[name] ?? match);
   const found: string[] = [];
   let key = "";
   let installPath: string | null = null;
@@ -70,8 +76,8 @@ export function parseWindowsPythonRegistry(output: string): ReadonlyArray<string
     if (!/\\InstallPath$/iu.test(key)) continue;
     const value = /^(\S.*?)\s+REG_(?:EXPAND_)?SZ\s+(.+)$/u.exec(line);
     if (value === null) continue;
-    if (value[1] === "ExecutablePath") executable = value[2]!.trim();
-    else if (value[1] === "(Default)") installPath = value[2]!.trim();
+    if (value[1] === "ExecutablePath") executable = expanded(value[2]!.trim());
+    else if (value[1] === "(Default)") installPath = expanded(value[2]!.trim());
   }
   if (/\\InstallPath$/iu.test(key)) flush();
   return found;
@@ -79,7 +85,11 @@ export function parseWindowsPythonRegistry(output: string): ReadonlyArray<string
 
 let registrations: Promise<ReadonlyArray<string>> | null = null;
 
-function readWindowsRegistrations(): Promise<ReadonlyArray<string>> {
+function readWindowsRegistrations(
+  environment: Readonly<Record<string, string | undefined>>,
+  refresh: boolean,
+): Promise<ReadonlyArray<string>> {
+  if (refresh) registrations = null;
   registrations ??= Promise.all(
     REG_KEYS.map(
       (key) =>
@@ -92,11 +102,16 @@ function readWindowsRegistrations(): Promise<ReadonlyArray<string>> {
           );
         }),
     ),
-  ).then((outputs) => [...new Set(outputs.flatMap(parseWindowsPythonRegistry))]);
+  ).then((outputs) => [
+    ...new Set(outputs.flatMap((output) => parseWindowsPythonRegistry(output, environment))),
+  ]);
   return registrations;
 }
 
-const makeNodeRuntimeDiscoveryHost = (platform: NodeJS.Platform): RuntimeDiscoveryHost => ({
+const makeNodeRuntimeDiscoveryHost = (
+  platform: NodeJS.Platform,
+  environment: Readonly<Record<string, string | undefined>>,
+): RuntimeDiscoveryHost => ({
   kind: nodeKind,
   isDanglingLink: (path) => {
     try {
@@ -138,8 +153,8 @@ const makeNodeRuntimeDiscoveryHost = (platform: NodeJS.Platform): RuntimeDiscove
       return null;
     }
   },
-  windowsPythonRegistrations: () =>
-    platform === "win32" ? readWindowsRegistrations() : Promise.resolve([]),
+  windowsPythonRegistrations: (refresh = false) =>
+    platform === "win32" ? readWindowsRegistrations(environment, refresh) : Promise.resolve([]),
 });
 
 /** Null means the host's real filesystem; tests provide a fake. */
@@ -169,7 +184,8 @@ export const discoveryContext = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
   const homeDirectory = yield* HostProcess.HomeDirectory;
-  const host = (yield* RuntimeDiscoveryHostReference) ?? makeNodeRuntimeDiscoveryHost(platform);
+  const host =
+    (yield* RuntimeDiscoveryHostReference) ?? makeNodeRuntimeDiscoveryHost(platform, environment);
   return {
     platform,
     environment,
@@ -191,6 +207,38 @@ function environmentPath(context: DiscoveryContext): ReadonlyArray<string> {
     .split(context.platform === "win32" ? ";" : ":")
     .map((entry) => entry.trim().replace(/^"(.*)"$/u, "$1"))
     .filter((entry) => entry.length > 0);
+}
+
+const ORIGINS: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /\/\.?conda[^/]*\/|\/(mini|ana)conda3\/|\/miniforge3\/|\/mambaforge\/|\/micromamba\//iu,
+    "conda",
+  ],
+  [/\/Cellar\/|\/Caskroom\/|\/opt\/homebrew\/|\/linuxbrew\//u, "Homebrew"],
+  [/\/Library\/Frameworks\/Python\.framework\//u, "python.org"],
+  [/\/AppData\/Local\/Programs\/Python\//iu, "python.org"],
+  [/\/Library\/Frameworks\/R\.framework\//u, "CRAN"],
+  [/\/\.pyenv\//u, "pyenv"],
+  [/\/\.asdf\//u, "asdf"],
+  [/\/mise\/installs\//u, "mise"],
+  [/\/uv\/(data\/)?python\//u, "uv"],
+  [/\/\.juliaup\/|\/\.julia\/juliaup\//u, "juliaup"],
+  [/\/\.rustup\/|\/\.cargo\/bin\//u, "rustup"],
+  [/\/\.elan\//u, "elan"],
+  [/\/\.nvm\//u, "nvm"],
+  [/\/\.sdkman\//u, "SDKMAN"],
+  [/\/\.opam\//u, "opam"],
+  [/\/\.ghcup\//u, "GHCup"],
+  [/\/\.pixi\//u, "pixi"],
+  [/\/nix\/store\//u, "Nix"],
+  [/\/Library\/Developer\/CommandLineTools\/|\/Xcode[^/]*\.app\//u, "Apple developer tools"],
+  [/^\/(usr\/)?bin\//u, "System"],
+];
+
+/** Who installed something, judged by where its file really lives; null when that says nothing. */
+export function originFromPath(context: DiscoveryContext, executable: string): string | null {
+  const real = (context.host.realPath(executable) ?? executable).replaceAll("\\", "/");
+  return ORIGINS.find(([pattern]) => pattern.test(real))?.[1] ?? null;
 }
 
 /** Every PATH match, in PATH order. */
@@ -326,13 +374,27 @@ function projectPythons(context: DiscoveryContext, projectRoot: string) {
     .readDirectory(pixi)
     .toSorted((a, b) => (a === "default" ? -1 : b === "default" ? 1 : a.localeCompare(b)))
     .slice(0, MAX_DIRECTORY_ENTRIES);
-  return [
+  const named = [
     venvRuntime(context, path.join(projectRoot, ".venv"), "project", ".venv"),
     condaRuntime(context, path.join(projectRoot, ".conda"), "project", ".conda"),
     ...pixiEnvironments.map((name) =>
       condaRuntime(context, path.join(pixi, name), "project", `pixi: ${name}`),
     ),
   ].filter((runtime): runtime is DiscoveredRuntime => runtime !== null);
+  // `venv/` or `env/` is the project's when it is the only one. With several, none is assumed.
+  const others = context.host
+    .readDirectory(projectRoot)
+    .filter((name) => name !== ".venv" && name !== ".conda")
+    .filter((name) => context.host.kind(path.join(projectRoot, name, "pyvenv.cfg")) === "file")
+    .toSorted()
+    .slice(0, MAX_DIRECTORY_ENTRIES);
+  const source = named.length === 0 && others.length === 1 ? "project" : "conventional";
+  return [
+    ...named,
+    ...others
+      .map((name) => venvRuntime(context, path.join(projectRoot, name), source, `${name}/`))
+      .filter((runtime): runtime is DiscoveredRuntime => runtime !== null),
+  ];
 }
 
 const WINDOWS_STORE_ALIAS =
@@ -396,12 +458,26 @@ function condaRoots(context: DiscoveryContext): ReadonlyArray<string> {
     ...fromExe,
     ...(env.MAMBA_ROOT_PREFIX === undefined ? [] : [env.MAMBA_ROOT_PREFIX]),
     ...names.map((name) => path.join(home, name)),
+    // Anaconda's graphical installer for macOS.
+    ...(context.platform === "darwin" ? names.map((name) => path.join(home, "opt", name)) : []),
     ...shared,
   ];
 }
 
-function condaPythons(context: DiscoveryContext): ReadonlyArray<DiscoveredRuntime> {
+/** A conda prefix as people name it: its environment, `base` for a root, else its folder. */
+function condaLabel(context: DiscoveryContext, prefix: string, roots: ReadonlySet<string>): string {
   const path = pathModule(context.platform);
+  const name = path.basename(prefix);
+  if (path.basename(path.dirname(prefix)) === "envs") return `conda: ${name}`;
+  return `conda: ${roots.has(prefix) ? "base" : name}`;
+}
+
+/** Every conda-style prefix on this computer, whatever it holds. */
+export function condaPrefixes(
+  context: DiscoveryContext,
+): ReadonlyArray<{ readonly prefix: string; readonly origin: string }> {
+  const path = pathModule(context.platform);
+  const roots = condaRoots(context);
   const listed = (
     context.host.readText(path.join(context.homeDirectory, ".conda", "environments.txt")) ?? ""
   )
@@ -409,7 +485,7 @@ function condaPythons(context: DiscoveryContext): ReadonlyArray<DiscoveredRuntim
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith("#"))
     .slice(0, MAX_DIRECTORY_ENTRIES);
-  const prefixes = condaRoots(context).flatMap((root) => [
+  const prefixes = roots.flatMap((root) => [
     root,
     ...context.host
       .readDirectory(path.join(root, "envs"))
@@ -417,16 +493,57 @@ function condaPythons(context: DiscoveryContext): ReadonlyArray<DiscoveredRuntim
       .slice(0, MAX_DIRECTORY_ENTRIES)
       .map((name) => path.join(root, "envs", name)),
   ]);
-  return [...prefixes, ...listed]
-    .map((prefix) =>
-      condaRuntime(
-        context,
-        prefix,
-        "conventional",
-        `conda: ${path.basename(path.dirname(prefix)) === "envs" ? path.basename(prefix) : "base"}`,
-      ),
-    )
+  const known = new Set(roots);
+  return [...new Set([...prefixes, ...listed])]
+    .filter((prefix) => context.host.kind(path.join(prefix, "conda-meta")) === "directory")
+    .map((prefix) => ({ prefix, origin: condaLabel(context, prefix, known) }));
+}
+
+function condaPythons(context: DiscoveryContext): ReadonlyArray<DiscoveredRuntime> {
+  return condaPrefixes(context)
+    .map(({ prefix, origin }) => condaRuntime(context, prefix, "conventional", origin))
     .filter((runtime): runtime is DiscoveredRuntime => runtime !== null);
+}
+
+/** Folders that hold one virtual environment per project, outside the projects themselves. */
+function environmentStores(context: DiscoveryContext) {
+  const path = pathModule(context.platform);
+  const env = context.environment;
+  const home = context.homeDirectory;
+  const poetry =
+    env.POETRY_VIRTUALENVS_PATH ??
+    (context.platform === "win32"
+      ? path.join(env.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "pypoetry", "Cache")
+      : context.platform === "darwin"
+        ? path.join(home, "Library", "Caches", "pypoetry")
+        : path.join(env.XDG_CACHE_HOME ?? path.join(home, ".cache"), "pypoetry"));
+  return [
+    { root: env.WORKON_HOME ?? path.join(home, ".virtualenvs"), origin: "virtualenv" },
+    { root: path.join(home, ".venvs"), origin: "virtualenv" },
+    { root: path.join(home, "venvs"), origin: "virtualenv" },
+    {
+      root: env.POETRY_VIRTUALENVS_PATH ?? path.join(poetry, "virtualenvs"),
+      origin: "Poetry",
+    },
+    {
+      root: path.join(env.XDG_DATA_HOME ?? path.join(home, ".local", "share"), "virtualenvs"),
+      origin: "Pipenv",
+    },
+  ];
+}
+
+function storePythons(context: DiscoveryContext): ReadonlyArray<DiscoveredRuntime> {
+  const path = pathModule(context.platform);
+  return environmentStores(context).flatMap(({ root, origin }) =>
+    context.host
+      .readDirectory(root)
+      .toSorted()
+      .slice(0, MAX_DIRECTORY_ENTRIES)
+      .map((name) =>
+        venvRuntime(context, path.join(root, name), "conventional", `${origin}: ${name}`),
+      )
+      .filter((runtime): runtime is DiscoveredRuntime => runtime !== null),
+  );
 }
 
 function managerPythons(context: DiscoveryContext): ReadonlyArray<DiscoveredRuntime> {
@@ -462,7 +579,7 @@ function managerPythons(context: DiscoveryContext): ReadonlyArray<DiscoveredRunt
           ? []
           : versionedEntries(
               context,
-              env.UV_PYTHON_INSTALL_DIR ?? path.join(env.APPDATA!, "uv", "python"),
+              env.UV_PYTHON_INSTALL_DIR ?? path.join(env.APPDATA!, "uv", "data", "python"),
               /^c?python-/iu,
             ).map((prefix) => ({ executable: path.join(prefix, "python.exe"), origin: "uv" }))),
       ]
@@ -493,9 +610,18 @@ function systemPythons(
 ): ReadonlyArray<DiscoveredRuntime> {
   const path = pathModule(context.platform);
   const env = context.environment;
-  const entries = (items: ReadonlyArray<string>, origin: string) =>
+  const entries = (items: ReadonlyArray<string>, origin: string | null) =>
     items.map((executable) => ({ executable, origin }));
-  const list: ReadonlyArray<{ readonly executable: string; readonly origin: string }> =
+  // A versioned formula has bin/python3.12 and keeps its plain python3 under libexec.
+  const kegs = (roots: ReadonlyArray<string>) =>
+    roots
+      .flatMap((root) => versionedEntries(context, root, /^python@3/u))
+      .flatMap((prefix) => [
+        path.join(prefix, "bin", "python3"),
+        path.join(prefix, "libexec", "bin", "python3"),
+        path.join(prefix, "bin", path.basename(prefix).replace("@", "")),
+      ]);
+  const list: ReadonlyArray<{ readonly executable: string; readonly origin: string | null }> =
     context.platform === "win32"
       ? [
           ...entries(registrations, "Python launcher"),
@@ -519,15 +645,10 @@ function systemPythons(
         ]
       : context.platform === "darwin"
         ? [
-            ...entries(["/opt/homebrew/bin/python3", "/usr/local/bin/python3"], "Homebrew"),
-            ...entries(
-              ["/opt/homebrew/opt", "/usr/local/opt"].flatMap((root) =>
-                versionedEntries(context, root, /^python@3/u).map((prefix) =>
-                  path.join(prefix, "bin", "python3"),
-                ),
-              ),
-              "Homebrew",
-            ),
+            ...entries(["/opt/homebrew/bin/python3"], "Homebrew"),
+            // /usr/local/bin is shared: python.org's installer links there too.
+            ...entries(["/usr/local/bin/python3"], null),
+            ...entries(kegs(["/opt/homebrew/opt", "/usr/local/opt"]), "Homebrew"),
             ...entries(
               versionedEntries(
                 context,
@@ -543,6 +664,7 @@ function systemPythons(
               [
                 "/home/linuxbrew/.linuxbrew/bin/python3",
                 path.join(context.homeDirectory, ".linuxbrew", "bin", "python3"),
+                ...kegs(["/home/linuxbrew/.linuxbrew/opt"]),
               ],
               "Homebrew",
             ),
@@ -550,7 +672,12 @@ function systemPythons(
           ];
   return list
     .filter((entry) => context.host.isExecutable(entry.executable))
-    .map((entry) => ({ ...entry, source: "conventional" as const, problem: null }));
+    .map((entry) => ({
+      executable: entry.executable,
+      origin: originFromPath(context, entry.executable) ?? entry.origin,
+      source: "conventional" as const,
+      problem: null,
+    }));
 }
 
 /**
@@ -579,15 +706,28 @@ export function enumeratePythonRuntimes(
           `conda: ${path.basename(env.CONDA_PREFIX)}`,
         ),
   ].filter((runtime): runtime is DiscoveredRuntime => runtime !== null);
-  const onPath = pathMatches(
-    context,
-    context.platform === "win32" ? ["python.exe", "python3.exe"] : ["python3", "python"],
-  )
+  const onPath = [
+    ...pathMatches(
+      context,
+      context.platform === "win32" ? ["python.exe", "python3.exe"] : ["python3", "python"],
+    ),
+    // Distributions install python3.11 beside an older python3.
+    ...(context.platform === "win32"
+      ? []
+      : environmentPath(context).flatMap((directory) =>
+          context.host
+            .readDirectory(directory)
+            .filter((name) => /^python3\.\d+$/u.test(name))
+            .toSorted((a, b) => b.localeCompare(a, "en", { numeric: true }))
+            .map((name) => path.join(directory, name))
+            .filter(context.host.isExecutable),
+        )),
+  ]
     .filter((executable) => context.platform !== "darwin" || executable !== MACOS_PYTHON_SHIM)
     .map((executable) => ({
       executable,
       source: "path" as const,
-      origin: null,
+      origin: originFromPath(context, executable),
       problem: context.platform === "win32" ? windowsAliasProblem(context, executable) : null,
     }));
   return dedupeRuntimes(
@@ -597,6 +737,7 @@ export function enumeratePythonRuntimes(
       ...active,
       ...onPath,
       ...managerPythons(context),
+      ...storePythons(context),
       ...condaPythons(context),
       ...systemPythons(context, input.windowsRegistrations),
     ],

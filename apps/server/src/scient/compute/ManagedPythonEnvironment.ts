@@ -31,6 +31,8 @@ export type ManagedPythonGeneration = typeof ManagedPythonGeneration.Type;
 export const ManagedPythonEnvironmentRecord = Schema.Struct({
   schemaVersion: Schema.Literal(1),
   selection: ManagedPythonSelection,
+  /** The person picked this Python, as opposed to it being selected by setting it up. */
+  chosen: Schema.optional(Schema.Boolean),
   active: ManagedPythonGeneration,
   previous: Schema.NullOr(ManagedPythonGeneration),
 });
@@ -753,6 +755,7 @@ export function makeManagedPythonEnvironmentManager(
             schemaVersion: 1,
             selection:
               latest?.selection ?? pendingSelection ?? input.selectionAfterInstall ?? "managed",
+            ...(latest?.chosen === undefined ? {} : { chosen: latest.chosen }),
             active,
             previous: existing?.record.active ?? null,
           };
@@ -799,8 +802,10 @@ export function makeManagedPythonEnvironmentManager(
             : "Set up Scientific Python before selecting it.",
         );
       }
-      if (current.record.selection === selection) return current;
-      const record = { ...current.record, selection };
+      const chosen = selection === "managed";
+      if (current.record.selection === selection && current.record.chosen === chosen)
+        return current;
+      const record = { ...current.record, selection, chosen };
       await commitState(paths.statePath, record).catch((cause) => {
         throw new ManagedPythonEnvironmentError(
           "activation-failed",
