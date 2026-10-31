@@ -33,6 +33,7 @@ export function useSignInRecording(input: {
   const observation = useRef<{
     url: string;
     cookies: Promise<ReadonlyArray<CookieMetadata> | null>;
+    announced?: boolean;
   } | null>(null);
   const inspect = useEffectEvent(
     (
@@ -85,7 +86,10 @@ export function useSignInRecording(input: {
     }
     const previous = observation.current;
     if (!previous) return;
-    window.dispatchEvent(new Event("scient-accounts-session-changed"));
+    if (!previous.announced) {
+      previous.announced = true;
+      window.dispatchEvent(new Event("scient-accounts-session-changed"));
+    }
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = Date.now() + 300_000;

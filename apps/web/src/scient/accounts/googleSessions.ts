@@ -5,6 +5,8 @@ import { accountsState } from "./accountsState";
 
 /** Coming back to the app asks again at most this often. */
 const FOCUS_CHECK_GAP_MS = 5 * 60 * 1000;
+/** A sign-in asks straight away, but browsing around one must not. */
+const CHANGE_CHECK_GAP_MS = 30 * 1000;
 const FIRST_CHECK_DELAY_MS = 3_000;
 
 /**
@@ -19,23 +21,31 @@ export function watchGoogleSessions(
   const read = bridge?.googleSessions;
   if (!read) return () => undefined;
   let lastCheck = 0;
+  let checking = false;
   const check = async () => {
+    if (checking) return;
+    checking = true;
     lastCheck = Date.now();
-    const { profiles } = await resolveBrowserDefaults();
-    for (const { id, kind } of profiles) {
-      if (kind === "incognito") continue;
-      const sessions = await read(id, environmentId).catch(() => null);
-      if (sessions)
-        await accountsState.googleSessionsSeen.run(registry, {
-          environmentId,
-          input: { profileId: BrowserProfileId.make(id), sessions },
-        });
+    try {
+      const { profiles } = await resolveBrowserDefaults();
+      for (const { id, kind } of profiles) {
+        if (kind === "incognito") continue;
+        const sessions = await read(id, environmentId).catch(() => null);
+        if (sessions)
+          await accountsState.googleSessionsSeen.run(registry, {
+            environmentId,
+            input: { profileId: BrowserProfileId.make(id), sessions },
+          });
+      }
+    } finally {
+      checking = false;
     }
   };
-  const onFocus = () => {
-    if (Date.now() - lastCheck >= FOCUS_CHECK_GAP_MS) void check();
+  const checkAfter = (gapMs: number) => () => {
+    if (Date.now() - lastCheck >= gapMs) void check();
   };
-  const onChange = () => void check();
+  const onFocus = checkAfter(FOCUS_CHECK_GAP_MS);
+  const onChange = checkAfter(CHANGE_CHECK_GAP_MS);
   const first = setTimeout(onChange, FIRST_CHECK_DELAY_MS);
   window.addEventListener("focus", onFocus);
   window.addEventListener("scient-accounts-session-changed", onChange);
