@@ -334,10 +334,17 @@ describe("OpenCodeAdapterV2", () => {
   ])("reports readable and sanitized session and turn failures: $expected", (sample) =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();
+      // SCIENT-FORK: Scient writes and confirms the turn's permission rules before prompting.
+      let permission: unknown;
       const harness = yield* makeOpenCodeRuntimeHarness("provider-error", "root", {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          update: async (input: { permission: unknown }) => {
+            permission = input.permission;
+            return { data: { id: "root", time: { created: 1, updated: 2 } } };
+          },
+          get: async () => ({ data: { id: "root", permission, time: { created: 1, updated: 2 } } }),
           promptAsync: async () => ({ data: true }),
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),

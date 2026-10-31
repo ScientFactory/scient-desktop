@@ -292,6 +292,8 @@ jobs:
             apps/server/src/secrets/secretProviderDefinitions.ts \
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
+            apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -356,6 +358,8 @@ jobs:
             apps/server/src/secrets/secretProviderDefinitions.ts \
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
+            apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -421,6 +425,8 @@ jobs:
             apps/server/src/secrets/secretProviderDefinitions.ts \
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
+            apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
             apps/server/src/auth \
@@ -510,6 +516,8 @@ jobs:
             apps/server/src/secrets/secretProviderDefinitions.ts \
             apps/server/src/secrets/settingsSecretValue.ts \
             apps/server/src/secrets/SecretResolver.ts \
+            apps/server/src/scient/projectScope/WorkspaceAuthorityRevision.ts \
+            apps/server/src/workspace/KnownWorkspaces.ts \
             apps/server/src/serverSettings.ts \
             apps/server/src/scient/accounts/AccountVault.ts \
             apps/server/src/scient/accounts/AccountsSecretStore.ts \
