@@ -34,6 +34,28 @@ function openSideChatId(parentRef: ScopedThreadRef): ThreadId | null {
   );
 }
 
+async function citeInSideChat(
+  parentRef: ScopedThreadRef,
+  citation: ComposerCitation,
+  startSideChat: () => Promise<boolean>,
+  starting: { current: Promise<boolean> | null },
+) {
+  if (openSideChatId(parentRef) === null) {
+    // Two quotes picked while it starts both join the same side chat.
+    starting.current ??= startSideChat().finally(() => {
+      starting.current = null;
+    });
+    if (!(await starting.current)) return;
+  }
+  const threadId = openSideChatId(parentRef);
+  if (threadId === null) return;
+  useRightPanelStore.getState().openSideChat(parentRef, threadId);
+  const key = scopedThreadKey({ environmentId: parentRef.environmentId, threadId });
+  useSideChatInbox.setState(({ byThread }) => ({
+    byThread: { ...byThread, [key]: [...(byThread[key] ?? []), citation] },
+  }));
+}
+
 /** Sends quotes to the side chat from `parentRef`, starting one when none is open. */
 export function useCiteInSideChat(
   parentRef: ScopedThreadRef | null,
@@ -41,22 +63,14 @@ export function useCiteInSideChat(
 ) {
   const starting = useRef<Promise<boolean> | null>(null);
   return useStableCallback(async (citation: ComposerCitation) => {
-    if (!parentRef) return;
-    if (openSideChatId(parentRef) === null) {
-      // Two quotes picked while it starts both join the same side chat.
-      starting.current ??= startSideChat().finally(() => {
-        starting.current = null;
-      });
-      if (!(await starting.current)) return;
-    }
-    const threadId = openSideChatId(parentRef);
-    if (threadId === null) return;
-    useRightPanelStore.getState().openSideChat(parentRef, threadId);
-    const key = scopedThreadKey({ environmentId: parentRef.environmentId, threadId });
-    useSideChatInbox.setState(({ byThread }) => ({
-      byThread: { ...byThread, [key]: [...(byThread[key] ?? []), citation] },
-    }));
+    if (parentRef) await citeInSideChat(parentRef, citation, startSideChat, starting);
   });
+}
+
+function takeWaitingCitations(key: string): ReadonlyArray<ComposerCitation> {
+  const { [key]: citations = [], ...rest } = useSideChatInbox.getState().byThread;
+  useSideChatInbox.setState({ byThread: rest });
+  return citations;
 }
 
 /** Adds quotes waiting for this thread to its composer. */
@@ -70,9 +84,7 @@ export function useSideChatCitationInbox(
   useEffect(() => {
     if (!waiting) return;
     // Read here, not from render: StrictMode replays this effect.
-    const { [key]: citations = [], ...rest } = useSideChatInbox.getState().byThread;
-    useSideChatInbox.setState({ byThread: rest });
-    for (const citation of citations) {
+    for (const citation of takeWaitingCitations(key)) {
       if (cite(citation)) continue;
       toastManager.add({
         type: "warning",
