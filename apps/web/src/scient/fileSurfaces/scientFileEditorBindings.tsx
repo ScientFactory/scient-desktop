@@ -19,7 +19,11 @@ import { sourceMathController, sourceMathOwnsEvent } from "~/scient/math/input/s
 import { installLatexFileCompletion } from "~/scient/latex/latexFileCompletion";
 import type { MarkdownPersistenceLease } from "~/scient/markdownEditor/persistence/markdownPersistenceRegistry";
 
-import { SCIENT_FILE_UNSAFE_CSS } from "./StaticTextFileSurface";
+import {
+  FILE_ACTIVE_RANGE_ATTRIBUTE,
+  SCIENT_FILE_UNSAFE_CSS,
+  type FilePostRender,
+} from "./StaticTextFileSurface";
 
 /**
  * Scient behaviour of the inherited workspace file editor: external document
@@ -161,9 +165,41 @@ export function useScientFileEditorBindings<Annotation>({
         return;
       }
       event.preventDefault();
+      // The editor's own Cmd+Enter inserts a line, which would make the file differ from the save.
+      event.stopPropagation();
       onRunShortcut(editor?.getViewState().selections?.at(-1) ?? null);
     },
   };
+}
+
+type RenderedFile = Pick<Parameters<FilePostRender>[1], "setSelectedLines">;
+
+/**
+ * Draws the selected or active line range in place. The range stays out of the editor's options,
+ * since a change there rebuilds the editor, which collapses a drag and can lose a click.
+ */
+export function useScientFileLineRange(
+  selectedRange: SelectedLineRange | null,
+  activeLineRange: SelectedLineRange | null | undefined,
+) {
+  const rendered = useRef<{ fileContainer: HTMLElement; instance: RenderedFile } | null>(null);
+  const draw = useStableCallback((fileContainer: HTMLElement, instance: RenderedFile) => {
+    rendered.current = { fileContainer, instance };
+    const showsActiveRange = selectedRange === null && activeLineRange != null;
+    fileContainer.toggleAttribute(FILE_ACTIVE_RANGE_ATTRIBUTE, showsActiveRange);
+    instance.setSelectedLines(
+      selectedRange ?? activeLineRange ?? null,
+      showsActiveRange
+        ? { notify: false, activeLineSide: "additions", lineNumberOnly: false }
+        : { notify: false },
+    );
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the editor sets its selected lines plainly as it renders, so the range's style is drawn after that.
+  useLayoutEffect(() => {
+    if (rendered.current === null || !rendered.current.fileContainer.isConnected) return;
+    draw(rendered.current.fileContainer, rendered.current.instance);
+  });
+  return draw;
 }
 
 /** The source math input row above an editable `.tex` or Markdown source. */

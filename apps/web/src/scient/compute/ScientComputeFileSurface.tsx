@@ -45,7 +45,7 @@ import {
   type ComputeBatchRunModel,
 } from "./ComputeBatchResults";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
-import { computeActiveCell } from "./computeSourceSlices";
+import { computeActiveCell, computeCellQuote } from "./computeSourceSlices";
 import {
   DEFAULT_COMPUTE_FILE_SPLIT,
   DEFAULT_COMPUTE_FILE_SPLIT_LAYOUT,
@@ -444,6 +444,9 @@ function ComputeFileSurfaceContent(
               saveResolution={props.saveResolution}
               onSelectionChange={setSelection}
               activeLineRange={activeCellRange}
+              caretQuote={(source, line) =>
+                computeCellQuote(source, line, props.language.cellMarker)
+              }
               onEditorSelectionChange={setEditorSelection}
               gutterUtilityVisibility="hover"
               {...(hasExplicitCells

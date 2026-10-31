@@ -2,7 +2,10 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useLayoutEffect } from "react";
 import type { EditorSelection } from "@pierre/diffs/edit";
 import { revealFileEditorSelection, type SourceSelectionReveal } from "./fileEditorSourceReveal";
-import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
+import {
+  SourceCitationActions,
+  type SourceCaretQuote,
+} from "~/scient/fileSurfaces/SourceCitationActions";
 // SCIENT-FORK:START
 import {
   FILE_ACTIVE_RANGE_ATTRIBUTE,
@@ -18,6 +21,7 @@ import {
 import {
   ScientMathSourceToolbar,
   scientEditorGutterUtility,
+  useScientFileLineRange,
   scientFileEditorUnsafeCss,
   useScientFileEditorBindings,
 } from "~/scient/fileSurfaces/scientFileEditorBindings";
@@ -847,6 +851,9 @@ interface EditableFileSurfaceProps {
   saveResolution: FileSaveResolution | null;
   onSelectionChange?: (range: SelectedLineRange | null) => void;
   activeLineRange?: SelectedLineRange | null;
+  // SCIENT-FORK:START — what a clicked caret stands for when asking in chat.
+  caretQuote?: SourceCaretQuote | undefined;
+  // SCIENT-FORK:END
   retainSelectionOnBlur?: boolean;
   sourceSelectionReveal?: SourceSelectionReveal | undefined;
   onEditorSelectionChange?: (selection: EditorSelection | null) => void;
@@ -914,6 +921,9 @@ export function EditableFileEditor({
   editingBlocked = false,
   onSelectionChange,
   activeLineRange,
+  // SCIENT-FORK:START — what a clicked caret stands for when asking in chat.
+  caretQuote,
+  // SCIENT-FORK:END
   retainSelectionOnBlur = false,
   sourceSelectionReveal,
   onEditorSelectionChange,
@@ -942,6 +952,9 @@ export function EditableFileEditor({
   const selectedRange =
     selectionOverride?.revealRequestId === revealRequestId ? selectionOverride.range : null;
   const displayedRange = selectedRange ?? activeLineRange ?? null;
+  // SCIENT-FORK:START — the line range is drawn in place, outside the editor's options.
+  const drawLineRange = useScientFileLineRange(selectedRange, activeLineRange);
+  // SCIENT-FORK:END
   const setSelectedRange = (range: SelectedLineRange | null) => {
     setSelectionOverride({ revealRequestId, range });
     onSelectionChange?.(range);
@@ -1320,14 +1333,9 @@ export function EditableFileEditor({
     selectionFrameRef.current = requestAnimationFrame(() => {
       selectionFrameRef.current = null;
       if (!fileContainer.isConnected) return;
-      const showsActiveRange = selectedRange === null && activeLineRange != null;
-      fileContainer.toggleAttribute(FILE_ACTIVE_RANGE_ATTRIBUTE, showsActiveRange);
-      instance.setSelectedLines(
-        displayedRange,
-        showsActiveRange
-          ? { notify: false, activeLineSide: "additions", lineNumberOnly: false }
-          : { notify: false },
-      );
+      // SCIENT-FORK:START — the line range is drawn in place, outside the editor's options.
+      drawLineRange(fileContainer, instance);
+      // SCIENT-FORK:END
     });
   };
 
@@ -1354,6 +1362,9 @@ export function EditableFileEditor({
             onCite={onCite}
             reveal={citationReveal}
             revealId={revealRequestId}
+            // SCIENT-FORK:START — what a clicked caret stands for, while no lines are picked.
+            caretQuote={selectedRange === null ? caretQuote : undefined}
+            // SCIENT-FORK:END
           />
         ) : null}
         {/* SCIENT-FORK:START — Overleaf conflict blocks: highlighted, with a choice above each */}

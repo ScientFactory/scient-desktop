@@ -4,6 +4,8 @@ import type { FileCitation } from "@t3tools/contracts";
 import { useEffect, useRef, useId } from "react";
 import { SelectionCitationToolbar } from "~/components/chat/AssistantSelectionToolbar";
 import { toastManager } from "~/components/ui/toast";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import type { MarkdownCiteHandler } from "../markdownEditor/markdownCitation";
 import { sourcePosition } from "../math/input/sourceAdapter";
 import {
@@ -13,8 +15,15 @@ import {
   staticSourceSelection,
   type SourceCitationTarget,
 } from "./sourceCitation";
+import { SourceCaretAction } from "./SourceCaretAction";
 
 const allowSourceSelection = () => true;
+
+/** The text a caret on this one-based line stands for when asking in chat. */
+export type SourceCaretQuote = (
+  source: string,
+  line: number,
+) => { readonly from: number; readonly to: number } | null;
 
 export function SourceCitationActions<Annotation>({
   editor,
@@ -26,6 +35,7 @@ export function SourceCitationActions<Annotation>({
   reveal,
   revealId,
   staticSource,
+  caretQuote,
 }: {
   editor: Editor<"file", Annotation, undefined> | null;
   viewport: HTMLElement | null;
@@ -36,6 +46,7 @@ export function SourceCitationActions<Annotation>({
   reveal?: FileCitation | undefined;
   revealId: number;
   staticSource?: string | undefined;
+  caretQuote?: SourceCaretQuote | undefined;
 }) {
   const { environmentId, threadId, cwd, path, latexRootRelativePath } = target;
   const ownerId = useId();
@@ -44,7 +55,7 @@ export function SourceCitationActions<Annotation>({
   useLayoutEffect(() => {
     currentStaticSource.current = staticSource;
   });
-  const capture = () => {
+  const currentSelection = () => {
     const state = editor?.getEditState();
     const selections = editor?.getViewState().selections;
     if (
@@ -73,8 +84,10 @@ export function SourceCitationActions<Annotation>({
             to: state.document.offsetAt(selections[0]!.end),
           }
         : staticSourceSelection(viewport, source);
-    if (!selected) return null;
-    const { from, to } = selected;
+    return selected ? { source, ...selected } : null;
+  };
+  const quote = (source: string, from: number, to: number) => {
+    if (!viewport) return null;
     const citation = createSourceCitation(
       { environmentId, threadId, cwd, path, latexRootRelativePath },
       source,
@@ -103,6 +116,17 @@ export function SourceCitationActions<Annotation>({
       },
     };
   };
+  const capture = () => {
+    const selected = currentSelection();
+    return selected && quote(selected.source, selected.from, selected.to);
+  };
+  const captureCaret = useStableCallback(() => {
+    const selected = currentSelection();
+    if (!selected || selected.from !== selected.to) return null;
+    const { source, from } = selected;
+    const range = caretQuote?.(source, sourcePosition(source, from).line + 1);
+    return range ? quote(source, range.from, range.to) : null;
+  });
   const handled = useRef<{ editor: typeof editor; id: number } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the editor selection or posts a warning toast when a citation reveal request arrives
   useEffect(() => {
@@ -128,57 +152,63 @@ export function SourceCitationActions<Annotation>({
       });
   }, [editor, reveal, revealId, ready, staticSource, viewport]);
   if (!onCite) return null;
+  const cite = (citation: FileCitation, anchor: AssistantCitationSourceAnchor) => {
+    // Activating the action can move focus or collapse the native selection.
+    // Validate the captured offsets against the source, not that live selection.
+    const source = editor ? editor.getFile()?.contents : currentStaticSource.current;
+    const current =
+      source !== undefined && ready() && !editor?.isComposing
+        ? createSourceCitation(
+            { environmentId, threadId, cwd, path, latexRootRelativePath },
+            source,
+            baseline(),
+            citation.sourceStart,
+            citation.sourceEnd,
+          )
+        : null;
+    if (
+      !current ||
+      current.revision !== citation.revision ||
+      current.text !== citation.text ||
+      current.environmentId !== citation.environmentId ||
+      current.threadId !== citation.threadId ||
+      current.cwd !== citation.cwd ||
+      current.path !== citation.path ||
+      current.latex?.rootRelativePath !== citation.latex?.rootRelativePath ||
+      anchor.source !== viewport ||
+      !anchor.source.isConnected ||
+      anchor.selectionOwnerId !== ownerId ||
+      !anchor.resolveRects?.().length
+    ) {
+      toastManager.add({
+        type: "warning",
+        title: "The selection has changed",
+        description: "Select the source again to cite its current version.",
+      });
+      return false;
+    }
+    const accepted = onCite(current, anchor);
+    if (!accepted)
+      toastManager.add({
+        type: "warning",
+        title: "Could not add the citation",
+        description: "The chat input is not ready. Your selection is unchanged.",
+      });
+    return accepted;
+  };
   return (
-    <SelectionCitationToolbar
-      viewport={viewport}
-      capture={capture}
-      preserveSelection
-      selectionOwnerId={ownerId}
-      allowPreventedSelectionStart={allowSourceSelection}
-      onCite={(citation, anchor) => {
-        // Activating the action can move focus or collapse the native selection.
-        // Validate the captured offsets against the source, not that live selection.
-        const source = editor ? editor.getFile()?.contents : currentStaticSource.current;
-        const current =
-          source !== undefined && ready() && !editor?.isComposing
-            ? createSourceCitation(
-                { environmentId, threadId, cwd, path, latexRootRelativePath },
-                source,
-                baseline(),
-                citation.sourceStart,
-                citation.sourceEnd,
-              )
-            : null;
-        if (
-          !current ||
-          current.revision !== citation.revision ||
-          current.text !== citation.text ||
-          current.environmentId !== citation.environmentId ||
-          current.threadId !== citation.threadId ||
-          current.cwd !== citation.cwd ||
-          current.path !== citation.path ||
-          current.latex?.rootRelativePath !== citation.latex?.rootRelativePath ||
-          anchor.source !== viewport ||
-          !anchor.source.isConnected ||
-          anchor.selectionOwnerId !== ownerId ||
-          !anchor.resolveRects?.().length
-        ) {
-          toastManager.add({
-            type: "warning",
-            title: "The selection has changed",
-            description: "Select the source again to cite its current version.",
-          });
-          return false;
-        }
-        const accepted = onCite(current, anchor);
-        if (!accepted)
-          toastManager.add({
-            type: "warning",
-            title: "Could not add the citation",
-            description: "The chat input is not ready. Your selection is unchanged.",
-          });
-        return accepted;
-      }}
-    />
+    <>
+      <SelectionCitationToolbar
+        viewport={viewport}
+        capture={capture}
+        preserveSelection
+        selectionOwnerId={ownerId}
+        allowPreventedSelectionStart={allowSourceSelection}
+        onCite={cite}
+      />
+      {caretQuote ? (
+        <SourceCaretAction viewport={viewport} capture={captureCaret} onCite={cite} />
+      ) : null}
+    </>
   );
 }

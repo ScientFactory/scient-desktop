@@ -504,7 +504,9 @@ same authority as your own code.
 **Ask in chat** works as it does in documents. Select text in the Console, in Results or in a
 notebook cell and choose **Ask in chat**: the quote becomes a chip in your message, with an optional
 comment. To ask about a whole run or cell, such as a figure, use the same action at its top right.
-The agent receives the text and where it came from, and reads the rest of the run or cell itself.
+In a script with `# %%` cells, click a cell and choose **Ask in chat** beside the pointer to quote
+that cell. The agent receives the text and where it came from, and reads the rest of the run or cell
+itself.
 
 Click a chip, in your message or a sent one, to go back to the quote. A run opens in its script or
 Console while they still hold its session, and otherwise in Compute history.

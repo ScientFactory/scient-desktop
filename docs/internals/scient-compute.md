@@ -55,7 +55,10 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
   `SelectionCitationToolbar` on the feed and the notebook; a `ComputeCitation`
   (`packages/shared/src/computeCitations.ts`) carries a run's ids or a notebook cell's id, so the agent
   reads the rest with `scient_compute_output` or `scient_notebook_read`. A chip opens through
-  `openComputeCitation` and `computeQuoteReveal`.
+  `openComputeCitation` and `computeQuoteReveal`. In a `# %%` script, `SourceCaretAction` offers a
+  clicked cell as an ordinary file quote, using `computeCellQuote`.
+- **The active cell** is drawn by `useScientFileLineRange`, outside the editor's options. A changed
+  option rebuilds the editor, and that restores a bare caret: it collapses a drag and can lose a click.
 - **Console** is the Compute tab (`ComputeConsole`): it owns a session like a file tab does, starts it
   on the first run, and tags runs with the `console` source. A script tab with no session of its own
   borrows a live Console session of its language (`computeConsoleSession`, `borrowSession`). A
