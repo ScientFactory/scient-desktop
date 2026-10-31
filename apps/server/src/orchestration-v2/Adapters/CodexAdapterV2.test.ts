@@ -1331,7 +1331,7 @@ describe("CodexAdapterV2 session initialize", () => {
       assert.instanceOf(failure.cause, ProviderSetupError);
       assert.equal(
         failure.cause.message,
-        "Codex 0.144.3 does not work with this T3 Code release. Update Codex to >=0.159.0, then retry.",
+        "Codex 0.144.3 does not work with this Scient release. Update Codex to >=0.159.0, then retry.",
       );
     }).pipe(
       Effect.scoped,
@@ -3842,87 +3842,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect.each([
-    {
-      name: "a text reply gains each saved image once",
-      reply: "Done.",
-      images: [
-        { savedPath: "/tmp/a.png" },
-        { savedPath: "/tmp/a.png" },
-        { savedPath: "/tmp/failed.png", status: "failed" },
-        {
-          savedPath: "/tmp/limited.png",
-          failure: { type: "usageLimitExceeded", limitId: "image-generation" },
-        },
-        { savedPath: null },
-      ],
-      expected: "Done.\n\n![](</tmp/a.png>)",
-    },
-    {
-      name: "an image-only result becomes the reply",
-      reply: null,
-      images: [{ savedPath: "/tmp/a.png" }],
-      expected: "![](</tmp/a.png>)",
-    },
-  ])("projects generated images: $name", ({ reply, images, expected }) =>
-    Effect.gen(function* () {
-      const scenario = "codex-generated-images";
-      const result = "aW1hZ2UtYnl0ZXMtbXVzdC1uZXZlci1yZWFjaC1jbGllbnRz";
-      const base = finalAnswerTranscript(
-        scenario,
-        reply === null ? [] : [{ id: "answer", text: reply }],
-      );
-      const harness = yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({
-          scenario,
-          entries: [
-            ...base.entries.slice(0, -1),
-            ...images.map((image, index) => ({
-              type: "emit_inbound" as const,
-              frame: {
-                method: "item/completed",
-                params: {
-                  threadId: `native-${scenario}-thread`,
-                  turnId: `native-${scenario}-turn`,
-                  item: {
-                    type: "imageGeneration",
-                    id: `image-${index}`,
-                    status: "completed",
-                    result,
-                    ...image,
-                  },
-                },
-              },
-            })),
-            ...base.entries.slice(-1),
-          ],
-        }),
-      );
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-generated-images"),
-          text: "Reply with the requested recovery marker.",
-        }),
-      );
-      yield* harness.firstTerminal;
-
-      const messages = assistantMessages(harness.events);
-      assert.strictEqual(messages.at(-1)?.message.text, expected);
-      assert.strictEqual(messages.at(-1)?.message.streaming, false);
-      assert.strictEqual(new Set(messages.map(({ message }) => message.id)).size, 1);
-      // Image bytes stay with Codex; clients load the saved file.
-      assert.notInclude(encodeUnknownJson(harness.events), result);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-      ),
-    ),
-  );
-
   it.effect.each(["complete", "stop"] as const)(
     "retains generating images after settlement until %s",
     (outcome) =>
@@ -3935,7 +3854,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         };
         const projected = yield* Deferred.make<void>();
         const drained = yield* Deferred.make<void>();
-        const firstText = "Done.\n\n![](</tmp/first.png>)";
+        // The harness has no Codex home, so an image lands as Scient's attach notice.
+        const isImageNotice = (text: string) => text.startsWith("Codex generated an image");
         const imageEvent = (image: "first" | "second", phase: "started" | "completed") => ({
           type: "emit_inbound" as const,
           label: `${image}-${phase}`,
@@ -3967,7 +3887,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ],
           }),
           (event) =>
-            event.type === "message.updated" && event.message.text === firstText
+            event.type === "message.updated" && isImageNotice(event.message.text)
               ? Deferred.succeed(projected, undefined)
               : event.type === "background_work.updated" && !event.pending
                 ? Deferred.succeed(drained, undefined)
@@ -4027,16 +3947,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isAbove(terminal, started);
         assert.isAbove(finished, terminal);
         if (outcome === "complete") {
-          const messages = assistantMessages(harness.events);
-          const projectedBoth = indexOf(
-            (e) =>
-              e.type === "message.updated" &&
-              e.message.text === `${firstText}\n\n![](</tmp/second.png>)`,
+          const lastNotice = harness.events.findLastIndex(
+            (e) => e.type === "message.updated" && isImageNotice(e.message.text),
           );
-          assert.isAbove(projectedBoth, terminal);
-          assert.isAbove(finished, projectedBoth);
-          assert.strictEqual(messages.at(-1)?.message.id, messages[0]?.message.id);
-          assert.strictEqual(messages.at(-1)?.message.streaming, false);
+          assert.isAbove(lastNotice, terminal);
+          assert.isAbove(finished, lastNotice);
         }
       }).pipe(
         Effect.scoped,

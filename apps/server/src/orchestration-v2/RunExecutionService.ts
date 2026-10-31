@@ -1524,6 +1524,10 @@ export const layer: Layer.Layer<
                   activeChildSubagents,
                   ownedProviderTurns: (yield* Ref.get(eventRouting)).ownedProviderTurns,
                 });
+                const { ownedProviderTurns } = yield* Ref.get(eventRouting);
+                for (const id of pendingBackgroundProviderTurns) {
+                  if (!ownedProviderTurns.has(id)) pendingBackgroundProviderTurns.delete(id);
+                }
               }
               // SCIENT-FORK:END
               // Route, persist, and track each frame in one sequential step.

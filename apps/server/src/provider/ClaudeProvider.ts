@@ -630,6 +630,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         enabled: claudeSettings.enabled,
         checkedAt,
         models: [],
+        updateRequiredModels: resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion),
         probe: {
           installed: true,
           version: parsedVersion,

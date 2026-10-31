@@ -1987,9 +1987,10 @@ it.layer(
             events.filter((event) => event === "update"),
             ["update"],
           );
-          assert.strictEqual(events[0], "update");
+          // The version check before an update probes the instance; the caches refresh after it.
+          const afterUpdate = events.slice(events.indexOf("update"));
           assert.deepStrictEqual(
-            events.filter((event) => event.startsWith("probe:")).toSorted(),
+            afterUpdate.filter((event) => event.startsWith("probe:")).toSorted(),
             [
               "probe:personal",
               "probe:work",
@@ -1997,7 +1998,7 @@ it.layer(
             ].toSorted(),
           );
           for (const id of ["personal", "work"]) {
-            assert.isBelow(events.indexOf(`invalidate:${id}`), events.indexOf(`probe:${id}`));
+            assert.isBelow(afterUpdate.indexOf(`invalidate:${id}`), afterUpdate.indexOf(`probe:${id}`));
             assert.include(events, `invalidate:${id}`);
             const provider = result.providers.find((p) => p.instanceId === id);
             assert.deepStrictEqual(
@@ -4176,6 +4177,8 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            if (joined === "auth status --json")
+              return { stdout: '{"loggedIn":false}\n', stderr: "", code: 1 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
