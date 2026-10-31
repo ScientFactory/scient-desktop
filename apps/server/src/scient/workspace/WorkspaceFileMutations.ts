@@ -625,7 +625,13 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         decodeReference,
       );
       const directory = reference?.recordDirectory ?? indexed;
-      await assertPrivateRetention(directory, deps.nativePublicationHelper);
+      try {
+        await assertPrivateRetention(directory, deps.nativePublicationHelper);
+      } catch (e) {
+        // A deleted folder took the referenced record with it; nothing is left to settle.
+        if (reference && isNodeError(e, "ENOENT")) return null;
+        throw e;
+      }
       // Taken before the read: a change after it moves this on.
       const stand = await recordStand(indexed, directory);
       const text = await readOptional(NodePath.join(directory, "record.json"), (value) => value);

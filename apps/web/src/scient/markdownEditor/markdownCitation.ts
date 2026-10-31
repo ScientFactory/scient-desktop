@@ -5,6 +5,7 @@ import { FileCitation, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import type { Node as ProseMirrorNode } from "prosemirror-model";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import type { CitationDestination } from "../chat/sideChatCitation";
 import type { ScientMarkdownEditorView } from "./prosemirror/view";
 import type { ScientProseMirrorSession } from "./prosemirror/session";
 
@@ -15,6 +16,7 @@ export type MarkdownCitationSource = ScopedThreadRef & {
 export type MarkdownCiteHandler = (
   citation: FileCitation,
   anchor: AssistantCitationSourceAnchor,
+  destination: CitationDestination,
 ) => boolean;
 const validCitation = Schema.is(FileCitation);
 const revisions = new WeakMap<ProseMirrorNode, { source: string; revision: string }>();
