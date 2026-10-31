@@ -12,6 +12,8 @@ import {
 } from "@t3tools/contracts";
 import {
   accountStatusLabel,
+  isBrowserSignIn,
+  signedOutOfGoogle,
   sitesToKeep,
   activityLine,
   keysInUse,
@@ -59,6 +61,30 @@ describe("Accounts decisions", () => {
     expect(siteMatchesUrl("https://example.com:8443", "https://example.com:8443/login")).toBe(true);
     expect(siteMatchesUrl("https://example.com:8443", "https://example.com/login")).toBe(false);
     expect(siteMatchesUrl("example.com", "not a URL")).toBe(false);
+  });
+
+  it("groups Google rows with browser sign-ins, and says when a profile lost Google", () => {
+    const google = (state: "signed-in" | "signed-out", profileId = "work") => ({
+      ...website(profileId),
+      details: {
+        kind: "website" as const,
+        sites: ["google.com"],
+        username: "a@example.com",
+        profileId,
+      },
+      lastCheck: { state, at: "2026-10-31T00:00:00.000Z" },
+    });
+    expect(isBrowserSignIn(google("signed-in"))).toBe(true);
+    expect(
+      isBrowserSignIn({
+        ...website("work"),
+        details: { ...website("work").details, username: "a" },
+      } as AccountSummary),
+    ).toBe(false);
+    expect(signedOutOfGoogle([google("signed-out")], "work")).toBe(true);
+    expect(signedOutOfGoogle([google("signed-out"), google("signed-in")], "work")).toBe(false);
+    expect(signedOutOfGoogle([google("signed-out", "home")], "work")).toBe(false);
+    expect(signedOutOfGoogle([], "work")).toBe(false);
   });
 
   it("keeps working sign-ins and any Google session out of a refresh, per profile", () => {

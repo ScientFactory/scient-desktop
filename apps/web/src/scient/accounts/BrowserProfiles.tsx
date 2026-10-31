@@ -66,6 +66,7 @@ import {
   matchExistingProfile,
   mergeSourceProfiles,
   changedSourceProfile,
+  signedOutOfGoogle,
   sitesToKeep,
 } from "./accountsView";
 
@@ -925,9 +926,17 @@ export function BrowserProfiles({
                       </span>
                     ) : null}
                   </span>
-                  {profile.record.source?.email ? (
+                  {profile.record.source?.email ||
+                  signedOutOfGoogle(snapshot.accounts, profile.id) ? (
                     <span className="truncate text-xs text-muted-foreground">
-                      {profile.record.source.email}
+                      {[
+                        profile.record.source?.email,
+                        signedOutOfGoogle(snapshot.accounts, profile.id)
+                          ? "Signed out of Google"
+                          : undefined,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </span>
                   ) : null}
                 </span>

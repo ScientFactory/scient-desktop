@@ -519,13 +519,24 @@ export function isSavedPassword(account: AccountSummary) {
   return account.details.kind === "website" && account.secrets.password !== undefined;
 }
 
-/** A website account that is only a profile's session: no password and no username. */
+/** A website account that is only a profile's session: no password, and no username but Google's. */
 export function isBrowserSignIn(account: AccountSummary) {
   return (
     account.details.kind === "website" &&
     account.secrets.password === undefined &&
-    account.details.username === undefined
+    (account.details.username === undefined || account.details.sites.includes(GOOGLE_SITE))
   );
+}
+
+/** Google knows this profile's accounts, and none of them works here any more. */
+export function signedOutOfGoogle(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
+  const rows = accounts.filter(
+    ({ details }) =>
+      details.kind === "website" &&
+      details.profileId === profileId &&
+      details.sites.includes(GOOGLE_SITE),
+  );
+  return rows.length > 0 && rows.every(({ lastCheck }) => lastCheck?.state === "signed-out");
 }
 
 /**
