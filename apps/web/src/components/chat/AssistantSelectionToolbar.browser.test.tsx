@@ -55,8 +55,9 @@ it.each([
     );
     const action = () =>
       document.querySelector<HTMLButtonElement>('button[aria-label="Ask in chat"]');
-    await expect.poll(() => action()?.style.left).toBe(`${expected.x}px`);
-    expect(action()!.style.top).toBe(`${expected.y}px`);
+    const bar = () => action()?.closest<HTMLElement>('[role="group"]');
+    await expect.poll(() => bar()?.style.left).toBe(`${expected.x}px`);
+    expect(bar()!.style.top).toBe(`${expected.y}px`);
     action()!.click();
     expect(onCite).toHaveBeenCalledWith(citation, sourceAnchor, "chat");
   } finally {

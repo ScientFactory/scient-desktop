@@ -12,11 +12,9 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { useComposerHandleContext } from "~/composerHandleContext";
-import { useStableCallback } from "~/hooks/useStableCallback";
-import { CitationActionPill, focusCitationAction } from "~/scient/chat/CitationActionPill";
+import { CitationActionBar } from "~/scient/chat/CitationActionBar";
 import { SideChatCitationContext } from "~/scient/chat/sideChatCitation";
 import {
   observeSelectionActions,
@@ -168,10 +166,7 @@ function PdfAskInChat(props: {
   const composerRef = useComposerHandleContext();
   const citeInSideChat = use(SideChatCitationContext);
   const [shown, setShown] = useState<(Captured & { position: SelectionActionPoint }) | null>(null);
-  const buttonRef = useRef<HTMLElement>(null);
-  const setButton = useStableCallback((button: HTMLElement | null) => {
-    buttonRef.current = button;
-  });
+  const buttonRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const { container, ready, runtimeRef, source, citeThread } = props;
   const identity = pdfDocumentIdentity(source);
@@ -267,7 +262,7 @@ function PdfAskInChat(props: {
       }
       event.preventDefault();
       event.stopPropagation();
-      focusCitationAction(button);
+      button.querySelector("button")?.focus({ preventScroll: true });
     };
     document.addEventListener("keydown", focusAction, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
@@ -328,37 +323,16 @@ function PdfAskInChat(props: {
     window.getSelection()?.removeAllRanges();
     dismiss();
   };
-  if (citeInSideChat && refusal === null) {
-    return createPortal(
-      <CitationActionPill
-        ref={setButton}
-        pdf
-        style={{ left: shown.position.x, top: shown.position.y }}
-        onAskInChat={ask}
-        onAskInSideChat={askInSideChat}
-        onKeyDown={dismissOnEscape}
-      />,
-      document.body,
-    );
-  }
   return createPortal(
-    <Button
-      ref={setButton}
-      type="button"
-      size="xs"
-      variant="glass"
-      // Stays focusable when refused, so the reason is read out, not skipped.
-      aria-disabled={refusal !== null || undefined}
-      aria-label={refusal ?? "Ask in chat"}
-      data-pdf-ask-in-chat=""
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+    <CitationActionBar
+      ref={buttonRef}
+      pdf
       style={{ left: shown.position.x, top: shown.position.y }}
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={ask}
+      {...(refusal === null ? {} : { label: refusal, refused: true })}
+      onAskInChat={ask}
+      onAskInSideChat={citeInSideChat && refusal === null ? askInSideChat : undefined}
       onKeyDown={dismissOnEscape}
-    >
-      <span aria-live="polite">{refusal ?? "Ask in chat"}</span>
-    </Button>,
+    />,
     document.body,
   );
 }

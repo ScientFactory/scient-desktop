@@ -24,10 +24,8 @@ import {
   resolveSelectionActionPosition,
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
-import { useStableCallback } from "~/hooks/useStableCallback";
-import { CitationActionPill, focusCitationAction } from "~/scient/chat/CitationActionPill";
+import { CitationActionBar } from "~/scient/chat/CitationActionBar";
 import { SideChatCitationContext, type CitationDestination } from "~/scient/chat/sideChatCitation";
-import { Button } from "../ui/button";
 import { BackgroundThreadContext } from "./backgroundThread";
 
 export function SelectionCitationToolbar<T extends { readonly text: string }>({
@@ -56,10 +54,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const toolbarRef = useRef<HTMLElement>(null);
-  const setToolbar = useStableCallback((toolbar: HTMLElement | null) => {
-    toolbarRef.current = toolbar;
-  });
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const backgroundThread = use(BackgroundThreadContext);
   const sideChatOffered = use(SideChatCitationContext) !== null;
@@ -189,10 +184,11 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       ) {
         return;
       }
-      if (toolbar.matches(":disabled")) return;
+      const action = toolbar.querySelector("button");
+      if (!action || action.disabled) return;
       event.preventDefault();
       event.stopPropagation();
-      focusCitationAction(toolbar);
+      action.focus({ preventScroll: true });
     };
     // Tab belongs to the foreground chat; a background timeline only follows its selection.
     if (!backgroundThread) document.addEventListener("keydown", focusActions, true);
@@ -225,36 +221,22 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       dismiss();
     }
   };
-  if (sideChatOffered && !tooLong) {
-    return createPortal(
-      <CitationActionPill
-        ref={setToolbar}
-        style={{ left: selection.position.x, top: selection.position.y }}
-        ownerId={selectionOwnerId}
-        onAskInChat={() => cite("chat")}
-        onAskInSideChat={() => cite("side-chat")}
-        onKeyDown={dismissOnEscape}
-      />,
-      document.body,
-    );
-  }
   return createPortal(
-    <Button
-      ref={setToolbar}
-      type="button"
-      size="xs"
-      variant="glass"
-      disabled={tooLong}
-      data-writing-menu-owner={selectionOwnerId}
-      aria-label={tooLong ? "Selection is too long to cite" : "Ask in chat"}
-      className="fixed z-50 max-w-[calc(100vw-1rem)]"
+    <CitationActionBar
+      ref={toolbarRef}
       style={{ left: selection.position.x, top: selection.position.y }}
-      onPointerDown={(event) => event.preventDefault()}
-      onClick={() => cite("chat")}
+      ownerId={selectionOwnerId}
+      {...(tooLong
+        ? {
+            label: "Shorten selection",
+            accessibleLabel: "Selection is too long to cite",
+            disabled: true,
+          }
+        : {})}
+      onAskInChat={() => cite("chat")}
+      onAskInSideChat={sideChatOffered && !tooLong ? () => cite("side-chat") : undefined}
       onKeyDown={dismissOnEscape}
-    >
-      {tooLong ? "Shorten selection" : "Ask in chat"}
-    </Button>,
+    />,
     document.body,
   );
 }
