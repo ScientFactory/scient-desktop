@@ -242,6 +242,19 @@ describe("Files panel search", () => {
     expect(screen.rowTop("package.json")).toBe(filteredTop);
   });
 
+  it("catches up with changes made in other apps on coming back to the window", async () => {
+    setup();
+    await using screen = await renderPanel();
+    await expect.poll(screen.visiblePaths).toEqual(["src/", "package.json"]);
+    files.directories[""]!.push(entry("from-elsewhere.tex"));
+    window.dispatchEvent(new Event("focus"));
+    await act(async () => undefined);
+    expect(screen.visiblePaths()).not.toContain("from-elsewhere.tex");
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    await expect.poll(screen.visiblePaths).toContain("from-elsewhere.tex");
+  });
+
   it("shows no matching files instead of the full tree when a filename is absent", async () => {
     setup();
     await using screen = await renderPanel();

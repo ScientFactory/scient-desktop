@@ -370,9 +370,20 @@ export default function FileBrowserPanel({
   const refreshOnReturn = useEffectEvent(refreshEntries);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window focus so the tree catches up with changes made in other apps
   useEffect(() => {
-    const onFocus = () => refreshOnReturn();
+    let away = false;
+    const onBlur = () => {
+      away = true;
+    };
+    const onFocus = () => {
+      if (away) refreshOnReturn();
+      away = false;
+    };
+    window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
   const handleRefresh = () => {
     refreshEntries();

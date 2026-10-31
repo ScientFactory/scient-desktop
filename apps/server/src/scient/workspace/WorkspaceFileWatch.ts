@@ -25,6 +25,10 @@ import { isNodeError } from "./WorkspaceFileErrors.ts";
 /** How often a watch checks that its folder is still the one it is attached to. */
 const WATCHED_FOLDER_CHECK = "2 seconds";
 
+/** Linux gives a new folder the inode of a deleted one at once, so the birth time counts too. */
+const folderIdentity = ({ dev, ino, birthtimeNs }: NodeFS.BigIntStats) =>
+  `${dev}:${ino}:${birthtimeNs}`;
+
 const isFolderMissing = (error: WorkspaceFileSystemOperationError) =>
   (error.operation === "realpath-watch-directory" || error.operation === "watch") &&
   (isNodeError(error.cause, "ENOENT") || isNodeError(error.cause, "ENOTDIR"));
@@ -142,10 +146,12 @@ export function makeWorkspaceFileWatch(deps: {
               Effect.acquireRelease(
                 Effect.try({
                   try: () => {
-                    const folder = NodeFS.statSync(watchDirectory, { bigint: true });
+                    const folder = folderIdentity(
+                      NodeFS.statSync(watchDirectory, { bigint: true }),
+                    );
                     const folderLost = () =>
                       NodeFSP.stat(watchDirectory, { bigint: true }).then(
-                        ({ dev, ino }) => dev !== folder.dev || ino !== folder.ino,
+                        (found) => folderIdentity(found) !== folder,
                         (error) => isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR"),
                       );
                     const changed = () =>
