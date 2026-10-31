@@ -52,7 +52,8 @@ export interface NotebookCellHandlers {
   readonly escape: (cellId: string) => void;
   readonly leave: (cellId: string, edge: NotebookCellEdge) => void;
   readonly insert: (cellId: string, cellType: NotebookCellType) => void;
-  readonly ask: (cellId: string) => void;
+  /** Absent where there is no chat to ask in. */
+  readonly ask: ((cellId: string) => void) | null;
   readonly delete: (cellId: string) => void;
   /** Opens the cell's editor with its caret there. */
   readonly edit: (cellId: string, caret: NotebookCaret) => void;
@@ -156,6 +157,11 @@ function CellAction(props: {
   );
 }
 
+/** A drag that selected text ends in a click, which must leave the selection alone. */
+function selectingText(): boolean {
+  return window.getSelection()?.isCollapsed === false;
+}
+
 function formatRunTime(ms: number): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
@@ -226,9 +232,8 @@ function CellGutter(props: {
 
 /** Insert and arrange live in a row of their own, so no control ever sits on a cell's code. */
 function CellRow(props: {
-  readonly canAsk: boolean;
   readonly onInsert: (type: NotebookCellType) => void;
-  readonly onAsk: () => void;
+  readonly onAsk: (() => void) | null;
   readonly onMove: (offset: -1 | 1) => void;
   readonly onDelete: () => void;
 }) {
@@ -245,7 +250,7 @@ function CellRow(props: {
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within/cell:opacity-100 group-hover/cell:opacity-100">
-        {props.canAsk ? (
+        {props.onAsk !== null ? (
           <CellAction label="Ask in chat" onClick={props.onAsk}>
             <MessageSquarePlus />
           </CellAction>
@@ -300,9 +305,11 @@ function StaticCode(props: {
   return (
     <pre
       className="min-w-0 cursor-text py-[calc(--spacing(1)+4px)] pr-[calc(--spacing(1)+2px)] pl-[calc(--spacing(1)+6px)] font-mono text-[13px] leading-[1.4] wrap-anywhere whitespace-break-spaces"
-      onClick={(event) =>
-        props.onEdit(textOffsetAt(event.currentTarget, event.clientX, event.clientY))
-      }
+      onClick={(event) => {
+        if (!selectingText()) {
+          props.onEdit(textOffsetAt(event.currentTarget, event.clientX, event.clientY));
+        }
+      }}
     >
       {spans === null
         ? source
@@ -369,6 +376,7 @@ export function NotebookCell(props: {
     <section
       ref={section}
       data-notebook-cell={cellId}
+      data-assistant-citation-source={cellId}
       role="application"
       aria-label={isCode ? "Code cell" : "Text cell"}
       tabIndex={-1}
@@ -377,9 +385,10 @@ export function NotebookCell(props: {
       onClick={() => controller.select(cellId)}
     >
       <CellRow
-        canAsk={isCode && cell.outputs.length > 0}
         onInsert={(type) => handlers.insert(cellId, type)}
-        onAsk={() => handlers.ask(cellId)}
+        onAsk={
+          handlers.ask === null || cell.source.trim() === "" ? null : () => handlers.ask?.(cellId)
+        }
         onMove={(offset) => controller.move(cellId, offset)}
         onDelete={() => handlers.delete(cellId)}
       />
@@ -409,7 +418,11 @@ export function NotebookCell(props: {
           {rendered ? (
             <div
               className="min-h-8 cursor-text px-3 py-1"
-              onClick={(event) => handlers.edit(cellId, { x: event.clientX, y: event.clientY })}
+              onClick={(event) => {
+                if (!selectingText()) {
+                  handlers.edit(cellId, { x: event.clientX, y: event.clientY });
+                }
+              }}
             >
               <RenderedText source={cell.source} live={live} />
             </div>

@@ -497,5 +497,14 @@ session, such as an open file or notebook, where its runs appear in Results mark
 notebooks they read, edit and run cells directly, and you see the changes in the open notebook. Agents
 see the output and figures of their runs, can read your runs, list a session's variables,
 interrupt or restart a session, and set up Scient-managed Python or its Toolkits. They run with the
-same authority as your own code. **Ask in chat** on a run puts a short reference to it in the chat;
-the agent finds the run itself.
+same authority as your own code.
+
+### Ask in chat
+
+**Ask in chat** works as it does in documents. Select text in the Console, in Results or in a
+notebook cell and choose **Ask in chat**: the quote becomes a chip in your message, with an optional
+comment. To ask about a whole run or cell, such as a figure, use the same action at its top right.
+The agent receives the text and where it came from, and reads the rest of the run or cell itself.
+
+Click a chip, in your message or a sent one, to go back to the quote. A run opens in its script or
+Console while they still hold its session, and otherwise in Compute history.

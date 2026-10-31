@@ -4,6 +4,7 @@
  */
 import {
   CONVERSATION_REFERENCE_URL_PREFIX,
+  isComputeCitation,
   isFileCitation,
   isPdfCitation,
   pdfCitationText,
@@ -13,6 +14,7 @@ import {
   type ConversationInlineReference,
 } from "@t3tools/contracts";
 import { collectComposerCitations } from "@t3tools/shared/composerCitations";
+import { computeCitationPlaceLabel } from "@t3tools/shared/computeCitations";
 import {
   collectComposerContextReferences,
   sanitizeComposerContextLabel,
@@ -220,6 +222,21 @@ export function projectInlineReferences(input: {
               startLine: citation.startLine,
               endLine: citation.endLine,
               unsaved: citation.origin === "draft",
+              text: citation.text,
+              comment: citation.comment ?? null,
+            },
+          };
+        }
+        if (isComputeCitation(citation)) {
+          // A run's ids mean nothing outside this installation, so its place stays in words.
+          return {
+            label: "Compute quote",
+            image: false,
+            reference: {
+              _tag: "compute-excerpt",
+              id,
+              label: "Compute quote",
+              place: computeCitationPlaceLabel(citation),
               text: citation.text,
               comment: citation.comment ?? null,
             },

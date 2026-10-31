@@ -51,6 +51,11 @@ project files: scripts with `%%` cells (`.py`, `.m`) and Jupyter notebooks (`.ip
   hash of host, platform, architecture and home (`<host>`, `<host>/<project>`), so a copied or
   synced profile never applies another computer's paths. An unscoped `executable` from older
   settings is migrated into this machine's slot at startup.
+- **Ask in chat** is the shared citation path, not a Compute one. `ComputeQuoteActions` puts
+  `SelectionCitationToolbar` on the feed and the notebook; a `ComputeCitation`
+  (`packages/shared/src/computeCitations.ts`) carries a run's ids or a notebook cell's id, so the agent
+  reads the rest with `scient_compute_output` or `scient_notebook_read`. A chip opens through
+  `openComputeCitation` and `computeQuoteReveal`.
 - **Console** is the Compute tab (`ComputeConsole`): it owns a session like a file tab does, starts it
   on the first run, and tags runs with the `console` source. A script tab with no session of its own
   borrows a live Console session of its language (`computeConsoleSession`, `borrowSession`). A

@@ -279,6 +279,10 @@
       "types": "./src/composerCitations.ts",
       "import": "./src/composerCitations.ts"
     },
+    "./computeCitations": {
+      "types": "./src/computeCitations.ts",
+      "import": "./src/computeCitations.ts"
+    },
     "./pdfCitations": {
       "types": "./src/pdfCitations.ts",
       "import": "./src/pdfCitations.ts"

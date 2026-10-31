@@ -11,6 +11,7 @@
     "apps/web/src/scient/compute",
     "apps/web/src/scient/latex",
     "apps/web/src/scient/layout",
+    "apps/web/src/scient/notebook",
     "apps/web/src/scient/artifacts",
     "apps/web/src/scient/previewPresentation",
     "apps/web/src/scient/fileSurfaces",
@@ -58,6 +59,7 @@
     "apps/server/src/scient/ScientAssetUrls.ts",
     "apps/server/src/scient/ScientWsServices.ts",
     "apps/web/src/components/files/FileRenameButton.tsx",
+    "apps/web/src/scient/markdownEditor/fileCitationNavigation.ts",
     "apps/web/src/scient/markdownEditor/persistence/renameOpenDocument.ts",
     "apps/web/src/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice.tsx",
     "apps/server/scripts/scientServerAssets.ts"
@@ -179,6 +181,11 @@
       "path": "apps/web/src/components/RightPanelTabs.tsx",
       "anchor": "onAddCompute",
       "purpose": "Present generic Scient artifact and compute tabs through the inherited right-panel chrome."
+    },
+    {
+      "path": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+      "anchor": "ComputeCitationHoverCard",
+      "purpose": "Draw a Compute quote with the shared citation chip, its hover card and its link back to the run or cell."
     },
     {
       "path": "apps/web/src/components/files/FilePreviewPanel.tsx",

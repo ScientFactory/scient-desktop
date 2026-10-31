@@ -20,7 +20,16 @@ import {
   type ComputeFileActionsHandle,
 } from "~/scient/compute/ComputeFileActions";
 import { ComputePanel } from "~/scient/compute/ComputePanel";
-import { askInChatAboutCompute } from "~/scient/compute/computeAskInChat";
+import {
+  ComputeQuoteActions,
+  useAskAboutCompute,
+  type ComputePlace,
+} from "~/scient/compute/ComputeQuoteActions";
+import {
+  finishComputeQuoteReveal,
+  showComputeQuote,
+  usePendingComputeQuote,
+} from "~/scient/compute/computeQuoteReveal";
 import { computeFileContextId, useComputeContextStore } from "~/scient/compute/computeContextStore";
 import type { ComputePanelView } from "~/scient/compute/computeFilePresentationStore";
 import { computeSourceLanguageForId } from "~/scient/compute/computeSourceLanguage";
@@ -156,6 +165,11 @@ export default function ScientNotebookSurface(props: {
   const lastKey = useRef<NotebookKeyPress | null>(null);
   const restartedTo = useRef<number | null>(null);
   const [{ setRoot: setScroller, watch: watchNear }] = useState(createNearWatcher);
+  const [scroller, setScrollerNode] = useState<HTMLDivElement | null>(null);
+  const attachScroller = useStableCallback((node: HTMLDivElement | null) => {
+    setScroller(node);
+    setScrollerNode(node);
+  });
   const [focusedCell, setFocusedCell] = useState<{ readonly cellId: string } | null>(null);
   const [submitting, setSubmitting] = useState<ReadonlySet<string>>(new Set());
   const [panelView, setPanelView] = useState<ComputePanelView | null>(null);
@@ -281,6 +295,12 @@ export default function ScientNotebookSurface(props: {
     setFocusedCell({ cellId });
   };
   const positionOf = (cellId: string) => controller.store.getState().order.indexOf(cellId);
+  const placeOfCell = useStableCallback((source: HTMLElement): ComputePlace | null => {
+    const cellId = source.closest<HTMLElement>("[data-notebook-cell]")?.dataset.notebookCell;
+    return cellId === undefined
+      ? null
+      : { _tag: "cell", path: props.relativePath, cellId, number: positionOf(cellId) + 1 };
+  });
   const cellAt = (index: number) => controller.store.getState().order[index];
   const addCell = (position: number, cellType: NotebookCellType) => {
     focusCell(controller.insert(position, cellType), "start");
@@ -359,6 +379,42 @@ export default function ScientNotebookSurface(props: {
     runCommand(command, cellId);
   };
 
+  const askAbout = useAskAboutCompute({ threadRef: props.threadRef, cwd: props.cwd });
+  const ask = useStableCallback((cellId: string) => {
+    const source = list.current?.querySelector<HTMLElement>(
+      `[data-notebook-cell="${CSS.escape(cellId)}"] [data-notebook-cell-box]`,
+    );
+    const place = source == null ? null : placeOfCell(source);
+    if (source == null || place === null) return;
+    askAbout?.({ source, place, text: controller.store.getState().cells[cellId]?.source ?? "" });
+  });
+  const revealing = usePendingComputeQuote(props.threadRef, (citation) =>
+    citation.place._tag === "cell" &&
+    citation.place.path === props.relativePath &&
+    citation.cwd === props.cwd
+      ? citation
+      : null,
+  );
+  const revealCell = useStableCallback(() => {
+    if (revealing === null || revealing.place._tag !== "cell" || status === "loading") return;
+    finishComputeQuoteReveal(revealing);
+    if (status === "failed") return;
+    const { cellId } = revealing.place;
+    if (!order.includes(cellId)) {
+      toastManager.add({ type: "warning", title: "That cell is no longer in this notebook" });
+      return;
+    }
+    focusCell(cellId, "cell");
+    const source = list.current?.querySelector<HTMLElement>(
+      `[data-notebook-cell="${CSS.escape(cellId)}"]`,
+    );
+    if (source != null && scroller !== null) {
+      showComputeQuote({ source, scroller, citation: revealing });
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a quote's chip selects its cell once the notebook has loaded
+  useEffect(() => revealCell());
+
   const handlers: NotebookCellHandlers = {
     run: useStableCallback(runAndAdvance),
     stop,
@@ -370,12 +426,7 @@ export default function ScientNotebookSurface(props: {
     insert: useStableCallback((cellId: string, cellType: NotebookCellType) =>
       addCell(positionOf(cellId), cellType),
     ),
-    ask: useStableCallback((cellId: string) =>
-      askInChatAboutCompute({
-        threadRef: props.threadRef,
-        what: `Cell ${positionOf(cellId) + 1} of ${props.relativePath}`,
-      }),
-    ),
+    ask: askAbout === null ? null : ask,
     delete: useStableCallback(deleteCell),
     edit: useStableCallback(focusCell),
     observeNear: watchNear,
@@ -475,7 +526,17 @@ export default function ScientNotebookSurface(props: {
           />
         </div>
       </div>
-      <div ref={setScroller} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
+      <div
+        ref={attachScroller}
+        data-assistant-citation-viewport=""
+        className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto"
+      >
+        <ComputeQuoteActions
+          viewport={scroller}
+          threadRef={props.threadRef}
+          cwd={props.cwd}
+          placeOf={placeOfCell}
+        />
         <div ref={list} className="mx-auto max-w-4xl pb-4" onKeyDown={onCommandKey}>
           {order.map((cellId) => (
             <NotebookCell

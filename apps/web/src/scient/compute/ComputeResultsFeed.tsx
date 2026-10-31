@@ -3,11 +3,14 @@ import type { ComputeExecutionRecord, ComputeSessionRecord } from "@t3tools/cont
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
 import { computeEnvironment } from "~/state/compute";
 import { useEnvironmentQuery } from "~/state/query";
 
 import type { ComputeFeedEntry } from "./computeFeedModel";
+import { ComputeQuoteActions, computeRunPlace } from "./ComputeQuoteActions";
+import { usePendingComputeQuote } from "./computeQuoteReveal";
 import { ComputeRunEntry, type ComputeRunEntryProps } from "./ComputeRunEntry";
 
 const FEED_PAGE = 30;
@@ -91,6 +94,21 @@ export function ComputeResultsFeed(
   const [shown, setShown] = useState(FEED_PAGE);
   const following = useRef(true);
   const viewport = useRef<HTMLDivElement>(null);
+  const [quoteViewport, setQuoteViewport] = useState<HTMLDivElement | null>(null);
+  const attachViewport = useStableCallback((node: HTMLDivElement | null) => {
+    viewport.current = node;
+    setQuoteViewport(node);
+  });
+  const revealRun = usePendingComputeQuote(shared.threadRef, ({ place }) =>
+    place._tag === "run" ? place.executionId : null,
+  );
+  const revealIndex = entries.findIndex(
+    (entry) => entry.kind === "run" && entry.execution.request.executionId === revealRun,
+  );
+  // A quote of an older run pages back until that run is on the page.
+  if (revealIndex >= 0 && shown < entries.length - revealIndex) {
+    setShown(entries.length - revealIndex);
+  }
   const visible = entries.slice(-shown);
   const newestKey = entries.findLast((entry) => entry.kind !== "restart")?.key ?? null;
 
@@ -118,10 +136,24 @@ export function ComputeResultsFeed(
     if (node !== null) node.scrollTop = node.scrollHeight;
     onFollowRequestConsumed?.(followRequest);
   }, [followRequest, onFollowRequestConsumed]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a quote's chip moves the reader to its run, so the feed stops following the end
+  useEffect(() => {
+    if (revealRun !== null) following.current = false;
+  }, [revealRun]);
 
   if (entries.length === 0 && lead == null) return <>{empty}</>;
   return (
-    <div ref={viewport} className="scrollbar-gutter-stable min-h-0 flex-1 overflow-y-auto">
+    <div
+      ref={attachViewport}
+      data-assistant-citation-viewport=""
+      className="scrollbar-gutter-stable min-h-0 flex-1 overflow-y-auto"
+    >
+      <ComputeQuoteActions
+        viewport={quoteViewport}
+        threadRef={shared.threadRef}
+        cwd={shared.cwd}
+        placeOf={computeRunPlace}
+      />
       <div ref={observe} className="divide-y divide-border/60 pb-2">
         {lead}
         {entries.length > visible.length ? (

@@ -20,6 +20,7 @@ import {
   useComputeConsoleRun,
 } from "./ComputeConsole";
 import { computeConsoleHistory, useComputeConsoleStore } from "./computeConsoleStore";
+import { usePendingComputeQuote } from "./computeQuoteReveal";
 import type { ComputeContextId } from "./computeContextStore";
 import { computeFeedEntries, type ComputeFeedEntry } from "./computeFeedModel";
 import type { ComputePanelView } from "./computeFilePresentationStore";
@@ -169,6 +170,17 @@ export function ComputePanel(props: {
     model,
   });
   const { contextBinding, selectedSession, liveSession, runtimes, events } = model;
+  const revealSessionId = usePendingComputeQuote(props.threadRef, ({ place }) =>
+    place._tag === "run" ? place.sessionId : null,
+  );
+  const revealHere = model.contextSessions.some((session) => session.sessionId === revealSessionId);
+  const { chooseSession } = model;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a quote's chip asks for a run in a session this panel may not be showing
+  useEffect(() => {
+    if (!revealHere || revealSessionId === null) return;
+    chooseSession(revealSessionId);
+    setPanelView("results");
+  }, [chooseSession, revealHere, revealSessionId, setPanelView]);
   const [openTable, setOpenTable] = useState<string | null>(null);
   const [runFileOpen, setRunFileOpen] = useState(false);
   const [followRun, setFollowRun] = useState<string | null>(null);
