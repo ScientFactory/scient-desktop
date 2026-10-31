@@ -18,6 +18,7 @@ import {
   type GrantScope,
   type ProjectId,
   type AccountStoresStatus,
+  type AccountsSnapshot,
   type AccountSummary,
   type AccountUseAction,
   type AccountSaveInput,
