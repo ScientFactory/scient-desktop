@@ -29,6 +29,7 @@ vi.mock("../state/session", () => ({
   readEnvironmentScope: (id: string) => fixture.allowed.has(id),
 }));
 vi.mock("../state/entities", () => ({
+  useQuietThreadProjection: () => null,
   useQuietThreadShell: () => null,
   useProject: () => null,
 }));

@@ -1998,7 +1998,10 @@ it.layer(
             ].toSorted(),
           );
           for (const id of ["personal", "work"]) {
-            assert.isBelow(afterUpdate.indexOf(`invalidate:${id}`), afterUpdate.indexOf(`probe:${id}`));
+            assert.isBelow(
+              afterUpdate.indexOf(`invalidate:${id}`),
+              afterUpdate.indexOf(`probe:${id}`),
+            );
             assert.include(events, `invalidate:${id}`);
             const provider = result.providers.find((p) => p.instanceId === id);
             assert.deepStrictEqual(

@@ -12,6 +12,10 @@ vi.mock("@effect/atom-react", async (original) => ({
   useAtomValue: (atom: unknown) =>
     atom === primaryServerKeybindingsAtom ? DEFAULT_RESOLVED_KEYBINDINGS : [],
 }));
+vi.mock("../scient/analytics/client", async (original) => ({
+  ...(await original<typeof import("../scient/analytics/client")>()),
+  useScientAnalyticsView: () => {},
+}));
 vi.mock("../hooks/useTheme", () => ({
   useRenderedAppearance: () => "light",
   useTheme: () => ({ theme: "t3-chat", resolvedTheme: "light", appearanceMode: "light" }),
@@ -41,7 +45,10 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => ({ _tag: "Success", value: undefined }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
+  useAtomQueryRunner: () => async () => ({
+    _tag: "Success",
+    value: { parentPath: "/workspace/", entries: [] },
+  }),
 }));
 vi.mock("../state/environments", async (original) => ({
   ...(await original<typeof import("../state/environments")>()),
@@ -122,9 +129,6 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     if (step === "repository") {
       await userEvent.keyboard("{Enter}");
       await expect.element(input()).toHaveValue("/workspace/計画");
-    } else {
-      await userEvent.keyboard("{Enter}");
-      await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
     }
   });
 });

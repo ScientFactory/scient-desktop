@@ -65,7 +65,7 @@ function RestoreBranchHarness(props: {
   readonly focusComposer: () => void;
 }) {
   const lifecycle = useThreadLifecycle({
-    scheduleComposerFocus: () => {},
+    scheduleComposerFocus: () => props.focusComposer(),
     ...props.thread,
     environmentId,
     currentRouteThreadKeyRef: props.currentRouteThreadKeyRef,

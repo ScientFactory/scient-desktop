@@ -619,6 +619,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`59bb4e83bcf753e6ebb99b63b5232f5f41251c8a` is recorded in
+[the 2026-10-31 59bb4e83bc receipt](docs/internals/t3-upstream-sync-20261031-59bb4e83bc.md).
+Literal merge `bcf7bf08725b71e805949d4d7e757947b8c4bffd` has owned base
+`3a3dec7711ba5eb07e31eb5c8a2ab0fa6a911c48` (#713, with main's #715) and the frozen official
+target as parents, retaining the 295 official commits after `97e35bcf23`. Every chat message
+renders through upstream's faster renderer, and messages without math intent also take its
+cache and last-block streaming; Scient's math, direction, image gallery and generated-image
+display stay. Upstream's migrations 074 and 075 land as Scient 078 and 079. Release remains
+separate.
+
+The previous committed alignment through
 `97e35bcf23e4dcf34c2dcffadd37c08db0e01e52` is recorded in
 [the 2026-10-30 97e35bcf23 receipt](docs/internals/t3-upstream-sync-20261030-97e35bcf23.md).
 Literal merge `fa47084190dd8c156172c23678b2e84bbea8a4a6` has owned base
@@ -629,7 +640,7 @@ messages continue after a later completed run, except those a Stop held. Provide
 secrets arrive behind upstream's off secrets
 flag. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `dd148481531a0a090780a2ade20588566db099a2` is recorded in
 [the 2026-10-30 dd14848153 receipt](docs/internals/t3-upstream-sync-20261030-dd14848153.md).
 Literal merge `e86962f1278340f6fdbdda071ebe1cc0a11aec22` has owned base

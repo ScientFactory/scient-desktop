@@ -378,10 +378,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       return;
     }
 
-    if (
-      currentRouteThreadKeyRef.current !== routeThreadKey ||
-      !readEnvironmentScope(environmentId, AuthSourceControlWriteScope)
-    ) {
+    if (!readEnvironmentScope(environmentId, AuthSourceControlWriteScope)) {
       finishRestore();
       return;
     }
@@ -408,7 +405,11 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     }
     gitStatusQuery.refresh();
     finishRestore();
-    if (currentRouteThreadKeyRef.current === routeThreadKey) scheduleComposerFocus();
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      window.requestAnimationFrame(() => {
+        if (currentRouteThreadKeyRef.current === routeThreadKey) scheduleComposerFocus();
+      });
+    }
   };
   const handleSwitchCheckoutToThreadStable = useStableCallback(() => {
     void handleSwitchCheckoutToThread();

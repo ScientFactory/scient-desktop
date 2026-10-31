@@ -2070,12 +2070,9 @@ function ChatMarkdown({
   const wholeMessage = messageRemarkPlugins !== sharedRemarkPlugins || markdownText !== text;
   // SCIENT-FORK:END
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
+  // SCIENT-FORK: the split outlives the stream, so a web image the reader loaded stays loaded.
   const streamingBlocks =
-    props.isStreaming === true &&
-    !inline &&
-    extraRemarkPlugins.length === 0 &&
-    !props.onTaskListChange &&
-    !wholeMessage
+    !inline && extraRemarkPlugins.length === 0 && !props.onTaskListChange && !wholeMessage
       ? splitMarkdownBlocks(text)
       : null;
   const incrementalParsing =

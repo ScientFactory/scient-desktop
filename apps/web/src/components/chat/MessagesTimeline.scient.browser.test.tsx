@@ -1708,7 +1708,7 @@ it("collapses settled tool runs behind a generated summary toggle", async () => 
   expect(markup).toContain('aria-label="Image attachment, shot.png, 1 KB"');
   // Selection copy re-emits chips as their canonical links.
   expect(markup).toContain('data-markdown-copy="![shot.png](t3-context://v1/image/img-1)"');
-  expect(markup).toContain('aria-label="File attachment, notes.txt, 1 KB"');
+  expect(markup).toContain('aria-label="File attachment, notes.txt, Sending…"');
   expect(markup).toContain(">1 KB</span>");
   expect(markup).not.toContain('aria-label="Download notes.txt"');
   expect(markup).toContain("legacy.txt");

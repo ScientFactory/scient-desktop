@@ -77,7 +77,11 @@ describe("ChatMarkdown BiDi seam", () => {
   });
 
   it("keeps raw parsing and sanitizing confined to the opted-in HTML plugin set", () => {
-    expect(CHAT_MARKDOWN_REHYPE_PLUGINS).toContain(rehypeRaw);
+    expect(
+      CHAT_MARKDOWN_REHYPE_PLUGINS.some(
+        (plugin) => typeof plugin === "function" && plugin.name === "rehypeRawWhenPresent",
+      ),
+    ).toBe(true);
     expect(
       CHAT_MARKDOWN_REHYPE_PLUGINS.some(
         (plugin) => Array.isArray(plugin) && plugin[0] === rehypeSanitize,
