@@ -31,7 +31,7 @@ import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjectPathSearch } from "~/state/queries";
 
 import { connectOverleaf, overleafRequestId, saveOverleafToken } from "./client";
-import { reportOverleafSync, runOverleafSync } from "./overleafActions";
+import { reportOverleafSync, runOverleafSync, unlinkOverleaf } from "./overleafActions";
 import {
   folderNameProblem,
   newFolderPath,
@@ -49,6 +49,7 @@ import {
   reloadOverleafWorkspaces,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
+  useOverleafWorkspace,
   type OverleafConnection,
 } from "./overleafStore";
 
@@ -115,6 +116,8 @@ export function ConnectOverleafDialog(props: {
   const [folderNameDraft, setName] = useState<string | null>(null);
   const [tokenDraft, setTokenDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // The standing link of this project that refused the connect, when one did.
+  const [linkedAlready, setLinkedAlready] = useState<OverleafConnection | null>(null);
   const [phase, setPhase] = useState<Phase>({ _tag: "form" });
   const [projectName, setProjectName] = useState("");
   const name =
@@ -126,6 +129,7 @@ export function ConnectOverleafDialog(props: {
   // Once made, the project stays: a refused link is tried again in it, never made twice.
   const [madeRoot, setMadeRoot] = useState<string | null>(null);
   const cwd = newProject ? (madeRoot ?? "") : props.cwd;
+  const workspace = useOverleafWorkspace(newProject ? null : environmentId, cwd);
   const busy = phase._tag === "working";
   // Until the token's status is known, Connect waits: without it, a missing
   // token would only show after the project was made.
@@ -141,6 +145,7 @@ export function ConnectOverleafDialog(props: {
   const connect = async () => {
     if (!tokenKnown) return;
     setError(null);
+    setLinkedAlready(null);
     const projectId = parseOverleafProjectInput(project);
     if (projectId === null) {
       setError("Paste the project's link from Overleaf, or its ID.");
@@ -229,8 +234,15 @@ export function ConnectOverleafDialog(props: {
         requestId: overleafRequestId(),
       });
       if (connected._tag === "refused") {
+        const existing =
+          connected.reason === "project-already-linked"
+            ? workspace.connections.find((link) => link.projectId === projectId)
+            : undefined;
+        setLinkedAlready(existing ?? null);
         setError(
-          `${projectMade ? MADE_NOT_LINKED : ""}${refusalText({ reason: connected.reason }, "connect")}`,
+          existing
+            ? `This Overleaf project is already linked to ${existing.folder === "" ? "the project's top folder" : existing.folder}.`
+            : `${projectMade ? MADE_NOT_LINKED : ""}${refusalText({ reason: connected.reason }, "connect")}`,
         );
         setPhase({ _tag: "form" });
         return;
@@ -272,6 +284,11 @@ export function ConnectOverleafDialog(props: {
       setError(`${projectMade ? MADE_NOT_LINKED : ""}${operationErrorText(failure, "connect")}`);
       setPhase({ _tag: "form" });
     }
+  };
+
+  /** Unlinks the folder the project is linked to, then links it here instead. */
+  const linkHereInstead = async (link: OverleafConnection) => {
+    if (await unlinkOverleaf(environmentId, cwd, link.connectionId)) await connect();
   };
 
   const view = phase._tag === "done" && phase.result ? overleafResultView(phase.result) : null;
@@ -540,6 +557,18 @@ export function ConnectOverleafDialog(props: {
                 <p className="text-sm text-destructive" role="alert">
                   {error}
                 </p>
+              ) : null}
+              {linkedAlready ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="self-start"
+                  disabled={busy}
+                  onClick={() => void linkHereInstead(linkedAlready)}
+                >
+                  Unlink it and link here
+                </Button>
               ) : null}
             </form>
           </DialogPanel>

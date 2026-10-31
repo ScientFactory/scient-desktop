@@ -152,6 +152,7 @@ import {
   ScientOverleafRestoreRequest,
   ScientOverleafRestoreResult,
   ScientOverleafSaveTokenRequest,
+  ScientOverleafRemoteState,
   ScientOverleafStatus,
   ScientOverleafSyncRequest,
   ScientOverleafSyncResult,
@@ -881,6 +882,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientOverleafConnectionRequest,
         success: ScientOverleafCancelResult,
+        error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("remoteState", "/api/scient/overleaf/v1/remote-state", {
+        headers: OptionalBearerHeaders,
+        payload: ScientOverleafConnectionRequest,
+        success: ScientOverleafRemoteState,
         error: [EnvironmentHttpCommonError, ScientOverleafOperationError],
       }).middleware(EnvironmentAuthenticatedAuth),
     )

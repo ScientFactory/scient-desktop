@@ -157,15 +157,19 @@ reads; it waits if a sync is already running.
 
 ### The chip
 
-The chip next to **Saved** shows the link's state without going online:
+The chip next to **Saved** shows the link's state. Scient asks Overleaf when you come
+back to the window and every couple of minutes, without changing anything. Changes
+only reach the folder when you sync.
 
-| Chip                 | Meaning                                                                       |
-| -------------------- | ----------------------------------------------------------------------------- |
-| **Up to date**       | The folder matches the last sync.                                             |
-| **Edits to send**    | The folder has changes since the last sync, or an earlier sync didn't finish. |
-| **Needs a decision** | A file still has Overleaf conflict marks, or was left half done.              |
-| **Overleaf problem** | The folder moved, its disk isn't connected, or it couldn't be read.           |
-| **Syncing…**         | A sync is running.                                                            |
+| Chip                    | Meaning                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| **Up to date**          | The folder and Overleaf match.                                                |
+| **Changes in Overleaf** | Overleaf has changes this folder doesn't have yet. Sync to bring them here.   |
+| **Edits to send**       | The folder has changes since the last sync, or an earlier sync didn't finish. |
+| **No edits to send**    | Nothing changed here. Scient hasn't heard from Overleaf yet.                  |
+| **Needs a decision**    | A file still has Overleaf conflict marks, or was left half done.              |
+| **Overleaf problem**    | The folder moved, its disk isn't connected, or it couldn't be read.           |
+| **Syncing…**            | A sync is running.                                                            |
 
 Click the **Sync with Overleaf** button beside the chip to sync in one click.
 Its menu has **Sync now** (**Cancel sync** while one runs), **See changes**, when
@@ -320,9 +324,15 @@ A sync stops with a reason, never a question, when:
 
 ## Unlink
 
-**Unlink** in **Settings ▸ Synced folders ▸ Overleaf** or **Project Settings ▸
-Overleaf** ends the link. Nothing is deleted, in the folder or on Overleaf.
-Linking the same folder to the same project again picks up where it left off.
+**Unlink from Overleaf** in the chip's menu, or **Unlink** in **Settings ▸ Synced
+folders ▸ Overleaf** or **Project Settings ▸ Overleaf**, ends the link. It always
+works, even if the folder is gone or a sync was interrupted; only a sync running right
+now has to finish or be cancelled first. Nothing is deleted, in the folder or on
+Overleaf. Linking the same folder to the same project again picks up where it left off.
+
+If you delete or move a linked folder, you can link the project again without
+unlinking first. A moved folder keeps its history. A new folder starts fresh, and the
+old link is put away.
 
 ## Messages
 
@@ -337,7 +347,7 @@ Linking the same folder to the same project again picks up where it left off.
 | The Overleaf project has no single main branch.                      | Ask Overleaf support; the project's Git history is unusual.                |
 | A folder with that name already has files.                           | Pick another name, or link that folder instead.                            |
 | This folder, or one inside or around it, is linked already.          | Use the existing link, or unlink it first.                                 |
-| This Overleaf project is linked to another folder of this project.   | Sync that folder instead.                                                  |
+| This Overleaf project is linked to another folder of this project.   | Sync that folder instead, or choose **Unlink it and link here**.           |
 | The project wasn't made: _reason_                                    | Fix what the reason says (often the location), then **Add** again.         |
 | The project is made, but Overleaf isn't linked yet.                  | Fix what follows it, then **Add** again; the project stays.                |
 | The token wasn't saved. Try again.                                   | Paste the token again and **Connect**; nothing was made.                   |
@@ -355,8 +365,8 @@ Linking the same folder to the same project again picks up where it left off.
 | The folder kept changing during the sync.                            | Sync again when edits pause.                                               |
 | Two names differ only by letter case or accents.                     | Rename one and sync again.                                                 |
 | Overleaf sent something Scient won't write.                          | Remove the link, repository or LFS file on Overleaf.                       |
-| The folder isn't there, or its disk isn't connected.                 | Connect the disk, or relink the folder.                                    |
-| This project's folder changed since it was linked.                   | Relink it.                                                                 |
+| The folder isn't there, or its disk isn't connected.                 | Connect the disk, or pick the folder at its new place.                     |
+| The linked folder was moved, renamed or deleted.                     | Link it again at its new place, or unlink it.                              |
 | Another Scient process holds the Overleaf state.                     | Quit the other Scient and sync again.                                      |
 | An earlier attempt stopped before it finished.                       | Try again; Scient never repeats an attempt that may have half run.         |
 | Scient can't read its Overleaf link records.                         | Nothing was linked or changed. Report it; the records need repair.         |

@@ -404,6 +404,10 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const syncs = new Map<string, { readonly operationId: string; cancelled: boolean }>();
   /** Contract section 3: renewal is serialized against token use. */
   const credentialLock = yield* Semaphore.make(CREDENTIAL_PERMITS);
+  /** One fetch into the private repositories at a time, so a check never collides with a sync. */
+  const fetching = yield* Semaphore.make(1);
+  /** Overleaf heads whose tree is the link's base though their commit is not: no need to fetch. */
+  const matchingHeads = new Map<string, string>();
   const credentialUnavailable = new OverleafGitExecutor.OverleafGitError({
     reason: "runtime-failed",
     exitCode: null,
@@ -435,11 +439,13 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
         Effect.gen(function* () {
           const token = yield* readToken;
           if (token === null || token.length === 0) return yield* credentialUnavailable;
-          return yield* repos.fetch({
-            repo: input.repo,
-            branch: input.connection.remote.branch,
-            token,
-          });
+          return yield* fetching.withPermits(1)(
+            repos.fetch({
+              repo: input.repo,
+              branch: input.connection.remote.branch,
+              token,
+            }),
+          );
         }),
       ),
     remoteHead: (input) =>
@@ -759,6 +765,37 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       connectionId: input.connectionId,
     });
     return { ...found, linkedElsewhere };
+  });
+
+  /**
+   * Whether Overleaf moved past what the folder took in. The status reads only the disk;
+   * this asks Overleaf, by its head first, and fetches only when the head differs. It
+   * changes neither the folder nor the link, and takes no hold, so a sync never waits on it.
+   */
+  const remoteState = Effect.fn("OverleafSync.remoteState")(function* (input: {
+    readonly caller: OverleafCaller;
+    readonly connectionId: string;
+  }) {
+    const { document } = yield* authorize(input.caller, input.connectionId);
+    const { base, remote, connectionId } = document;
+    if (document.state !== "active" || base.commit === null) return { state: "unknown" as const };
+    const repo = NodePath.join(options.stateRoot, "repositories", `${connectionId}.git`);
+    return yield* credentialLock.withPermits(1)(
+      Effect.gen(function* () {
+        const token = yield* readToken;
+        if (token === null || token.length === 0) return { state: "unknown" as const };
+        const head = yield* repos.remoteHead({ repo, branch: remote.branch, token });
+        if (head === null) return { state: "unknown" as const };
+        if (head === base.commit || head === matchingHeads.get(connectionId))
+          return { state: "same" as const };
+        const fetched = yield* fetching.withPermits(1)(
+          repos.fetch({ repo, branch: remote.branch, token }),
+        );
+        if (fetched.tree !== base.tree) return { state: "changed" as const };
+        matchingHeads.set(connectionId, head);
+        return { state: "same" as const };
+      }).pipe(Effect.catchIf(isGitFailure, () => Effect.succeed({ state: "unknown" as const }))),
+    );
   });
 
   const diff = Effect.fn("OverleafSync.diff")(function* (input: {
@@ -1294,6 +1331,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
     list,
     connect,
     status,
+    remoteState,
     preview,
     diff,
     sync,

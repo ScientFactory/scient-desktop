@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 const client = vi.hoisted(() => ({
+  readOverleafRemoteState: vi.fn(),
   readOverleafToken: vi.fn(),
   saveOverleafToken: vi.fn(),
   connectOverleaf: vi.fn(),
@@ -266,6 +267,34 @@ describe("ConnectOverleafDialog", () => {
       );
     },
   );
+
+  it("names the folder a project is linked to, and moves the link here in one click", async () => {
+    reset(true);
+    client.listOverleafConnections.mockResolvedValue({
+      connections: [{ ...summary("old-copy"), linkedHere: true }],
+    });
+    client.connectOverleaf
+      .mockResolvedValueOnce({ _tag: "refused", reason: "project-already-linked" })
+      .mockResolvedValue({ _tag: "connected", connection: summary("paper"), reconnected: false });
+    client.disconnectOverleaf.mockResolvedValue({ _tag: "done", connection: summary("old-copy") });
+    await using _screen = await render(
+      <ConnectOverleafDialog
+        environmentId={environmentId}
+        cwd="/work/project"
+        folder=""
+        onClose={() => undefined}
+      />,
+    );
+    await page.getByLabelText("Overleaf project").fill(`https://www.overleaf.com/project/${ID}`);
+    await page.getByLabelText("Folder name").fill("paper");
+    await page.getByRole("button", { name: "Connect" }).click();
+    await expect
+      .element(page.getByText("This Overleaf project is already linked to old-copy."))
+      .toBeVisible();
+    await page.getByRole("button", { name: "Unlink it and link here" }).click();
+    await expect.poll(() => client.connectOverleaf.mock.calls.length).toBe(2);
+    expect(client.disconnectOverleaf).toHaveBeenCalledOnce();
+  });
 
   it("refuses a link that isn't Overleaf's, and shows the server's reason on the form", async () => {
     reset(true);

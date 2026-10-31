@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 const client = vi.hoisted(() => ({
+  readOverleafRemoteState: vi.fn(),
   readOverleafToken: vi.fn(),
   saveOverleafToken: vi.fn(),
   removeOverleafToken: vi.fn(),
@@ -128,6 +129,35 @@ describe("Settings ▸ Synced folders ▸ Overleaf", () => {
 });
 
 describe("Project Settings ▸ Overleaf", () => {
+  it("says a link's folder is gone, offers no sync, and still unlinks it", async () => {
+    reset(true);
+    client.listOverleafConnections.mockResolvedValue({ connections: [link("c1", "paper")] });
+    client.readOverleafStatus.mockResolvedValue({
+      availability: "unavailable",
+      reasons: ["folder-changed"],
+      local: null,
+      connection: link("c1", "paper"),
+      markerPaths: [],
+      unresolvedSends: 0,
+      keptCopies: 0,
+      busy: false,
+      revision: 1,
+      linkedElsewhere: false,
+    });
+    client.disconnectOverleaf.mockResolvedValue({ _tag: "done", connection: link("c1", "paper") });
+    await using _screen = await render(
+      <OverleafProjectSettingsSection
+        environmentId={environmentId}
+        workspaceRoot="/work/project"
+      />,
+    );
+    const row = page.getByRole("group", { name: "paper" });
+    await expect.element(row.getByText(/moved, renamed or deleted/u)).toBeVisible();
+    await expect.element(row.getByRole("button", { name: "Sync now" })).not.toBeInTheDocument();
+    await row.getByRole("button", { name: "Unlink" }).click();
+    await expect.poll(() => client.disconnectOverleaf.mock.calls.length).toBe(1);
+  });
+
   it("shows this project's links with Sync now, Open in Overleaf and Unlink", async () => {
     reset(true);
     let links = [link("c1", "paper"), link("c2", "slides")];

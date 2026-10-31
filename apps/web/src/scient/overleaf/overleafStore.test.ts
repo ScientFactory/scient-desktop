@@ -2,6 +2,8 @@ import { EnvironmentId, type ScientOverleafStatus } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const client = vi.hoisted(() => ({
+  readOverleafRemoteState: vi.fn(),
+  disconnectOverleaf: vi.fn(),
   listOverleafConnections: vi.fn(),
   readOverleafStatus: vi.fn(),
   readOverleafToken: vi.fn(),

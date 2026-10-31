@@ -14,6 +14,7 @@ import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
 import { ComposerHandleContext } from "~/composerHandleContext";
 
 const client = vi.hoisted(() => ({
+  readOverleafRemoteState: vi.fn(),
   readOverleafToken: vi.fn(),
   saveOverleafToken: vi.fn(),
   removeOverleafToken: vi.fn(),

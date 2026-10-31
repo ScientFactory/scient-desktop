@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vitest/browser";
 
 const client = vi.hoisted(() => ({
+  readOverleafRemoteState: vi.fn(),
   readOverleafToken: vi.fn(),
   saveOverleafToken: vi.fn(),
   connectOverleaf: vi.fn(),

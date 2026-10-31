@@ -416,6 +416,18 @@ export const scientOverleafHttpApiLayer = HttpApiBuilder.group(
           );
         }),
       )
+      .handle("remoteState", ({ endpoint, payload }) =>
+        Effect.gen(function* () {
+          yield* annotateEnvironmentRequest(endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* mapErrors(
+            overleaf.remoteState({
+              caller: workspace(payload.workspaceRoot),
+              connectionId: payload.connectionId,
+            }),
+          );
+        }),
+      )
       .handle("relink", ({ endpoint, payload }) =>
         Effect.gen(function* () {
           yield* annotateEnvironmentRequest(endpoint.name);

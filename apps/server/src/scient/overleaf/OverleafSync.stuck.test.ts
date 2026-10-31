@@ -334,6 +334,58 @@ describe.skipIf(!canApply)("a link never traps anyone", () => {
     ),
   );
 
+  it.live("says when Overleaf holds changes, by asking Overleaf", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const id = yield* linked(w);
+        const asked = w.service.remoteState({ caller: w.at(w.main), connectionId: id });
+        expect(yield* asked).toEqual({ state: "same" });
+        yield* w.collaborate(PROJECT, { "main.tex": "edited on Overleaf" });
+        expect(yield* asked).toEqual({ state: "changed" });
+        // Asking changes nothing here: the folder waits for a sync.
+        expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("from Overleaf");
+        yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s2" });
+        expect(yield* asked).toEqual({ state: "same" });
+      }),
+    ),
+  );
+
+  it.live("doesn't call a new Overleaf commit a change when its files are the same", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const id = yield* linked(w);
+        yield* w.collaborate(PROJECT, { "main.tex": "from Overleaf" });
+        const asked = w.service.remoteState({ caller: w.at(w.main), connectionId: id });
+        expect(yield* asked).toEqual({ state: "same" });
+        expect(yield* asked).toEqual({ state: "same" });
+      }),
+    ),
+  );
+
+  it.live("answers unknown for a link that never synced", () =>
+    run(
+      Effect.gen(function* () {
+        const w = yield* world();
+        const connected = yield* w.service.connect({
+          caller: w.at(w.main),
+          folder: "paper",
+          create: true,
+          project: PROJECT,
+          requestId: "c1",
+        });
+        if (connected._tag !== "connected") return yield* Effect.die(connected);
+        expect(
+          yield* w.service.remoteState({
+            caller: w.at(w.main),
+            connectionId: connected.connection.connectionId,
+          }),
+        ).toEqual({ state: "unknown" });
+      }),
+    ),
+  );
+
   it.live("links one Overleaf project into two different Scient projects", () =>
     run(
       Effect.gen(function* () {

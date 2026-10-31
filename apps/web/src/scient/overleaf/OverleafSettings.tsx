@@ -16,28 +16,15 @@ import { searchableSetting } from "~/components/settings/settingsSearch";
 import { Button, InlineButton } from "~/components/ui/button";
 import { Collapsible, CollapsibleContent } from "~/components/ui/collapsible";
 import { Label } from "~/components/ui/label";
-import { toastManager } from "~/components/ui/toast";
 import { cn } from "~/lib/utils";
 import { OverleafMark } from "~/scient/files/ExternalFolderMarks";
 import { useProjects } from "~/state/entities";
 
-import {
-  disconnectOverleaf,
-  overleafRequestId,
-  removeOverleafToken,
-  saveOverleafToken,
-} from "./client";
+import { removeOverleafToken, saveOverleafToken } from "./client";
 import { lastSyncLabel } from "./OverleafFileChip";
-import { openOverleafProject, runOverleafSync } from "./overleafActions";
+import { openOverleafProject, runOverleafSync, unlinkOverleaf } from "./overleafActions";
+import { OVERLEAF_TOKEN_PAGE_URL, operationErrorText, overleafChipView } from "./overleafModel";
 import {
-  OVERLEAF_TOKEN_PAGE_URL,
-  operationErrorText,
-  overleafChipView,
-  refusalText,
-} from "./overleafModel";
-import {
-  forgetOverleafConnection,
-  reloadOverleafWorkspaces,
   setOverleafTokenSaved,
   useOverleafTokenSaved,
   useNoOverleafLinks,
@@ -158,35 +145,8 @@ function OverleafProjectLinks(props: {
   }
   const unlink = async (connectionId: string) => {
     setUnlinking(connectionId);
-    await settleOverleafOperation(
-      async () => {
-        const result = await disconnectOverleaf(environmentId, {
-          workspaceRoot,
-          connectionId,
-          requestId: overleafRequestId(),
-        });
-        // Unlinked: what this window remembered of the link (its review, decisions) goes too.
-        if (result._tag === "done") forgetOverleafConnection(environmentId, connectionId);
-        if (result._tag === "refused") {
-          toastManager.add({
-            type: "error",
-            title: "Couldn't unlink",
-            description: refusalText({ reason: result.reason }),
-          });
-        }
-      },
-      (failure) => {
-        toastManager.add({
-          type: "error",
-          title: "Couldn't unlink",
-          description: operationErrorText(failure),
-        });
-      },
-      () => {
-        setUnlinking(null);
-        void reloadOverleafWorkspaces(environmentId, workspaceRoot);
-      },
-    );
+    await unlinkOverleaf(environmentId, workspaceRoot, connectionId);
+    setUnlinking(null);
   };
   const Row = asSettingsRows ? "div" : "li";
   const rows = workspace.connections.map((connection) => {
@@ -195,7 +155,10 @@ function OverleafProjectLinks(props: {
       workspace.statuses.get(connection.connectionId) ?? null,
       syncing,
       workspace.lastSync.get(connection.connectionId)?.result ?? null,
+      workspace.remoteStates.get(connection.connectionId) ?? null,
     );
+    const folderGone =
+      workspace.statuses.get(connection.connectionId)?.availability === "unavailable";
     return (
       <Row
         key={connection.connectionId}
@@ -216,25 +179,31 @@ function OverleafProjectLinks(props: {
           <p className="truncate text-sm font-medium tracking-subtle text-foreground">
             {connection.folder === "" ? "Project's top folder" : connection.folder}
           </p>
-          <p className="truncate text-xs text-muted-foreground">
-            {view.label} ·{" "}
-            {lastSyncLabel({
-              lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
-              completedSyncCount: connection.completedSyncCount,
-              updatedAt: connection.updatedAt,
-            })}
-            {connection.linkedHere ? "" : " · Another copy"}
-          </p>
+          {view.state === "problem" ? (
+            <p className="text-xs text-destructive">{view.detail}</p>
+          ) : (
+            <p className="truncate text-xs text-muted-foreground">
+              {view.label} ·{" "}
+              {lastSyncLabel({
+                lastSyncAt: workspace.syncedAt.get(connection.connectionId) ?? null,
+                completedSyncCount: connection.completedSyncCount,
+                updatedAt: connection.updatedAt,
+              })}
+              {connection.linkedHere ? "" : " · Another copy"}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap gap-1.5">
-          <Button
-            size="xs"
-            variant="outline"
-            disabled={syncing}
-            onClick={() => void runOverleafSync({ environmentId, workspaceRoot, connection })}
-          >
-            {syncing ? "Syncing…" : "Sync now"}
-          </Button>
+          {folderGone ? null : (
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={syncing}
+              onClick={() => void runOverleafSync({ environmentId, workspaceRoot, connection })}
+            >
+              {syncing ? "Syncing…" : "Sync now"}
+            </Button>
+          )}
           <Button
             size="xs"
             variant="ghost"
