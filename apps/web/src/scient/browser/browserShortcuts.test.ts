@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
-import { canAddShortcut, useBrowserShortcuts, visibleShortcuts } from "./browserShortcuts";
+import {
+  canAddShortcut,
+  GOOGLE_APPS,
+  useBrowserShortcuts,
+  visibleShortcuts,
+} from "./browserShortcuts";
 
 const names = () => visibleShortcuts(useBrowserShortcuts.getState()).map(({ name }) => name);
 const visit = (url: string, times = 1, at = 1_000) => {
@@ -15,7 +20,7 @@ beforeEach(() => {
 
 describe("visibleShortcuts", () => {
   it("starts with the scientific sites and Google's apps", () => {
-    expect(names()).toEqual(["Scholar", "PubMed", "arXiv", "Overleaf", "Drive", "Calendar"]);
+    expect(names()).toEqual(["Scholar", "PubMed", "arXiv", "Overleaf", "Calendar"]);
   });
 
   it("puts added sites first, then the most opened, then the starting set", () => {
@@ -42,9 +47,9 @@ describe("visibleShortcuts", () => {
   });
 
   it("names a known site and doesn't repeat it from the starting set", () => {
-    visit("https://drive.google.com/drive/my-drive", 5);
-    expect(names().filter((name) => name === "Drive")).toHaveLength(1);
-    expect(names()[0]).toBe("Drive");
+    visit("https://calendar.google.com/calendar/u/0/r", 5);
+    expect(names().filter((name) => name === "Calendar")).toHaveLength(1);
+    expect(names()[0]).toBe("Calendar");
   });
 
   it("names and pictures a Google app reached from anywhere", () => {
@@ -56,9 +61,11 @@ describe("visibleShortcuts", () => {
     });
   });
 
-  it("leaves Google and Gmail to the row above", () => {
+  it("leaves Google, Gmail and Drive to the row above", () => {
     visit("https://www.google.com/search?q=a", 5);
     visit("https://mail.google.com/mail/u/0/#inbox", 5);
+    visit("https://drive.google.com/drive/my-drive", 5);
+    expect(names()).not.toContain("Drive");
     expect(names()).not.toContain("google.com");
     expect(names()).not.toContain("mail.google.com");
     expect(names()).not.toContain("Gmail");
@@ -93,6 +100,11 @@ describe("visibleShortcuts", () => {
     expect(canAddShortcut(useBrowserShortcuts.getState().added)).toBe(false);
     expect(names()).toHaveLength(8);
   });
+});
+
+it("fills a four by four Apps menu with different apps", () => {
+  expect(new Set(GOOGLE_APPS.map(({ name }) => name)).size).toBe(16);
+  expect(GOOGLE_APPS.every(({ icon }) => icon?.startsWith("data:image/"))).toBe(true);
 });
 
 describe("recordVisit", () => {

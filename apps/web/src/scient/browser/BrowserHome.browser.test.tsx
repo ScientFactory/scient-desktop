@@ -17,15 +17,17 @@ function renderHome(onOpenUrl: (url: string) => void = vi.fn()) {
   return render(<BrowserHome threadRef={threadRef} onOpenUrl={onOpenUrl} />);
 }
 
-it("opens Google, Gmail and each shortcut", async () => {
+it("opens Google, Gmail, Drive and each shortcut", async () => {
   const onOpenUrl = vi.fn();
   await using _screen = await renderHome(onOpenUrl);
   await page.getByRole("button", { name: "Google", exact: true }).click();
   await page.getByRole("button", { name: "Gmail" }).click();
+  await page.getByRole("button", { name: "Drive", exact: true }).click();
   await page.getByRole("button", { name: "PubMed" }).first().click();
   expect(onOpenUrl.mock.calls.map(([url]) => url)).toEqual([
     "https://www.google.com/",
     "https://mail.google.com/mail/",
+    "https://drive.google.com/",
     "https://pubmed.ncbi.nlm.nih.gov/",
   ]);
 });
@@ -34,7 +36,7 @@ it("opens an app from the Apps menu and closes it", async () => {
   const onOpenUrl = vi.fn();
   await using _screen = await renderHome(onOpenUrl);
   await page.getByRole("button", { name: "Apps" }).click();
-  for (const app of ["Account", "Tasks", "YouTube"]) {
+  for (const app of ["Account", "Tasks", "YouTube", "Photos", "Notebook", "Colab"]) {
     await expect.element(page.getByRole("button", { name: app, exact: true })).toBeVisible();
   }
   await page.getByRole("button", { name: "Sheets" }).click();

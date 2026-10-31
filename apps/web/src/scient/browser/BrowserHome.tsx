@@ -20,6 +20,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 
 import {
   canAddShortcut,
+  DRIVE,
   GMAIL,
   GOOGLE,
   GOOGLE_APPS,
@@ -75,7 +76,7 @@ function GoogleApps({
         Apps
       </PopoverTrigger>
       <PopoverPopup padding="tight">
-        <div className="grid w-64 grid-cols-3 gap-1">
+        <div className="grid w-80 grid-cols-4 gap-1">
           {GOOGLE_APPS.map((app) => (
             <button
               key={app.name}
@@ -211,7 +212,7 @@ function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onCl
   );
 }
 
-/** What an empty browser tab offers first: Google, Gmail, the apps and the user's shortcuts. */
+/** What an empty browser tab offers first: Google's main apps and the user's shortcuts. */
 export function BrowserHome({
   threadRef,
   onOpenUrl,
@@ -228,7 +229,7 @@ export function BrowserHome({
   return (
     <div className="flex flex-col items-center gap-5">
       <div className="flex flex-wrap items-center justify-center gap-1">
-        {[GOOGLE, GMAIL].map((site) => (
+        {[GOOGLE, GMAIL, DRIVE].map((site) => (
           <Button key={site.name} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
             <SiteIcon threadRef={threadRef} site={site} className="size-4 object-contain" />
             {site.name}

@@ -54,8 +54,12 @@ export const GOOGLE: HomeSite = {
   icon: ICONS.google,
 };
 export const GMAIL: HomeSite = { name: "Gmail", url: GMAIL_URL, icon: ICONS.gmail };
+export const DRIVE: HomeSite = {
+  name: "Drive",
+  url: "https://drive.google.com/",
+  icon: ICONS.drive,
+};
 
-const DRIVE: HomeSite = { name: "Drive", url: "https://drive.google.com/", icon: ICONS.drive };
 const CALENDAR: HomeSite = {
   name: "Calendar",
   url: "https://calendar.google.com/",
@@ -67,19 +71,26 @@ const SCHOLAR: HomeSite = {
   icon: ICONS.scholar,
 };
 
+/** Sites with their own place at the top of the page, so never a shortcut too. */
+const TOP_ROW: ReadonlyArray<HomeSite> = [GOOGLE, GMAIL, DRIVE];
+
 export const GOOGLE_APPS: ReadonlyArray<HomeSite> = [
   { name: "Account", url: "https://myaccount.google.com/", icon: ICONS.account },
-  DRIVE,
   CALENDAR,
   { name: "Docs", url: "https://docs.google.com/document/", icon: ICONS.docs },
   { name: "Sheets", url: "https://docs.google.com/spreadsheets/", icon: ICONS.sheets },
   { name: "Slides", url: "https://docs.google.com/presentation/", icon: ICONS.slides },
+  { name: "Forms", url: "https://docs.google.com/forms/", icon: ICONS.forms },
   { name: "Meet", url: "https://meet.google.com/", icon: ICONS.meet },
   { name: "Tasks", url: "https://tasks.google.com/", icon: ICONS.tasks },
+  { name: "Photos", url: "https://photos.google.com/", icon: ICONS.photos },
   { name: "YouTube", url: "https://www.youtube.com/", icon: ICONS.youtube },
-  SCHOLAR,
   { name: "Maps", url: "https://maps.google.com/", icon: ICONS.maps },
   { name: "Translate", url: "https://translate.google.com/", icon: ICONS.translate },
+  SCHOLAR,
+  { name: "Notebook", url: "https://notebook.google.com/", icon: ICONS.notebook },
+  { name: "Gemini", url: "https://gemini.google.com/", icon: ICONS.gemini },
+  { name: "Colab", url: "https://colab.research.google.com/", icon: ICONS.colab },
 ];
 
 const STARTING_SITES: ReadonlyArray<HomeSite> = [
@@ -87,7 +98,6 @@ const STARTING_SITES: ReadonlyArray<HomeSite> = [
   { name: "PubMed", url: "https://pubmed.ncbi.nlm.nih.gov/", icon: ICONS.pubmed },
   { name: "arXiv", url: "https://arxiv.org/", icon: ICONS.arxiv },
   { name: "Overleaf", url: "https://www.overleaf.com/", icon: ICONS.overleaf },
-  DRIVE,
   CALENDAR,
 ];
 
@@ -129,8 +139,8 @@ function shortcutFor(url: string, key: string, name?: string): Shortcut {
 
 /** The user's sites, then what they open most, then the starting set, without repeating a site. */
 export function visibleShortcuts({ added, names, hidden, visits }: SavedShortcuts): Shortcut[] {
-  const onHomeAlready = [GOOGLE, GMAIL].flatMap((site) => siteKeyOf(site.url) ?? []);
-  const taken = new Set([...hidden, ...onHomeAlready]);
+  const onTopRow = TOP_ROW.flatMap((site) => siteKeyOf(site.url) ?? []);
+  const taken = new Set([...hidden, ...onTopRow]);
   const shortcuts = added.flatMap((url) => {
     const key = siteKeyOf(url);
     if (!key) return [];
