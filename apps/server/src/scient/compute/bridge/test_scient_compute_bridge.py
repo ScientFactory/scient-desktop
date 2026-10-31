@@ -679,6 +679,7 @@ class TestSourceCache(unittest.TestCase):
             compile=types.SimpleNamespace(cache=lambda *args: "<fallback>"),
             events=types.SimpleNamespace(register=lambda *args: None),
             user_ns={},
+            config=types.SimpleNamespace(InlineBackend=types.SimpleNamespace()),
         )
         self.context = {
             "get_ipython": lambda: self.shell,
