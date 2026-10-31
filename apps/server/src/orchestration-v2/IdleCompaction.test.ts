@@ -380,6 +380,7 @@ describe("IdleCompactionService", () => {
                     }
                   : {},
               }),
+              committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
             }),
           );
           yield* Effect.gen(function* () {

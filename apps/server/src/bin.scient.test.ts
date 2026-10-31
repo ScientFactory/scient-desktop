@@ -160,7 +160,7 @@ describe("Restored bin.test.ts", () => {
       ThreadManagement.layer.pipe(Layer.provide(replay)),
     ).pipe(
       Layer.provideMerge(ProjectEnrichmentService.layer),
-      Layer.provide(
+      Layer.provideMerge(
         Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ discard: () => Effect.void }),
       ),
       Layer.provideMerge(RepositoryIdentityResolver.layer),

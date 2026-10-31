@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import type { OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -47,6 +47,7 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
               snoozeLimitedThreads: false,
             } as never),
             streamChanges: Stream.never,
+            committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
           }),
         ),
       ),

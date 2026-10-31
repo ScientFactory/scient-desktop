@@ -396,7 +396,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   (${piContextExtension.toString()})(pi);
 
   // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
-  // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
+  // replacement reruns this factory without project_trust, and the app drops notices outside a turn,
   // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.
   let projectTrustChecked = false;
   pi.on("before_agent_start", (_event, ctx) => {

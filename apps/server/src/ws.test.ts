@@ -675,6 +675,7 @@ it.effect(
               },
               {},
               yield* ServerBrowser.ServerBrowser,
+              () => Effect.void,
             ).pipe(Layer.provide(services)),
           ),
         );

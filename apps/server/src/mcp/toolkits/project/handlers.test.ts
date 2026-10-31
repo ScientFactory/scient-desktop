@@ -564,7 +564,7 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
     const pi = ProviderInstanceId.make("pi");
     const launchPi = Effect.fn("test.launchPi")(function* (runtimeMode?: RuntimeMode) {
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-      const { projectId, dependencies } = clientLaunchHarness({
+      const { projectId, dependencies } = projectLaunchHarness({
         runtimeModeCeiling: "auto",
         launched,
         providers: [
@@ -592,7 +592,7 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
         ),
       );
       const result = yield* toolkit
-        .handle("t3_thread_launch", {
+        .handle("scient_thread_launch", {
           projectId,
           title: "Fix",
           modelSelection: { instanceId: pi, model: "pi-model" },
@@ -923,7 +923,7 @@ it.effect("a client launches with the fallback for an exhausted default", () =>
 it.effect("deleting a project through MCP also discards its clone record", () =>
   Effect.gen(function* () {
     const discarded: Array<ProjectId> = [];
-    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const harness = projectLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
     const dependencies = Layer.merge(
       harness.dependencies,
       Layer.mergeAll(
@@ -957,7 +957,7 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
     );
 
     yield* toolkit
-      .handle("t3_project_delete", { projectId: harness.projectId })
+      .handle("scient_project_delete", { projectId: harness.projectId })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);

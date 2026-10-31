@@ -1287,7 +1287,7 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
 );
 
 it.effect(
-  "t3_thread_list settled:false with an empty statuses list lists the unsettled threads",
+  "scient_thread_list settled:false with an empty statuses list lists the unsettled threads",
   () => {
     const unsettled = McpToolAccessTestkit.liveThreadShell(ThreadId.make("unsettled-thread"));
     const settled = {
@@ -1298,7 +1298,7 @@ it.effect(
       const server = yield* McpServer.McpServer;
       const result = yield* server
         .callTool({
-          name: "t3_thread_list",
+          name: "scient_thread_list",
           arguments: { projectId: unsettled.projectId, settled: false, statuses: [] },
         })
         .pipe(
@@ -1326,6 +1326,7 @@ it.effect(
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),

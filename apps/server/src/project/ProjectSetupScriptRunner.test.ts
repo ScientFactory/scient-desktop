@@ -9,7 +9,6 @@ import {
   type TerminalEvent,
   type TerminalSessionSnapshot,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -233,7 +232,7 @@ const makeProjectServiceLayer = (project: OrchestrationProject) =>
   });
 
 type TerminalOverrides = Pick<TerminalManager.TerminalManager["Service"], "open" | "write"> &
-  Partial<Pick<TerminalManager.TerminalManager["Service"], "subscribe" | "closeIdle">>;
+  Partial<Pick<TerminalManager.TerminalManager["Service"], "subscribe" | "closeIdle" | "getShell">>;
 
 const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
   Layer.succeed(TerminalManager.TerminalManager, {
@@ -241,6 +240,7 @@ const makeTerminalManagerLayer = (overrides: TerminalOverrides) =>
     attachOutputStream: () => Stream.die(new Error("unused")),
     observeStream: () => Effect.die(new Error("unused")),
     resyncStream: () => Effect.die(new Error("unused")),
+    getShell: () => Effect.succeed("/bin/zsh"),
     resize: () => Effect.void,
     clear: () => Effect.void,
     close: () => Effect.void,
@@ -407,11 +407,7 @@ describe("ProjectSetupScriptRunner", () => {
 
       expect((yield* result.completion).exitCode).toBe(0);
       expect(closeIdle).toHaveBeenCalledWith({ threadId: "thread-1", terminalId: "setup-setup" });
-    }).pipe(
-      Effect.provide(testLayer(project, { open, write, subscribe, closeIdle })),
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { SHELL: "/bin/zsh" }),
-    );
+    }).pipe(Effect.provide(testLayer(project, { open, write, subscribe, closeIdle })));
   });
 
   // regression: 9f40b2f563 feat(settings): add shared project defaults and scoped overrides (#9754)
@@ -606,11 +602,7 @@ describe("ProjectSetupScriptRunner", () => {
         expect(listeners.size).toBe(0);
         // A failed run keeps its shell open for a look.
         expect(closeIdle).not.toHaveBeenCalled();
-      }).pipe(
-        Effect.provide(testLayer(project, { open, write, subscribe, closeIdle })),
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HostProcess.Environment, { SHELL: "/bin/zsh" }),
-      );
+      }).pipe(Effect.provide(testLayer(project, { open, write, subscribe, closeIdle })));
     },
   );
 
@@ -664,11 +656,7 @@ describe("ProjectSetupScriptRunner", () => {
       yield* TestClock.adjust("3 seconds");
       expect((yield* result.completion).exitCode).toBeNull();
       expect(unsubscribe).toHaveBeenCalledTimes(2);
-    }).pipe(
-      Effect.provide(testLayer(project, { open, write, subscribe })),
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { SHELL: "/bin/zsh" }),
-    );
+    }).pipe(Effect.provide(testLayer(project, { open, write, subscribe })));
   });
 
   // regression: 73b206f4bf feat(web): show each worktree setup step and let users cancel it (#11372)
@@ -724,9 +712,7 @@ describe("ProjectSetupScriptRunner", () => {
       expect(writes).toHaveLength(1);
       expect(writes[0]).toMatch(expected);
     }).pipe(
-      Effect.provide(testLayer(project, { open, write })),
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(HostProcess.Environment, { SHELL: shell }),
+      Effect.provide(testLayer(project, { open, write, getShell: () => Effect.succeed(shell) })),
     );
   });
 
@@ -887,8 +873,6 @@ it.effect.each(
     expect(closed).toEqual([expect.stringMatching(/^settle-/)]);
   }).pipe(
     Effect.provide(Layer.merge(ServerSettings.layerTest(), ThreadCommandExecutor.layer)),
-    Effect.provideService(HostProcess.Platform, "linux"),
-    Effect.provideService(HostProcess.Environment, { SHELL: "/bin/zsh" }),
     Effect.scoped,
   ),
 );
