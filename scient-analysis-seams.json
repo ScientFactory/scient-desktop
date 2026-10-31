@@ -17,7 +17,10 @@
     "apps/web/src/scient/fileSurfaces",
     "packages/scient-analysis",
     "packages/scient-compute",
-    "packages/scient-execution"
+    "packages/scient-execution",
+    "apps/server/src/scient/data",
+    "apps/server/src/scient/notebook",
+    "apps/web/src/scient/dataTable"
   ],
   "ownedFiles": [
     "apps/web/src/testUtils/shardWeights.json",
@@ -62,7 +65,10 @@
     "apps/web/src/scient/markdownEditor/fileCitationNavigation.ts",
     "apps/web/src/scient/markdownEditor/persistence/renameOpenDocument.ts",
     "apps/web/src/scient/markdownEditor/ui/ScientMarkdownPersistenceNotice.tsx",
-    "apps/server/scripts/scientServerAssets.ts"
+    "apps/server/scripts/scientServerAssets.ts",
+    "packages/contracts/src/scientData.ts",
+    "packages/contracts/src/scientNotebook.ts",
+    "apps/web/src/routes/_chat.settings.scientific-computing_.$languageId.tsx"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",

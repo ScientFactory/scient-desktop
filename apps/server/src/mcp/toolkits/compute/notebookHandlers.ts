@@ -16,6 +16,8 @@ import {
 } from "@t3tools/shared/notebookStaleness";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { agentScope, ownedSession, toolError, type AgentScope } from "./agentComputeScope.ts";
 import type { ComputeToolImage, ComputeToolNotebookCell } from "./tools.ts";
@@ -29,6 +31,7 @@ const MAXIMUM_CELL_OUTPUT_CHARACTERS = 4000;
 const OUTLINE_CHARACTERS = 160;
 const MAXIMUM_IMAGES = 6;
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif"] as const;
+const decodeOutput = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const notebookFailed = (error: { readonly message: string }) =>
   toolError("compute-failed", error.message);
 
@@ -206,7 +209,7 @@ const figuresOf = Effect.fn("ScientComputeToolkit.notebookFigures")(function* (
       const stored = yield* scope.gateway
         .readNotebookOutput({ cwd: scope.cwd, path, cellId: cell.id, index })
         .pipe(Effect.mapError(notebookFailed));
-      const parsed = stored.json === null ? null : (JSON.parse(stored.json) as unknown);
+      const parsed = stored.json === null ? null : Option.getOrNull(decodeOutput(stored.json));
       const data = isRecord(parsed) && isRecord(parsed.data) ? parsed.data[mediaType] : undefined;
       if (data !== undefined) images.push({ mediaType, data: text(data).replaceAll(/\s/gu, "") });
     }

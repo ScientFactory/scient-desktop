@@ -4,6 +4,7 @@ import { ComputeExecutionId, ComputeSessionId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Scope from "effect/Scope";
 
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -84,8 +85,9 @@ describe("NotebookStore", () => {
     paths,
     NodeServices.layer,
   );
-  const scoped = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-    effect.pipe(Effect.provide(testLayer), Effect.scoped) as Effect.Effect<A, E, never>;
+  const scoped = <A, E>(
+    effect: Effect.Effect<A, E, Layer.Success<typeof testLayer> | Scope.Scope>,
+  ) => effect.pipe(Effect.provide(testLayer), Effect.scoped);
 
   it.effect("reads cells and reports when nothing changed", () =>
     scoped(

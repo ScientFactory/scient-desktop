@@ -514,6 +514,6 @@ export const makeNotebookStore = Effect.gen(function* () {
 export class NotebookStore extends Context.Service<
   NotebookStore,
   Effect.Success<typeof makeNotebookStore>
->()("scient/notebook/NotebookStore") {}
+>()("t3/scient/notebook/NotebookStore") {}
 
 export const layer = Layer.effect(NotebookStore, makeNotebookStore);

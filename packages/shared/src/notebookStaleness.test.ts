@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { NotebookCellView } from "@t3tools/contracts";
 
-import { definedNames, notebookCodeHash, staleNotebookCells } from "./notebookStaleness";
+import { definedNames, notebookCodeHash, staleNotebookCells } from "./notebookStaleness.ts";
 
 const emptyCell: NotebookCellView = {
   id: "",
