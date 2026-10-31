@@ -11,6 +11,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import type * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 
 import {
@@ -20,6 +21,13 @@ import {
 } from "../../workspace/WorkspaceFileSystem.ts";
 import type * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import { isNodeError } from "./WorkspaceFileErrors.ts";
+
+/** How often a watch checks that its folder is still the one it is attached to. */
+const WATCHED_FOLDER_CHECK = "2 seconds";
+
+const isFolderMissing = (error: WorkspaceFileSystemOperationError) =>
+  (error.operation === "realpath-watch-directory" || error.operation === "watch") &&
+  (isNodeError(error.cause, "ENOENT") || isNodeError(error.cause, "ENOTDIR"));
 
 /** The Scient watch method WorkspaceFileSystem serves beside its reads. */
 export interface WorkspaceFileWatchMethods {
@@ -113,7 +121,19 @@ export function makeWorkspaceFileWatch(deps: {
     },
   );
 
-  const watchFile: WorkspaceFileSystem["Service"]["watchFile"] = (input) =>
+  /**
+   * A native watch holds the folder itself, not its path: once the folder is deleted it
+   * reports nothing, even when a folder of that name returns. So this ends when the
+   * folder goes or is replaced, and follows it to the next one. `returned` says the
+   * folder was away, so whoever has the file open reads it again.
+   */
+  const follow = (
+    input: ProjectReadFileInput,
+    returned: boolean,
+  ): Stream.Stream<
+    ProjectFileWatchEvent,
+    WorkspaceFileSystemError | WorkspacePaths.WorkspacePathOutsideRootError
+  > =>
     Stream.unwrap(
       resolveRealFileWatchTarget(input).pipe(
         Effect.map(({ realTargetPath, target, watchDirectory, settlementInput }) => {
@@ -122,6 +142,21 @@ export function makeWorkspaceFileWatch(deps: {
               Effect.acquireRelease(
                 Effect.try({
                   try: () => {
+                    const folder = NodeFS.statSync(watchDirectory, { bigint: true });
+                    const folderLost = () =>
+                      NodeFSP.stat(watchDirectory, { bigint: true }).then(
+                        ({ dev, ino }) => dev !== folder.dev || ino !== folder.ino,
+                        (error) => isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR"),
+                      );
+                    const changed = () =>
+                      Queue.offerUnsafe(queue, {
+                        _tag: "file-changed",
+                        relativePath: target.relativePath,
+                      });
+                    const leave = () => {
+                      changed();
+                      Queue.endUnsafe(queue);
+                    };
                     const watcher = NodeFS.watch(watchDirectory, (_event, reportedPath) => {
                       // Node documents that filename may be absent on some
                       // platforms. Since this watcher is scoped to one parent,
@@ -132,32 +167,34 @@ export function makeWorkspaceFileWatch(deps: {
                           : path.resolve(watchDirectory, reportedPath);
                         if (absoluteReportedPath !== realTargetPath) return;
                       }
-                      Queue.offerUnsafe(queue, {
-                        _tag: "file-changed",
-                        relativePath: target.relativePath,
-                      });
+                      changed();
                     });
+                    // Windows reports a deleted folder as an error on its watch.
                     watcher.on("error", (cause) => {
-                      Queue.failCauseUnsafe(
-                        queue,
-                        Cause.fail(
-                          new WorkspaceFileSystemOperationError({
-                            workspaceRoot: input.cwd,
-                            relativePath: input.relativePath,
-                            resolvedPath: realTargetPath,
-                            operationPath: watchDirectory,
-                            operation: "watch",
-                            cause,
-                          }),
-                        ),
-                      );
+                      void folderLost().then((lost) => {
+                        if (lost) return leave();
+                        Queue.failCauseUnsafe(
+                          queue,
+                          Cause.fail(
+                            new WorkspaceFileSystemOperationError({
+                              workspaceRoot: input.cwd,
+                              relativePath: input.relativePath,
+                              resolvedPath: realTargetPath,
+                              operationPath: watchDirectory,
+                              operation: "watch",
+                              cause,
+                            }),
+                          ),
+                        );
+                      });
                     });
                     watcher.on("close", () => Queue.endUnsafe(queue));
                     Queue.offerUnsafe(queue, {
                       _tag: "watch-ready",
                       relativePath: target.relativePath,
                     });
-                    return watcher;
+                    if (returned) changed();
+                    return { watcher, folderLost, leave };
                   },
                   catch: (cause) =>
                     new WorkspaceFileSystemOperationError({
@@ -169,7 +206,15 @@ export function makeWorkspaceFileWatch(deps: {
                       cause,
                     }),
                 }),
-                (watcher) => Effect.sync(() => watcher.close()),
+                ({ watcher }) => Effect.sync(() => watcher.close()),
+              ).pipe(
+                Effect.flatMap(({ folderLost, leave }) =>
+                  Effect.promise(folderLost).pipe(
+                    Effect.flatMap((lost) => (lost ? Effect.sync(leave) : Effect.void)),
+                    Effect.repeat(Schedule.spaced(WATCHED_FOLDER_CHECK)),
+                    Effect.forkScoped,
+                  ),
+                ),
               ),
           ).pipe(
             // Batching coalesces hints, not native retirement. Readiness remains
@@ -195,7 +240,22 @@ export function makeWorkspaceFileWatch(deps: {
           );
         }),
       ),
+    ).pipe(
+      Stream.catchIf(
+        (error) => error._tag === "WorkspaceFileSystemOperationError" && isFolderMissing(error),
+        () =>
+          returned
+            ? Stream.empty
+            : Stream.make({ _tag: "watch-ready", relativePath: input.relativePath } as const),
+      ),
+      Stream.concat(
+        Stream.suspend(() =>
+          Stream.unwrap(Effect.as(Effect.sleep(WATCHED_FOLDER_CHECK), follow(input, true))),
+        ),
+      ),
     );
+
+  const watchFile: WorkspaceFileSystem["Service"]["watchFile"] = (input) => follow(input, false);
 
   return { watchFile };
 }

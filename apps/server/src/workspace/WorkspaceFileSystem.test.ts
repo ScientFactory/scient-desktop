@@ -869,6 +869,59 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("finds its file again after the folder is deleted and comes back", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const relativePath = "paper/main.tex";
+        yield* writeTextFile(cwd, relativePath, "first\n");
+        let step = 0;
+
+        yield* workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
+          Stream.tap((event) => {
+            if (step === 0 && event._tag === "watch-ready") {
+              step = 1;
+              return fileSystem.remove(path.join(cwd, "paper"), { recursive: true });
+            }
+            if (step === 1 && event._tag === "file-changed") {
+              step = 2;
+              return writeTextFile(cwd, relativePath, "back\n");
+            }
+            if (step === 2 && event._tag === "watch-ready") step = 3;
+            else if (step === 3 && event._tag === "file-changed") {
+              step = 4;
+              return writeTextFile(cwd, relativePath, "edited after coming back\n");
+            } else if (step === 4 && event._tag === "file-changed") step = 5;
+            return Effect.void;
+          }),
+          Stream.takeUntil(() => step === 5),
+          Stream.runDrain,
+        );
+
+        expect(step).toBe(5);
+      }),
+    );
+
+    it.effect("waits for a folder that is not there yet", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const relativePath = "paper/main.tex";
+
+        const event = yield* workspaceFileSystem.watchFile({ cwd, relativePath }).pipe(
+          Stream.tap((event) =>
+            event._tag === "watch-ready" ? writeTextFile(cwd, relativePath, "here\n") : Effect.void,
+          ),
+          Stream.filter((event) => event._tag === "file-changed"),
+          Stream.runHead,
+        );
+
+        expect(event).toEqual(Option.some({ _tag: "file-changed", relativePath }));
+      }),
+    );
+
     it.effect("follows in-workspace file symlinks to their real target", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
