@@ -13,6 +13,12 @@ export const ANALYTICS_EVENT_NAMES = [
   "app.health",
   "app.diagnostics",
   "server.boot.heartbeat",
+  "install.owner_observed",
+  "client.turn.requested",
+  "client.thread.started",
+  "feature.used",
+  "mcp.tool.invoked",
+  "mcp.delegated_task.finished",
   "provider.session.started",
   "provider.session.recovered",
   "provider.session.stopped",
@@ -262,6 +268,30 @@ const VOICE_FAILURE_CLASSES = new Set([
   "unknown",
 ]);
 const VOICE_CANCELLATION_STAGES = new Set(["recording", "transcribing", "unknown"]);
+const OWNER_SOURCES = new Set(["connect", "openai", "claude", "device"]);
+const OWNER_OBSERVERS = new Set(["server", "client"]);
+const OWNER_ID_PATTERN = /^[0-9a-f]{64}$/u;
+const CLIENT_SURFACES = new Set(["web", "desktop", "mobile", "cli"]);
+const CLIENT_DEVICE_TYPES = new Set(["desktop", "phone", "tablet"]);
+const CLIENT_OPERATING_SYSTEMS = new Set([
+  "macOS",
+  "Windows",
+  "Linux",
+  "iOS",
+  "Android",
+  "ChromeOS",
+  "other",
+]);
+const CLIENT_CONNECTIONS = new Set(["direct", "ssh", "relay"]);
+const TURN_ACTORS = new Set(["user", "agent", "system"]);
+const TURN_CREATION_SOURCES = new Set(["web", "mobile", "mcp", "provider", "server"]);
+const TOOL_OUTCOMES = new Set(["ok", "error"]);
+const TOOL_CALLER_ORIGINS = new Set(["user", "agent", "system", "scheduler"]);
+const TOOL_INTERACTION_MODES = new Set(["default", "plan", "unknown"]);
+const TOOL_MODES = new Set(["async", "wait"]);
+const TOOL_WORKSPACES = new Set(["scratch", "root", "worktree", "existing_worktree"]);
+const DELEGATED_TASK_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
+const DELEGATED_TASK_WAKES = new Set(["always", "settled_only"]);
 const SURFACES = new Set([
   "files",
   "preview",
@@ -360,6 +390,56 @@ function normalizedEnum(
   fallback = "unknown",
 ): string {
   return typeof value === "string" && allowed.has(value) ? value : fallback;
+}
+
+function normalizedIdentifier(value: unknown, fallback: string): string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,64}$/u.test(value) ? value : fallback;
+}
+
+/** Copies an optional field only when it is a valid value; unknown values stay absent. */
+function optionalProperties(
+  input: Readonly<Record<string, unknown>>,
+  rules: Readonly<Record<string, "count" | "boolean" | "identifier" | ReadonlySet<string>>>,
+): Record<string, string | boolean | number> {
+  const properties: Record<string, string | boolean | number> = {};
+  for (const [key, rule] of Object.entries(rules)) {
+    const value = property(input, key);
+    if (rule === "boolean" && typeof value === "boolean") properties[key] = value;
+    else if (
+      rule === "count" &&
+      typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value >= 0 &&
+      value <= 1_000_000_000
+    )
+      properties[key] = value;
+    else if (rule === "identifier" && normalizedIdentifier(value, "") !== "")
+      properties[key] = value as string;
+    else if (rule instanceof Set && typeof value === "string" && rule.has(value))
+      properties[key] = value;
+  }
+  return properties;
+}
+
+function clientProperties(input: Readonly<Record<string, unknown>>) {
+  return {
+    surface: normalizedEnum(property(input, "surface"), CLIENT_SURFACES),
+    clientDeviceType: normalizedEnum(property(input, "clientDeviceType"), CLIENT_DEVICE_TYPES),
+    clientOs: normalizedEnum(property(input, "clientOs"), CLIENT_OPERATING_SYSTEMS),
+    connectionMethod: normalizedEnum(property(input, "connectionMethod"), CLIENT_CONNECTIONS),
+  };
+}
+
+function optionalModelKeys(
+  input: Readonly<Record<string, unknown>>,
+  keys: ReadonlyArray<string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    keys.flatMap((key) => {
+      const value = property(input, key);
+      return value === undefined ? [] : [[key, modelKey(value)]];
+    }),
+  );
 }
 
 export function countBucket(value: unknown): string {
@@ -608,6 +688,107 @@ function normalizeEvent(
         properties: {
           appVersion: context.appVersion,
           buildChannel: context.buildChannel,
+          ...optionalProperties(input, { threadCount: "count", projectCount: "count" }),
+        },
+      };
+    case "install.owner_observed": {
+      const ownerId = property(input, "ownerId");
+      const ownerSource = property(input, "ownerSource");
+      // The id is already hashed; anything else must never leave the machine.
+      if (
+        typeof ownerId !== "string" ||
+        !OWNER_ID_PATTERN.test(ownerId) ||
+        typeof ownerSource !== "string" ||
+        !OWNER_SOURCES.has(ownerSource)
+      )
+        return null;
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          ownerSource,
+          ownerId,
+          observedBy: normalizedEnum(property(input, "observedBy"), OWNER_OBSERVERS, "server"),
+        },
+      };
+    }
+    case "client.turn.requested":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: clientProperties(input),
+      };
+    case "client.thread.started":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "core",
+        properties: {
+          ...clientProperties(input),
+          workspaceStrategy: normalizedIdentifier(property(input, "workspaceStrategy"), "unknown"),
+        },
+      };
+    case "feature.used":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          feature: normalizedIdentifier(property(input, "feature"), "other"),
+          surface: normalizedEnum(property(input, "surface"), CLIENT_SURFACES),
+          ...optionalProperties(input, { variant: "identifier" }),
+        },
+      };
+    case "mcp.tool.invoked":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          tool: normalizedIdentifier(property(input, "tool"), "other"),
+          callerProvider: normalizedProvider(property(input, "callerProvider")),
+          outcome: normalizedEnum(property(input, "outcome"), TOOL_OUTCOMES, "error"),
+          ...optionalModelKeys(input, ["callerModel", "targetModel"]),
+          ...(property(input, "targetProvider") === undefined
+            ? {}
+            : { targetProvider: normalizedProvider(property(input, "targetProvider")) }),
+          ...(property(input, "targetRuntimeMode") === undefined
+            ? {}
+            : { targetRuntimeMode: normalizedRuntimeMode(property(input, "targetRuntimeMode")) }),
+          ...optionalProperties(input, {
+            callerOrigin: TOOL_CALLER_ORIGINS,
+            callerDepth: "count",
+            durationMs: "count",
+            errorCode: "identifier",
+            targetInteractionMode: TOOL_INTERACTION_MODES,
+            crossProvider: "boolean",
+            targetChosen: "boolean",
+            mode: TOOL_MODES,
+            waitTimedOut: "boolean",
+            batchSize: "count",
+            workspace: TOOL_WORKSPACES,
+            delivery: "identifier",
+            bindToCurrentThread: "boolean",
+          }),
+        },
+      };
+    case "mcp.delegated_task.finished":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          status: normalizedEnum(property(input, "status"), DELEGATED_TASK_STATUSES, "failed"),
+          callerProvider: normalizedProvider(property(input, "callerProvider")),
+          targetProvider: normalizedProvider(property(input, "targetProvider")),
+          ...optionalModelKeys(input, ["callerModel", "targetModel"]),
+          ...optionalProperties(input, {
+            crossProvider: "boolean",
+            completionWake: DELEGATED_TASK_WAKES,
+            durationSeconds: "count",
+          }),
         },
       };
     case "provider.session.started":
@@ -718,24 +899,21 @@ function normalizeEvent(
         ),
         usageScope: "main_agent",
       };
-      if (typeof property(input, "hasSubagents") === "boolean")
-        properties.hasSubagents = property(input, "hasSubagents") as boolean;
-      for (const key of [
-        "inputTokens",
-        "outputTokens",
-        "cachedInputTokens",
-        "cacheCreationTokens",
-        "reasoningTokens",
-      ]) {
-        const value = property(input, key);
-        if (
-          typeof value === "number" &&
-          Number.isSafeInteger(value) &&
-          value >= 0 &&
-          value <= 1_000_000_000
-        )
-          properties[key] = value;
-      }
+      Object.assign(
+        properties,
+        optionalProperties(input, {
+          hasSubagents: "boolean",
+          inputTokens: "count",
+          outputTokens: "count",
+          cachedInputTokens: "count",
+          cacheCreationTokens: "count",
+          reasoningTokens: "count",
+          createdBy: TURN_ACTORS,
+          creationSource: TURN_CREATION_SOURCES,
+          scheduled: "boolean",
+          subagent: "boolean",
+        }),
+      );
       for (const [subset, total] of [
         ["cachedInputTokens", "inputTokens"],
         ["cacheCreationTokens", "inputTokens"],

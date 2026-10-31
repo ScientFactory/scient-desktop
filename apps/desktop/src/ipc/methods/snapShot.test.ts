@@ -45,7 +45,10 @@ describe("window capture IPC", () => {
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
             main: Effect.succeedSome({ webContents: { id: 7 } }),
-          } as ElectronWindow.ElectronWindow["Service"]),
+            // SCIENT-FORK:START — snapshot senders resolve against every app window.
+            appWindows: Effect.succeed([{ webContents: { id: 7, isDestroyed: () => false } }]),
+          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+          // SCIENT-FORK:END
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             previewConfig: () =>
               Effect.sync(() => {
@@ -82,7 +85,10 @@ describe("window capture IPC", () => {
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
             main: Effect.succeedSome({ webContents: { id: 7 } }),
-          } as ElectronWindow.ElectronWindow["Service"]),
+            // SCIENT-FORK:START — snapshot senders resolve against every app window.
+            appWindows: Effect.succeed([{ webContents: { id: 7, isDestroyed: () => false } }]),
+          } as unknown as ElectronWindow.ElectronWindow["Service"]),
+          // SCIENT-FORK:END
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             setup: (action: string) =>
               Effect.sync(() => {

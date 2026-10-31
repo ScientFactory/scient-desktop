@@ -498,6 +498,11 @@ it.effect.each([
                     ? [
                         {
                           id: ThreadId.make("other-thread"),
+                          lineage: {
+                            parentThreadId: null,
+                            relationshipToParent: null,
+                            rootThreadId: ThreadId.make("other-thread"),
+                          },
                           deletedAt: null,
                           worktreePath: shared === "worktree" ? process.cwd() : null,
                         } as never,

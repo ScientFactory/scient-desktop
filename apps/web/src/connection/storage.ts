@@ -39,6 +39,9 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+// SCIENT-FORK:START — several desktop windows share the saved connection catalog.
+import { catalogWriteLock } from "../scient/multiWindow/windowLocks";
+// SCIENT-FORK:END
 
 const DATABASE_NAME = "t3code:connection-runtime";
 const DATABASE_VERSION = 4;
@@ -383,6 +386,10 @@ export interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
   readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
+  // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
+  /** Runs a read-modify-write that no other app window interleaves with. */
+  readonly exclusive?: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  // SCIENT-FORK:END
 }
 
 export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
@@ -409,6 +416,9 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
                 ),
           ),
         ),
+      // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
+      ...(bridge.onConnectionCatalogChanged === undefined ? {} : { exclusive: catalogWriteLock() }),
+      // SCIENT-FORK:END
     };
   }
 
@@ -427,6 +437,10 @@ interface CatalogStore {
   readonly update: (
     transform: (catalog: ConnectionCatalogDocumentType) => ConnectionCatalogDocumentType,
   ) => Effect.Effect<void, ConnectionTransientError>;
+  // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
+  /** Another window saved the catalog; the next read loads it again. */
+  readonly invalidate: () => void;
+  // SCIENT-FORK:END
 }
 
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
@@ -434,12 +448,18 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
 ) {
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
+  // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
+  let stale = false;
+  // SCIENT-FORK:END
 
   const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
     const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
+    // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
+    if (Option.isSome(cached) && !stale) {
       return cached.value;
     }
+    stale = false;
+    // SCIENT-FORK:END
     const raw = yield* backend.read;
     let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
     if (raw !== null && raw.trim() !== "") {
@@ -488,7 +508,21 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     },
   );
 
-  return { read, update } satisfies CatalogStore;
+  // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
+  const invalidate = () => {
+    stale = true;
+  };
+  const { exclusive } = backend;
+  return {
+    read,
+    // The change notice from the window that held the lock last can still be in flight.
+    update:
+      exclusive === undefined
+        ? update
+        : (transform) => exclusive(Effect.sync(invalidate).pipe(Effect.andThen(update(transform)))),
+    invalidate,
+  } satisfies CatalogStore;
+  // SCIENT-FORK:END
 });
 
 // The stored names predate the rename and stay, so a tab still on an older version and an
@@ -619,6 +653,12 @@ export const layer = Layer.effectContext(
       (owned) => owned.close,
     );
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
+    // SCIENT-FORK:START — several desktop windows share the saved connection catalog.
+    yield* Effect.acquireRelease(
+      Effect.sync(() => window.desktopBridge?.onConnectionCatalogChanged?.(catalog.invalidate)),
+      (unsubscribe) => Effect.sync(() => unsubscribe?.()),
+    );
+    // SCIENT-FORK:END
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
     // Remembers each thread row's encoding, so a save only encodes rows that changed.
     const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({

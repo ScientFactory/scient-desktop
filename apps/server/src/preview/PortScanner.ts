@@ -1,5 +1,5 @@
 /** Listener metadata never authorizes protocol probes.
- * Publish declared web URLs only after bounded HTML/redirect verification.
+ * Publish declared web URLs after bounded HTML/redirect verification, or on an owned listener.
  * Cache by URL and listener identity; poll only while retained. */
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
@@ -74,6 +74,9 @@ export class PortDiscovery extends Context.Service<
  */
 export const AGENT_THREAD_ENV = "T3CODE_THREAD_ID";
 
+/** `0` turns off listener discovery; configured preview URLs are still probed. */
+const PORT_DISCOVERY_ENV = "T3CODE_PORT_DISCOVERY";
+
 const POLL_INTERVAL = Duration.seconds(3);
 const LSOF_TIMEOUT_MS = 5_000;
 const PROC_FD_WALK_LIMIT = 50_000;
@@ -144,6 +147,7 @@ interface WebProbeGroup {
 }
 
 interface WebProbeSnapshot {
+  readonly discovered: ReadonlyArray<DiscoveredLocalServer>;
   readonly configured: ReadonlyMap<string, DiscoveredLocalServer>;
 }
 
@@ -195,13 +199,24 @@ const projectWebProbeSnapshot = (
   configuredUrls: ReadonlyArray<string>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const visibleByServer = new Map<string, DiscoveredLocalServer>();
+  const firstConfiguredByServer = new Map<string, string>();
   for (const raw of normalizeConfiguredUrls(configuredUrls)) {
     const url = new URL(raw);
     const port = urlPort(url);
     const serverKey = localServerKey(url.hostname, port);
+    if (!firstConfiguredByServer.has(serverKey)) firstConfiguredByServer.set(serverKey, raw);
     if (visibleByServer.has(serverKey)) continue;
     const configured = snapshot.configured.get(webProbeCacheKey(raw));
     if (configured) visibleByServer.set(serverKey, { ...configured, url: raw });
+  }
+  // An owned listener whose configured check failed still opens at this caller's configured URL.
+  for (const server of snapshot.discovered) {
+    const key = localServerKey(server.host, server.port);
+    if (visibleByServer.has(key)) continue;
+    const configuredUrl = firstConfiguredByServer.get(key);
+    // SCIENT-FORK:START explicit-url-authority — a listener with no declared URL stays unlisted.
+    if (configuredUrl) visibleByServer.set(key, { ...server, url: configuredUrl });
+    // SCIENT-FORK:END explicit-url-authority
   }
   return [...visibleByServer.values()].toSorted((left, right) => left.port - right.port);
 };
@@ -504,6 +519,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // SCIENT-FORK:START compute-endpoint-authority
   const ownedLocalEndpoints = yield* OwnedLocalEndpointRegistry;
   // SCIENT-FORK:END compute-endpoint-authority
+  const listenerDiscovery = (yield* HostProcess.Environment)[PORT_DISCOVERY_ENV] !== "0";
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.withScope);
   const stateRef = yield* Ref.make<ScannerState>({
     listeners: new Map(),
@@ -752,6 +768,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return groups;
   };
 
+  // Only configured URLs are requested: owning a process says nothing about its protocol, and
+  // HTTP or TLS bytes break binary ones such as Unity's test runner or Steam's IPC.
   const probeWebServers = Effect.fn("PortDiscovery.probeWebServers")(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
@@ -826,16 +844,20 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       if (probe?.isWeb) configured.set(group.configuredKey, group.server);
     }
     yield* Ref.set(webProbeCacheRef, nextCache);
-    return { configured } satisfies WebProbeSnapshot;
+    // SCIENT-FORK:START compute-endpoint-authority — a private endpoint is never listed.
+    const discovered = servers.filter(
+      (server) =>
+        isOwned(server) && !ownershipAtCompletion.protectedLoopbackTcpPorts.has(server.port),
+    );
+    // SCIENT-FORK:END compute-endpoint-authority
+    return { discovered, configured } satisfies WebProbeSnapshot;
   });
 
   // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
   const withWindowsProcessNames = Effect.fn("PortDiscovery.withWindowsProcessNames")(function* (
     snapshot: WebProbeSnapshot,
   ) {
-    // SCIENT-FORK:START explicit-url-authority — only configured servers are visible.
-    const servers = [...snapshot.configured.values()];
-    // SCIENT-FORK:END explicit-url-authority
+    const servers = [...snapshot.discovered, ...snapshot.configured.values()];
     const pids = new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid])));
     const nowMillis = yield* Clock.currentTimeMillis;
     const cached = [...(yield* Ref.get(windowsProcessNamesRef))].filter(
@@ -875,9 +897,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         ? server
         : { ...server, processName: names.get(server.pid)?.name ?? null };
     return {
-      // SCIENT-FORK:START explicit-url-authority — no discovered listener list.
+      discovered: snapshot.discovered.map(withName),
       configured: new Map([...snapshot.configured].map(([key, server]) => [key, withName(server)])),
-      // SCIENT-FORK:END explicit-url-authority
     } satisfies WebProbeSnapshot;
   });
 
@@ -898,6 +919,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     // from this backend's in-memory registry. Do not probe unknown listeners.
     if (configuredUrls.length === 0) return yield* probeWebServers([], []);
     // SCIENT-FORK:END explicit-url-authority
+    if (!listenerDiscovery) return yield* probeWebServers([], configuredUrls);
     const state = yield* Ref.get(stateRef);
     const terminalOwners = new Map<number, ServerOwner>();
     for (const registration of state.terminalProcesses.values()) {

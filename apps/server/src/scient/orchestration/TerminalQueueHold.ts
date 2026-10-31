@@ -143,9 +143,10 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
                 Option.isSome(receipt) &&
                 receipt.value.status === "accepted" &&
                 receipt.value.threadId === threadId &&
-                // Send and Resume release with queue.resume; a direct user
-                // message releases the held queue in its own message.dispatch.
+                // Send and Resume release with queue.resume or queued-run.start; a
+                // direct user message releases the held queue in its own message.dispatch.
                 (receipt.value.commandType === "queue.resume" ||
+                  receipt.value.commandType === "queued-run.start" ||
                   receipt.value.commandType === "message.dispatch")
                   ? receipt.value.resultSequence
                   : 0;

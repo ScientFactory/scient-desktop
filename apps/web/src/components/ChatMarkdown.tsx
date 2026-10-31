@@ -307,6 +307,7 @@ interface ChatMarkdownProps {
   // SCIENT-FORK:END
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
   /** Loads media a source control host keeps behind a credential through the server, which holds
@@ -1978,6 +1979,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
+
+// One combined list per pair, so a stable extra list shares a renderer and its parse cache.
+function withExtraPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
+  if (extra.length === 0) return shared;
+  let byShared = combinedPlugins.get(extra);
+  if (!byShared) combinedPlugins.set(extra, (byShared = new WeakMap()));
+  let combined = byShared.get(shared);
+  if (!combined) byShared.set(shared, (combined = [...shared, ...extra]));
+  return combined;
+}
+
 const markdownRenderers = new WeakMap<
   PluggableList,
   WeakMap<PluggableList, ReturnType<typeof createMarkdownRenderer>>
@@ -2063,9 +2076,10 @@ function ChatMarkdown({
   } = useChatMarkdownState({ text, inline, ...props });
   // SCIENT-FORK:START — authored math intent reads offsets in the whole message, so a message
   // that needs it renders whole; every other message takes the shared, cached path.
-  const sharedRemarkPlugins = lineBreaks
-    ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS
-    : CHAT_MARKDOWN_REMARK_PLUGINS;
+  const sharedRemarkPlugins = withExtraPlugins(
+    lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS,
+    extraRemarkPlugins,
+  );
   const messageRemarkPlugins = scientMathRemarkPluginsForMessage(sharedRemarkPlugins, text);
   const wholeMessage = messageRemarkPlugins !== sharedRemarkPlugins || markdownText !== text;
   // SCIENT-FORK:END
@@ -2084,19 +2098,14 @@ function ChatMarkdown({
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  // Extra and incremental plugins are per instance, so their output is not shared.
-  const instancePlugins = extraRemarkPlugins.length > 0 || incrementalParsing;
-  const remarkPlugins = instancePlugins
+  // The incremental parser keeps per-instance state, so its output is not shared.
+  const remarkPlugins = incrementalParsing
     ? scientMathRemarkPluginsForMessage(
-        [
-          ...sharedRemarkPlugins,
-          ...extraRemarkPlugins,
-          ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
-        ],
+        [...sharedRemarkPlugins, createIncrementalMarkdownPlugin()],
         text,
       )
     : messageRemarkPlugins;
-  const uncachedPlugins = instancePlugins || wholeMessage;
+  const uncachedPlugins = incrementalParsing || wholeMessage;
   const blocks = streamingBlocks ?? [markdownText];
   // SCIENT-FORK:START — the message direction, after the shared pipeline.
   const rehypePlugins = directionalRehypePlugins(parseRawHtml, {

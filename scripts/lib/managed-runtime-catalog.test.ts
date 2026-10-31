@@ -316,7 +316,7 @@ describe("managed runtime policy transitions", () => {
     expect(result.changedProviders).toEqual(["codex"]);
     expect(validateManagedRuntimeCandidate(result.catalog, "codex")).toMatchObject({
       version: "0.163.0",
-      contractRevision: 4,
+      contractRevision: 5,
     });
     const promoted = mergeQualifiedManagedRuntimeProvider({
       current,
@@ -383,7 +383,7 @@ describe("managed runtime policy transitions", () => {
       });
     });
     expect(result.changedProviders).toEqual(["codex"]);
-    expect(result.catalog.providers.codex?.contractRevision).toBe(4);
+    expect(result.catalog.providers.codex?.contractRevision).toBe(5);
     expect(result.catalog.providers.codex?.version).toBe(codex.version);
     expect(requested).toHaveLength(2 + Object.keys(codex.artifacts).length);
     expect(current.providers.codex?.contractRevision).toBe(3);
@@ -415,7 +415,7 @@ describe("managed runtime policy transitions", () => {
     expect(() =>
       validateManagedRuntimeCatalog({
         ...decoded,
-        providers: { codex: { ...historical, contractRevision: 4 } },
+        providers: { codex: { ...historical, contractRevision: 5 } },
       }),
     ).toThrow(/unapproved target/u);
   });
@@ -467,7 +467,7 @@ describe("managed runtime policy transitions", () => {
   });
 
   // regression: aa7e503582 fix(provider-runtime): qualify Codex packages without patched zsh
-  it.each([0, 5, 999])("rejects unknown Codex contract %s", (contractRevision) => {
+  it.each([0, 6, 999])("rejects unknown Codex contract %s", (contractRevision) => {
     expect(() =>
       validateManagedRuntimeCatalog({
         ...currentCatalog,

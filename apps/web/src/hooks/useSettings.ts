@@ -61,6 +61,9 @@ import {
 } from "~/state/session";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+// SCIENT-FORK:START — several desktop windows share the saved client settings.
+import { createClientSettingsWindowSync } from "~/scient/multiWindow/clientSettingsSync";
+// SCIENT-FORK:END
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -75,6 +78,18 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+// SCIENT-FORK:START — several desktop windows share the saved client settings.
+const clientSettingsWindowSync = createClientSettingsWindowSync({
+  isHydrated: () => clientSettingsHydrationStatus === "ready",
+  current: getClientSettingsSnapshot,
+  replace: replaceClientSettingsSnapshot,
+  hydrateWith: (saved) => {
+    clientSettingsHydrationGeneration += 1;
+    replaceClientSettingsSnapshot(saved);
+    setClientSettingsHydrationStatus("ready");
+  },
+});
+// SCIENT-FORK:END
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -130,6 +145,9 @@ export function subscribeClientSettingsHydration(listener: () => void): () => vo
 }
 
 async function hydrateClientSettings(): Promise<void> {
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  clientSettingsWindowSync.listen();
+  // SCIENT-FORK:END
   if (clientSettingsHydrationStatus === "ready") {
     return;
   }
@@ -179,7 +197,9 @@ const defaultClientSettingsPersistence = (settings: ClientSettings): Promise<voi
   ensureLocalApi().persistence.setClientSettings(settings);
 
 function enqueueClientSettingsPersistence<A>(work: () => Promise<A>): Promise<A> {
-  const result = clientSettingsPersistenceQueue.then(work);
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  const result = clientSettingsPersistenceQueue.then(clientSettingsWindowSync.queuedWrite(work));
+  // SCIENT-FORK:END
   clientSettingsPersistenceQueue = result.then(
     () => undefined,
     () => undefined,
@@ -199,6 +219,9 @@ export function persistClientSettingsPatch(
   } else {
     replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
   }
+  // SCIENT-FORK:START — settings another window saves meanwhile must keep unsaved patches.
+  clientSettingsWindowSync.holdPatch(patch);
+  // SCIENT-FORK:END
   return enqueueClientSettingsPersistence(async () => {
     if (deferPatch) {
       try {
@@ -738,6 +761,9 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   clientSettingsPersistenceQueue = Promise.resolve();
   deferredClientSettingsPatchCount = 0;
+  // SCIENT-FORK:START — several desktop windows share the saved client settings.
+  clientSettingsWindowSync.reset();
+  // SCIENT-FORK:END
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }

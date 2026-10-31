@@ -105,10 +105,10 @@ it("keeps the new-chat footer at the bottom of the picker", async () => {
   await expect.poll(() => picker.querySelectorAll("[data-slot=combobox-item]").length).toBe(2);
   await expectAnchored();
 
-  await page.getByText("Legacy models", { exact: true }).click();
+  await page.getByText("Show more", { exact: true }).click();
   await expect.poll(() => picker.querySelectorAll("[data-slot=combobox-item]").length).toBe(5);
   await expectAnchored();
-  await page.getByText("Legacy models", { exact: true }).click();
+  await page.getByText("Show less", { exact: true }).click();
   await expect.poll(() => picker.querySelectorAll("[data-slot=combobox-item]").length).toBe(2);
   await expectAnchored();
 

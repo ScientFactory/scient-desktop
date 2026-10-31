@@ -6,6 +6,7 @@ import { createContext, useContext } from "react";
 import { cn } from "~/lib/utils";
 import { OverlayScrollScope } from "./overlay-scroll-scope";
 import { buttonVariants } from "./button";
+import { renderClosingPositioner } from "./closing-positioner";
 import { Input, type InputProps } from "./input";
 import { Spinner } from "./spinner";
 
@@ -60,6 +61,7 @@ function MenuPopup({
         className="z-[130]"
         collisionAvoidance={collisionAvoidance}
         data-slot="menu-positioner"
+        render={renderClosingPositioner}
         side={side}
         sideOffset={sideOffset}
       >

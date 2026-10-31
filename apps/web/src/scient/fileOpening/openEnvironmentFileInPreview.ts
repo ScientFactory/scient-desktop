@@ -18,6 +18,7 @@ import {
 } from "~/browser/openFileInPreview";
 import { isPreviewAvailableFor } from "~/browser/previewRuntime";
 import { useHtmlPdfSourceStore } from "../documentExport/htmlPdfSourceStore";
+import { rightPanelHostRef } from "~/rightPanelStore";
 
 export function environmentFileAssetResource(input: {
   readonly path: string;
@@ -46,6 +47,8 @@ export async function openEnvironmentFileInPreview<AssetError, PreviewError>(inp
     AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
   >
 > {
+  // Read before the first await: readers look the file up by the panel's thread.
+  const hostRef = rightPanelHostRef(input.threadRef);
   if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
   if (!isPreviewAvailableFor(input.threadRef.environmentId)) {
     return AsyncResult.failure(
@@ -80,7 +83,7 @@ export async function openEnvironmentFileInPreview<AssetError, PreviewError>(inp
     ...(input.isCurrent ? { isCurrent: input.isCurrent } : {}),
     onOpened: (snapshot) => {
       useHtmlPdfSourceStore.getState().bind({
-        threadRef: input.threadRef,
+        threadRef: hostRef,
         tabId: snapshot.tabId,
         authorizedUrl: assetUrl,
         source: {

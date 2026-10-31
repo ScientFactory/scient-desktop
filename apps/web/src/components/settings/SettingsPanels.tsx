@@ -30,6 +30,9 @@ import {
   HOSTED_APP_CHANNEL,
   HOSTED_APP_CHANNEL_LABEL,
 } from "../../branding";
+// SCIENT-FORK:START — wrapped below so dev builds keep their stage beside the version.
+import { AboutVersionTitle as CopyableVersionTitle } from "./AboutVersionTitle";
+// SCIENT-FORK:END
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import {
   canCheckForUpdate,
@@ -95,7 +98,6 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { AnalyticsPrivacySettings } from "../../scient/analytics/AnalyticsPrivacySettings";
 // SCIENT-FORK: fork context size preference.
 import { ForkContextSettings } from "../../scient/fork/ForkContextSettings";
 import { ScientGettingStartedSettingsRow } from "../../scient/onboarding/ScientGettingStartedSettingsRow";
@@ -139,15 +141,11 @@ const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
 };
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
+// SCIENT-FORK:START — the version copies clean; dev builds still read "· Dev" beside it.
 function AboutVersionTitle() {
-  const versionLabel = formatAboutVersionLabel(APP_VERSION, APP_STAGE_LABEL);
-  return (
-    <span className="inline-flex items-baseline gap-2">
-      <span>Version</span>
-      <code className="text-2xs font-medium text-muted-foreground">{versionLabel}</code>
-    </span>
-  );
+  return <CopyableVersionTitle label={formatAboutVersionLabel(APP_VERSION, APP_STAGE_LABEL)} />;
 }
+// SCIENT-FORK:END
 
 function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
@@ -1685,9 +1683,7 @@ export function AboutSettingsPanel() {
         )}
       </SettingsSection>
 
-      <AnalyticsPrivacySettings />
-
-      {/* SCIENT-FORK: the external privacy-policy row is withheld; analytics controls stay above. */}
+      {/* SCIENT-FORK: the external privacy-policy row is withheld. */}
       <SettingsSection id="legal" title="Legal">
         <SettingsRow
           {...searchableSetting("open-source-licenses")}

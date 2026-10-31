@@ -743,7 +743,11 @@ it("shows the end control while a running turn has new activity below the reader
   expect(state.contentLength - state.scroll - state.scrollLength).toBeGreaterThan(120);
   // While the turn runs, that activity is what's new: not at the end.
   expect(readerAtReadingEnd(state, COMPOSER_INSET, true)).toBe(false);
-  expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
+  // The list's scroll, metrics and size events can each carry this report, in any order.
+  await vi.waitFor(async () => {
+    await advanceClock(_fixture, 16);
+    expect(onIsAtEndChange.mock.lastCall?.[0]).toBe(false);
+  });
 });
 
 function toolRows(run: string, count: number) {

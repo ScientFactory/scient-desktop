@@ -79,6 +79,7 @@ import { InlineButton } from "../ui/button";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
+  shouldShowInstanceBadge,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
@@ -163,8 +164,7 @@ function shouldOfferModelPickerSetup(
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 const MODEL_LIST_ESTIMATED_ITEM_SIZE = 32;
 // Rendered heights in `--spacing` units. Chrome is the search box and list padding, plus a 1px border.
-const ONE_LINE_ROW_UNITS = 8;
-const TWO_LINE_ROW_UNITS = 12;
+const ROW_UNITS = 8;
 const ROW_SEPARATOR_UNITS = 0.5;
 const LIST_CHROME_UNITS = 15.5;
 
@@ -368,6 +368,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   continueInNewChatDisabled?: boolean;
   /** The owning popup moves focus here when it opens (its `initialFocus`). */
   searchInputRef: RefObject<HTMLInputElement | null>;
+  /** Sits beside an effort column: fills the shared row, and stacks above it on narrow screens. */
+  docked?: boolean;
+  /** Right at the end of the search text moves into the popup's effort column. */
+  onFocusEffort?: () => void;
 }) {
   const {
     searchInputRef,
@@ -553,31 +557,28 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
-  // Inside one provider's tab the provider line repeats the selected rail icon on every row.
-  const rowsMixProviders = isSearching || selectedInstanceId === "favorites";
   // Fit the tallest tab so switching tabs never resizes the popup and moves the rail under the cursor.
   const tallestTabUnits = (() => {
     const unitsByTab = new Map<ProviderInstanceId | "favorites", number>();
-    const addRow = (tab: ProviderInstanceId | "favorites", twoLine: boolean) => {
-      const rowUnits = twoLine ? TWO_LINE_ROW_UNITS : ONE_LINE_ROW_UNITS;
+    const addRow = (tab: ProviderInstanceId | "favorites") => {
       const previous = unitsByTab.get(tab);
       unitsByTab.set(
         tab,
-        previous === undefined ? rowUnits : previous + ROW_SEPARATOR_UNITS + rowUnits,
+        previous === undefined ? ROW_UNITS : previous + ROW_SEPARATOR_UNITS + ROW_UNITS,
       );
     };
     const tabsWithLegacyRow = new Set<ProviderInstanceId>();
     for (const model of flatModels) {
       if (!matchesLockedProvider(model)) continue;
       const isFavorite = favoritesSet.has(providerModelKey(model.instanceId, model.slug));
-      if (isFavorite) addRow("favorites", true);
+      if (isFavorite) addRow("favorites");
       if (model.isLegacy && !isFavorite) {
         tabsWithLegacyRow.add(model.instanceId);
       } else {
-        addRow(model.instanceId, Boolean(model.subProvider));
+        addRow(model.instanceId);
       }
     }
-    for (const instanceId of tabsWithLegacyRow) addRow(instanceId, true);
+    for (const instanceId of tabsWithLegacyRow) addRow(instanceId);
     return Math.max(0, ...unitsByTab.values());
   })();
   const lockedDisabledInstanceIds = (() => {
@@ -845,11 +846,14 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     const modelKeys = visibleModels.map((model) =>
       modelPickerModelKey(model.instanceId, model.slug),
     );
-    if (!legacySection) {
+    // SCIENT-FORK:START — Droid's More models stay a section below their toggle.
+    if (droidGroups && legacySection) {
+      modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
       return modelKeys;
     }
-    modelKeys.splice(legacySection.currentModels.length, 0, legacySection.key);
-    return modelKeys;
+    // SCIENT-FORK:END
+    // The toggle trails the list, so expanding it reveals older models above it.
+    return legacySection ? [...modelKeys, legacySection.key] : modelKeys;
   })();
   const filteredModelByKey = ((): ReadonlyMap<string, ModelPickerItem> =>
     new Map(
@@ -869,7 +873,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     keybindings,
     props.terminalOpen,
   );
+  const badgedInstanceIds = new Set(
+    instanceEntries
+      .filter((entry) => shouldShowInstanceBadge(entry, instanceEntries))
+      .map((entry) => entry.instanceId),
+  );
   const modelListExtraData = (() => ({
+    badgedInstanceIds,
     favoritesSet,
     modelJumpLabelByKey,
     activeModelKey,
@@ -941,8 +951,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       <WindowKeyDownListener onKeyDown={onWindowKeyDown} />
       <div
         ref={pickerContentRef}
-        // SCIENT-FORK: 320 px fits the model names with their badges; the setup panel matches it.
-        className="relative flex max-h-[min(21.625rem,var(--available-height,85vh))] w-screen max-w-80 flex-row overflow-hidden"
+        className={cn(
+          // SCIENT-FORK:START — 320 px fits the model names with their badges; the setup panel
+          // matches it, and the cap never passes the popup's available height.
+          "relative flex w-screen max-w-80 flex-row overflow-hidden",
+          props.docked
+            ? "max-sm:h-56 max-sm:min-h-0! max-sm:w-full max-sm:max-w-none"
+            : "max-h-[min(21.625rem,var(--available-height,85vh))]",
+          // SCIENT-FORK:END
+        )}
         style={
           isSearchingModels
             ? { height: searchHeight }
@@ -1071,6 +1088,29 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     props.onRequestClose?.();
                     return;
                   }
+                  if (
+                    props.onFocusEffort &&
+                    e.key === "ArrowRight" &&
+                    !e.altKey &&
+                    !e.ctrlKey &&
+                    !e.metaKey &&
+                    !e.shiftKey &&
+                    e.currentTarget.selectionStart === searchQuery.length
+                  ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // The column shows the selected model's effort, so a highlighted model is
+                    // picked first; the owning popup then moves focus to that model's levels.
+                    const highlighted = highlightedModelKeyRef.current
+                      ? parseModelPickerModelKey(highlightedModelKeyRef.current)
+                      : null;
+                    const pickedNew =
+                      highlighted !== null &&
+                      highlightedModelKeyRef.current !== activeModelKey &&
+                      handleModelSelect(highlighted.slug, highlighted.instanceId) !== null;
+                    if (!pickedNew) props.onFocusEffort();
+                    return;
+                  }
                   if (e.key === "Enter" && highlightedModelKeyRef.current) {
                     (
                       e as typeof e & { preventBaseUIHandler?: () => void }
@@ -1124,11 +1164,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         aria-expanded={legacySection.isExpanded}
                         className="group w-full cursor-pointer"
                       >
-                        <ModelListDisclosureContent
-                          label={droidGroups ? "More models" : "Legacy models"}
-                          count={legacySection.legacyModels.length}
-                          expanded={legacySection.isExpanded}
-                        />
+                        {droidGroups ? (
+                          // SCIENT-FORK: Droid's More section keeps its labelled disclosure.
+                          <ModelListDisclosureContent
+                            label="More models"
+                            count={legacySection.legacyModels.length}
+                            expanded={legacySection.isExpanded}
+                          />
+                        ) : (
+                          <span className="text-sm leading-snug text-muted-foreground group-hover:text-foreground group-data-highlighted:text-foreground">
+                            {legacySection.isExpanded ? "Show less" : "Show more"}
+                          </span>
+                        )}
                       </ComboboxItem>
                     );
                   }
@@ -1187,7 +1234,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                             ? selectedModelKeySet.has(modelKey)
                             : modelKey === activeModelKey
                         }
-                        showProvider={rowsMixProviders || Boolean(model.subProvider)}
+                        favoriteStarOnHover={selectedInstanceId === "favorites" && !isSearching}
+                        showInstanceBadge={badgedInstanceIds.has(model.instanceId)}
                         showNewBadge={model.badge === "new"}
                         unavailable={model.isUnavailable === true}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
