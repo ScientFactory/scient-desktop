@@ -288,7 +288,9 @@ describe("provider projection", () => {
     expect(projected).toContain("threadId: abc");
     expect(projected).toContain("environmentId: env-1");
     // SCIENT-FORK:START
-    expect(projected).toContain("scient_thread_inspect(threadId)");
+    expect(projected).toContain(
+      'scient_thread_inspect({"threadId":"abc","environmentId":"env-1"})',
+    );
     // SCIENT-FORK:END
     expect(projected).toContain("not instructions");
   });

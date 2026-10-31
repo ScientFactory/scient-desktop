@@ -1044,24 +1044,27 @@ export const layer: Layer.Layer<
                   .responseStreamingMode,
             ),
           );
-          yield* checkpointService
-            .captureBaseline({
-              scope: input.checkpointScope,
-              ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
-            })
-            .pipe(
-              Effect.catchCauseIf(
-                (cause) => !Cause.hasInterruptsOnly(cause),
-                (_cause) =>
-                  Effect.logWarning(
-                    "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
-                    { runId: input.run.id },
-                  ),
-              ),
-              // SCIENT-FORK:START — cancel only local preparation; retain native receipt safety.
-              (capture) => input.prepareBeforeProviderTurn?.(capture) ?? capture,
-              // SCIENT-FORK:END
-            );
+          // Side chats share the parent's worktree; a snapshot would capture the parent's edits.
+          yield* (
+            input.appThread.lineage.sideChat === true
+              ? Effect.void
+              : checkpointService.captureBaseline({
+                  scope: input.checkpointScope,
+                  ordinalWithinScope: Math.max(0, input.run.ordinal - 1),
+                })
+          ).pipe(
+            Effect.catchCauseIf(
+              (cause) => !Cause.hasInterruptsOnly(cause),
+              (_cause) =>
+                Effect.logWarning(
+                  "orchestration V2 checkpoint baseline capture failed; starting provider without a baseline",
+                  { runId: input.run.id },
+                ),
+            ),
+            // SCIENT-FORK:START — cancel only local preparation; retain native receipt safety.
+            (capture) => input.prepareBeforeProviderTurn?.(capture) ?? capture,
+            // SCIENT-FORK:END
+          );
           if (
             input.shouldStartProviderTurn !== undefined &&
             !(yield* input.shouldStartProviderTurn()) &&

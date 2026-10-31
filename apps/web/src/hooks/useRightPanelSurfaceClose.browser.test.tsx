@@ -32,6 +32,7 @@ vi.mock("../state/entities", () => ({
   useQuietThreadProjection: () => null,
   useQuietThreadShell: () => null,
   useProject: () => null,
+  readThreadShell: () => null,
 }));
 vi.mock("../state/terminalSessions", () => ({ useKnownTerminalSessions: () => null }));
 vi.mock("../composerDraftStore", async () => {
@@ -57,6 +58,8 @@ vi.mock("../state/use-atom-command", () => ({
 // The commands are replaced above; importing their runtime would connect a client.
 vi.mock("../state/terminal", () => ({ terminalEnvironment: { open: {}, close: {}, write: {} } }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { close: {} } }));
+vi.mock("../state/threads", () => ({ threadEnvironment: { delete: {} } }));
+vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => null } }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: () => false,
 }));

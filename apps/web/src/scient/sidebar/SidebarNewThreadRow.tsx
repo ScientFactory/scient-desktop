@@ -3,6 +3,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { MessageSquareDashedIcon, SquarePenIcon } from "lucide-react";
 import { useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import { openCommandPalette } from "../../commandPaletteBus";
 import { SidebarMenuButton } from "../../components/ui/sidebar";
 import { stackedThreadToast, toastManager } from "../../components/ui/toast";
 import type { useHandleNewThread } from "../../hooks/useHandleNewThread";
@@ -139,6 +140,8 @@ export function useSidebarNewThreadRowActions(input: {
       activeThread: newThreadContext.activeThread ?? undefined,
       defaultProjectRef: newThreadContext.defaultProjectRef,
       handleNewThread: newThreadContext.handleNewThread,
+    }).then((started) => {
+      if (!started) openCommandPalette({ open: "new-thread-in" });
     });
   });
 

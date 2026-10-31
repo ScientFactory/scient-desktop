@@ -75,6 +75,7 @@ import {
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
@@ -175,9 +176,11 @@ function UserFileCard({
 function UserVideoAttachment({
   file,
   standalone = false,
+  cornerClassName,
 }: {
   readonly file: ChatFileAttachment;
   readonly standalone?: boolean;
+  readonly cornerClassName?: string | undefined;
 }) {
   const ctx = use(TimelineRowCtx);
   // Row updates rebuild attachment objects, so the asset follows only the
@@ -199,7 +202,7 @@ function UserVideoAttachment({
         className={cn(
           "flex aspect-[4/3] w-full items-center justify-center bg-black px-2 py-3 text-center text-2xs text-white/70",
           standalone
-            ? cn(MEDIA_EDGE_CLASS_NAME, "rounded-2xl")
+            ? cn(MEDIA_EDGE_CLASS_NAME, "rounded-2xl", cornerClassName)
             : "rounded-lg border border-border/80",
         )}
       >
@@ -234,7 +237,9 @@ function UserVideoAttachment({
     />
   );
   return standalone ? (
-    <div className={cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl")}>{player}</div>
+    <div className={cn(MEDIA_EDGE_CLASS_NAME, "overflow-hidden rounded-2xl", cornerClassName)}>
+      {player}
+    </div>
   ) : (
     player
   );
@@ -429,6 +434,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const entranceRef = createPromptEntrance(row.message.id, sendMotion.enteringPromptId);
   // SCIENT-FORK:END
   const { onImageExpand, onFileOpen } = ctx;
+  const coarsePointer = useMediaQuery({ pointer: "coarse" });
   const senderThreadId = row.message.senderThreadId;
   const resources = selectMessageImageResources(row.message.attachments);
   const previewUrls = useAssetUrls(ctx.activeThreadEnvironmentId, resources);
@@ -671,12 +677,82 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     ) : null;
   // SCIENT-FORK:END
 
+  // Touch shows actions all the time, and narrow lanes have no room beside the
+  // bubble, so both keep the actions on their own line.
+  const floatActions = row.groupedWithNext === true && !coarsePointer;
+  const messageActions = (
+    <div
+      className={cn(
+        "flex items-center justify-end gap-x-2 gap-y-0.5",
+        floatActions ? "flex-wrap" : "shrink-0",
+      )}
+    >
+      {folded && senderThreadId ? (
+        <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
+          Open thread
+        </InlineButton>
+      ) : null}
+      <Tooltip>
+        <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+          {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
+        </TooltipTrigger>
+        <TooltipPopup>
+          {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+        </TooltipPopup>
+      </Tooltip>
+      <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>
+              {/* SCIENT-FORK:START — both folded and ordinary prompts retain Scient fork V2. */}
+              {row.canForkConversation === true && ctx.onForkUserMessage ? (
+                <ScientForkMessageButton
+                  label="Fork conversation from this message"
+                  onFork={() => ctx.onForkUserMessage?.(row.message)}
+                />
+              ) : null}
+              {/* SCIENT-FORK:END */}
+              {typeof revertTurnCount === "number" && (
+                <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
+              )}
+              {copyText && (
+                <MessageCopyButton
+                  text={contextClipboardFragment ? copyText : plainText}
+                  {...(contextClipboardFragment
+                    ? {
+                        extraFlavors: {
+                          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment,
+                        },
+                      }
+                    : {})}
+                  // SCIENT-FORK:START — copy preserves the rendered message's rich direction.
+                  resolveHtml={(anchor) =>
+                    messageCopyHtml({
+                      anchor,
+                      messageId: row.message.id,
+                      markdown: resolvedContext.text,
+                      lineBreaks: true,
+                      parseRawHtml: false,
+                    })
+                  }
+                  // SCIENT-FORK:END
+                  variant="ghost"
+                />
+              )}
+              {promptLink !== null && (
+                <MessageCopyButton
+                  text={promptLink}
+                  label="Copy prompt link"
+                  icon={LinkIconNode}
+                  variant="ghost"
+                />
+              )}
+      </div>
+    </div>
+  );
   return (
     <div
       // SCIENT-FORK:START — the first prompt's entrance plays on its bubble.
       ref={entranceRef}
       // SCIENT-FORK:END
-      className="group flex flex-col items-end gap-1"
+      className="group @container flex flex-col items-end gap-1"
       data-user-message-attribution={folded ? "agent" : undefined}
     >
       {userMessage.attribution === "t3code" ? (
@@ -710,7 +786,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div
         className={cn(
           "relative min-w-0 max-w-[80%] rounded-2xl text-message-foreground",
-          mediaAboveText && "rounded-tr-md",
+          (mediaAboveText || row.groupedWithPrevious) && "rounded-tr-md",
+          row.groupedWithNext && "rounded-br-md",
           BUBBLE_CHIP_CLASS_NAME,
           userMessage.attribution === "guest"
             ? guestBubbleClassName(false)
@@ -867,75 +944,35 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             )}
           </div>
         ) : null}
+        {floatActions ? (
+          <div
+            className={cn(
+              "absolute end-full top-1/2 me-2 hidden w-max max-w-[calc(20cqw-0.5rem)] -translate-y-1/2 @min-[37rem]:flex",
+              ACTIONS_REVEAL_CLASS_NAME,
+            )}
+          >
+            {messageActions}
+          </div>
+        ) : null}
       </div>
       <UserMessageProjectedStatus row={row} />
       {!folded || expanded ? (
-        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-          <div className="flex shrink-0 items-center gap-2">
-            {folded && senderThreadId ? (
-              <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
-                Open thread
-              </InlineButton>
-            ) : null}
-            <Tooltip>
-              <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-                {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
-              </TooltipTrigger>
-              <TooltipPopup>
-                {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-              </TooltipPopup>
-            </Tooltip>
-            <div className="flex items-center gap-0.5">
-              {/* SCIENT-FORK:START — both folded and ordinary prompts retain Scient fork V2. */}
-              {row.canForkConversation === true && ctx.onForkUserMessage ? (
-                <ScientForkMessageButton
-                  label="Fork conversation from this message"
-                  onFork={() => ctx.onForkUserMessage?.(row.message)}
-                />
-              ) : null}
-              {/* SCIENT-FORK:END */}
-              {typeof revertTurnCount === "number" && (
-                <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-              )}
-              {copyText && (
-                <MessageCopyButton
-                  text={contextClipboardFragment ? copyText : plainText}
-                  {...(contextClipboardFragment
-                    ? {
-                        extraFlavors: {
-                          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment,
-                        },
-                      }
-                    : {})}
-                  // SCIENT-FORK:START — copy preserves the rendered message's rich direction.
-                  resolveHtml={(anchor) =>
-                    messageCopyHtml({
-                      anchor,
-                      messageId: row.message.id,
-                      markdown: resolvedContext.text,
-                      lineBreaks: true,
-                      parseRawHtml: false,
-                    })
-                  }
-                  // SCIENT-FORK:END
-                  variant="ghost"
-                />
-              )}
-              {promptLink !== null && (
-                <MessageCopyButton
-                  text={promptLink}
-                  label="Copy prompt link"
-                  icon={LinkIconNode}
-                  variant="ghost"
-                />
-              )}
-            </div>
-          </div>
+        <div
+          className={cn(
+            "flex w-full max-w-[80%] justify-end pe-1",
+            floatActions && "@min-[37rem]:hidden",
+            ACTIONS_REVEAL_CLASS_NAME,
+          )}
+        >
+          {messageActions}
         </div>
       ) : null}
     </div>
   );
 }
+
+const ACTIONS_REVEAL_CLASS_NAME =
+  "items-center text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100";
 
 function UserMessageIntentMarker({
   intent,

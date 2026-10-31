@@ -1,15 +1,21 @@
+import * as NodeUtil from "node:util";
+
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+// SCIENT-FORK:START — the kept service onboarding offer.
+import type { PlatformError } from "effect/PlatformError";
 import * as Terminal from "effect/Terminal";
+// SCIENT-FORK:END
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import * as ServiceProtection from "../cloud/serviceProtection.ts";
-import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
+import { compareExactServiceVersions, SERVICE_ENV_FILE } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
@@ -34,13 +40,70 @@ export type ServiceReconcileResult =
       readonly plan: BootService.BootServicePlan;
     };
 
-const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
+const SERVICE_ENV_KEY = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/u;
+
+/**
+ * Sets or removes (`undefined`) entries in `service.env` text and keeps every
+ * other line, including comments, as the user wrote it.
+ */
+export const upsertServiceEnv = (
+  contents: string,
+  entries: Readonly<Record<string, string | undefined>>,
+): string => {
+  const written = new Set<string>();
+  const lines = contents.split("\n").flatMap((line) => {
+    const key = SERVICE_ENV_KEY.exec(line)?.[1];
+    if (key === undefined || !Object.hasOwn(entries, key)) return [line];
+    const value = entries[key];
+    if (value === undefined || written.has(key)) return [];
+    written.add(key);
+    return [`${key}=${value}`];
+  });
+  while (lines.at(-1) === "") lines.pop();
+  for (const [key, value] of Object.entries(entries)) {
+    if (value !== undefined && !written.has(key)) lines.push(`${key}=${value}`);
+  }
+  return lines.length === 0 ? "" : `${lines.join("\n")}\n`;
+};
+
+/** `service.env` under `baseDir`, parsed as the service launcher parses it. */
+export const readServiceEnv = Effect.fn("cli.service.read_env")(function* (baseDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = (yield* Path.Path).join(baseDir, SERVICE_ENV_FILE);
+  const contents = (yield* fs.exists(path)) ? yield* fs.readFileString(path) : "";
+  const entries = Object.entries(NodeUtil.parseEnv(contents)).flatMap(([key, value]) =>
+    value === undefined ? [] : [[key, value] as const],
+  );
+  return { path, contents, entries: Object.fromEntries(entries) };
+});
+
+export const writeServiceEnv = Effect.fn("cli.service.write_env")(function* (
+  baseDir: string,
+  entries: Readonly<Record<string, string | undefined>>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const current = yield* readServiceEnv(baseDir);
+  const next = upsertServiceEnv(current.contents, entries);
+  if (next === current.contents) return;
+  yield* fs.makeDirectory(baseDir, { recursive: true });
+  yield* fs.writeFileString(current.path, next);
+});
+
+export const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
   readonly allowDowngrade?: boolean;
 }) {
+  const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
   if (status.installed && status.current) {
     return { changed: false, status } satisfies ServiceReconcileResult;
+  }
+  if (status.supported && !status.installed) {
+    // A new service listens on this machine only, until `t3 up` opens the local network.
+    const { entries } = yield* readServiceEnv(baseDir);
+    if (entries.T3CODE_LAN === undefined && entries.T3CODE_HOST === undefined) {
+      yield* writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
+    }
   }
   if (
     status.installedVersion !== undefined &&
@@ -60,13 +123,13 @@ const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?:
   } satisfies ServiceReconcileResult;
 });
 
-function formatServiceChange(
+export function formatServiceChange(
   result: Extract<ServiceReconcileResult, { readonly changed: true }>,
 ): string {
   if (result.plan.handedOff === true) {
-    return `Handed the Scient service switch to t3@${packageJson.version} to a separate systemd unit, since this session runs inside the service and disconnects when it restarts.\nResult: ${result.plan.logPath}`;
+    return `Service update to t3@${packageJson.version} queued. This session will disconnect.\nLog: ${result.plan.logPath}`;
   }
-  return `${result.previouslyInstalled ? "Updated" : "Installed"} Scient service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`;
+  return `Service ${result.previouslyInstalled ? "updated" : "installed"} · t3@${packageJson.version}\nLog: ${result.plan.logPath}`;
 }
 
 function formatProtection(
@@ -137,10 +200,7 @@ const runServiceCommand = Effect.fn("cli.service.run")(function* <A, E, R>(
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
   const config = yield* resolveCliAuthConfig(flags, logLevel);
-  return yield* run.pipe(
-    Effect.provide(layer(config)),
-    Effect.provideService(ServerConfig.ServerConfig, config),
-  );
+  return yield* run.pipe(Effect.provide(Layer.merge(layer(config), ServerConfig.layer(config))));
 });
 
 const serviceReconcileFlags = {
@@ -152,7 +212,9 @@ const serviceReconcileFlags = {
 };
 
 const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pipe(
-  Command.withDescription("Install Scient as a background service for this user."),
+  Command.withDescription(
+    "Install Scient as a background service for this user. `t3 up` also chooses how your other devices reach it.",
+  ),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
@@ -165,6 +227,9 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
           return;
         }
         yield* Console.log(formatServiceChange(result));
+        if (!result.previouslyInstalled) {
+          yield* Console.log("Run `t3 up` to choose how your other devices reach it.");
+        }
       }),
     ),
   ),
@@ -371,6 +436,7 @@ const serviceProtectCommand = Command.make("protect", {
   ),
 );
 
+// SCIENT-FORK:START — `t3 up` replaced this offer upstream; the dormant connect keeps it.
 export type ServiceOnboardingOutcome = "ready" | "pending" | "skipped";
 
 const offerInheritedServiceDuringOnboarding = Effect.gen(function* () {
@@ -443,7 +509,7 @@ export const offerServiceDuringOnboarding = SCIENT_DESKTOP_IDENTITY.safetyEnvelo
     ).pipe(Effect.as("skipped" as const))
   : offerInheritedServiceDuringOnboarding;
 
-const reportServiceSetupFailure = (error: BootService.BootServiceError) =>
+const reportServiceSetupFailure = (error: { readonly message: string }) =>
   Console.warn(`Background setup did not finish: ${error.message}`).pipe(
     Effect.as("skipped" as const),
   );
@@ -451,7 +517,7 @@ const reportServiceSetupFailure = (error: BootService.BootServiceError) =>
 export const recoverServiceOnboardingOffer = <R>(
   offer: Effect.Effect<
     ServiceOnboardingOutcome,
-    BootService.BootServiceError | Terminal.QuitError,
+    BootService.BootServiceError | PlatformError | Terminal.QuitError,
     R
   >,
 ) =>
@@ -467,8 +533,10 @@ export const recoverServiceOnboardingOffer = <R>(
       BootServicePrerequisiteError: reportServiceSetupFailure,
       BootServiceUpdatePendingError: reportServiceSetupFailure,
       BootServiceDowngradeRefusedError: reportServiceSetupFailure,
+      PlatformError: reportServiceSetupFailure,
     }),
   );
+// SCIENT-FORK:END
 
 export const serviceCommand = Command.make("service").pipe(
   Command.withDescription("Manage the Scient background service."),

@@ -4,7 +4,7 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -18,6 +18,7 @@ import {
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
+import { BackgroundThreadContext } from "./backgroundThread";
 
 export function SelectionCitationToolbar<T extends { readonly text: string }>({
   viewport,
@@ -43,6 +44,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
+  const backgroundThread = use(BackgroundThreadContext);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
   useLayoutEffect(() => {
@@ -174,7 +176,8 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       event.stopPropagation();
       toolbar.focus({ preventScroll: true });
     };
-    document.addEventListener("keydown", focusActions, true);
+    // Tab belongs to the foreground chat; a background timeline only follows its selection.
+    if (!backgroundThread) document.addEventListener("keydown", focusActions, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
     return () => {
       document.removeEventListener("keydown", focusActions, true);
@@ -183,7 +186,7 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       unsubscribe?.();
       actionsRef.current = null;
     };
-  }, [allowPreventedSelectionStart, capture, viewport, subscribeSelection]);
+  }, [allowPreventedSelectionStart, backgroundThread, capture, viewport, subscribeSelection]);
 
   if (!selection) return null;
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;

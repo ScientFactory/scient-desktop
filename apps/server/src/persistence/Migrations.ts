@@ -98,6 +98,8 @@ import Migration0077 from "./Migrations/077_ActiveTurnItemIndexes.ts";
 // T3's migrations 74-75 land at the next free IDs; Scient already recorded 074-077.
 import Migration0078 from "./Migrations/078_ExcludeAttachmentPlaceholdersFromSearch.ts";
 import Migration0079 from "./Migrations/079_SubagentDeliveryState.ts";
+// T3's migration 76 lands at the next free ID; Scient already recorded 076-079.
+import Migration0080 from "./Migrations/080_ProjectionProjectsPinArchive.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -199,6 +201,7 @@ export const migrationEntries = [
   [77, "ActiveTurnItemIndexes", Migration0077],
   [78, "ExcludeAttachmentPlaceholdersFromSearch", Migration0078],
   [79, "SubagentDeliveryState", Migration0079],
+  [80, "ProjectionProjectsPinArchive", Migration0080],
   // SCIENT-FORK:END
 ] as const;
 

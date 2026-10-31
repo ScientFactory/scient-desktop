@@ -90,6 +90,10 @@ Endpoint behavior follows the actual address:
 - a non-loopback HTTP endpoint can be used for direct LAN pairing; and
 - `127.0.0.1` is reachable only from the server computer.
 
+For a server you start in a terminal, `scient serve --lan` accepts connections
+from your local network and tailnet, but not from public addresses. A pairing
+code is then all that keeps other devices on those networks out.
+
 Prefer SSH forwarding or a correctly secured private HTTPS endpoint. Do not
 expose an unauthenticated Scient server port to the public internet.
 
@@ -114,8 +118,9 @@ current LAN and Tailscale addresses and adds them as routes, so pairing once
 is enough to use the LAN at home. When the
 machine's LAN address changes, for example after it joins another Wi-Fi network,
 the learned route follows it. The machine must allow network access for its LAN
-address to be learned. The [background service](./background-service.md#local-network-access)
-allows it on private networks by default. You can reorder a learned route, but not remove it; it
+address to be learned: **Network access** in the desktop app, or
+`scient serve --lan` for a server in a terminal.
+You can reorder a learned route, but not remove it; it
 goes away with the route it was learned through, or when the machine stops
 reporting that address.
 
@@ -281,6 +286,15 @@ tab closes. Audio does not play on your device.
 On a phone, tap the floating preview's corner dot to show its controls, then
 **Pop into separate window** to keep watching in picture-in-picture over other
 apps.
+
+### Local servers
+
+The browser lists a local server once it has a **Preview URL**: set one on the
+project action that starts the server. Scient checks that address and opens it
+as written, including HTTPS addresses and specific paths. It does not send web
+requests to other ports, even ones your terminals and agents opened, because a
+process may use a non-web protocol. To open any other local server, enter its
+URL in the browser.
 
 ### Browser host setup
 

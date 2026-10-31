@@ -77,13 +77,15 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       handleNewThread,
     };
   };
-  const readProjectGroupCount = () =>
+  // Grouped like the sidebar, so the shortcut and the New thread button agree.
+  const readProjectGroups = () =>
     buildSidebarProjectSnapshots({
       projects: readProjects(),
+      groupScratchProjects: true,
       settings: selectProjectGroupingSettings(getClientSettings()),
       primaryEnvironmentId: appAtomRegistry.get(primaryEnvironmentIdAtom),
       resolveEnvironmentLabel: () => null,
-    }).length;
+    });
   const canOperatePreview = (environmentId: EnvironmentId) =>
     readEnvironmentScope(environmentId, AuthPreviewOperateScope);
 
@@ -94,7 +96,10 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
 
   const startNewLocal: CommandHandler = (event) => {
     claim(event);
-    void startNewThreadFromContext(readThreadContext());
+    // With no current or open project, such as when every project is archived, pick one.
+    void startNewThreadFromContext(readThreadContext()).then((started) => {
+      if (!started) openCommandPalette({ open: "new-thread-in" });
+    });
   };
 
   const previewCommand =
@@ -124,10 +129,10 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         if (
           !boringSidebarEnabled &&
           // SCIENT-FORK:START — Scient's target-picker rule: always open it, so Add
-          // project stays one step away (T3: only with more than one project).
+          // project stays one step away (T3: only with more than one open project).
           shouldOpenNewThreadTargetPicker({
             legacySidebarEnabled,
-            projectGroupCount: readProjectGroupCount(),
+            projectGroupCount: readProjectGroups().length,
           })
           // SCIENT-FORK:END
         ) {

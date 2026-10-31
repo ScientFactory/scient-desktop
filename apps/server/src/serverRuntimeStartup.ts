@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
+  isListedThreadLineage,
   type ModelSelection,
   type Project,
   ProjectId,
@@ -309,8 +310,7 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
     targets.bootstrapProjectId = project.id;
     targets.bootstrapProjectCreated = created;
     const existingThread = (yield* threads.listActiveShellIndex()).find(
-      (thread) =>
-        thread.projectId === project.id && thread.lineage.relationshipToParent !== "subagent",
+      (thread) => thread.projectId === project.id && isListedThreadLineage(thread.lineage),
     );
     if (existingThread !== undefined) {
       targets.bootstrapThreadId = existingThread.id;

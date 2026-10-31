@@ -28,7 +28,11 @@ import {
   setActivePreviewTab,
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
-import { selectSelectedRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import {
+  rightPanelHostRef,
+  selectSelectedRightPanelSurface,
+  useRightPanelStore,
+} from "~/rightPanelStore";
 import { useHtmlPdfSourceStore } from "~/scient/documentExport/htmlPdfSourceStore";
 import { resolveBrowserDefaults } from "./browserDefaults";
 
@@ -99,6 +103,8 @@ export async function openUrlInPreview<E>(input: {
   readonly isCurrent?: () => boolean;
   // SCIENT-FORK:END
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
+  // Read before any await: a side chat pane that unmounts meanwhile drops its host mapping.
+  const threadRef = rightPanelHostRef(input.threadRef);
   // SCIENT-FORK:START — stale opens must not navigate or trigger a fallback.
   if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
   const defaults = await resolveBrowserDefaults().catch(
@@ -109,17 +115,17 @@ export async function openUrlInPreview<E>(input: {
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
-  const runtime = previewRuntimeFor(input.threadRef.environmentId);
-  const previousActiveTabId = readThreadPreviewState(input.threadRef).activeTabId;
+  const runtime = previewRuntimeFor(threadRef.environmentId);
+  const previousActiveTabId = readThreadPreviewState(threadRef).activeTabId;
   // The server changes the active tab, not panel selection; selection changes come from the user.
   const selectedSurface = () =>
-    selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, input.threadRef)
-      ?.id ?? null;
+    selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef)?.id ??
+    null;
   const surfaceBeforeOpen = selectedSurface();
   const result = await input.openPreview({
-    environmentId: input.threadRef.environmentId,
+    environmentId: threadRef.environmentId,
     input: {
-      threadId: input.threadRef.threadId,
+      threadId: threadRef.threadId,
       url: input.url,
       viewport: defaults.viewport,
       profileId: input.profileId ?? defaults.profileId,
@@ -130,21 +136,21 @@ export async function openUrlInPreview<E>(input: {
   if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
   // SCIENT-FORK:END
   return mapAtomCommandResult(result, (snapshot) => {
-    rememberPreviewUrl(input.threadRef, input.url);
+    rememberPreviewUrl(threadRef, input.url);
     if (input.background) {
-      updatePreviewServerSnapshot(input.threadRef, snapshot);
+      updatePreviewServerSnapshot(threadRef, snapshot);
       // Restore focus unless the user picked a tab while opening this one.
       if (
         previousActiveTabId &&
-        readThreadPreviewState(input.threadRef).activeTabId === snapshot.tabId &&
+        readThreadPreviewState(threadRef).activeTabId === snapshot.tabId &&
         selectedSurface() === surfaceBeforeOpen
       ) {
-        setActivePreviewTab(input.threadRef, previousActiveTabId);
+        setActivePreviewTab(threadRef, previousActiveTabId);
       }
       return;
     }
-    applyPreviewServerSnapshot(input.threadRef, snapshot);
-    useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
+    applyPreviewServerSnapshot(threadRef, snapshot);
+    useRightPanelStore.getState().openBrowser(threadRef, snapshot.tabId);
     input.onOpened?.(snapshot);
   });
 }
@@ -180,6 +186,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       ),
     );
   }
+  const hostRef = rightPanelHostRef(input.threadRef);
   const workspaceRelativePath =
     input.workspaceRoot === undefined
       ? undefined
@@ -213,7 +220,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     );
   }
   return openUrlInPreview({
-    threadRef: input.threadRef,
+    threadRef: hostRef,
     url: assetUrl,
     openPreview: input.openPreview,
     // SCIENT-FORK:START — pass the same predicate, never claim a second intent.
@@ -228,7 +235,9 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
         return;
       }
       useHtmlPdfSourceStore.getState().bind({
-        threadRef: input.threadRef,
+        // SCIENT-FORK:START — the tab lives in the panel's thread, which reads the relation.
+        threadRef: hostRef,
+        // SCIENT-FORK:END
         tabId: snapshot.tabId,
         authorizedUrl: assetUrl,
         source: {
