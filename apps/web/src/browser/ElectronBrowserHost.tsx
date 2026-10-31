@@ -32,7 +32,7 @@ import { openUrlInPreview } from "./openFileInPreview";
 import { rendersServerTabNatively } from "./previewRuntime";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 // SCIENT-FORK:START — one app window hosts each desktop preview tab's webview.
-import { PreviewWindowHost } from "../scient/multiWindow/PreviewWindowHost";
+import { hostsPreviewTab, PreviewWindowHost } from "../scient/multiWindow/PreviewWindowHost";
 // SCIENT-FORK:END
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
@@ -98,6 +98,9 @@ function startAnnotationThemeSync(preview: DesktopPreviewBridge): () => void {
 }
 
 function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEvent): void {
+  // SCIENT-FORK:START — every app window hears the page's request; the window hosting it opens it.
+  if (!hostsPreviewTab(tabId)) return;
+  // SCIENT-FORK:END
   const source = hostedBrowserSessions(
     readActivePreviewSessions(),
     appAtomRegistry.get(primaryEnvironmentIdAtom),

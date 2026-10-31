@@ -5,11 +5,13 @@ import {
   ThreadId,
   type ClientSettings,
   type DesktopPreviewBridge,
+  type DesktopPreviewOpenLinkEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
+import { stubGlobals } from "../../test/scientAppWindows";
 
 const mocks = vi.hoisted(() => ({
   getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
@@ -18,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   closeTab: vi.fn<DesktopPreviewBridge["closeTab"]>(),
   registerWebview: vi.fn<DesktopPreviewBridge["registerWebview"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
+  openUrlInPreview: vi.fn<(input: { readonly url: string }) => Promise<unknown>>(),
 }));
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
@@ -51,6 +54,11 @@ vi.mock(import("../scient/multiWindow/windowLocks"), async (original) => ({
   desktopWindowLocks: () => navigator.locks,
 }));
 
+vi.mock(import("./openFileInPreview"), async (original) => ({
+  ...(await original()),
+  openUrlInPreview: mocks.openUrlInPreview as never,
+}));
+
 vi.mock(import("~/components/preview/usePreviewBridge"), async (original) => ({
   ...(await original()),
   usePreviewBridge: () => undefined,
@@ -64,11 +72,12 @@ import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/pre
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { acquireBrowserSurface } from "./browserSurfaceStore";
 import { withDesktopTab } from "./desktopTabLifetime";
-import { ElectronBrowserHost } from "./ElectronBrowserHost";
+import { ElectronBrowserHost, startElectronBrowserHost } from "./ElectronBrowserHost";
 import {
   createPreviewHostClaim,
   takeOverPreviewTabWhenShown,
 } from "../scient/multiWindow/previewHostOwnership";
+import { hostsPreviewTab } from "../scient/multiWindow/PreviewWindowHost";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 const threadRef = scopeThreadRef(
@@ -111,6 +120,27 @@ async function showTab(stack: DisposableStack, runtimeTabId: string) {
   });
 }
 
+/** Starts this window's desktop preview listeners; returns how the shell delivers a page's link. */
+function listenToDesktopPreview(stack: DisposableStack) {
+  let openLink: ((event: DesktopPreviewOpenLinkEvent) => void) | null = null;
+  const preview: Partial<DesktopPreviewBridge> = {
+    setAnnotationTheme: () => Promise.resolve(),
+    onPointerEvent: () => () => undefined,
+    onOpenLink: (listener) => {
+      openLink = listener;
+      return () => {
+        openLink = null;
+      };
+    },
+  };
+  {
+    // Only the listeners see this partial bridge; the webviews keep the mocked preview bridge.
+    using _bridge = stubGlobals({ desktopBridge: { preview } });
+    stack.defer(startElectronBrowserHost());
+  }
+  return (event: DesktopPreviewOpenLinkEvent) => openLink?.(event);
+}
+
 function setup(): Disposable {
   __resetClientSettingsPersistenceForTests();
   mocks.getClientSettings.mockReset().mockResolvedValue(DEFAULT_CLIENT_SETTINGS);
@@ -118,6 +148,7 @@ function setup(): Disposable {
   mocks.createTab.mockReset().mockResolvedValue(undefined);
   mocks.closeTab.mockReset().mockResolvedValue(undefined);
   mocks.registerWebview.mockReset().mockResolvedValue(undefined);
+  mocks.openUrlInPreview.mockReset().mockResolvedValue(undefined);
   mocks.getPreviewConfig.mockReset().mockResolvedValue({
     partition: "persist:t3-preview-default",
     webPreferences: "contextIsolation=yes",
@@ -191,6 +222,34 @@ describe("ElectronBrowserHost with several app windows", () => {
     await vi.waitFor(() => expect(screen.container.querySelector("webview")).not.toBeNull());
     await vi.waitFor(() => expect(other.role()).toBe("elsewhere"));
     expect(page.getByText(PLACEHOLDER).query()).toBeNull();
+  });
+
+  it("opens a link the page asks for only in the window hosting the page", async () => {
+    using _state = setup();
+    using otherWindow = new DisposableStack();
+    const runtimeTabId = openTab("tab_4");
+    const other = createPreviewHostClaim(runtimeTabId, openOtherWindow(otherWindow));
+    otherWindow.defer(other.start());
+    await other.setDisplayed(true);
+    await vi.waitFor(() => expect(other.role()).toBe("host"));
+
+    await using _screen = await renderHost();
+    using surfaces = new DisposableStack();
+    await showTab(surfaces, runtimeTabId);
+    await expect.element(page.getByText(PLACEHOLDER)).toBeVisible();
+    using desktop = new DisposableStack();
+    const openLink = listenToDesktopPreview(desktop);
+    const link = { tabId: runtimeTabId, url: "https://example.com/next", background: false };
+
+    openLink(link);
+    expect(mocks.openUrlInPreview).not.toHaveBeenCalled();
+
+    await page.getByRole("button", { name: "Show here" }).click();
+    await vi.waitFor(() => expect(hostsPreviewTab(runtimeTabId)).toBe(true));
+    openLink(link);
+    expect(mocks.openUrlInPreview).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ url: link.url }),
+    );
   });
 
   it("keeps the desktop tab open after another window takes it from this one", async () => {

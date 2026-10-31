@@ -17,11 +17,32 @@ interface PreviewWindowTab {
   readonly serverDriven: boolean;
 }
 
+const hostedTabIds = new Set<string>();
+
+/** Whether this window mounts the tab's webview; the shell tells every app window about its page. */
+export function hostsPreviewTab(runtimeTabId: string): boolean {
+  return hostedTabIds.has(runtimeTabId);
+}
+
 /** Renders `children` (the tab's webview) only in the app window that hosts the tab. */
 export function PreviewWindowHost(props: PreviewWindowTab & { readonly children: ReactNode }) {
   const locks = desktopWindowLocks();
-  if (!locks) return props.children;
+  if (!locks) {
+    return <HostedPreviewTab runtimeTabId={props.runtimeTabId}>{props.children}</HostedPreviewTab>;
+  }
   return <CoordinatedPreviewWindowHost {...props} locks={locks} />;
+}
+
+function HostedPreviewTab(props: { readonly runtimeTabId: string; readonly children: ReactNode }) {
+  const { runtimeTabId } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records which tabs' pages this window hosts, for shell events that reach every app window
+  useEffect(() => {
+    hostedTabIds.add(runtimeTabId);
+    return () => {
+      hostedTabIds.delete(runtimeTabId);
+    };
+  }, [runtimeTabId]);
+  return props.children;
 }
 
 function CoordinatedPreviewWindowHost({
@@ -52,7 +73,9 @@ function CoordinatedPreviewWindowHost({
     );
   }, [claim, displayed, tabId]);
 
-  if (role === "host") return children;
+  if (role === "host") {
+    return <HostedPreviewTab runtimeTabId={runtimeTabId}>{children}</HostedPreviewTab>;
+  }
   return (
     <>
       <PreviewTabFollower {...tab} />
