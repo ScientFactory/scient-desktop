@@ -945,9 +945,9 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
 
   /**
    * A new folder at the link's place that still holds the project: a restore, or a cloud
-   * drive putting it back, perhaps edited since. Every file last synced is there and at
-   * least one is untouched. Anything else may not be this project's, so it waits for the
-   * person.
+   * drive putting it back, perhaps edited since. Every file last synced is there and most
+   * are untouched; one shared file proves nothing, as templates share them. Anything else
+   * may not be this project's, so it waits for the person.
    */
   const isRestored = Effect.fn("OverleafConnections.isRestored")(function* (
     document: OverleafConnectionDocument,
@@ -961,7 +961,11 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
     )
       return false;
     const compared = yield* compareWithBase(document);
-    return compared._tag === "read" && compared.deleted === 0 && compared.unchanged > 0;
+    return (
+      compared._tag === "read" &&
+      compared.deleted === 0 &&
+      compared.unchanged > compared.changed + compared.added
+    );
   });
 
   /** Records a restored folder as the link's own. Run while holding the connection. */

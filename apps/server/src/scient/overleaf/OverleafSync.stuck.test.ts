@@ -142,7 +142,7 @@ describe.skipIf(!canApply)("a link never traps anyone", () => {
         const caller = w.at(w.main);
         const paper = NodePath.join(w.main, "paper");
         const away = `${paper}-away`;
-        yield* write(paper, { "notes.tex": "notes" });
+        yield* write(paper, { "notes.tex": "notes", "refs.bib": "refs" });
         yield* w.service.sync({ caller, connectionId, requestId: "s2" });
         // A copy put back is a new folder at the same place, as a cloud drive leaves it.
         yield* Effect.promise(async () => {
@@ -161,6 +161,7 @@ describe.skipIf(!canApply)("a link never traps anyone", () => {
         expect(yield* w.overleafNow(PROJECT)).toEqual({
           "main.tex": "after the restore",
           "notes.tex": "notes",
+          "refs.bib": "refs",
         });
       }),
     ),
@@ -173,17 +174,25 @@ describe.skipIf(!canApply)("a link never traps anyone", () => {
         const connectionId = yield* linked(w);
         const caller = w.at(w.main);
         const paper = NodePath.join(w.main, "paper");
+        yield* write(paper, { "refs.bib": "the shared template's references" });
+        yield* w.service.sync({ caller, connectionId, requestId: "s2" });
         yield* Effect.promise(() => NodeFSP.rm(paper, { recursive: true }));
-        // The same file name, as any LaTeX folder has, doesn't make it this project.
-        yield* write(paper, { "main.tex": "someone else's work" });
+        // The same names and one shared file, as two papers from a template have.
+        yield* write(paper, {
+          "main.tex": "someone else's work",
+          "refs.bib": "the shared template's references",
+        });
         expect(yield* w.service.status({ caller, connectionId })).toMatchObject({
           availability: "unavailable",
           reasons: ["folder-changed"],
         });
         expect(
-          yield* Effect.flip(w.service.sync({ caller, connectionId, requestId: "s2" })),
+          yield* Effect.flip(w.service.sync({ caller, connectionId, requestId: "s3" })),
         ).toMatchObject({ _tag: "OverleafConnectionNotReadyError", reason: "folder-changed" });
-        expect(yield* w.overleafNow(PROJECT)).toEqual({ "main.tex": "from Overleaf" });
+        expect(yield* w.overleafNow(PROJECT)).toEqual({
+          "main.tex": "from Overleaf",
+          "refs.bib": "the shared template's references",
+        });
       }),
     ),
   );

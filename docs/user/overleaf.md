@@ -337,7 +337,7 @@ unlinking first. A moved folder keeps its history. A new folder starts fresh, an
 old link is put away.
 
 If a linked folder comes back at the same place, from a backup or a cloud drive, the
-link carries on by itself: every file from the last sync is there and at least one is
+link carries on by itself: every file from the last sync is there and most are
 unchanged. A different folder with the same name stops the sync, so it can't replace
 your Overleaf project. Unlink it and link the folder you want.
 
