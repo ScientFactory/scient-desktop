@@ -77,13 +77,15 @@ rules. Packages before 0.163.0 still require the patched `codex-resources/zsh/bi
 The code-mode host, ripgrep, Linux bubblewrap and Windows sandbox executables remain
 required. The same rules apply during discovery, qualification, installation and
 receipt-based repair. Feed metadata cannot change them.
-Contract 3 and earlier remain historical, so older Scient builds keep their compatible
-cached or bundled Codex instead of attempting the new layout. The bundled fallback's
+Contract 5 raises the expanded-data limit from 512 MiB to 768 MiB, because Codex 0.166.0
+unpacks to 516 MiB on Linux x64 and 560 MiB on Windows x64. Contract 4 and earlier
+remain historical, so older Scient builds keep their compatible cached or bundled Codex
+instead of attempting a package their limit would reject. The bundled fallback's
 release version and bytes are unchanged by this contract transition.
 
 The Codex extraction policy accommodates the official voice payload and reserves bounded
 headroom for later package growth: all Codex targets allow up to 128 entries
-and retain the 512 MiB expanded-data limit. The shared extraction default
+and 768 MiB of expanded data. The shared extraction default
 remains 32 entries for other providers. Changing these Codex-specific
 limits requires code review and native qualification, not a feed edit.
 Extraction errors report the entry at rejection, the running entry/byte counts,
