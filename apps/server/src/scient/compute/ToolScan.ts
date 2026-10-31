@@ -1,10 +1,11 @@
 import {
+  condaLocations,
   condaPrefixes,
   originFromPath,
   pathModule,
   type DiscoveryContext,
 } from "./RuntimeDiscovery.ts";
-import { LANGUAGE_TOOLS, type LanguageTools } from "./ToolCatalog.ts";
+import { DISCOVERY_VARIABLES, LANGUAGE_TOOLS, type LanguageTools } from "./ToolCatalog.ts";
 
 /** Finding reads names and links. It never starts a tool, and a tool's version may stay unknown. */
 export interface FoundLanguageTool {
@@ -198,6 +199,19 @@ function scanFolder(
   });
 }
 
+/** The command a file in a known place answers to: `jags-terminal.exe` is JAGS's `jags`. */
+function commandName(context: DiscoveryContext, tools: LanguageTools, executable: string): string {
+  const base = pathModule(context.platform)
+    .basename(executable)
+    .replace(/\.(app|exe|bat|cmd)$/iu, "");
+  const name = base.toLowerCase();
+  return (
+    tools.commands.find((command) => command.toLowerCase() === name) ??
+    tools.commands.find((command) => name.startsWith(command.toLowerCase())) ??
+    base
+  );
+}
+
 function environmentPathEntries(context: DiscoveryContext): ReadonlyArray<string> {
   const value =
     context.platform === "win32"
@@ -275,6 +289,18 @@ function managerFolders(context: DiscoveryContext): ReadonlyArray<string> {
   ];
 }
 
+/**
+ * Folders the person's settings point at, which discovery on the server's own thread also reads.
+ * Reading them here first means a dead one is set aside before that happens.
+ */
+function movedFolders(context: DiscoveryContext): ReadonlyArray<string> {
+  const path = pathModule(context.platform);
+  const separator = context.platform === "win32" ? ";" : ":";
+  return DISCOVERY_VARIABLES.flatMap((name) =>
+    (context.environment[name] ?? "").split(separator),
+  ).filter((folder) => path.isAbsolute(folder));
+}
+
 function condaFolders(context: DiscoveryContext, prefix: string): ReadonlyArray<string> {
   const path = pathModule(context.platform);
   return context.platform === "win32"
@@ -294,15 +320,8 @@ export function toolScanSteps(context: DiscoveryContext): ReadonlyArray<ToolScan
     (tools.places?.[context.platform as "darwin" | "linux" | "win32"] ?? []).map((place) => ({
       source: place,
       run: () => {
-        const path = pathModule(context.platform);
         return expandPlace(context, place).map((executable) =>
-          found(
-            context,
-            languageId,
-            path.basename(executable).replace(/\.app$/u, ""),
-            executable,
-            null,
-          ),
+          found(context, languageId, commandName(context, tools, executable), executable, null),
         );
       },
     })),
@@ -316,15 +335,23 @@ export function toolScanSteps(context: DiscoveryContext): ReadonlyArray<ToolScan
           scanFolder(context, directory, wanted, null),
         ),
     })),
-    {
-      source: "conda",
+    // One step per place, so a dead drive sets aside that place and not all of conda.
+    ...condaLocations(context).map((location) => ({
+      source: location,
       run: () =>
-        condaPrefixes(context).flatMap(({ prefix, origin }) =>
+        condaPrefixes(context, [location]).flatMap(({ prefix, origin }) =>
           condaFolders(context, prefix).flatMap((directory) =>
             scanFolder(context, directory, wanted, origin),
           ),
         ),
-    },
+    })),
+    ...movedFolders(context).map((folder) => ({
+      source: folder,
+      run: () => {
+        context.host.readDirectory(folder);
+        return [];
+      },
+    })),
     ...placeSteps,
   ];
 }

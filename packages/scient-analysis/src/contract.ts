@@ -528,6 +528,8 @@ export interface AnalysisRuntimeAdapter {
   readonly id: AnalysisRuntimeId;
   readonly kind: AnalysisRuntimeKind;
   readonly fileExtensions: ReadonlyArray<string>;
+  /** Inspection answers from a shared scan, so a kept profile would only go stale. */
+  readonly readsLiveScan?: boolean;
   readonly inspect: (input: {
     readonly customExecutablePath?: string;
     readonly inspectedAt: string;

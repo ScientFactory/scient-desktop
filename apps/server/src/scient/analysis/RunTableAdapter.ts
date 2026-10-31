@@ -38,15 +38,31 @@ function chooseTool(
     return command === undefined ? null : { command, executable: added, version: null };
   }
   for (const command of route.commands) {
-    const tool = tools.find((candidate) => candidate.name === command.command);
+    // An app bundle proves the language is here, but it is not a program Run can start.
+    const tool = tools.find(
+      (candidate) => candidate.name === command.command && !/\.app$/iu.test(candidate.executable),
+    );
     if (tool !== undefined) return { command, executable: tool.executable, version: tool.version };
   }
   return null;
 }
 
-/** A build's runner sits beside the compiler that needs it, or comes from the scan's PATH. */
 function fill(args: ReadonlyArray<string>, file: string, output: string): ReadonlyArray<string> {
   return args.map((arg) => arg.replaceAll("{file}", file).replaceAll("{output}", output));
+}
+
+/** Windows starts a batch file only through its command interpreter. */
+function startable(
+  step: { readonly executable: string; readonly args: ReadonlyArray<string> },
+  environment: Readonly<Record<string, string>>,
+  platform: NodeJS.Platform,
+) {
+  return platform === "win32" && /\.(bat|cmd)$/iu.test(step.executable)
+    ? {
+        executable: environment.ComSpec ?? environment.COMSPEC ?? "cmd.exe",
+        args: ["/d", "/c", "call", step.executable, ...step.args],
+      }
+    : step;
 }
 
 function prepare(
@@ -64,14 +80,20 @@ function prepare(
     context.artifactStagingDirectory,
     platform === "win32" ? "program.exe" : "program",
   );
+  const step = (name: string, args: ReadonlyArray<string>) => ({
+    ...startable({ executable: name, args }, environment, platform),
+    ...process,
+  });
   const args = fill(command.args, file, output);
-  if (command.build === undefined) return { executable, args, ...process };
+  if (command.build === undefined) return step(executable, args);
+  // A build's runner sits beside the compiler that needs it.
   const runner = command.build.runner;
   return {
-    executable: runner === undefined ? output : NodePath.join(NodePath.dirname(executable), runner),
-    args: fill(command.build.args ?? [], file, output),
-    ...process,
-    before: [{ executable, args, ...process }],
+    ...step(
+      runner === undefined ? output : NodePath.join(NodePath.dirname(executable), runner),
+      fill(command.build.args ?? [], file, output),
+    ),
+    before: [step(executable, args)],
   };
 }
 
@@ -94,6 +116,7 @@ export function makeRunTableAdapters(input: {
       id: AnalysisRuntimeId.make(`file:${route.languageId}`),
       kind: route.languageId,
       fileExtensions: route.extensions,
+      readsLiveScan: true,
       inspect: async ({ customExecutablePath, inspectedAt }) => {
         const tools = (await input.tools()).get(route.languageId) ?? [];
         const tool = chooseTool(route, tools, customExecutablePath);

@@ -837,7 +837,6 @@ class MatlabEngineBridge:
             {
                 "ownerToken": owner_token,
                 "pid": os.getpid(),
-                "parentPid": os.getppid(),
                 "platform": sys.platform,
                 "capabilities": self._capabilities,
             },

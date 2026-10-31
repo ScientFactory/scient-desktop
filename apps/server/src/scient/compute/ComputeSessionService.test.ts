@@ -1123,6 +1123,44 @@ describe("compute runtime inspection", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keeps a choice remembered for this project over a machine's managed selection", () =>
+    Effect.gen(function* () {
+      const profile = (executable: string, source: "managed" | "configured") => ({
+        languageId: PYTHON,
+        source,
+        executable,
+        languageVersion: "3.12.0",
+        architecture: null,
+        displayName: executable,
+      });
+      const test = yield* harness({
+        runtimeProfiles: [
+          profile("/scient/python", "managed"),
+          profile("/chosen/python", "configured"),
+        ],
+        adapter: { selectedExecutable: () => Effect.succeed("/scient/python") },
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const inspect = (chosenForProject: ReadonlySet<string>) =>
+            service.inspectRuntimes({
+              projectRoot: null,
+              workingDirectory: process.cwd(),
+              configuredExecutables: { python: "/chosen/python" },
+              enabledLanguageIds: new Set(["python"]),
+              chosenForProject,
+              refresh: false,
+            });
+          const [chosen] = yield* inspect(new Set(["python"]));
+          expect(chosen?.selection?.executable).toBe("/chosen/python");
+          const [machine] = yield* inspect(new Set());
+          expect(machine?.selection?.executable).toBe("/scient/python");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("offers a language whose kernel appeared after startup, with no restart", () =>
     Effect.gen(function* () {
       const late = {

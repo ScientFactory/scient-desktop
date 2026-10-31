@@ -755,8 +755,9 @@ const make = Effect.gen(function* () {
           ),
         { concurrency: 4 },
       );
+      // A choice remembered for this project outranks the machine's Scient-managed selection.
       const explicit =
-        binding.adapter.selectedExecutable === undefined
+        input.chosenForProject || binding.adapter.selectedExecutable === undefined
           ? input.configuredExecutable
           : yield* binding.adapter.selectedExecutable(request);
       const choice = yield* chooseRuntime(
@@ -2544,7 +2545,7 @@ const make = Effect.gen(function* () {
       );
     }
     const explicit =
-      binding.adapter.selectedExecutable === undefined
+      input.chosenForProject === true || binding.adapter.selectedExecutable === undefined
         ? input.configuredExecutable
         : yield* binding.adapter
             .selectedExecutable({ projectRoot, configuredExecutable: input.configuredExecutable })

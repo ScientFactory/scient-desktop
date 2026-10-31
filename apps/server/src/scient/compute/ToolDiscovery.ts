@@ -48,7 +48,13 @@ export interface ToolScanWorkerData {
 }
 
 export interface ToolScanRun {
-  readonly stop: () => void;
+  /** Settles only when the worker is really gone, which a blocked call can delay indefinitely. */
+  readonly stop: () => Promise<unknown>;
+}
+
+/** Workers told to stop that have not stopped yet, across every scan. */
+interface BlockedWorkers {
+  count: number;
 }
 
 /** Bundled modules and the executable share the emitted worker's directory. */
@@ -76,7 +82,7 @@ function startWorker(
   worker.unref();
   worker.on("message", onMessage);
   worker.on("error", onFailure);
-  return { stop: () => void worker.terminate() };
+  return { stop: () => worker.terminate() };
 }
 
 /** For tests and source runs, where no worker was built. */
@@ -90,7 +96,7 @@ function startInline(
     onMessage({ kind: "found", source: step.source, tools: step.run() });
   }
   onMessage({ kind: "done" });
-  return { stop: () => undefined };
+  return { stop: () => Promise.resolve() };
 }
 
 type StartRun = (
@@ -105,28 +111,36 @@ export function runToolScan(
   stalled: ReadonlyArray<string>,
   onStall: (source: string) => void,
   onProgress: (tools: ReadonlyArray<FoundLanguageTool>) => void,
+  blocked: BlockedWorkers = { count: 0 },
 ): Promise<ToolSnapshot> {
   return new Promise((resolve) => {
     const tools: FoundLanguageTool[] = [];
     const finished = new Set(stalled);
     let complete = stalled.length === 0;
-    let stuck = 0;
     const settle = () => resolve({ tools: groupTools(tools), complete });
     const launch = () => {
+      if (blocked.count >= MAX_STUCK_WORKERS) {
+        complete = false;
+        settle();
+        return;
+      }
       let live = true;
       let reading: string | null = null;
       let run: ToolScanRun | undefined;
       const onStuck = () => {
         live = false;
         complete = false;
-        stuck += 1;
-        run?.stop();
-        if (reading !== null) {
-          finished.add(reading);
-          onStall(reading);
+        blocked.count += 1;
+        void run?.stop().finally(() => {
+          blocked.count -= 1;
+        });
+        if (reading === null) {
+          settle();
+          return;
         }
-        if (reading === null || stuck >= MAX_STUCK_WORKERS) settle();
-        else launch();
+        finished.add(reading);
+        onStall(reading);
+        launch();
       };
       let watchdog = setTimeout(onStuck, WORKER_START_MS);
       run = start(
@@ -183,6 +197,7 @@ const make = Effect.sync((): ToolDiscoveryService => {
   let latestAt = 0;
   let running: Promise<ToolSnapshot> | null = null;
   let partial: ReadonlyArray<FoundLanguageTool> = [];
+  const blocked: BlockedWorkers = { count: 0 };
 
   const scan = (context: DiscoveryContext, inline: boolean) => {
     const workerFile = NodeURL.fileURLToPath(toolDiscoveryWorkerUrl(import.meta.url));
@@ -201,6 +216,7 @@ const make = Effect.sync((): ToolDiscoveryService => {
       (tools) => {
         partial = tools;
       },
+      blocked,
     ).then((snapshot) => {
       latest = snapshot;
       latestAt = Date.now();

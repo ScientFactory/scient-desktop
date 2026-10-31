@@ -13,7 +13,7 @@ const perl: FoundLanguageTool = {
 };
 
 /** A scan whose worker is driven by hand, as a real one would answer or stall. */
-function harness(stalled: ReadonlyArray<string> = []) {
+function harness(stalled: ReadonlyArray<string> = [], blocked = { count: 0 }) {
   const runs: Array<{
     skip: ReadonlyArray<string>;
     send: (message: ToolScanMessage) => void;
@@ -21,17 +21,24 @@ function harness(stalled: ReadonlyArray<string> = []) {
     stopped: boolean;
   }> = [];
   const stalls: string[] = [];
+  const releases: Array<() => void> = [];
   const result = runToolScan(
     (skip, onMessage, onFailure) => {
       const run = { skip, send: onMessage, fail: onFailure, stopped: false };
       runs.push(run);
-      return { stop: () => (run.stopped = true) };
+      return {
+        stop: () => {
+          run.stopped = true;
+          return new Promise<void>((release) => releases.push(release));
+        },
+      };
     },
     stalled,
     (source) => stalls.push(source),
     () => undefined,
+    blocked,
   );
-  return { runs, stalls, result };
+  return { runs, stalls, result, releases };
 }
 
 describe("the scan's deadline", () => {
@@ -65,16 +72,24 @@ describe("the scan's deadline", () => {
     }
   });
 
-  it("stops after a few stuck workers, because each one stays until its call returns", async () => {
+  it("stops at a few stuck workers across scans, because each stays until its call returns", async () => {
     vi.useFakeTimers();
     try {
-      const { runs, result } = harness();
+      const blocked = { count: 0 };
+      const first = harness([], blocked);
       for (const index of [0, 1, 2]) {
-        runs[index]!.send({ kind: "start", source: `/mnt/dead${index}` });
+        first.runs[index]!.send({ kind: "start", source: `/mnt/dead${index}` });
         await vi.advanceTimersByTimeAsync(1000);
       }
-      expect(runs).toHaveLength(3);
-      expect((await result).complete).toBe(false);
+      expect(first.runs).toHaveLength(3);
+      expect((await first.result).complete).toBe(false);
+      const second = harness([], blocked);
+      expect(second.runs).toHaveLength(0);
+      expect((await second.result).complete).toBe(false);
+      // A worker that finally stops frees its place for the next scan.
+      first.releases[0]!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(harness([], blocked).runs).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }

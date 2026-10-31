@@ -65,8 +65,14 @@ export function makePythonPrivateKernels(input: {
         }),
         { signal },
       );
-      // A folder at its final name is complete.
-      await NodeFSP.rename(staging, directory);
+      // A folder at its final name is complete, whoever finished first.
+      await NodeFSP.rename(staging, directory).catch(async (cause: unknown) => {
+        const finished = await NodeFSP.stat(directory).then(
+          () => true,
+          () => false,
+        );
+        if (!finished) throw cause;
+      });
     } finally {
       await NodeFSP.rm(staging, { recursive: true, force: true }).catch(() => undefined);
     }

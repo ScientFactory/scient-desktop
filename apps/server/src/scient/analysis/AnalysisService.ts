@@ -484,6 +484,7 @@ const make = Effect.gen(function* () {
     if (
       cached !== undefined &&
       !refresh &&
+      adapter.readsLiveScan !== true &&
       cached.executablePreference === runtimeConfiguration.executablePath
     )
       return cached.profile;
@@ -1119,6 +1120,9 @@ const make = Effect.gen(function* () {
         const prepared = adapter.prepare(runContext);
         let exitCode: number | null = 0;
         for (const [index, step] of [...(prepared.before ?? []), prepared].entries()) {
+          // Stop between steps must not start the next one, such as a program just built.
+          if (index > 0 && (yield* Ref.get(runsRef)).get(runId)?.receipt.cancellationRequested)
+            break;
           const handle = yield* processes.start({
             runId: startingRun.receipt.runId,
             executable: step.executable,

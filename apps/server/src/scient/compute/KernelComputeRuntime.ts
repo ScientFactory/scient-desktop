@@ -27,6 +27,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 
 import { sanitizeComputeEnvironment } from "./ComputeEnvironmentPolicy.ts";
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
@@ -573,6 +574,8 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     readonly fiber: Fiber.Fiber<void, never>;
   } | null = null;
   let failure: ComputeManagedRuntimeFailure | null = null;
+  /** Two first runs must not install over each other. */
+  const setupLock = yield* Semaphore.make(1);
 
   const target = Effect.fn("KernelComputeRuntime.setupTarget")(function* () {
     const configured = yield* input.configuredExecutable(language.languageId);
@@ -678,9 +681,14 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     if (action === "use-managed" || action === "use-existing")
       return yield* manageError(`${language.kernelPackage} has no runtime choice.`);
     if (operation !== null) return yield* status();
-    const current = yield* target();
-    if (current === null) return yield* manageError(`${language.displayName} was not found.`);
-    yield* begin(action, current.installation.executable, current.state.privateDirectory);
+    yield* setupLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (operation !== null) return;
+        const current = yield* target();
+        if (current === null) return yield* manageError(`${language.displayName} was not found.`);
+        yield* begin(action, current.installation.executable, current.state.privateDirectory);
+      }),
+    );
     return yield* status();
   });
 
@@ -689,13 +697,16 @@ export const makeKernelRuntimeBinding = Effect.fn("KernelComputeRuntime.makeBind
     executable: string,
     privateDirectory: string,
   ) {
-    if (operation !== null) yield* Fiber.await(operation.fiber);
-    const known = yield* fileState(executable);
-    if (known.privateKernelVersion !== null) return;
-    const fiber = yield* begin("install", executable, privateDirectory);
-    yield* Fiber.await(fiber);
-    if (failure !== null)
-      return yield* runtimeError("prepare", `${failure.summary}: ${failure.detail}`);
+    yield* setupLock.withPermits(1)(
+      Effect.gen(function* () {
+        if (operation !== null) yield* Fiber.await(operation.fiber);
+        const known = yield* fileState(executable);
+        if (known.privateKernelVersion !== null) return;
+        yield* Fiber.await(yield* begin("install", executable, privateDirectory));
+        if (failure !== null)
+          return yield* runtimeError("prepare", `${failure.summary}: ${failure.detail}`);
+      }),
+    );
   });
 
   const begin = Effect.fn("KernelComputeRuntime.begin")(function* (

@@ -13,6 +13,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
+import { privateKernelFolder } from "./KernelSpecs.ts";
 import type { KernelBridgeHost } from "./PythonComputeRuntime.ts";
 import { normalizeDiagnosticText } from "./PythonDiagnostic.ts";
 import { PYTHON_LANGUAGE_ID, buildLaunchPlan } from "./PythonRuntimeAdapter.ts";
@@ -21,6 +22,8 @@ import { readPythonFacts } from "./RuntimeFacts.ts";
 
 export const SQL_LANGUAGE_ID = ComputeLanguageId.make("sql");
 const SQL_KERNEL_SCRIPT_NAME = "scient_sql_kernel.py";
+/** A chosen Python may have DuckDB and no ipykernel. The kernel then loads Scient's copy. */
+const PRIVATE_KERNEL_VARIABLE = "COMPUTE_PRIVATE_KERNEL";
 
 // Tables and views are a SQL session's variables.
 const SQL_VARIABLES = `SELECT json_object(
@@ -199,7 +202,15 @@ export function makeSqlRuntimeBinding(host: KernelBridgeHost): ComputeRuntimeBin
         const profile = asPython(request.profile);
         if (request.profile.executable !== PRIVATE_DUCKDB && host.privateExecutable !== undefined) {
           const plan = yield* python.prepareLaunch({ ...request, profile });
-          return { ...plan, kernel: sqlKernelSpec(request.profile.executable, host.bridgePath) };
+          const privateKernel = privateKernelFolder(plan.kernel?.argv ?? []);
+          const kernel = sqlKernelSpec(request.profile.executable, host.bridgePath);
+          return {
+            ...plan,
+            kernel:
+              privateKernel === null
+                ? kernel
+                : { ...kernel, env: { [PRIVATE_KERNEL_VARIABLE]: privateKernel } },
+          };
         }
         const executable = yield* host.privateExecutable!();
         return {

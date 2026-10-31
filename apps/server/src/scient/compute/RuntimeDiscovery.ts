@@ -514,11 +514,9 @@ function condaLabel(context: DiscoveryContext, prefix: string, roots: ReadonlySe
 }
 
 /** Every conda-style prefix on this computer, whatever it holds. */
-export function condaPrefixes(
-  context: DiscoveryContext,
-): ReadonlyArray<{ readonly prefix: string; readonly origin: string }> {
+/** Where conda environments may be, read from the home folder without touching any of them. */
+export function condaLocations(context: DiscoveryContext): ReadonlyArray<string> {
   const path = pathModule(context.platform);
-  const roots = condaRoots(context);
   const listed = (
     context.host.readText(path.join(context.homeDirectory, ".conda", "environments.txt")) ?? ""
   )
@@ -526,16 +524,26 @@ export function condaPrefixes(
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && !line.startsWith("#"))
     .slice(0, MAX_DIRECTORY_ENTRIES);
-  const prefixes = roots.flatMap((root) => [
-    root,
+  return [...new Set([...condaRoots(context), ...listed])];
+}
+
+/** Every conda-style environment at these locations, whether or not it holds Python. */
+export function condaPrefixes(
+  context: DiscoveryContext,
+  locations: ReadonlyArray<string> = condaLocations(context),
+): ReadonlyArray<{ readonly prefix: string; readonly origin: string }> {
+  const path = pathModule(context.platform);
+  const roots = condaRoots(context);
+  const prefixes = locations.flatMap((location) => [
+    location,
     ...context.host
-      .readDirectory(path.join(root, "envs"))
+      .readDirectory(path.join(location, "envs"))
       .toSorted()
       .slice(0, MAX_DIRECTORY_ENTRIES)
-      .map((name) => path.join(root, "envs", name)),
+      .map((name) => path.join(location, "envs", name)),
   ]);
   const known = new Set(roots);
-  return [...new Set([...prefixes, ...listed])]
+  return [...new Set(prefixes)]
     .filter((prefix) => context.host.kind(path.join(prefix, "conda-meta")) === "directory")
     .map((prefix) => ({ prefix, origin: condaLabel(context, prefix, known) }));
 }

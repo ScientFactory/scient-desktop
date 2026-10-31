@@ -84,7 +84,7 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   stata: {
     commands: ["stata-mp", "stata-se", "stata-be", "stata"],
     places: {
-      darwin: ["/Applications/Stata*/Stata*.app"],
+      darwin: ["/Applications/Stata*/Stata*.app/Contents/MacOS/stata*"],
       linux: ["/usr/local/stata*/stata-*"],
       win32: ["%ProgramFiles%\\Stata*\\Stata*.exe"],
     },
@@ -127,7 +127,11 @@ export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   "imagej-macro": {
     commands: ["fiji", "ImageJ"],
     places: {
-      darwin: ["/Applications/Fiji.app", "~/Applications/Fiji.app", "/Applications/ImageJ.app"],
+      darwin: [
+        "/Applications/Fiji.app/Contents/MacOS/ImageJ-macosx",
+        "~/Applications/Fiji.app/Contents/MacOS/ImageJ-macosx",
+        "/Applications/ImageJ.app/Contents/MacOS/*",
+      ],
       linux: ["~/Fiji.app/ImageJ-linux64", "/opt/Fiji.app/ImageJ-linux64"],
       win32: ["~/Fiji.app/ImageJ-win64.exe", "%ProgramFiles%\\Fiji.app\\ImageJ-win64.exe"],
     },

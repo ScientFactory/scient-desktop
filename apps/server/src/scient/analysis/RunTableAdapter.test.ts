@@ -109,6 +109,25 @@ describe("the run table", () => {
     expect(profile).toMatchObject({ availability: "available", source: "custom" });
   });
 
+  it("starts a Windows batch launcher through its command interpreter", async () => {
+    const adapter = makeRunTableAdapters({
+      tools: async () => new Map([["maxima", [tool("maxima", "maxima", "C:\\M\\maxima.bat")]]]),
+      environment: { ComSpec: "C:\\Windows\\cmd.exe" },
+      platform: "win32",
+    }).find((candidate) => candidate.kind === "maxima")!;
+    expect(await prepare(adapter as never, "a.mac")).toMatchObject({
+      executable: "C:\\Windows\\cmd.exe",
+      args: ["/d", "/c", "call", "C:\\M\\maxima.bat", "-b", "/project/a.mac"],
+    });
+  });
+
+  it("finds an app bundle but does not try to start it", async () => {
+    const profile = await inspect(
+      adapterFor("stata", [tool("stata", "stata", "/Applications/Stata/StataMP.app")]),
+    );
+    expect(profile.availability).toBe("missing");
+  });
+
   it("matches a file by its extension, keeping the case where it means something", () => {
     expect(computeRunRouteForPath("src/main.RS")?.languageId).toBe("rust");
     expect(computeRunRouteForPath("macro.C")?.languageId).toBe("root");

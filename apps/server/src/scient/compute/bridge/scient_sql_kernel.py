@@ -13,11 +13,24 @@ import decimal
 import html
 import json
 import math
+import os
+import sys
 import threading
 from typing import Any, Optional
 
 import duckdb
-from ipykernel.kernelapp import IPKernelApp
+
+# The chosen Python's DuckDB is already loaded. Scient's kernel loads its own dependencies, then
+# moves behind the person's packages, as it does for a Python session.
+PRIVATE_KERNEL = os.environ.pop("COMPUTE_PRIVATE_KERNEL", None)
+if PRIVATE_KERNEL:
+    sys.path.insert(0, PRIVATE_KERNEL)
+
+from ipykernel.kernelapp import IPKernelApp  # noqa: E402
+
+if PRIVATE_KERNEL:
+    sys.path.remove(PRIVATE_KERNEL)
+    sys.path.append(PRIVATE_KERNEL)
 from ipykernel.kernelbase import Kernel
 
 MAX_ROWS = 100

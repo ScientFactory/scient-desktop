@@ -144,3 +144,7 @@ export const PRIVATE_KERNEL_STARTER = [
   "sys.path.append(private)",
   "kernelapp.launch_new_instance()",
 ].join("\n");
+
+/** The private folder a kernel command starts from, when it has one. */
+export const privateKernelFolder = (argv: ReadonlyArray<string>): string | null =>
+  argv[2] === PRIVATE_KERNEL_STARTER ? (argv[3] ?? null) : null;
