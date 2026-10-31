@@ -51,7 +51,7 @@ export function MarkdownCitationActions({
       viewport={viewport}
       capture={capture}
       allowPreventedSelectionStart={isNestedCodeSelectionTarget}
-      onCite={(citation, anchor) => {
+      onCite={(citation, anchor, destination) => {
         // A toolbar may still be visible after an external update. Never silently
         // replace its captured quote with a newly selected or edited passage.
         if (
@@ -69,7 +69,7 @@ export function MarkdownCitationActions({
           });
           return false;
         }
-        const accepted = onCite(citation, anchor);
+        const accepted = onCite(citation, anchor, destination);
         if (!accepted)
           toastManager.add({
             type: "warning",
