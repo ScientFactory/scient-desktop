@@ -1,6 +1,6 @@
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import { profileSignIns, profilesSignedIn } from "@t3tools/shared/scientBrowserProfileChoice";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, MailIcon } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -19,6 +19,8 @@ import { mergeProfiles } from "./accountsView";
 import { ProfilePicture } from "./ProfilePicture";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 
+const GMAIL_URL = "https://mail.google.com/mail/";
+
 /**
  * The tab's browser profile. Choosing another opens the same page in a new tab in it and is
  * remembered for this conversation and the page's site; "Use in this project" sets the project's.
@@ -32,7 +34,7 @@ export function ProfileSwitcher({
   threadRef: ScopedThreadRef;
   url: string;
   activeProfileId: string;
-  onOpenInProfile: (profileId: string) => void;
+  onOpenInProfile: (profileId: string, url?: string) => void;
 }) {
   const environmentId = threadRef.environmentId;
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
@@ -46,11 +48,11 @@ export function ProfileSwitcher({
     void choose({ threadId: threadRef.threadId, profileId, ...(url ? { url } : {}) });
     onOpenInProfile(profileId);
   };
-  const holders = profilesSignedIn(
-    url,
-    profiles.map((profile) => profile.id),
-    profileSignIns(data?.accounts ?? []),
-  );
+  const profileIds = profiles.map((profile) => profile.id);
+  const signIns = profileSignIns(data?.accounts ?? []);
+  const holders = profilesSignedIn(url, profileIds, signIns);
+  const gmailHolders = profilesSignedIn(GMAIL_URL, profileIds, signIns);
+  const gmailProfile = gmailHolders.includes(activeProfileId) ? activeProfileId : gmailHolders[0];
   // This page is signed out here but signed in on another profile: one click, not a login page.
   const signedInElsewhere = holders.includes(activeProfileId)
     ? undefined
@@ -113,6 +115,16 @@ export function ProfileSwitcher({
           ) : null}
         </MenuPopup>
       </Menu>
+      {gmailProfile ? (
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Open Gmail"
+          onClick={() => onOpenInProfile(gmailProfile, GMAIL_URL)}
+        >
+          <MailIcon />
+        </Button>
+      ) : null}
       {signedInElsewhere ? (
         <Button
           size="xs"

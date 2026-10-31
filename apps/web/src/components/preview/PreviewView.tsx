@@ -928,11 +928,11 @@ export function PreviewView({
             threadRef={threadRef}
             url={url}
             activeProfileId={activeProfileId}
-            onOpenInProfile={(profileId) =>
+            onOpenInProfile={(profileId, pageUrl = url) =>
               void openPreviewSession({
                 openPreview: open,
                 threadRef,
-                ...(url ? { url } : {}),
+                ...(pageUrl ? { url: pageUrl } : {}),
                 viewport,
                 profileId,
               }).then((result) => {

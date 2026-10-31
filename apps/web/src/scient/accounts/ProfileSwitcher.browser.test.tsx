@@ -66,3 +66,39 @@ it("offers nothing when this profile already holds the sign-in", async () => {
   await expect.element(page.getByRole("button", { name: "Profile: Work" })).toBeInTheDocument();
   expect(container.textContent).not.toContain("Signed in on");
 });
+
+const googleRow = (state: "signed-in" | "signed-out") => ({
+  details: { kind: "website", profileId: "work", sites: ["google.com"], username: "a@b.co" },
+  secrets: {},
+  controls: defaultAccountControls("website"),
+  lastCheck: { state, at: "2026-10-31T00:00:00.000Z" },
+});
+
+it("opens Gmail in the profile signed in to Google", async () => {
+  state.accounts = [googleRow("signed-in")];
+  const onOpenInProfile = vi.fn();
+  const { container } = await render(
+    <ProfileSwitcher
+      threadRef={threadRef}
+      url="https://www.example.com/"
+      activeProfileId="home"
+      onOpenInProfile={onOpenInProfile}
+    />,
+  );
+  container.querySelector<HTMLButtonElement>('[aria-label="Open Gmail"]')?.click();
+  expect(onOpenInProfile).toHaveBeenCalledWith("work", "https://mail.google.com/mail/");
+});
+
+it("hides the Gmail button when no profile holds a working Google session", async () => {
+  state.accounts = [googleRow("signed-out")];
+  const { container } = await render(
+    <ProfileSwitcher
+      threadRef={threadRef}
+      url="https://www.example.com/"
+      activeProfileId="home"
+      onOpenInProfile={vi.fn()}
+    />,
+  );
+  await expect.element(page.getByRole("button", { name: "Profile: Home" }).first()).toBeVisible();
+  expect(container.querySelector('[aria-label="Open Gmail"]')).toBeNull();
+});

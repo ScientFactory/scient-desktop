@@ -599,7 +599,8 @@ provider environment. The existing proxy redacts reflected values in responses.
   (`profileChoices`: projects, and threads with per-host switches, 500 threads and 50 hosts kept),
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. On a
   page signed out in the tab's profile but signed in on another, `ProfileSwitcher` offers that
-  profile in one click.
+  profile in one click. It also shows a Gmail button once a profile holds a working Google session, which
+  opens the inbox in that profile.
 - **Library access**: a library account's link pattern (`proxyUrl` with `{url}`, e.g. HUJI's
   OpenAthens redirector) is how `scient_paper_get` reaches paywalled PDFs. Pasting any library
   link derives the pattern. The tool opens the article through it in the library account's
