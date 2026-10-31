@@ -176,10 +176,10 @@ function estimateEventBytes(event: ComputeTransportEvent): number {
  * image without ending the namespace and discarding variables; only protocol-invalid frames are
  * fatal.
  */
-// Kernels may wrap base64 into MIME-style lines (IRkernel does); whitespace carries no data.
+// Kernels may wrap base64 into MIME-style lines (IRkernel does) or leave off the padding (Ark does).
 const readBase64 = (data: string): Uint8Array | null => {
   const compact = data.replace(/\s+/gu, "");
-  return compact.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(compact)
+  return compact.length % 4 !== 1 && /^[A-Za-z0-9+/]*={0,2}$/.test(compact)
     ? new Uint8Array(Buffer.from(compact, "base64"))
     : null;
 };
@@ -301,9 +301,8 @@ function materializeRichDisplay(payload: Exclude<RichDisplayPayload, { kind: "cl
     representations,
     metadataJson,
   });
-  return Option.isNone(decoded)
-    ? "A rich representation was dropped because its bounded bundle was invalid."
-    : { bundle: decoded.value, resources, warning };
+  if (Option.isSome(decoded)) return { bundle: decoded.value, resources, warning };
+  return warning ?? "A rich representation was dropped because its bounded bundle was invalid.";
 }
 
 function hasCapabilities(

@@ -1174,9 +1174,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                 className="min-w-0 max-w-full"
                 onClick={() => setProjectEnvironmentNoted(true)}
               >
-                <span className="truncate">
-                  New sessions here now use this project's environment
-                </span>
+                <span className="truncate">Now runs in this project's environment</span>
                 <XIcon />
               </Button>
             ) : capacityBlocked ? (

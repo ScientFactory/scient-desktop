@@ -654,6 +654,39 @@ describe("jupyter bridge output mapping", () => {
     ),
   );
 
+  it.effect("reads an image with no base64 padding, however its length falls", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bridge, reader } = yield* harness();
+        yield* reader.next;
+        for (const extra of [0, 1, 2]) {
+          const bytes = new Uint8Array([...pngBytes(12, 9), ...new Array<number>(extra).fill(0)]);
+          yield* bridge.say({
+            type: "display",
+            payload: {
+              kind: "display-data",
+              bundle: {
+                representations: [
+                  {
+                    mediaType: "image/png",
+                    encoding: "base64",
+                    data: Buffer.from(bytes).toString("base64").replace(/=+$/u, ""),
+                  },
+                ],
+                metadataJson: null,
+              },
+              displayId: null,
+            },
+            requestId: "run-1",
+          });
+          const event = yield* reader.next;
+          if (event._tag !== "output") throw new Error("Expected output.");
+          expect(event.resources[0]?.bytes).toEqual(bytes);
+        }
+      }),
+    ),
+  );
+
   it.effect("materializes a complete rich bundle with resource bytes and display identity", () =>
     Effect.scoped(
       Effect.gen(function* () {
