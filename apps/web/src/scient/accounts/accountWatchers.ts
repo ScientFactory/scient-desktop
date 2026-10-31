@@ -2,8 +2,9 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { environmentSummaries } from "~/state/presentation";
 import { watchAccountAutofill } from "./accountAutofill";
+import { watchGoogleSessions } from "./googleSessions";
 
-/** Saved sign-ins run for every environment, whatever the notification settings. */
+/** Saved sign-ins and session checks run for every environment, whatever the notification settings. */
 export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
   const watched = new Map<EnvironmentId, () => void>();
   const sync = () => {
@@ -15,7 +16,12 @@ export function startAccountWatchers(registry: AtomRegistry.AtomRegistry) {
     }
     for (const environmentId of environmentIds) {
       if (watched.has(environmentId)) continue;
-      watched.set(environmentId, watchAccountAutofill(registry, environmentId));
+      const stopAutofill = watchAccountAutofill(registry, environmentId);
+      const stopGoogleSessions = watchGoogleSessions(registry, environmentId);
+      watched.set(environmentId, () => {
+        stopAutofill();
+        stopGoogleSessions();
+      });
     }
   };
   const unsubscribe = registry.subscribe(environmentSummaries.environmentIdsAtom, sync);

@@ -233,7 +233,7 @@
     {
       "path": "apps/web/src/appInit.tsx",
       "anchor": "./scient/accounts/accountWatchers",
-      "purpose": "Start saved sign-in autofill with the app, whatever the notification settings."
+      "purpose": "Start saved sign-in autofill and session checks with the app, whatever the notification settings."
     },
     {
       "path": "apps/web/src/components/ThreadNotificationCoordinator.tsx",

@@ -27,7 +27,7 @@ import { isElectron } from "./env";
 // SCIENT-FORK:START desktop-reload-save-coordination
 import { startDesktopReloadHandling } from "./lib/desktopReload";
 // SCIENT-FORK:END desktop-reload-save-coordination
-// SCIENT-FORK:START — Scient Accounts: saved sign-ins run in the background.
+// SCIENT-FORK:START — Scient Accounts: saved sign-ins and session checks run in the background.
 import { startAccountWatchers } from "./scient/accounts/accountWatchers";
 // SCIENT-FORK:END
 import {
@@ -229,7 +229,7 @@ export function startAppServices(): AppRouter {
   startLegacyThreadMigrationToast();
   startPermissionUpdateNotices(router);
   startThreadNotifications(appAtomRegistry, router);
-  // SCIENT-FORK:START — Scient Accounts: saved sign-ins run in the background.
+  // SCIENT-FORK:START — Scient Accounts: saved sign-ins and session checks run in the background.
   startAccountWatchers(appAtomRegistry);
   // SCIENT-FORK:END
   startGuideRunNotifications(appAtomRegistry, router);

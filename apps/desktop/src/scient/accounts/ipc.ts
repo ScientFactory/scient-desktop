@@ -127,7 +127,7 @@ export const signedInSites = Effect.fn("DesktopAccounts.signedInSites")(function
   );
 });
 
-export const googleSessions = Effect.fn("DesktopAccounts.googleSessions")(function* (
+const googleSessions = Effect.fn("DesktopAccounts.googleSessions")(function* (
   raw: unknown,
   event?: AccountsInvokeEvent,
 ) {
