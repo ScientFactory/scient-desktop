@@ -77,7 +77,7 @@ export type ComputePreRunRuntimeChoice = {
 export function resolveComputePreRunRuntimeChoice(
   language: ComputeLanguageRuntimeInspection | null,
 ): ComputePreRunRuntimeChoice | null {
-  if (language?.enabled !== true || language.descriptor.languageId !== "python") return null;
+  if (language?.descriptor.languageId !== "python") return null;
   const current = language.runtimes[0];
   if (
     current === undefined ||
@@ -113,7 +113,7 @@ export function resolveComputePreRunRuntimeChoice(
  * their preference first; that order is not a list to skip until something runs.
  */
 export function defaultComputeRuntime(languages: ReadonlyArray<ComputeLanguageRuntimeInspection>) {
-  const language = languages.find((candidate) => candidate.enabled);
+  const [language] = languages;
   if (language?.selection !== undefined) {
     const executable = language.selection.executable;
     return (

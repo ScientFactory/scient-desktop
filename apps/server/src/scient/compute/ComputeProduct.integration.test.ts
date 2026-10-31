@@ -124,7 +124,7 @@ describe.runIf(Boolean(TEST_PYTHON))("compute product backend", () => {
               scientificComputing: {
                 schemaVersion: 1,
                 languages: {
-                  python: { enabled: true, executable: TEST_PYTHON },
+                  python: { executable: TEST_PYTHON },
                 },
               },
             }),

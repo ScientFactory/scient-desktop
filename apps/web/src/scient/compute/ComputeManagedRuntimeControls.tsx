@@ -140,7 +140,6 @@ export function useComputeManagedRuntime(input: {
   environmentId: EnvironmentId | null;
   languageId: ComputeLanguageId;
   initialStatus: ComputeManagedRuntimeStatus | null;
-  ensureEnabled: () => Promise<boolean>;
 }) {
   const manage = useAtomCommand(computeEnvironment.manageRuntime, { reportFailure: false });
   const cancelCommand = useAtomCommand(computeEnvironment.cancelManagedRuntime, {
@@ -239,12 +238,6 @@ export function useComputeManagedRuntime(input: {
       setCancellationKey(cancelledBuild);
     }
     return await (async () => {
-      const activatesManaged =
-        action === "use-managed" ||
-        (action === "install" && options?.selectionAfterInstall !== "existing");
-      if (activatesManaged && !(await input.ensureEnabled())) {
-        throw new Error("The language could not be enabled. Settings were not saved.");
-      }
       const result = await manage({
         environmentId: environmentId,
         input: {

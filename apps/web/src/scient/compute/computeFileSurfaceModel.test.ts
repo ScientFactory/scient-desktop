@@ -73,7 +73,6 @@ describe("python compute surface model", () => {
         sourceExtensions: [".py"],
         capabilities: [],
       },
-      enabled: true,
       configuredExecutable: null,
       managedRuntime: {
         installed: true,
@@ -171,7 +170,6 @@ describe("python compute surface model", () => {
         sourceExtensions: [".py"],
         capabilities: [],
       },
-      enabled: true,
       configuredExecutable: null,
       managedRuntime: null,
       toolkits: [],
@@ -187,7 +185,6 @@ describe("python compute surface model", () => {
     expect(
       defaultComputeRuntime([{ ...language, runtimes: [candidate("path", true)] }])?.profile.source,
     ).toBe("path");
-    expect(defaultComputeRuntime([{ ...language, enabled: false }])).toBeNull();
   });
   it("follows the server's selection and names an explicit or project blocker", () => {
     const candidate = (source: "managed" | "path" | "project", ready: boolean) => ({
@@ -208,7 +205,6 @@ describe("python compute surface model", () => {
         sourceExtensions: [".py"],
         capabilities: [],
       },
-      enabled: true,
       configuredExecutable: null,
       managedRuntime: null,
       toolkits: [],

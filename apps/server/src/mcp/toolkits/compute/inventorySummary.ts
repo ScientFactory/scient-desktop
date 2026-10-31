@@ -55,7 +55,7 @@ function defaultRuntime(
 ): string | null {
   const chosen = inspected?.selection?.executable;
   if (chosen) return chosen;
-  const preference = { enabled: language.enabled, executable: language.configuredExecutable ?? "" };
+  const preference = { executable: language.configuredExecutable ?? "" };
   return (
     defaultComputeInstallation(language, preference, language.managedRuntime)?.executable ?? null
   );
@@ -66,7 +66,7 @@ function summarize(
   inspected: ComputeRuntimeInspection["languages"][number] | undefined,
   incomplete: boolean,
 ): ComputeToolLanguage | null {
-  const preference = { enabled: language.enabled, executable: language.configuredExecutable ?? "" };
+  const preference = { executable: language.configuredExecutable ?? "" };
   const status = computeLanguageStatus({ language, preference, incomplete });
   const runtimes = runtimesOf(language, inspected);
   const runnable = language.descriptor.capabilities.length > 0 && !status.comingSoon;

@@ -138,7 +138,6 @@ export function defaultComputeInstallation(
 
 export type ComputeCurrentRuntimeSummary = {
   readonly kind:
-    | "disabled"
     | "ready"
     | "setup"
     | "connect"
@@ -161,12 +160,6 @@ export function computeCurrentRuntimeSummary(input: {
   const isMatlab = language.descriptor.languageId === "matlab";
   const selected = defaultComputeInstallation(language, preference, managed);
   const source = selected === undefined ? null : runtimeSourceLabel(selected.source);
-  const enabled = preference.enabled;
-
-  if (!enabled) {
-    return { kind: "disabled", title: "Off", detail: "" };
-  }
-
   if (selected?.problem && selected.source === "managed") {
     return {
       kind: "repair-managed",
@@ -276,13 +269,6 @@ export function computeLanguageDetail(
   managed: ComputeManagedRuntimeStatus | null,
 ): string {
   switch (summary.kind) {
-    case "disabled": {
-      // Turning a language off says nothing about what is installed.
-      const installed = defaultComputeInstallation(language, preference, managed);
-      return installed === undefined
-        ? "Off"
-        : `${computeRuntimePickerLabel(installed, language.descriptor.displayName)} · Off`;
-    }
     case "ready":
     case "update-managed": {
       // SQL's version would be its Python's. A kernel with no version has not been started yet.

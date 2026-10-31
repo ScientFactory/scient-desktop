@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
-  useEnvironmentSettings: () => ({ languages: { python: { enabled: true, executable: "" } } }),
+  useEnvironmentSettings: () => ({ languages: { python: { executable: "" } } }),
 }));
 vi.mock("~/state/query", async (original) => ({
   ...(await original<typeof import("~/state/query")>()),
@@ -118,7 +118,6 @@ function setRuntimeCandidates(candidates = [runtime("managed")], language = PYTH
         sourceExtensions: [],
         capabilities: [],
       },
-      enabled: true,
       configuredExecutable: null,
       managedRuntime: mocks.managedStatus,
       toolkits: [],

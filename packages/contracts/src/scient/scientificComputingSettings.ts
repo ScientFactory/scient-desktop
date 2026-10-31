@@ -12,9 +12,6 @@ import { TrimmedString } from "../baseSchemas.ts";
  * mutates a runtime, and never rewrites an existing compute session.
  */
 export const ScientificComputingLanguageSettings = Schema.Struct({
-  // SCIENT-FORK:START — supported languages are discoverable unless explicitly disabled.
-  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  // SCIENT-FORK:END
   /** Written by older clients; the server moves it into this machine's selection. */
   executable: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
@@ -70,7 +67,6 @@ export const ScientificComputingSettingsPatch = Schema.Struct({
     Schema.Record(
       ComputeLanguageId,
       Schema.Struct({
-        enabled: Schema.optionalKey(Schema.Boolean),
         executable: Schema.optionalKey(TrimmedString),
         selections: Schema.optionalKey(Schema.Record(Schema.String, TrimmedString)),
       }),

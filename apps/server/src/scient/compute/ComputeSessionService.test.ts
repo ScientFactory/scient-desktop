@@ -1148,7 +1148,6 @@ describe("compute runtime inspection", () => {
               projectRoot: null,
               workingDirectory: process.cwd(),
               configuredExecutables: { python: "/chosen/python" },
-              enabledLanguageIds: new Set(["python"]),
               chosenForProject,
               refresh: false,
             });
@@ -1263,7 +1262,6 @@ describe("compute runtime inspection", () => {
               projectRoot: null,
               workingDirectory: process.cwd(),
               configuredExecutables: {},
-              enabledLanguageIds: new Set([PYTHON]),
               refresh,
               languageIds: new Set([PYTHON]),
             });
@@ -1304,7 +1302,6 @@ describe("compute runtime inspection", () => {
             projectRoot: null,
             workingDirectory: process.cwd(),
             configuredExecutables: {},
-            enabledLanguageIds: new Set([PYTHON]),
             refresh: true,
           });
           expect(python).toMatchObject({ runtimes: [], failure: "Probe host crashed." });
@@ -1323,7 +1320,6 @@ describe("compute runtime inspection", () => {
             projectRoot: null,
             workingDirectory: process.cwd(),
             configuredExecutables: {},
-            enabledLanguageIds: new Set([PYTHON]),
             refresh: true,
           });
           expect(inspection[0]?.runtimes[0]?.verification.connection).toBe("detected");
@@ -1496,7 +1492,6 @@ describe("compute runtime inspection", () => {
             projectRoot: null,
             workingDirectory: process.cwd(),
             configuredExecutables: {},
-            enabledLanguageIds: new Set([PYTHON]),
             refresh: false,
           });
 
@@ -1631,7 +1626,6 @@ describe("compute runtime inspection", () => {
             projectRoot: null,
             workingDirectory: process.cwd(),
             configuredExecutables: {},
-            enabledLanguageIds: new Set([PYTHON]),
             refresh: false,
           });
 

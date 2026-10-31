@@ -46,7 +46,6 @@ function pendingRuntimeInventory(
     );
     return {
       descriptor,
-      enabled: preference.enabled,
       configuredExecutable: preference.executable || null,
       managedRuntime: null,
       toolkits: [],
@@ -103,7 +102,6 @@ export function useComputeLanguages(environmentId: EnvironmentId) {
                 hostKey === null
                   ? next
                   : {
-                      enabled: next.enabled,
                       executable: "",
                       selections: { [hostKey]: next.executable },
                     },

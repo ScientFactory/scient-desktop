@@ -106,7 +106,6 @@ const harness = Effect.gen(function* () {
                       sourceExtensions: [".py"],
                       capabilities: [],
                     },
-                    enabled: true,
                     configuredExecutable: null,
                     managedRuntime: status,
                     toolkits: [],
@@ -148,7 +147,6 @@ const harness = Effect.gen(function* () {
                       sourceExtensions: [".py"],
                       capabilities: [],
                     },
-                    enabled: true,
                     configuredExecutable: null,
                     managedRuntime: status,
                     toolkits: [],
@@ -178,7 +176,7 @@ const harness = Effect.gen(function* () {
   const runtime = Atom.runtime(Layer.succeed(EnvironmentRegistry, environmentRegistry));
   const settings = Atom.make<ScientificComputingSettings | undefined>({
     schemaVersion: 1,
-    languages: { [PYTHON]: { enabled: true, executable: "" } },
+    languages: { [PYTHON]: { executable: "" } },
   });
   const atoms = createComputeEnvironmentAtoms(runtime, () => settings);
   const registry = AtomRegistry.make();
@@ -354,7 +352,7 @@ describe("shared compute runtime transitions", () => {
           let count = h.inventoryReads();
           h.registry.set(h.settings, {
             schemaVersion: 1,
-            languages: { [PYTHON]: { enabled: true, executable: "/new/python" } },
+            languages: { [PYTHON]: { executable: "/new/python" } },
           });
           yield* h.read(query);
           expect(h.inventoryReads()).toBeGreaterThan(count);
@@ -525,7 +523,7 @@ describe("shared compute runtime transitions", () => {
       }),
   );
 
-  it.live("invalidates project inspection when executable/enabled settings change", () =>
+  it.live("invalidates project inspection when executable settings change", () =>
     Effect.gen(function* () {
       const h = yield* harness;
       try {
@@ -534,7 +532,7 @@ describe("shared compute runtime transitions", () => {
         const before = h.inspected.length;
         h.registry.set(h.settings, {
           schemaVersion: 1,
-          languages: { [PYTHON]: { enabled: false, executable: "/new/python" } },
+          languages: { [PYTHON]: { executable: "/new/python" } },
         });
         yield* h.read(h.project);
         expect(h.inspected.length).toBeGreaterThan(before);

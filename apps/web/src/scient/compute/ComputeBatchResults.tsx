@@ -4,13 +4,8 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  AnalysisRunId,
-  AnalysisSourceRevision,
-  ComputeLanguageId,
-  resolveScientificComputingLanguageSettings,
-} from "@t3tools/contracts";
-import { useClientSettings, useEnvironmentSettings } from "~/hooks/useSettings";
+import { AnalysisRunId, AnalysisSourceRevision } from "@t3tools/contracts";
+import { useClientSettings } from "~/hooks/useSettings";
 import { formatTimestamp } from "~/timestampFormat";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
 import { randomUUID } from "~/lib/utils";
@@ -418,14 +413,6 @@ export function useComputeBatchRun(
   const onRunStarted = options.onRunStarted;
   const onRunReserved = options.onRunReserved;
   const onStartRejected = options.onStartRejected;
-  const enabled = useEnvironmentSettings(
-    source.environmentId,
-    (settings) =>
-      resolveScientificComputingLanguageSettings(
-        settings.scientificComputing,
-        ComputeLanguageId.make(source.runtimeKind),
-      ).enabled,
-  );
   const runtimeAtom = analysisEnvironment.runtimes({
     environmentId: source.environmentId,
     input: { cwd: source.cwd },
@@ -489,7 +476,6 @@ export function useComputeBatchRun(
       ? latestSubmittedRun
       : null);
   const canStart =
-    enabled &&
     !source.sourcePending &&
     profile?.availability === "available" &&
     streamedRunValue !== null &&

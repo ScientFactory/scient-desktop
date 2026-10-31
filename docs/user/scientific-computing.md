@@ -2,10 +2,8 @@
 
 Scient can run Python, R, Julia, SQL, and MATLAB from an initialized project without turning the
 project into a notebook or installing a second copy of its files. All of them use the same session,
-source, results, and history controls. Supported languages are enabled by default
-so Scient can offer a compatible runtime already available on the server. Enablement does not
-download a runtime, install packages, create a managed environment, acquire a license, or start a
-session, and each language can still be disabled individually. MATLAB requires a user-installed,
+source, results, and history controls. Looking for a language does not download a runtime, install
+packages, create a managed environment, acquire a license, or start a session. MATLAB requires a user-installed,
 licensed runtime and a compatible Engine host. See [Run a MATLAB file](matlab-run-file.md) for its setup and
 **Run MATLAB batch**, available in the same file's Run menu and Results pane.
 
@@ -42,8 +40,7 @@ The managed environment is optional. To use Python you already maintain instead:
 
 1. Open **Settings → Scientific Computing** for the server environment you want to use.
 2. Open **Python**.
-3. Turn on **Use Python in Scient** if it is off.
-4. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
+3. Choose **Automatic** or an installation under **Runtime**. To enter a path, open
    **Found on this computer**, fill in **Add a location** and choose **Use**.
 
 Any CPython runs, with nothing added to it. Scient needs `jupyter_client` and `ipykernel` to run a
@@ -59,8 +56,8 @@ Python if set up, then other Pythons in PATH order. A runtime you chose that goe
 chosen and says why it cannot run. Agents follow the same order.
 
 Settings → Scientific Computing shows every language at once: **Most used** first, then one group
-per field. Each language sits in one place and says where it stands: what it runs on, or **Needs
-setup**, **Not connected**, **Off** or a problem. **Kernel found** means a language's own kernel
+per field. Each language sits in one place and says where it stands: what it runs on, or **Not
+connected** or a problem. **Kernel found** means a language's own kernel
 was found and has not been started yet. **Not found** means Scient looked in the usual places, and
 **Couldn't check** means a place did not answer in time. **Coming soon** beside a name means Scient
 cannot run that language yet. Looking starts nothing: no language, kernel or licence check runs
@@ -82,8 +79,7 @@ Every language page has the same rows. **Runtime** shows what new sessions use, 
 it needs, if any. Next comes what Scient itself adds, if anything: Scient-managed Python, a private
 kernel such as Ark or IJulia, or the MATLAB connection helper, with its maintenance menu. **Found on this
 computer** opens the full list, each with its version, where it came from (such as Homebrew, uv or
-a conda environment), its path and **Test**. The last row turns the language on or off for you and
-for agents; turning it off changes nothing on your computer.
+a conda environment), its path and **Test**.
 
 Settings runs each Python briefly to read its version, a moment after the page opens, and gives up
 on one that takes too long. **Test** starts and closes a real session without selecting that
@@ -103,7 +99,7 @@ it becomes available. Existing sessions keep the exact generation they started w
 The pinned Python interpreter is reused from Scient's private, versioned interpreter store.
 Package files use independent filesystem clones where supported, or copies otherwise; they never
 share writable hardlinks with the cache or another generation. Changing Toolkits does not reinstall
-the same Python interpreter. Enablement and runtime selection remain available during preparation;
+the same Python interpreter. Runtime selection remains available during preparation;
 the latest selection is preserved when the verified generation becomes available.
 **Repair** deliberately prepares a new private interpreter as well, so a damaged interpreter is
 not reused or replaced underneath an existing session.
@@ -451,8 +447,7 @@ package.
 Scientific code runs with the filesystem and network authority of the selected Scient server
 environment. It is not sandboxed. Only run code you trust, especially when the server is remote.
 
-Enabled languages only let Scient discover and offer a runtime; nothing is installed until you or an
-agent asks for it. Arbitrary package installation into Scient-managed Python, interactive widgets,
+Nothing is installed until you or an agent runs something that needs it. Arbitrary package installation into Scient-managed Python, interactive widgets,
 and saving a session's state as a portable result remain future work.
 
 ### Run fresh and MATLAB batch

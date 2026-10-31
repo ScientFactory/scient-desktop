@@ -63,7 +63,7 @@ export function useComputeSessionStart(input: {
   const languages = runtimes.data?.languages ?? [];
   const readyRuntimes: ReadonlyArray<ComputeReadyRuntime> = languages.flatMap((language) =>
     language.runtimes.flatMap((candidate) =>
-      language.enabled && candidate.verification.readiness === "ready"
+      candidate.verification.readiness === "ready"
         ? [
             {
               language,

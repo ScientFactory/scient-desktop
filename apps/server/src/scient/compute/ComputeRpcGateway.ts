@@ -200,7 +200,7 @@ export function makeComputeRpcGateway(input: {
     );
   });
 
-  const requireEnabledLanguage = Effect.fn("ComputeRpcGateway.requireEnabledLanguage")(function* (
+  const requireLanguage = Effect.fn("ComputeRpcGateway.requireLanguage")(function* (
     operation: GatewayOperation,
     languageId: ComputeLanguageId,
   ) {
@@ -219,13 +219,6 @@ export function makeComputeRpcGateway(input: {
       settings.scientificComputing,
       languageId,
     );
-    if (!preference.enabled) {
-      return yield* gatewayError(
-        operation,
-        "language-disabled",
-        `${descriptor.displayName} is disabled in Scientific Computing settings.`,
-      );
-    }
     return { descriptor, preference };
   });
 
@@ -282,7 +275,6 @@ export function makeComputeRpcGateway(input: {
     return {
       languages: languages.map((language) => ({
         ...language,
-        enabled: preferences[language.descriptor.languageId]?.enabled ?? false,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),
       ...(incomplete ? { incomplete } : {}),
@@ -321,11 +313,6 @@ export function makeComputeRpcGateway(input: {
         ]),
       ),
       chosenForProject: new Set(Object.keys(projectChoices)),
-      enabledLanguageIds: new Set(
-        Object.entries(preferences).flatMap(([languageId, preference]) =>
-          preference.enabled ? [languageId] : [],
-        ),
-      ),
       refresh: request.refresh,
       ...(request.languageIds === undefined ? {} : { languageIds: new Set(request.languageIds) }),
     });
@@ -335,7 +322,6 @@ export function makeComputeRpcGateway(input: {
       languages: inspected.map((language) => ({
         ...language,
         managedRuntime: language.managedRuntime ?? null,
-        enabled: preferences[language.descriptor.languageId]?.enabled ?? false,
         configuredExecutable: preferences[language.descriptor.languageId]?.executable || null,
       })),
     };
@@ -344,7 +330,7 @@ export function makeComputeRpcGateway(input: {
   const verifyRuntime = Effect.fn("ComputeRpcGateway.verifyRuntime")(function* (
     request: ComputeVerifyRuntimeInput,
   ) {
-    yield* requireEnabledLanguage("verify", request.languageId);
+    yield* requireLanguage("verify", request.languageId);
     const project = request.cwd === null ? null : yield* projectFor("verify", request.cwd);
     const executable = request.executable.trim();
     if (executable.length === 0) {
@@ -390,7 +376,7 @@ export function makeComputeRpcGateway(input: {
     request: ComputeStartProjectSessionInput,
   ) {
     const project = yield* projectFor("start", request.cwd);
-    const { descriptor, preference: hostPreference } = yield* requireEnabledLanguage(
+    const { descriptor, preference: hostPreference } = yield* requireLanguage(
       "start",
       request.languageId,
     );
@@ -522,7 +508,7 @@ export function makeComputeRpcGateway(input: {
       projectId: project.projectId,
       sessionId: request.sessionId,
     });
-    if (session !== null) yield* requireEnabledLanguage("submit", session.languageId);
+    if (session !== null) yield* requireLanguage("submit", session.languageId);
     yield* validateSource(project.root, request);
     return yield* input.compute.submitExecution({
       ...request,
@@ -538,7 +524,7 @@ export function makeComputeRpcGateway(input: {
       projectId: project.projectId,
       sessionId: request.sessionId,
     });
-    if (session !== null) yield* requireEnabledLanguage("submit", session.languageId);
+    if (session !== null) yield* requireLanguage("submit", session.languageId);
     return yield* input.compute.submitExecutions({
       projectId: project.projectId,
       sessionId: request.sessionId,

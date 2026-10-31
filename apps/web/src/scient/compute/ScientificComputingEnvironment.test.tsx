@@ -8,7 +8,6 @@ const mocks = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   query: vi.fn(),
   updateAtom: {},
-  toggle: null as null | ((enabled: boolean) => void),
   known: true,
   pending: false,
   refreshRuntimeInventory: vi.fn(),
@@ -51,7 +50,6 @@ vi.mock("~/state/query", () => ({
                   sourceExtensions: [".m"],
                   capabilities: [],
                 },
-                enabled: false,
                 configuredExecutable: null,
                 managedRuntime: null,
                 toolkits: [],
@@ -79,12 +77,6 @@ vi.mock("~/state/use-atom-command", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children?: ReactNode }) => <a href="#language">{children}</a>,
-}));
-vi.mock("~/components/ui/switch", () => ({
-  Switch: ({ onCheckedChange }: { onCheckedChange: (enabled: boolean) => void }) => {
-    mocks.toggle = onCheckedChange;
-    return <button type="button">Toggle</button>;
-  },
 }));
 vi.mock("~/components/settings/settingsLayout", () => ({
   useSettingsSearchTarget: () => undefined,
@@ -129,12 +121,11 @@ describe("Scientific Computing environment ownership", () => {
     vi.clearAllMocks();
     mocks.known = true;
     mocks.pending = false;
-    mocks.toggle = null;
     mocks.updateSettings.mockResolvedValue({ _tag: "Success", value: null });
     mocks.refreshRuntimeInventory.mockResolvedValue({ _tag: "Success", value: null });
   });
 
-  it("reads, edits, and inspects the requested remote server, not the primary", () => {
+  it("reads and inspects the requested remote server, not the primary", () => {
     renderToStaticMarkup(
       <ComputeLanguagePage
         languageId="matlab"
@@ -142,18 +133,6 @@ describe("Scientific Computing environment ownership", () => {
       />,
     );
     expect(mocks.readSettings).toHaveBeenCalledWith("remote-server");
-    mocks.toggle?.(true);
-    expect(mocks.updateSettings).toHaveBeenCalledWith({
-      environmentId: "remote-server",
-      input: {
-        patch: {
-          scientificComputing: {
-            schemaVersion: 1,
-            languages: { matlab: { enabled: true, executable: "" } },
-          },
-        },
-      },
-    });
     expect(mocks.query).toHaveBeenCalledWith({
       environmentId: "remote-server",
       input: {},

@@ -200,7 +200,7 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
       ).pipe(Layer.provide(localStoreLayer))
     : localStoreLayer;
   const settingsLayer = ServerSettings.layerTest({
-    scientificComputing: { languages: { [ComputeLanguageId.make("matlab")]: { enabled: true } } },
+    scientificComputing: { languages: { [ComputeLanguageId.make("matlab")]: {} } },
   });
   const analysisLayer = layerWithAdapters([adapter]).pipe(
     Layer.provide(
@@ -888,33 +888,6 @@ describe("analysis service coordination", () => {
         expect((yield* Fiber.join(closing)).receipt.status).toBe("cancelled");
       }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
-  it.effect(
-    "enforces the shared language enable setting without requiring an Engine connection",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* serviceTestLayer;
-        yield* Effect.gen(function* () {
-          const settings = yield* ServerSettings.ServerSettingsService;
-          yield* settings.updateSettings({
-            scientificComputing: {
-              languages: { [ComputeLanguageId.make("matlab")]: { enabled: false } },
-            },
-          });
-          const service = yield* AnalysisService;
-          const error = yield* Effect.flip(
-            service.startRun({
-              cwd: harness.projectRoot,
-              relativePath: "disabled.m",
-              sourceRevision,
-              runtimeId,
-            }),
-          );
-          expect(error.message).toContain("Enable matlab");
-          expect(yield* Ref.get(harness.processStartCount)).toBe(0);
-        }).pipe(Effect.provide(harness.analysisLayer), Effect.scoped);
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("serializes concurrent starts so one file cannot acquire two active runs", () =>

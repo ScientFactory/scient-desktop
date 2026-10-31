@@ -22,7 +22,6 @@ describe("scientific runtime preference ownership", () => {
         readRuntimeExecutablePath: legacy,
       });
       expect((yield* preferences.getSettings).scientificComputing.languages[MATLAB]).toEqual({
-        enabled: true,
         executable: "/legacy/matlab",
       });
       expect((yield* settings.getSettings).scientificComputing.languages[MATLAB]).toBeUndefined();
@@ -56,14 +55,13 @@ describe("scientific runtime preference ownership", () => {
       expect((yield* preferences.readRuntimeExecutablePath("matlab")).executablePath).toBeNull();
       expect(legacy).not.toHaveBeenCalled();
       expect((yield* settings.getSettings).scientificComputing.languages[PYTHON]).toEqual({
-        enabled: true,
         executable: "/chosen/python",
       });
     }).pipe(
       Effect.provide(
         layerTest({
           scientificComputing: {
-            languages: { [PYTHON]: { enabled: true, executable: "/chosen/python" } },
+            languages: { [PYTHON]: { executable: "/chosen/python" } },
           },
         }),
       ),
@@ -79,7 +77,6 @@ describe("scientific runtime preference ownership", () => {
       const here = makeScientificRuntimePreferences(settings, legacy, "host-a");
       yield* here.migrate();
       expect((yield* settings.getSettings).scientificComputing.languages[PYTHON]).toEqual({
-        enabled: true,
         executable: "",
         selections: { "host-a": "/chosen/python" },
       });
@@ -101,7 +98,7 @@ describe("scientific runtime preference ownership", () => {
       Effect.provide(
         layerTest({
           scientificComputing: {
-            languages: { [PYTHON]: { enabled: true, executable: "/chosen/python" } },
+            languages: { [PYTHON]: { executable: "/chosen/python" } },
           },
         }),
       ),
@@ -126,7 +123,6 @@ describe("scientific runtime preference ownership", () => {
           scientificComputing: {
             languages: {
               [PYTHON]: {
-                enabled: true,
                 executable: "",
                 selections: {
                   "host-a": "/usr/bin/python3",

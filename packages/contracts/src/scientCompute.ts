@@ -79,7 +79,6 @@ export type ComputeRuntimeCandidate = typeof ComputeRuntimeCandidate.Type;
 
 export const ComputeLanguageRuntimeInspection = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
-  enabled: Schema.Boolean,
   configuredExecutable: Schema.NullOr(ComputeExecutable),
   managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(null)),
@@ -125,7 +124,6 @@ export type ComputeFoundTool = typeof ComputeFoundTool.Type;
 /** Cheap Settings data, deliberately separate from runnable candidates. */
 export const ComputeLanguageRuntimeInventory = Schema.Struct({
   descriptor: ComputeLanguageDescriptor,
-  enabled: Schema.Boolean,
   configuredExecutable: Schema.NullOr(ComputeExecutable),
   managedRuntime: Schema.NullOr(ComputeManagedRuntimeStatus),
   toolkits: Schema.Array(ComputeToolkitDescriptor).check(Schema.isMaxLength(64)),
@@ -174,7 +172,6 @@ export class ComputeGatewayError extends Schema.TaggedError<ComputeGatewayError>
     ]),
     reason: Schema.Literals([
       "project-not-initialized",
-      "language-disabled",
       "language-unavailable",
       "runtime-not-found",
       "source-invalid",

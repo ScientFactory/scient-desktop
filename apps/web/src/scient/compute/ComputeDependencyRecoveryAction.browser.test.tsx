@@ -82,7 +82,6 @@ function inspection(): ComputeRuntimeInspection {
           sourceExtensions: [".py"],
           capabilities: [],
         },
-        enabled: true,
         configuredExecutable: "/system/python",
         toolkits: [
           {

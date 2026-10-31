@@ -3,7 +3,6 @@ import {
   classifyMatlabSource,
   ComputeExecutionId,
   ComputeSessionId,
-  resolveScientificComputingLanguageSettings,
   TERMINAL_COMPUTE_SESSION_STATUSES,
 } from "@t3tools/contracts";
 import {
@@ -38,9 +37,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/compone
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { computeEnvironment } from "~/state/compute";
-import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
@@ -241,43 +238,15 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
     const manageRuntime = useAtomCommand(computeEnvironment.manageRuntime, {
       reportFailure: false,
     });
-    const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-      reportFailure: false,
-    });
-    const scientificComputing = useEnvironmentSettings(
-      props.environmentId,
-      (settings) => settings.scientificComputing,
-    );
     const languageInspection =
       runtimes.data?.languages.find(
         (language) => language.descriptor.languageId === props.language.languageId,
       ) ?? null;
     const languageName = languageInspection?.descriptor.displayName ?? props.language.displayName;
-    const languagePreference = resolveScientificComputingLanguageSettings(
-      scientificComputing,
-      props.language.languageId,
-    );
     const managedRuntime = useComputeManagedRuntime({
       environmentId: props.environmentId,
       languageId: props.language.languageId,
       initialStatus: languageInspection?.managedRuntime ?? null,
-      ensureEnabled: async () => {
-        if (languagePreference.enabled) return true;
-        const result = await updateSettings({
-          environmentId: props.environmentId,
-          input: {
-            patch: {
-              scientificComputing: {
-                schemaVersion: 1,
-                languages: {
-                  [props.language.languageId]: { ...languagePreference, enabled: true },
-                },
-              },
-            },
-          },
-        });
-        return result._tag === "Success";
-      },
     });
     const getSession = useAtomQueryRunner(computeEnvironment.session, {
       reportFailure: false,
@@ -507,9 +476,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
               refreshed._tag === "Success"
                 ? refreshed.value.languages
                     .find(
-                      (language) =>
-                        language.descriptor.languageId === target.session.languageId &&
-                        language.enabled,
+                      (language) => language.descriptor.languageId === target.session.languageId,
                     )
                     ?.runtimes.find(
                       (candidate) =>
@@ -880,7 +847,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         props.contextId === undefined ||
         operation !== null ||
         fileSlice === null ||
-        !languagePreference.enabled ||
         readyRuntime === null ||
         matlabFileCapability?.runnableAsFile === false
       )
@@ -950,9 +916,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
             typeof error === "object" &&
             error !== null &&
             "reason" in error &&
-            ["capacity-reached", "language-disabled", "source-invalid"].includes(
-              String(error.reason),
-            )
+            ["capacity-reached", "source-invalid"].includes(String(error.reason))
           ) {
             useComputeContextStore.getState().removeContext(childId);
           }
@@ -1008,7 +972,6 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
         target === null ||
         stoppingForFresh.current ||
         operation !== null ||
-        !languagePreference.enabled ||
         readyRuntime === null ||
         fileSlice === null ||
         matlabFileCapability?.runnableAsFile === false
@@ -1351,11 +1314,7 @@ export const ComputeFileActions = forwardRef<ComputeFileActionsHandle, ComputeFi
                     {props.contextId !== undefined ? (
                       <MenuItem
                         disabled={
-                          busy ||
-                          !languagePreference.enabled ||
-                          readyRuntime === null ||
-                          fileRunBlocked ||
-                          fileSlice === null
+                          busy || readyRuntime === null || fileRunBlocked || fileSlice === null
                         }
                         onClick={() => void runFresh()}
                       >

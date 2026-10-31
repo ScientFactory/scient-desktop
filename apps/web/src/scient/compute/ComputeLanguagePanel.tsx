@@ -17,7 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { Switch } from "~/components/ui/switch";
 import { cn } from "~/lib/utils";
 import {
   ManagedRuntimeMaintenanceMenu,
@@ -91,7 +90,6 @@ export function ComputeLanguagePanel({
   });
   const runtimeFingerprint = JSON.stringify([
     refreshVersion,
-    preference.enabled,
     selected?.executable,
     runtime.status?.generationId,
     runtime.status?.selection,
@@ -260,7 +258,7 @@ export function ComputeLanguagePanel({
           testable={false}
           environmentId={environmentId}
           languageId={languageId}
-          disabled={disabled || !preference.enabled}
+          disabled={disabled}
           renderMenu={(installationActions) => (
             <ManagedRuntimeMaintenanceMenu
               installationActions={installationActions}
@@ -283,25 +281,9 @@ export function ComputeLanguagePanel({
         selectedExecutable={selected?.executable}
         selection={selection}
         environmentId={environmentId}
-        disabled={unavailable || !preference.enabled}
+        disabled={unavailable}
         fingerprint={runtimeFingerprint}
         onVersion={rememberVersion}
-      />
-      <SettingsRow
-        id={`${languageId}-enabled`}
-        title={`Use ${name} in Scient`}
-        control={
-          <Switch
-            checked={preference.enabled}
-            disabled={unavailable}
-            onCheckedChange={(enabled) => {
-              void onChange({ ...preference, enabled }).then((saved) => {
-                if (saved) void onRefresh();
-              });
-            }}
-            aria-label={`Use ${name} in Scient`}
-          />
-        }
       />
     </>
   );
@@ -345,7 +327,7 @@ function RuntimePicker({
         if (!next || next === value) return;
         void selection.select(next === AUTOMATIC_RUNTIME_OPTION ? null : next);
       }}
-      disabled={selection.disabled || !preference.enabled}
+      disabled={selection.disabled}
     >
       <SelectTrigger
         size="sm"

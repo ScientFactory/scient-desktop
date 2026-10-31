@@ -113,26 +113,24 @@ function computeStub(overrides: Partial<GatewayCompute> = {}): GatewayCompute {
         ],
         incomplete: false,
       }),
-    inspectRuntimes: (input) =>
+    inspectRuntimes: () =>
       Effect.succeed([
         {
           descriptor: DESCRIPTOR,
           toolkits: [],
-          runtimes: input.enabledLanguageIds.has(PYTHON)
-            ? [
-                {
-                  profile: PROFILE,
-                  verification: {
-                    profile: PROFILE,
-                    readiness: "ready",
-                    missingRequirements: [],
-                    message: null,
-                    packages: [],
-                  },
-                  toolkits: [],
-                },
-              ]
-            : [],
+          runtimes: [
+            {
+              profile: PROFILE,
+              verification: {
+                profile: PROFILE,
+                readiness: "ready",
+                missingRequirements: [],
+                message: null,
+                packages: [],
+              },
+              toolkits: [],
+            },
+          ],
         },
       ]),
     verifyRuntime: () =>
@@ -280,7 +278,7 @@ describe("compute RPC gateway", () => {
       expect(forwarded).toEqual({ toolkitChange });
     }),
   );
-  it.effect("discovers default-enabled Python without inspecting or verifying runtimes", () =>
+  it.effect("discovers Python without inspecting or verifying runtimes", () =>
     Effect.gen(function* () {
       const gateway = makeComputeRpcGateway({
         workspaceResolver: computeWorkspaceResolverForTest,
@@ -305,67 +303,11 @@ describe("compute RPC gateway", () => {
         workspaceFileSystem: workspace(),
       });
       expect((yield* gateway.runtimeInventory()).languages[0]).toMatchObject({
-        enabled: true,
         configuredExecutable: null,
         installations: [],
       });
     }),
   );
-  it.effect("does not inspect or start a language the user left disabled", () =>
-    Effect.gen(function* () {
-      const initialized = yield* project;
-      let inspectionEnabled = new Set<string>();
-      let startCalls = 0;
-      const retained = record(
-        ComputeProjectId.make(initialized.identity.projectId),
-        ComputeSessionId.make("retained-session"),
-      );
-      const compute = computeStub({
-        inspectRuntimes: (input) => {
-          inspectionEnabled = new Set(input.enabledLanguageIds);
-          return Effect.succeed([{ descriptor: DESCRIPTOR, toolkits: [], runtimes: [] }]);
-        },
-        startSession: (input) => {
-          startCalls += 1;
-          return Effect.succeed(record(input.projectId, input.sessionId));
-        },
-        listSessions: () => Effect.succeed([retained]),
-      });
-      const gateway = makeComputeRpcGateway({
-        workspaceResolver: computeWorkspaceResolverForTest,
-        compute,
-        serverSettings: {
-          getSettings: Effect.succeed({
-            ...DEFAULT_SERVER_SETTINGS,
-            scientificComputing: {
-              ...DEFAULT_SERVER_SETTINGS.scientificComputing,
-              languages: {
-                ...DEFAULT_SERVER_SETTINGS.scientificComputing.languages,
-                [PYTHON]: { enabled: false, executable: "" },
-              },
-            },
-          }),
-        },
-        workspaceFileSystem: workspace(),
-      });
-
-      const inspection = yield* gateway.inspectRuntimes({ cwd: initialized.root, refresh: false });
-      expect(inspection.languages[0]).toMatchObject({ enabled: false, runtimes: [] });
-      expect(inspectionEnabled.size).toBe(0);
-      const error = yield* Effect.flip(
-        gateway.startSession({
-          cwd: initialized.root,
-          sessionId: ComputeSessionId.make("session-1"),
-          languageId: PYTHON,
-          executable: null,
-        }),
-      );
-      expect(error.reason).toBe("language-disabled");
-      expect(startCalls).toBe(0);
-      expect(yield* gateway.listSessions({ cwd: initialized.root })).toEqual([retained]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-  );
-
   it.effect("preserves Toolkit readiness from each exact verified runtime", () =>
     Effect.gen(function* () {
       const initialized = yield* project;
@@ -421,7 +363,7 @@ describe("compute RPC gateway", () => {
             ...DEFAULT_SERVER_SETTINGS,
             scientificComputing: {
               schemaVersion: 1,
-              languages: { python: { enabled: true, executable: "" } },
+              languages: { python: { executable: "" } },
             },
           }),
         },
@@ -469,7 +411,7 @@ describe("compute RPC gateway", () => {
             scientificComputing: {
               schemaVersion: 1,
               languages: {
-                python: { enabled: true, executable: "/preferred/python" },
+                python: { executable: "/preferred/python" },
               },
             },
           }),
@@ -605,7 +547,7 @@ describe("compute saved-source validation", () => {
             ...DEFAULT_SERVER_SETTINGS,
             scientificComputing: {
               ...DEFAULT_SERVER_SETTINGS.scientificComputing,
-              languages: { [PYTHON]: { enabled: true, executable: "" } },
+              languages: { [PYTHON]: { executable: "" } },
             },
           }),
         },

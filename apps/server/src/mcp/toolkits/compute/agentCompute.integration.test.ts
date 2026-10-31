@@ -75,7 +75,7 @@ describe.runIf(Boolean(TEST_PYTHON))("agent compute tools", () => {
               ...DEFAULT_SERVER_SETTINGS,
               scientificComputing: {
                 schemaVersion: 1,
-                languages: { python: { enabled: true, executable: TEST_PYTHON } },
+                languages: { python: { executable: TEST_PYTHON } },
               },
             }),
           },

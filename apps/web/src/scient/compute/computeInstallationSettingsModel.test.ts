@@ -36,7 +36,6 @@ const inventory: ComputeLanguageRuntimeInventory = {
     sourceExtensions: [".py"],
     capabilities: [],
   },
-  enabled: true,
   configuredExecutable: "/system/python",
   managedRuntime: status,
   toolkits: [],
@@ -127,7 +126,7 @@ describe("installation selection", () => {
   });
 
   it("uses managed precedence only for Python, independently of an existing path", () => {
-    const preference = { enabled: true, executable: "/system/python" };
+    const preference = { executable: "/system/python" };
     expect(defaultComputeInstallation(inventory, preference, status)?.source).toBe("managed");
     expect(
       defaultComputeInstallation(inventory, preference, { ...status, selection: "existing" })
@@ -146,7 +145,7 @@ describe("installation selection", () => {
       descriptor: { ...inventory.descriptor, languageId: ComputeLanguageId.make("sql") },
       configuredExecutable: null,
     };
-    const automatic = { enabled: true, executable: "" };
+    const automatic = { executable: "" };
     expect(defaultComputeInstallation(sql, automatic, null)?.source).toBe("managed");
     expect(
       defaultComputeInstallation(sql, { ...automatic, executable: "/system/python" }, null)
@@ -156,23 +155,22 @@ describe("installation selection", () => {
 
   it("keeps a configured alias selected without changing its system provenance", () => {
     const language = { ...inventory, configuredExecutable: "python3" };
+    expect(defaultComputeInstallation(language, { executable: "python3" }, null)?.executable).toBe(
+      "/system/python",
+    );
     expect(
-      defaultComputeInstallation(language, { enabled: true, executable: "python3" }, null)
-        ?.executable,
-    ).toBe("/system/python");
-    expect(
-      defaultComputeInstallation(language, { enabled: true, executable: "/new/python" }, null),
+      defaultComputeInstallation(language, { executable: "/new/python" }, null),
     ).toBeUndefined();
   });
 
   it("never labels an alternative as default when an explicit choice disappeared", () => {
     expect(
-      defaultComputeInstallation(inventory, { enabled: true, executable: "/missing/python" }, null),
+      defaultComputeInstallation(inventory, { executable: "/missing/python" }, null),
     ).toBeUndefined();
     expect(
       defaultComputeInstallation(
         { ...inventory, installations: inventory.installations.slice(1) },
-        { enabled: true, executable: "" },
+        { executable: "" },
         status,
       ),
     ).toBeUndefined();
@@ -182,7 +180,7 @@ describe("installation selection", () => {
     expect(
       defaultComputeInstallation(
         { ...inventory, configuredExecutable: null },
-        { enabled: true, executable: "" },
+        { executable: "" },
         { ...status, selection: "existing" },
       )?.executable,
     ).toBe("/system/python");
@@ -193,16 +191,14 @@ describe("installation selection", () => {
           configuredExecutable: null,
           installations: inventory.installations.slice(0, 1),
         },
-        { enabled: true, executable: "" },
+        { executable: "" },
         { ...status, selection: "existing" },
       ),
     ).toBeUndefined();
   });
 
   it("does not reuse stale explicit candidate order while automatic discovery refreshes", () => {
-    expect(
-      defaultComputeInstallation(inventory, { enabled: true, executable: "" }, null),
-    ).toBeUndefined();
+    expect(defaultComputeInstallation(inventory, { executable: "" }, null)).toBeUndefined();
   });
 
   it.each(["/system/python", ""])(
@@ -211,7 +207,7 @@ describe("installation selection", () => {
       const steps: string[] = [];
       await selectExistingComputeInstallation({
         executable,
-        preference: { enabled: true, executable: "old" },
+        preference: { executable: "old" },
         releaseManaged: true,
         save: async (next) => {
           steps.push(`save:${next.executable}`);
@@ -230,7 +226,7 @@ describe("installation selection", () => {
     await expect(
       selectExistingComputeInstallation({
         executable: "/system/python",
-        preference: { enabled: true, executable: "" },
+        preference: { executable: "" },
         releaseManaged: true,
         save: async () => false,
         useExisting: release,
@@ -243,7 +239,7 @@ describe("installation selection", () => {
     await expect(
       selectExistingComputeInstallation({
         executable: "/system/python",
-        preference: { enabled: true, executable: "" },
+        preference: { executable: "" },
         releaseManaged: true,
         save: async () => true,
         useExisting: async () => {
@@ -257,12 +253,9 @@ describe("installation selection", () => {
     const release = vi.fn();
     await selectExistingComputeInstallation({
       executable: "/MATLAB/bin/matlab",
-      preference: { enabled: false, executable: "" },
+      preference: { executable: "" },
       releaseManaged: false,
-      save: async (next) => {
-        expect(next.enabled).toBe(false);
-        return true;
-      },
+      save: async () => true,
       useExisting: release,
     });
     expect(release).not.toHaveBeenCalled();
@@ -274,7 +267,7 @@ describe("current runtime summary", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: inventory,
-        preference: { enabled: true, executable: "" },
+        preference: { executable: "" },
         managed: status,
       }),
     ).toEqual({
@@ -288,7 +281,7 @@ describe("current runtime summary", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: inventory,
-        preference: { enabled: true, executable: "" },
+        preference: { executable: "" },
         managed: { ...status, updateAvailable: true },
       }),
     ).toEqual({
@@ -299,20 +292,10 @@ describe("current runtime summary", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: inventory,
-        preference: { enabled: true, executable: "/system/python" },
+        preference: { executable: "/system/python" },
         managed: { ...status, selection: "existing", updateAvailable: true },
       }).kind,
     ).toBe("ready");
-  });
-
-  it("keeps a disabled Python row quiet until it is enabled", () => {
-    expect(
-      computeCurrentRuntimeSummary({
-        language: { ...inventory, installations: [] },
-        preference: { enabled: false, executable: "" },
-        managed: null,
-      }),
-    ).toEqual({ kind: "disabled", title: "Off", detail: "" });
   });
 
   it("repairs only a broken Scient-managed runtime", () => {
@@ -325,7 +308,7 @@ describe("current runtime summary", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: brokenManaged,
-        preference: { enabled: true, executable: "" },
+        preference: { executable: "" },
         managed: status,
       }).kind,
     ).toBe("repair-managed");
@@ -337,7 +320,7 @@ describe("current runtime summary", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: brokenSystem,
-        preference: { enabled: true, executable: "/system/python" },
+        preference: { executable: "/system/python" },
         managed: { ...status, selection: "existing" },
       }).kind,
     ).toBe("unavailable");
@@ -347,7 +330,7 @@ describe("current runtime summary", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: inventory,
-        preference: { enabled: true, executable: "" },
+        preference: { executable: "" },
         managed: {
           ...status,
           failure: {
@@ -362,7 +345,7 @@ describe("current runtime summary", () => {
     ).toBe("ready");
   });
 
-  it("keeps disabled MATLAB quiet, then offers the correct enabled recovery", () => {
+  it("offers to connect a found MATLAB and says when none is here", () => {
     const matlab = {
       ...inventory,
       descriptor: { ...inventory.descriptor, languageId: ComputeLanguageId.make("matlab") },
@@ -378,28 +361,14 @@ describe("current runtime summary", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: matlab,
-        preference: { enabled: false, executable: "" },
-        managed: null,
-      }),
-    ).toEqual({ kind: "disabled", title: "Off", detail: "" });
-    expect(
-      computeCurrentRuntimeSummary({
-        language: { ...matlab, installations: [] },
-        preference: { enabled: false, executable: "" },
-        managed: null,
-      }),
-    ).toEqual({ kind: "disabled", title: "Off", detail: "" });
-    expect(
-      computeCurrentRuntimeSummary({
-        language: matlab,
-        preference: { enabled: true, executable: "" },
+        preference: { executable: "" },
         managed: null,
       }).kind,
     ).toBe("connect");
     expect(
       computeCurrentRuntimeSummary({
         language: { ...matlab, installations: [] },
-        preference: { enabled: true, executable: "" },
+        preference: { executable: "" },
         managed: null,
       }).kind,
     ).toBe("missing");
@@ -422,7 +391,7 @@ describe("current runtime summary", () => {
     expect(
       computeCurrentRuntimeSummary({
         language: matlab,
-        preference: { enabled: true, executable: "/MATLAB/bin/matlab" },
+        preference: { executable: "/MATLAB/bin/matlab" },
         managed: {
           ...status,
           selection: "managed",
@@ -466,9 +435,9 @@ describe("what a language shows", () => {
     version: "4.6.2",
     problem: null,
   };
-  const preference = { enabled: true, executable: "" };
-  const detail = (item: ComputeLanguageRuntimeInventory, enabled = true) => {
-    const current = { ...preference, enabled };
+  const preference = { executable: "" };
+  const detail = (item: ComputeLanguageRuntimeInventory) => {
+    const current = preference;
     return computeLanguageDetail(
       item,
       computeCurrentRuntimeSummary({
@@ -529,7 +498,6 @@ describe("what a language shows", () => {
   it("says what a language runs on, or what it needs", () => {
     const kernel = { ...status, selection: "existing" as const };
     expect(detail(language("r", [found], kernel))).toBe("4.6.2 · System");
-    expect(detail(language("r", [found], kernel), false)).toBe("4.6.2 · System · Off");
     // Run adds a missing kernel, so a language that lacks one says only what it runs on.
     expect(detail(language("r", [found], { ...status, installed: false }))).toBe("4.6.2 · System");
     expect(detail(language("rust", [{ ...found, version: null }]))).toBe("Kernel found");

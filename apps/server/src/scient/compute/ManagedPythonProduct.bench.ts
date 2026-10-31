@@ -157,7 +157,7 @@ describe.runIf(ENABLED)("Scient-managed Python product", () => {
                   ...DEFAULT_SERVER_SETTINGS,
                   scientificComputing: {
                     schemaVersion: 1,
-                    languages: { [PYTHON]: { enabled: true, executable: "" } },
+                    languages: { [PYTHON]: { executable: "" } },
                   },
                 }),
               },

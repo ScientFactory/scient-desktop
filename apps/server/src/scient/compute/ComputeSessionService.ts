@@ -205,7 +205,6 @@ export interface ComputeRuntimeInspectionRequest {
   readonly configuredExecutables: Readonly<Record<string, string | null>>;
   /** Languages whose configured executable was chosen for this project, not this machine. */
   readonly chosenForProject?: ReadonlySet<string>;
-  readonly enabledLanguageIds: ReadonlySet<string>;
   readonly refresh: boolean;
   /** Absent means every language. */
   readonly languageIds?: ReadonlySet<string>;
@@ -833,13 +832,6 @@ const make = Effect.gen(function* () {
       requested,
       (binding) => {
         const languageId = binding.adapter.languageId;
-        if (!input.enabledLanguageIds.has(languageId))
-          return Effect.succeed({
-            descriptor: descriptorFor(binding),
-            managedRuntime: null,
-            toolkits: binding.toolkitSupport?.descriptors ?? [],
-            runtimes: [],
-          });
         const configuredExecutable = input.configuredExecutables[languageId] ?? null;
         return inspectionSnapshot(
           JSON.stringify([

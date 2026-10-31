@@ -203,7 +203,6 @@ function python(): ComputeLanguageRuntimeInventory {
       sourceExtensions: [".py"],
       capabilities: [],
     },
-    enabled: true,
     configuredExecutable: null,
     managedRuntime: status(),
     toolkits: [],
@@ -254,7 +253,7 @@ const matlabHere = (): ComputeLanguageRuntimeInventory => ({
 
 describe("Scientific Computing settings interactions", () => {
   async function _setupFixture0(_fixture: _Fixture) {
-    mocks.preferences = { python: { enabled: true, executable: "" } };
+    mocks.preferences = { python: { executable: "" } };
     mocks.languages = [python()];
     mocks.statuses = { python: status() };
     mocks.queryErrors = {};
@@ -559,7 +558,7 @@ describe("Scientific Computing settings interactions", () => {
     await _setupFixture0(_fixture);
 
     const path = "/missing/python";
-    mocks.preferences.python = { enabled: true, executable: path };
+    mocks.preferences.python = { executable: path };
     mocks.statuses.python = { ...status(), selection: "existing" };
     mocks.languages = [
       {
@@ -597,7 +596,6 @@ describe("Scientific Computing settings interactions", () => {
     const path = "/opt/conda/envs/lab/bin/python";
     mocks.hostKey = "host-a";
     mocks.preferences.python = {
-      enabled: true,
       executable: "",
       selections: { "host-a": path, "host-b": "/other/python" },
     };
@@ -625,7 +623,6 @@ describe("Scientific Computing settings interactions", () => {
     await openInstallation(_fixture, path);
     await clickMenuItem("Forget path");
     expect(mocks.preferences.python).toEqual({
-      enabled: true,
       executable: "",
       selections: { "host-a": "" },
     });
@@ -682,7 +679,7 @@ describe("Scientific Computing settings interactions", () => {
     const selected = "/MATLAB-A/bin/matlab";
     const other = "/MATLAB-B/bin/matlab";
     const helper = { ...status(), installationExecutable: selected };
-    mocks.preferences = { matlab: { enabled: true, executable: selected } };
+    mocks.preferences = { matlab: { executable: selected } };
     mocks.statuses = { matlab: helper };
     mocks.languages = [
       {
@@ -811,7 +808,7 @@ describe("Scientific Computing settings interactions", () => {
       runtimeVersion: null,
       toolkitIds: [],
     };
-    mocks.preferences.python = { enabled: true, executable: systemPath };
+    mocks.preferences.python = { executable: systemPath };
     mocks.statuses.python = uninstalled;
     mocks.languages = [
       {
@@ -887,8 +884,8 @@ describe("Scientific Computing settings interactions", () => {
 
     const matlabPath = "/MATLAB/bin/matlab";
     mocks.preferences = {
-      python: { enabled: true, executable: "" },
-      matlab: { enabled: true, executable: matlabPath },
+      python: { executable: "" },
+      matlab: { executable: matlabPath },
     };
     mocks.statuses = { python: status(), matlab: null };
     mocks.languages = [
@@ -967,7 +964,7 @@ describe("Scientific Computing settings interactions", () => {
       managedRuntime: kernel,
       installations,
     });
-    mocks.preferences = { r: { enabled: true, executable: "" } };
+    mocks.preferences = { r: { executable: "" } };
     mocks.statuses = { r: kernel };
     mocks.languages = [
       python(),
@@ -1082,7 +1079,7 @@ describe("Scientific Computing settings interactions", () => {
     )!;
     const toolkitCard = toolkitSection.querySelector<HTMLElement>("[data-source-panel]")!;
     expect(runtimePanel.contains(toolkitSection)).toBe(false);
-    expect(runtimePanel.querySelectorAll("[data-slot=settings-row]")).toHaveLength(4);
+    expect(runtimePanel.querySelectorAll("[data-slot=settings-row]")).toHaveLength(3);
     expect(toolkitSection.querySelector("h2")?.textContent).toBe("Toolkits");
     expect(toolkitCard.querySelectorAll("[data-slot=settings-row]")).toHaveLength(toolkits.length);
 
@@ -1768,7 +1765,7 @@ describe("Scientific Computing settings interactions", () => {
       installationExecutable: matlab,
       failureMessage: "ENOENT: uv.lock",
     };
-    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.preferences = { matlab: { executable: matlab } };
     mocks.statuses = { matlab: helper };
     mocks.languages = [
       {
@@ -1811,7 +1808,7 @@ describe("Scientific Computing settings interactions", () => {
       displayName: "MATLAB connection helper",
       installationExecutable: matlab,
     };
-    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.preferences = { matlab: { executable: matlab } };
     mocks.statuses = { matlab: helper };
     mocks.languages = [
       {
@@ -1847,7 +1844,7 @@ describe("Scientific Computing settings interactions", () => {
       displayName: "MATLAB connection helper",
       installationExecutable: matlab,
     };
-    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.preferences = { matlab: { executable: matlab } };
     mocks.statuses = { matlab: helper };
     mocks.queryErrors = { matlab: "Status request timed out" };
     mocks.languages = [
@@ -1896,7 +1893,7 @@ describe("Scientific Computing settings interactions", () => {
           totalBytes: null,
         },
       };
-      mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+      mocks.preferences = { matlab: { executable: matlab } };
       mocks.statuses = { matlab: helper };
       mocks.languages = [
         {
@@ -1924,11 +1921,6 @@ describe("Scientific Computing settings interactions", () => {
       ).toHaveLength(1);
       expect(_fixture.container.querySelector('[data-compute-notice="block"]')).toBeNull();
       expect(_fixture.container.textContent).not.toContain("Installing private Python");
-      const enable = _fixture.container.querySelector<HTMLElement>(
-        '[aria-label="Use MATLAB in Scient"]',
-      )!;
-      expect(enable.closest("[data-compute-recovery]")).toBeNull();
-      expect(enable.hasAttribute("data-disabled")).toBe(false);
     },
   );
 
@@ -1943,7 +1935,7 @@ describe("Scientific Computing settings interactions", () => {
       displayName: "MATLAB connection helper",
       installationExecutable: matlab,
     };
-    mocks.preferences = { matlab: { enabled: true, executable: matlab } };
+    mocks.preferences = { matlab: { executable: matlab } };
     mocks.statuses = { matlab: helper };
     mocks.languages = [
       {
@@ -1991,13 +1983,12 @@ describe("Scientific Computing settings interactions", () => {
   });
 
   it.each([
-    ["python", "managed", true],
-    ["python", "existing", true],
-    ["python", "existing", false],
-    ["matlab", "existing", true],
+    ["python", "managed"],
+    ["python", "existing"],
+    ["matlab", "existing"],
   ] as const)(
-    "keeps %s updates on the Runtime row, out of the maintenance menu (%s, enabled=%s)",
-    async (languageId, selection, enabled) => {
+    "keeps %s updates on the Runtime row, out of the maintenance menu (%s)",
+    async (languageId, selection) => {
       await using _fixture = _createFixture();
       _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
       await _setupFixture0(_fixture);
@@ -2012,13 +2003,12 @@ describe("Scientific Computing settings interactions", () => {
           : {}),
       };
       mocks.preferences = {
-        [languageId]: { enabled, executable: languageId === "matlab" ? matlab : systemPath },
+        [languageId]: { executable: languageId === "matlab" ? matlab : systemPath },
       };
       mocks.statuses = { [languageId]: current };
       mocks.languages = [
         {
           ...python(),
-          enabled,
           descriptor: {
             ...python().descriptor,
             languageId: ComputeLanguageId.make(languageId),
@@ -2193,17 +2183,9 @@ describe("Scientific Computing settings interactions", () => {
     };
     mocks.languages = [{ ...python(), managedRuntime: mocks.statuses.python }];
     await render(_fixture);
-    const toggle = _fixture.container.querySelector<HTMLButtonElement>(
-      '[aria-label="Use Python in Scient"]',
-    )!;
-    expect(toggle.hasAttribute("data-disabled")).toBe(false);
     await chooseRuntime(_fixture, systemPath);
     expect(mocks.calls).toEqual(["save", "use-existing"]);
     expect(runtimeValue(_fixture)).toBe(systemPath);
-    await act(() =>
-      _fixture.container.querySelector<HTMLElement>('[aria-label="Use Python in Scient"]')!.click(),
-    );
-    expect(mocks.preferences.python?.enabled).toBe(false);
   });
 
   it("does not switch or release managed Python when saving fails", async () => {
@@ -2240,7 +2222,7 @@ describe("Scientific Computing settings interactions", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
 
-    mocks.preferences.python = { enabled: true, executable: "/old/python" };
+    mocks.preferences.python = { executable: "/old/python" };
     await render(_fixture);
     await chooseRuntime(_fixture, automaticRuntimeOption);
     expect(mocks.calls).toEqual(["save", "use-existing"]);
@@ -2273,20 +2255,6 @@ describe("Scientific Computing settings interactions", () => {
     expect(mocks.calls).toEqual(["save", "use-existing"]);
   });
 
-  it("keeps disabled managed Python removable without falsely saying it needs repair", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    mocks.preferences.python = { enabled: false, executable: "" };
-    mocks.languages = [{ ...python(), enabled: false, installations: [] }];
-    await render(_fixture);
-    expect(_fixture.container.textContent).not.toContain("needs repair");
-    await openMaintenance(_fixture, "Python runtime");
-    expect(menuItem("Remove").getAttribute("data-disabled")).toBeNull();
-    expect(mocks.manage).not.toHaveBeenCalled();
-  });
-
   it("ties helper maintenance to the selected MATLAB, not an inventory of rows", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -2299,7 +2267,7 @@ describe("Scientific Computing settings interactions", () => {
       displayName: "MATLAB connection helper",
       installationExecutable: a,
     };
-    mocks.preferences = { matlab: { enabled: true, executable: b } };
+    mocks.preferences = { matlab: { executable: b } };
     mocks.statuses = { matlab: helper };
     mocks.languages = [
       {
@@ -2349,7 +2317,7 @@ describe("Scientific Computing settings interactions", () => {
       installationExecutable: previousMatlab,
       selection: "existing" as const,
     };
-    mocks.preferences = { matlab: { enabled: true, executable: selectedMatlab } };
+    mocks.preferences = { matlab: { executable: selectedMatlab } };
     mocks.statuses = { matlab: helper };
     mocks.languages = [
       {
@@ -2390,7 +2358,7 @@ describe("Scientific Computing settings interactions", () => {
       displayName: "MATLAB connection helper",
       installationExecutable: previousMatlab,
     };
-    mocks.preferences = { matlab: { enabled: true, executable: selectedMatlab } };
+    mocks.preferences = { matlab: { executable: selectedMatlab } };
     mocks.statuses = { matlab: helper };
     mocks.languages = [
       {

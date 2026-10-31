@@ -85,22 +85,16 @@ export function ComputeInventoryFailure({ inventory }: { inventory: ComputeLangu
 function LanguageRuntime({
   environmentId,
   language,
-  preference,
-  onChange,
   children,
 }: {
   environmentId: EnvironmentId;
   language: ComputeLanguageRuntimeInventory;
-  preference: ScientificComputingLanguageSettings;
-  onChange: (next: ScientificComputingLanguageSettings) => Promise<boolean>;
   children: (runtime: ComputeManagedRuntimeController) => ReactNode;
 }) {
   const runtime = useComputeManagedRuntime({
     environmentId,
     languageId: language.descriptor.languageId,
     initialStatus: language.managedRuntime,
-    ensureEnabled: async () =>
-      preference.enabled || (await onChange({ ...preference, enabled: true })),
   });
   return children(runtime);
 }
@@ -324,13 +318,7 @@ function LanguageDetail({
     inventory.updateLanguage(language.descriptor.languageId, next);
   return (
     <SettingsPageContainer>
-      <LanguageRuntime
-        key={languageId}
-        environmentId={environmentId}
-        language={language}
-        preference={preference}
-        onChange={onChange}
-      >
+      <LanguageRuntime key={languageId} environmentId={environmentId} language={language}>
         {(runtime) => (
           <div className="grid gap-6">
             {back}

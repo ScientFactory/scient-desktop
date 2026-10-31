@@ -69,7 +69,6 @@ import { promoteAnalysisRun } from "./AnalysisRunPromotion.ts";
 import * as LocalAnalysisStore from "./LocalAnalysisStore.ts";
 import { ScientificRuntimePreferences } from "../compute/ScientificRuntimePreferences.ts";
 import * as ComputeHostCapacity from "../compute/ComputeHostCapacity.ts";
-import { ComputeLanguageId, resolveScientificComputingLanguageSettings } from "@t3tools/contracts";
 import type { ResolvedAnalysisArtifactRepresentation } from "./LocalAnalysisStore.ts";
 import * as LocalExecutionProcess from "../execution/LocalExecutionProcess.ts";
 import {
@@ -1382,21 +1381,6 @@ const make = Effect.gen(function* () {
             "The selected analysis runtime is unavailable.",
           );
         }
-        const settings = yield* runtimePreferences.getSettings.pipe(
-          Effect.mapError((cause) =>
-            analysisError("start", "operation-failed", "Unable to read runtime settings.", cause),
-          ),
-        );
-        const preference = resolveScientificComputingLanguageSettings(
-          settings.scientificComputing,
-          ComputeLanguageId.make(adapter.kind),
-        );
-        if (!preference.enabled)
-          return yield* analysisError(
-            "start",
-            "runtime-invalid",
-            `Enable ${adapter.kind} in Scientific Computing settings before running it.`,
-          );
         const lowerPath = input.relativePath.toLowerCase();
         if (
           !adapter.fileExtensions.some((extension) => lowerPath.endsWith(extension.toLowerCase()))
