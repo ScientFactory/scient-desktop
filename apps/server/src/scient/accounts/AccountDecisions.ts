@@ -99,16 +99,20 @@ export const siteLimiting = (account: Pick<AccountSummary, "lastCheck">, nowMs: 
 
 /**
  * True while Scient must not try this sign-in by itself. A refused one can lock the account, a
- * site limiting automation stays limited for longer when pushed, and one that just needed the user
- * will need them again.
+ * site limiting automation stays limited for longer when pushed, and one that failed or needed the
+ * user will do the same again.
  */
 export const signInOnHold = (
   account: Pick<AccountSummary, "lastSignInOutcome" | "lastCheck">,
   nowMs: number,
-) =>
-  account.lastSignInOutcome === "password-rejected" ||
-  account.lastSignInOutcome === "code-rejected" ||
-  account.lastCheck?.state === "rejected" ||
-  siteLimiting(account, nowMs) ||
-  (account.lastCheck?.state === "needs-you" &&
-    nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS);
+) => {
+  const recent =
+    account.lastCheck !== undefined && nowMs - Date.parse(account.lastCheck.at) < RETRY_PAUSE_MS;
+  return (
+    account.lastSignInOutcome === "password-rejected" ||
+    account.lastSignInOutcome === "code-rejected" ||
+    account.lastCheck?.state === "rejected" ||
+    siteLimiting(account, nowMs) ||
+    (recent && (account.lastCheck?.state === "needs-you" || account.lastSignInOutcome === "failed"))
+  );
+};
