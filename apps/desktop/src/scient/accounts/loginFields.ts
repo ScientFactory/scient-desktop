@@ -123,7 +123,13 @@ function fillLoginForm(
       if (options.automatic && state) state.autoFilled = true;
       // Only a complete sign-in: a username step still needs the user's page to move on.
       const form = detected.inputs[detected.password]?.form;
-      if (form && options.submit && values.username !== undefined && detected.username !== -1) {
+      if (
+        form &&
+        options.submit &&
+        values.username !== undefined &&
+        values.password !== undefined &&
+        detected.username !== -1
+      ) {
         form.requestSubmit();
         return "submitted";
       }

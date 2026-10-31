@@ -33,7 +33,8 @@ When an agent needs a key you don't have in Accounts, it asks in a private card 
 answer here, so later conversations reuse it. One-time secrets still use the plain card.
 
 A tab you or an agent opens without naming a profile goes, in order, to the profile you switched
-that site to in this conversation, the profile signed in to the site, this conversation's profile,
+that site to in this conversation, the profile signed in to the site (your latest switch settles a
+tie), the profile you last switched that site to in any conversation, this conversation's profile,
 the project's profile (**Use … in this project** in the tab's profile menu), then the default.
 Switching a tab's profile is remembered for the conversation and the site.
 
@@ -52,8 +53,10 @@ Choosing a profile explicitly or navigating an existing tab keeps that profile. 
 no saved sign-in helps, Scient tells the agent to use `scient_account_find_profile` with the URL.
 
 You stay signed in across restarts and updates, including on sites that mark a sign-in as ending
-when the browser closes. Scient also ticks "Remember me" and "Trust this device" beside a saved
-sign-in, so codes come back less often. You can untick them; shared-computer options stay off.
+when the browser closes. To keep sign-ins alive, Scient quietly visits each signed-in site about
+once a day, and checks Google's accounts at startup, on focus and after sign-ins. It also ticks
+"Remember me" and "Trust this device" beside a saved sign-in, so codes come back less often. You can
+untick them; shared-computer options stay off.
 
 **Check my accounts** opens your browser sign-ins one at a time in their own profiles and shows what
 it found on each row: signed in, signed out, needs you, or rejected. A signed-out account with a
@@ -80,8 +83,9 @@ A key a service refuses shows **Key refused**, and the agent asks you for a new 
 
 Saved sign-ins fill automatically as a login form appears, in every tab, yours or an agent's,
 without replacing what you typed. They submit only to sign you back in: on your own tab, when it's
-the site's one saved sign-in and it has worked there before, once every 10 minutes. Exact-site matches come first, then your most
-recently used sign-in. Use the small toolbar chip to choose another, or the key button to fill
+the site's one saved sign-in, belongs to that profile, has worked there before and the site isn't
+limiting sign-ins, once every 10 minutes. Sign-ins from the same profile come first, then exact-site
+matches, then your most recently used sign-in. Use the small toolbar chip to choose another, or the key button to fill
 again. Incognito never autofills. A tab an agent controls gets only sign-ins that agent may use, and
 an agent can't act on your tab filled with a sign-in it may not use until that page changes.
 Turning an account Off stops agents using its password; a profile you allow still lets agents use

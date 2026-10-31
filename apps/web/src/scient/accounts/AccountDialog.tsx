@@ -460,7 +460,8 @@ function MoreOptionsFields({
               <AccountField label="Library link">
                 <Input
                   value={details.proxyUrl}
-                  onChange={(event) =>
+                  onChange={(event) => onChange({ ...details, proxyUrl: event.target.value })}
+                  onBlur={(event) =>
                     onChange({ ...details, proxyUrl: libraryLinkTemplate(event.target.value) })
                   }
                   placeholder="Paste a link from your library"

@@ -97,7 +97,10 @@ export function watchAccountAutofill(
     const submit =
       !agentTab &&
       matches.length === 1 &&
+      account.details.kind === "website" &&
+      (account.details.profileId ?? form.profileId) === form.profileId &&
       account.lastSignInOutcome === "signed-in" &&
+      account.lastCheck?.state !== "limited" &&
       account.secrets.password !== undefined &&
       isLoginPlace(new URL(pageUrl)) &&
       Date.now() - lastSubmitted > SIGN_BACK_IN_COOLDOWN_MS;
@@ -128,10 +131,13 @@ export function watchAccountAutofill(
     filled.set(form.tabId, { accountId: account.accountId, url: pageUrl });
     for (const listener of listeners) listener();
     if (done !== "submitted") return;
-    // A password field still there means it no longer works; retries could lock the account.
     await new Promise((settled) => setTimeout(settled, SIGN_IN_SETTLE_MS));
     const still = await bridge.loginForm?.(form.tabId).catch(() => undefined);
-    if (still?.hasPassword && still.url === form.url)
+    if (!still?.hasPassword || still.url !== form.url) return;
+    // Retries could lock the account. Only a page that came back with the form again means the
+    // password no longer works: the same page may still be waiting or asking for something else.
+    if (still.documentId === form.documentId) signedBackIn.set(form.url, Number.POSITIVE_INFINITY);
+    else
       await accountsState.signInSeen.run(registry, {
         environmentId,
         input: { accountId: account.accountId, outcome: "password-rejected" },
