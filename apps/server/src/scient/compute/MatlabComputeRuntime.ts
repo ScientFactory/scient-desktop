@@ -4,7 +4,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { ComputeRuntimeError, REQUIRED_COMPUTE_CAPABILITIES } from "@scientfactory/compute";
+import {
+  ComputeRuntimeError,
+  REQUIRED_COMPUTE_CAPABILITIES,
+  type ComputeLanguageAdapter,
+} from "@scientfactory/compute";
 import { ExecutionRunId } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -296,6 +300,32 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
   });
 });
 
+/** Test and Run add what MATLAB needs when nothing on this computer can reach its Engine. */
+export function connectingOnDemand(
+  adapter: ComputeLanguageAdapter,
+  addConnection: (cause: ComputeRuntimeError) => Effect.Effect<void, ComputeRuntimeError>,
+): ComputeLanguageAdapter {
+  return {
+    ...adapter,
+    verify: Effect.fn("MatlabComputeRuntime.verify")(function* (request) {
+      const verdict = yield* adapter.verify(request);
+      if (verdict.readiness !== "missing-requirement") return verdict;
+      return yield* addConnection(runtimeError(verdict.message ?? "MATLAB is unavailable.")).pipe(
+        Effect.andThen(() => adapter.verify(request)),
+        Effect.orElseSucceed(() => verdict),
+      );
+    }),
+    prepareLaunch: (request) =>
+      adapter
+        .prepareLaunch(request)
+        .pipe(
+          Effect.catchIf(engineHostRequirementIsMissing, (cause) =>
+            addConnection(cause).pipe(Effect.andThen(() => adapter.prepareLaunch(request))),
+          ),
+        ),
+  };
+}
+
 export const matlabRuntimeBinding: Effect.Effect<
   ComputeRuntimeBinding & {
     readonly managedRuntime?: ReturnType<typeof makeMatlabConnectionHelper>["controller"];
@@ -399,25 +429,7 @@ export const matlabRuntimeBinding: Effect.Effect<
         };
   const transport = makeComputeBridgeTransport(duplexProcesses, { startupTimeoutMs: 180_000 });
   return {
-    adapter: {
-      ...runtime.adapter,
-      verify: Effect.fn("MatlabComputeRuntime.verify")(function* (request) {
-        const verdict = yield* runtime.adapter.verify(request);
-        if (verdict.readiness !== "missing-requirement") return verdict;
-        return yield* addConnection(runtimeError(verdict.message ?? "MATLAB is unavailable.")).pipe(
-          Effect.andThen(runtime.adapter.verify(request)),
-          Effect.orElseSucceed(() => verdict),
-        );
-      }),
-      prepareLaunch: (request) =>
-        runtime.adapter
-          .prepareLaunch(request)
-          .pipe(
-            Effect.catchIf(engineHostRequirementIsMissing, (cause) =>
-              addConnection(cause).pipe(Effect.andThen(runtime.adapter.prepareLaunch(request))),
-            ),
-          ),
-    },
+    adapter: connectingOnDemand(runtime.adapter, addConnection),
     transport,
     ...(managedRuntime === undefined ? {} : { managedRuntime }),
     descriptor: {

@@ -39,7 +39,8 @@
     "packages/contracts/src/scient/pluginKeys.ts",
     "apps/server/src/scient/extensions/brandIcons/NOTICE",
     "apps/server/src/provider/Drivers/ScientClaudeSkillFiles.ts",
-    "apps/web/src/scient/compute/ScientificComputingSettings.tsx"
+    "apps/web/src/scient/compute/ScientificComputingSettings.tsx",
+    "apps/web/src/scient/compute/ComputeLanguagePanel.tsx"
   ],
   "extensionsDiffSignals": [
     "ConnectorRuntime",

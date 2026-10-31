@@ -46,6 +46,7 @@ function fakeTransport(initial: NotebookView) {
     },
     recordRun: async () => null,
     onError: (title) => errors.push(title),
+    onNotice: (title) => errors.push(title),
   };
   return {
     transport,

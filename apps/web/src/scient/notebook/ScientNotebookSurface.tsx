@@ -134,6 +134,7 @@ function useNotebookController(props: {
         return result._tag === "Success" ? result.value : null;
       },
       onError: (title) => toastManager.add({ type: "error", title }),
+      onNotice: (title) => toastManager.add({ type: "warning", title }),
     }),
   );
   return controller;

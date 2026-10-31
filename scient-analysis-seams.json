@@ -68,7 +68,12 @@
     "apps/server/scripts/scientServerAssets.ts",
     "packages/contracts/src/scientData.ts",
     "packages/contracts/src/scientNotebook.ts",
-    "apps/web/src/routes/_chat.settings.scientific-computing_.$languageId.tsx"
+    "apps/web/src/routes/_chat.settings.scientific-computing_.$languageId.tsx",
+    "packages/contracts/src/scient/computeLanguageStatus.ts",
+    "packages/contracts/src/scient/computeLanguages.ts",
+    "packages/contracts/src/scient/computeRunTable.ts",
+    "packages/shared/src/notebookStaleness.ts",
+    "apps/server/src/tool-discovery-worker.ts"
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
@@ -322,6 +327,16 @@
       "path": "apps/web/src/components/files/filePreviewMode.ts",
       "anchor": "computeSourceLanguageForPath",
       "purpose": "Keep Python and MATLAB source in the scientific file surface instead of the generic truncated-text fallback; filePreviewMode.scient.test.ts guards the deciding inputs."
+    },
+    {
+      "path": "apps/server/src/os-jank.ts",
+      "anchor": "DISCOVERY_VARIABLES",
+      "purpose": "Read the variables that say where a person's scientific tools live from their login shell, so Compute finds what their terminal finds."
+    },
+    {
+      "path": "apps/web/src/routes/__root.tsx",
+      "anchor": "ComputeQuitGuardReport",
+      "purpose": "Keep the desktop app told how many runs Quit would stop, so Quit can ask first."
     }
   ],
   "scientMounts": [

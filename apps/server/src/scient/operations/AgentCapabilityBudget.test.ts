@@ -154,7 +154,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(53);
+      expect(scientTools).toHaveLength(55);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_act",
         "preview_dialog",
@@ -214,7 +214,7 @@ it.live(
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",
-        actual53Bytes: Buffer.byteLength(encode(schemas)),
+        actual55Bytes: Buffer.byteLength(encode(schemas)),
         synthetic31Bytes: size(31),
         synthetic100Bytes: size(100),
         synthetic500Bytes: size(500),

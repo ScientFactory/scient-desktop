@@ -32,6 +32,7 @@ export interface NotebookTransport {
     input: Omit<NotebookRecordRunInput, "cwd" | "path">,
   ) => Promise<NotebookRecordRunResult | null>;
   readonly onError: (title: string) => void;
+  readonly onNotice: (title: string) => void;
 }
 
 export interface NotebookLiveRun {
@@ -174,7 +175,7 @@ export function createNotebookController(transport: NotebookTransport) {
       );
       if (before.editing === cell.id) editing = id;
     }
-    transport.onError("Someone else changed this cell. What you typed is in a new cell below it.");
+    transport.onNotice("Someone else changed this cell. What you typed is in a new cell below it.");
     if (editing !== null) controller.edit(editing, "end");
   };
   const startSending = (): Promise<void> => {

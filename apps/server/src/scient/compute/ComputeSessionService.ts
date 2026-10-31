@@ -327,6 +327,8 @@ export interface ComputeSettledRun {
   readonly projectId: ComputeProjectId;
   /** The folder the run's relative paths belong to. */
   readonly root: string;
+  /** What reading the session back must be admitted with. */
+  readonly workspace: ComputeWorkspaceReceipt | null;
   readonly execution: ComputeExecutionRecord;
 }
 
@@ -1094,6 +1096,7 @@ const make = Effect.gen(function* () {
       yield* PubSub.publish(settledRuns, {
         projectId: live.projectId,
         root: live.workspaceReceipt?.scope.workspaceRoot ?? live.workingDirectory,
+        workspace: live.workspaceReceipt,
         execution,
       });
     }

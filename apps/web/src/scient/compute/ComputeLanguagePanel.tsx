@@ -503,7 +503,7 @@ export function FoundDialog({
               <Input
                 type="search"
                 aria-label={`Find ${name} on this computer`}
-                placeholder={`Search ${entries.length} found`}
+                placeholder={`Search ${entries.length} installations`}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />

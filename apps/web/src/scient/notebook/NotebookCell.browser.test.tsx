@@ -50,6 +50,7 @@ async function mountCell(
     edit: async () => ({ revision: "1.1", refused: [] }),
     recordRun: async () => null,
     onError: () => undefined,
+    onNotice: () => undefined,
   });
   controller.fileChanged("open");
   await vi.waitFor(() => expect(controller.store.getState().status).toBe("ready"));

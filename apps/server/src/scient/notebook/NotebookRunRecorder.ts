@@ -7,6 +7,7 @@ import * as Stream from "effect/Stream";
 
 import { makeComputeNotebookOutputs } from "../compute/ComputeNotebookOutputs.ts";
 import { ComputeSessionService, type ComputeSettledRun } from "../compute/ComputeSessionService.ts";
+import { ComputeWorkspaceAdmission } from "../compute/ComputeWorkspaceAdmission.ts";
 import { NotebookStore } from "./NotebookStore.ts";
 
 const unreadable = (cause: { readonly message: string }) =>
@@ -26,6 +27,7 @@ export const layer = Layer.effectDiscard(
     const record = Effect.fn("NotebookRunRecorder.record")(function* ({
       projectId,
       root,
+      workspace,
       execution,
     }: ComputeSettledRun) {
       const { request, result } = execution;
@@ -44,18 +46,20 @@ export const layer = Layer.effectDiscard(
         compute,
         fileSystem,
       });
-      yield* notebooks.recordRun(
-        {
-          cwd: root,
-          path: source.path,
-          cellId: source.cell,
-          sessionId,
-          executionId,
-          executionCount: result.executionCount ?? null,
-          run: notebookCellRun(execution),
-        },
-        outputs,
-      );
+      yield* notebooks
+        .recordRun(
+          {
+            cwd: root,
+            path: source.path,
+            cellId: source.cell,
+            sessionId,
+            executionId,
+            executionCount: result.executionCount ?? null,
+            run: notebookCellRun(execution),
+          },
+          outputs,
+        )
+        .pipe(Effect.provideService(ComputeWorkspaceAdmission, workspace));
     });
 
     yield* compute.settledRuns.pipe(
