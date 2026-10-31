@@ -455,7 +455,7 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     });
     state.shells.set("one", shell(completed, asking, offline, done));
 
-    expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+    expect(app.notifications.map(({ title }) => title)).toEqual([
       "Approval needed",
       flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
     ]);
@@ -463,7 +463,7 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     state.shells.set("one", { ...shell(completed, asking, offline, done), status: "cached" });
     state.shells.set("one", shell(completed, asking, offline, done));
     await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
-    expect(TestNotification.sent.map(({ title }) => title)).toEqual([
+    expect(app.notifications.map(({ title }) => title)).toEqual([
       "Approval needed",
       flag === "hasPendingApprovals" ? "Approval needed" : "Input needed",
       "Thread completed",
@@ -483,10 +483,10 @@ it.each([false, true])(
     state.shells.set("one", completed);
     state.shells.set("one", { ...completed, status: "cached" });
     await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
-    expect(TestNotification.sent).toEqual([]);
+    expect(app.notifications).toEqual([]);
     state.shells.set("one", continued ? shell() : completed);
     await vi.advanceTimersByTimeAsync(WORKING_EXIT_GRACE_MS);
-    expect(TestNotification.sent.map(({ title }) => title)).toEqual(
+    expect(app.notifications.map(({ title }) => title)).toEqual(
       continued ? [] : ["Thread completed"],
     );
   },

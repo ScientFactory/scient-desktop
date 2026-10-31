@@ -313,6 +313,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       });
       const resolved = yield* resolveServerConfig(
         {
+          lan: Option.none<boolean>(),
           mode: Option.none(),
           port: Option.none(),
           host: Option.none(),
@@ -387,6 +388,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       );
       const resolved = yield* resolveServerConfig(
         {
+          lan: Option.none<boolean>(),
           mode: Option.some("web"),
           port: Option.some(8788),
           host: Option.some("127.0.0.1"),
@@ -454,6 +456,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const baseDir = join(NodeOS.tmpdir(), "scient-cli-config-development-state");
       const resolved = yield* resolveServerConfig(
         {
+          lan: Option.none<boolean>(),
           mode: Option.some("desktop"),
           port: Option.none(),
           host: Option.none(),
@@ -589,6 +592,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       const resolved = yield* resolveServerConfig(
         {
+          lan: Option.none<boolean>(),
           mode: Option.none(),
           port: Option.none(),
           host: Option.none(),
@@ -662,6 +666,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       const resolved = yield* resolveServerConfig(
         {
+          lan: Option.none<boolean>(),
           mode: Option.some("desktop"),
           port: Option.some(4888),
           host: Option.none(),
@@ -882,6 +887,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-next-cli-config-safe-" });
       const resolved = yield* resolveServerConfig(
         {
+          lan: Option.none<boolean>(),
           mode: Option.some("desktop"),
           port: Option.some(4888),
           host: Option.none(),
@@ -1153,6 +1159,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
 
       const resolved = yield* resolveServerConfig(
         {
+          lan: Option.none<boolean>(),
           mode: Option.some("web"),
           port: Option.some(3773),
           host: Option.none(),

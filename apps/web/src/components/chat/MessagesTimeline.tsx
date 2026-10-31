@@ -82,13 +82,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { type PendingApproval, type TimelineEntry } from "../../session-logic";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
-import {
-  ArrowRightIcon,
-  BotIcon,
-  CircleAlertIcon,
-  MessagesSquareIcon,
-  Minimize2Icon,
-} from "lucide-react";
+import { ArrowRightIcon, BotIcon, CircleAlertIcon, MessagesSquareIcon } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Skeleton } from "../ui/skeleton";

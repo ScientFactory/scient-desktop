@@ -115,10 +115,7 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
-import {
-  filterTerminalContextsWithText,
-  type TerminalContextDraft,
-} from "../../lib/terminalContext";
+import { filterTerminalContextsWithText } from "../../lib/terminalContext";
 import { ensureInlineContextReferences } from "../../lib/composerContextReferences";
 import {
   buildMessageContext,

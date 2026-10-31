@@ -701,49 +701,49 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </TooltipPopup>
       </Tooltip>
       <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>
-              {/* SCIENT-FORK:START — both folded and ordinary prompts retain Scient fork V2. */}
-              {row.canForkConversation === true && ctx.onForkUserMessage ? (
-                <ScientForkMessageButton
-                  label="Fork conversation from this message"
-                  onFork={() => ctx.onForkUserMessage?.(row.message)}
-                />
-              ) : null}
-              {/* SCIENT-FORK:END */}
-              {typeof revertTurnCount === "number" && (
-                <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-              )}
-              {copyText && (
-                <MessageCopyButton
-                  text={contextClipboardFragment ? copyText : plainText}
-                  {...(contextClipboardFragment
-                    ? {
-                        extraFlavors: {
-                          [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment,
-                        },
-                      }
-                    : {})}
-                  // SCIENT-FORK:START — copy preserves the rendered message's rich direction.
-                  resolveHtml={(anchor) =>
-                    messageCopyHtml({
-                      anchor,
-                      messageId: row.message.id,
-                      markdown: resolvedContext.text,
-                      lineBreaks: true,
-                      parseRawHtml: false,
-                    })
-                  }
-                  // SCIENT-FORK:END
-                  variant="ghost"
-                />
-              )}
-              {promptLink !== null && (
-                <MessageCopyButton
-                  text={promptLink}
-                  label="Copy prompt link"
-                  icon={LinkIconNode}
-                  variant="ghost"
-                />
-              )}
+        {/* SCIENT-FORK:START — both folded and ordinary prompts retain Scient fork V2. */}
+        {row.canForkConversation === true && ctx.onForkUserMessage ? (
+          <ScientForkMessageButton
+            label="Fork conversation from this message"
+            onFork={() => ctx.onForkUserMessage?.(row.message)}
+          />
+        ) : null}
+        {/* SCIENT-FORK:END */}
+        {typeof revertTurnCount === "number" && (
+          <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
+        )}
+        {copyText && (
+          <MessageCopyButton
+            text={contextClipboardFragment ? copyText : plainText}
+            {...(contextClipboardFragment
+              ? {
+                  extraFlavors: {
+                    [COMPOSER_CONTEXT_CLIPBOARD_MIME]: contextClipboardFragment,
+                  },
+                }
+              : {})}
+            // SCIENT-FORK:START — copy preserves the rendered message's rich direction.
+            resolveHtml={(anchor) =>
+              messageCopyHtml({
+                anchor,
+                messageId: row.message.id,
+                markdown: resolvedContext.text,
+                lineBreaks: true,
+                parseRawHtml: false,
+              })
+            }
+            // SCIENT-FORK:END
+            variant="ghost"
+          />
+        )}
+        {promptLink !== null && (
+          <MessageCopyButton
+            text={promptLink}
+            label="Copy prompt link"
+            icon={LinkIconNode}
+            variant="ghost"
+          />
+        )}
       </div>
     </div>
   );

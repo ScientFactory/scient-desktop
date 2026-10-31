@@ -624,6 +624,8 @@ const withNativeQueue = <A, E, R>(
                               workspaceRoot: cwd,
                               defaultModelSelection: modelSelection,
                               defaultThreadEnvMode: null,
+                              pinnedAt: null,
+                              archivedAt: null,
                               autoPull: false,
                               faviconPath: null,
                               projectIcon: null,

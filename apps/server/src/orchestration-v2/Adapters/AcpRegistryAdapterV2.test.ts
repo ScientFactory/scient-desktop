@@ -1137,6 +1137,7 @@ describe("AcpRegistryAdapterV2", () => {
           endpoint,
           browserToolsAvailable: false,
           connectors: [],
+          capabilities: new Set<never>(),
         };
         yield* mcpSessions.set({ ...mcpSession, authorizationHeader: "Bearer opened-token" });
         const adapter = yield* makeAcpRegistryAdapterV2({

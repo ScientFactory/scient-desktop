@@ -62,7 +62,7 @@ const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(function* (in
 });
 
 // cmd.exe needs verbatim quoting and a literal path, with delayed expansion disabled.
-export function spawnWindowsRemoval(comspec: string, dir: string) {
+function spawnWindowsRemoval(comspec: string, dir: string) {
   return NodeChildProcess.spawn(
     comspec,
     [

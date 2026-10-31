@@ -677,5 +677,11 @@
     "rules": ["t3-command"],
     "kind": "unmounted-upstream",
     "reason": "Upstream's server read of its npm package for the fleet track switch, which Scient does not mount."
+  },
+  {
+    "path": "apps/server/src/cli/up.ts",
+    "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
+    "kind": "unmounted-upstream",
+    "reason": "Upstream's service and T3 Connect setup. Scient does not register `up`, so nobody reaches this text."
   }
 ]

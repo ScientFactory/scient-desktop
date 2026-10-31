@@ -332,8 +332,7 @@ import {
   primaryServerKeybindingsAtom,
   serverEnvironment,
 } from "../state/server";
-import { threadEnvironment, useThreadFamily } from "../state/threads";
-import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
+import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import {
   type EnvironmentPresentation,
