@@ -1427,6 +1427,7 @@ const make = Effect.gen(function* () {
   // SCIENT-FORK:START — a desktop page outlives its server connection, so the least recently used
   // connections of other conversations are released before a new tab is refused for the server
   // limit; each reconnects on its next use.
+  const operatingAgents = new Map<string | null, number>();
   const releaseDesktopConnections = (threadId: string) => {
     while (tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT) {
       const oldest = [...tabs.values()]
@@ -1437,6 +1438,7 @@ const make = Effect.gen(function* () {
             tab.viewers.size === 0 &&
             tab.recording === undefined &&
             // Never one an agent is using right now.
+            !operatingAgents.has(tab.control.agentId) &&
             tab.usedAt < Date.now() - RELEASE_IDLE_MS,
         )
         .sort((left, right) => left.usedAt - right.usedAt)[0];
@@ -2297,12 +2299,18 @@ const make = Effect.gen(function* () {
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
       try: () => {
-        // SCIENT-FORK:START — in use from the start, so an idle release never interrupts it.
-        markUsed(request);
+        // SCIENT-FORK:START — an agent's tabs stay connected while its operation runs.
+        const agent = request.agentSessionId ?? null;
+        operatingAgents.set(agent, (operatingAgents.get(agent) ?? 0) + 1);
         // SCIENT-FORK:END
-        return runOperation(request, performance.now() + request.timeoutMs).finally(() =>
-          markUsed(request),
-        );
+        return runOperation(request, performance.now() + request.timeoutMs).finally(() => {
+          markUsed(request);
+          // SCIENT-FORK:START
+          const others = (operatingAgents.get(agent) ?? 1) - 1;
+          if (others > 0) operatingAgents.set(agent, others);
+          else operatingAgents.delete(agent);
+          // SCIENT-FORK:END
+        });
       },
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
