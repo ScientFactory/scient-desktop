@@ -633,7 +633,8 @@ export function ComputeScientPartSection({
       id={`${languageId}-managed-runtime`}
       title={title}
       action={
-        status?.installed ? (
+        // While a person's own kernel runs, nothing shown here is Scient's to rebuild or remove.
+        status?.installed && !ownKernel ? (
           <ManagedRuntimeMaintenanceMenu
             installationActions={
               managed ? (

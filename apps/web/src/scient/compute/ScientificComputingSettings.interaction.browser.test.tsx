@@ -1040,6 +1040,8 @@ describe("Scientific Computing settings interactions", () => {
       python(),
       language("cpp", "C++", [], [program("clang++"), program("g++")]),
       language("perl", "Perl", [], [program("perl")]),
+      language("java", "Java", [], [program("javac"), program("java")]),
+      language("javascript", "JavaScript", [], [program("deno"), program("node")]),
       language("stata", "Stata", [], []),
       language(
         "rust",
@@ -1068,6 +1070,25 @@ describe("Scientific Computing settings interactions", () => {
       "perl · System",
     );
     expect(_fixture.container.querySelector('[aria-label="Perl program"]')).toBeNull();
+
+    // A saved choice keeps the way back to Automatic.
+    mocks.preferences = { perl: { executable: "/usr/bin/perl" } };
+    notify();
+    await render(_fixture, "perl");
+    expect(_fixture.container.querySelector('[aria-label="Perl program"]')).not.toBeNull();
+    mocks.preferences = {};
+    notify();
+
+    // Only what Run can start is offered, and Automatic names what Run will use.
+    await render(_fixture, "java");
+    expect(_fixture.container.querySelector("#java-runs-with")?.textContent).toContain(
+      "java · System",
+    );
+    expect(_fixture.container.querySelector('[aria-label="Java program"]')).toBeNull();
+    await render(_fixture, "javascript");
+    expect(_fixture.container.querySelector("#javascript-runs-with")?.textContent).toContain(
+      "Automatic · node",
+    );
 
     await render(_fixture, "stata");
     expect(_fixture.container.querySelector("header")?.textContent).toBe("Stata");
@@ -1100,6 +1121,41 @@ describe("Scientific Computing settings interactions", () => {
     expect(_fixture.container.querySelector("#sql-found")?.textContent).toContain(
       "Scient runs SQL in DuckDB",
     );
+  });
+
+  it("offers no maintenance while a person's own kernel runs", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+
+    const own = {
+      ...status(),
+      displayName: "IRkernel",
+      installed: true,
+      selection: "existing" as const,
+    };
+    mocks.preferences = { r: { executable: "" } };
+    mocks.statuses = { r: own };
+    mocks.languages = [
+      python(),
+      {
+        ...python(),
+        descriptor: {
+          ...python().descriptor,
+          languageId: ComputeLanguageId.make("r"),
+          displayName: "R",
+        },
+        managedRuntime: own,
+        installations: [
+          { executable: "/usr/bin/R", source: "path", version: "4.6.2", problem: null },
+        ],
+      },
+    ];
+    await render(_fixture, "r");
+    expect(_fixture.container.querySelector("#r-managed-runtime")?.textContent).toContain(
+      "IRkernel",
+    );
+    expect(_fixture.container.querySelector('[aria-label="More IRkernel actions"]')).toBeNull();
   });
 
   it("groups languages by use and field, with Coming soon beside each name", async () => {

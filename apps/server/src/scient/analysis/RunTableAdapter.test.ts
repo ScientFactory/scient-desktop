@@ -2,6 +2,7 @@ import { ExecutionRunId } from "@scientfactory/execution";
 import {
   COMPUTE_LANGUAGE_CATALOG,
   COMPUTE_RUN_TABLE,
+  computeRunnableTools,
   computeRunRouteForPath,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -47,6 +48,21 @@ const prepare = async (adapter: ReturnType<typeof adapterFor>, file: string, cus
   });
 
 describe("the run table", () => {
+  it("lists what Run can start in the order it tries them", () => {
+    const route = COMPUTE_RUN_TABLE.find((candidate) => candidate.languageId === "javascript")!;
+    const java = COMPUTE_RUN_TABLE.find((candidate) => candidate.languageId === "java")!;
+    const tool = (name: string, executable = `/usr/bin/${name}`) => ({ name, executable });
+    expect(
+      computeRunnableTools(route, [
+        tool("deno"),
+        tool("node", "/Applications/Node.app"),
+        tool("node"),
+      ]),
+    ).toEqual([tool("node"), tool("deno")]);
+    // javac is found with Java, but on its own it only compiles.
+    expect(computeRunnableTools(java, [tool("javac"), tool("java")])).toEqual([tool("java")]);
+  });
+
   it("covers every catalog language except those with sessions", () => {
     const routed = new Set(COMPUTE_RUN_TABLE.map((route) => route.languageId));
     const catalog = COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages).map(

@@ -3,6 +3,8 @@ import { ChevronLeftIcon, ExternalLinkIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import {
   COMPUTE_ADDED_LOCATION,
+  COMPUTE_RUN_TABLE,
+  computeRunnableTools,
   type ComputeLanguageRuntimeInventory,
   type EnvironmentId,
   type ScientificComputingLanguageSettings,
@@ -189,16 +191,24 @@ function FoundPrograms({
   const label = (tool: (typeof tools)[number]) =>
     [tool.name, tool.version, tool.origin ?? "System"].filter(Boolean).join(" · ");
   const chosenTool = tools.find((tool) => tool.executable === chosen);
-  const onlyTool = tools.length === 1 ? tools[0] : undefined;
+  const route = COMPUTE_RUN_TABLE.find((candidate) => candidate.languageId === languageId);
+  const runnable = route === undefined ? [] : computeRunnableTools(route, tools);
+  const choices =
+    chosenTool === undefined || runnable.includes(chosenTool)
+      ? runnable
+      : [...runnable, chosenTool];
+  const automatic = `Automatic · ${runnable[0]?.name ?? name}`;
+  // A saved choice keeps the picker, which is the way back to Automatic.
+  const onlyChoice = choices.length === 1 && !chosen ? choices[0] : undefined;
   return (
     <SettingsSourcePanel id={`scientific-computing-${languageId}`}>
-      {tools.length === 0 ? null : (
+      {choices.length === 0 ? null : (
         <SettingsRow
           id={`${languageId}-runs-with`}
           title="Runs with"
           control={
-            onlyTool ? (
-              <span className="text-xs text-muted-foreground">{label(onlyTool)}</span>
+            onlyChoice ? (
+              <span className="text-xs text-muted-foreground">{label(onlyChoice)}</span>
             ) : (
               <Select
                 value={chosenTool === undefined ? AUTOMATIC_TOOL : chosen}
@@ -213,9 +223,7 @@ function FoundPrograms({
               >
                 <SelectTrigger size="sm" className="w-auto max-w-64" aria-label={`${name} program`}>
                   <SelectValue>
-                    {chosenTool === undefined
-                      ? `Automatic · ${tools[0]?.name ?? name}`
-                      : label(chosenTool)}
+                    {chosenTool === undefined ? automatic : label(chosenTool)}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup
@@ -225,10 +233,10 @@ function FoundPrograms({
                   className="max-w-[calc(100vw-1rem)]"
                 >
                   <SelectItem hideIndicator value={AUTOMATIC_TOOL}>
-                    {`Automatic · ${tools[0]?.name ?? name}`}
+                    {automatic}
                   </SelectItem>
                   <SelectSeparator />
-                  {tools.map((tool) => (
+                  {choices.map((tool) => (
                     <SelectItem key={tool.executable} hideIndicator value={tool.executable}>
                       <span className="block max-w-[calc(100vw-3rem)] truncate sm:max-w-80">
                         {label(tool)}

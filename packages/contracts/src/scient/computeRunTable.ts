@@ -213,3 +213,15 @@ export function computeRunRouteForPath(path: string): ComputeRunRoute | undefine
     matching((extension) => lower.endsWith(extension))
   );
 }
+
+/**
+ * What Run can start for a language, best first. The first one runs a file unless someone chooses
+ * another. An app bundle proves the language is here, but it is not a program Run can start.
+ */
+export function computeRunnableTools<
+  Tool extends { readonly name: string; readonly executable: string },
+>(route: ComputeRunRoute, tools: ReadonlyArray<Tool>): ReadonlyArray<Tool> {
+  return route.commands.flatMap((command) =>
+    tools.filter((tool) => tool.name === command.command && !/\.app$/iu.test(tool.executable)),
+  );
+}

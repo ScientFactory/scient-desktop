@@ -9,6 +9,7 @@ import {
 import {
   COMPUTE_LANGUAGE_CATALOG,
   COMPUTE_RUN_TABLE,
+  computeRunnableTools,
   type ComputeRunCommand,
   type ComputeRunRoute,
 } from "@t3tools/contracts";
@@ -37,14 +38,11 @@ function chooseTool(
       route.commands.find((candidate) => candidate.command === name) ?? route.commands[0];
     return command === undefined ? null : { command, executable: added, version: null };
   }
-  for (const command of route.commands) {
-    // An app bundle proves the language is here, but it is not a program Run can start.
-    const tool = tools.find(
-      (candidate) => candidate.name === command.command && !/\.app$/iu.test(candidate.executable),
-    );
-    if (tool !== undefined) return { command, executable: tool.executable, version: tool.version };
-  }
-  return null;
+  const tool = computeRunnableTools(route, tools)[0];
+  const command = route.commands.find((candidate) => candidate.command === tool?.name);
+  return tool === undefined || command === undefined
+    ? null
+    : { command, executable: tool.executable, version: tool.version };
 }
 
 function fill(args: ReadonlyArray<string>, file: string, output: string): ReadonlyArray<string> {
