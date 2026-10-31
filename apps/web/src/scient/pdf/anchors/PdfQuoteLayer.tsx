@@ -1,12 +1,23 @@
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
 import type { PdfCitation, ScopedThreadRef } from "@t3tools/contracts";
 import { pdfCitationFits } from "@t3tools/shared/pdfCitations";
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import {
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
 
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
 import { useComposerHandleContext } from "~/composerHandleContext";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { CitationActionPill, focusCitationAction } from "~/scient/chat/CitationActionPill";
+import { SideChatCitationContext } from "~/scient/chat/sideChatCitation";
 import {
   observeSelectionActions,
   resolveSelectionActionPosition,
@@ -155,8 +166,12 @@ function PdfAskInChat(props: {
   readonly citeThread: ScopedThreadRef;
 }) {
   const composerRef = useComposerHandleContext();
+  const citeInSideChat = use(SideChatCitationContext);
   const [shown, setShown] = useState<(Captured & { position: SelectionActionPoint }) | null>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
+  const buttonRef = useRef<HTMLElement>(null);
+  const setButton = useStableCallback((button: HTMLElement | null) => {
+    buttonRef.current = button;
+  });
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const { container, ready, runtimeRef, source, citeThread } = props;
   const identity = pdfDocumentIdentity(source);
@@ -252,7 +267,7 @@ function PdfAskInChat(props: {
       }
       event.preventDefault();
       event.stopPropagation();
-      button.focus({ preventScroll: true });
+      focusCitationAction(button);
     };
     document.addEventListener("keydown", focusAction, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
@@ -280,6 +295,19 @@ function PdfAskInChat(props: {
     setShown(null);
   };
   const refusal = "refusal" in shown ? shown.refusal : null;
+  const dismissOnEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      dismiss();
+    }
+  };
+  const askInSideChat = () => {
+    if (!("citation" in shown)) return;
+    citeInSideChat?.(shown.citation);
+    window.getSelection()?.removeAllRanges();
+    dismiss();
+  };
   const ask = () => {
     if (!("citation" in shown) || !container) return;
     const inserted =
@@ -300,9 +328,22 @@ function PdfAskInChat(props: {
     window.getSelection()?.removeAllRanges();
     dismiss();
   };
+  if (citeInSideChat && refusal === null) {
+    return createPortal(
+      <CitationActionPill
+        ref={setButton}
+        pdf
+        style={{ left: shown.position.x, top: shown.position.y }}
+        onAskInChat={ask}
+        onAskInSideChat={askInSideChat}
+        onKeyDown={dismissOnEscape}
+      />,
+      document.body,
+    );
+  }
   return createPortal(
     <Button
-      ref={buttonRef}
+      ref={setButton}
       type="button"
       size="xs"
       variant="glass"
@@ -314,13 +355,7 @@ function PdfAskInChat(props: {
       style={{ left: shown.position.x, top: shown.position.y }}
       onPointerDown={(event) => event.preventDefault()}
       onClick={ask}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-          event.preventDefault();
-          dismiss();
-        }
-      }}
+      onKeyDown={dismissOnEscape}
     >
       <span aria-live="polite">{refusal ?? "Ask in chat"}</span>
     </Button>,

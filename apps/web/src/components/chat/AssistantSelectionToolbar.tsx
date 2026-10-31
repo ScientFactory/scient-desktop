@@ -4,7 +4,14 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  use,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
@@ -17,6 +24,9 @@ import {
   resolveSelectionActionPosition,
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { CitationActionPill, focusCitationAction } from "~/scient/chat/CitationActionPill";
+import { SideChatCitationContext, type CitationDestination } from "~/scient/chat/sideChatCitation";
 import { Button } from "../ui/button";
 import { BackgroundThreadContext } from "./backgroundThread";
 
@@ -31,7 +41,11 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
 }: {
   viewport: HTMLElement | null;
   capture: () => { citation: T; sourceAnchor: AssistantCitationSourceAnchor } | null;
-  onCite: (citation: T, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  onCite: (
+    citation: T,
+    sourceAnchor: AssistantCitationSourceAnchor,
+    destination: CitationDestination,
+  ) => boolean;
   allowPreventedSelectionStart?: (target: EventTarget | null) => boolean;
   subscribeSelection?: (changed: () => void) => () => void;
   selectionOwnerId?: string;
@@ -42,9 +56,13 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
     position: SelectionActionPoint;
     sourceAnchor: AssistantCitationSourceAnchor;
   } | null>(null);
-  const toolbarRef = useRef<HTMLButtonElement>(null);
+  const toolbarRef = useRef<HTMLElement>(null);
+  const setToolbar = useStableCallback((toolbar: HTMLElement | null) => {
+    toolbarRef.current = toolbar;
+  });
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const backgroundThread = use(BackgroundThreadContext);
+  const sideChatOffered = use(SideChatCitationContext) !== null;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the toolbar DOM node and clamps its position inside the window before paint
   useLayoutEffect(() => {
@@ -171,10 +189,10 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       ) {
         return;
       }
-      if (toolbar.disabled) return;
+      if (toolbar.matches(":disabled")) return;
       event.preventDefault();
       event.stopPropagation();
-      toolbar.focus({ preventScroll: true });
+      focusCitationAction(toolbar);
     };
     // Tab belongs to the foreground chat; a background timeline only follows its selection.
     if (!backgroundThread) document.addEventListener("keydown", focusActions, true);
@@ -194,15 +212,35 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
     actionsRef.current?.cancel();
     setSelection(null);
   };
-  const cite = () => {
-    if (tooLong || !onCite(selection.citation, selection.sourceAnchor)) return false;
+  const cite = (destination: CitationDestination) => {
+    if (tooLong || !onCite(selection.citation, selection.sourceAnchor, destination)) return false;
     if (!preserveSelection) window.getSelection()?.removeAllRanges();
     dismiss();
     return true;
   };
+  const dismissOnEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
+    event.stopPropagation();
+    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      dismiss();
+    }
+  };
+  if (sideChatOffered && !tooLong) {
+    return createPortal(
+      <CitationActionPill
+        ref={setToolbar}
+        style={{ left: selection.position.x, top: selection.position.y }}
+        ownerId={selectionOwnerId}
+        onAskInChat={() => cite("chat")}
+        onAskInSideChat={() => cite("side-chat")}
+        onKeyDown={dismissOnEscape}
+      />,
+      document.body,
+    );
+  }
   return createPortal(
     <Button
-      ref={toolbarRef}
+      ref={setToolbar}
       type="button"
       size="xs"
       variant="glass"
@@ -212,14 +250,8 @@ export function SelectionCitationToolbar<T extends { readonly text: string }>({
       className="fixed z-50 max-w-[calc(100vw-1rem)]"
       style={{ left: selection.position.x, top: selection.position.y }}
       onPointerDown={(event) => event.preventDefault()}
-      onClick={cite}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
-          event.preventDefault();
-          dismiss();
-        }
-      }}
+      onClick={() => cite("chat")}
+      onKeyDown={dismissOnEscape}
     >
       {tooLong ? "Shorten selection" : "Ask in chat"}
     </Button>,
@@ -234,7 +266,11 @@ export function AssistantSelectionToolbar({
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
-  onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  onCite: (
+    citation: AssistantCitation,
+    sourceAnchor: AssistantCitationSourceAnchor,
+    destination: CitationDestination,
+  ) => boolean;
 }) {
   const capture = () => {
     if (!viewport) return null;

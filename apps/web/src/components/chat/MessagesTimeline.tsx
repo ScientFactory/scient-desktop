@@ -28,6 +28,7 @@ import { deriveTerminalAssistantMessageIds } from "./MessagesTimeline.logic";
 import { settledListThreadKey } from "../scient-fork/forkLanding";
 import type { OrchestrationV2ContextTransfer } from "@t3tools/contracts";
 import { ScanTextIcon } from "lucide-react";
+import type { CitationDestination } from "~/scient/chat/sideChatCitation";
 import { ForkMarkerSeparator } from "~/scient/fork/ForkMarkerSeparator";
 import { TRACE_ICON_STROKE } from "~/scient/presentation/traceIcons";
 import { subagentWorkflowIdsFor } from "~/scient/presentation/subagentRowGroups";
@@ -226,6 +227,7 @@ interface MessagesTimelineProps {
   onCiteAssistantText?: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
+    destination: CitationDestination,
   ) => boolean;
   // SCIENT-FORK:START — agent-spawn rows read the agent panel model.
   agentPanelModel?: AgentPanelModel;

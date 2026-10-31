@@ -373,6 +373,11 @@ import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
+import {
+  SideChatCitationContext,
+  useCiteInSideChat,
+  type CitationDestination,
+} from "../scient/chat/sideChatCitation";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -783,7 +788,6 @@ function ChatViewContent(props: ChatViewProps) {
     }
     return inserted;
   };
-  const citeAssistantTextStable = useStableCallback(citeAssistantText);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticBlobPreviews] = useState(createOptimisticBlobPreviews);
   const [heldOptimisticUserMessages, setHeldOptimisticUserMessages] = useState(() =>
@@ -3519,6 +3523,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (activeThread) setThreadError(activeThread.id, message);
     },
   });
+  const citeInSideChat = useCiteInSideChat(activeThreadRef, sideChat.open);
   // A maximized panel covers the terminal drawer the command runs in.
   const runSideChatShellCommandStable = useStableCallback((command: string) => {
     if (activeThreadRef) useRightPanelStore.getState().setMaximized(activeThreadRef, false);
@@ -3544,6 +3549,21 @@ function ChatViewContent(props: ChatViewProps) {
                 ? "Available once the thread's worktree is set up."
                 : null;
   const openSideChatStable = useStableCallback(() => void sideChat.open());
+  // SCIENT-FORK:START — quotes offer a side chat wherever `/side` would start one.
+  const sideChatCitation =
+    sideChat.available && sideChatDisabledReason === null ? citeInSideChat : null;
+  const citeAssistantTextStable = useStableCallback(
+    (
+      citation: AssistantCitation,
+      sourceAnchor: AssistantCitationSourceAnchor,
+      destination: CitationDestination,
+    ) => {
+      if (destination === "chat") return citeAssistantText(citation, sourceAnchor);
+      void citeInSideChat(citation);
+      return true;
+    },
+  );
+  // SCIENT-FORK:END
   const sendSideChatStable = useStableCallback((prompt: string) => sideChat.open(prompt));
   const { onRevertToTurnCountStable, onRevertTimelineTurnStable } = useTimelineRewind({
     setPendingRevert,
@@ -4030,8 +4050,13 @@ function ChatViewContent(props: ChatViewProps) {
             scientFilePanelProps(surface, {
               projectName: activeProject?.title ?? null,
               workspaceRoot: activeWorkspaceRoot,
-              onCiteFile: (citation, anchor) =>
-                composerRef.current?.citeText(citation, anchor) ?? false,
+              onCiteFile: (citation, anchor, destination) => {
+                if (destination === "side-chat") {
+                  void citeInSideChat(citation);
+                  return true;
+                }
+                return composerRef.current?.citeText(citation, anchor) ?? false;
+              },
               // A rename carries the tab's Back and Forward history with it.
               onFileRenamed: (fromPath, toPath) =>
                 renameInTabHistory(activeThreadRef, fromPath, toPath, () =>
@@ -5028,7 +5053,9 @@ function ChatViewContent(props: ChatViewProps) {
       cwd={activeWorkspaceRoot}
       checkpoints={serverProjection?.checkpoints}
     >
-      {content}
+      {/* SCIENT-FORK:START — an embedded side chat offers none, so it clears the parent's. */}
+      <SideChatCitationContext value={sideChatCitation}>{content}</SideChatCitationContext>
+      {/* SCIENT-FORK:END */}
     </FileMetadataThreadProvider>
   );
 }
