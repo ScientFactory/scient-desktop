@@ -1240,6 +1240,9 @@ export interface DesktopPreviewBridge {
     readonly sourceId: BrowserImportSourceId;
     readonly sourceProfileDirectory: string;
     readonly targetProfileId: string;
+    // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+    readonly keepSites?: ReadonlyArray<string>;
+    // SCIENT-FORK:END
   }) => Promise<BrowserImportResult>;
   setAnnotationTheme: (theme: DesktopPreviewAnnotationTheme) => Promise<void>;
   setAnnotationSendEnabled: (tabId: string, enabled: boolean) => Promise<void>;

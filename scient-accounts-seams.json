@@ -231,6 +231,16 @@
       "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
     },
     {
+      "path": "apps/desktop/src/preview/BrowserImport/BrowserImport.ts",
+      "anchor": "coveredBySite",
+      "purpose": "Leave working sign-ins alone when a browser refresh copies cookies."
+    },
+    {
+      "path": "packages/contracts/src/browserImport.ts",
+      "anchor": "keepSites",
+      "purpose": "Carry the sites a refresh must leave alone."
+    },
+    {
       "path": "apps/web/src/appInit.tsx",
       "anchor": "./scient/accounts/accountWatchers",
       "purpose": "Start saved sign-in autofill and session checks with the app, whatever the notification settings."

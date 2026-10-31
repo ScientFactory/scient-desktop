@@ -5,6 +5,7 @@ import {
   ProfilePictureDataUri,
   INCOGNITO_BROWSER_PROFILE_ID,
   DEFAULT_BROWSER_PROFILE_ID,
+  GOOGLE_SITE,
   type DesktopLoginForm,
   ProfileColor,
   ACCOUNT_SECRET_FIELDS,
@@ -50,6 +51,20 @@ export function profileAccounts(
     ({ details }) =>
       ("profileId" in details ? (details.profileId ?? newTabProfileId) : newTabProfileId) ===
       profileId,
+  );
+}
+
+/**
+ * Sites a browser refresh must leave alone in a profile: sign-ins that work, and Google, where a
+ * copy stops working and would replace the session and remembered device this profile has.
+ */
+export function sitesToKeep(accounts: ReadonlyArray<AccountSummary>, profileId: string) {
+  return accounts.flatMap(({ details, lastCheck }) =>
+    details.kind === "website" &&
+    details.profileId === profileId &&
+    (lastCheck?.state === "signed-in" || details.sites.includes(GOOGLE_SITE))
+      ? details.sites
+      : [],
   );
 }
 

@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Opaque record ids use the operating system CSPRNG.
 import * as NodeCrypto from "node:crypto";
 import {
+  GOOGLE_SITE,
   ACCOUNT_SECRET_FIELDS,
   AccountId,
   AccountSaveInput,
@@ -56,7 +57,6 @@ import {
 import { AccountSources, type OnePasswordClient } from "./AccountSources.ts";
 import {
   GOOGLE_RECHECK_WRITE_MS,
-  GOOGLE_SITE,
   isGoogleSessionRow,
   applyApprovalDecision,
   agentAccessOff,

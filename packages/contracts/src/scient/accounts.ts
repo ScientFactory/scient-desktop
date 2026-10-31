@@ -541,6 +541,9 @@ export const AccountKeyUnlinkInput = Schema.Struct({
   variable: EnvironmentVariableName,
 });
 
+/** Where Scient keeps a browser profile's Google session. */
+export const GOOGLE_SITE = "google.com";
+
 /** The Google accounts a browser profile holds, as Google reports them. */
 export const AccountGoogleSessions = Schema.Struct({
   profileId: BrowserProfileId,

@@ -1,5 +1,6 @@
 import {
   defaultBrowserProfileRecord,
+  GOOGLE_SITE,
   type AccountApprovalDecision,
   type AccountCheckState,
   type AccountControls,
@@ -90,7 +91,6 @@ export const outcomeCheckState = (
           ? "unknown"
           : "rejected";
 
-export const GOOGLE_SITE = "google.com";
 /** An unchanged answer from Google is written this often, to date it without constant writes. */
 export const GOOGLE_RECHECK_WRITE_MS = 60 * 60 * 1000;
 

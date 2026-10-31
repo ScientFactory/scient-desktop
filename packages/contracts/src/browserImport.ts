@@ -59,6 +59,9 @@ export const BrowserImportInput = Schema.Struct({
   sourceId: BrowserImportSourceId,
   sourceProfileDirectory: TrimmedNonEmptyString,
   targetProfileId: BrowserProfileId,
+  // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
+  keepSites: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  // SCIENT-FORK:END
 });
 export type BrowserImportInput = typeof BrowserImportInput.Type;
 

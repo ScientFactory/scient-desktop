@@ -142,7 +142,9 @@ browser nor the Keychain. A Scient profile still named after its source follows 
 name chosen in Scient stays. A picture that can't be read keeps the one shown. The manual refresh
 (the button beside Browser profiles, or Refresh in a profile's menu) also re-copies sign-ins, once
 the browser is closed, and imports saved passwords; it reports a running browser instead of
-skipping silently. An import writes the profile's record and the new-tab default before its
+skipping silently. It leaves sites that are working in that profile alone (`sitesToKeep`), and
+Google once the profile has a Google row, because a copy stops working and would replace the
+session and remembered device. An import writes the profile's record and the new-tab default before its
 passwords, so an interrupted import still leaves a complete profile.
 
 Access is enforced in the server's preview tools: `preview_status` lists only the profiles the
@@ -175,7 +177,8 @@ desktop. The count comes from Login Data without decrypting anything.
 - On Import, Electron main snapshots Login Data, decrypts it with the cookie importer's Safe Storage
   key (the macOS Keychain prompt appears here, not before) and returns CSV to the renderer, which
   sends it to `accountsImportPasswords` like a picked CSV file. Dedupe, controls and store writes
-  are the CSV importer's; new website accounts work in every profile.
+  are the CSV importer's. Each password stays linked to the profile it came from, and still fills
+  in every profile.
 - An import commits once: per-entry commits each rebuilt and published the whole snapshot (about
   3 s per password), and the uninterruptible write lock kept the server from quitting meanwhile.
   300 passwords now take about 3 s.

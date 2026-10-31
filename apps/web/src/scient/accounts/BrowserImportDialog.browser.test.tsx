@@ -151,5 +151,9 @@ it("imports a Chromium profile's saved passwords through the Accounts importer",
       title: "Imported 3 passwords, 4 skipped",
     }),
   );
-  expect(state.command).toHaveBeenCalledWith({ format: "chrome", content: "synthetic csv" });
+  expect(state.command).toHaveBeenCalledWith({
+    format: "chrome",
+    content: "synthetic csv",
+    profileId: expect.stringMatching(/^profile-/),
+  });
 });

@@ -8,6 +8,7 @@ import {
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BrowserProfileRecordUpdateInput,
   DEFAULT_BROWSER_PROFILE_ID,
+  BrowserProfileId,
   isBuiltInBrowserProfileId,
   type AccountsSnapshot,
   type EnvironmentId,
@@ -65,6 +66,7 @@ import {
   matchExistingProfile,
   mergeSourceProfiles,
   changedSourceProfile,
+  sitesToKeep,
 } from "./accountsView";
 
 const RUNNING_BROWSER_COPY = "open, quit to import";
@@ -252,18 +254,23 @@ export function BrowserImportDialog({
     null,
   );
   const [imported, setImported] = useState<ReadonlySet<string>>(new Set());
-  const isImported = (
+  const linkedProfile = (
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
   ) =>
-    imported.has(JSON.stringify([source.id, profile.directory])) ||
-    snapshot.profiles.some(
+    snapshot.profiles.find(
       (item) =>
         item.source?.browser === source.id &&
         (item.source.directory
           ? item.source.directory === profile.directory
           : item.source.profileName === profile.name && item.source.email === profile.email),
-    );
+    )?.profileId;
+  const isImported = (
+    source: ReturnType<typeof mergeSourceProfiles>[number],
+    profile: (typeof source.profiles)[number],
+  ) =>
+    imported.has(JSON.stringify([source.id, profile.directory])) ||
+    linkedProfile(source, profile) !== undefined;
   const load = async () => {
     const [sources, details] = await Promise.all([
       previewBridge?.listBrowserImportSources() ?? [],
@@ -314,17 +321,21 @@ export function BrowserImportDialog({
     importRunning = true;
     setBusy(true);
     const done = new Set<string>();
-    const passwordSources: Array<{ sourceId: (typeof loaded)[number]["id"]; directory: string }> =
-      [];
+    const passwordSources: Array<{
+      sourceId: (typeof loaded)[number]["id"];
+      directory: string;
+      profileId: string | undefined;
+    }> = [];
     const passwordTotals = { imported: 0, skipped: 0, failed: false };
     try {
       for (const source of loaded)
         for (const profile of source.profiles) {
           const key = JSON.stringify([source.id, profile.directory]);
           if (!selected.has(key) || source.unavailable) continue;
+          let profileId: string | undefined = linkedProfile(source, profile);
           // A profile imported before keeps its sign-ins; only its passwords can still come in.
           if (!isImported(source, profile)) {
-            const profileId = `profile-${randomUUID()}`;
+            profileId = `profile-${randomUUID()}`;
             const outcome = await importBrowserCookiesIntoTarget(
               previewBridge,
               source,
@@ -349,13 +360,17 @@ export function BrowserImportDialog({
           }
           done.add(key);
           if (passwords && readPasswords && profile.passwordCount !== undefined)
-            passwordSources.push({ sourceId: source.id, directory: profile.directory });
+            passwordSources.push({ sourceId: source.id, directory: profile.directory, profileId });
         }
       if (done.size > 0) void persistClientSettingsUpdate(withOwnDefault).catch(profileError);
-      for (const input of passwordSources) {
+      for (const { profileId, ...input } of passwordSources) {
         const csv = (await readPasswords?.(input).catch(() => null)) ?? null;
         const result = csv
-          ? await importPasswords({ format: "chrome", content: csv.content })
+          ? await importPasswords({
+              format: "chrome",
+              content: csv.content,
+              ...(profileId === undefined ? {} : { profileId: BrowserProfileId.make(profileId) }),
+            })
           : null;
         if (csv && result?.ok) {
           passwordTotals.imported += result.value.created + result.value.updated;
@@ -715,6 +730,7 @@ export function BrowserProfiles({
         const result = await importBrowserCookiesIntoTarget(previewBridge, source, environmentId, {
           sourceProfileDirectory: profile.directory,
           target: { kind: "existing", profileId: id, name: linked.profileName },
+          keepSites: sitesToKeep(snapshot.accounts, id),
         });
         if (result.kind === "blocked") failed = true;
       }
@@ -728,7 +744,11 @@ export function BrowserProfiles({
           directory: profile.directory,
         }).catch(() => null);
         const result = csv
-          ? await importPasswords({ format: "chrome", content: csv.content })
+          ? await importPasswords({
+              format: "chrome",
+              content: csv.content,
+              profileId: BrowserProfileId.make(id),
+            })
           : null;
         if (!result?.ok) failed = true;
       }

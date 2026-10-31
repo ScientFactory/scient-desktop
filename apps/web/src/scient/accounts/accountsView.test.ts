@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import {
   accountStatusLabel,
+  sitesToKeep,
   activityLine,
   keysInUse,
   agentMayUse,
@@ -58,6 +59,26 @@ describe("Accounts decisions", () => {
     expect(siteMatchesUrl("https://example.com:8443", "https://example.com:8443/login")).toBe(true);
     expect(siteMatchesUrl("https://example.com:8443", "https://example.com/login")).toBe(false);
     expect(siteMatchesUrl("example.com", "not a URL")).toBe(false);
+  });
+
+  it("keeps working sign-ins and any Google session out of a refresh, per profile", () => {
+    const row = (site: string, profileId: string, state?: "signed-in" | "signed-out") => ({
+      ...website(profileId),
+      details: { kind: "website" as const, sites: [site], profileId },
+      ...(state ? { lastCheck: { state, at: "2026-10-31T00:00:00.000Z" } } : {}),
+    });
+    expect(
+      sitesToKeep(
+        [
+          row("github.com", "work", "signed-in"),
+          row("overleaf.com", "work", "signed-out"),
+          row("nature.com", "work"),
+          row("google.com", "work", "signed-out"),
+          row("arxiv.org", "home", "signed-in"),
+        ],
+        "work",
+      ),
+    ).toEqual(["github.com", "google.com"]);
   });
 
   it("offers a site's accounts in any profile, the tab's own profile first", () => {
