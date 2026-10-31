@@ -141,7 +141,12 @@ export default function SideChatPane(props: {
               </Button>
             }
           />
-          <TooltipPopup side="bottom">
+          <TooltipPopup
+            side="bottom"
+            // SCIENT-FORK:START — balanced text leaves the default width half empty.
+            className="max-w-48"
+            // SCIENT-FORK:END
+          >
             {bringBackBlockedReason ?? "Adds this side chat to the main thread's next message."}
           </TooltipPopup>
         </Tooltip>
