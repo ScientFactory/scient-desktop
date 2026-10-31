@@ -166,7 +166,7 @@ describe.skipIf(!windows)("Windows capture and install", () => {
         helper!,
         [binding],
         async (lease) => {
-          await removeNativeRetainedEntry(lease, result.recordDirectory, "retained", helper);
+          await removeNativeRetainedEntry(lease, result.recordDirectory, "retained");
         },
         { mode: "exclusive" },
       );
@@ -637,7 +637,15 @@ describe.skipIf(!windows)("Windows folder leases and removals", () => {
         [binding],
         async (lease) => {
           await expect(NodeFSP.rename(input.cwd, `${input.cwd}-old`)).rejects.toThrow();
-          await removeNativeRetainedEntry(lease, input.cwd, "junction");
+          // The lease's own helper decides this; a second lookup failing must not.
+          const configured = process.env.SCIENT_FILE_PUBLICATION_HELPER;
+          process.env.SCIENT_FILE_PUBLICATION_HELPER = NodePath.join(input.cwd, "missing.exe");
+          try {
+            await removeNativeRetainedEntry(lease, input.cwd, "junction");
+          } finally {
+            if (configured === undefined) delete process.env.SCIENT_FILE_PUBLICATION_HELPER;
+            else process.env.SCIENT_FILE_PUBLICATION_HELPER = configured;
+          }
         },
         { mode: "exclusive" },
       );
