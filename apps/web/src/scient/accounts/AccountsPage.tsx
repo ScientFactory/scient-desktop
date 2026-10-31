@@ -152,7 +152,16 @@ export function AccountRow({
             <span className="truncate text-left">{account.name}</span>
             <span className="truncate text-xs text-muted-foreground">
               {details.kind === "website" && !account.secrets.password
-                ? `Browser sign-in · ${profiles.find((profile) => profile.id === (details.profileId ?? newTabProfileId ?? DEFAULT_BROWSER_PROFILE_ID))?.name ?? "Browser profile"}`
+                ? [
+                    details.username ?? "Browser sign-in",
+                    profiles.find(
+                      (profile) =>
+                        profile.id ===
+                        (details.profileId ?? newTabProfileId ?? DEFAULT_BROWSER_PROFILE_ID),
+                    )?.name,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
                 : isSavedPassword(account) && details.kind === "website"
                   ? // The username tells two sign-ins to the same site apart.
                     [details.username, account.name === site ? undefined : details.sites.join(", ")]
@@ -441,11 +450,10 @@ function SignInGroupRow({
   const first = accounts[0]!;
   const site = "sites" in first.details ? first.details.sites[0] : undefined;
   const iconUrl = accountIconUrl(site ? [site] : [], first.name);
-  const signedIn = accounts.flatMap((account) => {
-    const profileId = account.details.kind === "website" ? account.details.profileId : undefined;
-    const profile = profiles.find((item) => item.id === profileId);
-    return profile ? [profile] : [];
-  });
+  const profileIds = new Set(
+    accounts.map(({ details }) => (details.kind === "website" ? details.profileId : undefined)),
+  );
+  const signedIn = profiles.filter((profile) => profileIds.has(profile.id));
   return (
     <SettingsRow
       {...clickableAccountRow(onOpen)}
@@ -460,7 +468,10 @@ function SignInGroupRow({
           <span className="grid min-w-0 gap-1">
             <span className="truncate text-left">{first.name}</span>
             <span className="truncate text-xs text-muted-foreground">
-              Browser sign-in · {signedIn.map((profile) => profile.name).join(", ")}
+              Browser sign-in ·{" "}
+              {signedIn.length > 2
+                ? `${signedIn.length} profiles`
+                : signedIn.map((profile) => profile.name).join(", ")}
             </span>
           </span>
         </span>

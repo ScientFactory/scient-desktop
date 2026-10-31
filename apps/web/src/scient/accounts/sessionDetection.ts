@@ -1,3 +1,5 @@
+import { GOOGLE_SITE } from "@t3tools/contracts";
+
 export interface CookieMetadata {
   readonly domain: string;
   readonly httpOnly?: boolean;
@@ -91,8 +93,13 @@ export function signedInSite(input: {
     siteHost(input.url) === null
   )
     return null;
+  // Google's own services are one session, which Scient asks Google about (`googleSessions`).
+  const insideGoogle = (domain: string) =>
+    provider.endsWith(`.${GOOGLE_SITE}`) && domain.endsWith(`.${GOOGLE_SITE}`);
   const domains = newSessionDomains(input.before, input.after, input.url, input.now ?? Date.now())
-    .filter((domain) => provider !== domain && !provider.endsWith(`.${domain}`))
+    .filter(
+      (domain) => provider !== domain && !provider.endsWith(`.${domain}`) && !insideGoogle(domain),
+    )
     .toSorted((a, b) => a.length - b.length);
   return domains[0] ?? null;
 }

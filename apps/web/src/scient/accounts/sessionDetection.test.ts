@@ -62,6 +62,15 @@ it("records the new session's own site after an identity provider, never the pro
       after: [{ domain: ".google.com", httpOnly: true }],
     }),
   ).toBeNull();
+  // Gmail's own cookie is still Google's session.
+  expect(
+    signedInSite({
+      ...input,
+      url: "https://mail.google.com/mail/u/0/",
+      before: [],
+      after: [{ domain: "mail.google.com", httpOnly: true }],
+    }),
+  ).toBeNull();
   // A university sign-in, then a service of the same university, is a session of its own.
   expect(
     signedInSite({
