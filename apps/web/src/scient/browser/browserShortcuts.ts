@@ -28,6 +28,8 @@ interface SiteVisits {
 interface SavedShortcuts {
   /** Sites the user added, in the order they added them. */
   readonly added: ReadonlyArray<string>;
+  /** The names the user gave them, by address. */
+  readonly names: Readonly<Record<string, string>>;
   /** Sites the user removed, which suggestions must not bring back. */
   readonly hidden: ReadonlyArray<string>;
   readonly visits: Readonly<Record<string, SiteVisits>>;
@@ -35,7 +37,8 @@ interface SavedShortcuts {
 
 interface BrowserShortcutsState extends SavedShortcuts {
   recordVisit: (url: string, at: number) => void;
-  add: (url: string) => void;
+  /** Adds a site, or replaces `previous`. An empty name leaves the site's own. */
+  save: (previous: Shortcut | null, link: string, name: string) => void;
   remove: (shortcut: Shortcut) => void;
 }
 
@@ -111,20 +114,25 @@ const KNOWN_SITES = new Map(
   }),
 );
 
-function shortcutFor(url: string, key: string): Shortcut {
+function shortcutFor(url: string, key: string, name?: string): Shortcut {
   const known = KNOWN_SITES.get(key);
-  return { key, url, name: known?.name ?? key, ...(known?.icon ? { icon: known.icon } : {}) };
+  return {
+    key,
+    url,
+    name: name ?? known?.name ?? key,
+    ...(known?.icon ? { icon: known.icon } : {}),
+  };
 }
 
 /** The user's sites, then what they open most, then the starting set, without repeating a site. */
-export function visibleShortcuts({ added, hidden, visits }: SavedShortcuts): Shortcut[] {
+export function visibleShortcuts({ added, names, hidden, visits }: SavedShortcuts): Shortcut[] {
   const onHomeAlready = [GOOGLE, GMAIL].flatMap((site) => siteKeyOf(site.url) ?? []);
   const taken = new Set([...hidden, ...onHomeAlready]);
   const shortcuts = added.flatMap((url) => {
     const key = siteKeyOf(url);
     if (!key) return [];
     taken.add(key);
-    return [shortcutFor(url, key)];
+    return [shortcutFor(url, key, names[url])];
   });
   const frequent = Object.values(visits)
     .filter(({ count }) => count >= MIN_VISITS_TO_SUGGEST)
@@ -140,6 +148,10 @@ export function visibleShortcuts({ added, hidden, visits }: SavedShortcuts): Sho
 
 export function canAddShortcut(added: ReadonlyArray<string>) {
   return added.length < MAX_SHORTCUTS;
+}
+
+function withoutName(names: SavedShortcuts["names"], url: string | undefined) {
+  return Object.fromEntries(Object.entries(names).filter(([site]) => site !== url));
 }
 
 function withVisit(
@@ -166,22 +178,32 @@ export const useBrowserShortcuts = create<BrowserShortcutsState>()(
   persist(
     (set) => ({
       added: [],
+      names: {},
       hidden: [],
       visits: {},
       recordVisit: (url, at) => set((state) => ({ visits: withVisit(state.visits, url, at) })),
-      add: (raw) =>
+      save: (previous, link, name) =>
         set((state) => {
-          const url = parseSiteUrl(raw);
+          const url = parseSiteUrl(link);
           if (!url) return state;
           const key = siteKey(url);
+          const index = previous ? state.added.indexOf(previous.url) : -1;
+          const added = index < 0 ? [...state.added, url.href] : state.added.with(index, url.href);
+          const names = withoutName(state.names, previous?.url);
+          if (name.trim()) names[url.href] = name.trim();
+          else delete names[url.href];
+          const hidden = state.hidden.filter((site) => site !== key);
           return {
-            added: state.added.includes(url.href) ? state.added : [...state.added, url.href],
-            hidden: state.hidden.filter((site) => site !== key),
+            added: [...new Set(added)],
+            names,
+            // A suggestion moved to another site doesn't come back under its old one.
+            hidden: previous && previous.key !== key ? [...hidden, previous.key] : hidden,
           };
         }),
       remove: ({ url, key }) =>
         set((state) => ({
           added: state.added.filter((site) => site !== url),
+          names: withoutName(state.names, url),
           hidden: state.hidden.includes(key) ? state.hidden : [...state.hidden, key],
         })),
     }),
@@ -191,7 +213,7 @@ export const useBrowserShortcuts = create<BrowserShortcutsState>()(
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      partialize: ({ added, hidden, visits }) => ({ added, hidden, visits }),
+      partialize: ({ added, names, hidden, visits }) => ({ added, names, hidden, visits }),
     },
   ),
 );

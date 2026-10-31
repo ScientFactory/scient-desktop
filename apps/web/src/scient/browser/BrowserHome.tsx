@@ -1,11 +1,21 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { GripIcon, PlusIcon, XIcon } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { GripIcon, MoreHorizontalIcon, PlusIcon } from "lucide-react";
+import { type FormEvent, useId, useState } from "react";
 
 import { useFaviconForThreadUrl } from "~/browserFaviconStore";
 import { FaviconImage } from "~/components/preview/PreviewFaviconIcon";
 import { Button } from "~/components/ui/button";
+import {
+  Dialog,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
+import { Label } from "~/components/ui/label";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 
 import {
@@ -25,6 +35,7 @@ const TILE_CLASS =
 const CIRCLE_CLASS =
   "flex size-11 items-center justify-center overflow-hidden rounded-full border border-border/60";
 const TILE_LABEL_CLASS = "w-full truncate text-center text-xs text-muted-foreground";
+const MAX_NAME_LENGTH = 60;
 
 function SiteIcon({
   threadRef,
@@ -89,11 +100,13 @@ function ShortcutCircle({
   threadRef,
   shortcut,
   onOpen,
+  onEdit,
   onRemove,
 }: {
   threadRef: ScopedThreadRef;
   shortcut: Shortcut;
   onOpen: () => void;
+  onEdit: () => void;
   onRemove: () => void;
 }) {
   return (
@@ -104,76 +117,97 @@ function ShortcutCircle({
         </span>
         <span className={TILE_LABEL_CLASS}>{shortcut.name}</span>
       </button>
-      <Button
-        size="icon-tiny"
-        variant="ghost-muted-row"
-        className="absolute end-1 top-1"
-        aria-label={`Remove ${shortcut.name}`}
-        onClick={onRemove}
-      >
-        <XIcon />
-      </Button>
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              size="icon-tiny"
+              variant="ghost-muted-row"
+              className="absolute end-1 top-1"
+              aria-label={`${shortcut.name} options`}
+            />
+          }
+        >
+          <MoreHorizontalIcon />
+        </MenuTrigger>
+        <MenuPopup align="start">
+          <MenuItem onClick={onEdit}>Edit</MenuItem>
+          <MenuItem onClick={onRemove}>Remove</MenuItem>
+        </MenuPopup>
+      </Menu>
     </div>
   );
 }
 
-function AddShortcut() {
-  const add = useBrowserShortcuts((state) => state.add);
-  const [open, setOpen] = useState(false);
-  const [address, setAddress] = useState("");
+/** Adds a shortcut, or edits `shortcut`. */
+function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onClose: () => void }) {
+  const save = useBrowserShortcuts((state) => state.save);
+  const [name, setName] = useState(shortcut?.name ?? "");
+  const [link, setLink] = useState(shortcut?.url ?? "");
   const [invalid, setInvalid] = useState(false);
-  const reset = () => {
-    setAddress("");
-    setInvalid(false);
-  };
+  const formId = useId();
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!parseSiteUrl(address)) {
+    if (!parseSiteUrl(link)) {
       setInvalid(true);
       return;
     }
-    add(address);
-    reset();
-    setOpen(false);
+    save(shortcut, link, name);
+    onClose();
   };
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) reset();
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
       }}
     >
-      <div className="w-20">
-        <PopoverTrigger render={<button type="button" className={TILE_CLASS} />}>
-          <span className={`${CIRCLE_CLASS} bg-muted text-muted-foreground`}>
-            <PlusIcon className="size-5" />
-          </span>
-          <span className={TILE_LABEL_CLASS}>Add</span>
-        </PopoverTrigger>
-      </div>
-      <PopoverPopup padding="comfortable">
-        <form className="flex w-64 flex-col gap-2" onSubmit={submit}>
-          <Input
-            autoFocus
-            aria-label="Site address"
-            aria-invalid={invalid}
-            placeholder="Site address"
-            value={address}
-            onChange={(event) => {
-              setAddress(event.target.value);
-              setInvalid(false);
-            }}
-          />
-          {invalid ? (
-            <p className="text-xs text-destructive-foreground">Enter a web address.</p>
-          ) : null}
-          <Button type="submit" size="sm" className="self-end">
-            Add shortcut
+      <DialogPopup className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{shortcut ? "Edit shortcut" : "Add shortcut"}</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <form id={formId} className="grid gap-4" onSubmit={submit}>
+            <label className="grid gap-1.5">
+              <Label render={<span />}>Name</Label>
+              <Input
+                autoFocus={shortcut !== null}
+                maxLength={MAX_NAME_LENGTH}
+                placeholder="Optional"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <div className="grid gap-1.5">
+              <label className="grid gap-1.5">
+                <Label render={<span />}>Link</Label>
+                <Input
+                  autoFocus={shortcut === null}
+                  aria-invalid={invalid}
+                  placeholder="example.org"
+                  value={link}
+                  onChange={(event) => {
+                    setLink(event.target.value);
+                    setInvalid(false);
+                  }}
+                />
+              </label>
+              {invalid ? (
+                <p className="text-xs text-destructive-foreground">Enter a web address.</p>
+              ) : null}
+            </div>
+          </form>
+        </DialogPanel>
+        <DialogFooter variant="bare">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
           </Button>
-        </form>
-      </PopoverPopup>
-    </Popover>
+          <Button type="submit" form={formId}>
+            {shortcut ? "Save" : "Add"}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }
 
@@ -186,9 +220,11 @@ export function BrowserHome({
   onOpenUrl: (url: string) => void;
 }) {
   const added = useBrowserShortcuts((state) => state.added);
+  const names = useBrowserShortcuts((state) => state.names);
   const hidden = useBrowserShortcuts((state) => state.hidden);
   const visits = useBrowserShortcuts((state) => state.visits);
   const remove = useBrowserShortcuts((state) => state.remove);
+  const [dialog, setDialog] = useState<{ shortcut: Shortcut | null } | null>(null);
   return (
     <div className="flex flex-col items-center gap-5">
       <div className="flex flex-wrap items-center justify-center gap-1">
@@ -201,17 +237,34 @@ export function BrowserHome({
         <GoogleApps threadRef={threadRef} onOpenUrl={onOpenUrl} />
       </div>
       <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-1">
-        {visibleShortcuts({ added, hidden, visits }).map((shortcut) => (
+        {visibleShortcuts({ added, names, hidden, visits }).map((shortcut) => (
           <ShortcutCircle
-            key={shortcut.key}
+            key={shortcut.url}
             threadRef={threadRef}
             shortcut={shortcut}
             onOpen={() => onOpenUrl(shortcut.url)}
+            onEdit={() => setDialog({ shortcut })}
             onRemove={() => remove(shortcut)}
           />
         ))}
-        {canAddShortcut(added) ? <AddShortcut /> : null}
+        {canAddShortcut(added) ? (
+          <div className="w-20">
+            <button
+              type="button"
+              className={TILE_CLASS}
+              onClick={() => setDialog({ shortcut: null })}
+            >
+              <span className={`${CIRCLE_CLASS} bg-muted text-muted-foreground`}>
+                <PlusIcon className="size-5" />
+              </span>
+              <span className={TILE_LABEL_CLASS}>Add</span>
+            </button>
+          </div>
+        ) : null}
       </div>
+      {dialog ? (
+        <ShortcutDialog shortcut={dialog.shortcut} onClose={() => setDialog(null)} />
+      ) : null}
     </div>
   );
 }

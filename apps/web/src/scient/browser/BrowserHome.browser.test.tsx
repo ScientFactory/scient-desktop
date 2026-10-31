@@ -13,7 +13,7 @@ const threadRef = {
 };
 
 function renderHome(onOpenUrl: (url: string) => void = vi.fn()) {
-  useBrowserShortcuts.setState({ added: [], hidden: [], visits: {} });
+  useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
   return render(<BrowserHome threadRef={threadRef} onOpenUrl={onOpenUrl} />);
 }
 
@@ -39,28 +39,61 @@ it("opens an app from the Apps menu and closes it", async () => {
   await expect.element(page.getByRole("button", { name: "Sheets" })).not.toBeInTheDocument();
 });
 
-it("removes a shortcut", async () => {
+async function chooseFromMenu(shortcut: string, action: string) {
+  await page.getByRole("button", { name: `${shortcut} options` }).click();
+  await page.getByRole("menuitem", { name: action }).click();
+}
+
+it("removes a shortcut from its menu", async () => {
   await using _screen = await renderHome();
-  await page.getByRole("button", { name: "Remove arXiv" }).click();
-  await expect.element(page.getByRole("button", { name: "arXiv" })).not.toBeInTheDocument();
+  await chooseFromMenu("arXiv", "Remove");
+  await expect
+    .element(page.getByRole("button", { name: "arXiv", exact: true }))
+    .not.toBeInTheDocument();
 });
 
-it("adds a site and refuses text that isn't an address", async () => {
+it("adds a site with a name and refuses text that isn't an address", async () => {
   await using _screen = await renderHome();
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  const address = page.getByRole("textbox", { name: "Site address" });
-  await userEvent.fill(address, "not an address");
+  const link = page.getByRole("textbox", { name: "Link" });
+  await userEvent.fill(link, "not an address");
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByText("Enter a web address.")).toBeVisible();
-  await userEvent.fill(address, "example.org");
-  await userEvent.keyboard("{Enter}");
-  await expect.element(page.getByRole("button", { name: "example.org" })).toBeVisible();
-  await expect.element(address).not.toBeInTheDocument();
+  await userEvent.fill(link, "example.org");
+  await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Lab wiki");
+  await page.getByRole("button", { name: "Add", exact: true }).last().click();
+  await expect.element(page.getByRole("button", { name: "Lab wiki", exact: true })).toBeVisible();
+  await expect.element(link).not.toBeInTheDocument();
+});
+
+it("edits a shortcut's name and link and opens the new link", async () => {
+  const onOpenUrl = vi.fn();
+  await using _screen = await renderHome(onOpenUrl);
+  await chooseFromMenu("Overleaf", "Edit");
+  const name = page.getByRole("textbox", { name: "Name" });
+  const link = page.getByRole("textbox", { name: "Link" });
+  await expect.element(name).toHaveValue("Overleaf");
+  await expect.element(link).toHaveValue("https://www.overleaf.com/");
+  await userEvent.fill(name, "My paper");
+  await userEvent.fill(link, "https://www.overleaf.com/project/abc");
+  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "My paper", exact: true }).click();
+  expect(onOpenUrl).toHaveBeenCalledWith("https://www.overleaf.com/project/abc");
+});
+
+it("changes nothing when the edit is cancelled", async () => {
+  await using _screen = await renderHome();
+  await chooseFromMenu("Overleaf", "Edit");
+  await userEvent.fill(page.getByRole("textbox", { name: "Name" }), "Changed");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect.element(page.getByRole("button", { name: "Overleaf", exact: true })).toBeVisible();
+  expect(useBrowserShortcuts.getState().added).toEqual([]);
 });
 
 it("keeps every label inside its circle at a narrow panel width", async () => {
   useBrowserShortcuts.setState({
     added: ["https://a-very-long-subdomain.of-a-very-long-site.example.org/"],
+    names: {},
     hidden: [],
     visits: {},
   });

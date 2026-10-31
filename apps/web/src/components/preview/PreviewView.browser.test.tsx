@@ -247,7 +247,7 @@ function setup() {
   mocks.controller = "none";
   mocks.profileId = undefined;
   mocks.noTab = false;
-  useBrowserShortcuts.setState({ added: [], hidden: [], visits: {} });
+  useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
   mocks.exportDisabled = null;
   mocks.runtime = undefined;
   mocks.sourceUrl = "http://example.com/";
