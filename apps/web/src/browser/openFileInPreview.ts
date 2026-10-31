@@ -112,6 +112,10 @@ export async function openUrlInPreview<E>(input: {
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
+  const profileId = input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults));
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
+  // SCIENT-FORK:END
   const runtime = previewRuntimeFor(input.threadRef.environmentId);
   const previousActiveTabId = readThreadPreviewState(input.threadRef).activeTabId;
   // The server changes the active tab, not panel selection; selection changes come from the user.
@@ -125,9 +129,7 @@ export async function openUrlInPreview<E>(input: {
       threadId: input.threadRef.threadId,
       url: input.url,
       viewport: defaults.viewport,
-      // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
-      profileId: input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults)),
-      // SCIENT-FORK:END
+      profileId,
       ...(runtime === undefined ? {} : { runtime }),
     },
   });

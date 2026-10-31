@@ -50,10 +50,15 @@ const savePdf = Effect.fn("Papers.save")(
     for (let copy = 1; ; copy += 1) {
       const file = copy === 1 ? name : name.replace(/\.pdf$/u, `-${copy}.pdf`);
       const target = path.join(folder, file);
-      if (!(yield* fs.exists(target))) {
-        yield* fs.writeFile(target, bytes);
-        return `papers/${file}`;
-      }
+      // Exclusive, so two saves of different papers can't take the same name.
+      const created = yield* fs.writeFile(target, bytes, { flag: "wx" }).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (error) => error.reason._tag === "AlreadyExists",
+          () => Effect.succeed(false),
+        ),
+      );
+      if (created) return `papers/${file}`;
       // The same paper again reuses its file.
       if (Buffer.from(yield* fs.readFile(target)).equals(Buffer.from(bytes)))
         return `papers/${file}`;
@@ -117,7 +122,12 @@ const fetchPaper = Effect.fn("Papers.fetch")(function* (
         )
       : undefined;
   let note:
-    | { status: "needs-sign-in" | "no-access" | "limit"; message: string; openUrl?: string }
+    | {
+        status: "needs-sign-in" | "no-access" | "limit";
+        message: string;
+        openUrl?: string;
+        profileId?: string;
+      }
     | undefined;
   if (account) {
     // The count, the pause and the fetch are one step, so parallel requests can't pass the cap.

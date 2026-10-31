@@ -43,6 +43,10 @@ export async function openPreviewSession<E>(
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
+  const profileId = input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults));
+  input.assertCurrent?.();
+  // SCIENT-FORK:END
   const runtime = input.runtime ?? previewRuntimeFor(input.threadRef.environmentId);
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
@@ -50,9 +54,7 @@ export async function openPreviewSession<E>(
       threadId: input.threadRef.threadId,
       ...(input.url === undefined ? {} : { url: input.url }),
       viewport: input.viewport ?? defaults.viewport,
-      // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
-      profileId: input.profileId ?? (await openProfileId(input.threadRef, input.url, defaults)),
-      // SCIENT-FORK:END
+      profileId,
       ...(runtime === undefined || runtime === "desktop" ? {} : { runtime }),
     },
   });

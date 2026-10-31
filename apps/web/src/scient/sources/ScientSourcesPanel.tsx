@@ -979,12 +979,17 @@ export function ScientSourcesPanel(props: {
             });
             return;
           }
-          const openUrl = result.value.landingUrl;
+          const { landingUrl: openUrl, profileId } = result.value;
           toastManager.add({
             type: "error",
             title: result.value.message,
             ...(openUrl
-              ? { actionProps: { children: "Open", onClick: () => void openBrowser(openUrl) } }
+              ? {
+                  actionProps: {
+                    children: "Open",
+                    onClick: () => void openBrowser(openUrl, profileId),
+                  },
+                }
               : {}),
           });
         }}

@@ -506,6 +506,8 @@ export const AccountPaperForSourceResult = Schema.Union([
     status: Schema.Literals(["not-found", "no-access", "needs-sign-in", "limit"]),
     message: Schema.String,
     landingUrl: Schema.optional(Schema.String),
+    /** The library's browser profile, where "Open" has to go for a sign-in to count. */
+    profileId: Schema.optional(Schema.String),
   }),
 ]);
 

@@ -2296,10 +2296,14 @@ const make = Effect.gen(function* () {
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
-      try: () =>
-        runOperation(request, performance.now() + request.timeoutMs).finally(() =>
+      try: () => {
+        // SCIENT-FORK:START — in use from the start, so an idle release never interrupts it.
+        markUsed(request);
+        // SCIENT-FORK:END
+        return runOperation(request, performance.now() + request.timeoutMs).finally(() =>
           markUsed(request),
-        ),
+        );
+      },
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
       Effect.match({

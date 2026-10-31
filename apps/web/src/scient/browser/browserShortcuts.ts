@@ -138,11 +138,14 @@ function siteKeyOf(raw: string) {
   return url ? siteKey(url) : null;
 }
 
+/** The first site on each host names it, so everything on docs.google.com reads as Docs. */
 const KNOWN_SITES = new Map(
-  [...GOOGLE_APPS, ...STARTING_SITES, ...Object.values(UNIVERSITY_MOODLES)].flatMap((site) => {
-    const key = siteKeyOf(site.url);
-    return key ? [[key, site] as const] : [];
-  }),
+  [...GOOGLE_APPS, ...STARTING_SITES, ...Object.values(UNIVERSITY_MOODLES)]
+    .flatMap((site) => {
+      const key = siteKeyOf(site.url);
+      return key ? [[key, site] as const] : [];
+    })
+    .toReversed(),
 );
 
 function shortcutFor(url: string, key: string, name?: string): Shortcut {

@@ -306,6 +306,31 @@ describe("PreviewView", () => {
     );
   });
 
+  it("shows and opens the default profile from Settings when there is no tab yet", async () => {
+    setup();
+    mocks.showEmptyState = true;
+    mocks.noTab = true;
+    const stub = STUB_BROWSER_DEFAULTS as { profileId: string };
+    stub.profileId = INCOGNITO_BROWSER_PROFILE_ID;
+    vi.mocked(openPreviewSession).mockResolvedValueOnce({
+      _tag: "Success",
+      value: { tabId: "tab-1" },
+    } as never);
+    try {
+      await using _screen = await render(
+        <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
+      );
+      await page.getByRole("button", { name: "Gmail" }).click();
+      await vi.waitFor(() =>
+        expect(openPreviewSession).toHaveBeenCalledWith(
+          expect.objectContaining({ profileId: INCOGNITO_BROWSER_PROFILE_ID }),
+        ),
+      );
+    } finally {
+      stub.profileId = DEFAULT_BROWSER_PROFILE_ID;
+    }
+  });
+
   it("searches from the empty page in the profile the toolbar shows", async () => {
     setup();
     mocks.showEmptyState = true;

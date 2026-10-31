@@ -65,6 +65,8 @@ export type LibraryResult =
       readonly status: "needs-sign-in" | "no-access";
       readonly message: string;
       readonly openUrl?: string;
+      /** The profile the library uses, where the sign-in has to happen. */
+      readonly profileId?: string;
     };
 
 /**
@@ -106,11 +108,9 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
     reuseExistingTab: false,
     open: false,
   };
+  const profileId = details.profileId ?? status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID;
   const opened = userRun
-    ? yield* invoke<PreviewAutomationStatus>("open", {
-        ...open,
-        profileId: details.profileId ?? status.defaultProfileId ?? DEFAULT_BROWSER_PROFILE_ID,
-      })
+    ? yield* invoke<PreviewAutomationStatus>("open", { ...open, profileId })
     : yield* authorizePreviewProfile(session, status, open).pipe(
         Effect.flatMap(({ profileId }) =>
           recordProfileUse(
@@ -153,8 +153,11 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
         if (signedIn || !login || !libraryPage)
           return {
             status: "needs-sign-in" as const,
-            message: `The library asks to sign in on ${new URL(url).hostname}. Open the link in the same browser profile for the user to sign in once, then ask again.`,
+            message: userRun
+              ? `The library asks you to sign in on ${new URL(url).hostname}. Press Open, sign in once, then press Get PDF again.`
+              : `The library asks to sign in on ${new URL(url).hostname}. Open the link in the same browser profile for the user to sign in once, then ask again.`,
             openUrl: open.url,
+            profileId,
           };
         const result = yield* guardedSignIn(session, library, {
           tabId: tab,
@@ -165,6 +168,7 @@ export const fetchThroughLibrary = Effect.fn("Papers.library")(function* (
           return {
             status: "needs-sign-in" as const,
             message: result.message ?? "The library sign-in did not finish.",
+            profileId,
           };
         signedIn = true;
         continue;

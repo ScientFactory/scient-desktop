@@ -62,6 +62,11 @@ describe("visibleShortcuts", () => {
     });
   });
 
+  it("names a site that several apps share after the first of them", () => {
+    visit("https://docs.google.com/spreadsheets/d/abc", 2);
+    expect(names()[0]).toBe("Docs");
+  });
+
   it("doesn't turn searches or Gmail into shortcuts", () => {
     visit("https://www.google.com/search?q=a", 5);
     visit("https://mail.google.com/mail/u/0/#inbox", 5);

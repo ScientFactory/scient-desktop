@@ -7,7 +7,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
-  DEFAULT_BROWSER_PROFILE_ID,
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
   type ScopedThreadRef,
@@ -239,7 +238,7 @@ export function PreviewView({
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
   // IPC interprets undefined profile ids as all profiles.
-  const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
+  const activeProfileId = snapshot?.profileId ?? browserDefaults.profileId;
   const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
