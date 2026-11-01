@@ -5,6 +5,7 @@ import {
   useThreadAccountHandoffs,
 } from "~/scient/accounts/AccountApprovals";
 // SCIENT-FORK:END
+import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -4464,6 +4465,7 @@ function ChatViewContent(props: ChatViewProps) {
                       </div>
                     ) : null}
                     {/* SCIENT-FORK:END */}
+                    <ChildThreadApprovals threadRef={activeThreadRef} />
                     <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                       <ComposerSurface.Host>
                         <div className="relative z-10">

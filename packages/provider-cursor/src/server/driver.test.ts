@@ -25,7 +25,8 @@ import * as Schema from "effect/Schema";
 import { vi } from "vite-plus/test";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import { HttpClientResponse } from "effect/http";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Deferred from "effect/Deferred";
 
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
@@ -41,8 +42,10 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
-import { Cursor } from "./sdk.ts";
 import { CursorSettings } from "../settings.ts";
+import { loadCursorSdk } from "./sdk.ts";
+
+const { Cursor } = loadCursorSdk();
 
 const decodeCursorSettings = Schema.decodeEffect(CursorSettings);
 
@@ -92,19 +95,29 @@ it.layer(testLayer)("CursorDriver", (it) => {
           });
           return { apiKey: "instance-browser-key", apiKeyExpiresAtMs: 4_000_000_000_000 };
         });
-        const me = vi.spyOn(Cursor, "me").mockResolvedValue({
-          apiKeyName: "T3 Code",
-          createdAt: "2026-01-01T00:00:00.000Z",
-          userEmail: "cursor@example.com",
+        const requests: Array<{ url: string; authorization: string | undefined }> = [];
+        const client = HttpClient.make((request) => {
+          requests.push({ url: request.url, authorization: request.headers.authorization });
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                request.url.endsWith("/GetCurrentPeriodUsage")
+                  ? { planUsage: { totalPercentUsed: 10 } }
+                  : request.url.endsWith("/v1/me")
+                    ? {
+                        apiKeyName: "T3 Code",
+                        createdAt: "2026-01-01T00:00:00.000Z",
+                        userEmail: "cursor@example.com",
+                      }
+                    : { items: [{ id: "auto", displayName: "Auto" }] },
+              ),
+            ),
+          );
         });
-        const models = vi
-          .spyOn(Cursor.models, "list")
-          .mockResolvedValue([{ id: "auto", displayName: "Auto" }]);
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             login.mockRestore();
-            me.mockRestore();
-            models.mockRestore();
           }),
         );
         const fs = yield* FileSystem.FileSystem;
@@ -139,21 +152,7 @@ it.layer(testLayer)("CursorDriver", (it) => {
                 };
               }),
           }),
-          Effect.provideService(
-            HttpClient.HttpClient,
-            HttpClient.make((request) => {
-              expect(request.url).toBe(
-                "https://cli.example.test/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
-              );
-              expect(request.headers.authorization).toBe("Bearer synthetic-legacy-cli-token");
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(
-                  request,
-                  Response.json({ planUsage: { totalPercentUsed: 10 } }),
-                ),
-              );
-            }),
-          ),
+          Effect.provideService(HttpClient.HttpClient, client),
         );
         const instance = yield* create;
         expect(instance).not.toHaveProperty("managedRuntimeActions");
@@ -166,7 +165,10 @@ it.layer(testLayer)("CursorDriver", (it) => {
           Effect.map(Option.getOrThrow),
         );
         expect(terminal.phase).toBe("succeeded");
-        expect(me).toHaveBeenCalledWith({ apiKey: "instance-browser-key" });
+        expect(requests).toContainEqual({
+          url: "https://api.cursor.com/v1/me",
+          authorization: "Bearer instance-browser-key",
+        });
         expect(yield* instance.snapshot.getSnapshot).toMatchObject({
           status: "ready",
           auth: {
@@ -212,20 +214,24 @@ it.layer(testLayer)("CursorDriver", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-window-" });
-      const catalog = Promise.withResolvers<Array<SDKModel>>();
-      const catalogRequested = Promise.withResolvers<void>();
-      const me = vi.spyOn(Cursor, "me").mockResolvedValue({
-        apiKeyName: "T3 Code",
-        createdAt: "2026-01-01T00:00:00.000Z",
-      });
-      const models = vi.spyOn(Cursor.models, "list").mockImplementation(() => {
-        catalogRequested.resolve();
-        return catalog.promise;
-      });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          me.mockRestore();
-          models.mockRestore();
+      const catalog = yield* Deferred.make<Array<SDKModel>>();
+      const catalogRequested = yield* Deferred.make<void>();
+      let failUser = false;
+      const client = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          if (request.url.endsWith("/v1/me"))
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                failUser
+                  ? { error: { message: "Cursor is unreachable" } }
+                  : { apiKeyName: "T3 Code", createdAt: "2026-01-01T00:00:00.000Z" },
+                { status: failUser ? 503 : 200 },
+              ),
+            );
+          yield* Deferred.succeed(catalogRequested, undefined);
+          const models = yield* Deferred.await(catalog);
+          return HttpClientResponse.fromWeb(request, Response.json({ items: models }));
         }),
       );
       const instanceId = ProviderInstanceId.make("cursor-catalog-window");
@@ -238,6 +244,7 @@ it.layer(testLayer)("CursorDriver", (it) => {
         environment: [{ name: "CURSOR_API_KEY", value: "catalog-window-key", sensitive: true }],
         config: CursorDriver.defaultConfig(),
       }).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
           open: (request) =>
@@ -288,7 +295,7 @@ it.layer(testLayer)("CursorDriver", (it) => {
         runtimePolicy,
       });
       const refresh = yield* instance.snapshot.refresh.pipe(Effect.forkScoped);
-      yield* Effect.promise(() => catalogRequested.promise);
+      yield* Deferred.await(catalogRequested);
       expect(runtime.getModelContextWindow?.(selection())).toBeUndefined();
       const providerThread = yield* runtime.ensureThread({
         threadId,
@@ -359,7 +366,7 @@ it.layer(testLayer)("CursorDriver", (it) => {
         };
       });
       const beforeCatalog = yield* startTurn("1m");
-      catalog.resolve([
+      yield* Deferred.succeed(catalog, [
         {
           id: "claude-opus-5-5",
           displayName: "Claude Opus 5.5",
@@ -383,7 +390,7 @@ it.layer(testLayer)("CursorDriver", (it) => {
       const catalogDefault = yield* startTurn();
       const explicitWindow = yield* startTurn("500k");
       const unknownWindow = yield* startTurn("max");
-      me.mockRejectedValue(new Error("Cursor is unreachable"));
+      failUser = true;
       expect((yield* instance.snapshot.refresh).status).toBe("error");
       const retainedDefault = yield* startTurn();
 

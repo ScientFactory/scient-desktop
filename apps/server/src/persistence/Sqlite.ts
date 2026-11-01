@@ -58,7 +58,7 @@ const layerSetup = (filesystemPaths?: RetiredThreadFilesystemPaths) =>
       if (filesystemPaths !== undefined) {
         yield* cleanupRetiredThreadFilesystem(filesystemPaths);
       }
-    }),
+    }).pipe(Effect.withSpan("Sqlite.setup")),
   );
 
 export const layerFromPath = Effect.fn("makeSqlitePersistenceLive")(function* (dbPath: string) {
