@@ -140,6 +140,24 @@ export function useMarkdownPersistenceLease(input: {
       ? binding
       : null;
   const lease = currentBinding?.lease ?? null;
+  const admissionError = currentBinding?.error ?? null;
+  // A failed opening answered for one reading of the file. A different reading, such as
+  // the file coming back, gets a new try without a click.
+  const reading = input.authoritativeReadError
+    ? "unreadable"
+    : (input.authoritativeSnapshot?.revision ?? null);
+  const failedReading = useRef<{ readonly reading: string | null } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retries a failed admission when the watched file reads differently from when it failed
+  useEffect(() => {
+    if (admissionError === null) {
+      failedReading.current = null;
+    } else if (failedReading.current === null) {
+      failedReading.current = { reading };
+    } else if (failedReading.current.reading !== reading) {
+      failedReading.current = null;
+      setAdmissionAttempt((attempt) => attempt + 1);
+    }
+  }, [admissionError, reading]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forwards workspace-mutation freshness hints to the persistence lease
   useEffect(() => {
     if (input.workspaceMutationId !== null && input.workspaceMutationId !== undefined) {
@@ -174,7 +192,7 @@ export function useMarkdownPersistenceLease(input: {
   return {
     lease,
     snapshot,
-    admissionError: currentBinding?.error ?? null,
+    admissionError,
     retryAdmission,
   };
 }

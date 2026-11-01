@@ -205,6 +205,54 @@ describe("DocumentPersistenceCoordinator pending-input holds", () => {
     expect(h.write).not.toHaveBeenCalled();
   });
 
+  it("reads again on a hint after a failed read, so a file that came back recovers", async () => {
+    const gone = new Error("the file is not there");
+    const read = vi
+      .fn<() => Promise<DocumentPersistenceReadResult>>()
+      .mockRejectedValueOnce(gone)
+      .mockRejectedValueOnce(gone)
+      .mockResolvedValue({ source: "a=back\nb=1\n", revision: "r9" });
+    const h = fixture({ read, classifyFailure: () => "operation" });
+
+    h.coordinator.noteFreshnessHint();
+    await vi.waitFor(() => expect(h.coordinator.getSnapshot().error).toBe(gone));
+    // Still gone: the failure stays on show, and nothing is written.
+    h.coordinator.noteFreshnessHint();
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(h.coordinator.getSnapshot().error).toBe(gone));
+
+    h.coordinator.noteFreshnessHint();
+    await vi.waitFor(() =>
+      expect(h.coordinator.getSnapshot()).toMatchObject({
+        error: null,
+        baselineRevision: "r9",
+        draftSource: "a=back\nb=1\n",
+        pending: false,
+      }),
+    );
+    expect(h.write).not.toHaveBeenCalled();
+  });
+
+  it("leaves a failed save for the person: a hint neither reads nor clears it", async () => {
+    const refused = new Error("the disk refused");
+    const read = vi.fn<() => Promise<DocumentPersistenceReadResult>>();
+    const write = vi.fn<(intent: DocumentSaveIntent) => Promise<{ revision: string }>>();
+    write.mockRejectedValue(refused);
+    const h = fixture({ read, write, classifyFailure: () => "operation" });
+
+    h.coordinator.change("a=mine\nb=1\n");
+    await h.coordinator.flushNow();
+    await vi.waitFor(() => expect(h.coordinator.getSnapshot().error).toBe(refused));
+
+    h.coordinator.noteFreshnessHint();
+    await Promise.resolve();
+    expect(read).not.toHaveBeenCalled();
+    expect(h.coordinator.getSnapshot()).toMatchObject({
+      error: refused,
+      draftSource: "a=mine\nb=1\n",
+    });
+  });
+
   it("does not advance a same-source revision from an in-flight read during a hold", async () => {
     const firstRead = deferred<DocumentPersistenceReadResult>();
     const read = vi

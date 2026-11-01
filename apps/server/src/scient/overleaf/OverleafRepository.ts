@@ -15,6 +15,7 @@ import {
   OverleafGitError,
   OverleafGitExecutor,
   type OverleafGitExecuteInput,
+  isRateLimited,
   newOverleafId,
 } from "./OverleafGitExecutor.ts";
 import { type ManuscriptTreeProblem, manuscriptTreeProblem } from "./manuscriptPaths.ts";
@@ -656,12 +657,15 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.map((result) => parsePushPorcelain(text(result.stdout), result.stderr)),
         // A timeout or a broken connection says nothing about what Overleaf did.
+        // A rate limit does: it refused the request before anything was sent.
         Effect.catchTags({
           OverleafGitError: (error) =>
-            Effect.succeed<PushOutcome>({
-              _tag: "unknown",
-              detail: `${error.reason}: ${error.detail}`,
-            }),
+            isRateLimited(error)
+              ? Effect.fail(error)
+              : Effect.succeed<PushOutcome>({
+                  _tag: "unknown",
+                  detail: `${error.reason}: ${error.detail}`,
+                }),
         }),
       );
     },

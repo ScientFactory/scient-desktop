@@ -32,6 +32,12 @@ describe("Cloud probe boundaries", () => {
         "fatal: remote error: no git access\nThis Overleaf project currently has no git access, either because\nthe project does not exist, or because git access is not enabled\nfor the project.",
         "project-not-found",
       ],
+      // Overleaf's words for its rate limit open like the refusal above (found in a live check).
+      [
+        "fatal: remote error: no git access\nRate-limit exceeded. Please wait a while and try again.\n\nIf this is unexpected, please contact us at support@overleaf.com, or\nsee https://www.overleaf.com/learn/how-to/Git_integration for more information.",
+        "rate-limited",
+      ],
+      ["The requested URL returned error: 429", "rate-limited"],
       ["fatal: remote error: something new", "server-refused"],
       ["SSL certificate problem", "tls"],
       ["Could not resolve host", "dns"],

@@ -2,13 +2,25 @@ import type { FileTreeRowDecorationContext } from "@pierre/trees";
 import type { ProjectDirectoryEntry } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { scientReadOnlyRowDecoration } from "./useScientLazyWorkspaceTree";
+import {
+  SCIENT_FILE_BROWSER_TREE_ICONS,
+  scientReadOnlyRowDecoration,
+} from "./useScientLazyWorkspaceTree";
 
 const row = (path: string, kind: "directory" | "file", isExpanded = false) =>
   ({
     item: { path: kind === "directory" ? `${path}/` : path },
     row: { kind, isExpanded },
   }) as unknown as FileTreeRowDecorationContext;
+
+describe("SCIENT_FILE_BROWSER_TREE_ICONS", () => {
+  it("keeps Overleaf's leaf in the one <svg> the tree reads", () => {
+    const sheet = SCIENT_FILE_BROWSER_TREE_ICONS.spriteSheet;
+    expect(sheet.match(/<svg\b/gu)).toHaveLength(1);
+    expect(sheet.indexOf('id="scient-tree-icon-overleaf"')).toBeLessThan(sheet.indexOf("</svg>"));
+    expect(sheet.indexOf('id="scient-tree-icon-overleaf"')).toBeGreaterThan(0);
+  });
+});
 
 describe("scientReadOnlyRowDecoration", () => {
   it("marks folders linked to Overleaf, after a folder's own loading spinner", () => {

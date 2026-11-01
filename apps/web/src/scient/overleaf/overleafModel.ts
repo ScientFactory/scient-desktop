@@ -6,6 +6,7 @@ import type {
   ScientOverleafChange,
   ScientOverleafConnectionSummary,
   ScientOverleafRefusal,
+  ScientOverleafRemoteState,
   ScientOverleafReview,
   ScientOverleafStatus,
   ScientOverleafSyncResult,
@@ -114,7 +115,13 @@ export function workspaceFolderProblem(path: string): string | null {
  */
 export type OverleafFileDecision = "keep" | "send" | "release";
 
-export type OverleafChipState = "syncing" | "up-to-date" | "edits" | "decision" | "problem";
+export type OverleafChipState =
+  | "syncing"
+  | "up-to-date"
+  | "edits"
+  | "incoming"
+  | "decision"
+  | "problem";
 
 export interface OverleafChipView {
   readonly state: OverleafChipState;
@@ -133,6 +140,8 @@ export function overleafChipView(
   syncing: boolean,
   /** This window's latest sync of the link, dropped when another sync changes it. */
   last: ScientOverleafSyncResult | null = null,
+  /** What Overleaf itself last said; null until it was asked. */
+  remote: ScientOverleafRemoteState["state"] | null = null,
 ): OverleafChipView {
   if (syncing || status?.busy) {
     return { state: "syncing", label: "Syncing…", detail: "A sync is running." };
@@ -155,7 +164,7 @@ export function overleafChipView(
       detail:
         status.availability === "disconnected"
           ? "This folder is no longer linked."
-          : "Scient can't reach this folder's sync state.",
+          : "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.",
     };
   }
   if (status.reasons.includes("conflict-marks") || status.reasons.includes("interrupted-files")) {
@@ -174,7 +183,7 @@ export function overleafChipView(
       state: "problem",
       label: "Overleaf problem",
       detail: status.reasons.includes("folder-changed")
-        ? "The folder moved, or its disk isn't connected."
+        ? "The folder moved or was replaced, or its disk isn't connected."
         : "An earlier change left folders to tidy. Sync to finish it.",
     };
   }
@@ -193,11 +202,26 @@ export function overleafChipView(
       label: "Edits to send",
       detail:
         edits > 0
-          ? `${plural(edits, "change")} to send.`
+          ? `${plural(edits, "change")} to send.${remote === "changed" ? " Overleaf changed too." : ""}`
           : "An earlier sync didn't finish. The next sync finishes it.",
     };
   }
-  return { state: "up-to-date", label: "Up to date", detail: "Nothing to send." };
+  if (status.connection.completedSyncCount === 0)
+    return {
+      state: "incoming",
+      label: "Not synced yet",
+      detail: "Sync to bring the project here.",
+    };
+  if (remote === "changed")
+    return { state: "incoming", label: "Changes in Overleaf", detail: "Sync to bring them here." };
+  // "Up to date" is said only after asking Overleaf: the status reads the folder alone.
+  if (remote === "same")
+    return { state: "up-to-date", label: "Up to date", detail: "Same as Overleaf." };
+  return {
+    state: "up-to-date",
+    label: "No edits to send",
+    detail: remote === "unknown" ? "Scient couldn't check Overleaf just now." : "Nothing to send.",
+  };
 }
 
 /** Plain words for a refusal or failure reason, from the engine's fixed categories. */
@@ -235,6 +259,8 @@ export function refusalText(
       return "Overleaf has no Git access to a project at this link. Check the link, that the project is shared with you, and that your Overleaf plan includes Git.";
     case "project-invalid":
       return "That isn't an Overleaf project link or ID.";
+    case "rate-limited":
+      return `Overleaf is limiting Git requests right now. Nothing was lost. ${action === "connect" ? "Try connecting again" : "Sync again"} in a minute.`;
     case "unreachable":
       return action === "connect"
         ? "Overleaf couldn't be reached. Check the connection. Try connecting again."
@@ -245,8 +271,8 @@ export function refusalText(
       return `Git failed while talking to Overleaf. ${action === "connect" ? "Try connecting again." : "Sync again."}`;
     case "no-branch":
       return "The Overleaf project has no single main branch.";
-    case "relink-needed":
-      return "This project's folder changed since it was linked. Relink it.";
+    case "would-empty-overleaf":
+      return "This folder has none of the project's files, so a sync would delete everything on Overleaf. Nothing was sent. Put the files back, or unlink the folder.";
     case "workspace-not-authorized":
       return "This Overleaf link belongs to another project.";
     case "folder-invalid":
@@ -255,7 +281,7 @@ export function refusalText(
       return "The folder isn't there, or its disk isn't connected.";
     case "folder-changed":
     case "folder-unavailable":
-      return "The linked folder was moved or renamed. Put it back, or unlink it and link the folder at its new place.";
+      return "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.";
     case "folder-not-empty":
       return "A folder with that name already has files. Pick another name, or link it instead.";
     case "folder-outside-checkout":
@@ -263,10 +289,11 @@ export function refusalText(
     case "folder-overlaps":
       return "This folder, or one inside or around it, is linked already.";
     case "project-already-linked":
-      return "This Overleaf project is linked to another folder of this project already.";
+      return "This Overleaf project is linked to another folder of this project already. Unlink that folder first.";
     case "local-work-pending":
+      return "An earlier sync didn't finish here. Sync again to finish it.";
     case "operation-active":
-      return "Another Overleaf operation is running on this folder. Try again when it finishes.";
+      return "A sync is running on this folder. Cancel it, or try again when it finishes.";
     case "authority-changed":
     case "connection-stale":
       return "The project changed while this ran. Try again.";
@@ -543,7 +570,10 @@ function publicationLine(
       };
     case "not-sent":
       return {
-        line: "Nothing was sent: the Overleaf token changed during the sync. Sync again.",
+        line:
+          publication.reason === "rate-limited"
+            ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
+            : "Nothing was sent: the Overleaf token changed during the sync. Sync again.",
         tone: "warning",
       };
     case "out-of-date":

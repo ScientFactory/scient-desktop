@@ -5,6 +5,8 @@ import * as NodePath from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   make,
@@ -14,12 +16,72 @@ import {
   buildOverleafGitEnvironment,
   isSupportedGitVersion,
   parseGitVersion,
+  waitOutRateLimit,
 } from "./OverleafGitExecutor.ts";
 
 import { withExecutor } from "./OverleafGitExecutor.testkit.ts";
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const bytes = (value: string) => new TextEncoder().encode(value);
+
+describe("Overleaf's rate limit", () => {
+  const limited = new OverleafGitError({
+    reason: "non-zero-exit",
+    exitCode: 128,
+    detail:
+      "fatal: remote error: no git access\nRate-limit exceeded. Please wait a while and try again.",
+  });
+
+  it.effect("asks again every 10 seconds until Overleaf answers", () =>
+    Effect.gen(function* () {
+      let asked = 0;
+      const answer = yield* Effect.forkChild(
+        waitOutRateLimit(
+          Effect.suspend(() => {
+            asked += 1;
+            return asked < 3 ? Effect.fail(limited) : Effect.succeed("answered");
+          }),
+        ),
+      );
+      yield* TestClock.adjust("9 seconds");
+      expect(asked).toBe(1);
+      yield* TestClock.adjust("11 seconds");
+      expect(yield* Fiber.join(answer)).toBe("answered");
+      expect(asked).toBe(3);
+    }),
+  );
+
+  it.effect("gives up after four more tries, and leaves other failures alone", () =>
+    Effect.gen(function* () {
+      let asked = 0;
+      const answer = yield* Effect.forkChild(
+        Effect.exit(
+          waitOutRateLimit(
+            Effect.suspend(() => {
+              asked += 1;
+              return Effect.fail(limited);
+            }),
+          ),
+        ),
+      );
+      yield* TestClock.adjust("1 minute");
+      expect(Exit.isFailure(yield* Fiber.join(answer))).toBe(true);
+      expect(asked).toBe(5);
+
+      let refused = 0;
+      const other = new OverleafGitError({ reason: "non-zero-exit", exitCode: 1, detail: "no" });
+      yield* Effect.exit(
+        waitOutRateLimit(
+          Effect.suspend(() => {
+            refused += 1;
+            return Effect.fail(other);
+          }),
+        ),
+      );
+      expect(refused).toBe(1);
+    }),
+  );
+});
 
 describe("Overleaf Git environment", () => {
   const base = {

@@ -12,7 +12,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
 // SCIENT-FORK:START — expand and collapse all moved into the Files menu
 // SCIENT-FORK:END
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 // SCIENT-FORK:START — the Files bar's buttons and their icons come from Scient's toolbar
 // SCIENT-FORK:END
@@ -366,6 +366,25 @@ export default function FileBrowserPanel({
     refresh: refreshEntries,
     resourceKey: `files:${environmentId}:${cwd}`,
   });
+  // Folders also change outside Scient, and nothing tells the tree when they do.
+  const refreshOnReturn = useEffectEvent(refreshEntries);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window focus so the tree catches up with changes made in other apps
+  useEffect(() => {
+    let away = false;
+    const onBlur = () => {
+      away = true;
+    };
+    const onFocus = () => {
+      if (away) refreshOnReturn();
+      away = false;
+    };
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
   const handleRefresh = () => {
     refreshEntries();
     onRefreshSelectedFile?.();
