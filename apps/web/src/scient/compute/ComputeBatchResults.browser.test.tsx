@@ -891,7 +891,8 @@ describe("Compute batch results", () => {
       ]),
     );
     await render(_fixture, <Harness _fixture={_fixture} controls={false} />);
-    expect(_fixture.container.textContent).toContain("MATLAB exited with code 1.");
+    expect(_fixture.container.textContent).toContain("Failed");
+    expect(_fixture.container.textContent).not.toContain("exited with code 1");
     expect(_fixture.container.textContent).not.toContain(source.cwd);
     await click(_fixture, `${source.relativePath}:12:5`);
     expect(mocks.openFile).toHaveBeenCalledWith(source.threadRef, source.relativePath, 12);
@@ -900,7 +901,7 @@ describe("Compute batch results", () => {
       source.threadRef,
       expect.stringContaining("error: bad"),
     );
-    await click(_fixture, "Try with Java 21.0.1");
+    await clickRunAction(_fixture, "Run with Java 21.0.1");
     expect(mocks.start).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({ executablePath: "/opt/java/21/bin/java" }),

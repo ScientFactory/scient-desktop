@@ -227,10 +227,10 @@ Octave; `.gp` to gnuplot, then PARI/GP; `.v` to Rocq, then Verilog; and `.pro` t
 
 The output fills the pane. A file shows only **Run** until it has a result; then **Code**, **Split**
 and **Results** appear, and reopening the file brings its last run back. Each `file:line` in the
-output opens that line. A failed run offers **Ask agent**, which puts the error in your chat, and
-**Try with**, which runs it once on another install. Pictures a run writes in the project show as
-results, and tables it writes are linked. **Save to project**, **Remove this run** and **Clean up
-project** are in the run's menu.
+output opens that line. A failed run offers **Ask agent**, which puts the error in your chat. Pictures
+a run writes in the project show as results, and tables it writes are linked. The run's menu holds
+**Run with**, for one run on another install, **Save to project**, **Remove this run** and **Clean up
+project**.
 
 Any installed Jupyter kernel also works in notebooks and for agents. Scient finds kernels in
 Jupyter's usual folders and in every Python environment it can see, and a new kernel works without

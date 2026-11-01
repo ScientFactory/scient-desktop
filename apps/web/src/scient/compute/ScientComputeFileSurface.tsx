@@ -200,9 +200,9 @@ function RunFileButton(props: {
           {props.languageName} not found
         </Button>
       ) : (
-        <Button size="xs" disabled={!batch.canStart} onClick={props.onRun}>
+        <Button size="xs" variant="outline" disabled={!batch.canStart} onClick={props.onRun}>
           {batch.isStarting ? <LoaderCircle className="animate-spin" /> : <Play />}
-          Run
+          Run file
         </Button>
       )}
     </div>

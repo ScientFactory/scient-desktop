@@ -420,6 +420,15 @@ export function ManagedRuntimeNotice({
               </TooltipTrigger>
               <TooltipPopup>{retry === undefined ? headline : `Retry ${headline}`}</TooltipPopup>
             </Tooltip>
+            {retry !== undefined ? (
+              <Button size="xs" variant="outline" className="shrink-0" onClick={retry}>
+                {retryAction === "repair"
+                  ? "Repair"
+                  : retryAction === "install"
+                    ? "Install"
+                    : "Retry"}
+              </Button>
+            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={

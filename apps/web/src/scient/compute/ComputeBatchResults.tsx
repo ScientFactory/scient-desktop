@@ -8,7 +8,7 @@ import { AnalysisRunId, AnalysisSourceRevision } from "@t3tools/contracts";
 import { useClientSettings } from "~/hooks/useSettings";
 import { formatTimestamp } from "~/timestampFormat";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
-import { cn, randomUUID } from "~/lib/utils";
+import { randomUUID } from "~/lib/utils";
 import type {
   AnalysisRunSnapshot,
   AnalysisRunSummary,
@@ -154,54 +154,10 @@ function statusLabel(
 /** Enough of a failed run for an agent to start from; it can read the rest by the run's ID. */
 const MAXIMUM_ASKED_OUTPUT = 4000;
 
-type RunAlternative = NonNullable<AnalysisRuntimeProfile["alternatives"]>[number];
-
-/** A run that did not finish well says why, and what can be done about it. */
-function RunOutcome(props: {
-  readonly run: AnalysisRunSnapshot;
-  readonly runtimeLabel: string;
-  readonly alternative: RunAlternative | null;
-  readonly canRetry: boolean;
-  readonly onTryWith: (alternative: RunAlternative) => void;
-  readonly onAsk: (run: AnalysisRunSnapshot) => void;
-}) {
-  const { run } = props;
-  const failed = run.receipt.status === "failed";
-  if (!failed && run.receipt.status !== "cancelled" && run.receipt.status !== "lost") return null;
-  // A diagnostic already offers the same help for the error it describes.
-  const offersHelp = failed && run.diagnostics.length === 0;
-  return (
-    <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 px-3 py-1.5">
-      <span className={cn("min-w-40 flex-1 text-xs", failed && "text-destructive")}>
-        {run.receipt.failureMessage ?? statusLabel(run, props.runtimeLabel)}
-      </span>
-      {offersHelp && props.alternative !== null ? (
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={!props.canRetry}
-          onClick={() => props.onTryWith(props.alternative!)}
-        >
-          Try with {props.alternative.label}
-        </Button>
-      ) : null}
-      {offersHelp ? (
-        <Button size="xs" variant="outline" onClick={() => props.onAsk(run)}>
-          Ask agent
-        </Button>
-      ) : null}
-    </div>
-  );
-}
-
 function RunOutputView(props: {
   readonly run: AnalysisRunSnapshot;
   readonly runtimeLabel: string;
   readonly threadRef: ScopedThreadRef;
-  readonly alternative: RunAlternative | null;
-  readonly canRetry: boolean;
-  readonly onTryWith: (alternative: RunAlternative) => void;
-  readonly onAskAboutRun: (run: AnalysisRunSnapshot) => void;
   readonly onRevealCode?: (() => void) | undefined;
   readonly onAskAboutDiagnostic: (
     diagnostic: AnalysisDiagnostic,
@@ -241,19 +197,12 @@ function RunOutputView(props: {
               )}
             </span>
           ))
-        : emptyAnalysisRunOutputLabel(props.run.receipt.status)}
+        : (props.run.receipt.failureMessage ??
+          emptyAnalysisRunOutputLabel(props.run.receipt.status))}
     </pre>
   );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <RunOutcome
-        run={props.run}
-        runtimeLabel={props.runtimeLabel}
-        alternative={props.alternative}
-        canRetry={props.canRetry}
-        onTryWith={props.onTryWith}
-        onAsk={props.onAskAboutRun}
-      />
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-2 p-3">
           {props.run.writtenFiles !== undefined && props.run.writtenFiles.length > 0 ? (
@@ -427,10 +376,6 @@ function PersistedRunOutput(props: {
   readonly runId: AnalysisRunSnapshot["receipt"]["runId"];
   readonly runtimeLabel: string;
   readonly threadRef: ScopedThreadRef;
-  readonly alternative: RunAlternative | null;
-  readonly canRetry: boolean;
-  readonly onTryWith: (alternative: RunAlternative) => void;
-  readonly onAskAboutRun: (run: AnalysisRunSnapshot) => void;
   readonly onRevealCode?: (() => void) | undefined;
   readonly onAskAboutDiagnostic: (
     diagnostic: AnalysisDiagnostic,
@@ -460,10 +405,6 @@ function PersistedRunOutput(props: {
         run={run}
         runtimeLabel={props.runtimeLabel}
         threadRef={props.threadRef}
-        alternative={props.alternative}
-        canRetry={props.canRetry}
-        onTryWith={props.onTryWith}
-        onAskAboutRun={props.onAskAboutRun}
         onRevealCode={props.onRevealCode}
         onAskAboutDiagnostic={props.onAskAboutDiagnostic}
       />
@@ -847,6 +788,14 @@ export function ComputeBatchResults({
     streamedRuns.find((run) => run.receipt.runId === selectedRun?.receipt.runId) ??
     (model.submittedRun === selectedRun ? model.submittedRun : null) ??
     (model.restoredRun === selectedRun ? model.restoredRun : null);
+  const persistedRun = useEnvironmentQuery(
+    selectedRun !== null && selectedLiveRun === null
+      ? analysisEnvironment.run({
+          environmentId: props.environmentId,
+          input: { cwd: props.cwd, runId: selectedRun.receipt.runId },
+        })
+      : null,
+  );
   const latestTerminalRunId =
     streamedRuns.find((run) => isTerminalAnalysisRunStatus(run.receipt.status))?.receipt.runId ??
     null;
@@ -1084,29 +1033,23 @@ export function ComputeBatchResults({
   useEffect(() => {
     if (submittedRunId) refreshRuns();
   }, [submittedRunId, refreshRuns]);
+  const fullRun = selectedLiveRun ?? persistedRun.data ?? null;
   const shownRuntime = selectedRun?.runtime ?? profile;
   const shownRuntimeText =
     selectedRun === null
       ? runtimeStatusText
       : `${shownRuntime?.label ?? props.runtimeLabel}${shownRuntime?.version ? ` ${shownRuntime.version}` : ""}`;
-  const alternatives = profile?.alternatives ?? [];
-  // A version says what is different; a bare program name only says where it is.
-  const alternative =
-    alternatives.find(
-      (candidate) =>
-        candidate.version !== null && candidate.version !== selectedRun?.runtime.version,
-    ) ??
-    alternatives.find(
-      (candidate) => candidate.executablePath !== selectedRun?.runtime.executablePath,
-    ) ??
-    null;
+  const alternatives = (profile?.alternatives ?? []).filter(
+    (candidate) => candidate.executablePath !== selectedRun?.runtime.executablePath,
+  );
+  const failed = selectedRun?.receipt.status === "failed";
+  const stoppedEarly =
+    selectedRun?.receipt.status === "cancelled" || selectedRun?.receipt.status === "lost";
+  // A diagnostic already offers the same help for the error it describes.
+  const askableRun = failed && selectedRun.diagnostics.length === 0 ? (fullRun ?? null) : null;
   const outputProps = {
     runtimeLabel: props.runtimeLabel,
     threadRef: props.threadRef,
-    alternative,
-    canRetry: model.canStart,
-    onTryWith: (candidate: RunAlternative) => void model.start(candidate),
-    onAskAboutRun: askAboutRun,
     onRevealCode,
     onAskAboutDiagnostic: askAboutDiagnostic,
   };
@@ -1212,9 +1155,21 @@ export function ComputeBatchResults({
                 : projectNotInitialized
                   ? "Add this folder to Scient to run it"
                   : shownRuntimeText}
+            {!activeRun && !operationStatus && (failed || stoppedEarly) ? (
+              <span className={failed ? "text-destructive" : undefined}>
+                {" · "}
+                {statusLabel(selectedRun, props.runtimeLabel)}
+              </span>
+            ) : null}
           </span>
         </ScientTooltip>
-        {!projectNotInitialized && (finished || (storage && storage.totalBytes > 0)) ? (
+        {askableRun !== null ? (
+          <Button size="xs" variant="outline" onClick={() => askAboutRun(askableRun)}>
+            Ask agent
+          </Button>
+        ) : null}
+        {!projectNotInitialized &&
+        (finished || alternatives.length > 0 || (storage && storage.totalBytes > 0)) ? (
           <Menu>
             <MenuTrigger
               render={
@@ -1224,6 +1179,15 @@ export function ComputeBatchResults({
               }
             />
             <MenuPopup align="end" side="bottom" className="min-w-48">
+              {alternatives.map((candidate) => (
+                <MenuItem
+                  key={candidate.executablePath}
+                  disabled={!model.canStart}
+                  onClick={() => void model.start(candidate)}
+                >
+                  Run with {candidate.label}
+                </MenuItem>
+              ))}
               {finished ? (
                 <MenuItem disabled={busy} onClick={handlePromoteRun}>
                   <FolderDown />

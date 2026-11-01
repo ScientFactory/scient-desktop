@@ -189,8 +189,8 @@ export function makeManagedPythonRuntimeController(input: {
             ? ({
                 reason: "activation-failed",
                 action: "repair",
-                summary: `${displayName} was copied from another location`,
-                detail: `It still points to ${current.movedFrom}. Repair rebuilds it here.`,
+                summary: `${displayName} needs repair`,
+                detail: `It was copied from another location and still points to ${current.movedFrom}. Repair rebuilds it here.`,
               } satisfies ComputeManagedRuntimeFailure)
             : ({
                 reason: "activation-failed",
