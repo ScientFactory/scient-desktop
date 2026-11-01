@@ -11,7 +11,7 @@ const scientGrants: Record<OperationCapability, McpCapability> = {
   // SCIENT-FORK:END
   preview: "preview",
   "documents:build": "documents:build",
-  "compute:inventory": "compute:inventory",
+  compute: "compute",
   "skills:read": "skills:read",
   "sources:read": "sources:read",
   "sources:write": "sources:write",

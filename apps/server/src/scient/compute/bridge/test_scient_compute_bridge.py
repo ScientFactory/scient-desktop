@@ -310,6 +310,12 @@ class TestExecuteMapping(unittest.TestCase):
         m.interrupt_requested = True
         self.assertEqual(m.outcome(), "cancelled")
 
+    def test_outcome_cancelled_when_a_wrapped_interrupt_leads_the_error_value(self):
+        m = bridge.ExecuteMapping()
+        m.shell_reply = {"status": "error", "ename": "LoadError", "evalue": "InterruptException:"}
+        m.interrupt_requested = True
+        self.assertEqual(m.outcome(), "cancelled")
+
     def test_outcome_failed_when_interrupt_coincided_with_a_real_error(self):
         m = bridge.ExecuteMapping()
         m.shell_reply = {"status": "error", "ename": "ZeroDivisionError"}
@@ -673,6 +679,7 @@ class TestSourceCache(unittest.TestCase):
             compile=types.SimpleNamespace(cache=lambda *args: "<fallback>"),
             events=types.SimpleNamespace(register=lambda *args: None),
             user_ns={},
+            config=types.SimpleNamespace(InlineBackend=types.SimpleNamespace()),
         )
         self.context = {
             "get_ipython": lambda: self.shell,
@@ -868,7 +875,7 @@ class TestBridgeExecute(unittest.IsolatedAsyncioTestCase):
                 # this case deliberately replaces it with a real local kernel.
                 self.b._kernel_manager = None
                 await self.b._start_kernel(
-                    {"workingDirectory": directory, "kernelName": None}
+                    {"workingDirectory": directory, "kernel": None}
                 )
                 cell_code = "import os\nos.chdir('/')\nraise RuntimeError('cell source')\n"
                 await self.b._handle_execute(
@@ -1520,7 +1527,7 @@ class TestKernelEndpointAssignment(unittest.IsolatedAsyncioTestCase):
                 await self.b._start_kernel(
                     {
                         "workingDirectory": directory,
-                        "kernelName": None,
+                        "kernel": None,
                         "kernelPorts": {
                             "ip": "127.0.0.1",
                             "shell": 41001,
@@ -1686,3 +1693,31 @@ class TestProcessExit(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestKernelSpecValidation(unittest.TestCase):
+    def spec(self, **overrides):
+        value = {
+            "argv": ["evcxr_jupyter", "--control_file", "{connection_file}"],
+            "language": "rust",
+            "interruptMode": "message",
+            "variablesExpression": None,
+        }
+        value.update(overrides)
+        return value
+
+    def test_accepts_connection_file_inside_an_argument(self):
+        spec = self.spec(argv=["deno", "jupyter", "--kernel", "--conn={connection_file}"])
+        self.assertIs(bridge.validate_kernel_spec(spec), spec)
+
+    def test_rejects_a_command_without_the_connection_file(self):
+        with self.assertRaises(bridge.ProtocolViolation):
+            bridge.validate_kernel_spec(self.spec(argv=["evcxr_jupyter"]))
+
+    def test_keeps_the_installed_spec_environment_and_resource_directory(self):
+        spec = self.spec(env={"RUST_LOG": "warn"}, resourceDir="/k/rust")
+        self.assertEqual(bridge.validate_kernel_spec(spec)["env"], {"RUST_LOG": "warn"})
+        with self.assertRaises(bridge.ProtocolViolation):
+            bridge.validate_kernel_spec(self.spec(env={"N": 1}))
+        with self.assertRaises(bridge.ProtocolViolation):
+            bridge.validate_kernel_spec(self.spec(resourceDir=""))

@@ -878,25 +878,20 @@ export const registerAnalysisRpcTests = (
               cwd: workspaceDir,
               runId: started.receipt.runId,
             });
-            const events = yield* client[WS_METHODS.subscribeAnalysisRuns]({
+            // A subscription only sees runs still under way, and this one may already have ended.
+            return yield* client[WS_METHODS.analysisGetRun]({
               cwd: workspaceDir,
-              relativePath: "slow.m",
+              runId: started.receipt.runId,
             }).pipe(
-              Stream.filterMap((event) =>
-                event._tag !== "run-output" && event.run.receipt.runId === started.receipt.runId
-                  ? Result.succeed(event.run)
-                  : Result.failVoid,
-              ),
-              Stream.takeUntil((run) =>
-                ["succeeded", "failed", "cancelled", "lost"].includes(run.receipt.status),
-              ),
-              Stream.runCollect,
+              Effect.repeat({
+                until: (run) =>
+                  ["succeeded", "failed", "cancelled", "lost"].includes(run.receipt.status),
+              }),
               Effect.timeoutOrElse({
                 duration: "10 seconds",
                 orElse: () => Effect.die(new Error("Timed out waiting for MATLAB cancellation.")),
               }),
             );
-            return events.at(-1)!;
           }),
         ),
       );

@@ -230,7 +230,7 @@ describe("Scient right-panel surfaces", () => {
       scientRightPanelSurfaceTitle(
         scientComputeSurface({ cwd: "/project", contextId: "owner-1" as ComputeContextId }),
       ),
-    ).toBe("Compute session");
+    ).toBe("Console");
     expect(
       scientRightPanelSurfaceTitle(
         scientSourcePdfSurface({

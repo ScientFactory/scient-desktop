@@ -26,7 +26,7 @@ fork. The source already present in the assistant message is authoritative;
 SVG and PNG are disposable local representations. This is intentionally the
 first presentation layer for the future Scientific Artifact Studio, not a
 second artifact model. A future “save as artifact” action should follow the
-[Scientific Artifact Studio roadmap](./scientific-artifact-studio.md) and its
+[Scient Compute architecture](./scient-compute.md) and its
 typed artifact-reference boundary rather than adding persistence to the
 diagram card.
 

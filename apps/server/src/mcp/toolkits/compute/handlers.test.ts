@@ -1,91 +1,99 @@
-import {
-  ComputeGatewayError,
-  EnvironmentId,
-  ProviderInstanceId,
-  ThreadId,
-} from "@t3tools/contracts";
+import { ComputeLanguageId } from "@scientfactory/compute";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
+import { WorkspaceBindingResolutionError } from "../../../scient/projectScope/WorkspaceBinding.ts";
+import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
 import { listScientComputeInventory } from "./handlers.ts";
-import { ScientComputeInventoryToolError } from "./tools.ts";
 
-const makeInvocation = (
-  capabilities: ReadonlySet<AgentInvocationContext.OperationCapability>,
-): AgentInvocationContext.AgentInvocationScope => ({
-  environmentId: EnvironmentId.make("environment-compute-handler-test"),
-  threadId: ThreadId.make("thread-compute-handler-test"),
-  providerSessionId: "provider-session-compute-handler-test",
-  providerInstanceId: ProviderInstanceId.make("codex"),
-  capabilities,
-  issuedAt: 1,
-});
-
-it.effect("requires compute:inventory before touching the gateway", () => {
-  const runtimeInventory = vi.fn(() => Effect.succeed({ languages: [] }));
-  const gateway = { runtimeInventory } satisfies ComputeMcpGateway["Service"];
-
-  return Effect.gen(function* () {
-    const error = yield* listScientComputeInventory().pipe(
-      Effect.provideService(
-        AgentInvocationContext.AgentInvocationContext,
-        makeInvocation(new Set()),
-      ),
-      Effect.provideService(ComputeMcpGateway, gateway),
-      Effect.flip,
-    );
-
-    expect(error).toBeInstanceOf(ScientComputeInventoryToolError);
-    expect(error).toMatchObject({ code: "capability-unavailable" });
-    expect(runtimeInventory).not.toHaveBeenCalled();
-  });
-});
-
-it.effect("reads only the existing gateway inventory operation", () => {
-  const inventory = { languages: [] };
-  const runtimeInventory = vi.fn(() => Effect.succeed(inventory));
-  const gateway = { runtimeInventory } satisfies ComputeMcpGateway["Service"];
-
-  return Effect.gen(function* () {
-    const result = yield* listScientComputeInventory().pipe(
-      Effect.provideService(
-        AgentInvocationContext.AgentInvocationContext,
-        makeInvocation(new Set(["compute:inventory"])),
-      ),
-      Effect.provideService(ComputeMcpGateway, gateway),
-    );
-
-    expect(result).toEqual(inventory);
-    expect(runtimeInventory).toHaveBeenCalledTimes(1);
-  });
-});
-
-it.effect("maps gateway failures without exposing host details", () => {
+it.effect("lets an agent without the compute grant read what is installed", () => {
   const runtimeInventory = vi.fn(() =>
-    Effect.fail(
-      new ComputeGatewayError({
-        operation: "inspect",
-        reason: "operation-failed",
-        message: "host-specific-runtime should not be returned",
-      }),
-    ),
+    Effect.succeed({
+      languages: [
+        {
+          descriptor: {
+            languageId: ComputeLanguageId.make("cpp"),
+            displayName: "C++",
+            sourceExtensions: [],
+            capabilities: [],
+          },
+          enabled: true,
+          configuredExecutable: null,
+          managedRuntime: null,
+          toolkits: [],
+          installations: [],
+          tools: [
+            {
+              name: "clang++",
+              executable: "/usr/bin/clang++",
+              version: null,
+              origin: "Xcode tools",
+            },
+          ],
+          failureMessage: null,
+        },
+        {
+          descriptor: {
+            languageId: ComputeLanguageId.make("zig"),
+            displayName: "Zig",
+            sourceExtensions: [],
+            capabilities: [],
+          },
+          enabled: true,
+          configuredExecutable: null,
+          managedRuntime: null,
+          toolkits: [],
+          installations: [],
+          failureMessage: null,
+        },
+      ],
+    }),
   );
-  const gateway = { runtimeInventory } satisfies ComputeMcpGateway["Service"];
-
+  const inspectRuntimes = vi.fn(() =>
+    Effect.succeed({ contractVersion: 1 as const, scope: "environment" as const, languages: [] }),
+  );
   return Effect.gen(function* () {
-    const error = yield* listScientComputeInventory().pipe(
-      Effect.provideService(
-        AgentInvocationContext.AgentInvocationContext,
-        makeInvocation(new Set(["compute:inventory"])),
+    const inventory = yield* listScientComputeInventory().pipe(
+      Effect.provideService(AgentInvocationContext.AgentInvocationContext, {
+        environmentId: EnvironmentId.make("environment-compute-handler-test"),
+        threadId: ThreadId.make("thread-compute-handler-test"),
+        providerSessionId: "provider-session-compute-handler-test",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set<AgentInvocationContext.OperationCapability>(),
+        issuedAt: 1,
+      }),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ComputeMcpGateway)({ runtimeInventory, inspectRuntimes }),
+          Layer.mock(WorkspaceBindingResolver)({
+            resolveThread: () =>
+              Effect.fail(
+                new WorkspaceBindingResolutionError({
+                  operation: "test-resolve",
+                  kind: "project-required",
+                }),
+              ),
+          }),
+        ),
       ),
-      Effect.provideService(ComputeMcpGateway, gateway),
-      Effect.flip,
     );
-
-    expect(error).toMatchObject({ code: "inventory-failed" });
-    expect(error.message).not.toContain("host-specific-runtime");
+    expect(inventory).toEqual({
+      languages: [
+        {
+          language: "cpp",
+          name: "C++",
+          status: "clang++ · Xcode tools",
+          use: "shell",
+          default: null,
+          runtimes: [{ executable: "/usr/bin/clang++", version: null, origin: "Xcode tools" }],
+        },
+      ],
+      notFound: ["Zig"],
+    });
   });
 });

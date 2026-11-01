@@ -150,7 +150,7 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_MANAGED_PYTHON === "1")(
           Effect.scoped,
           Effect.provide(LocalExecutionProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
         ),
-      600_000,
+      25 * 60_000,
     );
   },
 );

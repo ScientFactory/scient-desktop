@@ -1,3 +1,5 @@
+import { ASSISTANT_CITATION_MAX_TEXT_LENGTH } from "@t3tools/contracts";
+
 export interface ComputeCodeSlice {
   readonly code: string;
   readonly range: {
@@ -147,6 +149,29 @@ export function computeCell(
     break;
   }
   return first > last ? null : sliceLines(contents, lines, first, last);
+}
+
+/**
+ * What asking about the cell at a one-based line quotes: its code without the blank lines around
+ * it. A cell too long for a quote is quoted in whole lines from that line on.
+ */
+export function computeCellQuote(
+  contents: string,
+  line: number,
+  marker?: RegExp,
+): { readonly from: number; readonly to: number } | null {
+  const cell = computeCell(contents, line, marker);
+  if (cell === null) return null;
+  const lines = sourceLines(contents);
+  const code = cell.code.trim();
+  const cellStart = (lines[cell.range.startLine]?.start ?? 0) + cell.code.indexOf(code);
+  const cellEnd = cellStart + code.length;
+  if (code.length <= ASSISTANT_CITATION_MAX_TEXT_LENGTH) return { from: cellStart, to: cellEnd };
+  const from = Math.max(cellStart, lines[line - 1]?.start ?? cellStart);
+  const limit = from + ASSISTANT_CITATION_MAX_TEXT_LENGTH;
+  if (limit >= cellEnd) return { from, to: cellEnd };
+  const lineEnd = contents.lastIndexOf("\n", limit);
+  return { from, to: lineEnd > from ? lineEnd : limit };
 }
 
 /** The explicit cell implied by a caret, never by a non-collapsed text selection. */

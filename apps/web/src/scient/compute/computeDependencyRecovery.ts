@@ -87,7 +87,7 @@ export function managedDependencyRuntime(input: {
     !(
       input.session.runtime !== null &&
       input.session.runtime.source !== "managed" &&
-      language?.enabled &&
+      language !== undefined &&
       catalogued &&
       status?.installed &&
       status.operation === null &&

@@ -638,7 +638,6 @@
   "src/scient/fileSurfaces/fileFailureCopy.test.ts": 0.019,
   "src/scient/fileSurfaces/FileReadFailure.dom.browser.test.tsx": 0.105,
   "src/scient/fileSurfaces/fileReadRecovery.dom.browser.test.tsx": 0.178,
-  "src/scient/fileSurfaces/fileRefreshPolicy.test.ts": 0.016,
   "src/scient/fileSurfaces/scientFileAuxiliarySeam.test.ts": 0.045,
   "src/scient/fileSurfaces/ScientFileFreshnessControls.test.tsx": 0.13,
   "src/scient/fileSurfaces/ScientFileVersionHistory.browser.test.tsx": 0.847,

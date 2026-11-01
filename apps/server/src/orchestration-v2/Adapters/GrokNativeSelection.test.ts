@@ -325,7 +325,7 @@ it.layer(layer, { excludeTestServices: true })("native Grok model selection", (i
     Effect.scoped(
       Effect.gen(function* () {
         const capabilities = granted
-          ? new Set<McpCapability>(["documents:build", "compute:inventory", "skills:read"])
+          ? new Set<McpCapability>(["documents:build", "compute", "skills:read"])
           : undefined;
         const h = yield* harness("1", { model: "default" }, {}, capabilities);
         yield* h.send;

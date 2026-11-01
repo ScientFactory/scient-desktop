@@ -2,6 +2,7 @@
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { ComputeRuntimeError } from "@scientfactory/compute";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   SCIENT_COMPUTE_BRIDGES,
@@ -18,6 +19,7 @@ import * as Stream from "effect/Stream";
 import { ExecutionProcess } from "../execution/LocalExecutionProcess.ts";
 import {
   MATLAB_BRIDGE_SCRIPT_NAME,
+  connectingOnDemand,
   matlabBridgePathCandidates,
   makeMatlabEngineInspector,
   pathIsInside,
@@ -318,5 +320,53 @@ describe("MATLAB Engine host inspection", () => {
       expect(failure.message).toContain("no compatible Python host");
       expect(yield* processes.cancelled).toBeGreaterThan(0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("connecting MATLAB on demand", () => {
+  const noHost = () =>
+    new ComputeRuntimeError({
+      operation: "discover",
+      message: "MATLAB is installed, but no compatible Python host could import its Engine API.",
+    });
+  const adapter = (connected: () => boolean) =>
+    ({
+      verify: () =>
+        Effect.sync(() => ({
+          readiness: connected() ? "ready" : "missing-requirement",
+          message: connected() ? null : "No host.",
+        })),
+      prepareLaunch: () => (connected() ? Effect.succeed("launch") : Effect.fail(noHost())),
+    }) as never;
+
+  it.effect("adds the connection only when nothing can reach the Engine, then goes on", () =>
+    Effect.gen(function* () {
+      let connected = false;
+      let added = 0;
+      const wrapped = connectingOnDemand(
+        adapter(() => connected),
+        () =>
+          Effect.sync(() => {
+            added += 1;
+            connected = true;
+          }),
+      );
+      expect(yield* wrapped.prepareLaunch({} as never)).toBe("launch");
+      expect((yield* wrapped.verify({} as never)).readiness).toBe("ready");
+      expect(added).toBe(1);
+    }),
+  );
+
+  it.effect("reports what was found when the connection cannot be added", () =>
+    Effect.gen(function* () {
+      const wrapped = connectingOnDemand(
+        adapter(() => false),
+        (cause) => Effect.fail(cause),
+      );
+      expect((yield* wrapped.verify({} as never)).readiness).toBe("missing-requirement");
+      expect((yield* Effect.flip(wrapped.prepareLaunch({} as never))).message).toContain(
+        "no compatible Python host",
+      );
+    }),
   );
 });

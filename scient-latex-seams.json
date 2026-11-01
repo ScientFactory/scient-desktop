@@ -42,6 +42,7 @@
     "packages/contracts/src/fileCitations.ts",
     "packages/shared/src/composerCitations.ts",
     "packages/shared/src/pdfCitations.ts",
+    "packages/shared/src/computeCitations.ts",
     "packages/contracts/src/scientConversationExport.ts"
   ],
   "latexDiffSignals": [

@@ -134,6 +134,29 @@ export async function closeComputeContext(
   return { closed: true, contextId: input.contextId, error: null };
 }
 
+/** Whether closing this context would stop something running or waiting. */
+export async function computeContextHasRunningWork(input: {
+  readonly contextId: ComputeContextId;
+  readonly isSessionBusy: (binding: ComputeContextBinding) => Promise<boolean>;
+  readonly isBatchRunActive: (binding: ComputeContextBinding) => Promise<boolean>;
+}): Promise<boolean> {
+  const { bindings } = useComputeContextStore.getState();
+  const owned = Object.values(bindings).filter(
+    (binding) =>
+      binding.contextId === input.contextId || binding.parentContextId === input.contextId,
+  );
+  const working = await Promise.all(
+    owned.map((binding) =>
+      binding.batchRunId !== undefined
+        ? input.isBatchRunActive(binding)
+        : binding.sessionId !== null && binding.borrowed !== true
+          ? input.isSessionBusy(binding)
+          : false,
+    ),
+  );
+  return working.some(Boolean);
+}
+
 /** Stop the displayed context only; closing its tab also stops all owned children. */
 export async function stopComputeContext(
   input: ComputeContextCloseInput,
@@ -163,13 +186,17 @@ async function stopOwnedComputeContext(
       /* Keep the owner when shutdown cannot be confirmed. */
     }
     if (!closed) {
-      const error = "Unable to confirm that this tab's MATLAB batch run has stopped.";
+      const error = "Unable to confirm that this tab's run has stopped.";
       useComputeContextStore.getState().markCloseFailed({ contextId: input.contextId, error });
       return { closed: false, contextId: input.contextId, error };
     }
     return { closed: true, contextId: input.contextId, error: null };
   }
   if (binding === null || binding.sessionId === null) {
+    return { closed: true, contextId: input.contextId, error: null };
+  }
+  if (binding.borrowed === true) {
+    useComputeContextStore.getState().releaseBorrowedSession(input.contextId);
     return { closed: true, contextId: input.contextId, error: null };
   }
 
@@ -381,7 +408,14 @@ export async function replaceComputeContextSession(
     if (!reserved) return { kind: "cancelled" };
     const started = await input.startSession({
       environmentId: binding.environmentId,
-      input: { cwd: binding.cwd, sessionId: input.replacementSessionId, ...runtime },
+      input: {
+        cwd: binding.cwd,
+        sessionId: input.replacementSessionId,
+        ...runtime,
+        ...(binding.relativePath === null
+          ? {}
+          : { owner: { _tag: "file" as const, path: binding.relativePath } }),
+      },
     });
     if (started._tag !== "Success") {
       const error = squashAtomCommandFailure(started);

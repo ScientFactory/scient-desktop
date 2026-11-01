@@ -188,6 +188,11 @@ export class LocalComputeStore extends Context.Service<
       projectId: ComputeProjectId,
       sessionId: ComputeSessionId,
     ) => Effect.Effect<ComputeSessionStorage, LocalComputeStoreError>;
+    readonly removeExecutionOutputs: (
+      projectId: ComputeProjectId,
+      sessionId: ComputeSessionId,
+      executionId: ComputeExecutionId,
+    ) => Effect.Effect<void, LocalComputeStoreError>;
     readonly removeDisposableSessionData: (
       record: ComputeSessionRecord,
       removedAt: string,
@@ -215,8 +220,16 @@ async function sha256File(filePath: string): Promise<string> {
   return `sha256:${hash.digest("hex")}`;
 }
 
-function resourceFileExtension(mediaType: string): ".png" | ".svg" | ".bin" {
-  return mediaType === "image/png" ? ".png" : mediaType === "image/svg+xml" ? ".svg" : ".bin";
+const RESOURCE_FILE_EXTENSIONS: Readonly<Record<string, string>> = {
+  "image/png": ".png",
+  "image/svg+xml": ".svg",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+};
+
+// The served Content-Type follows this extension.
+function resourceFileExtension(mediaType: string): string {
+  return RESOURCE_FILE_EXTENSIONS[mediaType] ?? ".bin";
 }
 
 async function directoryByteLength(directory: string): Promise<number> {
@@ -496,9 +509,10 @@ const make = Effect.gen(function* () {
           Effect.gen(function* () {
             // Resource copies intentionally bypass the journal write lease. Give each write a
             // private temporary directory so concurrent identical figures cannot race the same
-            // rename; scope cleanup must remove failed partial copies.
+            // rename; scope cleanup must remove failed partial copies. The name stays short because
+            // Windows applies its path limit to creating this folder, though not to the rename.
             const temporaryDirectory = yield* fs
-              .makeTempDirectoryScoped({ directory, prefix: `${fileName}.` })
+              .makeTempDirectoryScoped({ directory, prefix: ".write-" })
               .pipe(mapStoreError(input.operation, directory));
             yield* Effect.tryPromise({
               try: async () => {
@@ -896,6 +910,24 @@ const make = Effect.gen(function* () {
     });
   });
 
+  /** Makes room for newer runs. The caller records that this run's output is gone. */
+  const removeExecutionOutputs = Effect.fn("LocalComputeStore.removeExecutionOutputs")(function* (
+    projectId: ComputeProjectId,
+    sessionId: ComputeSessionId,
+    executionId: ComputeExecutionId,
+  ) {
+    const directory = yield* executionDirectory(projectId, sessionId, executionId);
+    yield* writeLock.withPermits(1)(
+      Effect.tryPromise({
+        try: async () => {
+          await NodeFSP.rm(`${directory}/output.ndjson`, { force: true });
+          await NodeFSP.rm(`${directory}/outputs`, { force: true, recursive: true });
+        },
+        catch: (cause) => storeError("remove-execution-outputs", directory, cause),
+      }),
+    );
+  });
+
   /**
    * Reclaim output bytes while preserving session/journal/request/result history and an explicit
    * unavailable-figures state. Do not schedule trimming here: retention timing requires a separate
@@ -982,6 +1014,7 @@ const make = Effect.gen(function* () {
     resolveOutputImage,
     resolveOutputResource,
     measureSessionStorage,
+    removeExecutionOutputs,
     removeDisposableSessionData,
   });
 });

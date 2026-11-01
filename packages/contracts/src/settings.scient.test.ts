@@ -183,7 +183,7 @@ describe("ServerSettings thread settlement", () => {
 });
 
 describe("ServerSettings scientific computing", () => {
-  it("enables every language by default while preserving explicit opt-outs", () => {
+  it("needs nothing saved for a language, and ignores the switch older versions saved", () => {
     const python = ComputeLanguageId.make("python");
     const matlab = ComputeLanguageId.make("matlab");
     const futureLanguage = ComputeLanguageId.make("future-language");
@@ -197,25 +197,25 @@ describe("ServerSettings scientific computing", () => {
         DEFAULT_SERVER_SETTINGS.scientificComputing,
         python,
       ),
-    ).toEqual({ enabled: true, executable: "" });
+    ).toEqual({ executable: "" });
     expect(
       resolveScientificComputingLanguageSettings(
         DEFAULT_SERVER_SETTINGS.scientificComputing,
         matlab,
       ),
-    ).toEqual({ enabled: true, executable: "" });
+    ).toEqual({ executable: "" });
     expect(
       resolveScientificComputingLanguageSettings(
         DEFAULT_SERVER_SETTINGS.scientificComputing,
         futureLanguage,
       ),
-    ).toEqual({ enabled: true, executable: "" });
-    const disabled = decodeServerSettings({
+    ).toEqual({ executable: "" });
+    const saved = decodeServerSettings({
       scientificComputing: { languages: { python: { enabled: false } } },
     });
-    expect(
-      resolveScientificComputingLanguageSettings(disabled.scientificComputing, python),
-    ).toEqual({ enabled: false, executable: "" });
+    expect(resolveScientificComputingLanguageSettings(saved.scientificComputing, python)).toEqual({
+      executable: "",
+    });
   });
 
   it("round-trips independent language preferences without installation state", () => {
@@ -223,14 +223,14 @@ describe("ServerSettings scientific computing", () => {
       scientificComputing: {
         schemaVersion: 1,
         languages: {
-          python: { enabled: true, executable: " /opt/python/bin/python3 " },
-          r: { enabled: false, executable: "" },
+          python: { executable: " /opt/python/bin/python3 " },
+          r: { executable: "" },
         },
       },
     });
     expect(settings.scientificComputing.languages).toEqual({
-      python: { enabled: true, executable: "/opt/python/bin/python3" },
-      r: { enabled: false, executable: "" },
+      python: { executable: "/opt/python/bin/python3" },
+      r: { executable: "" },
     });
     expect(encodeServerSettings(settings).scientificComputing).toEqual(
       settings.scientificComputing,
@@ -241,10 +241,10 @@ describe("ServerSettings scientific computing", () => {
     expect(
       decodeServerSettingsPatch({
         scientificComputing: {
-          languages: { python: { enabled: true } },
+          languages: { python: { executable: "" } },
         },
       }).scientificComputing,
-    ).toEqual({ languages: { python: { enabled: true } } });
+    ).toEqual({ languages: { python: { executable: "" } } });
   });
 });
 
