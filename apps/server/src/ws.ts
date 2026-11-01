@@ -325,6 +325,7 @@ import {
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { captureScientWsServices } from "./scient/ScientWsServices.ts";
+import { BrowserHistory } from "./scient/browserHistory/BrowserHistory.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
@@ -1472,6 +1473,9 @@ export const layerWsRpc = (
       const accountUserRuns = yield* accountsUserRunsForRpc;
       const accountPlainKeys = yield* makePlainKeys(accounts);
       const linkAccountKey = yield* makeAccountKeyLinks(accounts);
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — Scient Browser: history.
+      const browserHistory = yield* BrowserHistory;
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient extensions services.
       const extensionServices = {
@@ -3657,6 +3661,11 @@ export const layerWsRpc = (
         [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
         [WS_METHODS.previewReportProfiles]: (input) => reportProfiles(input),
         [WS_METHODS.previewReportStatus]: (input) => previewManager.reportStatus(input),
+        // SCIENT-FORK:START — Scient Browser: history.
+        [WS_METHODS.browserHistoryList]: (input) => browserHistory.list(input),
+        [WS_METHODS.browserHistoryRemove]: ({ urls }) => browserHistory.remove(urls),
+        [WS_METHODS.browserHistoryClear]: () => browserHistory.clear,
+        // SCIENT-FORK:END
         [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
       });
       const handlers5 = WsDeviceAndTelemetryRpcGroup.of({

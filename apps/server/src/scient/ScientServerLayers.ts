@@ -22,6 +22,7 @@ import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
 import * as DataTables from "./data/DataTables.ts";
 import * as NotebookRunRecorder from "./notebook/NotebookRunRecorder.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
+import * as BrowserHistory from "./browserHistory/BrowserHistory.ts";
 import * as AnalysisRunIndex from "./analysis/AnalysisRunIndex.ts";
 import * as LocalDuplexProcess from "./execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "./execution/LocalExecutionProcess.ts";
@@ -186,6 +187,7 @@ export function makeScientRouteServices<
   /** Scient services behind the routes, provided in order. */
   const provideScientRouteServices = <A, E, R>(self: Layer.Layer<A, E, R>) =>
     self.pipe(
+      Layer.provide(BrowserHistory.layer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(AnalysisServiceLive),
       Layer.provide(ConversationExportServiceLive),
       Layer.provide(ConversationImportStagingLive),
