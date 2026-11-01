@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import {
-  InMemoryCredentialStore,
+  loadCursorSdk,
   makeCursorAuth,
   type CursorAuthOptions,
 } from "@t3tools/provider-cursor/testing";
@@ -25,6 +25,7 @@ const credentials = {
 };
 
 const makeHarness = Effect.fn("makeCursorConnectionHarness")(function* (showUrl = true) {
+  const { InMemoryCredentialStore } = loadCursorSdk();
   const store = new InMemoryCredentialStore();
   const started = Promise.withResolvers<Parameters<NonNullable<CursorAuthOptions["login"]>>[0]>();
   const finish = Promise.withResolvers<void>();

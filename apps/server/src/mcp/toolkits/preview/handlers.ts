@@ -239,37 +239,48 @@ const handlers = {
       );
     }),
   ),
-  preview_open: McpToolAccess.actsAsCaller((input) =>
-    withPreviewAccounts(
-      invokeTargeted<PreviewAutomationStatus>("open", normalizePreviewOpenInput(input)),
-      (scope) =>
-        Effect.gen(function* () {
-          const status = yield* invokeTargeted<PreviewAutomationStatus>(
-            "status",
-            input.tabId === undefined ? {} : { tabId: input.tabId },
-          );
-          const profile = yield* authorizePreviewProfile(scope, status, input);
-          const opened = yield* recordProfileUse(
-            scope,
-            profile.profileId,
-            invokeTargeted<PreviewAutomationStatus>(
-              "open",
-              normalizePreviewOpenInput({ ...input, profileId: profile.profileId }),
-            ),
-          );
-          const checked = yield* previewProfileFallback(scope, opened, {
-            operation: "open",
-            requestedUrl: input.url,
-            input: normalizePreviewOpenInput(input),
-            profileId: profile.profileId,
-            targetsExistingTab:
-              input.tabId !== undefined ||
-              (input.reuseExistingTab !== false && status.tabId !== null),
-          });
-          return yield* filterPreviewProfiles(scope, checked);
-        }),
-    ),
-  ),
+  // Models often pass a dev server as both `url` and `target`; the target knows the environment.
+  preview_open: McpToolAccess.actsAsCaller(({ target, url, ...rest }) => {
+    const input: PreviewAutomationOpenInput =
+      target === undefined && url !== undefined ? { ...rest, url } : rest;
+    const openThenTarget = Effect.fn("PreviewToolkit.openThenTarget")(function* (
+      openInput: PreviewAutomationOpenInput,
+    ) {
+      const opened = yield* invokeTargeted<PreviewAutomationStatus>(
+        "open",
+        normalizePreviewOpenInput(openInput),
+      );
+      if (target === undefined || opened.tabId === null) return opened;
+      return yield* invokeTargeted<PreviewAutomationStatus>("navigate", {
+        target,
+        tabId: opened.tabId,
+      });
+    });
+    return withPreviewAccounts(openThenTarget(input), (scope) =>
+      Effect.gen(function* () {
+        const status = yield* invokeTargeted<PreviewAutomationStatus>(
+          "status",
+          input.tabId === undefined ? {} : { tabId: input.tabId },
+        );
+        const profile = yield* authorizePreviewProfile(scope, status, input);
+        const opened = yield* recordProfileUse(
+          scope,
+          profile.profileId,
+          openThenTarget({ ...input, profileId: profile.profileId }),
+        );
+        const checked = yield* previewProfileFallback(scope, opened, {
+          operation: "open",
+          requestedUrl: input.url,
+          input: normalizePreviewOpenInput(input),
+          profileId: profile.profileId,
+          targetsExistingTab:
+            input.tabId !== undefined ||
+            (input.reuseExistingTab !== false && status.tabId !== null),
+        });
+        return yield* filterPreviewProfiles(scope, checked);
+      }),
+    );
+  }),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: flag access failures after navigating an existing tab.
   preview_navigate: McpToolAccess.actsAsCaller((input) =>
