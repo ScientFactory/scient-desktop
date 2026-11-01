@@ -1,4 +1,5 @@
 import {
+  COMPUTE_RUN_TABLE,
   computeLanguageStatus,
   defaultComputeInstallation,
   type ComputeLanguageRuntimeInventory,
@@ -75,7 +76,11 @@ function summarize(
     language: language.descriptor.languageId,
     name: language.descriptor.displayName,
     status: status.detail,
-    use: runnable ? "scient_compute_run" : "shell",
+    use: runnable
+      ? "scient_compute_run"
+      : COMPUTE_RUN_TABLE.some((route) => route.languageId === language.descriptor.languageId)
+        ? "scient_compute_run_file"
+        : "shell",
     default: defaultRuntime(language, inspected),
     runtimes,
     ...(language.toolkits.length === 0

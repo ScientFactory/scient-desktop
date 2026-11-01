@@ -66,6 +66,8 @@ export interface ObservedComputeProjectImage {
 
 export interface ComputeProjectOutputCollection {
   readonly images: ReadonlyArray<ObservedComputeProjectImage>;
+  /** Tables written during the observation, to point at. They are not read. */
+  readonly tables: ReadonlyArray<string>;
   readonly warnings: ReadonlyArray<string>;
 }
 
@@ -91,6 +93,8 @@ function imageMediaType(name: string): ComputeImageMediaType | null {
       return null;
   }
 }
+
+const TABLE_FILE = /\.(csv|tsv|parquet|xlsx)$/iu;
 
 function sameState(left: ProjectImageState | undefined, right: ProjectImageState): boolean {
   return (
@@ -212,7 +216,8 @@ async function snapshotProjectImages(
         }
         continue;
       }
-      if (!entry.isFile() || imageMediaType(entry.name) === null) continue;
+      if (!entry.isFile() || (imageMediaType(entry.name) === null && !TABLE_FILE.test(entry.name)))
+        continue;
       try {
         const metadata = await NodeFSP.lstat(absolutePath, { bigint: true });
         if (!metadata.isFile()) continue;
@@ -317,7 +322,7 @@ async function readObservedImage(
 
 const disabledObserver: ComputeProjectOutputObserverPort = {
   begin: (projectRoot) => Effect.succeed({ projectRoot, baseline: null, warnings: [] }),
-  collect: () => Effect.succeed({ images: [], warnings: [] }),
+  collect: () => Effect.succeed({ images: [], tables: [], warnings: [] }),
 };
 
 export class ComputeProjectOutputObserver extends Context.Service<
@@ -362,7 +367,7 @@ const liveObserver: ComputeProjectOutputObserverPort = {
     ),
   collect: (observation, limits) =>
     observation.baseline === null
-      ? Effect.succeed({ images: [], warnings: observation.warnings })
+      ? Effect.succeed({ images: [], tables: [], warnings: observation.warnings })
       : Effect.clockWith((clock) =>
           Effect.tryPromise({
             try: (signal) =>
@@ -372,7 +377,7 @@ const liveObserver: ComputeProjectOutputObserverPort = {
             catch: (cause) => new ProjectOutputObservationFailure({ cause }),
           }).pipe(
             Effect.flatMap((after) => {
-              const changed = [...after.files.entries()]
+              const written = [...after.files.entries()]
                 .filter(([path, state]) => {
                   const baseline = observation.baseline!;
                   const before = baseline.files.get(path);
@@ -382,6 +387,10 @@ const liveObserver: ComputeProjectOutputObserverPort = {
                 })
                 .map(([path]) => path)
                 .toSorted();
+              const tables = written
+                .filter((path) => TABLE_FILE.test(path))
+                .slice(0, MAXIMUM_IMAGES_PER_EXECUTION);
+              const changed = written.filter((path) => !TABLE_FILE.test(path));
               const countLimited = changed.slice(0, MAXIMUM_IMAGES_PER_EXECUTION);
               const limited: string[] = [];
               let plannedBytes = 0n;
@@ -423,6 +432,7 @@ const liveObserver: ComputeProjectOutputObserverPort = {
                   }
                   return {
                     images,
+                    tables,
                     warnings: [
                       ...new Set([
                         ...observation.warnings,
@@ -435,6 +445,7 @@ const liveObserver: ComputeProjectOutputObserverPort = {
                 }),
                 Effect.orElseSucceed(() => ({
                   images: [],
+                  tables,
                   warnings: [
                     ...observation.warnings,
                     "Scient could not safely retain generated project figures.",
@@ -447,11 +458,13 @@ const liveObserver: ComputeProjectOutputObserverPort = {
               orElse: () =>
                 Effect.succeed({
                   images: [],
+                  tables: [],
                   warnings: ["Some project files could not be checked (time limit)."],
                 }),
             }),
             Effect.orElseSucceed(() => ({
               images: [],
+              tables: [],
               warnings: [
                 ...observation.warnings,
                 "Scient could not finish observing generated project figures.",

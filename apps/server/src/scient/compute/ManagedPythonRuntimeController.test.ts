@@ -838,9 +838,9 @@ describe("ManagedPythonRuntimeController", () => {
       expect((yield* controller.status()).failure).toEqual({
         reason: "activation-failed",
         action: "repair",
-        summary: "Scientific Python was copied from another location",
+        summary: "Scientific Python needs repair",
         detail:
-          "It still points to /Users/old/Library/Scient/compute/interpreters/python/3.12/bin. Repair rebuilds it here.",
+          "It was copied from another location and still points to /Users/old/Library/Scient/compute/interpreters/python/3.12/bin. Repair rebuilds it here.",
       });
       controller.dispose();
     }),

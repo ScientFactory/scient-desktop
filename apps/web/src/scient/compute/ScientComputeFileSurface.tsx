@@ -7,17 +7,20 @@ import type {
   EnvironmentId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { classifyMatlabSource } from "@t3tools/contracts";
+import { classifyMatlabSource, isSqliteScript } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Link } from "@tanstack/react-router";
 import { Columns2, LoaderCircle, Play, Rows2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 
 import { observeResize } from "~/lib/observeResize";
 
 import { EditableFileSurface } from "~/components/files/FilePreviewPanel";
+import { analysisEnvironment } from "~/state/analysis";
+import { computeEnvironment } from "~/state/compute";
+import { useEnvironmentQuery } from "~/state/query";
 import type { DraftId } from "~/composerDraftStore";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
@@ -33,7 +36,7 @@ import {
   useComputeFilePresentationStore,
   type ComputePanelView,
 } from "./computeFilePresentationStore";
-import type { ComputeSourceLanguage } from "./computeSourceLanguage";
+import { computeRunLanguageFor, type ComputeSourceLanguage } from "./computeSourceLanguage";
 import { ComputeFileActions, type ComputeFileActionsHandle } from "./ComputeFileActions";
 import {
   createComputeContextId,
@@ -143,10 +146,30 @@ function persist<T, E>(key: string, value: T, schema: Schema.Codec<T, E>): void 
 }
 
 export function ScientComputeFileSurface(props: ScientComputeFileSurfaceProps) {
-  return props.language.languageId === "matlab" || props.language.runOnly === true ? (
-    <BatchComputeFileSurface {...props} />
+  const { languageId, runOnly } = props.language;
+  const inspection = useEnvironmentQuery(
+    languageId === "matlab" || languageId === "sql" || runOnly === true
+      ? analysisEnvironment.runtimes({
+          environmentId: props.environmentId,
+          input: { cwd: props.cwd },
+        })
+      : null,
+  ).data;
+  // Read once: Scient must not swap the surface under someone typing a dot command.
+  const [sqliteScript] = useState(() => isSqliteScript(props.initialSource));
+  const language = computeRunLanguageFor({
+    language: props.language,
+    relativePath: props.relativePath,
+    sqliteScript,
+    isAvailable: (id) =>
+      inspection === undefined || inspection === null
+        ? null
+        : inspection.runtimes.find((runtime) => runtime.kind === id)?.availability === "available",
+  });
+  return language.languageId === "matlab" || language.runOnly === true ? (
+    <BatchComputeFileSurface {...props} language={language} />
   ) : (
-    <ComputeFileSurfaceContent {...props} />
+    <ComputeFileSurfaceContent {...props} language={language} />
   );
 }
 
@@ -177,9 +200,9 @@ function RunFileButton(props: {
           {props.languageName} not found
         </Button>
       ) : (
-        <Button size="xs" disabled={!batch.canStart} onClick={props.onRun}>
+        <Button size="xs" variant="outline" disabled={!batch.canStart} onClick={props.onRun}>
           {batch.isStarting ? <LoaderCircle className="animate-spin" /> : <Play />}
-          Run
+          Run file
         </Button>
       )}
     </div>
@@ -194,6 +217,16 @@ function BatchComputeFileSurface(props: ScientComputeFileSurfaceProps) {
     resultContextId === null ? null : (state.bindings[resultContextId]?.batchRunId ?? null),
   );
   const cancelBatchRun = useCancelComputeBatchRun();
+  const pastRuns = useEnvironmentQuery(
+    analysisEnvironment.runs({
+      environmentId: props.environmentId,
+      input: { cwd: props.cwd, relativePath: props.relativePath, limit: 1 },
+    }),
+  );
+  // What was read before this file's last run says it has none.
+  const refreshPastRuns = pastRuns.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the file's run history from the server when its tab opens
+  useEffect(() => refreshPastRuns(), [refreshPastRuns]);
   const batch = useComputeBatchRun(
     {
       environmentId: props.environmentId,
@@ -223,6 +256,7 @@ function BatchComputeFileSurface(props: ScientComputeFileSurfaceProps) {
           contextId: childId,
           parentContextId: props.contextId,
           batchRunId: runId,
+          startedAt: new Date().toISOString(),
           environmentId: props.environmentId,
           cwd: props.cwd,
           relativePath: props.relativePath,
@@ -260,11 +294,20 @@ function BatchComputeFileSurface(props: ScientComputeFileSurfaceProps) {
       },
     },
   );
-  return <ComputeFileSurfaceContent {...props} batch={batch} />;
+  return (
+    <ComputeFileSurfaceContent
+      {...props}
+      batch={batch}
+      hasRun={batchRunId !== null || (pastRuns.data?.runs.length ?? 0) > 0}
+    />
+  );
 }
 
 function ComputeFileSurfaceContent(
-  props: ScientComputeFileSurfaceProps & { readonly batch?: ComputeBatchRunModel },
+  props: ScientComputeFileSurfaceProps & {
+    readonly batch?: ComputeBatchRunModel;
+    readonly hasRun?: boolean;
+  },
 ) {
   const view = useComputeFilePresentationStore(
     (state) => state.presentations[props.contextId]?.view ?? "code",
@@ -278,8 +321,25 @@ function ComputeFileSurfaceContent(
     (state) => state.presentations[props.contextId]?.resultsContextId ?? props.contextId,
   );
   const showingBatch = useComputeContextStore(
-    (state) => state.bindings[resultsContextId]?.batchRunId !== undefined,
+    (state) =>
+      props.language.runOnly === true || state.bindings[resultsContextId]?.batchRunId !== undefined,
   );
+  const hasSession = useComputeContextStore(
+    (state) => (state.bindings[props.contextId]?.sessionId ?? null) !== null,
+  );
+  const sessions = useEnvironmentQuery(
+    computeEnvironment.sessions({ environmentId: props.environmentId, input: { cwd: props.cwd } }),
+  );
+  const refreshSessions = sessions.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-reads the project's sessions from the server when this file's tab opens
+  useEffect(() => refreshSessions(), [refreshSessions]);
+  const hadSession = sessions.data?.some(
+    (session) => session.owner?._tag === "file" && session.owner.path === props.relativePath,
+  );
+  // There is nothing to switch to until the file has a result.
+  const showViews = view !== "code" || props.hasRun === true || hasSession || hadSession === true;
+  // A file with runs but no session, such as MATLAB reopened, has only those runs to show.
+  const onlyRuns = props.hasRun === true && !hasSession && hadSession !== true;
   const [preferredResultsView, setPreferredResultsView] =
     useState<ComputeFileResultsView>(initialResultsView);
   const [split, setSplit] = useState(initialSplit);
@@ -368,27 +428,29 @@ function ComputeFileSurfaceContent(
       dir="ltr"
     >
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border/60 bg-muted/20 px-2 py-1">
-        <div
-          className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
-          role="group"
-          aria-label={`${props.language.displayName} view layout`}
-        >
-          {COMPUTE_FILE_VIEWS.map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              className={cn(
-                SEGMENT_BUTTON_CLASS,
-                "px-2",
-                view === candidate && "bg-accent text-accent-foreground",
-              )}
-              aria-pressed={view === candidate}
-              onClick={() => selectView(candidate)}
-            >
-              {COMPUTE_FILE_VIEW_LABELS[candidate]}
-            </button>
-          ))}
-        </div>
+        {showViews ? (
+          <div
+            className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
+            role="group"
+            aria-label={`${props.language.displayName} view layout`}
+          >
+            {COMPUTE_FILE_VIEWS.map((candidate) => (
+              <button
+                key={candidate}
+                type="button"
+                className={cn(
+                  SEGMENT_BUTTON_CLASS,
+                  "px-2",
+                  view === candidate && "bg-accent text-accent-foreground",
+                )}
+                aria-pressed={view === candidate}
+                onClick={() => selectView(candidate)}
+              >
+                {COMPUTE_FILE_VIEW_LABELS[candidate]}
+              </button>
+            ))}
+          </div>
+        ) : null}
         {view === "split" && !narrow ? (
           <div
             className="flex shrink-0 items-center gap-px rounded-[6px] border border-border p-px"
@@ -546,11 +608,16 @@ function ComputeFileSurfaceContent(
                 {...separatorHandlers}
               />
             ) : null}
-            {showingBatch && props.batch !== undefined ? (
+            {(showingBatch || onlyRuns) && props.batch !== undefined ? (
               <ComputeBatchResults
                 key={resultsContextId}
                 model={props.batch}
-                resultPicker={<ComputeResultPicker contextId={props.contextId} />}
+                onRevealCode={() => {
+                  if (view === "results") setFileView(props.contextId, "split");
+                }}
+                {...(props.language.runOnly === true || onlyRuns
+                  ? {}
+                  : { resultPicker: <ComputeResultPicker contextId={props.contextId} /> })}
               />
             ) : (
               <ComputePanel

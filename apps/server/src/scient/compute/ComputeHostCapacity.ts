@@ -22,6 +22,8 @@ export class ComputeHostCapacity extends Context.Service<
   ComputeHostCapacity,
   {
     readonly acquire: () => Effect.Effect<Effect.Effect<void>, ComputeOperationError>;
+    /** Sets what ends idle work when the host is full. It answers whether anything ended. */
+    readonly setReclaim: (reclaim: Effect.Effect<boolean>) => Effect.Effect<void>;
   }
 >()("t3/scient/compute/ComputeHostCapacity") {}
 
@@ -41,24 +43,37 @@ export const layer = Layer.effect(
       () => DEFAULT_COMPUTE_HOST_CAPACITY,
     );
     const leases = new Set<symbol>();
+    let reclaim: Effect.Effect<boolean> = Effect.succeed(false);
+    const take = Effect.suspend(() => {
+      if (leases.size >= limit)
+        return Effect.fail(
+          new ComputeOperationError({
+            operation: "start",
+            reason: "capacity-reached",
+            message: `This host has ${limit} active or starting compute sessions, tests, or batch runs. Stop unused work and try again.`,
+          }),
+        );
+      const lease = Symbol();
+      leases.add(lease);
+      return Effect.succeed(
+        Effect.sync(() => {
+          leases.delete(lease);
+        }),
+      );
+    });
     return ComputeHostCapacity.of({
-      acquire: Effect.fn("ComputeHostCapacity.acquire")(function () {
-        return Effect.suspend(() => {
-          if (leases.size >= limit)
-            return Effect.fail(
-              new ComputeOperationError({
-                operation: "start",
-                reason: "capacity-reached",
-                message: `This host has ${limit} active or starting compute sessions, tests, or batch runs. Stop unused work and try again.`,
-              }),
-            );
-          const lease = Symbol();
-          leases.add(lease);
-          return Effect.succeed(
-            Effect.sync(() => {
-              leases.delete(lease);
-            }),
-          );
+      acquire: Effect.fn("ComputeHostCapacity.acquire")(function* () {
+        return yield* take.pipe(
+          Effect.catch((full) =>
+            Effect.suspend(() => reclaim).pipe(
+              Effect.flatMap((ended) => (ended ? take : Effect.fail(full))),
+            ),
+          ),
+        );
+      }),
+      setReclaim: Effect.fn("ComputeHostCapacity.setReclaim")(function* (next) {
+        yield* Effect.sync(() => {
+          reclaim = next;
         });
       }),
     });

@@ -1,7 +1,10 @@
 import {
   COMPUTE_LANGUAGE_CATALOG,
+  COMPUTE_RUN_TABLE,
   ComputeLanguageId,
   computeRunRouteForPath,
+  computeRunRoutesForPath,
+  type ComputeRunRoute,
 } from "@t3tools/contracts";
 
 export interface ComputeSourceLanguage {
@@ -60,6 +63,21 @@ const COMPUTE_SOURCES = [
 
 const NO_CELLS = /$^/;
 
+function runOnlyLanguage(route: ComputeRunRoute): ComputeSourceLanguage {
+  const language = COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages).find(
+    (candidate) => candidate.languageId === route.languageId,
+  );
+  return {
+    languageId: ComputeLanguageId.make(route.languageId),
+    displayName: language?.name ?? route.label ?? route.languageId,
+    extensions: route.extensions.filter((extension) =>
+      extension.startsWith("."),
+    ) as ReadonlyArray<`.${string}`>,
+    cellMarker: NO_CELLS,
+    runOnly: true,
+  };
+}
+
 export function computeSourceLanguageForPath(path: string): ComputeSourceLanguage | null {
   const normalized = path.toLowerCase();
   const session = COMPUTE_SOURCES.find((source) =>
@@ -67,19 +85,33 @@ export function computeSourceLanguageForPath(path: string): ComputeSourceLanguag
   );
   if (session !== undefined) return session;
   const route = computeRunRouteForPath(path);
-  if (route === undefined) return null;
-  const language = COMPUTE_LANGUAGE_CATALOG.flatMap((group) => group.languages).find(
-    (candidate) => candidate.languageId === route.languageId,
+  return route === undefined ? null : runOnlyLanguage(route);
+}
+
+/**
+ * The language that really runs a file. A file type two languages share goes to the first one on
+ * this computer, and a sqlite3 script to sqlite3. While nothing is known, nothing changes; when
+ * none of them is here, the file keeps its usual language, whose page says how to get it.
+ */
+export function computeRunLanguageFor(input: {
+  readonly language: ComputeSourceLanguage;
+  readonly relativePath: string;
+  readonly sqliteScript: boolean;
+  readonly isAvailable: (languageId: string) => boolean | null;
+}): ComputeSourceLanguage {
+  const { language, isAvailable } = input;
+  if (language.languageId === SQL_COMPUTE_SOURCE.languageId) {
+    const sqlite = COMPUTE_RUN_TABLE.find((route) => route.languageId === "sqlite");
+    return input.sqliteScript && sqlite !== undefined && isAvailable("sqlite") === true
+      ? runOnlyLanguage(sqlite)
+      : language;
+  }
+  const shared = language.languageId === MATLAB_COMPUTE_SOURCE.languageId || language.runOnly;
+  if (shared !== true || isAvailable(language.languageId) !== false) return language;
+  const route = computeRunRoutesForPath(input.relativePath).find(
+    (candidate) => isAvailable(candidate.languageId) === true,
   );
-  return {
-    languageId: ComputeLanguageId.make(route.languageId),
-    displayName: language?.name ?? route.languageId,
-    extensions: route.extensions.filter((extension) =>
-      extension.startsWith("."),
-    ) as ReadonlyArray<`.${string}`>,
-    cellMarker: NO_CELLS,
-    runOnly: true,
-  };
+  return route === undefined ? language : runOnlyLanguage(route);
 }
 
 /** A notebook runs in any language; one Scient has no source file type for is named from its id. */

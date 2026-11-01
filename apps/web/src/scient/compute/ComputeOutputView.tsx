@@ -30,6 +30,7 @@ import { ComputeDependencyRecoveryAction } from "./ComputeDependencyRecoveryActi
 import type { ComputeContextId } from "./computeContextStore";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
+
 type ComputeDiagnosticOutput = Extract<ComputeOutput, { readonly _tag: "diagnostic" }>;
 type DiagnosticFrame = ComputeDiagnosticOutput["diagnostic"]["frames"][number];
 
@@ -143,6 +144,7 @@ function ComputeDiagnostic(props: {
     readonly contextId: ComputeContextId;
     readonly onSettled: () => void;
   };
+  readonly onAskAgent?: ((text: string) => void) | undefined;
 }) {
   const { diagnostic } = props.output;
   const recovery = computeDependencyRecovery({
@@ -165,7 +167,18 @@ function ComputeDiagnostic(props: {
         <div className="flex items-start gap-2">
           <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
           <div className="min-w-0 flex-1">
-            <p className="font-medium break-words text-destructive">{summary}</p>
+            <div className="flex items-start gap-2">
+              <p className="min-w-0 flex-1 font-medium break-words text-destructive">{summary}</p>
+              {props.onAskAgent === undefined ? null : (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => props.onAskAgent?.([summary, ...diagnostic.traceback].join("\n"))}
+                >
+                  Ask agent
+                </Button>
+              )}
+            </div>
             {recovery !== null ? (
               <div className="mt-1.5 flex flex-wrap items-center gap-1">
                 {managed !== null && props.dependencyRecovery !== undefined ? (
@@ -232,6 +245,8 @@ export function ComputeOutputView(props: {
   readonly threadRef: ScopedThreadRef;
   readonly source?: ComputeExecutionSource | null;
   readonly runtimeInspection?: ComputeRuntimeInspection | null;
+  /** Puts an error in the chat as a quote of this run. */
+  readonly onAskAgent?: ((text: string) => void) | undefined;
   readonly dependencyRecovery?: {
     readonly contextId: ComputeContextId;
     readonly onSettled: () => void;
@@ -266,6 +281,7 @@ export function ComputeOutputView(props: {
                 {...(props.dependencyRecovery === undefined
                   ? {}
                   : { dependencyRecovery: props.dependencyRecovery })}
+                onAskAgent={props.onAskAgent}
               />
             );
           case "figure":

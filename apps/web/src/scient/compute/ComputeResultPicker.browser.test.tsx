@@ -68,9 +68,9 @@ it("offers the session feed and MATLAB batch runs; fresh runs stay in the feed",
   try {
     await act(async () => await root.rerender(<ComputeResultPicker contextId={owner} />));
     await page.getByRole("button", { name: "Choose results" }).click();
-    await expect.element(page.getByRole("menuitemradio", { name: "Batch 1" })).toBeVisible();
+    await expect.element(page.getByRole("menuitemradio", { name: "Run 1" })).toBeVisible();
     expect(page.getByRole("menuitemradio").elements()).toHaveLength(2);
-    await page.getByRole("menuitemradio", { name: "Batch 1" }).click();
+    await page.getByRole("menuitemradio", { name: "Run 1" }).click();
     expect(getComputeFilePresentation(owner).resultsContextId).toBe(batch);
     await act(() =>
       vi

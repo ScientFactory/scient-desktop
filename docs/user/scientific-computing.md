@@ -217,8 +217,21 @@ they do for `.py`. Run needs no setup step: a missing kernel is added the first 
 Every language Settings lists runs from its file. Open a `.sh`, `.c`, `.f90`, `.rs`, `.do` or
 `.lean` file and press **Run**: Scient uses the best command it found on this computer, builds
 first where it must, streams the output, keeps a record of the run and can stop it. Add a location
-on the language's page when the tool lives somewhere unusual. A file type two languages share goes
-to the first in Scient's list: `.m` to MATLAB, `.pl` to Perl, `.v` to Rocq and `.pro` to IDL.
+on the language's page when the tool lives somewhere unusual.
+
+Scient runs the copy your terminal would, the first one on `PATH`, unless that is the copy the
+computer came with and a newer one is installed. `JAVA_HOME` chooses Java. A choice on the language's
+page outranks all of these. C++ builds to the newest standard your compiler knows and Rust to edition 2021. A file type two languages share goes to the first of them on this computer: `.m` to MATLAB, then
+Octave; `.gp` to gnuplot, then PARI/GP; `.v` to Rocq, then Verilog; and `.pro` to IDL, then Prolog. A
+`.sql` file that uses sqlite3's dot commands, such as `.bail on`, runs with `sqlite3` when it is here.
+
+The output fills the pane. A file shows only **Run** until it has a result; then **Code**, **Split**
+and **Results** appear, and reopening the file brings its last run back. Each `file:line` in the
+output opens that line. A failed run offers **Ask agent**, which adds the error to your chat as a
+quote and leaves what you are typing alone. Selected output offers **Ask in chat**, as in every other
+language. Pictures a run writes in the project show as results, and tables it writes are linked. The run's menu holds
+**Run with**, for one run on another install, **Save to project**, **Remove this run** and **Clean up
+project**.
 
 Any installed Jupyter kernel also works in notebooks and for agents. Scient finds kernels in
 Jupyter's usual folders and in every Python environment it can see, and a new kernel works without
@@ -458,8 +471,8 @@ Fresh does not mean sandboxed: it uses the same selected runtime, packages, proj
 and server permissions. It can still modify files.
 
 Fresh runs appear in the file's Results feed, marked **Fresh**. After a MATLAB batch run, the
-compact results selector lets you return to **Session** or view a previous batch run without
-executing anything. Switching threads or views does not stop
+compact results selector lets you return to **Session** or view a previous run, named by its time,
+without executing anything. Switching threads or views does not stop
 work. Closing the owning file/Compute tab stops its session and any fresh or batch runs;
 if shutdown cannot be confirmed, the tab stays available with an error.
 
@@ -473,10 +486,10 @@ run concurrently within the host's resource limit.
 Sessions, fresh runs, connection tests, and MATLAB batch share one host budget. The default allows
 one slot per 4 GiB of total host memory, with a minimum of one and maximum of sixteen. This limits
 simultaneous runtimes, not open tabs, and does not reserve or enforce memory for individual programs.
-On a one-slot host, a live session leaves no room for Run fresh. Scient never stops it automatically:
-the capacity menu offers **Stop this session and run fresh…**, with confirmation that its variables
-will be lost. Cancel keeps the session. Fresh execution begins only after shutdown is confirmed;
-another operation may take the freed slot, in which case the capacity warning remains actionable.
+When the host is full, a new run closes the session that has been idle longest, and that file says so
+where its variables were; its results stay. Running work is never stopped. If everything is busy, the
+capacity menu offers **Stop this session and run fresh…**, with confirmation that its variables will
+be lost, and Cancel keeps the session.
 
 ## Notebooks
 
@@ -503,8 +516,9 @@ that chat, which uses Scient-managed Python when it is installed; asked to, it r
 session, such as an open file or notebook, where its runs appear in Results marked **Agent**. For
 notebooks they read, edit and run cells directly, and you see the changes in the open notebook. Agents
 see the output and figures of their runs, can read your runs, list a session's variables,
-interrupt or restart a session, and set up Scient-managed Python or its Toolkits. They run with the
-same authority as your own code.
+interrupt or restart a session, and set up Scient-managed Python or its Toolkits. In the other
+languages they run a project file the way **Run** does, and you see that run under the file. They run
+with the same authority as your own code.
 
 ### Files changed outside the editor
 

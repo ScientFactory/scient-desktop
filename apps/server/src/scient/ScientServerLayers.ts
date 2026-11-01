@@ -20,6 +20,7 @@ import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
 import * as DataTables from "./data/DataTables.ts";
+import * as ComputeProjectOutputObserver from "./compute/ComputeProjectOutputObserver.ts";
 import * as NotebookRunRecorder from "./notebook/NotebookRunRecorder.ts";
 import * as NotebookStore from "./notebook/NotebookStore.ts";
 import * as AnalysisRunIndex from "./analysis/AnalysisRunIndex.ts";
@@ -127,6 +128,7 @@ export function makeScientRouteServices<
   );
 
   const AnalysisServiceLive = AnalysisService.layer.pipe(
+    Layer.provide(ComputeProjectOutputObserver.liveLayer),
     Layer.provide(ToolDiscovery.layer),
     Layer.provide(LocalAnalysisStore.layer),
     Layer.provide(AnalysisRunIndexLive),
@@ -191,6 +193,7 @@ export function makeScientRouteServices<
       Layer.provide(ConversationImportStagingLive),
       Layer.provide(WordFileExportLive),
       Layer.provide(ComputeMcpGatewayLive),
+      Layer.provide(AnalysisServiceLive),
       Layer.provide(NotebookRunRecorder.layer),
       Layer.provide(ComputeSessionServiceLive),
       Layer.provide(DataTables.layer),

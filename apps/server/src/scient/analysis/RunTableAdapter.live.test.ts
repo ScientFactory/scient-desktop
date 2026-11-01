@@ -18,10 +18,19 @@ const PROGRAMS: Readonly<Record<string, readonly [string, string]>> = {
   powershell: ["a.ps1", 'Write-Output "scient-ran"\n'],
   javascript: ["a.js", 'console.log("scient-ran");\n'],
   typescript: ["a.ts", 'const text: string = "scient-ran";\nconsole.log(text);\n'],
-  c: ["a.c", '#include <stdio.h>\nint main(void) { puts("scient-ran"); return 0; }\n'],
-  cpp: ["a.cpp", '#include <iostream>\nint main() { std::cout << "scient-ran\\n"; }\n'],
+  // Reaches the math library at run time, which Linux needs named.
+  c: [
+    "a.c",
+    '#include <math.h>\n#include <stdio.h>\nint main(int argc, char **argv) { (void)argv; puts("scient-ran"); return sqrt(argc) > 9; }\n',
+  ],
+  // Needs C++20, which compilers do not assume.
+  cpp: [
+    "a.cpp",
+    '#include <concepts>\n#include <iostream>\ntemplate <std::integral T> T same(T v) { return v; }\nint main() { std::cout << "scient-ran\\n" << same(1) << "\\n"; }\n',
+  ],
   fortran: ["a.f90", 'program a\n  print *, "scient-ran"\nend program a\n'],
-  rust: ["a.rs", 'fn main() { println!("scient-ran"); }\n'],
+  // `try_from` needs edition 2021, and rustc assumes 2015.
+  rust: ["a.rs", 'fn main() { let _ = u32::try_from(1i64); println!("scient-ran"); }\n'],
   go: ["a.go", 'package main\nimport "fmt"\nfunc main() { fmt.Println("scient-ran") }\n'],
   java: [
     "A.java",
@@ -32,7 +41,9 @@ const PROGRAMS: Readonly<Record<string, readonly [string, string]>> = {
   lua: ["a.lua", 'print("scient-ran")\n'],
   tcl: ["a.tcl", 'puts "scient-ran"\n'],
   octave: ["a.m", 'disp("scient-ran")\n'],
-  gnuplot: ["a.plt", 'print "scient-ran"\n'],
+  gnuplot: ["a.gp", 'print "scient-ran"\n'],
+  // The apostrophe proves the path reaches sqlite3 whole.
+  sqlite: ["o'brien.sql", ".bail on\nselect 'scient-ran';\n"],
   haskell: ["a.hs", 'main = putStrLn "scient-ran"\n'],
   ocaml: ["a.ml", 'print_endline "scient-ran";;\n'],
   racket: ["a.rkt", '#lang racket/base\n(displayln "scient-ran")\n'],

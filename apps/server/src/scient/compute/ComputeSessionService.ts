@@ -3689,6 +3689,58 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /**
+   * Ends the script tab idle longest, so a full host never stops the next Run. A Console, a
+   * notebook and an agent's session hold work built up by hand, so they are never chosen.
+   */
+  const reclaimIdleSession = Effect.gen(function* () {
+    const idle: Array<{ live: LiveComputeSession; record: ComputeSessionRecord }> = [];
+    for (const live of (yield* Ref.get(sessionsRef)).values()) {
+      const record = yield* Ref.get(live.recordRef);
+      const queue = yield* Ref.get(live.queueRef);
+      if (
+        record.owner?._tag === "file" &&
+        !record.owner.path.toLowerCase().endsWith(".ipynb") &&
+        record.status === "ready" &&
+        record.activity === "idle" &&
+        queue.active === null &&
+        queue.pending.length === 0
+      )
+        idle.push({ live, record });
+    }
+    idle.sort((left, right) =>
+      left.record.lastActivityAt.localeCompare(right.record.lastActivityAt),
+    );
+    for (const { live, record } of idle) {
+      const stopped = yield* stopSession({
+        projectId: live.projectId,
+        sessionId: live.sessionId,
+        expectedGeneration: record.generation,
+        onlyIfIdle: true,
+      }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!stopped) continue;
+      yield* Effect.logInfo("compute session stopped to make room", {
+        projectId: live.projectId,
+        sessionId: live.sessionId,
+      });
+      const closed = {
+        ...(yield* Ref.get(live.recordRef)),
+        lostReason: shortText(
+          "Closed to make room. Run the file again to bring its variables back.",
+        ),
+      };
+      yield* persistSession("stop", closed).pipe(Effect.ignoreCause({ log: true }));
+      yield* Ref.set(live.recordRef, closed);
+      yield* publishSession(closed);
+      return true;
+    }
+    return false;
+  });
+  yield* hostCapacity.setReclaim(reclaimIdleSession);
+
   if (idleTimeoutMs !== null) {
     // A pass every quarter of the timeout keeps the check cheap and bounds how
     // late a session is reclaimed to a fraction of the window a user chose.

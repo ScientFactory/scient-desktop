@@ -83,6 +83,16 @@ export const AnalysisRuntimeProfile = Schema.Struct({
       detail: Schema.NonEmptyString.check(Schema.isMaxLength(4096)),
     }),
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /** Other installs of this language, which one run can use instead. */
+  alternatives: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        executablePath: PathString,
+        label: Schema.NonEmptyString.check(Schema.isMaxLength(256)),
+        version: Schema.NullOr(Schema.String.check(Schema.isMaxLength(256))),
+      }),
+    ),
+  ),
 });
 export type AnalysisRuntimeProfile = typeof AnalysisRuntimeProfile.Type;
 
@@ -250,6 +260,8 @@ const AnalysisRunBase = Schema.Struct({
   diagnostics: Schema.Array(AnalysisDiagnostic).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
+  /** Tables the run wrote in the project, relative to it. */
+  writtenFiles: Schema.optional(Schema.Array(PathString)),
   artifacts: Schema.Array(AnalysisArtifact).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   artifactReceipt: AnalysisArtifactReceipt.pipe(
     Schema.withDecodingDefaultKey(
@@ -308,6 +320,8 @@ export const AnalysisStartRunInput = Schema.Struct({
   relativePath: PathString,
   sourceRevision: AnalysisSourceRevision,
   runtimeId: AnalysisRuntimeId,
+  /** One of the runtime's `alternatives`, for this run only. */
+  executablePath: Schema.optional(PathString),
 });
 export type AnalysisStartRunInput = typeof AnalysisStartRunInput.Type;
 
@@ -520,6 +534,8 @@ export interface AnalysisArtifactCandidate {
 
 export interface AnalysisArtifactCollection {
   readonly candidates: ReadonlyArray<AnalysisArtifactCandidate>;
+  /** Tables the run wrote in the project, relative to it. */
+  readonly writtenFiles?: ReadonlyArray<string>;
   /** A producer warning that does not invalidate representations published successfully. */
   readonly failureMessage: string | null;
 }

@@ -111,6 +111,17 @@ export function openComputeCitation(
     });
     return;
   }
+  if (place._tag === "file-run") {
+    const contextId = computeFileContextId({ ...ref, cwd, relativePath: place.path });
+    show(`file:${place.path}`, () => {
+      const presentation = useComputeFilePresentationStore.getState();
+      if ((presentation.presentations[contextId]?.view ?? "code") === "code") {
+        presentation.setFileView(contextId, "split");
+      }
+      panel.openFile(ref, place.path);
+    });
+    return;
+  }
   const scriptContext = scriptContextFor(ref, cwd, place);
   if (scriptContext !== null && place.path !== null) {
     const { path } = place;
