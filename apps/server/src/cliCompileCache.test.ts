@@ -48,7 +48,7 @@ it.live("enables CLI caching while respecting overrides and unavailable storage"
     const normal = yield* run({});
     expect(normal.exitCode).toBe(0);
     expect(normal.stderr.replaceAll("\\", "/")).toContain(
-      `CACHE=${root}/cache/t3code/compile-cache`.replaceAll("\\", "/"),
+      `CACHE=${root}/cache/scient/compile-cache`.replaceAll("\\", "/"),
     );
     const appImage = yield* run({ APPIMAGE: `${root}/T3Code.AppImage` });
     expect(appImage.exitCode).toBe(0);
