@@ -126,6 +126,12 @@ function previewProfileName(
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
 
+// SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
+function isPageLoadFailure(error: unknown) {
+  return error instanceof Error && error.message.includes("navigate.loadURL");
+}
+// SCIENT-FORK:END
+
 function ServerTabFileNotShown(props: {
   readonly threadRef: ScopedThreadRef;
   readonly tabId: string;
@@ -295,6 +301,9 @@ export function PreviewView({
         countSiteVisit(resolved);
       }
     } catch (error) {
+      // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
+      if (isPageLoadFailure(error)) return;
+      // SCIENT-FORK:END
       toastManager.add({
         type: "error",
         title: "Could not open this address",
@@ -318,6 +327,9 @@ export function PreviewView({
         countSiteVisit(next);
       }
     } catch (error) {
+      // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
+      if (isPageLoadFailure(error)) return;
+      // SCIENT-FORK:END
       toastManager.add({
         type: "error",
         title: "Could not open this address",

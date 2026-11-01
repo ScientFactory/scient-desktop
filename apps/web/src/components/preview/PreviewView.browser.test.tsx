@@ -515,6 +515,32 @@ describe("PreviewView", () => {
     },
   );
 
+  // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
+  it("leaves a site that didn't load to the tab's own page, and reports what it can't show", async () => {
+    setup();
+    mocks.navigate
+      .mockRejectedValueOnce(
+        new Error(
+          "Error invoking remote method 'desktop:preview-navigate': PreviewOperationError: Desktop preview operation failed: navigate.loadURL",
+        ),
+      )
+      .mockRejectedValueOnce(new Error("The tab is gone."));
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    const input = page.getByPlaceholder("Search or enter URL");
+
+    await input.fill("https://down.example/");
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledOnce());
+    await input.fill("https://example.org/");
+    await userEvent.keyboard("{Enter}");
+
+    await expect.element(page.getByText("The tab is gone.")).toBeVisible();
+    expect(page.getByText("Could not open this address").all()).toHaveLength(1);
+    expect(mocks.recordVisitForThread).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: "Dismiss notification" }));
+  });
+  // SCIENT-FORK:END
+
   it("retains the annotation locally when its own environment loses access during capture", async () => {
     setup();
     const picked = annotation("annotation-revoked");
