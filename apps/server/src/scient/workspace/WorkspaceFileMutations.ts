@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type {
   ProjectDeleteFileInput,
@@ -80,9 +81,11 @@ import {
 } from "./RetainedFileMutation.ts";
 import {
   discardFileVersion as discardKeptVersion,
+  FILE_HISTORY_TOTAL_BYTES,
   isFileHistoryVersion,
   keepFileVersion,
   listFileVersions as listKeptVersions,
+  moveFileHistory,
 } from "./FileHistory.ts";
 import {
   isNodeError,
@@ -258,6 +261,7 @@ const within = (root: string, target: string) => {
  */
 const plainRun = { nonce: NodeCrypto.randomUUID(), generation: 0 };
 
+const OLDER_PUBLICATIONS_WAIT_MS = 5_000;
 /** How many files' last saves are remembered; a forgotten one only keeps one extra copy. */
 const LAST_SAVED_FILES = 1024;
 /** Writing over a file holds its earlier bytes in memory, which must stay reasonable. */
@@ -1417,7 +1421,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           });
       }
       if (snapshot && !exclusive)
-        await keepEarlierVersion(resolved.target, snapshot, intent.guardMaxBytes);
+        await beforeChange(() =>
+          keepEarlierVersion(resolved.target, snapshot, intent.guardMaxBytes),
+        );
       // From here the target may change, so every epoch captured earlier is stale.
       advancePlainEpoch();
       if (!exclusive) {
@@ -1471,7 +1477,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     ["EPERM", "EACCES", "EBUSY", "EMLINK"].some((code) => isNodeError(cause, code));
   /** What Scient last wrote to each file, which tells its own autosaves from outside changes. */
   const lastSaved = new Map<string, string>();
-  /** Best effort: a save that couldn't keep a copy is still a save. */
+  /**
+   * Scient's own autosave can go without a copy, since the person's text is in the editor.
+   * Text from anywhere else is only replaced once it is safely in the history.
+   */
   const keepEarlierVersion = async (
     target: string,
     snapshot: NonNullable<GuardedSnapshot>,
@@ -1480,18 +1489,23 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   ) => {
     const directory = deps.fileHistoryDirectory;
     if (directory === undefined) return;
+    let ownSave = false;
     try {
       const whole = guardMaxBytes === undefined || snapshot.byteLength <= guardMaxBytes;
       const revision = whole ? snapshot.revision : await fileRevision(target);
       if (revision === null) return;
+      ownSave = !always && lastSaved.get(target) === revision;
       await keepFileVersion({
         directory,
         target,
         revision,
-        ownSave: !always && lastSaved.get(target) === revision,
+        ownSave,
         now: await runPromise(Clock.currentTimeMillis),
       });
+      if (!ownSave && (await NodeFSP.stat(target)).size > FILE_HISTORY_TOTAL_BYTES)
+        throw new Error("This file is too large to keep a copy of before replacing it.");
     } catch (cause) {
+      if (!ownSave) throw cause;
       await runPromise(Effect.logWarning("Could not keep a file's earlier version", cause));
     }
   };
@@ -4116,7 +4130,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         await NodeFSP.copyFile(target, kept);
         if ((await fileRevision(kept)) !== current) return finish("skipped", "revision");
         await syncDirectory(directory);
-        await keepEarlierVersion(target, snapshot, undefined, { always: true });
+        // The step's own copy above is the one that counts; this one shows in the file's menu.
+        await keepEarlierVersion(target, snapshot, undefined, { always: true }).catch(
+          () => undefined,
+        );
       }
       await point("prepared");
       // Last, so a neighbor changed while the copy was made stops the step too.
@@ -4356,6 +4373,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
             await syncDirectory(folder);
             await syncDirectory(NodePath.dirname(source.target));
             if (input.removeEmptyFolders) await pruneEmptyParents(source.root, source.target);
+            if (deps.fileHistoryDirectory !== undefined)
+              await moveFileHistory(
+                deps.fileHistoryDirectory,
+                source.target,
+                destination.target,
+              ).catch(() => undefined);
             const done = doneReceipt(id, snapshot.leadingRevision);
             rememberPlain(id, fingerprint, done);
             return done;
@@ -4413,7 +4436,9 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 publicationOutcome: "unchanged",
                 currentRevision: snapshot.leadingRevision,
               });
-            await keepEarlierVersion(resolved.target, snapshot, 1024 * 1024, { always: true });
+            await beforePublication(() =>
+              keepEarlierVersion(resolved.target, snapshot, 1024 * 1024, { always: true }),
+            );
             advancePlainEpoch();
             try {
               await NodeFSP.unlink(resolved.target);
@@ -4630,13 +4655,19 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   // Saves and Overleaf's writes are plain on every host. What an older build left unfinished
   // is finished once per root, but nothing it left blocks.
   const plain = makePlainHostMethods();
-  const settledRoots = new Map<string, Promise<void>>();
-  /** Once per root, before anything else touches it: what an older build left must not return. */
+  const settledRoots = new Map<string, Promise<unknown>>();
+  /**
+   * Once per root, before anything else touches it: what an older build left must not return.
+   * That work gets a few seconds and goes on alone, so it can never hold up a save.
+   */
   const afterOlderPublications = <A, E, R>(cwd: string, next: Effect.Effect<A, E, R>) =>
     Effect.promise(() => {
       const settled =
         settledRoots.get(cwd) ??
-        runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore));
+        Promise.race([
+          runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore)),
+          NodeTimersPromises.setTimeout(OLDER_PUBLICATIONS_WAIT_MS),
+        ]);
       settledRoots.set(cwd, settled);
       return settled;
     }).pipe(Effect.andThen(next));

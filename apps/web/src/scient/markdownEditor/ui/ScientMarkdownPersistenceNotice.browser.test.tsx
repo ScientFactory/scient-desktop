@@ -62,18 +62,8 @@ async function show(_fixture: _Fixture, name: string, snapshot: Readonly<Record<
 }
 
 it.each([
-  [
-    "refused",
-    {
-      attention: "outcome_unknown",
-      error: diskFull,
-      pending: true,
-      publicationOutcome: "unchanged",
-      attentionMutationId: "4d26d68b-af47-4345-8773-9e77d3f3bb4f",
-    },
-  ],
+  ["refused", { error: diskFull, pending: true }],
   ["failed", { error: new Error("offline"), pending: true }],
-  ["conflict", { pending: true, conflict: { externalSource: "Newer", externalRevision: "r2" } }],
   ["missing", { currentMissing: true, pending: true }],
 ] as const)("draws the %s notice as one compact line", async (name, snapshot) => {
   await using _fixture = _createFixture();
@@ -92,7 +82,6 @@ it("opens technical details beneath the line and keeps them out of the sentence"
 
   document.documentElement.classList.add("dark");
   const region = await show(_fixture, "refused-dark", {
-    attention: "outcome_unknown",
     error: diskFull,
     pending: true,
     publicationOutcome: "unchanged",

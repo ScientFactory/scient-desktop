@@ -361,44 +361,54 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
     }),
   );
 
-  it.live("saves even when no earlier version can be kept", () =>
+  it.live("goes on with its own saves but won't replace other text it can't keep", () =>
     plain(async (h) => {
       const target = NodePath.join(h.cwd, "main.tex");
       await NodeFSP.writeFile(target, "A");
-      await NodeFSP.writeFile(NodePath.join(h.root, "file-history"), "not a folder");
-      await h.run(
-        h.methods.writeFile({
-          cwd: h.cwd,
-          relativePath: "main.tex",
-          contents: "B",
-          expectedRevision: revision("A"),
-        }),
-      );
-      expect(await NodeFSP.readFile(target, "utf8")).toBe("B");
+      const save = (contents: string, before: string) =>
+        h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            contents,
+            expectedRevision: revision(before),
+          }),
+        );
+      await save("B", "A");
+      const history = NodePath.join(h.root, "file-history");
+      await NodeFSP.rm(history, { recursive: true });
+      await NodeFSP.writeFile(history, "not a folder");
+      await save("C", "B");
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+
+      await NodeFSP.writeFile(target, "theirs");
+      await expect(save("D", "theirs")).rejects.toMatchObject({ publicationOutcome: "unchanged" });
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("theirs");
     }),
   );
 
-  it.live("won't write over a file whose earlier text can't be kept", () =>
+  it.live("takes a file's history along when it's renamed", () =>
     plain(async (h) => {
-      const target = NodePath.join(h.cwd, "main.tex");
-      await NodeFSP.writeFile(target, "A");
-      await NodeFSP.writeFile(NodePath.join(h.root, "file-history"), "not a folder");
-      faults.refuse = held;
-      try {
-        await expect(
-          h.run(
-            h.methods.writeFile({
-              cwd: h.cwd,
-              relativePath: "main.tex",
-              contents: "B",
-              expectedRevision: revision("A"),
-            }),
-          ),
-        ).rejects.toMatchObject({ publicationOutcome: "unchanged" });
-      } finally {
-        faults.refuse = null;
-      }
-      expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
+      await NodeFSP.writeFile(NodePath.join(h.cwd, "a.tex"), "first");
+      await h.run(
+        h.methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "a.tex",
+          contents: "second",
+          expectedRevision: revision("first"),
+        }),
+      );
+      await h.run(
+        h.methods.renameFile({
+          cwd: h.cwd,
+          relativePath: "a.tex",
+          destinationRelativePath: "b.tex",
+        }),
+      );
+      const { versions } = await h.run(
+        h.methods.listFileVersions({ cwd: h.cwd, relativePath: "b.tex" }),
+      );
+      expect(versions.map((version) => version.revision)).toEqual([revision("first")]);
     }),
   );
 
@@ -1063,6 +1073,25 @@ describe("plain creation beside native replacement", () => {
       {},
       null,
       (helper) => filePublicationHelperWithout(helper, ["atomicCreateMetadata"]),
+    ),
+  );
+});
+
+describe("a file too large to keep a copy of", () => {
+  it.live("isn't replaced, since nothing could bring it back", () =>
+    fileMutationFixture(
+      async (h) => {
+        const target = NodePath.join(h.cwd, "huge.log");
+        await NodeFSP.writeFile(target, "");
+        await NodeFSP.truncate(target, 1024 ** 3 + 1);
+        await expect(
+          h.run(h.methods.writeFile({ cwd: h.cwd, relativePath: "huge.log", contents: "x" })),
+        ).rejects.toMatchObject({ publicationOutcome: "unchanged" });
+        expect((await NodeFSP.stat(target)).size).toBe(1024 ** 3 + 1);
+      },
+      {},
+      null,
+      async (helper) => helper,
     ),
   );
 });

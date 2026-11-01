@@ -255,6 +255,8 @@ export class MarkdownPersistenceRegistry {
       readonly checkpointStore?: MarkdownDraftCheckpointStore;
       /** Files whose ordinary drafts use this store; exact publication intents always do. */
       readonly keepsCheckpoint?: (target: MarkdownPersistenceTarget) => boolean;
+      /** Tests of what happens before a conflict is settled turn this off. */
+      readonly keepLocalOverConflicts?: boolean;
       /** The merge strategy for a file; Markdown's block merge where it names none. */
       readonly reconcile?: (
         target: MarkdownPersistenceTarget,
@@ -599,6 +601,7 @@ export class MarkdownPersistenceRegistry {
         ? { initialPublication: checkpoint.publicationIntent }
         : {}),
       reconcile,
+      keepLocalOverConflicts: this.options.keepLocalOverConflicts ?? true,
       source: initial.contents,
       revision: initial.revision,
       ...(draftSource === undefined ? {} : { draftSource }),

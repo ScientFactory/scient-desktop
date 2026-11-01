@@ -299,7 +299,6 @@ function ProjectFileSession(props: {
           const current = sourceLease.getSnapshot();
           if (
             current.editingBlocked ||
-            current.error !== null ||
             current.conflict !== null ||
             sourceLease.documentId !== edit.documentId
           )

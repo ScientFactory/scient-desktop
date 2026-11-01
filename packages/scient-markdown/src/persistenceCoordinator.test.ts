@@ -573,6 +573,82 @@ describe("MarkdownPersistenceCoordinator", () => {
     });
   });
 
+  it("saves the person's text over a change it can't merge, and offers the other back", async () => {
+    const h = fixture({ source: mergeBase, keepLocalOverConflicts: true });
+    h.setDisk(mergeBase.replace("First", "Theirs"), "external");
+    const mine = mergeBase.replace("First", "Mine");
+    h.coordinator.change(mine);
+    expect(await h.coordinator.flushNow()).toBe(true);
+    await vi.waitFor(() =>
+      expect(h.coordinator.getSnapshot()).toMatchObject({
+        conflict: null,
+        pending: false,
+        recoveryFromElsewhere: true,
+        recoverySource: mergeBase.replace("First", "Theirs"),
+      }),
+    );
+    expect(h.disk().source).toBe(mine);
+
+    expect(h.coordinator.restoreRecovery()).toBe(true);
+    expect(await h.coordinator.flushNow()).toBe(true);
+    expect(h.disk().source).toBe(mergeBase.replace("First", "Theirs"));
+  });
+
+  it("doesn't bring back undone text after the connection went mid-save", async () => {
+    vi.useFakeTimers();
+    const h = fixture({ source: mergeBase });
+    const attempted = mergeBase.replace("First", "First!");
+    h.write.mockImplementationOnce(async (intent) => {
+      h.setDisk(intent.source + "\nAgent\n", "external");
+      throw "disconnected";
+    });
+    h.coordinator.change(attempted);
+    void h.coordinator.flushNow();
+    await settleMicrotasks();
+    h.coordinator.change(mergeBase);
+    h.coordinator.setConnected(true);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(h.coordinator.getSnapshot().draftSource).toBe(mergeBase);
+  });
+
+  it("settles a restored conflict by itself", async () => {
+    const other = mergeBase.replace("First", "Theirs");
+    const mine = mergeBase.replace("First", "Mine");
+    const h = fixture({
+      source: mergeBase,
+      draftSource: mine,
+      keepLocalOverConflicts: true,
+      initialConflict: { externalSource: other, externalRevision: "external" },
+    });
+    h.setDisk(other, "external");
+    expect(await h.coordinator.flushNow()).toBe(true);
+    await vi.waitFor(() =>
+      expect(h.coordinator.getSnapshot()).toMatchObject({ conflict: null, pending: false }),
+    );
+    expect(h.disk().source).toBe(mine);
+  });
+
+  it("says so and waits when the file can't be replaced, instead of spinning", async () => {
+    vi.useFakeTimers();
+    const other = mergeBase.replace("First", "Theirs");
+    const h = fixture({ source: mergeBase, keepLocalOverConflicts: true });
+    h.setDisk(other, "external");
+    h.read.mockImplementation(async () => ({
+      source: other,
+      revision: "external",
+      readOnly: true,
+    }));
+    h.coordinator.change(mergeBase.replace("First", "Mine"));
+    const saved = h.coordinator.flushNow();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await saved).toBe(false);
+    expect(h.read.mock.calls.length).toBeLessThan(6);
+    expect(h.disk().source).toBe(other);
+    expect(h.coordinator.getSnapshot().error).not.toBeNull();
+    h.coordinator.change(mergeBase.replace("First", "Mine again"));
+    await vi.advanceTimersByTimeAsync(100);
+  });
+
   it("doesn't bring back undone text that landed under someone else's change", async () => {
     vi.useFakeTimers();
     const h = fixture({ source: mergeBase, retryDelaysMs: [1] });

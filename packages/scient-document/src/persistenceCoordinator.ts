@@ -134,6 +134,8 @@ export interface DocumentPersistenceOptions<
   ) => Promise<void>;
   /** The format's merge strategy for verified divergence between draft and disk. */
   readonly reconcile: ReconcileDocument<R>;
+  /** When a change elsewhere can't be merged, save this text and offer the other one back. */
+  readonly keepLocalOverConflicts?: boolean;
   readonly debounceMs?: number;
   readonly maxWaitMs?: number;
   readonly retryDelaysMs?: readonly number[];
@@ -142,6 +144,7 @@ export interface DocumentPersistenceOptions<
 
 /** How long a failed save waits before going again; the last delay repeats. */
 const SAVE_RETRY_DELAYS_MS = [250, 1_000, 3_000, 10_000, 30_000];
+const KEEP_LOCAL_RETRY_MS = 10_000;
 /** Tries that stay out of sight, since a brief hold usually passes. */
 const QUIET_SAVE_RETRIES = 3;
 
@@ -166,6 +169,8 @@ export interface DocumentPersistenceSnapshot extends DocumentSession {
   readonly currentMissing: boolean;
   /** The last explicitly discarded local draft remains recoverable in this renderer. */
   readonly recoverySource: string | null;
+  /** `recoverySource` is what was on disk when this text was saved over it. */
+  readonly recoveryFromElsewhere: boolean;
   readonly editingBlocked: boolean;
 }
 
@@ -249,6 +254,9 @@ export class DocumentPersistenceCoordinator<
   private publicationUncertain = false;
   /** A failed save is due again, so its shown error doesn't hold the next write. */
   private savingAgain = false;
+  private keepingLocal = false;
+  /** The last try to keep the person's text didn't work, and another is due. */
+  private keepLocalRetry: ReturnType<typeof setTimeout> | null = null;
   /** A save failed without saying what happened, so its bytes may be on disk. */
   private attemptMayHaveLanded = false;
   private reconciliationCount = 0;
@@ -362,9 +370,11 @@ export class DocumentPersistenceCoordinator<
           ? (options.initialAuthorizedCurrentReview ?? null)
           : null,
       recoverySource: null,
+      recoveryFromElsewhere: false,
       editingBlocked: false,
     };
     if (this.snapshot.pending) this.scheduleDraft();
+    if (options.initialConflict) queueMicrotask(() => this.keepLocalOverConflict());
   }
 
   getSnapshot = (): DocumentPersistenceSnapshot => this.snapshot;
@@ -379,7 +389,14 @@ export class DocumentPersistenceCoordinator<
     if (this.disposed || this.renameHold !== null || basedOnVersion !== this.snapshot.editVersion)
       return false;
     if (source === this.snapshot.draftSource) return true;
-    this.update({ draftSource: source, editVersion: this.snapshot.editVersion + 1 });
+    this.update({
+      draftSource: source,
+      editVersion: this.snapshot.editVersion + 1,
+      // Editing on means this text was kept; the other stays in the file's history.
+      ...(this.snapshot.recoveryFromElsewhere
+        ? { recoverySource: null, recoveryFromElsewhere: false }
+        : {}),
+    });
     this.scheduleDraft();
     return true;
   }
@@ -424,7 +441,8 @@ export class DocumentPersistenceCoordinator<
     if (
       this.disposed ||
       this.externalUpdateHolds.size > 0 ||
-      this.snapshot.conflict !== null ||
+      (this.snapshot.conflict !== null &&
+        (!this.options.keepLocalOverConflicts || this.keepLocalRetry !== null)) ||
       this.snapshot.attention !== null ||
       this.missingCreationHold ||
       (this.snapshot.error !== null && this.retryTimer === null)
@@ -440,6 +458,7 @@ export class DocumentPersistenceCoordinator<
     }
     return new Promise((resolve) => {
       this.waiters.add(resolve);
+      this.keepLocalOverConflict();
       this.drive();
       this.settleWaiters();
     });
@@ -610,6 +629,38 @@ export class DocumentPersistenceCoordinator<
     // version. External projection replacement need not retain editor history.
     if (source !== previousDraft) this.update({ recoverySource: previousDraft });
     return true;
+  }
+
+  /** The person's text wins. What it replaces is kept by the server and offered back here. */
+  private keepLocalOverConflict(): void {
+    const conflict = this.snapshot.conflict;
+    if (
+      !this.options.keepLocalOverConflicts ||
+      conflict === null ||
+      this.keepingLocal ||
+      this.keepLocalRetry !== null
+    )
+      return;
+    this.keepingLocal = true;
+    void this.resolveWithLocal(conflict.externalRevision).then((saved) => {
+      this.keepingLocal = false;
+      if (this.disposed) return;
+      if (saved) {
+        this.update({ recoverySource: conflict.externalSource, recoveryFromElsewhere: true });
+        return;
+      }
+      // Nothing was replaced. A file that can't be, for now, is said out loud and tried later.
+      this.keepLocalRetry = setTimeout(() => {
+        this.keepLocalRetry = null;
+        if (this.disposed) return;
+        if (this.snapshot.conflict !== null) this.update({ error: null });
+        this.keepLocalOverConflict();
+      }, KEEP_LOCAL_RETRY_MS);
+      if (this.snapshot.conflict !== null)
+        this.update({
+          error: this.snapshot.error ?? new Error("The file changed and couldn't be replaced."),
+        });
+    });
   }
 
   /** A successful rename must move exactly the clean bytes the user named. */
@@ -848,13 +899,15 @@ export class DocumentPersistenceCoordinator<
         console.error("Document persistence observer failed:", error);
       }
     }
+    this.keepLocalOverConflict();
     this.settleWaiters();
   }
 
   private settleWaiters(): void {
     const blocked =
       this.snapshot.attention !== null ||
-      this.snapshot.conflict !== null ||
+      (this.snapshot.conflict !== null &&
+        (!this.options.keepLocalOverConflicts || this.keepLocalRetry !== null)) ||
       this.snapshot.error !== null;
     if (
       !blocked &&
@@ -1400,6 +1453,7 @@ export class DocumentPersistenceCoordinator<
       this.missingCreationHold = false;
       this.update({
         recoverySource: current.draftSource,
+        recoveryFromElsewhere: false,
         baselineSource: disk.source,
         baselineRevision: disk.revision,
         currentMissing: false,
@@ -1602,12 +1656,12 @@ export class DocumentPersistenceCoordinator<
    */
   private handleFailure(error: unknown, kind: DocumentPersistenceFailureKind): void {
     this.clearDebounce();
+    this.attemptMayHaveLanded = true;
     if (kind === "disconnected") {
       this.connected = false;
       this.update({ error });
       return;
     }
-    this.attemptMayHaveLanded = true;
     const delays = this.options.retryDelaysMs ?? SAVE_RETRY_DELAYS_MS;
     const delay = delays[Math.min(this.retryCount, delays.length - 1)] ?? 0;
     this.retryCount += 1;

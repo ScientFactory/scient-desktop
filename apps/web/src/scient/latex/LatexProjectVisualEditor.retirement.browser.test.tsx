@@ -1044,32 +1044,6 @@ describe("retiring the project's recovery copy", () => {
       expect(chapter.getSnapshot().draftSource).toBe("Current.\n");
       expect(rootEdits).not.toHaveBeenCalled();
     });
-
-    it("stops editing while the file's save waits on a conflict", async () => {
-      await using _fixture = _createFixture();
-      _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-      await _setupFixture0(_fixture);
-      await _setupFixture2(_fixture);
-
-      const chapter = acquire("chapter.tex");
-      await act(async () => {
-        replaceVisualText(visual.props!.source, "Chapter text.", "Mine.");
-      });
-      // An agent writes the chapter before the save lands; the save is refused.
-      disk.set("chapter.tex", { source: "Agent text.\n", revision: "c2" });
-      await act(async () => {
-        expect(await chapter.flushNow()).toBe(false);
-      });
-      expect(chapter.getSnapshot().conflict).not.toBeNull();
-      expect(visual.props!.disabled).toBe(true);
-      let accepted = true;
-      await act(async () => {
-        accepted = replaceVisualText(visual.props!.source, "Mine.", "Mine again.").accepted;
-      });
-      expect(accepted).toBe(false);
-      expect(chapter.getSnapshot().draftSource).toBe("Mine.\n");
-      expect(disk.get("chapter.tex")!.source).toBe("Agent text.\n");
-    });
   });
 
   it("still saves and builds after an include is removed", async () => {

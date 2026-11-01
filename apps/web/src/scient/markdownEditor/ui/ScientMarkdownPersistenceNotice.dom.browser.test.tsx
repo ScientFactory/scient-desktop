@@ -220,74 +220,6 @@ describe("Markdown persistence feedback", () => {
     expect(host.querySelector("[data-persistence-reason]")).toBeNull();
   });
 
-  it("shows no conflict until ordered verification and keeps actions outside the live region", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const read = deferred<{ source: string; revision: string }>();
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "A",
-      revision: "rA",
-      write: async () => {
-        throw new Error("cas");
-      },
-      read: () => read.promise,
-      classifyFailure: () => "conflict",
-    });
-    const host = await mount(_fixture, coordinator);
-    const input = document.createElement("input");
-    document.body.append(_ownDOM(_fixture, input));
-    input.focus();
-    await act(async () => {
-      coordinator.change("B");
-      void coordinator.flushNow();
-    });
-    expect(host.querySelector("[role=region]")).toBeNull();
-    await act(async () => {
-      read.resolve({ source: "External", revision: "rX" });
-    });
-    expect(host.querySelectorAll("[role=region]")).toHaveLength(1);
-    expect(host.querySelector("[role=status]")?.textContent).toBe(
-      "This file changed on disk while you were editing",
-    );
-    expect(host.querySelector("[role=status] button")).toBeNull();
-    expect(document.activeElement).toBe(input);
-    await act(() => coordinator.change("C"));
-    expect(host.querySelector("[role=status]")?.textContent).toBe(
-      "This file changed on disk while you were editing",
-    );
-  });
-
-  it("confirms disk replacement and retains the previous local draft for recovery", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "A",
-      revision: "rA",
-      write: async () => {
-        throw new Error("cas");
-      },
-      read: async () => ({ source: "External", revision: "rX" }),
-      classifyFailure: () => "conflict",
-    });
-    const host = await mount(_fixture, coordinator);
-    await act(async () => {
-      coordinator.change("B");
-      await coordinator.flushNow();
-    });
-    await act(() => click(host, "Use disk version…"));
-    expect(coordinator.getSnapshot().draftSource).toBe("B");
-    await act(async () => click(host, "Use disk version"));
-    expect(coordinator.getSnapshot().draftSource).toBe("External");
-    expect(coordinator.getSnapshot().recoverySource).toBe("B");
-    expect(host.querySelector("[role=region]")).toBeNull();
-    await act(() => click(host, "Restore"));
-    expect(coordinator.getSnapshot().draftSource).toBe("B");
-  });
-
   it("does not claim unsaved edits when only a clean file refresh failed", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
@@ -355,43 +287,6 @@ describe("Markdown persistence feedback", () => {
     await act(() => coordinator.change("B"));
     expect(host.textContent).toContain("Couldn’t save");
     expect(host.textContent).not.toContain("archive/notes.md");
-  });
-
-  it("returns focus to this source editor when resolving removes the focused action", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "A",
-      revision: "rA",
-      write: async () => {
-        throw new Error("cas");
-      },
-      read: async () => ({ source: "External", revision: "rX" }),
-      classifyFailure: () => "conflict",
-    });
-    const host = await mount(_fixture, coordinator);
-    await act(async () => {
-      coordinator.change("B");
-      await coordinator.flushNow();
-    });
-    const file = document.createElement("diffs-container");
-    const shadow = file.attachShadow({ mode: "open" });
-    const source = document.createElement("div");
-    source.setAttribute("contenteditable", "true");
-    source.setAttribute("data-content", "");
-    source.tabIndex = 0;
-    shadow.append(source);
-    host.append(file);
-    await act(() => click(host, "Use disk version…"));
-    const action = [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === "Use disk version",
-    )!;
-    action.focus();
-    await act(async () => action.click());
-    await act(async () => vi.advanceTimersByTimeAsync(50));
-    expect(shadow.activeElement).toBe(source);
   });
 
   it("keeps saving and gives the reason and a way to keep the text, not a Try again", async () => {

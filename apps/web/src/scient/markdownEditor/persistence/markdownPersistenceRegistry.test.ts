@@ -69,6 +69,7 @@ function setup(options: { cleanTtlMs?: number; cleanLimit?: number } = {}) {
   };
   const createTransport = vi.fn(() => transport);
   const registry = new MarkdownPersistenceRegistry({
+    keepLocalOverConflicts: false,
     checkpointStore: durableStore().store,
     createTransport,
     debounceMs: 250,
@@ -758,6 +759,7 @@ describe("a merge strategy per file", () => {
   it("uses the file's own strategy for an outside change, and Markdown's for other files", async () => {
     const disk = { source: "First\n\nSecond\n", revision: "r0" };
     const registry = new MarkdownPersistenceRegistry({
+      keepLocalOverConflicts: false,
       checkpointStore: durableStore().store,
       createTransport: () => transport(() => disk),
       reconcile: (file) => (file.relativePath.endsWith(".tex") ? conflictOnly : undefined),

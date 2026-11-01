@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction, RefObject } from "react";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, Copy, Info } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronUp, Copy } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
@@ -58,10 +58,6 @@ export function ScientMarkdownPersistenceNotice({
   const pendingInput = useSyncExternalStore(persistence.subscribe, persistence.getPendingInput);
   const titleId = useId();
   const regionRef = useRef<HTMLDivElement>(null);
-  const [confirmation, setConfirmation] = useState<{
-    action: "local" | "disk";
-    revision: string;
-  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
@@ -70,13 +66,11 @@ export function ScientMarkdownPersistenceNotice({
     ? "input"
     : snapshot.currentMissing
       ? "missing-current"
-      : snapshot.conflict
-        ? "conflict"
-        : snapshot.error
-          ? snapshot.pending
-            ? "failure"
-            : "refresh"
-          : null;
+      : snapshot.error
+        ? snapshot.pending
+          ? "failure"
+          : "refresh"
+        : null;
   const failed = issue === "failure";
   const plainReason = failed ? documentFailurePlainReason(snapshot.error) : null;
   const title =
@@ -84,11 +78,9 @@ export function ScientMarkdownPersistenceNotice({
       ? "Finish your edit in Rich"
       : issue === "missing-current"
         ? "This file is no longer on disk"
-        : issue === "conflict"
-          ? "This file changed on disk while you were editing"
-          : issue === "refresh"
-            ? refreshCopy.title
-            : "Couldn’t save") + (plainReason ? `: ${plainReason}` : "");
+        : issue === "refresh"
+          ? refreshCopy.title
+          : "Couldn’t save") + (plainReason ? `: ${plainReason}` : "");
   const choices =
     issue === "refresh" && onOpenFile ? missingFileChoices.slice(0, MAX_MISSING_FILE_CHOICES) : [];
 
@@ -109,29 +101,21 @@ export function ScientMarkdownPersistenceNotice({
     if (issue === previousIssue.current) return;
     previousIssue.current = issue;
     setAnnouncement(issue ? title : "");
-    setConfirmation(null);
     setReviewError(null);
     setDetailsOpen(false);
   }, [issue, title]);
 
-  const tone = issue === "conflict" && snapshot.attention === null ? "info" : "warning";
   const description =
     issue === "input"
       ? "It isn’t saved yet. Fix or undo it there before using Source."
       : issue === "missing-current"
         ? "Your text is still here and hasn’t been saved anywhere."
-        : confirmation?.action === "local"
-          ? "Replace the file on disk with your version? Scient checks for newer changes first."
-          : confirmation?.action === "disk"
-            ? "Use the version on disk? Your edits can be restored while this document stays open."
-            : issue === "conflict"
-              ? "Nothing was overwritten."
-              : issue === "refresh"
-                ? refreshCopy.description
-                : "Your text is still here, and Scient keeps trying.";
+        : issue === "refresh"
+          ? refreshCopy.description
+          : "Your text is still here, and Scient keeps trying.";
 
   const run = (operation: () => Promise<boolean>) =>
-    createPersistenceNoticeOperation({ regionRef, setBusy, setConfirmation })(operation);
+    createPersistenceNoticeOperation({ regionRef, setBusy })(operation);
 
   return (
     <>
@@ -143,15 +127,11 @@ export function ScientMarkdownPersistenceNotice({
           ref={regionRef}
           role="region"
           aria-labelledby={titleId}
-          data-tone={tone}
+          data-tone="warning"
           className="shrink-0 border-b border-border bg-card scient-reading-micro text-foreground"
         >
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5">
-            {tone === "info" ? (
-              <Info className="size-3.5 shrink-0 text-info" aria-hidden="true" />
-            ) : (
-              <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
-            )}
+            <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-hidden="true" />
             <p className="min-w-0 flex-1 basis-64 leading-snug">
               <span id={titleId} className="font-medium">
                 {title}.
@@ -187,60 +167,6 @@ export function ScientMarkdownPersistenceNotice({
                 >
                   Save it again
                 </Button>
-              ) : confirmation ? (
-                <>
-                  <Button
-                    size="xs"
-                    variant={confirmation.action === "local" ? "destructive" : "default"}
-                    disabled={busy}
-                    onClick={() =>
-                      void run(() =>
-                        confirmation.action === "local"
-                          ? persistence.resolveWithLocal(confirmation.revision)
-                          : persistence.resolveWithDisk(),
-                      )
-                    }
-                  >
-                    {confirmation.action === "local" ? "Replace disk version" : "Use disk version"}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => setConfirmation(null)}
-                  >
-                    Cancel
-                  </Button>
-                </>
-              ) : issue === "conflict" && snapshot.conflict ? (
-                <>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() =>
-                      setConfirmation({
-                        action: "local",
-                        revision: snapshot.conflict!.externalRevision,
-                      })
-                    }
-                  >
-                    Keep my edits…
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={busy}
-                    onClick={() =>
-                      setConfirmation({
-                        action: "disk",
-                        revision: snapshot.conflict!.externalRevision,
-                      })
-                    }
-                  >
-                    Use disk version…
-                  </Button>
-                </>
               ) : issue === "failure" ? (
                 <Button
                   size="xs"
@@ -323,14 +249,16 @@ export function ScientMarkdownPersistenceNotice({
       ) : null}
       {snapshot.recoverySource !== null ? (
         <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
-          Your earlier edits can still be restored.
+          {snapshot.recoveryFromElsewhere
+            ? "This file also changed elsewhere. Your version was saved."
+            : "Your earlier edits can still be restored."}
           <Button
             size="xs"
             variant="ghost"
             disabled={pendingInput !== null}
             onClick={() => persistence.restoreRecovery()}
           >
-            Restore
+            {snapshot.recoveryFromElsewhere ? "Use the other version" : "Restore"}
           </Button>
         </div>
       ) : null}
@@ -341,11 +269,9 @@ export function ScientMarkdownPersistenceNotice({
 function createPersistenceNoticeOperation({
   regionRef,
   setBusy,
-  setConfirmation,
 }: {
   regionRef: RefObject<HTMLDivElement | null>;
   setBusy: Dispatch<SetStateAction<boolean>>;
-  setConfirmation: Dispatch<SetStateAction<{ action: "local" | "disk"; revision: string } | null>>;
 }) {
   return async (operation: () => Promise<boolean>) => {
     const focusWasInNotice = regionRef.current?.contains(document.activeElement) ?? false;
@@ -355,7 +281,6 @@ function createPersistenceNoticeOperation({
       await operation();
     } finally {
       setBusy(false);
-      setConfirmation(null);
       // Only restore focus when the user's action removed its focused control.
       if (focusWasInNotice)
         requestAnimationFrame(() => {

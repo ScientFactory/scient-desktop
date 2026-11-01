@@ -12,7 +12,7 @@ import * as NodePath from "node:path";
 /** Scient's own autosaves are kept this far apart. A change from elsewhere is always kept. */
 const KEEP_OWN_SAVES_EVERY_MS = 5 * 60 * 1000;
 const VERSIONS_PER_FILE = 30;
-const TOTAL_BYTES = 1024 ** 3;
+export const FILE_HISTORY_TOTAL_BYTES = 1024 ** 3;
 
 const VERSION_NAME = /^(\d+)-([a-f0-9]{64})(\.[a-zA-Z0-9]{1,16})$/u;
 const VERSION_ID = /^history:(\d+-[a-f0-9]{64}\.[a-zA-Z0-9]{1,16})$/u;
@@ -96,7 +96,7 @@ export async function keepFileVersion(input: {
   readonly now: number;
   readonly totalBytes?: number;
 }): Promise<boolean> {
-  const limit = input.totalBytes ?? TOTAL_BYTES;
+  const limit = input.totalBytes ?? FILE_HISTORY_TOTAL_BYTES;
   const folder = folderFor(input.directory, input.target);
   await NodeFSP.mkdir(folder, { recursive: true, mode: 0o700 });
   const versions = await versionsIn(folder);
@@ -145,6 +145,18 @@ export async function listFileVersions(directory: string, target: string) {
     }),
   );
   return listed.flat();
+}
+
+/** A renamed file keeps its history. Versions already kept under the new name stay too. */
+export async function moveFileHistory(directory: string, from: string, to: string) {
+  const source = folderFor(directory, from);
+  const destination = folderFor(directory, to);
+  const versions = await versionsIn(source);
+  if (versions.length === 0) return;
+  await NodeFSP.mkdir(destination, { recursive: true, mode: 0o700 });
+  for (const version of versions)
+    await NodeFSP.rename(version.path, NodePath.join(destination, version.name));
+  await NodeFSP.rm(source, { recursive: true, force: true });
 }
 
 export async function discardFileVersion(directory: string, target: string, versionId: string) {
