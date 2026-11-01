@@ -46,7 +46,11 @@ describe("the language that really runs a file", () => {
   const installed = (...languages: ReadonlyArray<string>) => ({
     isAvailable: (id: string) => languages.includes(id),
   });
-  const run = (path: string, available: ReturnType<typeof installed>, sqliteScript = false) =>
+  const run = (
+    path: string,
+    available: { readonly isAvailable: (id: string) => boolean | null },
+    sqliteScript = false,
+  ) =>
     computeRunLanguageFor({
       language: computeSourceLanguageForPath(path)!,
       relativePath: path,

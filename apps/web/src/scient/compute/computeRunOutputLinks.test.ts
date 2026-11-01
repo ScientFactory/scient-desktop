@@ -43,6 +43,18 @@ describe("links in a program's output", () => {
     ]);
   });
 
+  it("reads a Windows path written with forward slashes", () => {
+    const windows = { cwd: "C:\\lab", relativePath: "src/a.c" };
+    expect(links("C:/lab/src/a.c:4: error", windows)).toEqual([
+      { relativePath: "src/a.c", line: 4 },
+    ]);
+  });
+
+  it("finds the file that ran when a tool names it from the project", () => {
+    expect(links("src/a.java:7: error: x")).toEqual([{ relativePath: "src/a.java", line: 7 }]);
+    expect(links("lib/src/a.java:7: error: x")).toEqual([]);
+  });
+
   it("shows project paths relative to the project, and keeps every other word", () => {
     const text = "first\n/home/ada/lab/src/a.java:12: error: x\nlast\n";
     const pieces = splitRunOutputLinks(text, place);

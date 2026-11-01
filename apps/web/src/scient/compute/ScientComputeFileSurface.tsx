@@ -338,6 +338,8 @@ function ComputeFileSurfaceContent(
   );
   // There is nothing to switch to until the file has a result.
   const showViews = view !== "code" || props.hasRun === true || hasSession || hadSession === true;
+  // A file with runs but no session, such as MATLAB reopened, has only those runs to show.
+  const onlyRuns = props.hasRun === true && !hasSession && hadSession !== true;
   const [preferredResultsView, setPreferredResultsView] =
     useState<ComputeFileResultsView>(initialResultsView);
   const [split, setSplit] = useState(initialSplit);
@@ -606,14 +608,14 @@ function ComputeFileSurfaceContent(
                 {...separatorHandlers}
               />
             ) : null}
-            {showingBatch && props.batch !== undefined ? (
+            {(showingBatch || onlyRuns) && props.batch !== undefined ? (
               <ComputeBatchResults
                 key={resultsContextId}
                 model={props.batch}
                 onRevealCode={() => {
                   if (view === "results") setFileView(props.contextId, "split");
                 }}
-                {...(props.language.runOnly === true
+                {...(props.language.runOnly === true || onlyRuns
                   ? {}
                   : { resultPicker: <ComputeResultPicker contextId={props.contextId} /> })}
               />

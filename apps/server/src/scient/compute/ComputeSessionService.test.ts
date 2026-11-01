@@ -2164,9 +2164,10 @@ describe("compute session startup", () => {
           const service = yield* ComputeSessionService;
           const oldest = ComputeSessionId.make("oldest");
           const newer = ComputeSessionId.make("newer");
-          yield* service.startSession(startInput({ sessionId: oldest }));
+          const owner = { _tag: "file" as const, path: "a.py" };
+          yield* service.startSession(startInput({ sessionId: oldest, owner }));
           yield* TestClock.adjust("1 minute");
-          yield* service.startSession(startInput({ sessionId: newer }));
+          yield* service.startSession(startInput({ sessionId: newer, owner }));
           yield* TestClock.adjust("1 minute");
           const third = yield* service.startSession(
             startInput({ sessionId: ComputeSessionId.make("third") }),
@@ -2177,6 +2178,36 @@ describe("compute session startup", () => {
             sessions.find((session) => session.sessionId === sessionId)?.status;
           expect(status(oldest)).toBe("stopped");
           expect(status(newer)).toBe("ready");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("a full host leaves Consoles, notebooks and agents' sessions alone", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ capacity: 3 });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const held = [
+            startInput({ sessionId: ComputeSessionId.make("console") }),
+            startInput({
+              sessionId: ComputeSessionId.make("notebook"),
+              owner: { _tag: "file", path: "study.ipynb" },
+            }),
+            startInput({
+              sessionId: ComputeSessionId.make("agent"),
+              owner: { _tag: "agent", threadId: "thread" as never },
+            }),
+          ];
+          yield* Effect.forEach(held, service.startSession);
+          expect(
+            (yield* Effect.flip(
+              service.startSession(startInput({ sessionId: ComputeSessionId.make("next") })),
+            )).reason,
+          ).toBe("capacity-reached");
+          const sessions = yield* service.listSessions({ projectId: PROJECT_ID });
+          expect(sessions.every((session) => session.status === "ready")).toBe(true);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

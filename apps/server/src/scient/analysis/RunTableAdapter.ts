@@ -73,7 +73,13 @@ function chooseTool(
 }
 
 function fill(args: ReadonlyArray<string>, file: string, output: string): ReadonlyArray<string> {
-  return args.map((arg) => arg.replaceAll("{file}", file).replaceAll("{output}", output));
+  const quoted = file.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  return args.map((arg) =>
+    arg
+      .replaceAll("{file}", file)
+      .replaceAll("{quotedFile}", quoted)
+      .replaceAll("{output}", output),
+  );
 }
 
 /** Windows starts a batch file only through its command interpreter. */
@@ -157,14 +163,14 @@ function alternatives(
 
 /** What a run left in the project: its pictures become results, its tables are pointed at. */
 function projectOutputCapture(observer: ComputeProjectOutputObserverPort) {
-  const observations = new Map<string, ComputeProjectOutputObservation>();
+  // Held by the run's own context, so a run that never reaches collection leaves nothing behind.
+  const observations = new WeakMap<AnalysisRunContext, ComputeProjectOutputObservation>();
   return {
     prepareRun: async (context: AnalysisRunContext): Promise<void> => {
-      observations.set(context.runId, await Effect.runPromise(observer.begin(context.source.cwd)));
+      observations.set(context, await Effect.runPromise(observer.begin(context.source.cwd)));
     },
     collectArtifacts: async (context: AnalysisRunContext): Promise<AnalysisArtifactCollection> => {
-      const observation = observations.get(context.runId);
-      observations.delete(context.runId);
+      const observation = observations.get(context);
       if (observation === undefined) return { candidates: [], failureMessage: null };
       const { images, tables } = await Effect.runPromise(
         observer.collect(observation, { maximumBytes: MAXIMUM_CAPTURED_BYTES }),

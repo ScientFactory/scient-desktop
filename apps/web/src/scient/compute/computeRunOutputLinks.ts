@@ -21,18 +21,24 @@ export function splitRunOutputLinks(
   place: { readonly cwd: string; readonly relativePath: string },
 ): ReadonlyArray<RunOutputPiece> {
   const root = place.cwd.replace(/[\\/]+$/u, "");
-  const source = [root, ...place.relativePath.split("/")];
   const separators = String.raw`[\\/]`;
+  const rootPattern = root.split(/[\\/]/u).map(escaped).join(separators);
+  const sourcePattern = place.relativePath.split("/").map(escaped).join(separators);
+  const normalizedRoot = `${root.replaceAll("\\", "/")}/`;
   // The file that ran comes first, because its path may hold spaces a general match stops at.
+  // A tool may also name it as it sits in the project.
   const pattern = new RegExp(
-    String.raw`(?:file://)?(${source.map(escaped).join(separators)}|${escaped(root)}${separators}[^\s:"'()<>]+)${LINE_AFTER_PATH}`,
+    String.raw`(?:file://)?(${rootPattern}${separators}${sourcePattern}|${rootPattern}${separators}[^\s:"'()<>]+|(?<![\w./\\-])${sourcePattern})${LINE_AFTER_PATH}`,
     "gu",
   );
   const pieces: RunOutputPiece[] = [];
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     const [whole, path, wordLine, colonLine, bracketLine] = match;
-    const relativePath = path!.slice(root.length + 1).replaceAll("\\", "/");
+    const normalized = path!.replaceAll("\\", "/");
+    const relativePath = normalized.startsWith(normalizedRoot)
+      ? normalized.slice(normalizedRoot.length)
+      : normalized;
     if (match.index > last) pieces.push({ text: text.slice(last, match.index) });
     const suffix = whole.slice(whole.indexOf(path!) + path!.length);
     const line = Number(wordLine ?? colonLine ?? bracketLine);

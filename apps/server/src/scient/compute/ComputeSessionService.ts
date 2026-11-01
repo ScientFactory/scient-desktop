@@ -3689,13 +3689,18 @@ const make = Effect.gen(function* () {
     }
   });
 
-  /** Ends the session idle longest, so a full host never stops the next Run. */
+  /**
+   * Ends the script tab idle longest, so a full host never stops the next Run. A Console, a
+   * notebook and an agent's session hold work built up by hand, so they are never chosen.
+   */
   const reclaimIdleSession = Effect.gen(function* () {
     const idle: Array<{ live: LiveComputeSession; record: ComputeSessionRecord }> = [];
     for (const live of (yield* Ref.get(sessionsRef)).values()) {
       const record = yield* Ref.get(live.recordRef);
       const queue = yield* Ref.get(live.queueRef);
       if (
+        record.owner?._tag === "file" &&
+        !record.owner.path.toLowerCase().endsWith(".ipynb") &&
         record.status === "ready" &&
         record.activity === "idle" &&
         queue.active === null &&

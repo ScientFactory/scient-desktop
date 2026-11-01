@@ -1,4 +1,7 @@
-/** One way to run a file. `{file}` is the source and `{output}` a built program. */
+/**
+ * One way to run a file. `{file}` is the source, `{quotedFile}` the same for inside double quotes
+ * read with backslash escapes, and `{output}` a built program.
+ */
 export interface ComputeRunCommand {
   /** The tool's name, as the scan reports it. */
   readonly command: string;
@@ -230,7 +233,7 @@ export const COMPUTE_RUN_TABLE: ReadonlyArray<ComputeRunRoute> = [
     languageId: "sqlite",
     label: "SQLite",
     extensions: [".sql"],
-    commands: [{ command: "sqlite3", args: ["-bail", ":memory:", ".read '{file}'"] }],
+    commands: [{ command: "sqlite3", args: ["-bail", ":memory:", '.read "{quotedFile}"'] }],
   },
 ];
 

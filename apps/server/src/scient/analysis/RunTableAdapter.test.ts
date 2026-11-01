@@ -177,7 +177,15 @@ describe("how a file is built", () => {
       adapterFor("sqlite", [found("sqlite", "sqlite3", "/usr/bin/sqlite3", null)]),
       "a.sql",
     );
-    expect(step.args).toEqual(["-bail", ":memory:", ".read '/project/a.sql'"]);
+    expect(step.args).toEqual(["-bail", ":memory:", '.read "/project/a.sql"']);
+  });
+
+  it("keeps a sqlite3 script's path whole, whatever it holds", async () => {
+    const step = await prepare(
+      adapterFor("sqlite", [found("sqlite", "sqlite3", "/usr/bin/sqlite3", null)]),
+      `O'Brien "x".sql`,
+    );
+    expect(step.args[2]).toBe(`.read "/project/O'Brien \\"x\\".sql"`);
   });
 });
 

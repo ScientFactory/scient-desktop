@@ -1479,7 +1479,9 @@ const make = Effect.gen(function* () {
               existing.projectId !== identity.projectId ||
               existing.source.relativePath !== input.relativePath ||
               existing.source.revision !== input.sourceRevision ||
-              existing.runtime.id !== input.runtimeId
+              existing.runtime.id !== input.runtimeId ||
+              (input.executablePath !== undefined &&
+                existing.runtime.executablePath !== input.executablePath)
             ) {
               return yield* analysisError(
                 "start",
