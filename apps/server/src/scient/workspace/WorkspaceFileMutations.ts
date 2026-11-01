@@ -4013,9 +4013,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       kind: NonNullable<RetainedMutationInput["kind"]>,
       condition: NonNullable<RetainedMutationInput["condition"]>,
     ): Promise<RetainedMutationResult> => {
-      const directory = NodePath.join(input.retentionDirectory, input.id);
+      const directory = await prepareRetainedDirectory(
+        input.retentionDirectory,
+        input.id,
+        helperFor(),
+      );
       const desired = input.bytes == null ? null : bytesRevision(input.bytes);
-      await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
       const previous = await readRetainedRecord(directory, deps.nativePublicationHelper).catch(
         (cause: unknown) => {
           if (isNodeError(cause, "ENOENT")) return null;
@@ -4144,6 +4147,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         return finish("skipped", "revision");
       await save({ phase: "publishing", sourceMutation: true });
       await point("checked");
+      if (input.expectedRevision === null) await point("create-staged");
       const fields = {
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
