@@ -59,6 +59,9 @@ import {
   toolOutcome,
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+// SCIENT-FORK:START — Scient tools return figures as MCP image content.
+import { liftScientToolImages } from "./scientToolImages.ts";
+// SCIENT-FORK:END
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
@@ -858,6 +861,7 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
                     operation.id,
                     registration.handle(payload),
                   ).pipe(
+                    Effect.map(liftScientToolImages),
                     Effect.provideService(WorkspaceBindingResolver, resolver),
                     Effect.provideService(AgentInvocationContext, invocation),
                     Effect.catchTags({
@@ -1442,6 +1446,7 @@ export const layerTools = Layer.mergeAll(
   registerScientToolkit(ScientAccountsToolkit).pipe(
     Layer.provide(ScientAccountsToolkitHandlersLive),
     Layer.provide(AccountSessionFilesLive),
+    Layer.provide(OrchestratorMcpService.layer),
   ),
   // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,

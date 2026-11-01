@@ -77,7 +77,9 @@ import {
   ComposerBoldSelectionOnlyExtension,
   convertBulletItemToTask,
   ComposerCodeExtension,
+  ComposerBoldExtension,
   ComposerItalicExtension,
+  ComposerStrikeExtension,
   ComposerTaskItemExtension,
   ComposerTaskListExtension,
   flatToMarkdown,
@@ -850,7 +852,8 @@ function createComposerExtensions(richText: boolean) {
       listKeymap: false,
       undoRedo: { newGroupDelay: COMPOSER_UNDO_GROUP_DELAY },
       italic: false,
-      ...(richText ? {} : { bold: false, strike: false }),
+      bold: false,
+      strike: false,
     }),
     ComposerUndoGroupingExtension,
     ComposerTextDirectionExtension,
@@ -863,6 +866,8 @@ function createComposerExtensions(richText: boolean) {
       ? [
           ComposerBoldSelectionOnlyExtension,
           ComposerItalicExtension,
+          ComposerBoldExtension,
+          ComposerStrikeExtension,
           ComposerCodeExtension,
           ComposerCodeBlockExtension.extend({
             addNodeView() {

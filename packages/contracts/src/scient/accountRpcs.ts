@@ -18,11 +18,25 @@ import {
   AccountSaveInput,
   AccountSaveResult,
   AccountSetControlsInput,
+  AccountCodeSources,
+  AccountGoogleSessions,
+  AccountId,
+  AccountCodeSourcesResult,
+  AccountKeyLink,
+  AccountPaperForSourceInput,
+  AccountPlainKey,
+  AccountPlainKeyInput,
+  AccountPlainKeysInput,
+  AccountPaperForSourceResult,
+  AccountKeyUnlinkInput,
+  AccountSignInSeenInput,
+  AccountsCheckInput,
   AccountsError,
   AccountsSetAgentAccessInput,
   AccountsSnapshot,
   AccountsTestInput,
   AccountStoresStatus,
+  BrowserProfileChoiceInput,
   BrowserProfileRecordRemoveInput,
   BrowserProfileRecordUpdateInput,
   KeychainCandidatesInput,
@@ -40,10 +54,21 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsSave: "accounts.save",
   accountsRemove: "accounts.remove",
   accountsTest: "accounts.test",
+  accountsCheck: "accounts.check",
+  accountsSignInSeen: "accounts.signInSeen",
+  accountsGoogleSessionsSeen: "accounts.googleSessions.seen",
+  accountsSessionEnded: "accounts.sessionEnded",
+  accountsSetCodeSources: "accounts.codeSources.set",
+  accountsLinkKey: "accounts.keys.link",
+  accountsPaperForSource: "accounts.papers.getForSource",
+  accountsPlainKeys: "accounts.plainKeys.find",
+  accountsKeepPlainKey: "accounts.plainKeys.keep",
+  accountsUnlinkKey: "accounts.keys.unlink",
   accountsSetControls: "accounts.setControls",
   accountsSetAgentAccess: "accounts.setAgentAccess",
   accountsProfileUpdate: "accounts.profiles.update",
   accountsProfileRemove: "accounts.profiles.remove",
+  accountsProfileChoose: "accounts.profiles.choose",
   accountsHandoffShow: "accounts.handoffs.show",
   accountsHandoffCancel: "accounts.handoffs.cancel",
   accountsApprovalRespond: "accounts.approvals.respond",
@@ -98,6 +123,71 @@ export const WsAccountsRemoveRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsRe
 /** Resolves every linked value without returning it; fails with the first problem. */
 export const WsAccountsTestRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsTest, {
   payload: AccountsTestInput,
+  success: Empty,
+  error: AccountsRpcError,
+});
+
+/** Opens browser sign-ins one at a time; results arrive through account changes. */
+export const WsAccountsCheckRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsCheck, {
+  payload: AccountsCheckInput,
+  success: Schema.Struct({
+    checked: Schema.Int,
+    alreadyRunning: Schema.optional(Schema.Boolean),
+  }),
+  error: AccountsRpcError,
+});
+
+export const WsAccountsSignInSeenRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSignInSeen, {
+  payload: AccountSignInSeenInput,
+  success: Empty,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsGoogleSessionsSeenRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsGoogleSessionsSeen,
+  { payload: AccountGoogleSessions, success: Empty, error: AccountsRpcError },
+);
+
+export const WsAccountsSessionEndedRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSessionEnded, {
+  payload: Schema.Struct({ accountId: AccountId }),
+  success: Empty,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsSetCodeSourcesRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsSetCodeSources,
+  { payload: AccountCodeSources, success: AccountCodeSourcesResult, error: AccountsRpcError },
+);
+
+export const WsAccountsPaperForSourceRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsPaperForSource,
+  {
+    payload: AccountPaperForSourceInput,
+    success: AccountPaperForSourceResult,
+    error: AccountsRpcError,
+  },
+);
+
+export const WsAccountsPlainKeysRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsPlainKeys, {
+  payload: AccountPlainKeysInput,
+  success: Schema.Array(AccountPlainKey),
+  error: AccountsRpcError,
+});
+
+export const WsAccountsKeepPlainKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsKeepPlainKey, {
+  payload: AccountPlainKeyInput,
+  success: Empty,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsLinkKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsLinkKey, {
+  payload: AccountKeyLink,
+  success: Empty,
+  error: AccountsRpcError,
+});
+
+export const WsAccountsUnlinkKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsUnlinkKey, {
+  payload: AccountKeyUnlinkInput,
   success: Empty,
   error: AccountsRpcError,
 });
@@ -159,6 +249,11 @@ export const WsAccountsFillValuesRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accoun
   success: AccountFillValues,
   error: AccountsRpcError,
 });
+
+export const WsAccountsProfileChooseRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsProfileChoose,
+  { payload: BrowserProfileChoiceInput, success: Empty, error: AccountsRpcError },
+);
 
 export const WsAccountsMatchSignInRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsMatchSignIn, {
   payload: AccountMatchSignInInput,

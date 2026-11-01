@@ -60,6 +60,9 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
   DesktopLocalEnvironmentAuth,
   {
     readonly getBearerToken: Effect.Effect<string, DesktopLocalEnvironmentAuthError>;
+    // SCIENT-FORK:START — sessions expire, and keep-awake outlives them in a long-running app.
+    readonly forgetBearerToken: Effect.Effect<void>;
+    // SCIENT-FORK:END
   }
 >()("@t3tools/desktop/backend/DesktopLocalEnvironmentAuth") {}
 
@@ -121,7 +124,12 @@ export const make = Effect.gen(function* () {
     )
     .pipe(Effect.withSpan("desktop.localEnvironmentAuth.getBearerToken"));
 
-  return DesktopLocalEnvironmentAuth.of({ getBearerToken });
+  return DesktopLocalEnvironmentAuth.of({
+    getBearerToken,
+    // SCIENT-FORK:START — sessions expire, and keep-awake outlives them in a long-running app.
+    forgetBearerToken: Ref.set(tokenRef, Option.none()),
+    // SCIENT-FORK:END
+  });
 });
 
 export const layer = Layer.effect(DesktopLocalEnvironmentAuth, make);

@@ -499,6 +499,7 @@ import {
   WsAccountsPasswordStoreRpc,
   WsAccountsOnePasswordConnectRpc,
   WsAccountsOnePasswordDisconnectRpc,
+  WsAccountsProfileChooseRpc,
   WsAccountsProfileRemoveRpc,
   WsAccountsProfileUpdateRpc,
   WsAccountsRemoveRpc,
@@ -508,6 +509,16 @@ import {
   WsAccountsSnapshotRpc,
   WsAccountsSubscribeChangesRpc,
   WsAccountsTestRpc,
+  WsAccountsCheckRpc,
+  WsAccountsGoogleSessionsSeenRpc,
+  WsAccountsSessionEndedRpc,
+  WsAccountsSignInSeenRpc,
+  WsAccountsSetCodeSourcesRpc,
+  WsAccountsLinkKeyRpc,
+  WsAccountsPaperForSourceRpc,
+  WsAccountsPlainKeysRpc,
+  WsAccountsKeepPlainKeyRpc,
+  WsAccountsUnlinkKeyRpc,
 } from "./scient/accountRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
@@ -2566,6 +2577,7 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsPasswordStoreRpc,
   WsAccountsOnePasswordConnectRpc,
   WsAccountsOnePasswordDisconnectRpc,
+  WsAccountsProfileChooseRpc,
   WsAccountsProfileRemoveRpc,
   WsAccountsProfileUpdateRpc,
   WsAccountsRemoveRpc,
@@ -2575,6 +2587,16 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsSnapshotRpc,
   WsAccountsSubscribeChangesRpc,
   WsAccountsTestRpc,
+  WsAccountsCheckRpc,
+  WsAccountsGoogleSessionsSeenRpc,
+  WsAccountsSessionEndedRpc,
+  WsAccountsSignInSeenRpc,
+  WsAccountsSetCodeSourcesRpc,
+  WsAccountsLinkKeyRpc,
+  WsAccountsPaperForSourceRpc,
+  WsAccountsPlainKeysRpc,
+  WsAccountsKeepPlainKeyRpc,
+  WsAccountsUnlinkKeyRpc,
 );
 // SCIENT-FORK:END
 

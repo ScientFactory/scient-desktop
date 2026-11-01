@@ -33,6 +33,8 @@ export const SelectProviderOptionDescriptor = Schema.Struct({
   emptySelectionLabel: Schema.optional(TrimmedNonEmptyString),
   currentValue: Schema.optional(TrimmedNonEmptyString),
   promptInjectedValues: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Marks the reasoning control when its id is an agent's own, such as an ACP `thought_level`. */
+  role: Schema.optional(Schema.Literal("reasoning")),
 });
 export type SelectProviderOptionDescriptor = typeof SelectProviderOptionDescriptor.Type;
 
@@ -190,7 +192,7 @@ export const DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
   [ANTIGRAVITY_DRIVER_KIND]: ANTIGRAVITY_DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-5-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
-  [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+  [OPENCODE_DRIVER_KIND]: "opencode/big-pickle",
   // Droid's catalog varies per account and build; use the model Droid starts with.
   [DROID_DRIVER_KIND]: DROID_DEFAULT_MODEL,
   [PI_DRIVER_KIND]: PI_DEFAULT_TEXT_GENERATION_MODEL,

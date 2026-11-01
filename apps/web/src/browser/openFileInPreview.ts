@@ -35,6 +35,9 @@ import {
 } from "~/rightPanelStore";
 import { useHtmlPdfSourceStore } from "~/scient/documentExport/htmlPdfSourceStore";
 import { resolveBrowserDefaults } from "./browserDefaults";
+// SCIENT-FORK:START — Scient Accounts: choose the profile a new tab opens in.
+import { openProfileId } from "~/scient/accounts/openProfile";
+// SCIENT-FORK:END
 
 /** Classifies a link target; host-file authorization keeps literal extensions. */
 export const isBrowserPreviewFile = (path: string): boolean =>
@@ -115,6 +118,10 @@ export async function openUrlInPreview<E>(input: {
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  // SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.
+  const profileId = input.profileId ?? (await openProfileId(threadRef, input.url, defaults));
+  if (input.isCurrent?.() === false) return AsyncResult.success(undefined);
+  // SCIENT-FORK:END
   const runtime = previewRuntimeFor(threadRef.environmentId);
   const previousActiveTabId = readThreadPreviewState(threadRef).activeTabId;
   // The server changes the active tab, not panel selection; selection changes come from the user.
@@ -128,7 +135,7 @@ export async function openUrlInPreview<E>(input: {
       threadId: threadRef.threadId,
       url: input.url,
       viewport: defaults.viewport,
-      profileId: input.profileId ?? defaults.profileId,
+      profileId,
       ...(runtime === undefined ? {} : { runtime }),
     },
   });

@@ -8,6 +8,7 @@ import {
 import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -15,19 +16,39 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { authorizePreviewProfile, recordProfileUse } from "../agent/previewProfileAccess.ts";
 import { AccountsService, type AccountSessionScope } from "../AccountsService.ts";
-import { decideSignIn, decideSignInContinuation, type SignInSubmission } from "./decision.ts";
-import { SignInDetection, signInDetectionScript } from "./detection.ts";
+import {
+  decideSignIn,
+  decideSignInContinuation,
+  MAX_SIGN_IN_STEPS,
+  pageOffersNoSignIn,
+  SIGN_IN_TOO_LONG,
+  type SignInSubmission,
+} from "./decision.ts";
+import { SignInDetection, signInDetectionScript, tickRememberScript } from "./detection.ts";
 import { accountOtp, parseTotp } from "./totp.ts";
 import { matchesAccountOrigin } from "./origin.ts";
 
 const decodeDetection = Schema.decodeUnknownEffect(SignInDetection);
 const REJECTION_SETTLE_CHECKS = 5;
+const EMPTY_PAGE_SETTLE_CHECKS = 3;
+
+export interface SignInOptions {
+  /** The user's own check: their profile's agent access doesn't apply. */
+  readonly userRun?: boolean;
+  /** Waits for a code the user types into a private card, on any of their devices. */
+  readonly askCode?: (site: string) => Effect.Effect<string, never, never>;
+  /** Looks once for a code in the sources the user turned on. */
+  readonly findCode?: (sinceMs: number) => Effect.Effect<string | undefined, never, never>;
+  /** Started by a page, not by a tool that can ask for a code: hand that step to the agent. */
+  readonly stopAtCode?: boolean;
+}
 
 export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   session: AccountSessionScope,
   account: AccountSummary,
   secrets: Readonly<Record<string, Redacted.Redacted<string>>>,
   tabId?: PreviewTabId,
+  options: SignInOptions = {},
 ) {
   if (account.details.kind !== "website" && account.details.kind !== "library")
     return yield* new AccountsError({
@@ -51,21 +72,35 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
     broker
       .invoke<A>({ scope, operation, input, ...(target === undefined ? {} : { tabId: target }) })
       .pipe(
+        // Browser errors are written for agents (a full tab limit, a closed tab); keep them.
         Effect.mapError(
-          () =>
+          (error) =>
             new AccountsError({
               reason: "unavailable",
-              message: "The browser sign-in could not be completed.",
+              message: error.message || "The browser sign-in could not be completed.",
             }),
         ),
       );
   const status = yield* invoke<PreviewAutomationStatus>("status", {}, tabId);
   const current = status.tabs?.find((tab) => tab.tabId === (tabId ?? status.tabId));
-  const reuse =
-    current?.ownedByCaller === true &&
-    (details.profileId === undefined || current.profileId === details.profileId);
+  const onSite = current?.url ? matchesAccountOrigin(current.url, details.sites) : false;
+  const sameProfile = details.profileId === undefined || current?.profileId === details.profileId;
+  // The agent's own tab is used when it is on the account's site (in any profile: the password
+  // works anywhere) or in the account's profile, where it is sent to the site. A new tab opens the
+  // sign-in page, this page, or the account's first site.
+  const reuse = current?.ownedByCaller === true && (sameProfile || (tabId !== undefined && onSite));
+  const firstSite = details.sites[0];
+  const siteUrl =
+    firstSite && (firstSite.startsWith("https://") ? firstSite : `https://${firstSite}`);
+  // A tab already on the site stays put: a saved address may be a step of an old sign-in, and the
+  // page may already be the one to use.
+  const destination =
+    reuse && onSite ? undefined : (details.loginUrl ?? (onSite ? current?.url : siteUrl));
+  const otherAddresses = [...new Set([details.loginUrl, siteUrl])].filter(
+    (url): url is string => url !== undefined && url !== destination,
+  );
   const openInput = {
-    ...(details.loginUrl === undefined ? {} : { url: details.loginUrl }),
+    ...(destination ? { url: destination } : {}),
     ...(details.profileId === undefined ? {} : { profileId: details.profileId }),
     reuseExistingTab: reuse,
     ...(reuse && current ? { tabId: current.tabId } : {}),
@@ -76,16 +111,17 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       reason: "denied",
       message: "The sign-in URL does not match the account's sites.",
     });
-  const profile = yield* authorizePreviewProfile(session, status, openInput);
-  const opened = yield* recordProfileUse(
-    session,
-    profile.profileId,
+  const open = (profileId: string | undefined) =>
     invoke<PreviewAutomationStatus>(
       "open",
-      { ...openInput, profileId: profile.profileId },
+      { ...openInput, ...(profileId === undefined ? {} : { profileId }) },
       reuse ? current?.tabId : undefined,
-    ),
-  );
+    );
+  const opened = options.userRun
+    ? yield* open(current?.profileId ?? details.profileId)
+    : yield* authorizePreviewProfile(session, status, openInput).pipe(
+        Effect.flatMap(({ profileId }) => recordProfileUse(session, profileId, open(profileId))),
+      );
   if (!opened.tabId)
     return yield* new AccountsError({
       reason: "unavailable",
@@ -94,10 +130,20 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
   const target = opened.tabId;
   const password = secrets.password === undefined ? undefined : Redacted.value(secrets.password);
   const totp = secrets.totp === undefined ? undefined : Redacted.value(secrets.totp);
+  const decide = (page: SignInDetection) =>
+    decideSignIn(page, details.sites, {
+      username: details.username !== undefined,
+      password: password !== undefined,
+      otp: totp !== undefined,
+      ...(details.username === undefined ? {} : { accountName: details.username }),
+      passwordSent: submissions.some(({ fields }) => fields.includes("password")),
+    });
   // Only the last submission's fields: earlier pages are gone, and after a hand-off the user
   // continues with what is on screen.
   let filled: Array<{ origin: string; selector: string; expected: string }> = [];
   const submissions: SignInSubmission[] = [];
+  // A code sent in reply to a submit can arrive before the page shows it asks for one.
+  let submittedAt: number | undefined;
   // Cleared unless the sign-in succeeded or the user takes over, including on interruption.
   let clearFilled = true;
   let cleanupFailed = false;
@@ -132,7 +178,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
       const continuation = decideSignInContinuation(page, submissions, step, otpPeriod);
       return { page, timestamp, otpPeriod, continuation };
     });
-    for (let step = 0; step <= 6; step++) {
+    for (let step = 0; step <= MAX_SIGN_IN_STEPS; step++) {
       let { page, timestamp, otpPeriod, continuation } = yield* inspect(step);
       // Script-submitted logins answer after "load"; a field still on screen is only a
       // rejection once the page has had a few seconds to respond.
@@ -146,20 +192,101 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
         yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
         ({ page, timestamp, otpPeriod, continuation } = yield* inspect(step));
       }
+      // Sites like Google change step without a page load, so an empty page may not have drawn yet.
+      for (
+        let wait = 0;
+        wait < EMPTY_PAGE_SETTLE_CHECKS && !page.broken && pageOffersNoSignIn(page, details.sites);
+        wait++
+      ) {
+        yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
+        ({ page, timestamp, otpPeriod, continuation } = yield* inspect(step));
+      }
       if (continuation.type !== "continue" && !page.signedIn)
         return { outcome: continuation.type, message: continuation.message, tabId: target };
-      let action = decideSignIn(page, details.sites, {
-        username: details.username !== undefined,
-        password: password !== undefined,
-        otp: totp !== undefined,
-      });
+      // A library sends a signed-in reader on to the publisher, which is none of its sites.
+      if (
+        details.kind === "library" &&
+        submissions.some(({ fields }) => fields.includes("password")) &&
+        !matchesAccountOrigin(page.origin, details.sites) &&
+        !page.broken &&
+        !page.limited &&
+        !page.challenge &&
+        !page.username &&
+        !page.password &&
+        !page.otp
+      ) {
+        clearFilled = false;
+        return { outcome: "signed-in" as const, tabId: target };
+      }
+      // After a submission, an empty page is that sign-in's next step, not a dead address.
+      const nextAddress =
+        submissions.length === 0 && pageOffersNoSignIn(page, details.sites)
+          ? otherAddresses.shift()
+          : undefined;
+      if (nextAddress !== undefined) {
+        yield* invoke(
+          "open",
+          { url: nextAddress, reuseExistingTab: true, tabId: target, open: false },
+          target,
+        );
+        yield* invoke("accountWaitForLoad", {}, target);
+        continue;
+      }
+      let action = decide(page);
       if (action.type === "signed-in" || action.type === "needs-user") clearFilled = false;
       if (action.type === "signed-in") return { outcome: "signed-in" as const, tabId: target };
       if (action.type === "needs-user") {
+        if (page.limited)
+          return { outcome: "limited" as const, message: action.message, tabId: target };
         if (session.unattended || action.kind === undefined)
           return { outcome: "needs-user" as const, message: action.message, tabId: target };
+        if (options.stopAtCode && action.kind === "code")
+          return {
+            outcome: "needs-user" as const,
+            message: "It needs a code.",
+            tabId: target,
+          };
         const handoffId = NodeCrypto.randomUUID();
         const startedAt = timestamp;
+        // The code belongs to the page that asked for it, not to wherever the tab is by now.
+        let codeOrigin: string | undefined;
+        const codeNeeded = yield* Deferred.make<void>();
+        const noteCodeNeeded = Effect.suspend(() => {
+          if (action.type !== "needs-user" || action.kind !== "code") return Effect.void;
+          codeOrigin ??= page.origin;
+          return Deferred.succeed(codeNeeded, undefined).pipe(Effect.asVoid);
+        });
+        const enterCode = Effect.fn("accounts.signIn.enterCode")(function* (code: string) {
+          const field = yield* inspect(step);
+          if (!field.page.otp || field.page.origin !== codeOrigin) {
+            ({ page, timestamp } = field);
+            return "continue" as const;
+          }
+          yield* invoke(
+            "accountType",
+            { origin: codeOrigin, selector: field.page.otp, text: code, clear: true },
+            target,
+          );
+          submissions.push({
+            origin: field.page.origin,
+            fields: ["otp"],
+            otpPeriod: undefined,
+          });
+          if (field.page.submit) yield* invoke("click", { selector: field.page.submit }, target);
+          else yield* invoke("press", { key: "Enter" }, target);
+          yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
+          ({ page, timestamp } = yield* inspect(step));
+          return "continue" as const;
+        });
+        // A push or CAPTCHA can turn into a code partway, so the card waits until one is needed.
+        const answered = options.askCode
+          ? Deferred.await(codeNeeded).pipe(
+              Effect.andThen(
+                Effect.suspend(() => options.askCode!(new URL(codeOrigin ?? page.origin).host)),
+              ),
+              Effect.flatMap(enterCode),
+            )
+          : Effect.never;
         const wait = Effect.gen(function* () {
           let published = "";
           const update = Effect.fn("accounts.signIn.updateHandoff")(function* () {
@@ -192,6 +319,7 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           });
           // The card shows this tab live in the conversation; "Open browser" reveals it elsewhere.
           yield* update();
+          yield* noteCodeNeeded;
           for (let poll = 0; poll < 90; poll++) {
             if (yield* accounts.handoffCancelled(handoffId)) return "cancelled" as const;
             // The user's actions navigate the page; a look that fails mid-navigation is retried.
@@ -202,19 +330,23 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
             if (yield* accounts.handoffCancelled(handoffId)) return "cancelled" as const;
             if (looked._tag === "None") continue;
             ({ page, timestamp, otpPeriod, continuation } = looked.value);
-            action = decideSignIn(page, details.sites, {
-              username: details.username !== undefined,
-              password: password !== undefined,
-              otp: totp !== undefined,
-            });
+            action = decide(page);
             if (action.type !== "needs-user" || action.kind === undefined)
               return "continue" as const;
             if (timestamp - startedAt >= 180_000) break;
             yield* update();
+            yield* noteCodeNeeded;
+            const found =
+              action.kind === "code" && options.findCode
+                ? yield* options.findCode(Math.min(startedAt, submittedAt ?? startedAt))
+                : undefined;
+            if (found !== undefined) return yield* enterCode(found);
           }
           return "timeout" as const;
-        }).pipe(Effect.ensuring(accounts.removeHandoff(handoffId)));
-        const result = yield* wait;
+        });
+        const result = yield* Effect.raceFirst(wait, answered).pipe(
+          Effect.ensuring(accounts.removeHandoff(handoffId)),
+        );
         if (result !== "continue")
           return {
             outcome: "needs-user" as const,
@@ -224,16 +356,16 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
                 : "The user did not finish signing in within 3 minutes.",
             tabId: target,
           };
-        action = decideSignIn(page, details.sites, {
-          username: details.username !== undefined,
-          password: password !== undefined,
-          otp: totp !== undefined,
-        });
-        if (action.type === "signed-in") return { outcome: "signed-in" as const, tabId: target };
-        if (action.type === "needs-user")
+        // A code belongs to the page that asked for it; another site asking gets the user.
+        if (page.otp && codeOrigin !== undefined && page.origin !== codeOrigin)
           return { outcome: "needs-user" as const, message: action.message, tabId: target };
-        if (continuation.type !== "continue")
-          return { outcome: continuation.type, message: continuation.message, tabId: target };
+        if (decide(page).type === "signed-in") {
+          clearFilled = false;
+          return { outcome: "signed-in" as const, tabId: target };
+        }
+        // Back to the top: it waits for a slow answer, and catches a limit or a refusal.
+        yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
+        continue;
       }
       clearFilled = true;
       filled = [];
@@ -258,20 +390,22 @@ export const signIn = Effect.fn("AccountsAgent.signIn")(function* (
           target,
         );
       }
+      // Keeps the session and skips codes next time; never worth failing a sign-in over.
+      if (page.remember)
+        yield* invoke("evaluate", { expression: tickRememberScript(page.remember) }, target).pipe(
+          Effect.ignore,
+        );
       submissions.push({
         origin: page.origin,
         fields: action.fields.map(({ field }) => field),
         otpPeriod,
       });
+      submittedAt = yield* Clock.currentTimeMillis;
       if (action.submit) yield* invoke("click", { selector: action.submit }, target);
       else yield* invoke("press", { key: "Enter" }, target);
-      yield* invoke("accountWaitForLoad", {}, target);
+      yield* invoke("accountWaitForLoad", { settleMs: 1000 }, target);
     }
-    return {
-      outcome: "failed" as const,
-      message: "Sign-in did not finish after six steps.",
-      tabId: target,
-    };
+    return { outcome: "failed" as const, message: SIGN_IN_TOO_LONG, tabId: target };
   });
   return yield* run.pipe(
     Effect.orElseSucceed(() => ({

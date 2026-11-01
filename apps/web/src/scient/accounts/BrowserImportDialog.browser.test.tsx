@@ -28,7 +28,10 @@ vi.mock("~/state/environments", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/environments")>()),
   usePrimaryEnvironmentId: () => PRIMARY_LOCAL_ENVIRONMENT_ID,
 }));
-vi.mock("~/components/ui/toast", () => ({ toastManager: { add: state.toast } }));
+vi.mock("~/components/ui/toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/components/ui/toast")>()),
+  toastManager: { add: state.toast },
+}));
 vi.mock("./useAccounts", () => ({
   useAccountCommand: () => state.command,
 }));
@@ -151,5 +154,9 @@ it("imports a Chromium profile's saved passwords through the Accounts importer",
       title: "Imported 3 passwords, 4 skipped",
     }),
   );
-  expect(state.command).toHaveBeenCalledWith({ format: "chrome", content: "synthetic csv" });
+  expect(state.command).toHaveBeenCalledWith({
+    format: "chrome",
+    content: "synthetic csv",
+    profileId: expect.stringMatching(/^profile-/),
+  });
 });

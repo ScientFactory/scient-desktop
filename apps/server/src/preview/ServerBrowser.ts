@@ -388,6 +388,9 @@ const READ_OPERATIONS: ReadonlySet<PreviewAutomationRequest["operation"]> = new 
 const AGENT_TAB_LIMIT = 8;
 const SERVER_TAB_LIMIT = 32;
 const AGENT_TAB_IDLE_MS = 30 * 60 * 1000;
+// SCIENT-FORK:START — desktop connections released at the server limit have been idle this long.
+const RELEASE_IDLE_MS = 2 * 60 * 1000;
+// SCIENT-FORK:END
 const IDLE_SWEEP_INTERVAL = "1 minute";
 
 const DOWNLOAD_LIMIT = 20;
@@ -636,7 +639,11 @@ const make = Effect.gen(function* () {
     if (url === "about:blank" || url.startsWith("chrome-error://")) return;
     const title = (await tab.page.title().catch(() => "")).slice(0, 512);
     if (tab.loading || tab.page.url() !== url) return;
-    report(tab, { _tag: "Success", url: url.slice(0, 2048), title });
+    report(tab, {
+      _tag: "Success",
+      url: ServerBrowserPage.withoutDataPayload(url).slice(0, 2048),
+      title,
+    });
   };
 
   const reportLiveTabs = () => {
@@ -1029,6 +1036,8 @@ const make = Effect.gen(function* () {
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
     reportLiveTabs();
+    // A desktop page navigates on its own and can finish loading before these listeners attach.
+    if (desktop) void page.waitForLoadState("load").then(() => reportLoaded(tab), constVoid);
     // Existing desktop and popup PDFs can start loading before interception attaches.
     if (
       snapshot.navStatus._tag === "Loading" &&
@@ -1421,6 +1430,30 @@ const make = Effect.gen(function* () {
     );
   };
 
+  // SCIENT-FORK:START — a desktop page outlives its server connection, so the least recently used
+  // connections of other conversations are released before a new tab is refused for the server
+  // limit; each reconnects on its next use.
+  const operatingAgents = new Map<string | null, number>();
+  const releaseDesktopConnections = (threadId: string) => {
+    while (tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT) {
+      const oldest = [...tabs.values()]
+        .filter(
+          (tab) =>
+            tab.desktop !== null &&
+            tab.threadId !== threadId &&
+            tab.viewers.size === 0 &&
+            tab.recording === undefined &&
+            // Never one an agent is using right now.
+            !operatingAgents.has(tab.control.agentId) &&
+            tab.usedAt < Date.now() - RELEASE_IDLE_MS,
+        )
+        .sort((left, right) => left.usedAt - right.usedAt)[0];
+      if (!oldest) return;
+      dropTab(oldest, false);
+    }
+  };
+  // SCIENT-FORK:END
+
   const assertTabCapacity = (agentSessionId: string) => {
     if (atTabLimit(agentSessionId))
       throw new BrowserControlInterrupted(
@@ -1606,7 +1639,7 @@ const make = Effect.gen(function* () {
         ...profileStatus(),
       };
     }
-    const url = tab.page.url();
+    const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
     const viewport = tab.desktop ? await layoutSize(tab) : tab.page.viewportSize();
     const status = {
       available: true,
@@ -1630,7 +1663,10 @@ const make = Effect.gen(function* () {
         .filter((candidate) => candidate.threadId === tab.threadId)
         .map((candidate) => ({
           tabId: candidate.tabId,
-          url: candidate.page.url() === "about:blank" ? null : candidate.page.url(),
+          url:
+            candidate.page.url() === "about:blank"
+              ? null
+              : ServerBrowserPage.withoutDataPayload(candidate.page.url()),
           ...(candidate.openerTabId === undefined ? {} : { openerTabId: candidate.openerTabId }),
           owner: tabOwner(candidate),
           ownedByCaller: candidate.control.agentId === agentSessionId,
@@ -2015,7 +2051,12 @@ const make = Effect.gen(function* () {
             : undefined;
         const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
-        if (!existing) closeIdleAgentTabs();
+        if (!existing) {
+          closeIdleAgentTabs();
+          // SCIENT-FORK:START — free server connections held by other conversations' desktop pages.
+          releaseDesktopConnections(request.threadId);
+          // SCIENT-FORK:END
+        }
         const tab =
           existing ??
           (await runPromise(
@@ -2266,10 +2307,20 @@ const make = Effect.gen(function* () {
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
-      try: () =>
-        runOperation(request, performance.now() + request.timeoutMs).finally(() =>
-          markUsed(request),
-        ),
+      try: () => {
+        // SCIENT-FORK:START — an agent's tabs stay connected while its operation runs.
+        const agent = request.agentSessionId ?? null;
+        operatingAgents.set(agent, (operatingAgents.get(agent) ?? 0) + 1);
+        // SCIENT-FORK:END
+        return runOperation(request, performance.now() + request.timeoutMs).finally(() => {
+          markUsed(request);
+          // SCIENT-FORK:START
+          const others = (operatingAgents.get(agent) ?? 1) - 1;
+          if (others > 0) operatingAgents.set(agent, others);
+          else operatingAgents.delete(agent);
+          // SCIENT-FORK:END
+        });
+      },
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
       Effect.match({

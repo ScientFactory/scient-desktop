@@ -27,6 +27,9 @@ import { isElectron } from "./env";
 // SCIENT-FORK:START desktop-reload-save-coordination
 import { startDesktopReloadHandling } from "./lib/desktopReload";
 // SCIENT-FORK:END desktop-reload-save-coordination
+// SCIENT-FORK:START — Scient Accounts: saved sign-ins and session checks run in the background.
+import { startAccountWatchers } from "./scient/accounts/accountWatchers";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — a window opened for a side panel tab shows it.
 import { applyPanelTabWindowRequest } from "./scient/multiWindow/panelTabWindow";
 // SCIENT-FORK:END
@@ -232,6 +235,9 @@ export function startAppServices(): AppRouter {
   startLegacyThreadMigrationToast();
   startPermissionUpdateNotices(router);
   startThreadNotifications(appAtomRegistry, router);
+  // SCIENT-FORK:START — Scient Accounts: saved sign-ins and session checks run in the background.
+  startAccountWatchers(appAtomRegistry);
+  // SCIENT-FORK:END
   startGuideRunNotifications(appAtomRegistry, router);
   if (isElectron) startDesktopUpdateLaunchNotice();
 

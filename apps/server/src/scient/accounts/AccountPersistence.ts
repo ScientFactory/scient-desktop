@@ -1,4 +1,7 @@
 import {
+  AccountCodeSources,
+  AccountKeyLink,
+  BrowserProfileChoices,
   AccountsError,
   AccountSummary,
   AccountWriteStore,
@@ -24,6 +27,9 @@ export const AccountsState = Schema.Struct({
   agentAccess: Schema.Boolean,
   accounts: Schema.Array(StoredAccount),
   profiles: Schema.Array(BrowserProfileRecord),
+  profileChoices: Schema.optional(BrowserProfileChoices),
+  codeSources: Schema.optional(AccountCodeSources),
+  keyLinks: Schema.optional(Schema.Array(AccountKeyLink)),
   onePassword: Schema.optional(
     Schema.Union([
       Schema.Struct({

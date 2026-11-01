@@ -495,9 +495,8 @@ states what the user can inspect, and names the rich Markdown representations th
 renders. A separate browser block is composed only when the exact MCP credential for that session
 grants `preview`; the same capability decision drives both authorization and awareness. Sources
 mechanics remain in tool descriptions rather than consuming every turn's instruction context.
-The read-only Compute inventory block is likewise included only with the exact
-`compute:inventory` grant. It reports existing runtime candidates but grants no execution,
-installation, attachment, or authority to launch a listed executable path.
+The Compute block is likewise included only with the exact `compute` grant, which lets the
+agent run code in Compute sessions and read their results.
 
 Each built-in driver has an explicit native delivery decision, guarded against `BUILT_IN_DRIVERS`:
 
@@ -1182,7 +1181,10 @@ manual-only because their version is pinned in mise's config. A Grok cask whose 
 cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew
 compares against `brew info` since casks trail npm by hours; native installs share npm's version
-train, so the registry stays authoritative for them.
+train, so the registry stays authoritative for them. A Chocolatey install of Claude stays
+manual-only: its package directory is writable only by administrators, and `claude update` through
+the shim installs a native copy elsewhere. The latest version comes from `choco search`, and the
+card shows `choco upgrade claude-code` without running it.
 See the [resolver](../../apps/server/src/provider/providerMaintenanceRunner.ts).
 
 Ownership is cached per instance and re-read immediately before an update runs. The

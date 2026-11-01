@@ -2,7 +2,10 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useLayoutEffect } from "react";
 import type { EditorSelection } from "@pierre/diffs/edit";
 import { revealFileEditorSelection, type SourceSelectionReveal } from "./fileEditorSourceReveal";
-import { SourceCitationActions } from "~/scient/fileSurfaces/SourceCitationActions";
+import {
+  SourceCitationActions,
+  type SourceCaretQuote,
+} from "~/scient/fileSurfaces/SourceCitationActions";
 // SCIENT-FORK:START
 import {
   FILE_ACTIVE_RANGE_ATTRIBUTE,
@@ -17,7 +20,10 @@ import {
 } from "~/scient/fileSurfaces/scientWorkspaceViewerRefresh";
 import {
   ScientMathSourceToolbar,
+  minimalSourceEdit,
+  moveEditorToSource,
   scientEditorGutterUtility,
+  useScientFileLineRange,
   scientFileEditorUnsafeCss,
   useScientFileEditorBindings,
 } from "~/scient/fileSurfaces/scientFileEditorBindings";
@@ -27,12 +33,16 @@ import {
   scientDocumentSessionFile,
 } from "~/scient/fileSurfaces/scientDocumentSession";
 import {
+  isScientNotebookFile,
   ScientComputeFileSurface,
+  ScientDataFileTable,
   ScientLatexSurface,
+  ScientNotebookSurface,
   ScientPdfReader,
   ScientSurfaceSuspense,
 } from "~/scient/fileSurfaces/scientLazyFileSurfaces";
 import { useScientFileReadRecovery } from "~/scient/fileSurfaces/scientFileReadRecovery";
+import { isScientDataFile } from "~/scient/dataTable/dataFiles";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
 import { editorCompositions } from "~/scient/editorFlush/editorComposition";
@@ -481,6 +491,7 @@ function WorkspaceVideoPreview(props: {
         revision={revision}
         preload="metadata"
         className="flex h-full min-h-0 w-full max-w-5xl items-center justify-center"
+        videoClassName="aspect-auto max-h-full w-auto max-w-full"
         onRetry={refreshAssetUrl}
         actionsSource={{
           kind: "video",
@@ -843,6 +854,9 @@ interface EditableFileSurfaceProps {
   saveResolution: FileSaveResolution | null;
   onSelectionChange?: (range: SelectedLineRange | null) => void;
   activeLineRange?: SelectedLineRange | null;
+  // SCIENT-FORK:START — what a clicked caret stands for when asking in chat.
+  caretQuote?: SourceCaretQuote | undefined;
+  // SCIENT-FORK:END
   retainSelectionOnBlur?: boolean;
   sourceSelectionReveal?: SourceSelectionReveal | undefined;
   onEditorSelectionChange?: (selection: EditorSelection | null) => void;
@@ -910,6 +924,9 @@ export function EditableFileEditor({
   editingBlocked = false,
   onSelectionChange,
   activeLineRange,
+  // SCIENT-FORK:START — what a clicked caret stands for when asking in chat.
+  caretQuote,
+  // SCIENT-FORK:END
   retainSelectionOnBlur = false,
   sourceSelectionReveal,
   onEditorSelectionChange,
@@ -938,6 +955,9 @@ export function EditableFileEditor({
   const selectedRange =
     selectionOverride?.revealRequestId === revealRequestId ? selectionOverride.range : null;
   const displayedRange = selectedRange ?? activeLineRange ?? null;
+  // SCIENT-FORK:START — the line range is drawn in place, outside the editor's options.
+  const drawLineRange = useScientFileLineRange(selectedRange, activeLineRange);
+  // SCIENT-FORK:END
   const setSelectedRange = (range: SelectedLineRange | null) => {
     setSelectionOverride({ revealRequestId, range });
     onSelectionChange?.(range);
@@ -980,10 +1000,6 @@ export function EditableFileEditor({
     : fileEditStateKey;
   // SCIENT-FORK:END
   const [editedContents, setEditedContents] = useState<string | null>(null);
-  if (contents !== (editedContents ?? externalFile.contents)) {
-    setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
-    setEditedContents(null);
-  }
   const { ready: editable, onPostRender: onEditablePostRender } =
     useEditableAfterHighlight(externalFile);
   const editorRef = useRef<Editor<"file", FileCommentAnnotationGroup, undefined> | null>(null);
@@ -992,6 +1008,14 @@ export function EditableFileEditor({
     FileCommentAnnotationGroup,
     undefined
   > | null>(null);
+  // SCIENT-FORK:START — an open editor takes a new version as an edit, which keeps your place.
+  const outsideChange = contents !== (editedContents ?? externalFile.contents);
+  const updatesInPlace = editor !== null && externalPersistence === undefined;
+  if (outsideChange && !updatesInPlace) {
+    setExternalFile(editableFileContents(environmentId, cwd, relativePath, contents));
+    setEditedContents(null);
+  }
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — the server's editor flush names a file whose input method is composing.
   const compositionTarget = useStableCallback(
     () => externalPersistence?.target ?? { environmentId, cwd, relativePath },
@@ -1041,38 +1065,8 @@ export function EditableFileEditor({
       ) {
         const previous = restored.contents;
         const current = snapshot.draftSource;
-        const splitsBoundary = (source: string, offset: number) => {
-          if (offset === 0 || offset === source.length) return false;
-          const before = source.charCodeAt(offset - 1);
-          const after = source.charCodeAt(offset);
-          return (
-            (before === 13 && after === 10) ||
-            (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff)
-          );
-        };
-        let start = 0;
-        while (
-          start < previous.length &&
-          start < current.length &&
-          previous[start] === current[start]
-        )
-          start += 1;
-        while (splitsBoundary(previous, start) || splitsBoundary(current, start)) start -= 1;
-        let suffix = 0;
-        while (
-          suffix < previous.length - start &&
-          suffix < current.length - start &&
-          previous[previous.length - suffix - 1] === current[current.length - suffix - 1]
-        )
-          suffix += 1;
-        while (
-          splitsBoundary(previous, previous.length - suffix) ||
-          splitsBoundary(current, current.length - suffix)
-        )
-          suffix -= 1;
-        const end = previous.length - suffix;
-        const text = current.slice(start, current.length - suffix);
-        const prepared = attachedEditor.prepareExternalEdits(previous, [{ start, end, text }]);
+        const edit = minimalSourceEdit(previous, current);
+        const prepared = attachedEditor.prepareExternalEdits(previous, [edit]);
         const latest = persistence.getSnapshot();
         if (
           prepared &&
@@ -1082,7 +1076,7 @@ export function EditableFileEditor({
           latest.draftSource === current &&
           !latest.editingBlocked &&
           persistence.getPendingInput() === null &&
-          previous.slice(0, start) + text + previous.slice(end) === current
+          previous.slice(0, edit.start) + edit.text + previous.slice(edit.end) === current
         ) {
           applyingExternal.current = true;
           applyExternalProjection(
@@ -1095,6 +1089,8 @@ export function EditableFileEditor({
           );
         }
       }
+      // Without a document session the latest text, or your unsaved draft, wins over a retained copy.
+      if (!persistence) moveEditorToSource(attachedEditor, contents, applyingExternal);
       const projected = attachedEditor.getFile();
       if (persistence) {
         const current = persistence.getSnapshot();
@@ -1110,6 +1106,9 @@ export function EditableFileEditor({
     // SCIENT-FORK:END
     onComplete: () => {
       editorRef.current = null;
+      // SCIENT-FORK:START — a detached editor takes no in-place update.
+      setEditor(null);
+      // SCIENT-FORK:END
     },
     onFocus: () => queueMicrotask(() => reportEditorSelectionRef.current()),
   };
@@ -1170,6 +1169,7 @@ export function EditableFileEditor({
     reportEditorSelectionRef,
     onEditorSelectionChange,
     onRunShortcut,
+    outsideSource: updatesInPlace && outsideChange ? contents : null,
   });
   const readCitationBaseline = () =>
     externalBindings.current.externalPersistence?.getSnapshot().baselineSource ??
@@ -1316,14 +1316,9 @@ export function EditableFileEditor({
     selectionFrameRef.current = requestAnimationFrame(() => {
       selectionFrameRef.current = null;
       if (!fileContainer.isConnected) return;
-      const showsActiveRange = selectedRange === null && activeLineRange != null;
-      fileContainer.toggleAttribute(FILE_ACTIVE_RANGE_ATTRIBUTE, showsActiveRange);
-      instance.setSelectedLines(
-        displayedRange,
-        showsActiveRange
-          ? { notify: false, activeLineSide: "additions", lineNumberOnly: false }
-          : { notify: false },
-      );
+      // SCIENT-FORK:START — the line range is drawn in place, outside the editor's options.
+      drawLineRange(fileContainer, instance);
+      // SCIENT-FORK:END
     });
   };
 
@@ -1350,6 +1345,9 @@ export function EditableFileEditor({
             onCite={onCite}
             reveal={citationReveal}
             revealId={revealRequestId}
+            // SCIENT-FORK:START — what a clicked caret stands for, while no lines are picked.
+            caretQuote={selectedRange === null ? caretQuote : undefined}
+            // SCIENT-FORK:END
           />
         ) : null}
         {/* SCIENT-FORK:START — Overleaf conflict blocks: highlighted, with a choice above each */}
@@ -1614,6 +1612,9 @@ export default function FilePreviewPanel({
   const isMarkdownPreview = relativePath ? isMarkdownPreviewFile(relativePath) : false;
   const isRichMarkdown = relativePath ? isScientMarkdownDocumentPath(relativePath) : false;
   const isMarkdownDocument = isMarkdownPreview || isRichMarkdown;
+  // SCIENT-FORK:START — attachments and files outside the project keep the read-only preview.
+  const isProjectNotebook = !isHostFile && isScientNotebookFile(relativePath);
+  // SCIENT-FORK:END
   // Files whose saving belongs to a document session, not to this panel's
   // generic saver: one owner per file for every view of it.
   const usesDocumentSession =
@@ -1644,9 +1645,10 @@ export default function FilePreviewPanel({
     relativePath,
     // Read every workspace path so a chat link to a directory can be
     // distinguished from a media or PDF file before choosing a preview.
-    loadAsText: attachment === undefined,
+    // SCIENT-FORK:START — a project notebook loads cell by cell from the server, never as text.
+    loadAsText: attachment === undefined && !isProjectNotebook,
+    // SCIENT-FORK:END
     sourcePending: effectiveSourcePending,
-    surfaceOwnsConflictDetection: usesDocumentSession,
     workspaceMutationId,
     // Host files outside the workspace are watched too: they stay read-only,
     // but an agent or another app can still change them while they are open.
@@ -2641,7 +2643,36 @@ export default function FilePreviewPanel({
                 aria-label="Opening editor"
               />
             )
-          ) : relativePath && absolutePath && renderLargeText ? (
+          ) : // SCIENT-FORK:START — data files open in the paged grid; CSV and TSV keep their text view
+          relativePath &&
+            absolutePath &&
+            attachment === undefined &&
+            isScientDataFile(relativePath) &&
+            (tableDelimiter === null || renderTable) ? (
+            <ScientSurfaceSuspense>
+              <ScientDataFileTable
+                key={`${environmentId}:${absolutePath}`}
+                environmentId={environmentId}
+                absolutePath={absolutePath}
+                name={relativePath.split(/[\\/]/).at(-1) || relativePath}
+                revision={`${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
+              />
+            </ScientSurfaceSuspense>
+          ) : // SCIENT-FORK:END
+          // SCIENT-FORK:START — notebooks live on the server, cell by cell, and never load as text
+          isProjectNotebook ? (
+            <ScientSurfaceSuspense>
+              <ScientNotebookSurface
+                key={`${environmentId}:${cwd}:${relativePath}`}
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath!}
+                threadRef={threadRef}
+                fileRevision={`${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
+              />
+            </ScientSurfaceSuspense>
+          ) : // SCIENT-FORK:END
+          relativePath && absolutePath && renderLargeText ? (
             <WorkspaceLargeTextPreview
               key={`${absolutePath}:${renderTable}:${fileRefreshRevision}`}
               environmentId={environmentId}

@@ -1,11 +1,22 @@
 import type { AssistantCitation } from "@t3tools/contracts";
 // SCIENT-FORK:START — quotes from Markdown files (scient-file-citation://) share this chip; its
 // labels, copy text and navigation come from the composer-citation owners.
-import { isFileCitation, isPdfCitation, type ComposerCitation } from "@t3tools/contracts";
+import {
+  isComputeCitation,
+  isFileCitation,
+  isPdfCitation,
+  type ComposerCitation,
+} from "@t3tools/contracts";
 import {
   composerCitationLabel,
   serializeComposerCitation,
 } from "@t3tools/shared/composerCitations";
+import { computeCitationPlaceLabel } from "@t3tools/shared/computeCitations";
+import { ComputeCitationHoverCard } from "~/scient/compute/ComputeCitationHoverCard";
+import {
+  computeCitationHash,
+  computeCitationNavigation,
+} from "~/scient/compute/computeCitationNavigation";
 import {
   fileCitationHash,
   fileCitationNavigation,
@@ -45,6 +56,7 @@ import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCom
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { observeResize } from "~/lib/observeResize";
+import { textDirection } from "~/textDirection";
 
 export function AssistantCitationChip({
   citation,
@@ -106,16 +118,18 @@ export function AssistantCitationChip({
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes the cited DOM source while the comment editor is open and reacts when it disappears
   useEffect(() => {
     if (!commentOpen || sourceAnchor === unavailableSourceAnchor) return;
-    // SCIENT-FORK:START — a file or PDF quote has no assistant-message source to find.
+    // SCIENT-FORK:START — a document quote has no assistant-message source to find.
+    const assistantQuote =
+      isFileCitation(citation) || isPdfCitation(citation) || isComputeCitation(citation)
+        ? undefined
+        : citation;
     const anchor =
       sourceAnchor ??
-      (isFileCitation(citation) || isPdfCitation(citation)
-        ? null
-        : findAssistantCitationSourceAnchor(document, citation));
+      (assistantQuote ? findAssistantCitationSourceAnchor(document, assistantQuote) : null);
     if (!anchor) return;
     return observeAssistantCitationCommentSource({
       anchor,
-      citation: isFileCitation(citation) || isPdfCitation(citation) ? undefined : citation,
+      citation: assistantQuote,
       // SCIENT-FORK:END
       onUnavailable: onSourceUnavailable,
     });
@@ -142,12 +156,15 @@ export function AssistantCitationChip({
     : undefined;
   // SCIENT-FORK:START — file and PDF quotes label, copy and link to their document.
   const label = composerCitationLabel(citation);
-  const documentQuote = isFileCitation(citation) || isPdfCitation(citation);
+  const documentQuote =
+    isFileCitation(citation) || isPdfCitation(citation) || isComputeCitation(citation);
   const sourceName = isFileCitation(citation)
     ? citation.path
     : isPdfCitation(citation)
       ? pdfCitationDocumentLabel(citation)
-      : "assistant text";
+      : isComputeCitation(citation)
+        ? computeCitationPlaceLabel(citation)
+        : "assistant text";
   // SCIENT-FORK:END
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,
@@ -155,9 +172,11 @@ export function AssistantCitationChip({
     // SCIENT-FORK:START — file quotes label, copy and link to their file.
     hash: isPdfCitation(citation)
       ? pdfCitationHash(citation)
-      : isFileCitation(citation)
-        ? fileCitationHash(citation)
-        : assistantCitationHash(citation),
+      : isComputeCitation(citation)
+        ? computeCitationHash(citation)
+        : isFileCitation(citation)
+          ? fileCitationHash(citation)
+          : assistantCitationHash(citation),
     "data-markdown-copy": serializeComposerCitation(citation),
     // SCIENT-FORK:END
     resetScroll: false,
@@ -166,9 +185,12 @@ export function AssistantCitationChip({
         return;
       }
       event.preventDefault();
-      // SCIENT-FORK:START — a file quote opens its file at the quoted lines; a PDF quote its page.
+      // SCIENT-FORK:START — a file quote opens its file at the quoted lines; a PDF quote its page;
+      // a Compute quote its run or cell.
       if (isPdfCitation(citation)) {
         void navigate(pdfCitationNavigation(citation));
+      } else if (isComputeCitation(citation)) {
+        void navigate(computeCitationNavigation(citation));
       } else if (isFileCitation(citation)) {
         void navigate(fileCitationNavigation(citation));
       } else void navigate(assistantCitationNavigation(citation));
@@ -184,7 +206,9 @@ export function AssistantCitationChip({
       // SCIENT-FORK:END
     >
       <QuoteIcon aria-hidden="true" />
-      <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
+      <ContextChipLabel className="max-w-[16em]" dir={textDirection(label)}>
+        {label}
+      </ContextChipLabel>
     </Link>
   );
   // SCIENT-FORK:START — in chat, a file quote is a link chip with a hover card, not the popover.
@@ -230,6 +254,7 @@ export function AssistantCitationChip({
       data-assistant-citation-chip={documentQuote ? undefined : "true"}
       data-file-citation-chip={isFileCitation(citation) ? "true" : undefined}
       data-pdf-citation-chip={isPdfCitation(citation) ? "true" : undefined}
+      data-compute-citation-chip={isComputeCitation(citation) ? "true" : undefined}
       data-markdown-copy={serializeComposerCitation(citation)}
     >
       {isFileCitation(citation) ? (
@@ -239,6 +264,11 @@ export function AssistantCitationChip({
         />
       ) : isPdfCitation(citation) ? (
         <PdfCitationHoverCard
+          citation={citation}
+          trigger={composer ? composerSourceLink : chatSourceLink}
+        />
+      ) : isComputeCitation(citation) ? (
+        <ComputeCitationHoverCard
           citation={citation}
           trigger={composer ? composerSourceLink : chatSourceLink}
         />
@@ -345,9 +375,11 @@ export function AssistantCitationChip({
           aria-label={
             isPdfCitation(citation)
               ? "Remove PDF citation"
-              : isFileCitation(citation)
-                ? "Remove file citation"
-                : "Remove assistant citation"
+              : isComputeCitation(citation)
+                ? "Remove Compute citation"
+                : isFileCitation(citation)
+                  ? "Remove file citation"
+                  : "Remove assistant citation"
           }
         >
           <XIcon aria-hidden="true" className="size-[0.85em]" />
@@ -378,10 +410,13 @@ function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
         getVirtualizedScrollFadeClassName(fade),
       )}
     >
-      <blockquote className="border-l-2 border-border pl-3 text-muted-foreground">
+      <blockquote
+        className="border-l-2 border-border pl-3 text-muted-foreground"
+        dir={textDirection(citation.text)}
+      >
         {citation.text}
       </blockquote>
-      {citation.comment ? <p>{citation.comment}</p> : null}
+      {citation.comment ? <p dir={textDirection(citation.comment)}>{citation.comment}</p> : null}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { useRef, type RefObject } from "react";
 
 import type { OpenFileOptions } from "~/rightPanelStore";
 import type { NewDocumentFormat } from "~/scient/documents/documentTemplates";
+import type { NewDocumentChoice } from "~/scient/documents/NewDocumentMenuItems";
 import { useCreateNewDocument } from "~/scient/documents/useCreateNewDocument";
 import { useOverleafConnectDialog } from "~/scient/overleaf/useOverleafFolderConnect";
 
@@ -43,7 +44,7 @@ export function useScientFolderActions(input: {
     const slash = selection.lastIndexOf("/");
     return slash === -1 ? "" : selection.slice(0, slash + 1);
   };
-  const startNewDocument = (format: NewDocumentFormat, base: string) =>
+  const startNewDocument = (format: NewDocumentChoice, base: string) =>
     createNewDocument({
       format,
       environmentId: input.environmentId,

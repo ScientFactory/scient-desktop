@@ -8,6 +8,7 @@ import {
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BrowserProfileRecordUpdateInput,
   DEFAULT_BROWSER_PROFILE_ID,
+  BrowserProfileId,
   isBuiltInBrowserProfileId,
   type AccountsSnapshot,
   type EnvironmentId,
@@ -56,15 +57,19 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { accountsState } from "./accountsState";
 import { ProfilePicture } from "./ProfilePicture";
+import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand } from "./useAccounts";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import {
+  GMAIL_URL,
   browserIconUrl,
   importProfileName,
   mergeProfiles,
   matchExistingProfile,
   mergeSourceProfiles,
   changedSourceProfile,
+  signedOutOfGoogle,
+  sitesToKeep,
 } from "./accountsView";
 
 const RUNNING_BROWSER_COPY = "open, quit to import";
@@ -252,18 +257,23 @@ export function BrowserImportDialog({
     null,
   );
   const [imported, setImported] = useState<ReadonlySet<string>>(new Set());
-  const isImported = (
+  const linkedProfile = (
     source: ReturnType<typeof mergeSourceProfiles>[number],
     profile: (typeof source.profiles)[number],
   ) =>
-    imported.has(JSON.stringify([source.id, profile.directory])) ||
-    snapshot.profiles.some(
+    snapshot.profiles.find(
       (item) =>
         item.source?.browser === source.id &&
         (item.source.directory
           ? item.source.directory === profile.directory
           : item.source.profileName === profile.name && item.source.email === profile.email),
-    );
+    )?.profileId;
+  const isImported = (
+    source: ReturnType<typeof mergeSourceProfiles>[number],
+    profile: (typeof source.profiles)[number],
+  ) =>
+    imported.has(JSON.stringify([source.id, profile.directory])) ||
+    linkedProfile(source, profile) !== undefined;
   const load = async () => {
     const [sources, details] = await Promise.all([
       previewBridge?.listBrowserImportSources() ?? [],
@@ -314,17 +324,21 @@ export function BrowserImportDialog({
     importRunning = true;
     setBusy(true);
     const done = new Set<string>();
-    const passwordSources: Array<{ sourceId: (typeof loaded)[number]["id"]; directory: string }> =
-      [];
+    const passwordSources: Array<{
+      sourceId: (typeof loaded)[number]["id"];
+      directory: string;
+      profileId: string | undefined;
+    }> = [];
     const passwordTotals = { imported: 0, skipped: 0, failed: false };
     try {
       for (const source of loaded)
         for (const profile of source.profiles) {
           const key = JSON.stringify([source.id, profile.directory]);
           if (!selected.has(key) || source.unavailable) continue;
+          let profileId: string | undefined = linkedProfile(source, profile);
           // A profile imported before keeps its sign-ins; only its passwords can still come in.
           if (!isImported(source, profile)) {
-            const profileId = `profile-${randomUUID()}`;
+            profileId = `profile-${randomUUID()}`;
             const outcome = await importBrowserCookiesIntoTarget(
               previewBridge,
               source,
@@ -349,13 +363,17 @@ export function BrowserImportDialog({
           }
           done.add(key);
           if (passwords && readPasswords && profile.passwordCount !== undefined)
-            passwordSources.push({ sourceId: source.id, directory: profile.directory });
+            passwordSources.push({ sourceId: source.id, directory: profile.directory, profileId });
         }
       if (done.size > 0) void persistClientSettingsUpdate(withOwnDefault).catch(profileError);
-      for (const input of passwordSources) {
+      for (const { profileId, ...input } of passwordSources) {
         const csv = (await readPasswords?.(input).catch(() => null)) ?? null;
         const result = csv
-          ? await importPasswords({ format: "chrome", content: csv.content })
+          ? await importPasswords({
+              format: "chrome",
+              content: csv.content,
+              ...(profileId === undefined ? {} : { profileId: BrowserProfileId.make(profileId) }),
+            })
           : null;
         if (csv && result?.ok) {
           passwordTotals.imported += result.value.created + result.value.updated;
@@ -581,6 +599,30 @@ export function BrowserImportDialog({
   );
 }
 
+/** The line under a profile's name: its address and, when Google refused it, a way back in. */
+export function ProfileDetail({
+  email,
+  signedOut,
+  onSignIn,
+}: {
+  email: string | undefined;
+  signedOut: boolean;
+  onSignIn?: () => void;
+}) {
+  if (!email && !signedOut) return null;
+  return (
+    <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+      {email ? <span className="truncate">{email}</span> : null}
+      {signedOut ? <span className="shrink-0">{email ? "· " : ""}Signed out of Google</span> : null}
+      {signedOut && onSignIn ? (
+        <Button size="micro" variant="link" className="-my-0.5 shrink-0" onClick={onSignIn}>
+          <span className="text-xs text-foreground">Sign in</span>
+        </Button>
+      ) : null}
+    </span>
+  );
+}
+
 export function BrowserProfiles({
   environmentId,
   snapshot,
@@ -600,6 +642,7 @@ export function BrowserProfiles({
     reportFailure: false,
     reportDefect: false,
   });
+  const openBrowser = useAccountBrowser(environmentId);
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
@@ -715,6 +758,7 @@ export function BrowserProfiles({
         const result = await importBrowserCookiesIntoTarget(previewBridge, source, environmentId, {
           sourceProfileDirectory: profile.directory,
           target: { kind: "existing", profileId: id, name: linked.profileName },
+          keepSites: sitesToKeep(snapshot.accounts, id),
         });
         if (result.kind === "blocked") failed = true;
       }
@@ -728,7 +772,11 @@ export function BrowserProfiles({
           directory: profile.directory,
         }).catch(() => null);
         const result = csv
-          ? await importPasswords({ format: "chrome", content: csv.content })
+          ? await importPasswords({
+              format: "chrome",
+              content: csv.content,
+              profileId: BrowserProfileId.make(id),
+            })
           : null;
         if (!result?.ok) failed = true;
       }
@@ -905,11 +953,13 @@ export function BrowserProfiles({
                       </span>
                     ) : null}
                   </span>
-                  {profile.record.source?.email ? (
-                    <span className="truncate text-xs text-muted-foreground">
-                      {profile.record.source.email}
-                    </span>
-                  ) : null}
+                  <ProfileDetail
+                    email={profile.record.source?.email}
+                    signedOut={signedOutOfGoogle(snapshot.accounts, profile.id)}
+                    {...(previewBridge
+                      ? { onSignIn: () => void openBrowser(GMAIL_URL, profile.id) }
+                      : {})}
+                  />
                 </span>
               )}
             </div>
@@ -1013,7 +1063,7 @@ export function BrowserProfiles({
                       })
                     }
                   >
-                    Remove
+                    Remove and sign out
                   </MenuItem>
                 ) : null}
               </ControlsMenu>

@@ -3,6 +3,7 @@ import { installAccountsIpc } from "../scient/accounts/ipc.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer badge owns the app icon (docs/internals/answer-attention.md).
 import { installUnreadAnswerBadge } from "../scient/answerAttention/ipc.ts";
+import { installRunningWorkReport } from "../scient/quitGuard/ipc.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — spelling dictionaries follow the language being written.
 import { noteSpellingSample } from "../scient/spelling/ipc.ts";
@@ -19,6 +20,10 @@ import {
 } from "../scient/conversationImport/openedConversationFiles.ts";
 // SCIENT-FORK:END
 import * as Effect from "effect/Effect";
+
+// SCIENT-FORK:START — keep the computer awake while threads work.
+import { keepAwake } from "../scient/keepAwake/DesktopKeepAwake.ts";
+// SCIENT-FORK:END
 
 import { receiveProviderAuthCallback, cancelProviderAuthCallback } from "./methods/providerAuth.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
@@ -105,8 +110,12 @@ import {
 
 export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers")(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
+  // SCIENT-FORK:START — keep the computer awake while threads work.
+  yield* ipc.handle(keepAwake);
+  // SCIENT-FORK:END
   // SCIENT-FORK:START — replaces upstream's installNotificationBadge(): one owner for the app icon.
   yield* installUnreadAnswerBadge();
+  yield* installRunningWorkReport;
   // SCIENT-FORK:END
   yield* PreviewIpc.installPreviewEventForwarding();
 

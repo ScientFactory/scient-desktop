@@ -220,6 +220,8 @@ export function ComposerControlsBar(props: {
       compact={false}
       iconOnly={props.voiceBusy}
       isComposerOwned
+      // The trigger grows away from this edge when its model or effort label changes.
+      popupAlign={composerControlsCollapsed ? "start" : "end"}
       disabled={props.voiceBusy || providerCatalogPending || isSendBusy}
       multipleModelsEnabled={multipleModelsEnabled}
       multipleModelSelections={multipleModelSelections}

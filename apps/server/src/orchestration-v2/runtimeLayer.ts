@@ -68,6 +68,9 @@ import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
+// SCIENT-FORK:START — Scient Accounts: one-time answers are encrypted at rest.
+import { secretRequestStoreLayer } from "../scient/accounts/AccountsSecretStore.ts";
+// SCIENT-FORK:END
 
 export const layerEventInfrastructure = Layer.mergeAll(
   OrchestrationEventStore.layer,
@@ -315,6 +318,9 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
 );
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
+  // SCIENT-FORK:START — Scient Accounts: one-time answers are encrypted at rest.
+  Layer.provide(secretRequestStoreLayer),
+  // SCIENT-FORK:END
 );
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(

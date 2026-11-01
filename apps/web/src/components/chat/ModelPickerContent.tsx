@@ -372,6 +372,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   docked?: boolean;
   /** Right at the end of the search text moves into the popup's effort column. */
   onFocusEffort?: () => void;
+  /** Closes the list column, inside the popup's fixed height. */
+  listFooter?: ReactNode;
 }) {
   const {
     searchInputRef,
@@ -956,17 +958,20 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           // matches it, and the cap never passes the popup's available height.
           "relative flex w-screen max-w-80 flex-row overflow-hidden",
           props.docked
-            ? "max-sm:h-56 max-sm:min-h-0! max-sm:w-full max-sm:max-w-none"
+            ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none"
             : "max-h-[min(21.625rem,var(--available-height,85vh))]",
           // SCIENT-FORK:END
         )}
+        // Docked, the popup sets the height; a minimum here would overflow short windows.
         style={
-          isSearchingModels
-            ? { height: searchHeight }
-            : {
-                // SCIENT-FORK: the floor never passes the popup's available-height cap.
-                minHeight: `min(calc(var(--spacing) * ${tallestTabUnits + LIST_CHROME_UNITS} + 1px), 21.625rem, var(--available-height, 85vh))`,
-              }
+          props.docked
+            ? undefined
+            : isSearchingModels
+              ? { height: searchHeight }
+              : {
+                  // SCIENT-FORK: the floor never passes the popup's available-height cap.
+                  minHeight: `min(calc(var(--spacing) * ${tallestTabUnits + LIST_CHROME_UNITS} + 1px), 21.625rem, var(--available-height, 85vh))`,
+                }
         }
         data-model-picker-content="true"
       >
@@ -1270,6 +1275,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onRequestClose={props.onRequestClose}
               onOpenProviderSetup={props.onOpenProviderSetup}
             />
+            {props.listFooter}
           </div>
         </Combobox>
       </div>

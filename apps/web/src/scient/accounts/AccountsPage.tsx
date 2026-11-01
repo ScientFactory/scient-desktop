@@ -1,8 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_BROWSER_PROFILE_ID,
+  AccountId,
+  PROVIDER_DISPLAY_NAMES,
+  ThreadId,
   resolveBrowserProfiles,
   type AccountActivityEntry,
+  type AccountCodeSources,
+  type AccountPlainKey,
   type AccountSummary,
   type AccountsSnapshot,
   type ConnectorSummary,
@@ -10,8 +15,16 @@ import {
   type ProviderInstanceId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { ChevronRightIcon, KeyRoundIcon, PlusIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import {
+  ChevronRightIcon,
+  FileKeyIcon,
+  GlobeIcon,
+  KeyRoundIcon,
+  LinkIcon,
+  MessageSquareIcon,
+  PlusIcon,
+} from "lucide-react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import {
   SettingsPageContainer,
@@ -33,15 +46,21 @@ import { Switch } from "~/components/ui/switch";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useClientSettings } from "~/hooks/useSettings";
+import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { ExtensionIcon } from "~/scient/extensions/ExtensionRow";
 import { extensionsInventory } from "~/scient/extensions/extensionsState";
 import { useProviderInventory } from "~/scient/extensions/useProviderInventory";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
-import { providersIgnoringCheckedAtAtom } from "~/state/server";
+import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/server";
+import { environmentThreadShells } from "~/state/threads";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
 import "./accounts.css";
 import { AccountApprovals } from "./AccountApprovals";
+import { ApiKeyAccountPicker } from "./ApiKeyAccountPicker";
 import { AccessChip, ControlsMenu, ScopeSubmenu } from "./AccountControls";
 import { AccountDialog } from "./AccountDialog";
 import { AccountLogo, SiteFavicon } from "./AccountLogo";
@@ -49,14 +68,22 @@ import { accountsState } from "./accountsState";
 import {
   KIND_LABELS,
   accountIconUrl,
+  accountListRows,
   accountManagePage,
+  accountStatusLabel,
+  activityLine,
+  type KeyInUse,
+  isBrowserSignIn,
   isSavedPassword,
+  keysInUse,
+  mergeProfiles,
   providerManagedAccounts,
 } from "./accountsView";
 import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
 import { BrowserImportDialog, BrowserProfiles } from "./BrowserProfiles";
 import { clickableAccountRow } from "./clickableAccountRow";
 import { OnePasswordDialog, PasswordFileInput, PasswordStores } from "./PasswordStores";
+import { ProfilePicture } from "./ProfilePicture";
 import { useAccountBrowser } from "./useAccountBrowser";
 import { useAccountCommand, useAccounts } from "./useAccounts";
 import { useWebsiteSessions } from "./useWebsiteSessions";
@@ -96,14 +123,10 @@ export function AccountRow({
   const target = { type: "account", accountId: account.accountId } as const;
   const details = account.details;
   const site = details.kind === "website" ? details.sites[0] : undefined;
-  const rejection =
-    account.lastSignInOutcome === "password-rejected"
-      ? "Password rejected"
-      : account.lastSignInOutcome === "code-rejected"
-        ? "Code rejected"
-        : account.signedOut
-          ? "Signed out"
-          : null;
+  const check = useAccountCommand(accountsState.check, environmentId);
+  const statusLabel = accountStatusLabel(account, formatRelativeTimeLabel);
+  const signInAgain =
+    account.signedOut || ["signed-out", "needs-you"].includes(account.lastCheck?.state ?? "");
   const openSite = async (url = site) => {
     if (!url) return;
     await openBrowser(url, details.kind === "website" ? details.profileId : undefined);
@@ -129,7 +152,16 @@ export function AccountRow({
             <span className="truncate text-left">{account.name}</span>
             <span className="truncate text-xs text-muted-foreground">
               {details.kind === "website" && !account.secrets.password
-                ? `Browser sign-in · ${profiles.find((profile) => profile.id === (details.profileId ?? newTabProfileId ?? DEFAULT_BROWSER_PROFILE_ID))?.name ?? "Browser profile"}`
+                ? [
+                    details.username ?? "Browser sign-in",
+                    profiles.find(
+                      (profile) =>
+                        profile.id ===
+                        (details.profileId ?? newTabProfileId ?? DEFAULT_BROWSER_PROFILE_ID),
+                    )?.name,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
                 : isSavedPassword(account) && details.kind === "website"
                   ? // The username tells two sign-ins to the same site apart.
                     [details.username, account.name === site ? undefined : details.sites.join(", ")]
@@ -147,7 +179,16 @@ export function AccountRow({
                       .join(" · ")}
             </span>
           </span>
-          {rejection ? <span className="text-xs text-muted-foreground">{rejection}</span> : null}
+          {statusLabel ? (
+            <Tooltip>
+              <TooltipTrigger render={<span className="shrink-0 text-xs text-muted-foreground" />}>
+                {statusLabel}
+              </TooltipTrigger>
+              {account.lastCheck?.message ? (
+                <TooltipPopup>{account.lastCheck.message}</TooltipPopup>
+              ) : null}
+            </Tooltip>
+          ) : null}
           {account.status === "needs-attention" ? (
             <Tooltip>
               <TooltipTrigger
@@ -173,9 +214,21 @@ export function AccountRow({
             disabled={!canWrite || busy}
           />
           <ControlsMenu disabled={!canWrite || busy}>
-            {account.signedOut && details.kind === "website" ? (
+            {signInAgain && details.kind === "website" ? (
               <MenuItem onClick={() => void openSite(details.loginUrl ?? site)}>
                 Sign in again
+              </MenuItem>
+            ) : null}
+            {details.kind === "website" || details.kind === "library" ? (
+              <MenuItem
+                onClick={async () => {
+                  setBusy(true);
+                  window.dispatchEvent(new Event("scient-accounts-session-changed"));
+                  await check({ accountId: account.accountId });
+                  setBusy(false);
+                }}
+              >
+                Check sign-in
               </MenuItem>
             ) : null}
             {site ? <MenuItem onClick={() => void openSite()}>Open {site}</MenuItem> : null}
@@ -384,6 +437,289 @@ function SavedPasswordsDialog({
   );
 }
 
+/** One site signed in from several browser profiles: the profiles' pictures, opening to each. */
+function SignInGroupRow({
+  accounts,
+  profiles,
+  onOpen,
+}: {
+  accounts: ReadonlyArray<AccountSummary>;
+  profiles: ReturnType<typeof mergeProfiles>;
+  onOpen: () => void;
+}) {
+  const first = accounts[0]!;
+  const site = "sites" in first.details ? first.details.sites[0] : undefined;
+  const iconUrl = accountIconUrl(site ? [site] : [], first.name);
+  const profileIds = new Set(
+    accounts.map(({ details }) => (details.kind === "website" ? details.profileId : undefined)),
+  );
+  const signedIn = profiles.filter((profile) => profileIds.has(profile.id));
+  return (
+    <SettingsRow
+      {...clickableAccountRow(onOpen)}
+      aria-label={`Show ${first.name} sign-ins`}
+      title={
+        <span className="flex min-w-0 items-center gap-3">
+          {iconUrl ? (
+            <AccountLogo src={iconUrl} className="size-10 self-center rounded-[25%]" />
+          ) : site ? (
+            <SiteFavicon site={site} />
+          ) : null}
+          <span className="grid min-w-0 gap-1">
+            <span className="truncate text-left">{first.name}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              Browser sign-in ·{" "}
+              {signedIn.length > 2
+                ? `${signedIn.length} profiles`
+                : signedIn.map((profile) => profile.name).join(", ")}
+            </span>
+          </span>
+        </span>
+      }
+      control={
+        <span className="flex items-center gap-2">
+          <span className="flex -space-x-1.5">
+            {signedIn.map((profile) => (
+              <ProfilePicture
+                key={profile.id}
+                size="sm"
+                name={profile.name}
+                picture={profile.record.picture}
+                color={profile.record.color}
+              />
+            ))}
+          </span>
+          <ChevronRightIcon className="size-4 text-muted-foreground" />
+        </span>
+      }
+    />
+  );
+}
+
+/** One row standing for a list that grows on its own, opening it in a dialog. */
+function ListRow({
+  icon,
+  title,
+  detail,
+  onOpen,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  onOpen: () => void;
+}) {
+  return (
+    <SettingsRow
+      {...clickableAccountRow(onOpen)}
+      aria-label={`Show ${title.toLowerCase()}`}
+      title={
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted [&_svg]:size-4 [&_svg]:text-muted-foreground">
+            {icon}
+          </span>
+          <span className="grid min-w-0 gap-1">
+            <span className="truncate text-left">{title}</span>
+            <span className="truncate text-xs text-muted-foreground">{detail}</span>
+          </span>
+        </span>
+      }
+      control={<ChevronRightIcon className="size-4 text-muted-foreground" />}
+    />
+  );
+}
+
+function ListDialog({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup data-accounts-dialog className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="max-h-[60vh] overflow-y-auto rounded-lg border">{children}</div>
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
+/** The keys Scient itself runs on. Each is edited where it is used; this says what uses what. */
+function KeysInUseDialog({
+  keys,
+  snapshot,
+  environmentId,
+  canWrite,
+  onClose,
+}: {
+  keys: ReadonlyArray<KeyInUse>;
+  snapshot: AccountsSnapshot;
+  environmentId: EnvironmentId;
+  canWrite: boolean;
+  onClose: () => void;
+}) {
+  const link = useAccountCommand(accountsState.linkKey, environmentId);
+  const unlink = useAccountCommand(accountsState.unlinkKey, environmentId);
+  const savedKeys = snapshot.accounts.flatMap((account) =>
+    account.details.kind === "api-key" && account.secrets.token
+      ? [{ value: account.accountId, name: account.name }]
+      : [],
+  );
+  const linked = (key: KeyInUse) =>
+    snapshot.keyLinks?.find((item) =>
+      key.variables.some(
+        (target) => target.instanceId === item.instanceId && target.variable === item.variable,
+      ),
+    )?.accountId;
+  const follow = async (key: KeyInUse, accountId: string) => {
+    for (const target of key.variables) {
+      await (accountId
+        ? link({ ...target, accountId: AccountId.make(accountId) })
+        : unlink(target));
+    }
+  };
+  return (
+    <ListDialog title="Keys used by Scient" onClose={onClose}>
+      {keys.map((key) => (
+        <SettingsRow
+          key={`${key.href}:${key.name}`}
+          title={<span className="font-mono text-xs">{key.name}</span>}
+          description={key.usedBy.join(", ")}
+          control={
+            <span className="flex items-center gap-2">
+              {key.variables.length && savedKeys.length ? (
+                <ApiKeyAccountPicker
+                  aria-label={`Saved key for ${key.name}`}
+                  emptyLabel="Its own value"
+                  options={savedKeys}
+                  size="xs"
+                  value={linked(key) ?? ""}
+                  disabled={!canWrite}
+                  onChange={(event) => void follow(key, event.currentTarget.value)}
+                />
+              ) : null}
+              <Button size="xs" variant="outline" render={<Link to={key.href} />} onClick={onClose}>
+                Open
+              </Button>
+            </span>
+          }
+        />
+      ))}
+    </ListDialog>
+  );
+}
+
+/** Keys in plain files. Keeping one copies it into Accounts; the file stays as it is. */
+function PlainKeysDialog({
+  keys,
+  roots,
+  environmentId,
+  canWrite,
+  onKept,
+  onClose,
+}: {
+  keys: ReadonlyArray<AccountPlainKey>;
+  roots: ReadonlyArray<string>;
+  environmentId: EnvironmentId;
+  canWrite: boolean;
+  onKept: (key: AccountPlainKey) => void;
+  onClose: () => void;
+}) {
+  const keeping = useRef(new Set<string>());
+  const keep = useAccountCommand(accountsState.keepPlainKey, environmentId);
+  return (
+    <ListDialog title="Keys in plain files" onClose={onClose}>
+      {keys.map((key) => (
+        <SettingsRow
+          key={`${key.file}:${key.name}`}
+          title={<span className="font-mono text-xs">{key.name}</span>}
+          description={key.file}
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!canWrite || key.kept}
+              onClick={async () => {
+                if (keeping.current.has(key.name)) return;
+                keeping.current.add(key.name);
+                const result = await keep({ roots, file: key.file, name: key.name });
+                keeping.current.delete(key.name);
+                if (result.ok) onKept(key);
+              }}
+            >
+              {key.kept ? "In Accounts" : "Keep in Accounts"}
+            </Button>
+          }
+        />
+      ))}
+    </ListDialog>
+  );
+}
+
+/** Where Scient may find sign-in codes. Off until the user turns a source on. */
+function SignInCodesDialog({
+  sources,
+  environmentId,
+  canWrite,
+  onClose,
+}: {
+  sources: AccountCodeSources;
+  environmentId: EnvironmentId;
+  canWrite: boolean;
+  onClose: () => void;
+}) {
+  const set = useAccountCommand(accountsState.setCodeSources, environmentId);
+  const [chosen, setChosen] = useState(sources);
+  const [needsAccess, setNeedsAccess] = useState(false);
+  const change = async (next: AccountCodeSources) => {
+    setChosen(next);
+    const result = await set(next);
+    if (result.ok) setNeedsAccess(result.value.messagesNeedAccess);
+    else setChosen(sources);
+  };
+  return (
+    <ListDialog title="Sign-in codes" onClose={onClose}>
+      <SettingsRow
+        title="Codes from Messages"
+        description="Texts forwarded to this Mac. Needs Full Disk Access, which also lets Scient read your other files."
+        control={
+          <Switch
+            aria-label="Codes from Messages"
+            checked={chosen.messages}
+            disabled={!canWrite}
+            onCheckedChange={(messages) => void change({ messages })}
+          />
+        }
+      />
+      {needsAccess ? (
+        <SettingsRow
+          title="macOS hasn't given Scient access"
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() =>
+                void readLocalApi()
+                  ?.shell.openSystemSettings("full-disk-access")
+                  .catch(() => undefined)
+              }
+            >
+              Open Full Disk Access
+            </Button>
+          }
+        />
+      ) : null}
+    </ListDialog>
+  );
+}
+
 function AccountsContent({
   environmentId,
   snapshot,
@@ -393,8 +729,50 @@ function AccountsContent({
   snapshot: AccountsSnapshot;
   canWrite: boolean;
 }) {
-  const [dialog, setDialog] = useState<"add" | "import" | "1password" | "passwords" | null>(null);
+  const [dialog, setDialog] = useState<
+    | "add"
+    | "import"
+    | "1password"
+    | "passwords"
+    | "browser-sign-ins"
+    | "other-sign-ins"
+    | "sign-in-codes"
+    | "keys"
+    | "plain-keys"
+    | null
+  >(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
+  const [signIns, setSignIns] = useState<ReadonlyArray<AccountSummary> | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [plainKeys, setPlainKeys] = useState<ReadonlyArray<AccountPlainKey>>([]);
+  const projectRoots = useProjects()
+    .filter((project) => project.environmentId === environmentId)
+    .map((project) => project.workspaceRoot);
+  const findPlainKeys = useAccountCommand(accountsState.plainKeys, environmentId);
+  const scannedRoots = projectRoots.join("\u0000");
+  const scanPlainKeys = useEffectEvent((roots: ReadonlyArray<string>) => findPlainKeys({ roots }));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Looks once per set of projects when the page opens; the files aren't watched.
+  useEffect(() => {
+    if (!canWrite) return;
+    let live = true;
+    void scanPlainKeys(scannedRoots ? scannedRoots.split("\u0000") : []).then((result) => {
+      if (live && result.ok) setPlainKeys(result.value);
+    });
+    return () => {
+      live = false;
+    };
+  }, [canWrite, scannedRoots]);
+  const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  const keys = keysInUse(
+    serverSettings?.providerInstances ?? {},
+    snapshot.customModelKeys,
+    (driver) => PROVIDER_DISPLAY_NAMES[driver as keyof typeof PROVIDER_DISPLAY_NAMES] ?? driver,
+  );
+  const checkAll = useAccountCommand(accountsState.check, environmentId);
+  const profiles = mergeProfiles(
+    useClientSettings((settings) => settings.browserProfiles),
+    snapshot.profiles,
+  );
   const [activity, setActivity] = useState<ReadonlyArray<AccountActivityEntry> | null>(null);
   const passwordFileRef = useRef<HTMLInputElement>(null);
   const inventory = useEnvironmentQuery(extensionsInventory({ environmentId, input: {} }));
@@ -407,8 +785,10 @@ function AccountsContent({
     enabled: true,
   });
   const setAccess = useAccountCommand(accountsState.setAgentAccess, environmentId);
-  // Saved passwords, often hundreds from a browser, get one row so the page stays short.
+  // Lists that grow on their own (saved passwords, sign-ins recorded while browsing, sign-ins
+  // managed elsewhere) are one row each, so the page shows what was added on purpose.
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
+  const browserSignIns = accountListRows(snapshot.accounts.filter(isBrowserSignIn));
   const managedRows = [
     ...providerManagedAccounts(providerInventory.providers),
     ...(snapshot.managedElsewhere ??
@@ -440,6 +820,30 @@ function AccountsContent({
       <SettingsSection
         id="accounts-list"
         title="Accounts"
+        headerAction={
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={!canWrite || checking}
+            onClick={async () => {
+              setChecking(true);
+              window.dispatchEvent(new Event("scient-accounts-session-changed"));
+              const result = await checkAll({});
+              setChecking(false);
+              if (result.ok)
+                toastManager.add({
+                  type: "success",
+                  title: result.value.alreadyRunning
+                    ? "Already checking your accounts"
+                    : result.value.checked
+                      ? `Checked ${result.value.checked} sign-in${result.value.checked === 1 ? "" : "s"}`
+                      : "No sign-ins to check yet",
+                });
+            }}
+          >
+            {checking ? "Checking…" : "Check my accounts"}
+          </Button>
+        }
         titleAction={
           <Menu>
             <MenuTrigger
@@ -486,7 +890,7 @@ function AccountsContent({
           />
         ) : null}
         {snapshot.accounts
-          .filter((account) => !isSavedPassword(account))
+          .filter((account) => !isSavedPassword(account) && !isBrowserSignIn(account))
           .map((account) => (
             <AccountRow
               key={account.accountId}
@@ -498,23 +902,53 @@ function AccountsContent({
             />
           ))}
         {savedPasswords.length ? (
-          <SettingsRow
-            {...clickableAccountRow(() => setDialog("passwords"))}
-            aria-label="Show saved passwords"
-            title={
-              <span className="flex min-w-0 items-center gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
-                  <KeyRoundIcon className="size-4 text-muted-foreground" />
-                </span>
-                <span className="grid min-w-0 gap-1">
-                  <span className="truncate text-left">Saved passwords</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}
-                  </span>
-                </span>
-              </span>
-            }
-            control={<ChevronRightIcon className="size-4 text-muted-foreground" />}
+          <ListRow
+            icon={<KeyRoundIcon />}
+            title="Saved passwords"
+            detail={savedPasswords.length === 1 ? "1 site" : `${savedPasswords.length} sites`}
+            onOpen={() => setDialog("passwords")}
+          />
+        ) : null}
+        {browserSignIns.length ? (
+          <ListRow
+            icon={<GlobeIcon />}
+            title="Browser sign-ins"
+            detail={browserSignIns.length === 1 ? "1 site" : `${browserSignIns.length} sites`}
+            onOpen={() => setDialog("browser-sign-ins")}
+          />
+        ) : null}
+        {keys.length ? (
+          <ListRow
+            icon={<KeyRoundIcon />}
+            title="Keys used by Scient"
+            detail={keys.map((key) => key.name).join(", ")}
+            onOpen={() => setDialog("keys")}
+          />
+        ) : null}
+        {plainKeys.some((key) => !key.kept) ? (
+          <ListRow
+            icon={<FileKeyIcon />}
+            title="Keys in plain files"
+            detail={[...new Set(plainKeys.filter((key) => !key.kept).map((key) => key.name))].join(
+              ", ",
+            )}
+            onOpen={() => setDialog("plain-keys")}
+          />
+        ) : null}
+        {isMacPlatform(navigator.platform) ? (
+          <ListRow
+            icon={<MessageSquareIcon />}
+            title="Sign-in codes"
+            detail={snapshot.codeSources?.messages ? "Messages" : "You type them in"}
+            onOpen={() => setDialog("sign-in-codes")}
+          />
+        ) : null}
+        {managedRows.length ? (
+          <ListRow
+            icon={<LinkIcon />}
+            title="Other sign-ins"
+            detail={managedRows.map((row) => row.name).join(", ")}
+            onOpen={() => setDialog("other-sign-ins")}
           />
         ) : null}
       </SettingsSection>
@@ -524,17 +958,6 @@ function AccountsContent({
         canWrite={canWrite}
         onImport={() => setDialog("import")}
       />
-      {managedRows.length ? (
-        <SettingsSection title="Other sign-ins">
-          {managedRows.map((row) => (
-            <ManagedAccountRow
-              key={`${row.kind}:${row.id}`}
-              row={row}
-              environmentId={environmentId}
-            />
-          ))}
-        </SettingsSection>
-      ) : null}
       <PasswordStores
         environmentId={environmentId}
         snapshot={snapshot}
@@ -554,8 +977,8 @@ function AccountsContent({
           canWrite={canWrite}
           onClose={() => {
             setEditing(null);
-            // Editing from Saved passwords returns to that list.
-            if (dialog !== "passwords") setDialog(null);
+            // Editing from a list returns to it.
+            if (dialog !== "passwords" && dialog !== "browser-sign-ins") setDialog(null);
           }}
         />
       ) : null}
@@ -576,6 +999,99 @@ function AccountsContent({
           onActivity={setActivity}
           onClose={() => setDialog(null)}
         />
+      ) : null}
+      {dialog === "browser-sign-ins" ? (
+        <ListDialog title="Browser sign-ins" onClose={() => setDialog(null)}>
+          {browserSignIns.map((row) =>
+            "accountId" in row ? (
+              <AccountRow
+                key={row.accountId}
+                account={row}
+                environmentId={environmentId}
+                canWrite={canWrite}
+                onEdit={() => setEditing(row)}
+                onActivity={setActivity}
+              />
+            ) : (
+              <SignInGroupRow
+                key={row[0]!.accountId}
+                accounts={row}
+                profiles={profiles}
+                onOpen={() => setSignIns(row)}
+              />
+            ),
+          )}
+        </ListDialog>
+      ) : null}
+      {dialog === "plain-keys" ? (
+        <PlainKeysDialog
+          keys={plainKeys}
+          roots={projectRoots}
+          environmentId={environmentId}
+          canWrite={canWrite}
+          onKept={(key) =>
+            setPlainKeys((current) =>
+              current.map((item) => (item.name === key.name ? { ...item, kept: true } : item)),
+            )
+          }
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === "keys" ? (
+        <KeysInUseDialog
+          keys={keys}
+          snapshot={snapshot}
+          environmentId={environmentId}
+          canWrite={canWrite}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === "sign-in-codes" ? (
+        <SignInCodesDialog
+          sources={snapshot.codeSources ?? { messages: false }}
+          environmentId={environmentId}
+          canWrite={canWrite}
+          onClose={() => setDialog(null)}
+        />
+      ) : null}
+      {dialog === "other-sign-ins" ? (
+        <ListDialog title="Other sign-ins" onClose={() => setDialog(null)}>
+          {managedRows.map((row) => (
+            <ManagedAccountRow
+              key={`${row.kind}:${row.id}`}
+              row={row}
+              environmentId={environmentId}
+            />
+          ))}
+        </ListDialog>
+      ) : null}
+      {signIns ? (
+        <Dialog open onOpenChange={(open) => !open && setSignIns(null)}>
+          <DialogPopup data-accounts-dialog className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{signIns[0]!.name}</DialogTitle>
+            </DialogHeader>
+            <DialogPanel>
+              <div className="rounded-lg border">
+                {signIns.map((account) => {
+                  const current = snapshot.accounts.find(
+                    (item) => item.accountId === account.accountId,
+                  );
+                  return current ? (
+                    <AccountRow
+                      key={current.accountId}
+                      account={current}
+                      environmentId={environmentId}
+                      canWrite={canWrite}
+                      onEdit={() => setEditing(current)}
+                      onActivity={setActivity}
+                    />
+                  ) : null;
+                })}
+              </div>
+            </DialogPanel>
+          </DialogPopup>
+        </Dialog>
       ) : null}
       {dialog === "1password" ? (
         <OnePasswordDialog
@@ -598,13 +1114,10 @@ function AccountsContent({
             <DialogPanel>
               {activity.map((entry) => (
                 <div key={JSON.stringify(entry)} className="py-2 text-xs">
-                  <time>{new Date(entry.at).toLocaleString()}</time> · {entry.action} ·{" "}
-                  {entry.decision}
-                  {entry.signInOutcome
-                    ? ` · ${entry.signInOutcome}`
-                    : entry.outcome
-                      ? ` · ${entry.outcome}`
-                      : ""}
+                  <time className="text-muted-foreground">
+                    {new Date(entry.at).toLocaleString()}
+                  </time>{" "}
+                  · {activityLine(entry, activityConversation(entry, environmentId))}
                 </div>
               ))}
             </DialogPanel>
@@ -613,6 +1126,16 @@ function AccountsContent({
       ) : null}
     </div>
   );
+}
+
+/** The conversation behind an activity entry; the user's own check has none. */
+function activityConversation(entry: AccountActivityEntry, environmentId: EnvironmentId) {
+  if (!entry.threadId) return undefined;
+  if (entry.threadId === ThreadId.make("scient-accounts-check")) return "Check my accounts";
+  if (entry.threadId === ThreadId.make("scient-paper-get")) return "Get PDF";
+  return appAtomRegistry.get(
+    environmentThreadShells.threadShellAtom({ environmentId, threadId: entry.threadId }),
+  )?.title;
 }
 
 function AccountsEnvironment({ environmentId }: { environmentId: EnvironmentId }) {

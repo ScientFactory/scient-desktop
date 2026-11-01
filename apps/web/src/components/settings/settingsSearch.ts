@@ -12,6 +12,7 @@ import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Schema from "effect/Schema";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
+import { COMPUTE_LANGUAGE_CATALOG } from "@t3tools/contracts";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -117,7 +118,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/extensions": "Extensions",
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: name the Accounts section.
-  "/settings/accounts": "Accounts",
+  "/settings/accounts": "Accounts & secrets",
   // SCIENT-FORK:END
   "/settings/threads": "Threads",
   "/settings/browser": "Browser",
@@ -269,6 +270,15 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
   .join(" ");
 
 export const SETTINGS_SEARCH_ITEMS = [
+  // SCIENT-FORK:START — keep the computer awake while threads work.
+  {
+    id: "keep-computer-awake",
+    title: "Keep computer awake",
+    to: "/settings/maintenance",
+    searchTerms: ["sleep", "awake", "power", "caffeinate", "battery"],
+    desktopOnly: true,
+  },
+  // SCIENT-FORK:END
   {
     id: "desktop-update-track",
     title: "Update track",
@@ -287,11 +297,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "scientific-computing",
     title: "Scientific Computing",
     to: "/settings/scientific-computing",
-    searchTerms: ["scientific computing", "python", "matlab", "runtimes"],
+    searchTerms: [
+      "scientific computing",
+      "runtimes",
+      ...COMPUTE_LANGUAGE_CATALOG.flatMap((group) =>
+        group.languages.map((language) => language.name),
+      ),
+    ],
   },
   {
     id: "scientific-computing-language",
-    title: "Python and MATLAB languages and runtimes",
+    title: "Languages and runtimes",
     to: "/settings/scientific-computing",
     targetId: "scientific-computing",
     searchTerms: ["scientific computing languages"],
@@ -446,6 +462,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: ["new thread project provider reasoning effort"],
+  },
+  {
+    id: "fallback-model",
+    title: "Fallback model",
+    to: "/settings/threads",
+    scope: "environment-defaults",
+    searchTerms: ["fallback agent provider out of usage new threads"],
+    environmentOnly: true,
   },
   {
     id: "default-permissions",
@@ -769,9 +793,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "proactive-panels",
-    title: "Proactive panels",
+    title: "Open pull requests and changes panels proactively",
     to: "/settings/diffs",
-    searchTerms: ["automatically open diff pull request pr right panel agent completion"],
+    searchTerms: ["proactive automatically open diff pull request pr right panel agent completion"],
   },
   {
     id: "skills-in-slash-menu",
@@ -1034,9 +1058,17 @@ export const SETTINGS_SEARCH_ITEMS = [
   // SCIENT-FORK:START — Scient Accounts: index accounts and password stores.
   {
     id: "accounts-agent-access",
-    title: "Accounts",
+    title: "Accounts & secrets",
     to: "/settings/accounts",
-    searchTerms: ["passwords", "sign-in", "API keys", "keychain", "1Password", "browser profiles"],
+    searchTerms: [
+      "secrets",
+      "passwords",
+      "sign-in",
+      "API keys",
+      "keychain",
+      "1Password",
+      "browser profiles",
+    ],
   },
   {
     id: "accounts-password-stores",

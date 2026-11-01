@@ -116,6 +116,8 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerSettings from "./serverSettings.ts";
 // SCIENT-FORK:START — config subscriptions must not call unrelated Scient capabilities.
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
+import * as DataTables from "./scient/data/DataTables.ts";
+import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import { ConversationExportService } from "./scient/conversationExport/ConversationExportService.ts";
@@ -143,6 +145,7 @@ import * as ProjectService from "./project/ProjectService.ts";
 import { idleThreadProjection, liveThreadShell } from "./mcp/McpToolAccess.testkit.ts";
 import {
   layerWsRpc,
+  resolveOpenDiscoveryForConfig,
   subscribeOrchestrationV2Shell,
   subscribeOrchestrationV2Thread,
   WS_RPC_SERVER_OPTIONS,
@@ -205,6 +208,38 @@ it.effect("resends a file manager reveal kind that missed the snapshot", () =>
     if (late?.type === "snapshot") {
       assert.equal(late.config.shellRevealInFileManagerKind, "file-explorer");
     }
+  }),
+);
+
+it.effect("runs editor, remote open target and direct endpoint discovery side by side", () =>
+  Effect.gen(function* () {
+    // Each discovery finishes only once the other two have started, so a
+    // config that ran them one after another would never resolve.
+    const editorsStarted = yield* Deferred.make<void>();
+    const targetsStarted = yield* Deferred.make<void>();
+    const endpointsStarted = yield* Deferred.make<void>();
+    const startThenAwait = <A>(started: Deferred.Deferred<void>, value: A) =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(
+          Effect.forEach([editorsStarted, targetsStarted, endpointsStarted], Deferred.await),
+        ),
+        Effect.as(value),
+      );
+
+    const discovery = yield* resolveOpenDiscoveryForConfig({
+      editors: startThenAwait(editorsStarted, ["file-manager" as const]),
+      fileManagerRevealKind: Effect.succeed("finder" as const),
+      remoteOpenTargets: startThenAwait(targetsStarted, []),
+      directEndpoints: startThenAwait(endpointsStarted, []),
+    });
+
+    assert.deepEqual(discovery, {
+      availableEditors: ["file-manager"],
+      shellRevealInFileManager: true,
+      shellRevealInFileManagerKind: "finder",
+      remoteOpenTargets: [],
+      directEndpoints: [],
+    });
   }),
 );
 
@@ -502,6 +537,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   // SCIENT-FORK:START — unexpected access fails through Layer.mock.
   Layer.mock(AnalysisService.AnalysisService)({}),
   Layer.mock(ComputeSessionService.ComputeSessionService)({ runtimeDescriptors: [] }),
+  Layer.mock(DataTables.DataTables)({}),
+  Layer.mock(NotebookStore.NotebookStore)({}),
   Layer.mock(ScientificRuntimePreferences)({}),
   Layer.mock(ConversationExportService)({}),
   Layer.mock(ConversationForkService)({}),

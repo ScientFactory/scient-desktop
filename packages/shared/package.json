@@ -3,6 +3,18 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scientAccountSecretRequest": {
+      "types": "./src/scientAccountSecretRequest.ts",
+      "import": "./src/scientAccountSecretRequest.ts"
+    },
+    "./scientSignInPage": {
+      "types": "./src/scientSignInPage.ts",
+      "import": "./src/scientSignInPage.ts"
+    },
+    "./scientBrowserProfileChoice": {
+      "types": "./src/scientBrowserProfileChoice.ts",
+      "import": "./src/scientBrowserProfileChoice.ts"
+    },
     "./scientPublicationArtifact": {
       "types": "./src/scientPublicationArtifact.ts",
       "import": "./src/scientPublicationArtifact.ts"
@@ -46,6 +58,10 @@
     "./themePreview": {
       "types": "./src/themePreview.ts",
       "import": "./src/themePreview.ts"
+    },
+    "./textDirection": {
+      "types": "./src/textDirection.ts",
+      "import": "./src/textDirection.ts"
     },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
@@ -279,6 +295,10 @@
       "types": "./src/composerCitations.ts",
       "import": "./src/composerCitations.ts"
     },
+    "./computeCitations": {
+      "types": "./src/computeCitations.ts",
+      "import": "./src/computeCitations.ts"
+    },
     "./pdfCitations": {
       "types": "./src/pdfCitations.ts",
       "import": "./src/pdfCitations.ts"
@@ -442,6 +462,10 @@
     "./t3McpToolPresentation": {
       "types": "./src/t3McpToolPresentation.ts",
       "import": "./src/t3McpToolPresentation.ts"
+    },
+    "./notebookStaleness": {
+      "types": "./src/notebookStaleness.ts",
+      "import": "./src/notebookStaleness.ts"
     },
     "./scientMcpToolPresentation": {
       "types": "./src/scientMcpToolPresentation.ts",

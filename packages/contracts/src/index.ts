@@ -88,6 +88,11 @@ export * from "./scientSources.ts";
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
+export * from "./scient/computeLanguages.ts";
+export * from "./scient/computeLanguageStatus.ts";
+export * from "./scient/computeRunTable.ts";
+export * from "./scientData.ts";
+export * from "./scientNotebook.ts";
 export * from "./scientSkills.ts";
 // SCIENT-FORK:START — Scient Extensions contracts (new files, no upstream edits).
 export * from "./scient/secrets.ts";
@@ -122,6 +127,9 @@ export * from "./scientPandoc.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Overleaf sync contracts (new file, no upstream edits).
 export * from "./scientOverleaf.ts";
+// SCIENT-FORK:END
+// SCIENT-FORK:START — Scient keep-awake contracts (new file, no upstream edits).
+export * from "./scientKeepAwake.ts";
 // SCIENT-FORK:END
 export * from "./mcpApps.ts";
 export * from "./browserImport.ts";

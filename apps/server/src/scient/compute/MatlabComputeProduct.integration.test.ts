@@ -163,7 +163,7 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
               Layer.provide(
                 ServerSettings.layerTest({
                   scientificComputing: {
-                    languages: { [MATLAB]: { enabled: true, executable: TEST_MATLAB } },
+                    languages: { [MATLAB]: { executable: TEST_MATLAB } },
                   },
                 }),
               ),
@@ -196,7 +196,7 @@ describe.runIf(Boolean(TEST_MATLAB))("MATLAB compute product backend", () => {
                 ...DEFAULT_SERVER_SETTINGS,
                 scientificComputing: {
                   schemaVersion: 1,
-                  languages: { matlab: { enabled: true, executable: TEST_MATLAB } },
+                  languages: { matlab: { executable: TEST_MATLAB } },
                 },
               }),
             },

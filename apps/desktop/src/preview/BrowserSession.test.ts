@@ -11,10 +11,17 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
     {
       readonly clearCache: ReturnType<typeof vi.fn>;
       readonly clearStorageData: ReturnType<typeof vi.fn>;
+      readonly cookies: { readonly on: ReturnType<typeof vi.fn> };
       readonly getUserAgent: ReturnType<typeof vi.fn<() => string>>;
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
+      // SCIENT-FORK:START — Scient Browser: site identity hook.
+      readonly webRequest: {
+        readonly onBeforeSendHeaders: ReturnType<typeof vi.fn>;
+        readonly onHeadersReceived: ReturnType<typeof vi.fn>;
+      };
+      // SCIENT-FORK:END
     }
   >(),
 }));
@@ -57,10 +64,14 @@ describe("BrowserSession", () => {
       const browserSession = {
         clearCache: vi.fn(() => Promise.resolve()),
         clearStorageData: vi.fn(() => Promise.resolve()),
+        cookies: { on: vi.fn() },
         getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/0.0.27"),
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
+        // SCIENT-FORK:START — Scient Browser: site identity hook.
+        webRequest: { onBeforeSendHeaders: vi.fn(), onHeadersReceived: vi.fn() },
+        // SCIENT-FORK:END
       };
       sessions.set(partition, browserSession);
       return browserSession;
@@ -133,12 +144,16 @@ describe("BrowserSession", () => {
         const browserSession = {
           clearCache: vi.fn(() => Promise.resolve()),
           clearStorageData: vi.fn(() => Promise.resolve()),
+          cookies: { on: vi.fn() },
           getUserAgent: vi.fn(() => userAgent),
           setPermissionRequestHandler: vi.fn(),
           setPermissionCheckHandler: vi.fn(),
           setUserAgent: vi.fn((next: string) => {
             userAgent = next;
           }),
+          // SCIENT-FORK:START — Scient Browser: site identity hook.
+          webRequest: { onBeforeSendHeaders: vi.fn(), onHeadersReceived: vi.fn() },
+          // SCIENT-FORK:END
         };
         sessions.set(partition, browserSession);
         return browserSession;
@@ -153,6 +168,24 @@ describe("BrowserSession", () => {
       assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
     }).pipe(Effect.provide(layer)),
   );
+
+  // SCIENT-FORK:START — Scient Browser: site identity hook.
+  it.effect("adds the site identity rule to every browser session", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const persistent = yield* browserSessions.getPartition("scope-a");
+      const incognito = yield* browserSessions.getPartition("scope-a", false);
+      yield* browserSessions.getSession("scope-a");
+      yield* browserSessions.getSession("scope-a", false);
+
+      for (const partition of [persistent, incognito]) {
+        const webRequest = sessions.get(partition)?.webRequest;
+        assert.strictEqual(webRequest?.onBeforeSendHeaders.mock.calls.length, 1);
+        assert.strictEqual(webRequest?.onHeadersReceived.mock.calls.length, 1);
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+  // SCIENT-FORK:END
 
   it.effect("grants preview permissions through both the request and check handlers", () =>
     Effect.gen(function* () {

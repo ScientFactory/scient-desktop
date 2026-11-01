@@ -217,7 +217,7 @@ it.layer(layer, { excludeTestServices: true })("real Pi native V2", (it) => {
               ["documents:build", "## Scient PDF builds"],
               ["skills:read", "## Scient skills"],
               ["device", "## Scient devices"],
-              ["compute:inventory", "## Scient Compute"],
+              ["compute", "## Scient Compute"],
             ] as const) {
               assert.equal(system.includes(heading), capabilities.has(capability));
             }

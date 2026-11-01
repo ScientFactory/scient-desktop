@@ -286,6 +286,45 @@ describe("conversation document", () => {
     ]);
   });
 
+  it("renders a Compute quote by its place, never its session or a local path", () => {
+    const citation = {
+      kind: "compute",
+      version: 1,
+      environmentId: "environment-local",
+      threadId: "thread-1",
+      cwd: "/Users/someone/project",
+      place: { _tag: "cell", path: "notes/analysis.ipynb", cellId: "cell-a", number: 3 },
+      text: "mean is 2.0",
+      comment: "Is it?",
+      start: 0,
+      end: 11,
+      prefix: "",
+      suffix: "",
+    };
+    const href = `scient-compute-citation://v1/?${new URLSearchParams({ data: JSON.stringify(citation) })}`;
+    const snapshot = snapshotOf(
+      thread({
+        messages: [message({ id: "m1", role: "user", text: `See [Compute quote](${href}) here` })],
+      }),
+    );
+    expect(JSON.stringify(snapshot)).not.toContain("/Users/someone");
+    expect(JSON.stringify(snapshot)).not.toContain("cell-a");
+    const { markdown, document } = exportMarkdown(snapshot, { packaging: "with-attachments" });
+    expect(markdown).toContain("**Quote from `analysis.ipynb · Cell 3`:**");
+    expect(markdown).toContain("> mean is 2.0");
+    expect(markdown).toContain("Comment: Is it?");
+    expect(markdown).not.toContain("scient-compute-citation:");
+    expect(document.bundle.citations).toEqual([
+      {
+        _tag: "compute-excerpt",
+        id: "c1",
+        place: "analysis.ipynb · Cell 3",
+        text: "mean is 2.0",
+        comment: "Is it?",
+      },
+    ]);
+  });
+
   it("renders inline references readably and records file-excerpt citations", () => {
     const citation = {
       kind: "file",

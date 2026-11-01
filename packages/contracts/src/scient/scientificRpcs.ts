@@ -47,14 +47,39 @@ import {
   ComputeProjectSessionInput,
   ComputeRuntimeInspection,
   ComputeRuntimeInventory,
+  ComputeRuntimeInventoryInput,
   ComputeRuntimeVerification,
+  ComputeSaveConsoleNotebookInput,
+  ComputeSaveConsoleNotebookResult,
+  ComputeSaveProjectOutputInput,
+  ComputeSaveProjectOutputResult,
   ComputeSessionRecord,
   ComputeSessionStreamEvent,
   ComputeVariableSnapshot,
   ComputeStartProjectSessionInput,
+  ComputeActiveWork,
+  ComputeSubmitProjectCellsInput,
   ComputeSubmitProjectExecutionInput,
   ComputeVerifyRuntimeInput,
 } from "../scientCompute.ts";
+import {
+  ComputeTableInput,
+  DataFileTable,
+  DataFileTableError,
+  DataFileTableInput,
+  DataTablePage,
+} from "../scientData.ts";
+import {
+  NotebookEditInput,
+  NotebookEditResult,
+  NotebookError,
+  NotebookOutputJson,
+  NotebookReadInput,
+  NotebookReadOutputInput,
+  NotebookRecordRunInput,
+  NotebookRecordRunResult,
+  NotebookView,
+} from "../scientNotebook.ts";
 
 /** Spread into rpc.ts WS_METHODS where these methods have always been listed. */
 export const SCIENT_SCIENTIFIC_WS_METHODS = {
@@ -74,6 +99,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   // Scient-owned stateful scientific compute methods
   computeInspectRuntimes: "compute.inspectRuntimes",
   computeRuntimeInventory: "compute.runtimeInventory",
+  computeActiveWork: "compute.activeWork",
   computeVerifyRuntime: "compute.verifyRuntime",
   computeManagedRuntimeStatus: "compute.managedRuntimeStatus",
   computeManageRuntime: "compute.manageRuntime",
@@ -84,12 +110,23 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   computeRestartSession: "compute.restartSession",
   computeStopSession: "compute.stopSession",
   computeSubmitExecution: "compute.submitExecution",
+  computeSubmitCells: "compute.submitCells",
   computeCancelExecution: "compute.cancelExecution",
   computeInterruptSession: "compute.interruptSession",
   computeListExecutions: "compute.listExecutions",
   computeListOutputs: "compute.listOutputs",
   computeInspectVariables: "compute.inspectVariables",
+  computeReadTable: "compute.readTable",
+  computeSaveOutput: "compute.saveOutput",
+  computeSaveConsoleNotebook: "compute.saveConsoleNotebook",
+  notebookRead: "notebook.read",
+  notebookReadOutput: "notebook.readOutput",
+  notebookEdit: "notebook.edit",
+  notebookRecordRun: "notebook.recordRun",
   subscribeComputeSessions: "subscribe.computeSessions",
+
+  // Scient-owned data file viewer
+  dataReadFileTable: "data.readFileTable",
 } as const;
 
 /** Spread into the streaming subscriptions at the end of rpc.ts WS_METHODS. */
@@ -196,11 +233,17 @@ const WsComputeInspectRuntimesRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.comput
 const WsComputeRuntimeInventoryRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.computeRuntimeInventory,
   {
-    payload: Schema.Struct({}),
+    payload: ComputeRuntimeInventoryInput,
     success: ComputeRuntimeInventory,
     error: ComputeRpcError,
   },
 );
+
+const WsComputeActiveWorkRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeActiveWork, {
+  payload: Schema.Struct({}),
+  success: ComputeActiveWork,
+  error: ComputeRpcError,
+});
 
 const WsComputeVerifyRuntimeRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeVerifyRuntime, {
   payload: ComputeVerifyRuntimeInput,
@@ -304,6 +347,65 @@ const WsComputeInspectVariablesRpc = Rpc.make(
   },
 );
 
+const WsComputeReadTableRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeReadTable, {
+  payload: ComputeTableInput,
+  success: DataTablePage,
+  error: ComputeRpcError,
+});
+
+const WsDataReadFileTableRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.dataReadFileTable, {
+  payload: DataFileTableInput,
+  success: DataFileTable,
+  error: Schema.Union([DataFileTableError, EnvironmentAuthorizationError]),
+});
+
+const WsComputeSaveOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSaveOutput, {
+  payload: ComputeSaveProjectOutputInput,
+  success: ComputeSaveProjectOutputResult,
+  error: ComputeRpcError,
+});
+
+const WsComputeSaveConsoleNotebookRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.computeSaveConsoleNotebook,
+  {
+    payload: ComputeSaveConsoleNotebookInput,
+    success: ComputeSaveConsoleNotebookResult,
+    error: ComputeRpcError,
+  },
+);
+
+const WsComputeSubmitCellsRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeSubmitCells, {
+  payload: ComputeSubmitProjectCellsInput,
+  success: Schema.Array(ComputeExecutionRecord),
+  error: ComputeRpcError,
+});
+
+const NotebookRpcError = Schema.Union([NotebookError, EnvironmentAuthorizationError]);
+
+const WsNotebookReadRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookRead, {
+  payload: NotebookReadInput,
+  success: Schema.NullOr(NotebookView),
+  error: NotebookRpcError,
+});
+
+const WsNotebookReadOutputRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookReadOutput, {
+  payload: NotebookReadOutputInput,
+  success: NotebookOutputJson,
+  error: NotebookRpcError,
+});
+
+const WsNotebookEditRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookEdit, {
+  payload: NotebookEditInput,
+  success: NotebookEditResult,
+  error: NotebookRpcError,
+});
+
+const WsNotebookRecordRunRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.notebookRecordRun, {
+  payload: NotebookRecordRunInput,
+  success: NotebookRecordRunResult,
+  error: NotebookRpcError,
+});
+
 const WsSubscribeComputeSessionsRpc = Rpc.make(
   SCIENT_SCIENTIFIC_WS_METHODS.subscribeComputeSessions,
   {
@@ -328,6 +430,7 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsSubscribeAnalysisRunsRpc,
   WsComputeInspectRuntimesRpc,
   WsComputeRuntimeInventoryRpc,
+  WsComputeActiveWorkRpc,
   WsComputeVerifyRuntimeRpc,
   WsComputeManagedRuntimeStatusRpc,
   WsComputeManageRuntimeRpc,
@@ -343,5 +446,14 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsComputeListExecutionsRpc,
   WsComputeListOutputsRpc,
   WsComputeInspectVariablesRpc,
+  WsComputeReadTableRpc,
+  WsDataReadFileTableRpc,
+  WsComputeSaveOutputRpc,
+  WsComputeSaveConsoleNotebookRpc,
+  WsComputeSubmitCellsRpc,
+  WsNotebookReadRpc,
+  WsNotebookReadOutputRpc,
+  WsNotebookEditRpc,
+  WsNotebookRecordRunRpc,
   WsSubscribeComputeSessionsRpc,
 );

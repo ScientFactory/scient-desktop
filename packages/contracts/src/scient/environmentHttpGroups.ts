@@ -3,6 +3,7 @@ import {
   ScientPdfEditSaveResult,
   ScientPdfEditError,
 } from "../scientPdfEdits.ts";
+import { KEEP_AWAKE_WORK_PATH, KeepAwakeWork } from "../scientKeepAwake.ts";
 import * as Schema from "effect/Schema";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -755,6 +756,15 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
+  // Scient keep-awake group: which of this computer's threads need it awake.
+  class EnvironmentScientKeepAwakeHttpApi extends HttpApiGroup.make("scientKeepAwake").add(
+    HttpApiEndpoint.get("work", KEEP_AWAKE_WORK_PATH, {
+      headers: OptionalBearerHeaders,
+      success: KeepAwakeWork,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
+
   // Scient Overleaf sync group: the token, connections and manual sync. Reads
   // need the read scope; anything that writes the folder, Overleaf or the token
   // needs operate scope (enforced by the handlers).
@@ -903,6 +913,7 @@ export function makeScientEnvironmentHttpGroups({
     ) {}
 
   return {
+    EnvironmentScientKeepAwakeHttpApi,
     EnvironmentScientProjectHttpApi,
     EnvironmentScientSourcesHttpApi,
     EnvironmentScientLatexHttpApi,

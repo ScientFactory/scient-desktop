@@ -10,6 +10,8 @@ import * as Layer from "effect/Layer";
 
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as ComputeSessionService from "./compute/ComputeSessionService.ts";
+import * as DataTables from "./data/DataTables.ts";
+import * as NotebookStore from "./notebook/NotebookStore.ts";
 import { ScientificRuntimePreferences } from "./compute/ScientificRuntimePreferences.ts";
 import { ConversationExportService } from "./conversationExport/ConversationExportService.ts";
 import { EditorFlush } from "./editorFlush/EditorFlush.ts";
@@ -28,6 +30,8 @@ export const captureScientWsServices = Effect.gen(function* () {
   // SCIENT-FORK:END
   const analysis = yield* AnalysisService.AnalysisService;
   const compute = yield* ComputeSessionService.ComputeSessionService;
+  const dataTables = yield* DataTables.DataTables;
+  const notebooks = yield* NotebookStore.NotebookStore;
   const runtimePreferences = yield* ScientificRuntimePreferences;
   const conversationExports = yield* ConversationExportService;
   const editorFlush = yield* EditorFlush;
@@ -47,6 +51,8 @@ export const captureScientWsServices = Effect.gen(function* () {
     Layer.succeed(ProviderRuntimeManager.ProviderRuntimeManager, providerRuntimeManager),
     Layer.succeed(AnalysisService.AnalysisService, analysis),
     Layer.succeed(ComputeSessionService.ComputeSessionService, compute),
+    Layer.succeed(DataTables.DataTables, dataTables),
+    Layer.succeed(NotebookStore.NotebookStore, notebooks),
     Layer.succeed(ScientificRuntimePreferences, runtimePreferences),
     Layer.succeed(ConversationExportService, conversationExports),
     Layer.succeed(EditorFlush, editorFlush),

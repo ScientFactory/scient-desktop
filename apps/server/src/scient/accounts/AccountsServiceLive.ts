@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Opaque record ids use the operating system CSPRNG.
 import * as NodeCrypto from "node:crypto";
 import {
+  GOOGLE_SITE,
   ACCOUNT_SECRET_FIELDS,
   AccountId,
   AccountSaveInput,
@@ -42,6 +43,7 @@ import {
   type AccountSessionScope,
   type AccountAuthorization,
 } from "./AccountsService.ts";
+import { withoutProfile, withThreadChoice } from "./profileChoices.ts";
 import { AccountVault } from "./AccountVault.ts";
 import {
   AccountPersistence,
@@ -54,6 +56,9 @@ import {
 } from "./AccountPersistence.ts";
 import { AccountSources, type OnePasswordClient } from "./AccountSources.ts";
 import {
+  GOOGLE_RECHECK_WRITE_MS,
+  isGoogleSessionRow,
+  withCheck,
   applyApprovalDecision,
   agentAccessOff,
   authorizationDecision,
@@ -61,6 +66,7 @@ import {
   inScope,
   sameTarget,
   siteMatches,
+  outcomeCheckState,
 } from "./AccountDecisions.ts";
 import { accountTokenRef, boundAccountId } from "./AccountBoundRef.ts";
 import { planSecretStores, type CopyDestination } from "./copyPlan.ts";
@@ -69,6 +75,16 @@ import { parsePasswordImport } from "./PasswordImport.ts";
 const failure = (reason: AccountsError["reason"], message: string) =>
   new AccountsError({ reason, message });
 const missing = () => failure("not-found", "The account no longer exists.");
+
+/** A removed profile's sign-ins ended with it; a saved password stays, free of the profile. */
+const withoutProfileSignIns = (accounts: ReadonlyArray<StoredAccount>, profileId: string) =>
+  accounts.flatMap((account) => {
+    const { details, secrets } = account.summary;
+    if (!("profileId" in details) || details.profileId !== profileId) return [account];
+    if (Object.keys(secrets).length === 0) return [];
+    const { profileId: _, ...rest } = details;
+    return [{ ...account, summary: { ...account.summary, details: rest } }];
+  });
 const valueName = () => `accounts-value-${NodeCrypto.randomUUID()}`;
 const decodeSave = Schema.decodeEffect(AccountSaveInput);
 const decodeMatch = Schema.decodeEffect(AccountMatchSignInInput);
@@ -122,6 +138,9 @@ export const layer = Layer.effect(
         target.type === "account" ? target.accountId : target.profileId,
       ]);
     const handoffs = new Map<string, AccountHandoff>();
+    // In memory only, never trimmed while the server runs: a forgotten entry would expose a filled
+    // page. The account autofill put into a tab, keyed by thread and tab.
+    const filledTabs = new Map<string, { accountId: AccountId; url: string }>();
     const handoffReveals = new Map<string, Effect.Effect<void, AccountsError>>();
     const cancelledHandoffs = new Set<string>();
     const pending = new Map<
@@ -172,6 +191,9 @@ export const layer = Layer.effect(
         agentAccess: state.agentAccess,
         accounts: state.accounts.map((account) => account.summary),
         profiles: state.profiles,
+        ...(state.profileChoices ? { profileChoices: state.profileChoices } : {}),
+        ...(state.codeSources ? { codeSources: state.codeSources } : {}),
+        ...(state.keyLinks ? { keyLinks: state.keyLinks } : {}),
         stores: {
           scient: { protection },
           keychain: { available: protection === "keychain", platform: sources.platform },
@@ -523,6 +545,12 @@ export const layer = Layer.effect(
         ...(!input.secrets?.password && !input.secrets?.totp && existing?.summary.lastSignInOutcome
           ? { lastSignInOutcome: existing.summary.lastSignInOutcome }
           : {}),
+        ...(!input.secrets?.password &&
+        !input.secrets?.totp &&
+        !input.secrets?.token &&
+        existing?.summary.lastCheck
+          ? { lastCheck: existing.summary.lastCheck }
+          : {}),
         createdAt: existing?.summary.createdAt ?? timestamp,
         updatedAt: timestamp,
         ...(existing?.summary.lastUsedAt ? { lastUsedAt: existing.summary.lastUsedAt } : {}),
@@ -833,9 +861,108 @@ export const layer = Layer.effect(
           Effect.suspend(() =>
             commit({
               ...state,
+              accounts: withoutProfileSignIns(state.accounts, profileId),
               profiles: state.profiles.filter((profile) => profile.profileId !== profileId),
+              ...(state.profileChoices
+                ? { profileChoices: withoutProfile(state.profileChoices, profileId) }
+                : {}),
             }),
           ),
+        ),
+      ),
+      googleSessionsSeen: Effect.fn("AccountsService.googleSessionsSeen")((input) =>
+        locked(
+          batched(
+            Effect.gen(function* () {
+              const rows = () =>
+                state.accounts.filter(
+                  ({ summary }) =>
+                    isGoogleSessionRow(summary) &&
+                    "profileId" in summary.details &&
+                    summary.details.profileId === input.profileId,
+                );
+              const address = ({ summary }: StoredAccount) =>
+                summary.details.kind === "website" ? summary.details.username : undefined;
+              for (const { email } of input.sessions)
+                if (!rows().some((account) => address(account) === email))
+                  yield* save({
+                    name: "Google",
+                    details: {
+                      kind: "website",
+                      sites: [GOOGLE_SITE],
+                      loginUrl: "https://accounts.google.com/",
+                      username: email,
+                      profileId: input.profileId,
+                    },
+                    secrets: {},
+                  });
+              const at = yield* now;
+              const nowMs = Date.parse(at);
+              for (const account of rows()) {
+                const valid = input.sessions.some(
+                  (session) => session.email === address(account) && session.valid,
+                );
+                const seen = valid ? ("signed-in" as const) : ("signed-out" as const);
+                const last = account.summary.lastCheck;
+                if (last?.state === seen && nowMs - Date.parse(last.at) < GOOGLE_RECHECK_WRITE_MS)
+                  continue;
+                yield* commit(
+                  replaceAccount({
+                    ...account,
+                    summary: { ...account.summary, lastCheck: { state: seen, at } },
+                  }),
+                  true,
+                );
+              }
+            }),
+          ),
+        ),
+      ),
+      setCodeSources: Effect.fn("AccountsService.setCodeSources")((codeSources) =>
+        locked(Effect.suspend(() => commit({ ...state, codeSources }, true))),
+      ),
+      setKeyLink: Effect.fn("AccountsService.setKeyLink")((target, accountId) =>
+        locked(
+          Effect.suspend(() =>
+            commit(
+              {
+                ...state,
+                keyLinks: [
+                  ...(state.keyLinks ?? []).filter(
+                    (link) =>
+                      link.instanceId !== target.instanceId || link.variable !== target.variable,
+                  ),
+                  ...(accountId === undefined ? [] : [{ ...target, accountId }]),
+                ],
+              },
+              true,
+            ),
+          ),
+        ),
+      ),
+      chooseProfile: Effect.fn("AccountsService.chooseProfile")((input) =>
+        locked(
+          Effect.gen(function* () {
+            const current = state.profileChoices ?? { projects: {}, threads: {} };
+            yield* commit(
+              {
+                ...state,
+                profileChoices:
+                  "threadId" in input
+                    ? withThreadChoice(current, input, yield* now)
+                    : {
+                        ...current,
+                        projects: Object.fromEntries([
+                          ...Object.entries(current.projects).filter(
+                            ([projectId]) => projectId !== input.projectId,
+                          ),
+                          ...(input.profileId === null ? [] : [[input.projectId, input.profileId]]),
+                        ]),
+                      },
+              },
+              true,
+            );
+          }),
         ),
       ),
       respondApproval: Effect.fn("AccountsService.respondApproval")((approvalId, decision) =>
@@ -951,7 +1078,11 @@ export const layer = Layer.effect(
                   (account) =>
                     account.summary.details.kind === "website" &&
                     account.summary.details.sites.includes(entry.site) &&
-                    (account.summary.details.username ?? "") === entry.username,
+                    (account.summary.details.username ?? "") === entry.username &&
+                    // The same login in another profile is that profile's own row.
+                    (input.profileId === undefined ||
+                      account.summary.details.profileId === undefined ||
+                      account.summary.details.profileId === input.profileId),
                 );
                 if (existing) {
                   const current = yield* resolve(existing.summary.accountId, ["password", "totp"]);
@@ -1057,7 +1188,10 @@ export const layer = Layer.effect(
           }),
         ),
       ),
-      fillValues: Effect.fn("AccountsService.fillValues")((accountId, origin) =>
+      filledTab: Effect.fn("AccountsService.filledTab")((threadId, tabId) =>
+        Effect.sync(() => filledTabs.get(`${threadId}\u0000${tabId}`)),
+      ),
+      fillValues: Effect.fn("AccountsService.fillValues")((accountId, origin, tab) =>
         locked(
           Effect.gen(function* () {
             const account = findAccount(accountId);
@@ -1098,6 +1232,11 @@ export const layer = Layer.effect(
                 summary: { ...account.summary, lastUsedAt: yield* now },
               }),
             );
+            if (tab) {
+              const key = `${tab.threadId}\u0000${tab.tabId}`;
+              filledTabs.delete(key);
+              filledTabs.set(key, { accountId, url: tab.url });
+            }
             return {
               ...(details.username === undefined ? {} : { username: details.username }),
               ...(values.password ? { password: Redacted.value(values.password) } : {}),
@@ -1128,6 +1267,7 @@ export const layer = Layer.effect(
                     .map((id) => effectiveProfile(state.profiles, id))
                     .filter((profile) => inScope(profile.scope, scope.projectId))
                 : [],
+              profileChoices: state.profileChoices,
             };
           }),
         ),
@@ -1283,24 +1423,55 @@ export const layer = Layer.effect(
       resolveSecrets: Effect.fn("AccountsService.resolveSecretsInput")((accountId, fields) =>
         locked(resolve(accountId, fields)),
       ),
-      recordUse: Effect.fn("AccountsService.recordUse")((entry) =>
+      recordCheck: Effect.fn("AccountsService.recordCheck")((accountId, check) =>
+        locked(
+          Effect.gen(function* () {
+            const account = findAccount(accountId);
+            if (!account) return;
+            yield* commit(
+              replaceAccount({
+                ...account,
+                summary: withCheck(
+                  account.summary,
+                  { ...check, at: yield* now },
+                  yield* Clock.currentTimeMillis,
+                ),
+              }),
+              true,
+            );
+          }),
+        ),
+      ),
+      recordUse: Effect.fn("AccountsService.recordUse")((entry, message) =>
         locked(
           Effect.gen(function* () {
             yield* appendActivity({ ...entry, decision: "allowed" });
             if (entry.target.type === "account") {
               const account = findAccount(entry.target.accountId);
-              if (account)
+              if (account) {
+                const at = yield* now;
                 yield* commit(
                   replaceAccount({
                     ...account,
-                    summary: {
-                      ...account.summary,
-                      lastUsedAt: yield* now,
-                      ...(entry.signInOutcome ? { lastSignInOutcome: entry.signInOutcome } : {}),
-                    },
+                    summary: entry.signInOutcome
+                      ? withCheck(
+                          {
+                            ...account.summary,
+                            lastUsedAt: at,
+                            lastSignInOutcome: entry.signInOutcome,
+                          },
+                          {
+                            state: outcomeCheckState(entry.signInOutcome),
+                            at,
+                            ...(message === undefined ? {} : { message }),
+                          },
+                          yield* Clock.currentTimeMillis,
+                        )
+                      : { ...account.summary, lastUsedAt: at },
                   }),
                   true,
                 );
+              }
             }
           }),
         ).pipe(Effect.ignore, Effect.forkIn(serviceScope), Effect.asVoid),

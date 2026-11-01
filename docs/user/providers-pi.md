@@ -90,8 +90,9 @@ catalog refresh does not establish a model-access denial. Models with unverified
 remain selectable; Scient does not send paid requests to every model to check access.
 
 If discovery cannot complete, Scient keeps Pi available with the `Pi default` model; start a thread
-to let the interactive Pi session handle any startup prompt. The context meter appears once Pi
-reports usage for the thread, so it can wait for the first reply when a model provider reports
+to let the interactive Pi session handle any startup prompt. The context meter is off by default;
+see [commands and skills](./composer.md#commands-and-skills) to enable it on web and desktop. It
+appears once Pi reports usage for the thread, so it can wait for the first reply when a model provider reports
 usage only when a response completes.
 
 The thinking picker marks the discovered active model's configured level as its

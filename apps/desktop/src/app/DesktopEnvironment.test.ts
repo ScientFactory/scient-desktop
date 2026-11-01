@@ -160,7 +160,6 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
       assert.equal(environment.backendCwd, "/repo");
       assert.equal(environment.appUserModelId, "com.scientfactory.scient.next.dev");
-      assert.equal(environment.linuxWmClass, "scient-next-dev");
       assert.equal(environment.linuxDesktopEntryName, "scient-next-dev.desktop");
       assert.deepEqual(
         Option.map(environment.devServerUrl, (url) => url.href),

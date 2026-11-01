@@ -1,5 +1,9 @@
 import {
+  AccountId,
   AccountsError,
+  type AccountsSnapshot,
+  defaultAccountControls,
+  type AccountSaveInput,
   type AccountActivityEntry,
   type AccountHandoff,
   type AccountSummary,
@@ -17,12 +21,16 @@ export function fakeAccounts(
     agentAccess?: boolean;
     denied?: boolean;
     values?: Readonly<Record<string, string>>;
+    filledTab?: { accountId: AccountId; url: string };
   } = {},
 ) {
   const handoffs = new Map<string, AccountHandoff>();
   const cancelled = new Set<string>();
   const uses: Array<Omit<AccountActivityEntry, "at" | "decision">> = [];
   const calls: string[] = [];
+  const checks: Array<{ accountId: AccountId; state: string; message?: string | undefined }> = [];
+  const accounts = [...(options.accounts ?? [])];
+  const saves: Array<AccountSaveInput> = [];
   const unavailable = Effect.fail(
     new AccountsError({
       reason: "unsupported",
@@ -46,15 +54,42 @@ export function fakeAccounts(
         cancelled.add(id);
       }),
     passwordStore: () => unavailable,
-    snapshot: unavailable,
+    snapshot: Effect.sync(() => ({ accounts }) as unknown as AccountsSnapshot),
     changes: Stream.empty,
-    save: () => unavailable,
+    save: (input) =>
+      Effect.sync(() => {
+        saves.push(input);
+        const accountId =
+          input.accountId ?? AccountId.make(`acc_saved_${String(saves.length).padStart(4, "0")}`);
+        const index = accounts.findIndex((account) => account.accountId === accountId);
+        const saved: AccountSummary = {
+          accountId,
+          name: input.name,
+          details: input.details,
+          secrets: { token: { source: { type: "scient" } } },
+          controls: accounts[index]?.controls ?? defaultAccountControls(input.details.kind),
+          status: "ready",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        if (index === -1) accounts.push(saved);
+        else accounts[index] = saved;
+        return { accountId };
+      }),
     remove: () => unavailable,
     test: () => unavailable,
+    recordCheck: (accountId, check) =>
+      Effect.sync(() => {
+        checks.push({ accountId, ...check });
+      }),
     setControls: () => unavailable,
     setAgentAccess: () => unavailable,
     updateProfile: () => unavailable,
     removeProfile: () => unavailable,
+    chooseProfile: () => unavailable,
+    googleSessionsSeen: () => unavailable,
+    setCodeSources: () => unavailable,
+    setKeyLink: () => Effect.void,
     respondApproval: () => unavailable,
     activity: () => Effect.succeed([]),
     keychainCandidates: () => unavailable,
@@ -62,11 +97,12 @@ export function fakeAccounts(
     disconnectOnePassword: unavailable,
     importPasswords: () => unavailable,
     fillValues: () => unavailable,
+    filledTab: () => Effect.succeed(options.filledTab),
     matchSignIn: () => unavailable,
     forSession: () =>
       Effect.succeed({
         agentAccess: options.agentAccess ?? true,
-        accounts: options.accounts ?? [],
+        accounts,
         profiles: options.profiles ?? [],
       }),
     authorize: (_scope, target, action) =>
@@ -94,5 +130,5 @@ export function fakeAccounts(
         uses.push(entry);
       }),
   });
-  return { service, calls, uses, handoffs, cancelled };
+  return { service, calls, uses, handoffs, cancelled, saves, checks };
 }

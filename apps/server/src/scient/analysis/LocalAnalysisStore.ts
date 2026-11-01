@@ -120,6 +120,7 @@ export class LocalAnalysisStore extends Context.Service<
       readonly artifactId: AnalysisArtifactId;
       readonly representationId: AnalysisArtifactRepresentationId;
     }) => Effect.Effect<ResolvedAnalysisArtifactRepresentation | null, LocalAnalysisStoreError>;
+    readonly hasRuns: (projectId: string) => Effect.Effect<boolean, LocalAnalysisStoreError>;
     readonly loadRuns: (
       projectId: string,
     ) => Effect.Effect<ReadonlyArray<AnalysisRunSnapshotType>, LocalAnalysisStoreError>;
@@ -206,6 +207,19 @@ const make = Effect.gen(function* () {
     );
 
   const runDirectory = (projectId: string, runId: string) => path.join(runsRoot, projectId, runId);
+  const hasRuns = (projectId: string) =>
+    Effect.tryPromise({
+      try: async () => {
+        const entries = await NodeFSP.readdir(path.join(runsRoot, projectId)).catch(
+          (cause: NodeJS.ErrnoException) => {
+            if (cause.code === "ENOENT") return [];
+            throw cause;
+          },
+        );
+        return entries.length > 0;
+      },
+      catch: (cause) => storeError("list-runs", runsRoot, cause),
+    });
   const artifactStagingDirectory = (projectId: string, runId: string) =>
     path.join(runDirectory(projectId, runId), "artifact-staging");
   const artifactsDirectory = (projectId: string, runId: string) =>
@@ -680,6 +694,7 @@ const make = Effect.gen(function* () {
     publishArtifacts,
     discardArtifactStaging,
     resolveArtifact,
+    hasRuns,
     loadRuns,
     loadRun,
     measureRunStorage,

@@ -1347,7 +1347,6 @@ export const WSL_RUNTIME_ARCHIVE_EXCLUDED_PREFIXES = [
   "node_modules/node-pty/third_party/conpty",
   "node_modules/@ff-labs/fff-bin-win32-",
   "node_modules/@yuuang/ffi-rs-win32-",
-  "node_modules/@msgpackr-extract/msgpackr-extract-win32-",
   // These loaders select separate Linux packages when the WSL Node host runs.
   // Exclude only their Windows variants from this tarball, not the sidecar.
   "node_modules/@napi-rs/canvas-win32-",
@@ -3681,7 +3680,11 @@ export const stageWindowsServerSidecar = Effect.fn("stageWindowsServerSidecar")(
 export const validatePackagedComputeBridges = Effect.fn("validatePackagedComputeBridges")(
   function* (asarPath: string) {
     const path = yield* Path.Path;
-    for (const name of ["scient_compute_bridge.py", "scient_matlab_engine_bridge.py"]) {
+    for (const name of [
+      "scient_compute_bridge.py",
+      "scient_matlab_engine_bridge.py",
+      "scient_sql_kernel.py",
+    ]) {
       const relativePath = path.join(COMPUTE_BRIDGE_ASAR_UNPACK_DIR, name);
       yield* Effect.tryPromise({
         try: async () => {

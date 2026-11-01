@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 
+import { discoveryContext } from "./RuntimeDiscovery.ts";
 import { sanitizeComputeEnvironment, validateProjectRoot } from "./ComputeEnvironmentPolicy.ts";
 
 export const MATLAB_LANGUAGE_ID = ComputeLanguageId.make("matlab");
@@ -150,10 +151,16 @@ function conventionalCandidates(
   environment: Readonly<Record<string, string>>,
 ): ReadonlyArray<string> {
   if (platform === "darwin") {
-    return directoryNames("/Applications")
-      .filter((name) => /^MATLAB_R\d{4}[ab]\.app$/u.test(name))
-      .toSorted((left, right) => right.localeCompare(left))
-      .map((name) => NodePath.join("/Applications", name, "bin", "matlab"));
+    const roots = [
+      "/Applications",
+      ...(environment.HOME ? [NodePath.join(environment.HOME, "Applications")] : []),
+    ];
+    return roots.flatMap((root) =>
+      directoryNames(root)
+        .filter((name) => /^MATLAB_R\d{4}[ab]\.app$/u.test(name))
+        .toSorted((left, right) => right.localeCompare(left))
+        .map((name) => NodePath.join(root, name, "bin", "matlab")),
+    );
   }
   if (platform === "win32") {
     const roots = [environment.ProgramFiles, environment["ProgramFiles(x86)"]].filter(
@@ -166,15 +173,18 @@ function conventionalCandidates(
         .map((release) => NodePath.join(matlabRoot, release, "bin", "matlab.exe"));
     });
   }
-  return directoryNames("/usr/local/MATLAB")
-    .toSorted((left, right) => right.localeCompare(left))
-    .map((release) => NodePath.join("/usr/local/MATLAB", release, "bin", "matlab"));
+  return ["/usr/local/MATLAB", "/opt/MATLAB"].flatMap((root) =>
+    directoryNames(root)
+      .toSorted((left, right) => right.localeCompare(left))
+      .map((release) => NodePath.join(root, release, "bin", "matlab")),
+  );
 }
 
 export function discoverMatlabCandidates(
   configuredExecutable: string | null,
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
+  registeredRoots: ReadonlyArray<string> = [],
 ): ReadonlyArray<MatlabCandidate> {
   if (configuredExecutable !== null && configuredExecutable.trim().length > 0) {
     return [{ executable: configuredExecutable.trim(), source: "configured" }];
@@ -184,7 +194,10 @@ export function discoverMatlabCandidates(
       executable,
       source: "path" as const,
     })),
-    ...conventionalCandidates(platform, environment).map((executable) => ({
+    ...[
+      ...conventionalCandidates(platform, environment),
+      ...registeredRoots.map((root) => NodePath.win32.join(root, "bin", "matlab.exe")),
+    ].map((executable) => ({
       executable,
       source: "conventional" as const,
     })),
@@ -233,7 +246,7 @@ function unavailableProfile(
   };
 }
 
-function engineHostRequirementIsMissing(cause: ComputeRuntimeError): boolean {
+export function engineHostRequirementIsMissing(cause: ComputeRuntimeError): boolean {
   return /no compatible (?:Python )?host could import its Engine API|no compatible Engine host/iu.test(
     cause.message,
   );
@@ -348,6 +361,10 @@ export function makeMatlabRuntimeAdapter(
     (effect) => effect.pipe(probeLock.withPermits(1)),
   );
 
+  const registeredRoots = Effect.flatMap(discoveryContext, (context) =>
+    Effect.promise(() => context.host.windowsInstallRoots("matlab")),
+  );
+
   const adapter: ComputeLanguageAdapter = {
     languageId: MATLAB_LANGUAGE_ID,
     transportKind: MATLAB_ENGINE_TRANSPORT_KIND,
@@ -355,7 +372,8 @@ export function makeMatlabRuntimeAdapter(
       const resolveExecutable = yield* SpawnExecutableResolution;
       // Settings lists alternatives even when execution is pinned to one path.
       // The execution discovery path below deliberately retains its precedence.
-      const automatic = discoverMatlabCandidates(null, environment, platform);
+      const roots = yield* registeredRoots;
+      const automatic = discoverMatlabCandidates(null, environment, platform, roots);
       const candidates = request.configuredExecutable?.trim()
         ? [
             ...discoverMatlabCandidates(request.configuredExecutable, environment, platform),
@@ -408,17 +426,38 @@ export function makeMatlabRuntimeAdapter(
       return [...installations.values()];
     }),
     discover: (request) =>
-      Effect.forEach(
-        discoverMatlabCandidates(request.configuredExecutable, environment, platform),
-        (candidate) =>
-          readProbe(candidate.executable, request.refresh).pipe(
-            Effect.map((probe) => matlabProfile(probe, candidate.source)),
-            // Discovery already checked the executable. A broken helper or license
-            // must remain visible with its actionable verification failure.
-            Effect.orElseSucceed(() => unavailableProfile(candidate.executable, candidate.source)),
-          ),
-        { concurrency: 1 },
+      Effect.flatMap(registeredRoots, (roots) =>
+        Effect.forEach(
+          discoverMatlabCandidates(request.configuredExecutable, environment, platform, roots),
+          (candidate) =>
+            readMatlabInstallation(candidate.executable).pipe(
+              Effect.map((installation): ComputeRuntimeProfile => ({
+                languageId: MATLAB_LANGUAGE_ID,
+                source: candidate.source,
+                executable: installation.executableRealpath,
+                languageVersion: installation.release || installation.version,
+                architecture: null,
+                displayName: `MATLAB ${installation.release || installation.version} (${candidate.source})`,
+              })),
+              // Discovery already checked the executable. A broken helper or license
+              // must remain visible with its actionable verification failure.
+              Effect.orElseSucceed(() =>
+                unavailableProfile(candidate.executable, candidate.source),
+              ),
+            ),
+          { concurrency: 1 },
+        ),
       ),
+    // Nothing is needed before Run: only starting MATLAB can prove the connection, and Run adds it.
+    assess: (profile) =>
+      Effect.succeed({
+        profile,
+        readiness: "ready" as const,
+        connection: "detected" as const,
+        missingRequirements: [],
+        message: null,
+        packages: [],
+      }),
     verify: (request) =>
       readProbe(request.profile.executable).pipe(
         Effect.map((probe) => ({

@@ -1,11 +1,11 @@
 import {
   isListedThreadLineage,
+  ThreadId,
   type EnvironmentId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
   type Project,
-  type ThreadId,
 } from "@t3tools/contracts";
 import {
   RelayApi,
@@ -48,6 +48,10 @@ import {
 } from "../cloud/config.ts";
 import { getOrCreateEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+// SCIENT-FORK:START — Scient Accounts: a sign-in waiting for the user reaches their phone.
+import { accountRequestsByThread } from "@t3tools/shared/scientSignInPage";
+import { AccountsService } from "../scient/accounts/AccountsService.ts";
+// SCIENT-FORK:END
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -324,6 +328,24 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   };
 }
 
+// SCIENT-FORK:START — Scient Accounts: a sign-in waiting for the user reaches their phone.
+function withAccountRequest<S extends { readonly state: RelayAgentActivityState | null }>(
+  snapshot: S,
+  request: string | undefined,
+): S {
+  if (request === undefined || snapshot.state === null) return snapshot;
+  return {
+    ...snapshot,
+    state: {
+      ...snapshot.state,
+      phase: "waiting_for_approval",
+      headline: "An account needs you",
+      detail: request,
+    },
+  };
+}
+// SCIENT-FORK:END
+
 function terminalWorkSinceStart(thread: OrchestrationV2ThreadShell, startedAt: number): boolean {
   return (
     thread.latestRunCompletedAt != null &&
@@ -367,6 +389,10 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
   const scope = yield* Effect.scope;
+  // SCIENT-FORK:START — Scient Accounts: a sign-in waiting for the user reaches their phone.
+  const accounts = yield* Effect.serviceOption(AccountsService);
+  let accountRequests: ReadonlyMap<string, string> = new Map();
+  // SCIENT-FORK:END
   const cloudLinkKeyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
@@ -528,11 +554,14 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
-      environmentId,
-      thread,
-      project,
-    });
+    const snapshot = withAccountRequest(
+      resolveAgentAwarenessRelayPublishSnapshot({
+        environmentId,
+        thread,
+        project,
+      }),
+      accountRequests.get(threadId),
+    );
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
@@ -673,6 +702,25 @@ export const make = Effect.gen(function* () {
   const worker = yield* makeAgentAwarenessPublishWorker(processThreadPublish);
   const enqueueThreadPublish = (threadId: ThreadId) =>
     cancelPublishRetry(threadId).pipe(Effect.andThen(worker.enqueue(threadId)));
+  // SCIENT-FORK:START — Scient Accounts: a sign-in waiting for the user reaches their phone.
+  if (Option.isSome(accounts))
+    yield* Stream.runForEach(accounts.value.changes, (snapshot) =>
+      Effect.suspend(() => {
+        const previous = accountRequests;
+        accountRequests = accountRequestsByThread(snapshot);
+        const changed = [...new Set([...previous.keys(), ...accountRequests.keys()])].filter(
+          (threadId) => previous.get(threadId) !== accountRequests.get(threadId),
+        );
+        return Effect.forEach(
+          changed,
+          (threadId) => enqueueThreadPublish(ThreadId.make(threadId)),
+          {
+            discard: true,
+          },
+        );
+      }),
+    ).pipe(Effect.forkIn(scope));
+  // SCIENT-FORK:END
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
 

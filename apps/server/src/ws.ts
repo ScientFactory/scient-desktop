@@ -312,7 +312,12 @@ import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcH
 import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
 // SCIENT-FORK:END
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
+import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
+import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
+import { makeComputeConsoleNotebook } from "./scient/compute/ComputeConsoleNotebook.ts";
+import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
+import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
 import {
   makeAnalysisRuntimeInspectionHandlers,
   makeScientificRpcHandlers,
@@ -325,7 +330,13 @@ import * as ComputeSessionService from "./scient/compute/ComputeSessionService.t
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
 import { makeSkillRpcHandlers } from "./scient/skills/SkillRpcHandlers.ts";
 // SCIENT-FORK:START — Scient Accounts: service-backed transport.
-import { accountsForRpc, makeAccountsRpcHandlers } from "./scient/accounts/AccountsRpcHandlers.ts";
+import {
+  accountsForRpc,
+  accountsUserRunsForRpc,
+  makeAccountsRpcHandlers,
+} from "./scient/accounts/AccountsRpcHandlers.ts";
+import { makeAccountKeyLinks } from "./scient/accounts/keyLinks.ts";
+import { makePlainKeys } from "./scient/accounts/plainKeys.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions RPCs.
 import {
@@ -401,7 +412,8 @@ export const withLateEditorConfig = <E, R>(
         editors.join() !== config.availableEditors.join() ||
         (editors.includes("file-manager") && config.shellRevealInFileManagerKind === undefined),
     ),
-    // Leave the unshared reveal probe unbounded so timeouts cannot cancel every attempt on slow hosts.
+    // Unbounded, unlike the snapshot: this exists to deliver a probe that
+    // outlasts the snapshot's timeout.
     Stream.mapEffect((editors) =>
       resolveEditorConfig(editors, launcher.resolveFileManagerRevealKind()),
     ),
@@ -443,6 +455,31 @@ export const withLateEditorConfig = <E, R>(
   );
 };
 
+// Discoveries run side by side so the slowest one, not their sum, bounds the
+// server config snapshot. Each degrades on timeout rather than failing it.
+export const resolveOpenDiscoveryForConfig = <T, D, E1, R1, E2, R2, E3, R3, E4, R4>(discovery: {
+  readonly editors: Effect.Effect<ReadonlyArray<EditorId>, E1, R1>;
+  readonly fileManagerRevealKind: Effect.Effect<FileManagerRevealKind | undefined, E2, R2>;
+  readonly remoteOpenTargets: Effect.Effect<ReadonlyArray<T>, E3, R3>;
+  readonly directEndpoints: Effect.Effect<ReadonlyArray<D>, E4, R4>;
+}) =>
+  Effect.all(
+    {
+      editorConfig: resolveAvailableEditorsForConfig(discovery.editors).pipe(
+        Effect.flatMap((availableEditors) =>
+          resolveEditorConfig(
+            availableEditors,
+            resolveFileManagerRevealKindForConfig(discovery.fileManagerRevealKind),
+          ),
+        ),
+      ),
+      // Same discovery-with-timeout treatment as editors: a slow probe must
+      // not stall server.getConfig, so it degrades to an empty list.
+      remoteOpenTargets: resolveAvailableEditorsForConfig(discovery.remoteOpenTargets),
+      directEndpoints: resolveAvailableEditorsForConfig(discovery.directEndpoints),
+    },
+    { concurrency: "unbounded" },
+  ).pipe(Effect.map(({ editorConfig, ...endpoints }) => ({ ...editorConfig, ...endpoints })));
 function withoutWorkspaceSnapshots(providers: ReadonlyArray<ServerProvider>): ServerProvider[] {
   return providers.map(({ workspaceSnapshots: _workspaceSnapshots, ...provider }) => provider);
 }
@@ -1432,6 +1469,9 @@ export const layerWsRpc = (
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       // SCIENT-FORK:START — Scient Accounts: share the server-lifetime account owner.
       const accounts = yield* accountsForRpc;
+      const accountUserRuns = yield* accountsUserRunsForRpc;
+      const accountPlainKeys = yield* makePlainKeys(accounts);
+      const linkAccountKey = yield* makeAccountKeyLinks(accounts);
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient extensions services.
       const extensionServices = {
@@ -1885,11 +1925,28 @@ export const layerWsRpc = (
         serverSettings,
       });
       const analysis = yield* AnalysisService.AnalysisService;
+      const dataTables = yield* DataTables.DataTables;
       const compute = yield* ComputeSessionService.ComputeSessionService;
       const computeGateway = makeComputeRpcGateway({
         workspaceResolver: yield* WorkspaceBindingResolver,
         compute,
         serverSettings: yield* ScientificRuntimePreferences,
+        workspaceFileSystem,
+      });
+      const saveComputeOutput = makeComputeOutputSave({
+        gateway: computeGateway,
+        compute,
+        workspaceFileSystem,
+        fileSystem: yield* FileSystem.FileSystem,
+      });
+      const computeNotebookOutputs = makeComputeNotebookOutputs({
+        gateway: computeGateway,
+        compute,
+        fileSystem: yield* FileSystem.FileSystem,
+      });
+      const saveConsoleNotebook = makeComputeConsoleNotebook({
+        gateway: computeGateway,
+        notebookOutputs: computeNotebookOutputs,
         workspaceFileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
@@ -1941,10 +1998,12 @@ export const layerWsRpc = (
         const auth = yield* serverAuth.getDescriptor();
         const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
         const lastEventLoopStall = yield* eventLoopMonitor.latestNoticeableStall;
-        const editorConfig = yield* resolveEditorConfig(
-          yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
-          resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
-        );
+        const discovery = yield* resolveOpenDiscoveryForConfig({
+          editors: externalLauncher.resolveAvailableEditors(),
+          fileManagerRevealKind: externalLauncher.resolveFileManagerRevealKind(),
+          remoteOpenTargets: remoteOpenTargets.resolveTargets(),
+          directEndpoints: directEndpoints.resolve(),
+        });
 
         return {
           environment,
@@ -1954,11 +2013,7 @@ export const layerWsRpc = (
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          ...editorConfig,
-          remoteOpenTargets: yield* resolveAvailableEditorsForConfig(
-            remoteOpenTargets.resolveTargets(),
-          ),
-          directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
+          ...discovery,
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -3824,6 +3879,11 @@ export const layerWsRpc = (
           observeRpcStreamEffect,
           analysis,
           computeGateway,
+          dataTables,
+          saveComputeOutput,
+          notebooks: yield* NotebookStore.NotebookStore,
+          saveConsoleNotebook,
+          computeNotebookOutputs,
         }),
       });
       // SCIENT-FORK:START — Scient extensions RPCs.
@@ -3848,7 +3908,15 @@ export const layerWsRpc = (
         WsExtensionsRpcGroup.toLayer(handlers7),
         // SCIENT-FORK:START — Scient Accounts: mount thin handlers.
         WsAccountsRpcGroup.toLayer(
-          makeAccountsRpcHandlers({ accounts, observeRpcEffect, observeRpcStream }),
+          makeAccountsRpcHandlers({
+            accounts,
+            observeRpcEffect,
+            observeRpcStream,
+            check: accountUserRuns.check,
+            paperForSource: accountUserRuns.paperForSource,
+            plainKeys: accountPlainKeys,
+            linkKey: linkAccountKey,
+          }),
         ),
         // SCIENT-FORK:END
       );

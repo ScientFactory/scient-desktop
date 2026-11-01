@@ -119,7 +119,8 @@ it.effect("does not require a project for Browser or turn-scoped skill reads", (
 
 it.effect("withholds skill operations when a grant has no authorized release scope", () =>
   Effect.gen(function* () {
-    expect(yield* listAvailableScientOperations()).toEqual([]);
+    const available = yield* listAvailableScientOperations();
+    expect(available.filter((operation) => operation.family === "skills")).toEqual([]);
     expect(
       (yield* dispatchScientOperation("skills.load", Effect.succeed("never")).pipe(Effect.flip))
         ._tag,

@@ -1,11 +1,20 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProjectId, ThreadId, defaultAccountControls } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ThreadId,
+  defaultAccountControls,
+  type AccountSummary,
+} from "@t3tools/contracts";
 import {
   applyApprovalDecision,
   authorizationDecision,
+  automaticSignInOnHold,
   effectiveProfile,
   inScope,
+  isGoogleSessionRow,
+  signInOnHold,
   siteMatches,
+  withCheck,
 } from "./AccountDecisions.ts";
 
 const projectId = ProjectId.make("synthetic-project");
@@ -86,5 +95,109 @@ describe("account grant decisions", () => {
     expect(siteMatches(["example.com"], "https://user@example.com")).toBe(false);
     expect(siteMatches(["example.com"], "https://example.com/path")).toBe(false);
     expect(siteMatches(["example.com"], "not a URL")).toBe(false);
+  });
+});
+
+describe("sign-in holds", () => {
+  const at = "2026-10-31T10:00:00.000Z";
+  const now = Date.parse(at);
+  const minutes = (count: number) => now + count * 60_000;
+
+  it("keeps a failed or unfinished sign-in on hold for a while, and a refused one until it changes", () => {
+    const failed = {
+      lastSignInOutcome: "failed",
+      lastCheck: { state: "unknown", at },
+    } as const;
+    expect(signInOnHold(failed, minutes(10))).toBe(true);
+    expect(signInOnHold(failed, minutes(16))).toBe(false);
+    expect(signInOnHold({ lastCheck: { state: "needs-you", at } }, minutes(10))).toBe(true);
+    expect(signInOnHold({ lastCheck: { state: "needs-you", at } }, minutes(16))).toBe(false);
+    expect(
+      signInOnHold(
+        { lastSignInOutcome: "password-rejected", lastCheck: { state: "rejected", at } },
+        minutes(100_000),
+      ),
+    ).toBe(true);
+    expect(signInOnHold({ lastCheck: { state: "signed-in", at } }, minutes(1))).toBe(false);
+    // A one-time code the user typed wrong isn't something saved that needs fixing.
+    expect(
+      signInOnHold({ lastSignInOutcome: "code-rejected", secrets: {} }, minutes(100_000)),
+    ).toBe(false);
+  });
+
+  it("won't sign back in by itself right after a sign-in that worked", () => {
+    const worked = { lastCheck: { state: "signed-in", at } } as const;
+    expect(automaticSignInOnHold(worked, minutes(5))).toBe(true);
+    expect(automaticSignInOnHold(worked, minutes(16))).toBe(false);
+  });
+
+  it("only signs in by itself where that has worked or was never tried", () => {
+    const later = minutes(100_000);
+    expect(automaticSignInOnHold({}, later)).toBe(false);
+    expect(automaticSignInOnHold({ lastSignInOutcome: "signed-in" }, later)).toBe(false);
+    expect(automaticSignInOnHold({ lastSignInOutcome: "needs-user" }, later)).toBe(true);
+    expect(automaticSignInOnHold({ lastSignInOutcome: "failed" }, later)).toBe(true);
+  });
+});
+
+describe("Google session rows", () => {
+  const details = {
+    kind: "website",
+    sites: ["google.com"],
+    username: "a@example.com",
+    profileId: "work",
+  } as const;
+
+  it("are the password-free rows for google.com, never a saved password", () => {
+    expect(isGoogleSessionRow({ details, secrets: {} })).toBe(true);
+    expect(
+      isGoogleSessionRow({
+        details,
+        secrets: { password: { source: { type: "scient" } } },
+      }),
+    ).toBe(false);
+    expect(
+      isGoogleSessionRow({ details: { ...details, sites: ["accounts.google.com"] }, secrets: {} }),
+    ).toBe(false);
+  });
+});
+
+describe("what a check leaves on an account", () => {
+  const at = "2026-10-31T10:00:00.000Z";
+  const now = Date.parse(at);
+  const summary = (fields: Partial<AccountSummary>) => fields as AccountSummary;
+
+  it("keeps a limit through later looks, until a session is seen working", () => {
+    const limited = summary({ lastCheck: { state: "limited", at } });
+    expect(withCheck(limited, { state: "unknown", at }, now + 60_000).lastCheck?.state).toBe(
+      "limited",
+    );
+    expect(withCheck(limited, { state: "signed-in", at }, now + 60_000).lastCheck?.state).toBe(
+      "signed-in",
+    );
+  });
+
+  it("keeps the hold when a session ends moments after signing in", () => {
+    const signedIn = summary({ lastCheck: { state: "signed-in", at } });
+    const after = withCheck(signedIn, { state: "signed-out", at }, now + 60_000);
+    expect(after.lastCheck?.state).toBe("needs-you");
+    expect(automaticSignInOnHold(after, now + 60_000)).toBe(true);
+    expect(withCheck(signedIn, { state: "signed-out", at }, now + 3_600_000).lastCheck?.state).toBe(
+      "signed-out",
+    );
+  });
+
+  it("clears a result that only needed a person, never a refused password", () => {
+    expect(
+      withCheck(summary({ lastSignInOutcome: "needs-user" }), { state: "signed-in", at }, now)
+        .lastSignInOutcome,
+    ).toBeUndefined();
+    expect(
+      withCheck(
+        summary({ lastSignInOutcome: "password-rejected" }),
+        { state: "signed-in", at },
+        now,
+      ).lastSignInOutcome,
+    ).toBe("password-rejected");
   });
 });

@@ -154,7 +154,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(43);
+      expect(scientTools).toHaveLength(55);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "preview_act",
         "preview_dialog",
@@ -168,16 +168,27 @@ it.live(
         "preview_snapshot",
         "preview_status",
         "preview_wait_for",
+        "scient_account_add",
         "scient_account_browser_session",
         "scient_account_credentials",
+        "scient_account_fill",
         "scient_account_find_profile",
         "scient_account_request",
         "scient_account_sign_in",
         "scient_accounts_list",
+        "scient_compute_control",
         "scient_compute_inventory",
+        "scient_compute_output",
+        "scient_compute_run",
+        "scient_compute_sessions",
+        "scient_compute_setup",
+        "scient_compute_variables",
         "scient_document_export",
         "scient_handoff_summary_read",
         "scient_latex_build",
+        "scient_notebook_edit",
+        "scient_notebook_read",
+        "scient_notebook_run",
         "scient_overleaf_connect",
         "scient_overleaf_kept_copies",
         "scient_overleaf_manage",
@@ -186,6 +197,7 @@ it.live(
         "scient_overleaf_sync",
         "scient_overleaf_token",
         "scient_overleaf_undo",
+        "scient_paper_get",
         "scient_pdf_build",
         "scient_skill_load",
         "scient_skill_read_resource",
@@ -202,7 +214,7 @@ it.live(
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",
-        actual43Bytes: Buffer.byteLength(encode(schemas)),
+        actual55Bytes: Buffer.byteLength(encode(schemas)),
         synthetic31Bytes: size(31),
         synthetic100Bytes: size(100),
         synthetic500Bytes: size(500),

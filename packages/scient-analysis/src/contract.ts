@@ -528,6 +528,8 @@ export interface AnalysisRuntimeAdapter {
   readonly id: AnalysisRuntimeId;
   readonly kind: AnalysisRuntimeKind;
   readonly fileExtensions: ReadonlyArray<string>;
+  /** Inspection answers from a shared scan, so a kept profile would only go stale. */
+  readonly readsLiveScan?: boolean;
   readonly inspect: (input: {
     readonly customExecutablePath?: string;
     readonly inspectedAt: string;
@@ -544,6 +546,13 @@ export interface AnalysisRuntimeAdapter {
     readonly args: ReadonlyArray<string>;
     readonly cwd: string;
     readonly environment: Readonly<Record<string, string>>;
+    /** Steps that must succeed first, such as a compile. Each one streams its output. */
+    readonly before?: ReadonlyArray<{
+      readonly executable: string;
+      readonly args: ReadonlyArray<string>;
+      readonly cwd: string;
+      readonly environment: Readonly<Record<string, string>>;
+    }>;
   };
   readonly collectArtifacts?: (context: AnalysisRunContext) => Promise<AnalysisArtifactCollection>;
   readonly collectDiagnostics?: (

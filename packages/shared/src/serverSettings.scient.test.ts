@@ -58,18 +58,20 @@ describe("serverSettings helpers", () => {
     ).toBe(enabled);
   });
 
-  it("preserves an explicit scientific-language opt-out across narrow updates", () => {
+  it("keeps a language's other choices across narrow updates", () => {
     const python = ComputeLanguageId.make("python");
-    const disabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    const chosen = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       scientificComputing: {
-        languages: { [python]: { enabled: false, executable: "/usr/bin/python3" } },
+        languages: {
+          [python]: { executable: "/usr/bin/python3", selections: { host: "/usr/bin/python3" } },
+        },
       },
     });
     expect(
-      applyServerSettingsPatch(disabled, {
+      applyServerSettingsPatch(chosen, {
         scientificComputing: { languages: { [python]: { executable: "" } } },
       }).scientificComputing.languages[python],
-    ).toEqual({ enabled: false, executable: "" });
+    ).toEqual({ executable: "", selections: { host: "/usr/bin/python3" } });
   });
 
   it("upserts and removes usageAccountingSources per entry without clobbering", () => {

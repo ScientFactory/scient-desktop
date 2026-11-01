@@ -1,5 +1,8 @@
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+// SCIENT-FORK:START — a quote in a draft reads as its text.
+import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
+// SCIENT-FORK:END
 import { SquarePenIcon, XIcon } from "lucide-react";
 import {
   memo,
@@ -8,6 +11,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { useShallow } from "zustand/react/shallow";
 import { cn } from "~/lib/utils";
 import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
@@ -32,10 +36,15 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  // SCIENT-FORK:START — a quote in a draft reads as its text.
   const promptPreview =
-    replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
+    replaceComposerContextReferences(
+      composerCitationsToPlainText(composer.prompt),
+      (occurrence) => occurrence.label,
+    )
       .trim()
       .split("\n", 1)[0] ?? "";
+  // SCIENT-FORK:END
   // images mirrors persistedAttachments once rehydration finishes; before
   // that only the persisted list is populated, hence max not sum.
   const attachmentCount =
@@ -147,7 +156,15 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
-  const draftsByThreadKey = useComposerDraftStore((store) => store.draftsByThreadKey);
+  const draftsByThreadKey = useComposerDraftStore(
+    useShallow((store) =>
+      Object.fromEntries(
+        Object.keys(store.draftThreadsByThreadKey).map(
+          (key) => [key, store.draftsByThreadKey[key]] as const,
+        ),
+      ),
+    ),
+  );
   const [frozenActive, setFrozenActive] = useState<{
     routeDraftId: string | null;
     row: SidebarDraftRowData | null;

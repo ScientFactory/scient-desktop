@@ -16,8 +16,12 @@ import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifec
 import * as ProviderActivity from "./providerLifecycle/ProviderActivity.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
 import * as ManagedRuntimeCatalogReconciler from "./providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
+import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
+import * as DataTables from "./data/DataTables.ts";
+import * as NotebookRunRecorder from "./notebook/NotebookRunRecorder.ts";
+import * as NotebookStore from "./notebook/NotebookStore.ts";
 import * as AnalysisRunIndex from "./analysis/AnalysisRunIndex.ts";
 import * as LocalDuplexProcess from "./execution/LocalDuplexProcess.ts";
 import * as LocalExecutionProcess from "./execution/LocalExecutionProcess.ts";
@@ -35,6 +39,7 @@ import { scientSourcesHttpApiLayer } from "./sources/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
 import { scientPdfHttpApiLayer } from "./pdf/http.ts";
+import { scientKeepAwakeHttpApiLayer } from "./keepAwake/http.ts";
 import { scientThreadQueueHttpApiLayer } from "./threadQueue/http.ts";
 import { scientConversationExportHttpApiLayer } from "./conversationExport/http.ts";
 import * as ConversationExportFiles from "./conversationExport/ConversationExportFiles.ts";
@@ -122,9 +127,11 @@ export function makeScientRouteServices<
   );
 
   const AnalysisServiceLive = AnalysisService.layer.pipe(
+    Layer.provide(ToolDiscovery.layer),
     Layer.provide(LocalAnalysisStore.layer),
     Layer.provide(AnalysisRunIndexLive),
     Layer.provide(LocalExecutionProcess.layer),
+    Layer.provide(WorkspaceBindingResolverLayerLive),
   );
 
   // The compute session service owns both process ports: one-shot for the
@@ -168,6 +175,7 @@ export function makeScientRouteServices<
       Layer.provide(scientLatexHttpApiLayer),
       Layer.provide(scientMarkdownHttpApiLayer),
       Layer.provide(scientPdfHttpApiLayer),
+      Layer.provide(scientKeepAwakeHttpApiLayer),
       Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(scientConversationExportHttpApiLayer),
       Layer.provide(scientConversationImportHttpApiLayer),
@@ -183,7 +191,10 @@ export function makeScientRouteServices<
       Layer.provide(ConversationImportStagingLive),
       Layer.provide(WordFileExportLive),
       Layer.provide(ComputeMcpGatewayLive),
+      Layer.provide(NotebookRunRecorder.layer),
       Layer.provide(ComputeSessionServiceLive),
+      Layer.provide(DataTables.layer),
+      Layer.provide(NotebookStore.layer),
       Layer.provide(ScientificRuntimePreferencesLive),
       Layer.provide(ScientLatexServicesLive),
       Layer.provide(OverleafSyncLive),

@@ -19,6 +19,10 @@ export const SCIENT_COMPUTE_BRIDGES = [
     source: "src/scient/compute/bridge/scient_matlab_engine_bridge.py",
     asset: "dist/scient-compute-bridge/scient_matlab_engine_bridge.py",
   },
+  {
+    source: "src/scient/compute/bridge/scient_sql_kernel.py",
+    asset: "dist/scient-compute-bridge/scient_sql_kernel.py",
+  },
 ] as const;
 const SCIENT_MANAGED_PYTHON_SOURCE = "src/scient/compute/managed-python";
 const SCIENT_MANAGED_PYTHON_ASSET = "dist/scient-managed-python";

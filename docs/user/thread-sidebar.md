@@ -49,6 +49,26 @@ last project you opened or chose on that device. If neither is available, the
 project picker opens. Turn off **Settings → General → Use last project** to
 choose a project every time.
 
+## Keep the computer awake
+
+In the desktop app, **Settings > Maintenance > Keep computer awake** stops this computer
+sleeping while its threads work. It's off by default. To cover one thread without
+the setting, right-click it and choose **Keep computer awake until done**. That
+choice ends by itself about a minute after the thread and its subagents finish, and
+it covers the thread's next run if nothing is running yet.
+
+Work means a run or a background command, including one the agent left running, such
+as a dev server, so stop those to let the computer sleep. The computer can sleep while
+a thread waits for an approval, an answer or a secret, watches a pull request, or waits
+for a usage limit to reset, even if it has a background command running. A run that has
+lost its provider session stops counting, and a process the agent detached itself, such as
+with `nohup`, isn't seen at all.
+
+The screen can still turn off, and closing the lid or choosing Sleep still puts the
+computer to sleep. Windows laptops with Modern Standby can end the request on battery a
+few minutes after the normal sleep time. Threads on another computer keep running while
+this one sleeps, so they aren't covered, and neither are threads in a WSL backend yet.
+
 ## Pin and reorder threads
 
 A settings change affects future settlement and does not reopen a settled thread. Settings saved
@@ -459,8 +479,9 @@ pauses updates until a window is reopened; the last count remains. Quitting Scie
 **Limited** means the provider stopped on a usage or rate limit. The conversation
 keeps the provider's explanation. Retry after the limit resets, or switch to
 another provider instance.
-On web and desktop, press **Resume** in an empty composer to continue a limited
-or interrupted turn manually.
+Press **Resume** in an empty composer to continue a limited or interrupted turn
+manually. Do this when the provider reports no reset time, because nothing
+continues the turn on its own.
 Queued messages stay saved while the limit blocks the thread. They run after
 the continuation finishes. If the queue was held by a restart, resume it then.
 

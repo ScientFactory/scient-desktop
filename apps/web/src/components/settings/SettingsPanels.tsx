@@ -1,4 +1,7 @@
 import { AutomaticThreadPlacementSettings } from "../../scient/sections/AutomaticThreadPlacementSettings";
+// SCIENT-FORK:START — keep the computer awake while threads work.
+import { KeepAwakeSettings } from "../../scient/keepAwake/KeepAwakeSettings";
+// SCIENT-FORK:END
 import { NotificationSettings } from "./NotificationSettings";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -1073,7 +1076,7 @@ export function DiffsSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ proactivePanelsEnabled: Boolean(checked) })
               }
-              aria-label="Proactive panels"
+              aria-label="Open pull requests and changes panels proactively"
             />
           }
         />
@@ -1252,7 +1255,7 @@ export function ThreadsSettingsPanel() {
         <SettingsRow
           serverScoped
           {...searchableSetting("auto-resume-limited-threads")}
-          description="Resume usage-limit stops at the reported reset time. Each thread can cancel its scheduled continuation."
+          description="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
           settingKeys={["autoResumeLimitedThreads"]}
           control={
             <ScopedSwitch
@@ -1268,7 +1271,7 @@ export function ThreadsSettingsPanel() {
         <SettingsRow
           serverScoped
           {...searchableSetting("snooze-limited-threads")}
-          description="Snooze usage-limit stops until reset. Pair with resume to continue on wake."
+          description="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
           settingKeys={["snoozeLimitedThreads"]}
           control={
             <ScopedSwitch
@@ -1637,6 +1640,10 @@ export function MaintenanceSettingsPanel() {
 
       <SettingsSection id="background" title="Background activity">
         <BackgroundActivitySettingsRow />
+
+        {/* SCIENT-FORK:START — keep the computer awake while threads work. */}
+        <KeepAwakeSettings />
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
 
       <StorageCleanupSections />

@@ -45,6 +45,9 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Prepare", "Preparing", "Prepared", "a browser session"],
     "scient-accounts",
   ),
+  t3_account_fill: tool(["Fill", "Filling", "Filled", "a saved field"], "scient-accounts"),
+  t3_account_add: tool(["Ask for", "Asking for", "Asked for", "a key"], "scient-accounts"),
+  t3_paper_get: tool(["Get", "Getting", "Got", "a paper's PDF"], "scient-accounts"),
   // SCIENT-FORK:END
   t3_skills_list: tool(["Check", "Checking", "Checked", "available skills"], "scient-skills"),
   // A completed load reads "Used Latex Authoring", the wording skill loads already use.
@@ -71,6 +74,12 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_pdf_build: tool(["Build", "Building", "Built", "a PDF"], "scient-documents"),
   t3_latex_build: tool(["Build", "Building", "Built", "a LaTeX document"], "scient-documents"),
   t3_document_export: tool(["Export", "Exporting", "Exported", "a document"], "scient-documents"),
+  t3_compute_run: tool(["Run", "Running", "Ran", "code"], "scient-compute"),
+  t3_compute_output: tool(["Read", "Reading", "Read", "run output"], "scient-compute"),
+  t3_compute_sessions: tool(["List", "Listing", "Listed", "compute sessions"], "scient-compute"),
+  t3_compute_variables: tool(["Read", "Reading", "Read", "session variables"], "scient-compute"),
+  t3_compute_control: tool(["Control", "Controlling", "Controlled", "a session"], "scient-compute"),
+  t3_compute_setup: tool(["Set up", "Setting up", "Set up", "Scientific Python"], "scient-compute"),
   t3_compute_inventory: tool(
     ["Check", "Checking", "Checked", "compute runtimes"],
     "scient-compute",
@@ -124,6 +133,6 @@ export function scientMcpToolSummaryLabel(
       // One verb for PDF/LaTeX builds and exports alike.
       return phrase("Prepared", "prepare", `documents ${times}`);
     case "scient-compute":
-      return phrase("Checked", "check", `compute runtimes ${times}`);
+      return phrase("Used", "use", `Compute ${times}`);
   }
 }

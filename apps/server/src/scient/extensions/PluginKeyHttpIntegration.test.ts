@@ -285,7 +285,7 @@ it.effect.each(["json", "sse", "401", "401-challenge", "401-open"] as const)(
         (client) => Effect.promise(() => client.close()),
       );
       const transport = new StreamableHTTPClientTransport(new URL(config.url), {
-        requestInit: { headers: config.headers },
+        requestInit: config.headers ? { headers: config.headers } : {},
       });
       if (mode.startsWith("401")) {
         const outcome = yield* Effect.tryPromise({

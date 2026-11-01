@@ -1586,7 +1586,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
   );
 
-  it.effect("packs both Compute bridge scripts as files external interpreters can read", () =>
+  it.effect("packs the Compute bridge scripts as files external interpreters can read", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1594,7 +1594,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const source = path.join(root, "source");
       const bridgeDirectory = path.join(source, COMPUTE_BRIDGE_ASAR_UNPACK_DIR);
       yield* fs.makeDirectory(bridgeDirectory, { recursive: true });
-      const names = ["scient_compute_bridge.py", "scient_matlab_engine_bridge.py"];
+      const names = [
+        "scient_compute_bridge.py",
+        "scient_matlab_engine_bridge.py",
+        "scient_sql_kernel.py",
+      ];
       for (const name of names) yield* fs.writeFileString(path.join(bridgeDirectory, name), name);
       for (const archive of ["app.asar", "server.asar"]) {
         const asarPath = path.join(root, archive);
@@ -3503,7 +3507,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "--exclude=node_modules/node-pty/third_party/conpty*",
       "--exclude=node_modules/@ff-labs/fff-bin-win32-*",
       "--exclude=node_modules/@yuuang/ffi-rs-win32-*",
-      "--exclude=node_modules/@msgpackr-extract/msgpackr-extract-win32-*",
       "--exclude=node_modules/@napi-rs/canvas-win32-*",
       "--exclude=node_modules/@napi-rs/keyring-win32-*",
       "--exclude=node_modules/@cursor/sdk-win32-*",
@@ -3662,8 +3665,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "node_modules/@ff-labs/fff-bin-linux-x64-gnu/libfff.so",
           "node_modules/@yuuang/ffi-rs-win32-x64-msvc/ffi.dll",
           "node_modules/@yuuang/ffi-rs-linux-x64-gnu/libffi.so",
-          "node_modules/@msgpackr-extract/msgpackr-extract-win32-x64/addon.node",
-          "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
           "node_modules/@napi-rs/canvas-win32-x64-msvc/skia.win32-x64-msvc.node",
           "node_modules/@napi-rs/canvas-win32-arm64-msvc/skia.win32-arm64-msvc.node",
           "node_modules/@napi-rs/canvas/js-binding.js",
@@ -3735,10 +3736,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ]) {
           assert.include(listing, wrapper);
         }
-        assert.include(
-          listing,
-          "node_modules/@msgpackr-extract/msgpackr-extract-linux-x64/addon.node",
-        );
         for (const excluded of [
           "prebuilds/darwin-",
           "prebuilds/win32-",
@@ -3746,7 +3743,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "third_party/conpty",
           "fff-bin-win32-",
           "ffi-rs-win32-",
-          "msgpackr-extract-win32-",
           "canvas-win32-",
           "keyring-win32-",
           "sdk-win32-",
