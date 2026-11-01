@@ -93,7 +93,7 @@ synchronous subprocess calls, and startup measures. Per-file records include imp
 source loading, preparation, recursive dependency linking, and top-level evaluation. Preparation
 uses synchronous loader boundaries; linking includes dependencies, and CommonJS evaluation can
 include nested `require` calls. Some ESM/CommonJS interop reports a combined stage. `.process.json` records the process, Node version, and capture window.
-The server's nested Effect and SQL spans remain in `.t3/userdata/logs/server.trace.ndjson`.
+The server's nested Effect and SQL spans remain in its state directory's `logs/server.trace.ndjson`.
 
 The preload temporarily adds module-body timing markers and uses one automatic debugger pause
 to instrument the live Node loader. The launcher adds `--no-node-snapshot` to inherited
