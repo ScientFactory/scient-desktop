@@ -313,3 +313,20 @@ export const overleafSyncWorld = (input?: {
 
 export const runOverleafSync = <A, E, R>(body: Effect.Effect<A, E, R>) =>
   body.pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+/** A linked and synced `paper` folder in the main checkout; returns the connection ID. */
+export const linkedPaper = Effect.fnUntraced(function* (
+  w: Effect.Success<ReturnType<typeof overleafSyncWorld>>,
+) {
+  const connected = yield* w.service.connect({
+    caller: w.at(w.main),
+    folder: "paper",
+    create: true,
+    project: PROJECT,
+    requestId: "c1",
+  });
+  if (connected._tag !== "connected") return yield* Effect.die(connected);
+  const id = connected.connection.connectionId;
+  yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s1" });
+  return id;
+});
