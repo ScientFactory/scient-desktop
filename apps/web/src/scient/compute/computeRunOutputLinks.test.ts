@@ -52,7 +52,9 @@ describe("links in a program's output", () => {
 
   it("finds the file that ran when a tool names it from the project", () => {
     expect(links("src/a.java:7: error: x")).toEqual([{ relativePath: "src/a.java", line: 7 }]);
+    expect(links('at "src/a.java:7"')).toEqual([{ relativePath: "src/a.java", line: 7 }]);
     expect(links("lib/src/a.java:7: error: x")).toEqual([]);
+    expect(links("other+src/a.java:7: error: x")).toEqual([]);
   });
 
   it("shows project paths relative to the project, and keeps every other word", () => {

@@ -28,7 +28,7 @@ export function splitRunOutputLinks(
   // The file that ran comes first, because its path may hold spaces a general match stops at.
   // A tool may also name it as it sits in the project.
   const pattern = new RegExp(
-    String.raw`(?:file://)?(${rootPattern}${separators}${sourcePattern}|${rootPattern}${separators}[^\s:"'()<>]+|(?<![\w./\\-])${sourcePattern})${LINE_AFTER_PATH}`,
+    String.raw`(?:file://)?(${rootPattern}${separators}${sourcePattern}|${rootPattern}${separators}[^\s:"'()<>]+|(?<![^\s"'(=:])${sourcePattern})${LINE_AFTER_PATH}`,
     "gu",
   );
   const pieces: RunOutputPiece[] = [];

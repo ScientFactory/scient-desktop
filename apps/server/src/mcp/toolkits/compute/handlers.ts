@@ -305,6 +305,17 @@ const describeFileRun = (run: AnalysisRunSnapshot) => {
   };
 };
 
+/**
+ * Agents often hold a file's full path. Only a plain path under the project is shortened: folding
+ * a `..` here could pass through a symlink and land on a different file. Any other absolute path
+ * stays as it is, and reading it is refused.
+ */
+export function projectRelativePath(root: string, path: string, separator = NodePath.sep): string {
+  const prefix = `${root}${separator}`;
+  const inside = path.startsWith(prefix) ? path.slice(prefix.length).split(separator) : null;
+  return inside === null || inside.includes("..") ? path : inside.join("/");
+}
+
 export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(function* (input: {
   readonly path: string;
   readonly run?: string | undefined;
@@ -312,10 +323,7 @@ export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(fu
 }) {
   const scope = yield* agentScope();
   const { gateway } = scope;
-  // Agents often hold a file's full path. Anything outside the project is refused on read.
-  const relativePath = NodePath.isAbsolute(input.path)
-    ? NodePath.relative(scope.cwd, input.path).replaceAll("\\", "/")
-    : input.path;
+  const relativePath = projectRelativePath(scope.cwd, input.path);
   const waited = (
     runId: AnalysisRunId,
     start: Effect.Effect<AnalysisRunSnapshot, AnalysisOperationError>,

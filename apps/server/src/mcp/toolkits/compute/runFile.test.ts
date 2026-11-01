@@ -20,7 +20,7 @@ import { computeWorkspaceResolverForTest } from "../../../scient/compute/Compute
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { AgentInvocationContext } from "../../../scient/operations/AgentInvocationContext.ts";
 import { ComputeMcpGateway } from "./ComputeMcpGateway.ts";
-import { runScientComputeFile } from "./handlers.ts";
+import { projectRelativePath, runScientComputeFile } from "./handlers.ts";
 
 const finishedRun = (input: AnalysisStartRunInput): AnalysisRunSnapshot =>
   ({
@@ -110,6 +110,18 @@ it.effect("accepts the full path of a file in the project", () =>
     expect(started[0]?.relativePath).toBe("src/a.java");
   }),
 );
+
+it("shortens only a plain path under the project", () => {
+  expect(projectRelativePath("/lab", "/lab/src/a.c", "/")).toBe("src/a.c");
+  expect(projectRelativePath("/lab", "src/a.c", "/")).toBe("src/a.c");
+  expect(projectRelativePath("C:\\lab", "C:\\lab\\src\\a.c", "\\")).toBe("src/a.c");
+  // Folding these could pass through a symlink, or leave the project.
+  expect(projectRelativePath("/lab", "/lab/nested/../a.c", "/")).toBe("/lab/nested/../a.c");
+  expect(projectRelativePath("/lab", "/lab2/a.c", "/")).toBe("/lab2/a.c");
+  expect(projectRelativePath("/lab", "/etc/passwd", "/")).toBe("/etc/passwd");
+  // On POSIX a backslash is part of a file's name.
+  expect(projectRelativePath("/lab", "/lab/a\\b.c", "/")).toBe("a\\b.c");
+});
 
 it.effect("sends a shared file type to the language that is installed", () =>
   Effect.gen(function* () {
