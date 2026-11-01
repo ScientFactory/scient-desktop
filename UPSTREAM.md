@@ -619,6 +619,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`955e2bfbb5c092c54ad795c8d379fec99702a6b5` is recorded in
+[the 2026-11-01 955e2bfbb5 receipt](docs/internals/t3-upstream-sync-20261101-955e2bfbb5.md).
+Literal merge `e4037122ba1a4eb3ed1b49205865e16324c505e7` has owned base
+`b04ffa4e0e531d6c5b6d386d66136ad97a1a7818` (#696) and the frozen official target as parents,
+retaining the 161 official commits after `79f1fadfc6`. Upstream's model picker and mixed defaults
+join Scient's picker and saved-provider rule, and its right-to-left work joins Scient's direction
+modules. No migrations. Release remains separate.
+
+The previous committed alignment through
 `79f1fadfc6020b820d541ca4691d2feebb15dd1b` is recorded in
 [the 2026-10-31 79f1fadfc6 receipt](docs/internals/t3-upstream-sync-20261031-79f1fadfc6.md).
 Literal merge `5589000e86b47f1c227daa57521779cb8e93d5f9` has owned base
@@ -628,7 +637,7 @@ lineage beside Scient's frozen forks, and a forked parent gives them its frozen 
 and effort share one control on Scient's picker. Upstream's migration 076 lands as Scient 080.
 Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `59bb4e83bcf753e6ebb99b63b5232f5f41251c8a` is recorded in
 [the 2026-10-31 59bb4e83bc receipt](docs/internals/t3-upstream-sync-20261031-59bb4e83bc.md).
 Literal merge `bcf7bf08725b71e805949d4d7e757947b8c4bffd` has owned base

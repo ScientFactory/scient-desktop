@@ -18,7 +18,6 @@ export const SCIENT_DESKTOP_IDENTITY = {
   linuxDesktopEntryName: "scient.desktop",
   linuxDevelopmentDesktopEntryName: "scient-next-dev.desktop",
   linuxWmClass: "scient",
-  linuxDevelopmentWmClass: "scient-next-dev",
   serviceUnitName: "scient.service",
   serviceLaunchdLabel: "com.scientfactory.scient.service",
   previewPartitionPrefix: "persist:scient-next-preview-",

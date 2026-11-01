@@ -16,19 +16,26 @@ const issueComment: WebhookRequest = {
 };
 
 describe("findFailedWebhookFilter", () => {
-  it.each([
-    { body: { items: [{ name: "bug" }] }, path: "body.items[]", matches: true },
-    { body: { groups: [{ members: [] }] }, path: "body.groups[].members", matches: true },
-    { body: { items: [false, 0, ""] }, path: "body.items[]", matches: true },
-    { body: { items: [null] }, path: "body.items[]", matches: false },
-    { body: { items: [] }, path: "body.items[]", matches: false },
-    { body: {}, path: "body.items[]", matches: false },
-  ])("checks wildcard existence without scalar coercion: %#", ({ body, path, matches }) => {
-    const failed = findFailedWebhookFilter([{ path, op: "exists" }], {
-      ...issueComment,
-      bodyText: JSON.stringify(body),
-    });
-    assert.deepStrictEqual(failed, matches ? null : { index: 0, path });
+  it("matches exists on wildcard object values", () => {
+    assert.isNull(
+      findFailedWebhookFilter([{ path: "body.issue.labels[]", op: "exists" }], issueComment),
+    );
+    assert.isNull(
+      findFailedWebhookFilter([{ path: "body.issues[].labels", op: "exists" }], {
+        ...issueComment,
+        bodyText: JSON.stringify({ issues: [{ labels: [] }] }),
+      }),
+    );
+  });
+
+  it("rejects exists when wildcard values are all null or missing", () => {
+    assert.deepEqual(
+      findFailedWebhookFilter([{ path: "body.issues[].labels", op: "exists" }], {
+        ...issueComment,
+        bodyText: JSON.stringify({ issues: [{ labels: null }, {}] }),
+      }),
+      { index: 0, path: "body.issues[].labels" },
+    );
   });
 
   it("matches a wildcard path when any element matches", () => {

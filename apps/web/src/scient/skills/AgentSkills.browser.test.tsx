@@ -247,7 +247,7 @@ describe("AgentSkills activation", () => {
     });
     await act(() => {
       _fixture.container
-        .querySelector<HTMLButtonElement>('[data-title="Simplify"] button')!
+        .querySelector<HTMLButtonElement>('[data-title="simplify"] button')!
         .click();
     });
     await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
@@ -260,7 +260,7 @@ describe("AgentSkills activation", () => {
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
     await act(() => {
-      _fixture.container.querySelector<HTMLButtonElement>('[data-title="First"] button')?.click();
+      _fixture.container.querySelector<HTMLButtonElement>('[data-title="first"] button')?.click();
     });
     await expect.element(document.querySelector<HTMLElement>('[role="dialog"]')!).toBeVisible();
     expect(document.body.textContent).toContain("External instructions");
@@ -271,7 +271,7 @@ describe("AgentSkills activation", () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
-    const row = () => _fixture.container.querySelector<HTMLElement>('[data-title="First"]');
+    const row = () => _fixture.container.querySelector<HTMLElement>('[data-title="first"]');
     await act(() => switches(_fixture)[0]?.click());
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(() => row()?.querySelector<HTMLElement>("[data-description]")?.click());

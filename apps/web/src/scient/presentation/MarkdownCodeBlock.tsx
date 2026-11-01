@@ -125,7 +125,7 @@ export function MarkdownCodeBlockFrame({
   return (
     <Wrapper
       className={cn(
-        "chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32",
+        "chat-markdown-codeblock my-[0.65rem] text-start overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32",
         className,
       )}
       dir={copyTextDirection}

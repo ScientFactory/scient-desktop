@@ -7,6 +7,7 @@ import {
   // SCIENT-FORK:END
   createBrowseNavigationCoordinator,
   getFilesystemBrowsePath,
+  getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
 } from "./filesystem.ts";
 
@@ -151,6 +152,33 @@ describe("filesystem browse model", () => {
     });
   });
   // SCIENT-FORK:END
+
+  it("completes Tab like a shell", () => {
+    const entry = (name: string) => ({ name, fullPath: `/Users/me/${name}` });
+    expect(getFilesystemBrowseTabCompletion([entry("Creations")], "Creation")).toEqual({
+      name: "Creations",
+      isComplete: true,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("OpenSourced"), entry("OpenAI")], "op")).toEqual(
+      { name: "Open", isComplete: false },
+    );
+    expect(getFilesystemBrowseTabCompletion([entry("Open"), entry("Opal")], "Op")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("openAI"), entry("OpenSource")], "o")).toEqual({
+      name: "open",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😁two")], "")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("ΟΣα"), entry("οσβ")], "ο")).toBeNull();
+    expect(getFilesystemBrowseTabCompletion([entry("İfoo"), entry("İfar")], "i\u0307")).toEqual({
+      name: "İf",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([entry("😀one"), entry("😀other")], "😀")).toEqual({
+      name: "😀o",
+      isComplete: false,
+    });
+    expect(getFilesystemBrowseTabCompletion([], "x")).toBeNull();
+  });
 });
 
 describe("browse navigation", () => {

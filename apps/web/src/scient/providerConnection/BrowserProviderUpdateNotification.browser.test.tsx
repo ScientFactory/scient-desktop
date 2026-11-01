@@ -313,16 +313,11 @@ describe("browser provider-update availability", () => {
         ]),
       );
       expect(state.toasts).toHaveLength(1);
-      expect(toast.actionProps.children).toBe("Update");
-      expect(toast.actionProps.disabled).toBe(true);
-      expect(toast.data).toMatchObject({ actionLayout: "stacked-end", actionVariant: "outline" });
+      expect(toast.actionProps.children).toBe("Settings");
+      expect(toast.data.secondaryActionProps).toBeUndefined();
       await act(() => toast.actionProps.onClick());
       expect(state.cliUpdate).not.toHaveBeenCalled();
-      expect(state.closed).toEqual([]);
-      expect(toast.data.secondaryActionProps?.children).toBe("Settings");
-      await act(() => toast.data.secondaryActionProps!.onClick());
       expect(state.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/settings/providers" });
-      expect(fixture.storage.has(storageKey)).toBe(false);
     },
   );
 
@@ -418,25 +413,33 @@ describe("browser provider-update availability", () => {
     },
   );
 
-  it.each(["cli", "managed"] as const)(
-    "keeps a read-only %s update disabled and leaves Settings available",
-    async (kind) => {
-      using fixture = setup();
-      state.permissions.set(fixture.environmentId, []);
-      fixture.publish([kind === "cli" ? fixture.cliProvider : fixture.managed]);
-      await using _screen = await render(<BrowserProviderUpdateNotification />);
-      const toast = state.toasts[0]!;
-      expect(toast.actionProps.children).toBe("Update");
-      expect(toast.actionProps.disabled).toBe(true);
-      await act(() => toast.actionProps.onClick());
-      expect(state.cliUpdate).not.toHaveBeenCalled();
-      expect(state.managedUpdate).not.toHaveBeenCalled();
-      expect(state.closed).toEqual([]);
-      await act(() => toast.data.secondaryActionProps!.onClick());
-      expect(state.navigate).toHaveBeenCalledOnce();
-      expect(fixture.storage.has(storageKey)).toBe(false);
-    },
-  );
+  it("offers only Settings for a CLI update on a read-only machine", async () => {
+    using fixture = setup();
+    state.permissions.set(fixture.environmentId, []);
+    fixture.publish([fixture.cliProvider]);
+    await using _screen = await render(<BrowserProviderUpdateNotification />);
+    const toast = state.toasts[0]!;
+    expect(toast.actionProps.children).toBe("Settings");
+    expect(toast.actionProps.disabled).not.toBe(true);
+    expect(toast.data.secondaryActionProps).toBeUndefined();
+  });
+
+  it("keeps a read-only managed update disabled and leaves Settings available", async () => {
+    using fixture = setup();
+    state.permissions.set(fixture.environmentId, []);
+    fixture.publish([fixture.managed]);
+    await using _screen = await render(<BrowserProviderUpdateNotification />);
+    const toast = state.toasts[0]!;
+    expect(toast.actionProps.children).toBe("Update");
+    expect(toast.actionProps.disabled).toBe(true);
+    await act(() => toast.actionProps.onClick());
+    expect(state.cliUpdate).not.toHaveBeenCalled();
+    expect(state.managedUpdate).not.toHaveBeenCalled();
+    expect(state.closed).toEqual([]);
+    await act(() => toast.data.secondaryActionProps!.onClick());
+    expect(state.navigate).toHaveBeenCalledOnce();
+    expect(fixture.storage.has(storageKey)).toBe(false);
+  });
 
   it.each(["cli", "managed"] as const)(
     "rechecks %s management permission before closing or dispatching",
@@ -453,7 +456,8 @@ describe("browser provider-update availability", () => {
       expect(state.managedUpdate).not.toHaveBeenCalled();
       expect(state.closed).toEqual([]);
       await act(() => fixture.publish([provider]));
-      expect(toast.actionProps.disabled).toBe(true);
+      if (kind === "cli") expect(toast.actionProps.children).toBe("Settings");
+      else expect(toast.actionProps.disabled).toBe(true);
       expect(state.toasts).toHaveLength(1);
       state.permissions.set(fixture.environmentId, [AuthProvidersManageScope]);
       await act(() => fixture.publish([provider]));
@@ -464,29 +468,44 @@ describe("browser provider-update availability", () => {
     },
   );
 
-  it.each(["cli", "managed"] as const)(
-    "requires management permission on every %s update destination",
-    async (kind) => {
-      using fixture = setup();
-      const other = EnvironmentId.make(`restricted-${fixture.environmentId}`);
-      const provider = kind === "cli" ? fixture.cliProvider : fixture.managed;
-      state.environments.push({
-        environmentId: other,
-        label: "Read-only machine",
-        connection: { phase: "connected" },
-        serverConfig: {},
-      });
-      state.providers.set(other, [provider]);
-      fixture.publish([provider]);
-      await using _screen = await render(<BrowserProviderUpdateNotification />);
-      const toast = state.toasts[0]!;
-      expect(toast.actionProps.disabled).toBe(true);
-      await act(() => toast.actionProps.onClick());
-      expect(state.cliUpdate).not.toHaveBeenCalled();
-      expect(state.managedUpdate).not.toHaveBeenCalled();
-      expect(state.closed).toEqual([]);
-    },
-  );
+  it("updates only the CLI destinations this browser can manage", async () => {
+    using fixture = setup();
+    const other = EnvironmentId.make(`restricted-${fixture.environmentId}`);
+    state.environments.push({
+      environmentId: other,
+      label: "Read-only machine",
+      connection: { phase: "connected" },
+      serverConfig: {},
+    });
+    state.providers.set(other, [fixture.cliProvider]);
+    fixture.publish([fixture.cliProvider]);
+    await using _screen = await render(<BrowserProviderUpdateNotification />);
+    const toast = state.toasts[0]!;
+    expect(toast.actionProps.disabled).not.toBe(true);
+    await act(() => toast.actionProps.onClick());
+    expect(state.cliUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("requires management permission on every managed update destination", async () => {
+    using fixture = setup();
+    const other = EnvironmentId.make(`restricted-${fixture.environmentId}`);
+    const provider = fixture.managed;
+    state.environments.push({
+      environmentId: other,
+      label: "Read-only machine",
+      connection: { phase: "connected" },
+      serverConfig: {},
+    });
+    state.providers.set(other, [provider]);
+    fixture.publish([provider]);
+    await using _screen = await render(<BrowserProviderUpdateNotification />);
+    const toast = state.toasts[0]!;
+    expect(toast.actionProps.disabled).toBe(true);
+    await act(() => toast.actionProps.onClick());
+    expect(state.cliUpdate).not.toHaveBeenCalled();
+    expect(state.managedUpdate).not.toHaveBeenCalled();
+    expect(state.closed).toEqual([]);
+  });
 
   it("records user dismissal but not replacement, and ignores an obsolete managed action", async () => {
     using fixture = setup();
