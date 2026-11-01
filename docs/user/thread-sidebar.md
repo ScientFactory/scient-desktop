@@ -60,7 +60,9 @@ it covers the thread's next run if nothing is running yet.
 Work means a run or a background command, including one the agent left running, such
 as a dev server, so stop those to let the computer sleep. The computer can sleep while
 a thread waits for an approval, an answer or a secret, watches a pull request, or waits
-for a usage limit to reset. A run that has lost its provider session stops counting.
+for a usage limit to reset, even if it has a background command running. A run that has
+lost its provider session stops counting, and a process the agent detached itself, such as
+with `nohup`, isn't seen at all.
 
 The screen can still turn off, and closing the lid or choosing Sleep still puts the
 computer to sleep. Windows laptops with Modern Standby can end the request on battery a

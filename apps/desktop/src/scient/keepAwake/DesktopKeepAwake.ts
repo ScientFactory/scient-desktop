@@ -46,7 +46,7 @@ export const layer = Layer.effect(
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient);
+    const http = yield* HttpClient.HttpClient;
     const lock = yield* Semaphore.make(1);
     let hold = NO_HOLD;
     let appSetting = false;
@@ -60,6 +60,10 @@ export const layer = Layer.effect(
           HttpClientRequest.bearerToken(yield* auth.getBearerToken),
         ),
       );
+      if (response.status === 401) {
+        yield* auth.forgetBearerToken;
+        return null;
+      }
       return yield* HttpClientResponse.schemaBodyJson(KeepAwakeWork)(response);
     }).pipe(
       Effect.timeout("10 seconds"),

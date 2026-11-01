@@ -19,8 +19,9 @@ export function threadWork(
   const request = shell.pendingRuntimeRequest;
   const needsAnswer =
     request !== null && request.kind !== "dynamic_tool_call" && request.blocking !== false;
+  // A run only waiting on another thread is that thread's work, which reports for itself.
   const executing =
-    (shell.activityRunStatus ?? null) !== null ||
+    ((shell.activityRunStatus ?? null) !== null && shell.blockedOnThreadWait !== true) ||
     (shell.pendingBackgroundTasks ?? []).some((task) => task.kind !== "monitor");
   if (executing && !needsAnswer) return "executing";
   return isLiveSubagentShell(shell) || shell.limitRecovery?.autoResume === true

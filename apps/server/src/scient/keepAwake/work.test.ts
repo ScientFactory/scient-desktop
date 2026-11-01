@@ -32,6 +32,9 @@ describe("threadWork", () => {
       threadWork(shell({ activityRunStatus: "running", pendingRuntimeRequest: request({}) })),
     ).toBe("waiting");
     expect(threadWork(shell({ status: "queued" }))).toBe("waiting");
+    expect(threadWork(shell({ activityRunStatus: "running", blockedOnThreadWait: true }))).toBe(
+      "waiting",
+    );
     expect(
       threadWork(shell({ limitRecovery: { autoResume: true } as never, status: "failed" })),
     ).toBe("waiting");
