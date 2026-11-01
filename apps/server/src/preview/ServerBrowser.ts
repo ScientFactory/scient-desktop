@@ -972,6 +972,14 @@ const make = Effect.gen(function* () {
           if (!current && tab.fileChooser?.chooser === open.chooser) closeFileChooser(tab);
         });
       }
+      // SCIENT-FORK:START — Scient Browser: Back can leave a page that's still loading.
+      if (frame === page.mainFrame() && page.url() === "about:blank") {
+        if (tab.navigationGeneration > 0) {
+          tab.loading = false;
+          tab.leftBlank = true;
+        }
+      }
+      // SCIENT-FORK:END
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
       if (!desktop) void recordFrameCopies(tab, frame);
