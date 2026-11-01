@@ -11,6 +11,7 @@ import {
   type BrowserHistoryListInput,
   type BrowserHistoryListResult,
   type BrowserHistoryPage,
+  type BrowserHistorySuggestResult,
   INCOGNITO_BROWSER_PROFILE_ID,
   type PreviewEvent,
   PREVIEW_URL_MAX_LENGTH,
@@ -29,6 +30,7 @@ import { PreviewManager } from "../../preview/Manager.ts";
 const RETENTION_MS = Duration.toMillis(Duration.days(90));
 const TITLE_MAX_LENGTH = 512;
 const MAX_SEARCH_TERMS = 6;
+const SUGGESTED_PAGES = 3;
 
 interface PageRow {
   readonly url: string;
@@ -42,7 +44,8 @@ const toPage = (row: PageRow): BrowserHistoryPage => ({
   lastVisitedAt: row.last_visited_at,
 });
 
-const likeTerm = (term: string) => `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+const escapeLike = (text: string) => text.replace(/[\\%_]/g, "\\$&");
+const likeTerm = (term: string) => `%${escapeLike(term)}%`;
 
 const failed = (message: string) => (cause: SqlError) =>
   Effect.logWarning("Browser history failed", { message, cause }).pipe(
@@ -57,6 +60,10 @@ export class BrowserHistory extends Context.Service<
     readonly list: (
       input: BrowserHistoryListInput,
     ) => Effect.Effect<BrowserHistoryListResult, BrowserHistoryError>;
+    /** The few pages most likely meant by what's being typed. */
+    readonly suggest: (
+      query: string,
+    ) => Effect.Effect<BrowserHistorySuggestResult, BrowserHistoryError>;
     readonly remove: (urls: ReadonlyArray<string>) => Effect.Effect<void, BrowserHistoryError>;
     readonly clear: Effect.Effect<void, BrowserHistoryError>;
   }
@@ -137,13 +144,20 @@ export const layer = Layer.effect(
       Effect.forkScoped,
     );
 
-    const list = Effect.fn("BrowserHistory.list")(
-      function* ({ query, before }: BrowserHistoryListInput) {
-        const terms = (query ?? "").trim().split(/\s+/).filter(Boolean).slice(0, MAX_SEARCH_TERMS);
-        const conditions = terms.map((term) => {
+    const matching = (query: string) =>
+      query
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, MAX_SEARCH_TERMS)
+        .map((term) => {
           const like = likeTerm(term);
           return sql`(url LIKE ${like} ESCAPE '\\' OR title LIKE ${like} ESCAPE '\\')`;
         });
+
+    const list = Effect.fn("BrowserHistory.list")(
+      function* ({ query, before }: BrowserHistoryListInput) {
+        const conditions = matching(query ?? "");
         if (before) {
           conditions.push(sql`(last_visited_at, url) < (${before.lastVisitedAt}, ${before.url})`);
         }
@@ -162,6 +176,27 @@ export const layer = Layer.effect(
       Effect.catchTags({ SqlError: failed("Could not read your history.") }),
     );
 
+    const suggest = Effect.fn("BrowserHistory.suggest")(
+      function* (query: string) {
+        const conditions = matching(query);
+        if (conditions.length === 0) return { pages: [] };
+        const start = escapeLike(query.trim());
+        const rows = yield* sql<PageRow>`
+          SELECT url, title, last_visited_at FROM scient_browser_history
+          WHERE ${sql.and(conditions)}
+          ORDER BY
+            (url LIKE ${`https://${start}%`} ESCAPE '\\'
+              OR url LIKE ${`https://www.${start}%`} ESCAPE '\\'
+              OR url LIKE ${`http://${start}%`} ESCAPE '\\') DESC,
+            visit_count DESC,
+            last_visited_at DESC
+          LIMIT ${SUGGESTED_PAGES}
+        `;
+        return { pages: rows.map(toPage) };
+      },
+      Effect.catchTags({ SqlError: failed("Could not read your history.") }),
+    );
+
     const remove: BrowserHistory["Service"]["remove"] = (urls) =>
       urls.length === 0
         ? Effect.void
@@ -175,6 +210,6 @@ export const layer = Layer.effect(
       Effect.catchTags({ SqlError: failed("Could not clear your history.") }),
     );
 
-    return BrowserHistory.of({ record, list, remove, clear });
+    return BrowserHistory.of({ record, list, suggest, remove, clear });
   }),
 );

@@ -325,7 +325,11 @@ import {
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { captureScientWsServices } from "./scient/ScientWsServices.ts";
+// SCIENT-FORK:START — Scient Browser: history and search suggestions.
 import { BrowserHistory } from "./scient/browserHistory/BrowserHistory.ts";
+import { searchSuggestions } from "./scient/browserHistory/searchSuggestions.ts";
+import { FetchHttpClient } from "effect/http";
+// SCIENT-FORK:END
 import { ScientificRuntimePreferences } from "./scient/compute/ScientificRuntimePreferences.ts";
 import * as ComputeSessionService from "./scient/compute/ComputeSessionService.ts";
 import * as ScientSkillManagement from "./scient/skills/ScientSkillManagement.ts";
@@ -3665,6 +3669,9 @@ export const layerWsRpc = (
         [WS_METHODS.browserHistoryList]: (input) => browserHistory.list(input),
         [WS_METHODS.browserHistoryRemove]: ({ urls }) => browserHistory.remove(urls),
         [WS_METHODS.browserHistoryClear]: () => browserHistory.clear,
+        [WS_METHODS.browserHistorySuggest]: ({ query }) => browserHistory.suggest(query),
+        [WS_METHODS.browserSearchSuggest]: (input) =>
+          searchSuggestions(input).pipe(Effect.provide(FetchHttpClient.layer)),
         // SCIENT-FORK:END
         [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
       });

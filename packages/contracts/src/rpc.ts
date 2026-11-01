@@ -547,6 +547,8 @@ import {
   WsBrowserHistoryClearRpc,
   WsBrowserHistoryListRpc,
   WsBrowserHistoryRemoveRpc,
+  WsBrowserHistorySuggestRpc,
+  WsBrowserSearchSuggestRpc,
 } from "./scient/browserHistoryRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:END
@@ -2527,6 +2529,8 @@ export const WsInteractiveRpcGroup = RpcGroup.make(
   WsBrowserHistoryListRpc,
   WsBrowserHistoryRemoveRpc,
   WsBrowserHistoryClearRpc,
+  WsBrowserHistorySuggestRpc,
+  WsBrowserSearchSuggestRpc,
   // SCIENT-FORK:END
   WsSubscribePreviewEventsRpc,
 );

@@ -16,4 +16,12 @@ export const browserHistoryState = {
     label: "browser-history:clear",
     tag: WS_METHODS.browserHistoryClear,
   }),
+  suggestPages: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "browser-history:suggest",
+    tag: WS_METHODS.browserHistorySuggest,
+  }),
+  suggestSearches: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "browser-search:suggest",
+    tag: WS_METHODS.browserSearchSuggest,
+  }),
 };

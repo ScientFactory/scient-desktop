@@ -16,11 +16,15 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  useRef,
   useState,
 } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
+// SCIENT-FORK:START — Scient Browser: suggestions as you type.
+import { BrowserSuggestionInput, BrowserSuggestions } from "~/scient/browser/BrowserSuggestions";
+// SCIENT-FORK:END
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
@@ -29,6 +33,10 @@ interface Props {
   accountsTab?:
     | { environmentId: EnvironmentId; threadRef: ScopedThreadRef; tabId: string; profileId: string }
     | undefined;
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Browser: suggestions as you type.
+  threadRef: ScopedThreadRef;
+  incognito: boolean;
   // SCIENT-FORK:END
   url: string;
   loading: boolean;
@@ -64,6 +72,10 @@ export function PreviewChromeRow({
   // SCIENT-FORK:START — Scient Accounts: receive the native tab account context.
   accountsTab,
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Browser: suggestions as you type.
+  threadRef,
+  incognito,
+  // SCIENT-FORK:END
   loading,
   canGoBack,
   canGoForward,
@@ -90,6 +102,9 @@ export function PreviewChromeRow({
 }: Props) {
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
+  // SCIENT-FORK:START — Scient Browser: suggestions as you type.
+  const addressBar = useRef<HTMLDivElement>(null);
+  // SCIENT-FORK:END
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
@@ -162,65 +177,84 @@ export function PreviewChromeRow({
 
         {leadingActions}
 
-        <InputGroup variant="ghost" className="group/address h-7 flex-1">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <InputGroupInput
-                  ref={inputRef}
-                  value={inputFocused ? draft : url}
-                  onChange={(event) => setDraft(event.target.value)}
-                  onFocus={() => {
-                    setDraft(url);
-                    setInputFocused(true);
-                    queueMicrotask(() => inputRef.current?.select());
-                  }}
-                  onBlur={() => {
-                    setInputFocused(false);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") submit(event);
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setDraft(url);
-                      inputRef.current?.blur();
-                    }
-                  }}
-                  placeholder="Search or enter URL"
-                  aria-label="Search or enter URL"
-                  data-workspace-focus-default
-                  spellCheck={false}
-                  disabled={inputDisabled}
-                  data-preview-url-input
-                  size="sm"
-                />
-              }
-            />
-          </Tooltip>
-          {onOpenInBrowser && !inputFocused ? (
-            <InputGroupAddon align="inline-end">
-              {}
-              <span className="pointer-events-none flex opacity-0 transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/address:pointer-events-auto group-hover/address:opacity-100">
-                <Tooltip>
-                  <TooltipTrigger
+        {/* SCIENT-FORK:START — Scient Browser: suggestions as you type. */}
+        <BrowserSuggestions
+          threadRef={threadRef}
+          text={inputFocused ? draft : url}
+          active={inputFocused && draft !== url && !incognito}
+          anchor={addressBar}
+          onTextChange={setDraft}
+          onPick={(value) => {
+            onSubmit(value);
+            inputRef.current?.blur();
+          }}
+        >
+          {/* SCIENT-FORK:END */}
+          <InputGroup ref={addressBar} variant="ghost" className="group/address h-7 flex-1">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <BrowserSuggestionInput
                     render={
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        onClick={onOpenInBrowser}
-                        aria-label="Open in system browser"
-                        type="button"
+                      <InputGroupInput
+                        ref={inputRef}
+                        value={inputFocused ? draft : url}
+                        onFocus={() => {
+                          setDraft(url);
+                          setInputFocused(true);
+                          queueMicrotask(() => inputRef.current?.select());
+                        }}
+                        onBlur={() => {
+                          setInputFocused(false);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") submit(event);
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            setDraft(url);
+                            inputRef.current?.blur();
+                          }
+                        }}
+                        placeholder="Search or enter URL"
+                        aria-label="Search or enter URL"
+                        data-workspace-focus-default
+                        spellCheck={false}
+                        disabled={inputDisabled}
+                        data-preview-url-input
+                        size="sm"
                       />
                     }
-                  >
-                    <ExternalLink />
-                  </TooltipTrigger>
-                  <TooltipPopup>Open in system browser</TooltipPopup>
-                </Tooltip>
-              </span>
-            </InputGroupAddon>
-          ) : null}
-        </InputGroup>
+                  />
+                }
+              />
+            </Tooltip>
+            {onOpenInBrowser && !inputFocused ? (
+              <InputGroupAddon align="inline-end">
+                {}
+                <span className="pointer-events-none flex opacity-0 transition-opacity focus-within:pointer-events-auto focus-within:opacity-100 group-hover/address:pointer-events-auto group-hover/address:opacity-100">
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={onOpenInBrowser}
+                          aria-label="Open in system browser"
+                          type="button"
+                        />
+                      }
+                    >
+                      <ExternalLink />
+                    </TooltipTrigger>
+                    <TooltipPopup>Open in system browser</TooltipPopup>
+                  </Tooltip>
+                </span>
+              </InputGroupAddon>
+            ) : null}
+          </InputGroup>
+          {/* SCIENT-FORK:START — Scient Browser: suggestions as you type. */}
+        </BrowserSuggestions>
+        {/* SCIENT-FORK:END */}
 
         {onPickElement ? (
           <Tooltip>

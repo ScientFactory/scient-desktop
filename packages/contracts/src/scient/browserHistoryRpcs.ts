@@ -3,6 +3,7 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import { PREVIEW_URL_MAX_LENGTH } from "../preview.ts";
+import { BrowserSearchEngine } from "../settings.ts";
 
 export const BROWSER_HISTORY_PAGE_SIZE = 100;
 const BROWSER_HISTORY_QUERY_MAX_LENGTH = 200;
@@ -42,6 +43,24 @@ export const BrowserHistoryRemoveInput = Schema.Struct({
 });
 export type BrowserHistoryRemoveInput = typeof BrowserHistoryRemoveInput.Type;
 
+/** What a person is typing, while it's still worth suggesting for. */
+export const BrowserSuggestionsInput = Schema.Struct({ query: HistoryQuery });
+export type BrowserSuggestionsInput = typeof BrowserSuggestionsInput.Type;
+
+export const BrowserHistorySuggestResult = Schema.Struct({
+  pages: Schema.Array(BrowserHistoryPage),
+});
+export type BrowserHistorySuggestResult = typeof BrowserHistorySuggestResult.Type;
+
+export const BrowserSearchSuggestInput = Schema.Struct({
+  ...BrowserSuggestionsInput.fields,
+  engine: BrowserSearchEngine,
+});
+export type BrowserSearchSuggestInput = typeof BrowserSearchSuggestInput.Type;
+
+export const BrowserSearchSuggestResult = Schema.Struct({ searches: Schema.Array(Schema.String) });
+export type BrowserSearchSuggestResult = typeof BrowserSearchSuggestResult.Type;
+
 export class BrowserHistoryError extends Schema.TaggedError<BrowserHistoryError>()(
   "BrowserHistoryError",
   { message: Schema.String },
@@ -52,6 +71,8 @@ export const SCIENT_BROWSER_HISTORY_WS_METHODS = {
   browserHistoryList: "browserHistory.list",
   browserHistoryRemove: "browserHistory.remove",
   browserHistoryClear: "browserHistory.clear",
+  browserHistorySuggest: "browserHistory.suggest",
+  browserSearchSuggest: "browserSearch.suggest",
 } as const;
 
 const error = Schema.Union([BrowserHistoryError, EnvironmentAuthorizationError]);
@@ -67,4 +88,16 @@ export const WsBrowserHistoryRemoveRpc = Rpc.make(
 export const WsBrowserHistoryClearRpc = Rpc.make(
   SCIENT_BROWSER_HISTORY_WS_METHODS.browserHistoryClear,
   { payload: Schema.Struct({}), error },
+);
+export const WsBrowserHistorySuggestRpc = Rpc.make(
+  SCIENT_BROWSER_HISTORY_WS_METHODS.browserHistorySuggest,
+  { payload: BrowserSuggestionsInput, success: BrowserHistorySuggestResult, error },
+);
+export const WsBrowserSearchSuggestRpc = Rpc.make(
+  SCIENT_BROWSER_HISTORY_WS_METHODS.browserSearchSuggest,
+  {
+    payload: BrowserSearchSuggestInput,
+    success: BrowserSearchSuggestResult,
+    error: EnvironmentAuthorizationError,
+  },
 );

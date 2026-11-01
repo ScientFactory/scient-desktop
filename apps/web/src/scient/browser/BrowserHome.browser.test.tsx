@@ -36,6 +36,7 @@ function renderHome(
     <BrowserHome
       threadRef={threadRef}
       profileId="main"
+      incognito={false}
       onOpenUrl={onOpenUrl}
       onSearch={onSearch}
     />,
@@ -46,7 +47,7 @@ it("searches what was typed, and ignores an empty box", async () => {
   const onSearch = vi.fn();
   await using _screen = await renderHome(undefined, onSearch);
   await expect.element(page.getByText("Scient Browser")).toBeVisible();
-  const search = page.getByRole("searchbox", { name: "Search or enter an address" });
+  const search = page.getByRole("combobox", { name: "Search or enter an address" });
   await expect.element(search).not.toHaveFocus();
 
   await userEvent.fill(search, "   ");
@@ -84,6 +85,7 @@ it("shows the university's Moodle only on that university's profile", async () =
     <BrowserHome
       threadRef={threadRef}
       profileId={profileId}
+      incognito={false}
       onOpenUrl={onOpenUrl}
       onSearch={vi.fn()}
     />
@@ -213,7 +215,13 @@ it("keeps every label inside its circle at a narrow panel width", async () => {
   });
   await using screen = await render(
     <div data-testid="narrow" style={{ width: 260 }}>
-      <BrowserHome threadRef={threadRef} profileId="main" onOpenUrl={vi.fn()} onSearch={vi.fn()} />
+      <BrowserHome
+        threadRef={threadRef}
+        profileId="main"
+        incognito={false}
+        onOpenUrl={vi.fn()}
+        onSearch={vi.fn()}
+      />
     </div>,
   );
   const panel = screen.container.querySelector("[data-testid=narrow]")!;

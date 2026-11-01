@@ -349,6 +349,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.browserHistoryList]: AuthPreviewOperateScope,
   [WS_METHODS.browserHistoryRemove]: AuthPreviewOperateScope,
   [WS_METHODS.browserHistoryClear]: AuthPreviewOperateScope,
+  [WS_METHODS.browserHistorySuggest]: AuthPreviewOperateScope,
+  [WS_METHODS.browserSearchSuggest]: AuthPreviewOperateScope,
   // SCIENT-FORK:END
   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,

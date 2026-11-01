@@ -929,6 +929,10 @@ export function PreviewView({
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow
+        // SCIENT-FORK:START — Scient Browser: suggestions as you type.
+        threadRef={threadRef}
+        incognito={incognito}
+        // SCIENT-FORK:END
         // SCIENT-FORK:START — Scient Accounts: native credentials use the desktop runtime tab id.
         accountsTab={
           !isServerTab && runtimeTabId
@@ -1118,6 +1122,7 @@ export function PreviewView({
               <BrowserHome
                 threadRef={threadRef}
                 profileId={activeProfileId}
+                incognito={incognito}
                 onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
                 onSearch={(query) => void handleSubmitUrl(query, activeProfileId)}
               />

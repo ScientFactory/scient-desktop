@@ -702,6 +702,7 @@ const SEARCH_ENGINE_LABELS: Readonly<Record<BrowserSearchEngine, string>> = {
 function BrowserSearchEngineSetting() {
   const engine = useClientSettings((settings) => settings.browserSearchEngine);
   const customUrl = useClientSettings((settings) => settings.browserCustomSearchUrl);
+  const suggestions = useClientSettings((settings) => settings.browserSearchSuggestions);
   const updateSettings = useUpdatePrimarySettings();
 
   return (
@@ -743,6 +744,19 @@ function BrowserSearchEngineSetting() {
               ))}
             </SelectPopup>
           </Select>
+        }
+      />
+      <SettingsRow
+        {...searchableSetting("browser-search-suggestions")}
+        description="Show searches from your search engine as you type. What you type is sent to it, except addresses and anything typed in an incognito tab."
+        control={
+          <Switch
+            checked={suggestions}
+            aria-label="Search suggestions"
+            onCheckedChange={(checked) =>
+              updateSettings({ browserSearchSuggestions: Boolean(checked) })
+            }
+          />
         }
       />
       {engine === "custom" ? (

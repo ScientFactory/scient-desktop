@@ -189,6 +189,30 @@ describe("BrowserHistory", () => {
     ),
   );
 
+  it.effect("suggests sites that start with what's typed, then the most visited", () =>
+    run(
+      Effect.gen(function* () {
+        const { history, publish } = yield* setup;
+        yield* publish(
+          navigated(success("https://example.test/nature", "About nature")),
+          navigated(success("https://other.test/nature")),
+          navigated(success("https://example.test/nature", "About nature"), {}, "tab-2"),
+          navigated(success("https://www.nature.com/", "Nature")),
+          navigated(success("https://third.test/nature")),
+          navigated(success("https://fourth.test/nature")),
+        );
+        const { pages } = yield* history.suggest("nature");
+
+        expect(pages).toHaveLength(3);
+        expect(pages.slice(0, 2).map((page) => page.url)).toEqual([
+          "https://www.nature.com/",
+          "https://example.test/nature",
+        ]);
+        expect((yield* history.suggest("   ")).pages).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("pages through everything exactly once, even with equal times", () =>
     run(
       Effect.gen(function* () {

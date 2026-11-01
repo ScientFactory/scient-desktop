@@ -342,7 +342,10 @@ describe("PreviewView", () => {
     await using _screen = await render(
       <PreviewView threadRef={TEST_THREAD_REF} tabId={null} visible />,
     );
-    await userEvent.fill(page.getByRole("searchbox"), "protein folding");
+    await userEvent.fill(
+      page.getByRole("combobox", { name: "Search or enter an address" }),
+      "protein folding",
+    );
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() =>
       expect(openPreviewSession).toHaveBeenCalledWith(
@@ -358,7 +361,10 @@ describe("PreviewView", () => {
     setup();
     mocks.showEmptyState = true;
     await using _screen = await render(view());
-    await userEvent.fill(page.getByRole("searchbox"), "example.org");
+    await userEvent.fill(
+      page.getByRole("combobox", { name: "Search or enter an address" }),
+      "example.org",
+    );
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(() =>
       expect(mocks.navigate).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID, "https://example.org/"),
@@ -615,7 +621,7 @@ describe("PreviewView", () => {
       },
     } as NonNullable<typeof window.desktopBridge>;
     await using screen = await render(view());
-    const address = page.getByRole("textbox");
+    const address = page.getByRole("combobox", { name: "Search or enter URL" });
     const input = address.element() as HTMLInputElement;
     const forward = () =>
       act(() => {
@@ -642,7 +648,7 @@ describe("PreviewView", () => {
   it("focuses the address bar each time the focus-url shortcut fires", async () => {
     setup();
     await using _screen = await render(view());
-    const address = page.getByRole("textbox");
+    const address = page.getByRole("combobox", { name: "Search or enter URL" });
 
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();

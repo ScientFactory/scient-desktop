@@ -291,6 +291,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       browserRecordingShowMousePresses: DEFAULT_UNIFIED_SETTINGS.browserRecordingShowMousePresses,
       browserLinkTarget: DEFAULT_UNIFIED_SETTINGS.browserLinkTarget,
       browserSearchEngine: DEFAULT_UNIFIED_SETTINGS.browserSearchEngine,
+      // SCIENT-FORK:START — Scient Browser: search suggestions.
+      browserSearchSuggestions: DEFAULT_UNIFIED_SETTINGS.browserSearchSuggestions,
+      // SCIENT-FORK:END
       browserCustomSearchUrl: DEFAULT_UNIFIED_SETTINGS.browserCustomSearchUrl,
       browserAutoShowFloatingPreview: DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
       pullRequestLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp,
