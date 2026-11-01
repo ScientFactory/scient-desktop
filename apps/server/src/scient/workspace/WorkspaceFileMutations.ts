@@ -20,6 +20,7 @@ import type {
   ProjectResolveFileMutationInput,
   ProjectResolveFileMutationResult,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import type * as FileSystem from "effect/FileSystem";
@@ -74,6 +75,12 @@ import {
   type RetainedMutationResult,
   type RetainedMutationHooks,
 } from "./RetainedFileMutation.ts";
+import {
+  discardFileVersion as discardKeptVersion,
+  isFileHistoryVersion,
+  keepFileVersion,
+  listFileVersions as listKeptVersions,
+} from "./FileHistory.ts";
 import {
   isNodeError,
   WorkspaceFileExistsError,
@@ -248,6 +255,11 @@ const within = (root: string, target: string) => {
  */
 const plainRun = { nonce: NodeCrypto.randomUUID(), generation: 0 };
 
+/** How many files' last saves are remembered; a forgotten one only keeps one extra copy. */
+const LAST_SAVED_FILES = 1024;
+/** Writing over a file holds its earlier bytes in memory, which must stay reasonable. */
+const IN_PLACE_MAX_BYTES = 128n * 1024n * 1024n;
+
 /** A plain publication failed before it could change the target. */
 class PlainPublicationUnchangedError extends Error {
   constructor(cause: unknown) {
@@ -274,6 +286,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly resolveRetentionStorageDirectory: () => Promise<string>;
   readonly retentionDirectoryFor: (canonicalRoot: string, parentPath: string) => Promise<string>;
   readonly retentionLimitBytes?: number | null;
+  /** Where earlier versions of overwritten files go. */
+  readonly fileHistoryDirectory?: string;
   readonly retainedHooks?: RetainedMutationHooks;
   /** Passive receipts never delay ownership or make publication depend on an observer. */
   readonly publicationEvents?: Queue.Enqueue<WorkspacePublicationEvent>;
@@ -1395,6 +1409,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               intent.guardMaxBytes === undefined ? now.revision : now.leadingRevision,
           });
       }
+      if (snapshot && !exclusive) await keepEarlierVersion(resolved.target, snapshot, intent);
       // From here the target may change, so every epoch captured earlier is stale.
       advancePlainEpoch();
       if (!exclusive) {
@@ -1404,7 +1419,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         } catch (cause) {
           try {
             if (!snapshot || !replacementRefused(cause)) throw cause;
-            await writeOverInPlace(resolved.target, bytes, snapshot, intent);
+            await writeOverInPlace(resolved.target, bytes, snapshot, intent, cause);
           } catch (failure) {
             await settlePublicationFailure(resolved.target, desired, snapshot, failure);
           }
@@ -1422,12 +1437,44 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     } finally {
       await NodeFSP.rm(temporary, { force: true }).catch(() => undefined);
     }
+    lastSaved.delete(resolved.target);
+    lastSaved.set(resolved.target, desired);
+    for (const oldest of lastSaved.keys()) {
+      if (lastSaved.size <= LAST_SAVED_FILES) break;
+      lastSaved.delete(oldest);
+    }
     await published();
     await syncDirectory(directory);
   };
   /** A program holding the file, or a folder refusing new files, needn't stop the file itself. */
   const replacementRefused = (cause: unknown) =>
     ["EPERM", "EACCES", "EBUSY"].some((code) => isNodeError(cause, code));
+  /** What Scient last wrote to each file, which tells its own autosaves from outside changes. */
+  const lastSaved = new Map<string, string>();
+  /** Best effort: a save that couldn't keep a copy is still a save. */
+  const keepEarlierVersion = async (
+    target: string,
+    snapshot: NonNullable<GuardedSnapshot>,
+    intent: PlainIntent,
+  ) => {
+    const directory = deps.fileHistoryDirectory;
+    if (directory === undefined) return;
+    try {
+      const whole =
+        intent.guardMaxBytes === undefined || snapshot.byteLength <= intent.guardMaxBytes;
+      const revision = whole ? snapshot.revision : await fileRevision(target);
+      if (revision === null) return;
+      await keepFileVersion({
+        directory,
+        target,
+        revision,
+        ownSave: lastSaved.get(target) === revision,
+        now: await runPromise(Clock.currentTimeMillis),
+      });
+    } catch (cause) {
+      await runPromise(Effect.logWarning("Could not keep a file's earlier version", cause));
+    }
+  };
   const overwrite = async (handle: NodeFSP.FileHandle, bytes: Uint8Array) => {
     let written = 0;
     while (written < bytes.byteLength)
@@ -1439,13 +1486,15 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   /**
    * For a file that can't be replaced: write through its own handle, which the programs that
    * refuse a replacement usually allow. Only the admitted bytes are overwritten, read through
-   * that handle, and they go back if the write fails partway.
+   * that handle, and only once they are safe in the file history. A file that can't be kept
+   * there is left alone, and the save fails with the original refusal.
    */
   const writeOverInPlace = async (
     target: string,
     bytes: Uint8Array,
     admitted: NonNullable<GuardedSnapshot>,
     intent: PlainIntent,
+    refusal: unknown,
   ) => {
     const changed = () =>
       new RetainedMutationError("target", "The file changed before it was written.", intent.id);
@@ -1456,13 +1505,35 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       throw isNodeError(cause, "ELOOP") || isNodeError(cause, "ENOENT") ? changed() : cause;
     });
     try {
+      // Windows can't refuse a link on opening, so the name must still be this very file.
+      const opened = await handle.stat({ bigint: true });
+      const named = await NodeFSP.lstat(target, { bigint: true });
+      if (
+        !opened.isFile() ||
+        !named.isFile() ||
+        opened.dev !== named.dev ||
+        opened.ino !== named.ino
+      )
+        throw changed();
+      if (opened.size > IN_PLACE_MAX_BYTES) throw refusal;
       const earlier = await handle.readFile();
       const guarded =
         intent.guardMaxBytes === undefined
           ? earlier
           : earlier.subarray(0, intent.guardMaxBytes + 1);
-      if (!(await handle.stat()).isFile() || bytesRevision(guarded) !== admitted.revision)
-        throw changed();
+      if (bytesRevision(guarded) !== admitted.revision) throw changed();
+      // These bytes can't come back from a failed write unless they are safely elsewhere.
+      if (
+        deps.fileHistoryDirectory !== undefined &&
+        !(await keepFileVersion({
+          directory: deps.fileHistoryDirectory,
+          target,
+          revision: bytesRevision(earlier),
+          ownSave: false,
+          now: await runPromise(Clock.currentTimeMillis),
+        }))
+      )
+        throw refusal;
       try {
         await overwrite(handle, bytes);
       } catch (cause) {
@@ -4195,6 +4266,40 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       retainedWriteFolders: () => Effect.succeed(0),
     };
   }
+  /** The version menu lists the file history beside any copies from older builds. */
+  const withFileHistory = (methods: WorkspaceFileMutationMethods): WorkspaceFileMutationMethods => {
+    const directory = deps.fileHistoryDirectory;
+    if (directory === undefined) return methods;
+    return {
+      ...methods,
+      listFileVersions: Effect.fn("WorkspaceFileSystem.listFileHistory")(function* (input) {
+        const listed = yield* methods.listFileVersions(input);
+        const resolved = yield* resolveTarget(input, true);
+        // The rest of the menu never depends on the history being readable.
+        const kept = yield* Effect.promise(() =>
+          listKeptVersions(directory, resolved.target).catch(() => []),
+        );
+        return {
+          ...listed,
+          versions: [...kept, ...listed.versions].sort((a, b) => b.retainedAt - a.retainedAt),
+          retainedBytes:
+            listed.retainedBytes + kept.reduce((sum, version) => sum + version.byteLength, 0),
+        };
+      }),
+      discardFileVersion: (input) =>
+        isFileHistoryVersion(input.versionId)
+          ? resolveTarget(input, true).pipe(
+              Effect.flatMap((resolved) =>
+                Effect.tryPromise({
+                  try: () => discardKeptVersion(directory, resolved.target, input.versionId),
+                  catch: (cause) => errorFor(input, resolved.target, cause),
+                }),
+              ),
+              Effect.as({ versionId: input.versionId }),
+            )
+          : methods.discardFileVersion(input),
+    };
+  };
   // Retained publication needs the host's advertised authority and every ownership primitive.
   // An unqualified helper leaves ordinary saves on the plain publication path.
   const capabilities =
@@ -4211,8 +4316,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     !capabilities.exclusiveMove ||
     !capabilities.exclusiveLink
   )
-    return makePlainHostMethods();
-  return {
+    return withFileHistory(makePlainHostMethods());
+  return withFileHistory({
     prepareRetainedDirectory: preparePrivateDirectory,
     inspectWriteTarget,
     writeFile,
@@ -4231,5 +4336,5 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     resolveFileMutation,
     getMutationEpoch,
     withWorkspacePublicationFence,
-  } satisfies WorkspaceFileMutationMethods;
+  });
 });

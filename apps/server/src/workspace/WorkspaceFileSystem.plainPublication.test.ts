@@ -20,7 +20,7 @@ const faults = vi.hoisted(() => ({
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof NodeFSP>();
   const rename: typeof actual.rename = async (from, to) => {
-    if (faults.refuse) throw await faults.refuse();
+    if (faults.refuse && String(from).endsWith(".scient-tmp")) throw await faults.refuse();
     return actual.rename(from, to);
   };
   const open = (async (...args: Parameters<typeof actual.open>) => {
@@ -298,6 +298,87 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
         expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
         expect(await leftovers(folder)).toEqual([]);
       }),
+  );
+
+  it.live("lists the earlier text, and can discard it", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "first draft");
+      const request = { cwd: h.cwd, relativePath: "main.tex" };
+      await h.run(
+        h.methods.writeFile({
+          ...request,
+          contents: "second draft",
+          expectedRevision: revision("first draft"),
+        }),
+      );
+      const [kept] = (await h.run(h.methods.listFileVersions(request))).versions;
+      expect(kept).toMatchObject({ revision: revision("first draft"), byteLength: 11 });
+      expect(await NodeFSP.readFile(kept!.retainedPath, "utf8")).toBe("first draft");
+
+      await h.run(h.methods.discardFileVersion({ ...request, versionId: kept!.versionId }));
+      expect((await h.run(h.methods.listFileVersions(request))).versions).toEqual([]);
+    }),
+  );
+
+  it.live("keeps an outside change but not each of its own autosaves", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "A");
+      const request = { cwd: h.cwd, relativePath: "main.tex" };
+      const save = (contents: string, before: string) =>
+        h.run(h.methods.writeFile({ ...request, contents, expectedRevision: revision(before) }));
+      await save("B", "A");
+      await save("C", "B");
+      await NodeFSP.writeFile(target, "theirs");
+      await save("D", "theirs");
+      const { versions } = await h.run(h.methods.listFileVersions(request));
+      expect(versions.map((version) => version.revision)).toEqual([
+        revision("theirs"),
+        revision("A"),
+      ]);
+    }),
+  );
+
+  it.live("saves even when no earlier version can be kept", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.writeFile(NodePath.join(h.root, "file-history"), "not a folder");
+      await h.run(
+        h.methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "main.tex",
+          contents: "B",
+          expectedRevision: revision("A"),
+        }),
+      );
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("B");
+    }),
+  );
+
+  it.live("won't write over a file whose earlier text can't be kept", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.writeFile(NodePath.join(h.root, "file-history"), "not a folder");
+      faults.refuse = held;
+      try {
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "B",
+              expectedRevision: revision("A"),
+            }),
+          ),
+        ).rejects.toMatchObject({ publicationOutcome: "unchanged" });
+      } finally {
+        faults.refuse = null;
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
+    }),
   );
 
   it.live("keeps epochs stable between service instances and advances them on each save", () =>
