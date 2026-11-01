@@ -654,10 +654,10 @@ export class DocumentPersistenceCoordinator<
       this.update({ restoredDraft: false });
       return this.flushNow();
     }
-    this.keepingLocal = true;
-    this.update({ restoredDraft: false });
-    return this.resolveWithDisk().finally(() => {
-      this.keepingLocal = false;
+    // The draft stays protected until the file has really taken over.
+    return this.resolveWithDisk().then((used) => {
+      if (used) this.update({ restoredDraft: false });
+      return used;
     });
   }
 

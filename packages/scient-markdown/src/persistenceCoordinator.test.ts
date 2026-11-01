@@ -647,6 +647,25 @@ describe("MarkdownPersistenceCoordinator", () => {
     await vi.waitFor(() => expect(typed.disk().source).toBe(mine + "more\n"));
   });
 
+  it("never saves a draft the person turned down, even if turning it down failed", async () => {
+    const other = mergeBase.replace("First", "Theirs");
+    const mine = mergeBase.replace("First", "Mine");
+    const h = fixture({
+      source: mergeBase,
+      draftSource: mine,
+      keepLocalOverConflicts: true,
+      initialConflict: { externalSource: other, externalRevision: "external" },
+    });
+    h.setDisk(other, "external");
+    h.read.mockRejectedValueOnce("terminal");
+    expect(await h.coordinator.resolveRestoredDraft("file")).toBe(false);
+    expect(h.coordinator.getSnapshot().restoredDraft).toBe(true);
+    await h.coordinator.refresh();
+    expect(h.write).not.toHaveBeenCalled();
+    expect(await h.coordinator.resolveRestoredDraft("file")).toBe(true);
+    expect(h.coordinator.getSnapshot()).toMatchObject({ draftSource: other, restoredDraft: false });
+  });
+
   it("says so and waits when the file can't be replaced, instead of spinning", async () => {
     vi.useFakeTimers();
     const other = mergeBase.replace("First", "Theirs");

@@ -263,6 +263,7 @@ const plainRun = { nonce: NodeCrypto.randomUUID(), generation: 0 };
 
 const OLDER_RECORDS_SCAN_MS = 5_000;
 const OLDER_WORK_WRITE_WAIT_MS = 30_000;
+const OLDER_WORK_LIMIT_MS = 120_000;
 const OLDER_WORK_READ_WAIT_MS = 5_000;
 /** How many files' last saves are remembered; a forgotten one only keeps one extra copy. */
 const LAST_SAVED_FILES = 1024;
@@ -4675,8 +4676,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         recordsUnderRoot(root),
         NodeTimersPromises.setTimeout(OLDER_RECORDS_SCAN_MS, []),
       ]);
-      if (records.some(({ record }) => record?.version !== 2 || record.phase !== "done"))
-        await runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore));
+      if (records.some(({ record }) => record?.version === 2 && record.phase !== "done"))
+        await Promise.race([
+          runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore)),
+          // Saves are never held for ever by work that may never finish.
+          NodeTimersPromises.setTimeout(OLDER_WORK_LIMIT_MS),
+        ]);
     })().catch(() => undefined);
     settledRoots.set(cwd, finished);
     return finished;
