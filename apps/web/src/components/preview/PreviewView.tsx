@@ -103,6 +103,8 @@ import { ProfileSwitcher } from "~/scient/accounts/ProfileSwitcher";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient: Google, apps and shortcuts on an empty tab.
 import { BrowserHome } from "~/scient/browser/BrowserHome";
+import { BrowserHistoryDialog } from "~/scient/browser/BrowserHistoryDialog";
+import { MenuItem } from "~/components/ui/menu";
 import { recordSiteVisit } from "~/scient/browser/browserShortcuts";
 // SCIENT-FORK:END
 
@@ -252,6 +254,10 @@ export function PreviewView({
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
+
+  // SCIENT-FORK:START — Scient Browser: the History window.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // SCIENT-FORK:END
 
   // SCIENT-FORK:START — Scient: shortcuts and Recently used skip incognito tabs.
   const incognito =
@@ -989,23 +995,26 @@ export function PreviewView({
             // SCIENT-FORK:START — place Open in new window and PDF export in the preview menu.
             <PreviewMoreMenu
               extraItems={
-                previewBridge && tabId ? (
-                  <>
-                    <PanelTabNewWindowItem label="Open in new Scient window" plain />
-                    <ScientPreviewExportActions
-                      disabled={
-                        pdfExportOwner === null ||
-                        isUnreachable ||
-                        loading ||
-                        (isServerTab && clientPdfUrl !== null)
-                      }
-                      pageUrl={url}
-                      tabId={tabId}
-                      runtimeTabId={runtimeTabId}
-                      threadRef={threadRef}
-                    />
-                  </>
-                ) : null
+                <>
+                  <MenuItem onClick={() => setHistoryOpen(true)}>History</MenuItem>
+                  {previewBridge && tabId ? (
+                    <>
+                      <PanelTabNewWindowItem label="Open in new Scient window" plain />
+                      <ScientPreviewExportActions
+                        disabled={
+                          pdfExportOwner === null ||
+                          isUnreachable ||
+                          loading ||
+                          (isServerTab && clientPdfUrl !== null)
+                        }
+                        pageUrl={url}
+                        tabId={tabId}
+                        runtimeTabId={runtimeTabId}
+                        threadRef={threadRef}
+                      />
+                    </>
+                  ) : null}
+                </>
               }
               enabled={
                 runtimeTabId !== null &&
@@ -1113,6 +1122,7 @@ export function PreviewView({
                 onSearch={(query) => void handleSubmitUrl(query, activeProfileId)}
               />
             }
+            onShowHistory={() => setHistoryOpen(true)}
             // SCIENT-FORK:END
           />
         ) : null}
@@ -1158,6 +1168,15 @@ export function PreviewView({
           </div>
         ) : null}
       </div>
+      {/* SCIENT-FORK:START — Scient Browser: history opens in the tab it's shown from. */}
+      {historyOpen ? (
+        <BrowserHistoryDialog
+          threadRef={threadRef}
+          onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
+          onClose={() => setHistoryOpen(false)}
+        />
+      ) : null}
+      {/* SCIENT-FORK:END */}
     </div>
   );
 }
