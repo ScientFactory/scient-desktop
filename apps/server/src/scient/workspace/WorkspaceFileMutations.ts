@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** All manuscript namespace changes share durable native ownership and original intent receipts. */
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -1359,6 +1360,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       `.${NodePath.basename(resolved.target)}.${NodeCrypto.randomUUID()}.scient-tmp`,
     );
     try {
+      // A replacement that can't be made yet is no failure: the file may still take the bytes.
+      let refused: unknown = null;
       await beforeChange(async () => {
         const handle = await NodeFSP.open(temporary, "wx", mode);
         try {
@@ -1368,6 +1371,10 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         } finally {
           await handle.close();
         }
+      }).catch((cause: unknown) => {
+        const stage = cause instanceof PlainPublicationUnchangedError ? cause.cause : cause;
+        if (exclusive || !snapshot || !replacementRefused(stage)) throw cause;
+        refused = stage;
       });
       // Narrow the window for another program: check the folder and guarded bytes again last.
       await folderUnchanged();
@@ -1392,9 +1399,15 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       advancePlainEpoch();
       if (!exclusive) {
         try {
+          if (refused !== null) throw refused;
           await replaceByRename(temporary, resolved.target);
         } catch (cause) {
-          await settlePublicationFailure(resolved.target, desired, snapshot, cause);
+          try {
+            if (!snapshot || !replacementRefused(cause)) throw cause;
+            await writeOverInPlace(resolved.target, bytes, snapshot, intent);
+          } catch (failure) {
+            await settlePublicationFailure(resolved.target, desired, snapshot, failure);
+          }
         }
       } else {
         try {
@@ -1411,6 +1424,54 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     }
     await published();
     await syncDirectory(directory);
+  };
+  /** A program holding the file, or a folder refusing new files, needn't stop the file itself. */
+  const replacementRefused = (cause: unknown) =>
+    ["EPERM", "EACCES", "EBUSY"].some((code) => isNodeError(cause, code));
+  const overwrite = async (handle: NodeFSP.FileHandle, bytes: Uint8Array) => {
+    let written = 0;
+    while (written < bytes.byteLength)
+      written += (await handle.write(bytes, written, bytes.byteLength - written, written))
+        .bytesWritten;
+    await handle.truncate(bytes.byteLength);
+    await handle.sync();
+  };
+  /**
+   * For a file that can't be replaced: write through its own handle, which the programs that
+   * refuse a replacement usually allow. Only the admitted bytes are overwritten, read through
+   * that handle, and they go back if the write fails partway.
+   */
+  const writeOverInPlace = async (
+    target: string,
+    bytes: Uint8Array,
+    admitted: NonNullable<GuardedSnapshot>,
+    intent: PlainIntent,
+  ) => {
+    const changed = () =>
+      new RetainedMutationError("target", "The file changed before it was written.", intent.id);
+    const handle = await NodeFSP.open(
+      target,
+      NodeFS.constants.O_RDWR | (NodeFS.constants.O_NOFOLLOW ?? 0),
+    ).catch((cause: unknown) => {
+      throw isNodeError(cause, "ELOOP") || isNodeError(cause, "ENOENT") ? changed() : cause;
+    });
+    try {
+      const earlier = await handle.readFile();
+      const guarded =
+        intent.guardMaxBytes === undefined
+          ? earlier
+          : earlier.subarray(0, intent.guardMaxBytes + 1);
+      if (!(await handle.stat()).isFile() || bytesRevision(guarded) !== admitted.revision)
+        throw changed();
+      try {
+        await overwrite(handle, bytes);
+      } catch (cause) {
+        await overwrite(handle, earlier).catch(() => undefined);
+        throw cause;
+      }
+    } finally {
+      await handle.close();
+    }
   };
   /** Link support is missing: Windows reports EISDIR for hard links on exFAT. */
   const linkUnsupported = (cause: unknown) =>

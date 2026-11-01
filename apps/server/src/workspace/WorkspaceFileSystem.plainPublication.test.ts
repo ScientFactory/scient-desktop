@@ -5,11 +5,39 @@ import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   fileMutationFixture,
   filePublicationHelperWithout,
 } from "../scient/workspace/fileExchange.testkit.ts";
 import { bytesRevision } from "../scient/workspace/RetainedFileMutation.ts";
+
+/** Faults for a save: `refuse` answers the rename, `partial` fails a write through the file. */
+const faults = vi.hoisted(() => ({
+  refuse: null as (() => Promise<NodeJS.ErrnoException>) | null,
+  partial: false,
+}));
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof NodeFSP>();
+  const rename: typeof actual.rename = async (from, to) => {
+    if (faults.refuse) throw await faults.refuse();
+    return actual.rename(from, to);
+  };
+  const open = (async (...args: Parameters<typeof actual.open>) => {
+    const handle = await actual.open(...args);
+    if (!faults.partial || typeof args[1] !== "number") return handle;
+    const write = handle.write.bind(handle) as (...args: unknown[]) => Promise<unknown>;
+    handle.write = (async (bytes: Uint8Array, ...rest: unknown[]) => {
+      if (!faults.partial) return write(bytes, ...rest);
+      faults.partial = false;
+      await write(bytes, 0, 2, 0);
+      throw Object.assign(new Error("disk"), { code: "EIO" });
+    }) as typeof handle.write;
+    return handle;
+  }) as typeof actual.open;
+  return { ...actual, rename, open, default: { ...actual, rename, open } };
+});
+const held = async () => Object.assign(new Error("held"), { code: "EBUSY" });
 
 const revision = (text: string) => bytesRevision(Buffer.from(text));
 const leftovers = async (directory: string) =>
@@ -114,13 +142,140 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
     }),
   );
 
+  it.live("writes through a file another program won't let be replaced", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "the longer earlier text");
+      faults.refuse = held;
+      try {
+        const saved = await h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "main.tex",
+            contents: "C",
+            expectedRevision: revision("the longer earlier text"),
+          }),
+        );
+        expect(saved.revision).toBe(revision("C"));
+      } finally {
+        faults.refuse = null;
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+      expect(await leftovers(h.cwd)).toEqual([]);
+    }),
+  );
+
+  it.live("puts the file back when writing through it fails partway", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "ORIGINAL");
+      faults.refuse = held;
+      faults.partial = true;
+      try {
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "NEW",
+              expectedRevision: revision("ORIGINAL"),
+            }),
+          ),
+        ).rejects.toMatchObject({ publicationOutcome: "unchanged", cause: { code: "EIO" } });
+      } finally {
+        faults.refuse = null;
+        faults.partial = false;
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("ORIGINAL");
+    }),
+  );
+
+  it.live.skipIf(!posix)("never writes through a link put in the file's place", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      const elsewhere = NodePath.join(h.root, "elsewhere.tex");
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.writeFile(elsewhere, "A");
+      faults.refuse = async () => {
+        await NodeFSP.rm(target);
+        await NodeFSP.symlink(elsewhere, target);
+        return held();
+      };
+      try {
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "C",
+              expectedRevision: revision("A"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileTargetChangedError" });
+      } finally {
+        faults.refuse = null;
+      }
+      expect(await NodeFSP.readFile(elsewhere, "utf8")).toBe("A");
+    }),
+  );
+
+  it.live("leaves bytes another program wrote after the check", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      await NodeFSP.writeFile(target, "A");
+      faults.refuse = async () => {
+        await NodeFSP.writeFile(target, "theirs");
+        return held();
+      };
+      try {
+        await expect(
+          h.run(
+            h.methods.writeFile({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              contents: "C",
+              expectedRevision: revision("A"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileTargetChangedError" });
+      } finally {
+        faults.refuse = null;
+      }
+      expect(await NodeFSP.readFile(target, "utf8")).toBe("theirs");
+    }),
+  );
+
+  it.live.skipIf(!posix)("saves a writable file in a folder that refuses new files", () =>
+    plain(async (h) => {
+      const folder = NodePath.join(h.cwd, "locked");
+      await NodeFSP.mkdir(folder);
+      await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "A");
+      await NodeFSP.chmod(folder, 0o555);
+      try {
+        await h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: "locked/main.tex",
+            contents: "C",
+            expectedRevision: revision("A"),
+          }),
+        );
+      } finally {
+        await NodeFSP.chmod(folder, 0o755);
+      }
+      expect(await NodeFSP.readFile(NodePath.join(folder, "main.tex"), "utf8")).toBe("C");
+    }),
+  );
+
   it.live.skipIf(!posix)(
-    "reports a failure before the rename as unchanged, with the system's error",
+    "reports a file that can't be written as unchanged, with the system's error",
     () =>
       plain(async (h) => {
         const folder = NodePath.join(h.cwd, "locked");
         await NodeFSP.mkdir(folder);
-        await NodeFSP.writeFile(NodePath.join(folder, "main.tex"), "A");
+        const target = NodePath.join(folder, "main.tex");
+        await NodeFSP.writeFile(target, "A");
+        await NodeFSP.chmod(target, 0o444);
         await NodeFSP.chmod(folder, 0o555);
         try {
           await expect(
@@ -140,7 +295,7 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
         } finally {
           await NodeFSP.chmod(folder, 0o755);
         }
-        expect(await NodeFSP.readFile(NodePath.join(folder, "main.tex"), "utf8")).toBe("A");
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("A");
         expect(await leftovers(folder)).toEqual([]);
       }),
   );
