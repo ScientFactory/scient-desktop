@@ -59,6 +59,7 @@ export const makeApplierFiles = Effect.fn("WorkspaceApplier.makeApplierFiles")(f
     workspaceEntries: entries,
     readFile,
     retainedHooks,
+    nativeSaves: true,
     ...(helper === undefined ? {} : { nativePublicationHelper: helper }),
     resolveRetentionStorageDirectory: async () => NodePath.join(root, "shared-retention"),
     retentionDirectoryFor: async (_root, parent) => {

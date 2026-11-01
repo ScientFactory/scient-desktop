@@ -172,7 +172,9 @@ export const fileMutationFixture = Effect.fnUntraced(
       helper: string | undefined;
       run: <A, E>(effect: Effect.Effect<A, E>) => Promise<A>;
       methods: Effect.Success<ReturnType<typeof makeWorkspaceFileMutations>>;
-      restart: () => Promise<Effect.Success<ReturnType<typeof makeWorkspaceFileMutations>>>;
+      restart: (options?: {
+        readonly nativeSaves: boolean;
+      }) => Promise<Effect.Success<ReturnType<typeof makeWorkspaceFileMutations>>>;
       publication: {
         claimed: (mutationId: string, holders?: number) => Promise<void>;
         waiting: (root: string) => Promise<void>;
@@ -185,6 +187,8 @@ export const fileMutationFixture = Effect.fnUntraced(
     hooks: RetainedMutationHooks = {},
     retentionLimitBytes: number | null = null,
     wrapHelper?: (helper: string) => Promise<string | undefined>,
+    // A suite with its own helper tests plain saves; the others test the native publication.
+    nativeSavesByDefault = wrapHelper === undefined,
   ) {
     const compiledHelper = yield* Effect.promise(filePublicationTestHelper);
     const helper =
@@ -244,7 +248,7 @@ export const fileMutationFixture = Effect.fnUntraced(
       Queue.unbounded<WorkspacePublicationEvent>(),
       Queue.shutdown,
     );
-    const create = () =>
+    const create = (nativeSaves = nativeSavesByDefault) =>
       makeWorkspaceFileMutations({
         fileSystem,
         path,
@@ -255,6 +259,7 @@ export const fileMutationFixture = Effect.fnUntraced(
         resolveRetentionStorageDirectory: async () => retentionRoot,
         retentionLimitBytes,
         fileHistoryDirectory: NodePath.join(canonical, "file-history"),
+        nativeSaves,
         retainedHooks: hooks,
         publicationEvents,
         retentionDirectoryFor: async (_root, parent) => {
@@ -287,7 +292,7 @@ export const fileMutationFixture = Effect.fnUntraced(
         helper,
         run,
         methods,
-        restart: () => run(create()),
+        restart: (options) => run(create(options?.nativeSaves)),
         publication: {
           claimed: (mutationId, holders = 1) =>
             run(

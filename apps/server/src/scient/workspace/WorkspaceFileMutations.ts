@@ -288,6 +288,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly retentionLimitBytes?: number | null;
   /** Where earlier versions of overwritten files go. */
   readonly fileHistoryDirectory?: string;
+  /** Only for tests of the native publication Overleaf still uses, until it is removed. */
+  readonly nativeSaves?: boolean;
   readonly retainedHooks?: RetainedMutationHooks;
   /** Passive receipts never delay ownership or make publication depend on an observer. */
   readonly publicationEvents?: Queue.Enqueue<WorkspacePublicationEvent>;
@@ -1364,18 +1366,20 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     await beforeChange(() => NodeFSP.mkdir(directory, { recursive: true }));
     await folderUnchanged();
     const exclusive = intent.kind === "create" || intent.condition === "absent";
-    const mode = snapshot
-      ? Number((await beforeChange(() => NodeFSP.stat(resolved.target))).mode) & 0o7777
-      : intent.executable
-        ? 0o777
-        : 0o666;
+    const standing = snapshot ? await beforeChange(() => NodeFSP.stat(resolved.target)) : null;
+    const mode = standing ? Number(standing.mode) & 0o7777 : intent.executable ? 0o777 : 0o666;
     const temporary = NodePath.join(
       directory,
       `.${NodePath.basename(resolved.target)}.${NodeCrypto.randomUUID()}.scient-tmp`,
     );
     try {
       // A replacement that can't be made yet is no failure: the file may still take the bytes.
-      let refused: unknown = null;
+      let refused: unknown =
+        standing && standing.nlink > 1
+          ? Object.assign(new Error("A replacement would leave the file's other names behind."), {
+              code: "EMLINK",
+            })
+          : null;
       await beforeChange(async () => {
         const handle = await NodeFSP.open(temporary, "wx", mode);
         try {
@@ -1388,7 +1392,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       }).catch((cause: unknown) => {
         const stage = cause instanceof PlainPublicationUnchangedError ? cause.cause : cause;
         if (exclusive || !snapshot || !replacementRefused(stage)) throw cause;
-        refused = stage;
+        refused ??= stage;
       });
       // Narrow the window for another program: check the folder and guarded bytes again last.
       await folderUnchanged();
@@ -1409,7 +1413,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
               intent.guardMaxBytes === undefined ? now.revision : now.leadingRevision,
           });
       }
-      if (snapshot && !exclusive) await keepEarlierVersion(resolved.target, snapshot, intent);
+      if (snapshot && !exclusive)
+        await keepEarlierVersion(resolved.target, snapshot, intent.guardMaxBytes);
       // From here the target may change, so every epoch captured earlier is stale.
       advancePlainEpoch();
       if (!exclusive) {
@@ -1446,29 +1451,29 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     await published();
     await syncDirectory(directory);
   };
-  /** A program holding the file, or a folder refusing new files, needn't stop the file itself. */
+  /** A program holding the file, a folder refusing new files, or other names for the file. */
   const replacementRefused = (cause: unknown) =>
-    ["EPERM", "EACCES", "EBUSY"].some((code) => isNodeError(cause, code));
+    ["EPERM", "EACCES", "EBUSY", "EMLINK"].some((code) => isNodeError(cause, code));
   /** What Scient last wrote to each file, which tells its own autosaves from outside changes. */
   const lastSaved = new Map<string, string>();
   /** Best effort: a save that couldn't keep a copy is still a save. */
   const keepEarlierVersion = async (
     target: string,
     snapshot: NonNullable<GuardedSnapshot>,
-    intent: PlainIntent,
+    guardMaxBytes: number | undefined,
+    { always = false } = {},
   ) => {
     const directory = deps.fileHistoryDirectory;
     if (directory === undefined) return;
     try {
-      const whole =
-        intent.guardMaxBytes === undefined || snapshot.byteLength <= intent.guardMaxBytes;
+      const whole = guardMaxBytes === undefined || snapshot.byteLength <= guardMaxBytes;
       const revision = whole ? snapshot.revision : await fileRevision(target);
       if (revision === null) return;
       await keepFileVersion({
         directory,
         target,
         revision,
-        ownSave: lastSaved.get(target) === revision,
+        ownSave: !always && lastSaved.get(target) === revision,
         now: await runPromise(Clock.currentTimeMillis),
       });
     } catch (cause) {
@@ -1516,7 +1521,16 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       )
         throw changed();
       if (opened.size > IN_PLACE_MAX_BYTES) throw refusal;
-      const earlier = await handle.readFile();
+      // Read one byte past its size, so a file growing meanwhile can't take more memory.
+      const room = Buffer.alloc(Number(opened.size) + 1);
+      let length = 0;
+      for (;;) {
+        const { bytesRead } = await handle.read(room, length, room.length - length, length);
+        if (bytesRead === 0) break;
+        length += bytesRead;
+        if (length === room.length) throw changed();
+      }
+      const earlier = room.subarray(0, length);
       const guarded =
         intent.guardMaxBytes === undefined
           ? earlier
@@ -3835,6 +3849,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       intent: PlainIntent,
     ) {
       const resolved = yield* resolveTarget(input);
+      const replacesFile = yield* Effect.promise(() =>
+        NodeFSP.lstat(resolved.target).then(
+          () => true,
+          () => false,
+        ),
+      );
       const result = yield* owned(input, resolved.target, async (signal) => {
         // Claimed before waiting, so a different intent with this id is refused at once.
         const release = claimPlain(intent.id, plainFingerprint(resolved, intent));
@@ -3847,7 +3867,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
           release();
         }
       });
-      yield* workspaceEntries.refresh(input.cwd);
+      // The watcher applies new contents, so only a new path needs a rescan.
+      if (!replacesFile) yield* workspaceEntries.refresh(input.cwd);
       return { relativePath: resolved.named.relativePath, result };
     });
     const missing = (path: string) =>
@@ -3888,12 +3909,31 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         normalized,
         async (signal) => {
           const root = await NodeFSP.realpath(normalized);
-          return owning(root, signal, async () =>
-            Effect.runPromiseExitWith(context)(
+          const identity = await directoryIdentity(root, deps.nativePublicationHelper);
+          return owning(root, signal, async () => {
+            const exit = await Effect.runPromiseExitWith(context)(
               read(null, { currentMissing: await missingOf(root) }),
               { signal },
-            ),
-          );
+            );
+            // What was read must not answer for a different folder now at this path.
+            const stillRoot = await NodeFSP.realpath(normalized)
+              .then(async (current) =>
+                current === root
+                  ? sameIdentity(
+                      await directoryIdentity(root, deps.nativePublicationHelper),
+                      identity,
+                    )
+                  : false,
+              )
+              .catch(() => false);
+            if (!stillRoot)
+              throw new RetainedMutationError(
+                "target",
+                "The workspace changed while it was being read.",
+                "read-binding",
+              );
+            return exit;
+          });
         },
       );
       return Exit.isFailure(exit) ? yield* Effect.failCause(exit.cause) : exit.value;
@@ -4126,6 +4166,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
                 publicationOutcome: "unchanged",
                 currentRevision: snapshot.leadingRevision,
               });
+            await keepEarlierVersion(resolved.target, snapshot, 1024 * 1024, { always: true });
             advancePlainEpoch();
             try {
               await NodeFSP.unlink(resolved.target);
@@ -4317,24 +4358,59 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     !capabilities.exclusiveLink
   )
     return withFileHistory(makePlainHostMethods());
+  if (deps.nativeSaves)
+    return withFileHistory({
+      prepareRetainedDirectory: preparePrivateDirectory,
+      inspectWriteTarget,
+      writeFile,
+      createBinaryFile,
+      writeBinaryFile,
+      renameFile,
+      deleteFile,
+      replaceFileRetained,
+      removeFileRetained,
+      registerRetainedFileHistory,
+      retainedWriteFolders,
+      withSettledFileRead,
+      withSettledWorkspaceRead,
+      listFileVersions,
+      discardFileVersion,
+      resolveFileMutation,
+      getMutationEpoch,
+      withWorkspacePublicationFence,
+    });
+  // Ordinary saves are plain on every host. Overleaf's writes stay native for now, and what an
+  // older build left unfinished is finished once per root, but nothing it left blocks.
+  const plain = makePlainHostMethods();
+  const settledRoots = new Map<string, Promise<void>>();
+  /** Once per root, before anything else touches it: what an older build left must not return. */
+  const afterOlderPublications = <A, E, R>(cwd: string, next: Effect.Effect<A, E, R>) =>
+    Effect.promise(() => {
+      const settled =
+        settledRoots.get(cwd) ??
+        runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore));
+      settledRoots.set(cwd, settled);
+      return settled;
+    }).pipe(Effect.andThen(next));
   return withFileHistory({
+    ...plain,
+    writeFile: (input) => afterOlderPublications(input.cwd, plain.writeFile(input)),
+    createBinaryFile: (input) => afterOlderPublications(input.cwd, plain.createBinaryFile(input)),
+    writeBinaryFile: (input) => afterOlderPublications(input.cwd, plain.writeBinaryFile(input)),
+    renameFile: (input) => afterOlderPublications(input.cwd, plain.renameFile(input)),
+    deleteFile: (input) => afterOlderPublications(input.cwd, plain.deleteFile(input)),
     prepareRetainedDirectory: preparePrivateDirectory,
-    inspectWriteTarget,
-    writeFile,
-    createBinaryFile,
-    writeBinaryFile,
-    renameFile,
-    deleteFile,
     replaceFileRetained,
     removeFileRetained,
     registerRetainedFileHistory,
     retainedWriteFolders,
-    withSettledFileRead,
-    withSettledWorkspaceRead,
-    listFileVersions,
+    withSettledFileRead: (input, read) =>
+      afterOlderPublications(input.cwd, plain.withSettledFileRead(input, read)),
+    withSettledWorkspaceRead: (input, read) =>
+      afterOlderPublications(input.cwd, plain.withSettledWorkspaceRead(input, read)),
+    listFileVersions: (input) =>
+      listFileVersions(input).pipe(Effect.map((listed) => ({ ...listed, attention: null }))),
     discardFileVersion,
     resolveFileMutation,
-    getMutationEpoch,
-    withWorkspacePublicationFence,
   });
 });

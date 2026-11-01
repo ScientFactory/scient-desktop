@@ -66,9 +66,9 @@ const revisionOf = async (path: string) => {
 /** Oldest first across every file, until the whole history fits; `kept` always stays. */
 const limitTotal = async (directory: string, limit: number, kept: string) => {
   const all = [];
-  for (const folder of await NodeFSP.readdir(directory)) {
-    if (!FILE_FOLDER.test(folder)) continue;
-    for (const version of await versionsIn(NodePath.join(directory, folder))) {
+  for (const folder of await NodeFSP.readdir(directory, { withFileTypes: true })) {
+    if (!folder.isDirectory() || !FILE_FOLDER.test(folder.name)) continue;
+    for (const version of await versionsIn(NodePath.join(directory, folder.name))) {
       const size = await sizeOf(version.path);
       if (size !== null) all.push({ ...version, size });
     }

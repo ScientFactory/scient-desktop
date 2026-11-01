@@ -87,10 +87,11 @@ describe("file history", () => {
     expect(await times()).toEqual([1]);
   });
 
-  it("still limits the total with a stray file in its folder", async () => {
+  it("still limits the total with stray files in its folder", async () => {
     const { directory, keep, times } = await fixture();
     await keep("11111", 1);
     await NodeFSP.writeFile(NodePath.join(directory, ".DS_Store"), "stray");
+    await NodeFSP.writeFile(NodePath.join(directory, "a".repeat(64)), "stray");
     await keep("22222", 2, { totalBytes: 6 });
     expect(await times()).toEqual([2]);
   });

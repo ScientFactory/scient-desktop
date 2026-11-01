@@ -81,6 +81,7 @@ describe.skipIf(!native)("native publication lease", () => {
           {},
           null,
           countingHelper(log),
+          true,
         );
       },
       (directory) => Effect.promise(() => NodeFSP.rm(directory, { recursive: true, force: true })),

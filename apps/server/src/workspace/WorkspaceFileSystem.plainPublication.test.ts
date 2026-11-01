@@ -45,11 +45,12 @@ const leftovers = async (directory: string) =>
 const posix = HostProcess.Platform.defaultValue() !== "win32";
 
 /**
- * Plain publication in each way a host reaches it: the Windows helper (no shared leases,
- * no one-step replace or create), a native host whose volume cannot publish in one step,
- * and no helper at all. Where no helper can be compiled every mode runs without one.
+ * Plain publication in each way a host reaches it: a fully native helper, the Windows helper
+ * (no shared leases, no one-step replace or create), a native host whose volume cannot
+ * publish in one step, and no helper at all. Where no helper can be compiled every mode runs without one.
  */
 const modes = [
+  ["a helper that could publish natively", async (helper: string) => helper],
   [
     "a Windows-like helper",
     (helper: string) =>
@@ -103,7 +104,8 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
   it.live("saves changed bytes, keeps permissions and leaves no temporary file", () =>
     plain(async (h) => {
       const target = NodePath.join(h.cwd, "main.tex");
-      await NodeFSP.writeFile(target, "A", { mode: 0o640 });
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.chmod(target, 0o664);
       const saved = await h.run(
         h.methods.writeFile({
           cwd: h.cwd,
@@ -114,7 +116,7 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
       );
       expect(saved).toMatchObject({ relativePath: "main.tex", revision: revision("C") });
       expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
-      if (posix) expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o640);
+      if (posix) expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o664);
       expect(await leftovers(h.cwd)).toEqual([]);
       expect(await h.settledRead("main.tex")).toMatchObject({ contents: "C" });
     }),
@@ -161,6 +163,25 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
         faults.refuse = null;
       }
       expect(await NodeFSP.readFile(target, "utf8")).toBe("C");
+      expect(await leftovers(h.cwd)).toEqual([]);
+    }),
+  );
+
+  it.live("keeps every name of a hard-linked file", () =>
+    plain(async (h) => {
+      const target = NodePath.join(h.cwd, "main.tex");
+      const other = NodePath.join(h.cwd, "other-name.tex");
+      await NodeFSP.writeFile(target, "A");
+      await NodeFSP.link(target, other);
+      await h.run(
+        h.methods.writeFile({
+          cwd: h.cwd,
+          relativePath: "main.tex",
+          contents: "C",
+          expectedRevision: revision("A"),
+        }),
+      );
+      expect(await NodeFSP.readFile(other, "utf8")).toBe("C");
       expect(await leftovers(h.cwd)).toEqual([]);
     }),
   );
@@ -866,9 +887,11 @@ describe.each(modes.filter(([name]) => name !== "a native helper without one-ste
         await expect(NodeFSP.lstat(NodePath.join(h.cwd, "old"))).rejects.toMatchObject({
           code: "ENOENT",
         });
-        expect(
-          await h.run(h.methods.listFileVersions({ cwd: h.cwd, relativePath: "old/deep/x.tex" })),
-        ).toMatchObject({ versions: [], attention: null });
+        const history = await h.run(
+          h.methods.listFileVersions({ cwd: h.cwd, relativePath: "old/deep/x.tex" }),
+        );
+        expect(history.versions.map((version) => version.revision)).toEqual([revision("X")]);
+        expect(history.attention).toBeNull();
       }),
     );
 
@@ -1042,4 +1065,58 @@ describe("plain creation beside native replacement", () => {
       (helper) => filePublicationHelperWithout(helper, ["atomicCreateMetadata"]),
     ),
   );
+});
+
+describe("a save after an older build left a file stuck", () => {
+  it.live("goes ahead, and nothing asks about the stuck publication again", () => {
+    let target = "",
+      outside = "",
+      conflict = true;
+    return fileMutationFixture(
+      async (h) => {
+        target = NodePath.join(h.cwd, "main.tex");
+        outside = NodePath.join(h.root, "writer");
+        await NodeFSP.writeFile(target, "A");
+        const request = { cwd: h.cwd, relativePath: "main.tex" };
+        await expect(
+          h.run(
+            h.methods.deleteFile({
+              ...request,
+              expectedRevision: revision("A"),
+              mutationId: "stuck",
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileRecoveryRequiredError" });
+
+        const methods = await h.restart({ nativeSaves: false });
+        expect((await h.run(methods.listFileVersions(request))).attention).toBeNull();
+        expect(
+          await h.run(
+            methods.withSettledFileRead(request, (attention) => Effect.succeed(attention)),
+          ),
+        ).toBeNull();
+        await h.run(
+          methods.writeFile({
+            ...request,
+            contents: "my text",
+            expectedRevision: revision("D"),
+          }),
+        );
+        expect(await NodeFSP.readFile(target, "utf8")).toBe("my text");
+      },
+      {
+        at: async (point) => {
+          if (point === "checked" && conflict) {
+            await NodeFSP.writeFile(outside, "B");
+            await NodeFSP.rename(outside, target);
+          }
+          if (point === "restore-intent" && conflict) {
+            conflict = false;
+            await NodeFSP.writeFile(outside, "D");
+            await NodeFSP.rename(outside, target);
+          }
+        },
+      },
+    );
+  });
 });
