@@ -2047,6 +2047,36 @@ it.live("overlapping file pickers keep the newer offer answerable", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+// SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+it.live("reports an empty tab when Back reaches the blank page, but not while one starts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const page = contexts[0]!.page;
+      const nextStatus = Effect.gen(function* () {
+        let event = yield* PubSub.take(events);
+        while (event.type !== "navigated" || event.tabId !== tabId) {
+          event = yield* PubSub.take(events);
+        }
+        return event.snapshot.navStatus;
+      });
+
+      yield* Effect.promise(() => page.goto("about:blank"));
+      yield* Effect.promise(() => page.goto("https://example.com/"));
+      expect(yield* nextStatus).toMatchObject({ _tag: "Success", url: "https://example.com/" });
+
+      yield* Effect.promise(() => page.goto("about:blank"));
+      expect(yield* nextStatus).toEqual({ _tag: "Idle" });
+
+      yield* Effect.promise(() => page.goto("https://example.com/"));
+      expect(yield* nextStatus).toMatchObject({ _tag: "Success", url: "https://example.com/" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+// SCIENT-FORK:END
+
 it.live("a detached file picker stays open across same-document navigation", () =>
   Effect.scoped(
     Effect.gen(function* () {

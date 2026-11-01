@@ -357,6 +357,9 @@ interface ServerTab {
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
   navigationGeneration: number;
+  // SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+  leftBlank: boolean;
+  // SCIENT-FORK:END
 
   abortedNavigation: {
     readonly url: string;
@@ -612,6 +615,9 @@ const make = Effect.gen(function* () {
   };
 
   const report = (tab: ServerTab, navStatus: PreviewNavStatus) => {
+    // SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+    if (navStatus._tag === "Success" || navStatus._tag === "LoadFailed") tab.leftBlank = true;
+    // SCIENT-FORK:END
     void tab.cdp
       .send("Page.getNavigationHistory")
       .catch(() => null)
@@ -635,8 +641,18 @@ const make = Effect.gen(function* () {
 
   const reportLoaded = async (tab: ServerTab) => {
     const url = tab.page.url();
+    // SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+    if (url === "about:blank") {
+      // A new tab is blank too, while its first page loads.
+      if (tab.leftBlank && !tab.loading) {
+        tab.leftBlank = false;
+        report(tab, { _tag: "Idle" });
+      }
+      return;
+    }
+    // SCIENT-FORK:END
     // Chromium's error page loads after `requestfailed` and must not clear LoadFailed.
-    if (url === "about:blank" || url.startsWith("chrome-error://")) return;
+    if (url.startsWith("chrome-error://")) return;
     const title = (await tab.page.title().catch(() => "")).slice(0, 512);
     if (tab.loading || tab.page.url() !== url) return;
     report(tab, {
@@ -905,6 +921,9 @@ const make = Effect.gen(function* () {
       recordingStart: null,
       initialNavigation: null,
       navigationGeneration: 0,
+      // SCIENT-FORK:START — Scient Browser: Back can return a tab to its empty page.
+      leftBlank: false,
+      // SCIENT-FORK:END
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
