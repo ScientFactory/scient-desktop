@@ -468,7 +468,6 @@ it("replays the exact ambiguous publication identity recovered from IndexedDB in
   });
   expect(await replay.flushNow()).toBe(false);
   expect(replay.getSnapshot()).toMatchObject({
-    attention: "recovery_required",
     baselineRevision: "rA",
     draftSource: "B",
     pending: true,

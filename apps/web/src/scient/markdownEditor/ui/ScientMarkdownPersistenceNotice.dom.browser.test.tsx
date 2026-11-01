@@ -9,10 +9,6 @@ import { useState } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 import { MarkdownPersistenceCoordinator } from "@scientfactory/scient-markdown";
-import type {
-  DocumentPersistenceCurrentReview,
-  DocumentSaveIntent,
-} from "@scientfactory/scient-document";
 import { EnvironmentId, ProjectWriteFileError } from "@t3tools/contracts";
 import type { MarkdownPersistenceLease } from "../persistence/markdownPersistenceRegistry";
 import { ScientMarkdownPersistenceNotice } from "./ScientMarkdownPersistenceNotice";
@@ -97,72 +93,6 @@ describe("Markdown persistence feedback", () => {
     return host;
   }
 
-  it("shows reviewed absence as unsaved historical source and creates only after a distinct user action", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const attention = {
-      recoveryId: "notice-absent",
-      mutationId: "old",
-      retainedPaths: ["/retained/A"],
-      message: "Review.",
-    };
-    let current: DocumentPersistenceCurrentReview = {
-      missing: true,
-      revision: null,
-      publicationAttention: attention,
-    };
-    const write = vi.fn(async (intent: DocumentSaveIntent) => {
-      if (!intent.createOnly || !current.missing) throw "conflict";
-      current = { source: intent.source, revision: "created" };
-      return { revision: "created" };
-    });
-    const persistAuthorizedCurrentReview = vi.fn(async () => {});
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "A",
-      revision: "historical",
-      initialPublicationAttention: attention,
-      write,
-      classifyFailure: () => "terminal",
-      read: async () => {
-        if (current.missing) throw "not_found";
-        return current;
-      },
-      readForReview: async () => current,
-      persistAuthorizedCurrentReview,
-      resolve: async () => {
-        current = { missing: true, revision: null };
-        return { revision: null };
-      },
-    });
-    const host = await mount(_fixture, coordinator);
-    await act(async () => click(host, "Show file on disk"));
-    expect(host.querySelector("[aria-label='Reviewed current disk version'] pre")).toBeNull();
-    await act(async () => click(host, "Continue from this version"));
-    expect(coordinator.getSnapshot()).toMatchObject({
-      currentMissing: true,
-      pending: true,
-      draftSource: "A",
-      baselineSource: "A",
-    });
-    expect(persistAuthorizedCurrentReview).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        authorizedCurrentReview: expect.objectContaining({ recoveryId: attention.recoveryId }),
-      }),
-    );
-    expect(persistAuthorizedCurrentReview).toHaveBeenLastCalledWith(
-      expect.objectContaining({ authorizedCurrentReview: null, attention: null }),
-    );
-    expect(write).not.toHaveBeenCalled();
-    expect(
-      [...host.querySelectorAll("button")].some((button) => button.textContent === "Save it again"),
-    ).toBe(true);
-    await act(async () => click(host, "Save it again"));
-    expect(current).toEqual({ source: "A", revision: "created" });
-    expect(coordinator.getSnapshot()).toMatchObject({ currentMissing: false, pending: false });
-  });
   function click(host: HTMLElement, text: string) {
     const button = [...host.querySelectorAll("button")].find(
       (candidate) => candidate.textContent === text,
@@ -239,251 +169,6 @@ describe("Markdown persistence feedback", () => {
     expect(lease.getSnapshot().draftSource).toBe("Saved source");
     expect(write).not.toHaveBeenCalled();
     lease.release();
-  });
-  it("reviews retained evidence without retrying, clearing the blocked mutation, or dropping the draft", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const error = {
-      failure: "recovery_required",
-      recoveryId: "recovery-synthetic",
-      retainedPaths: ["/synthetic-retained/old.md"],
-    };
-    const read = vi.fn(async () => ({ source: "Current disk", revision: "rCurrent" }));
-    const write = vi.fn(async () => ({ revision: "rWritten" }));
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "Initial",
-      revision: "rInitial",
-      read,
-      write,
-      classifyFailure: () => "recovery_required",
-    });
-    coordinator.change("Local draft", coordinator.getSnapshot().editVersion);
-    coordinator.noteMutationFailure(error);
-    const open = vi.fn();
-    const host = await mount(_fixture, coordinator, { onOpenFile: open });
-    expect(
-      [...host.querySelectorAll("button")].some((button) => button.textContent === "Try again"),
-    ).toBe(false);
-    await act(async () => click(host, "Open earlier version"));
-    expect(open).toHaveBeenCalledWith("/synthetic-retained/old.md");
-    expect(read).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
-    expect(coordinator.getSnapshot()).toMatchObject({
-      attention: "recovery_required",
-      baselineRevision: "rInitial",
-      draftSource: "Local draft",
-    });
-  });
-
-  it("keeps mutation-only unknown outcomes blocked while retained versions remain readable", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const read = vi.fn(async () => ({ source: "Disk", revision: "rDisk" }));
-    const resolve = vi.fn(async () => ({ revision: "rDisk" }));
-    const write = vi.fn(async () => ({ revision: "rWritten" }));
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "Baseline",
-      revision: "rInitial",
-      draftSource: "Local draft",
-      read,
-      resolve,
-      write,
-      classifyFailure: () => "outcome_unknown",
-    });
-    coordinator.noteMutationFailure(
-      {
-        failure: "outcome_unknown",
-        retainedPaths: ["/synthetic-retained/unknown.md"],
-      },
-      "display-only-mutation",
-    );
-    const open = vi.fn();
-    const host = await mount(_fixture, coordinator, { onOpenFile: open });
-    expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
-      "Open earlier version",
-      "Details",
-    ]);
-    await act(async () => click(host, "Open earlier version"));
-    expect(open).toHaveBeenCalledExactlyOnceWith("/synthetic-retained/unknown.md");
-    await act(async () => {
-      await coordinator.flushNow();
-    });
-    expect(read).not.toHaveBeenCalled();
-    expect(resolve).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
-    expect(coordinator.getSnapshot()).toMatchObject({
-      attention: "outcome_unknown",
-      attentionMutationId: "display-only-mutation",
-      publicationAttention: null,
-      publicationOutcome: null,
-      baselineRevision: "rInitial",
-      baselineSource: "Baseline",
-      draftSource: "Local draft",
-      pending: true,
-    });
-    expect(host.querySelector("[aria-label='Reviewed current disk version']")).toBeNull();
-  });
-
-  it("accepts only a completed actual-ID review and preserves the local draft without publishing it", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const attention = {
-      recoveryId: "actual-recovery",
-      mutationId: "display-mutation",
-      retainedPaths: [],
-      message: "Review.",
-    };
-    let disk = {
-      source: "Current disk bytes",
-      revision: "rCurrent",
-      publicationAttention: attention as typeof attention | null,
-    };
-    const reviewStarted = Promise.withResolvers<void>();
-    const releaseReview = Promise.withResolvers<void>();
-    let reads = 0;
-    const read = async () => {
-      if (++reads === 1) {
-        reviewStarted.resolve();
-        await releaseReview.promise;
-      }
-      return disk;
-    };
-    const resolve = vi.fn(async () => {
-      disk = { ...disk, publicationAttention: null };
-      return { revision: disk.revision };
-    });
-    const write = vi.fn(async () => ({ revision: "unused" }));
-    const persistAuthorizedCurrentReview = vi.fn(async () => {});
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "Baseline",
-      revision: "rInitial",
-      draftSource: "Local draft",
-      initialPublicationAttention: attention,
-      read,
-      resolve,
-      persistAuthorizedCurrentReview,
-      write,
-      classifyFailure: () => "terminal",
-    });
-    const host = await mount(_fixture, coordinator);
-    const acceptance = [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === "Continue from this version",
-    )!;
-    expect(acceptance.disabled).toBe(true);
-    await act(async () => {
-      click(host, "Show file on disk");
-      await reviewStarted.promise;
-    });
-    expect(acceptance.disabled).toBe(true);
-    expect(resolve).not.toHaveBeenCalled();
-    expect(coordinator.getSnapshot()).toMatchObject({
-      attention: "recovery_required",
-      baselineRevision: "rInitial",
-      draftSource: "Local draft",
-    });
-    await act(async () => releaseReview.resolve());
-    expect(
-      host.querySelector("[aria-label='Reviewed current disk version'] pre")?.textContent,
-    ).toBe("Current disk bytes");
-    expect(acceptance.disabled).toBe(false);
-    expect(coordinator.getSnapshot().attention).toBe("recovery_required");
-    await act(async () => acceptance.click());
-    expect(resolve).toHaveBeenCalledExactlyOnceWith({
-      recoveryId: "actual-recovery",
-      currentRevision: "rCurrent",
-    });
-    expect(persistAuthorizedCurrentReview).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        authorizedCurrentReview: expect.objectContaining({ recoveryId: attention.recoveryId }),
-      }),
-    );
-    expect(persistAuthorizedCurrentReview).toHaveBeenLastCalledWith(
-      expect.objectContaining({ authorizedCurrentReview: null, attention: null }),
-    );
-    expect(write).not.toHaveBeenCalled();
-    expect(coordinator.getSnapshot()).toMatchObject({
-      attention: null,
-      publicationAttention: null,
-      baselineRevision: "rCurrent",
-      baselineSource: "Current disk bytes",
-      draftSource: "Local draft",
-      pending: true,
-    });
-  });
-
-  it("acknowledges known unchanged refusals through ordered review without a recovery request", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const read = vi.fn(async () => ({ source: "Disk", revision: "rDisk" }));
-    const resolve = vi.fn(async () => ({ revision: "rDisk" }));
-    const write = vi.fn(async () => ({ revision: "unused" }));
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "Baseline",
-      revision: "rInitial",
-      draftSource: "Local draft",
-      read,
-      resolve,
-      write,
-      classifyFailure: () => "target_changed",
-      describeOutcome: () => "unchanged",
-    });
-    coordinator.noteMutationFailure({ failure: "target_changed" }, "display-only-mutation");
-    const host = await mount(_fixture, coordinator);
-    await act(async () => click(host, "Continue from this version"));
-    expect(coordinator.getSnapshot().attention).toBe("target_changed");
-    expect(read).not.toHaveBeenCalled();
-    await act(async () => click(host, "Show file on disk"));
-    expect(
-      host.querySelector("[aria-label='Reviewed current disk version'] pre")?.textContent,
-    ).toBe("Disk");
-    expect(coordinator.getSnapshot()).toMatchObject({
-      attention: "target_changed",
-      baselineRevision: "rInitial",
-      draftSource: "Local draft",
-    });
-    await act(async () => click(host, "Continue from this version"));
-    expect(resolve).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
-    expect(coordinator.getSnapshot()).toMatchObject({
-      attention: null,
-      baselineRevision: "rDisk",
-      baselineSource: "Disk",
-      draftSource: "Local draft",
-      pending: true,
-    });
-  });
-
-  it.each([
-    "target_changed",
-    "mutation_unavailable",
-    "mutation_intent_conflict",
-    "outcome_unknown",
-  ] as const)("does not offer retry or disk replacement for %s", async (attention) => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "Local source",
-      revision: "rInitial",
-      read: vi.fn(async () => ({ source: "Disk", revision: "rDisk" })),
-      write: vi.fn(async () => ({ revision: "rWritten" })),
-      classifyFailure: () => attention,
-    });
-    coordinator.noteMutationFailure({ failure: attention });
-    const host = await mount(_fixture, coordinator);
-    expect(host.querySelectorAll("button")).toHaveLength(0);
-    expect(coordinator.getSnapshot().draftSource).toBe("Local source");
-    expect(coordinator.getSnapshot().attention).toBe(attention);
   });
 
   it("keeps both quick and slow routine saves silent, including screen readers", async () => {
@@ -709,7 +394,7 @@ describe("Markdown persistence feedback", () => {
     expect(shadow.activeElement).toBe(source);
   });
 
-  it("retries a save the server proved unwritten, then offers Try again with the reason", async () => {
+  it("keeps saving and gives the reason and a way to keep the text, not a Try again", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -743,79 +428,15 @@ describe("Markdown persistence feedback", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
-    expect(attempts).toBe(3);
+    expect(attempts).toBeGreaterThan(3);
     const region = host.querySelector("[role=region]")!;
     expect(region.textContent).toContain("Couldn’t save: the disk is full.");
-    expect(region.textContent).toContain("Your changes are still here.");
+    expect(region.textContent).toContain("Your text is still here, and Scient keeps trying.");
     expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
-      "Try again",
+      "Save a copy",
       "Details",
     ]);
     expect(coordinator.getSnapshot()).toMatchObject({ attention: null, draftSource: "B" });
-  });
-
-  it("words an unknown outcome the server proved unchanged as a refusal, details behind Details", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "A",
-      revision: "rA",
-      write: async () => {
-        throw new ProjectWriteFileError({
-          cwd: "/synthetic",
-          relativePath: "notes.md",
-          failure: "operation_failed",
-          osErrorCode: "ENOSPC",
-          publicationOutcome: "unchanged",
-        });
-      },
-      read: async () => ({ source: "A", revision: "rA" }),
-      classifyFailure: () => "operation",
-      describeOutcome: () => "unchanged",
-    });
-    const host = await mount(_fixture, coordinator);
-    await act(async () => {
-      coordinator.change("B");
-      await coordinator.flushNow();
-    });
-    const region = host.querySelector("[role=region]")!;
-    expect(region.textContent).toContain("Couldn’t save: the disk is full.");
-    expect(region.textContent).toContain("Nothing was written. Your text is still here.");
-    expect(region.textContent).not.toContain("notes.md");
-    expect(host.querySelector("[data-persistence-reason]")).toBeNull();
-    expect([...host.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
-      "Show file on disk",
-      "Continue from this version",
-      "Details",
-    ]);
-    await act(() => click(host, "Details"));
-    const details = host.querySelector("[data-persistence-reason]")!;
-    expect(details.textContent).toContain("Failed to write workspace file 'notes.md'");
-    expect(details.textContent).toContain("Code: ENOSPC");
-    expect(coordinator.getSnapshot().draftSource).toBe("B");
-    const writeText = vi.fn(async () => {});
-    _fixture.stack.use(_fixtureStubGlobal("navigator", { clipboard: { writeText } }));
-    await act(async () => click(host, "Copy details"));
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Code: ENOSPC"));
-    expect(host.textContent).toContain("Copied");
-    // Different details are never shown as already copied.
-    await act(async () =>
-      coordinator.noteMutationFailure(
-        new ProjectWriteFileError({
-          cwd: "/synthetic",
-          relativePath: "notes.md",
-          failure: "operation_failed",
-          osErrorCode: "EROFS",
-          publicationOutcome: "unchanged",
-        }),
-      ),
-    );
-    if (!host.querySelector("[data-persistence-reason]")) await act(() => click(host, "Details"));
-    expect(host.querySelector("[data-persistence-reason]")!.textContent).toContain("Code: EROFS");
-    expect(host.textContent).toContain("Copy details");
-    expect(host.textContent).not.toContain("Copied");
   });
 
   it("keeps one actionable failure after the retry budget is exhausted", async () => {
@@ -841,45 +462,6 @@ describe("Markdown persistence feedback", () => {
     });
     expect(host.querySelectorAll("[role=region]")).toHaveLength(1);
     expect(coordinator.getSnapshot().draftSource).toBe("B");
-  });
-  it("displays exact current disk bytes before acceptance and rejects a changed reviewed revision", async () => {
-    await using _fixture = _createFixture();
-    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
-    await _setupFixture0(_fixture);
-
-    const attention = {
-      recoveryId: "notice-review",
-      mutationId: "old",
-      retainedPaths: ["/private/A"],
-      message: "Review.",
-    };
-    let disk = { source: "Current C", revision: "rC", publicationAttention: attention };
-    const resolve = vi.fn(async () => ({ revision: "rC" }));
-    const coordinator = new MarkdownPersistenceCoordinator({
-      source: "A",
-      revision: "rA",
-      draftSource: "Local D",
-      initialPublicationAttention: attention,
-      read: async () => disk,
-      resolve,
-      write: async () => ({ revision: "unused" }),
-      classifyFailure: () => "terminal",
-    });
-    const host = await mount(_fixture, coordinator);
-    await act(() => click(host, "Continue from this version"));
-    expect(resolve).not.toHaveBeenCalled();
-    await act(async () => click(host, "Show file on disk"));
-    expect(
-      host.querySelector("[aria-label='Reviewed current disk version'] pre")?.textContent,
-    ).toBe("Current C");
-    disk = { source: "New external E", revision: "rE", publicationAttention: attention };
-    await act(async () => click(host, "Continue from this version"));
-    expect(resolve).not.toHaveBeenCalled();
-    expect(coordinator.getSnapshot()).toMatchObject({
-      attention: "recovery_required",
-      draftSource: "Local D",
-      baselineSource: "A",
-    });
   });
 });
 

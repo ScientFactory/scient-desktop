@@ -1423,7 +1423,19 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       if (!exclusive) {
         try {
           if (refused !== null) throw refused;
-          await replaceByRename(temporary, resolved.target);
+          // Checked before each try, since a held file can keep this waiting.
+          await replaceByRename(temporary, resolved.target, async (from, to) => {
+            if (intent.condition === "revision" && snapshot) {
+              const now = await inspectGuardedFile(
+                resolved.target,
+                intent.guardMaxBytes,
+                deps.nativePublicationHelper,
+              );
+              if (now?.revision !== snapshot.revision)
+                throw new RetainedMutationError("target", "The file changed.", intent.id);
+            }
+            return NodeFSP.rename(from, to);
+          });
         } catch (cause) {
           try {
             if (!snapshot || !replacementRefused(cause)) throw cause;

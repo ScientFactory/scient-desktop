@@ -712,48 +712,6 @@ describe("DocumentPersistenceCoordinator mutation outcomes", () => {
     }
   });
 
-  it("keeps retained attention, newer typing and held input through equal freshness and reconnect", async () => {
-    let rejectWrite!: (error: unknown) => void;
-    const error = { recoveryId: "retained-1", retainedPaths: ["/retained/old.md"] };
-    const read = vi.fn(async () => ({ source: "C", revision: "rC" }));
-    const write = vi.fn(
-      () =>
-        new Promise<{ revision: string }>((_resolve, reject) => {
-          rejectWrite = reject;
-        }),
-    );
-    const h = fixture({
-      source: "A",
-      write,
-      read,
-      classifyFailure: (value) => (value === error ? "recovery_required" : "terminal"),
-    });
-    h.coordinator.change("B");
-    const saved = h.coordinator.flushNow();
-    h.coordinator.change("C");
-    const releaseInput = h.coordinator.suspendExternalUpdates();
-    rejectWrite(error);
-    expect(await saved).toBe(false);
-    h.coordinator.noteFreshnessHint();
-    h.coordinator.setConnected(false);
-    h.coordinator.setConnected(true);
-    expect(await h.coordinator.refresh()).toBe(false);
-    expect(await h.coordinator.retry()).toBe(false);
-    releaseInput();
-    expect(await h.coordinator.flushNow()).toBe(false);
-    expect(read).not.toHaveBeenCalled();
-    expect(write).toHaveBeenCalledOnce();
-    expect(h.coordinator.getSnapshot()).toMatchObject({
-      attention: "recovery_required",
-      error,
-      baselineSource: "A",
-      draftSource: "C",
-      publicationSource: "B",
-      pending: true,
-      confirmedEditVersion: 0,
-    });
-  });
-
   it("restores a pending publication identity without inferring success from equal disk bytes", async () => {
     const intent: DocumentSaveIntent = {
       mutationId: "ambiguous-old",
@@ -772,39 +730,88 @@ describe("DocumentPersistenceCoordinator mutation outcomes", () => {
     });
   });
 
-  it.each(["target_changed", "mutation_unavailable", "mutation_intent_conflict"] as const)(
-    "does not retry or adopt freshness after the terminal %s outcome",
+  it.each(["target_changed", "mutation_unavailable", "operation", "terminal"] as const)(
+    "goes on saving after %s, showing the failure only once it lasts",
     async (kind) => {
+      let healed = false;
       const h = fixture({
+        retryDelaysMs: [0],
         write: async () => {
-          throw kind;
+          if (!healed) throw kind;
+          return { revision: "saved" };
         },
         classifyFailure: () => kind,
       });
       h.coordinator.change("a=mine\nb=1\n");
-      expect(await h.coordinator.flushNow()).toBe(false);
-      h.coordinator.noteFreshnessHint();
-      expect(await h.coordinator.retry()).toBe(false);
-      expect(await h.coordinator.refresh()).toBe(false);
-      expect(h.coordinator.getSnapshot()).toMatchObject({ attention: kind, pending: true });
-      expect(h.read).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(h.coordinator.getSnapshot().error).toBe(kind));
+      expect(h.coordinator.change("a=mine\nb=2\n")).toBe(true);
+      healed = true;
+      await vi.waitFor(() =>
+        expect(h.coordinator.getSnapshot()).toMatchObject({
+          error: null,
+          attention: null,
+          pending: false,
+          draftSource: "a=mine\nb=2\n",
+        }),
+      );
     },
   );
 
-  it("does not consider an unknown held rename outcome clean or rename-only", async () => {
-    const h = fixture();
-    const release = h.coordinator.holdForRename()!;
-    h.coordinator.noteMutationFailure(new Error("Reply lost"));
-    expect(h.coordinator.pendingOnlyForRename()).toBe(false);
-    release();
-    h.coordinator.noteFreshnessHint();
-    expect(await h.coordinator.flushNow()).toBe(false);
-    expect(h.coordinator.getSnapshot()).toMatchObject({
-      attention: "outcome_unknown",
-      draftSource: "a=1\nb=1\n",
-      pending: true,
+  it("goes on after a conflict meets a save already failing", async () => {
+    let attempts = 0;
+    const read = vi.fn(async () => ({ source: "a=1\nb=1\n", revision: "same" }));
+    const h = fixture({
+      retryDelaysMs: [0],
+      write: async () => {
+        attempts += 1;
+        if (attempts <= 1) throw "operation";
+        if (attempts === 2) throw "conflict";
+        return { revision: "saved" };
+      },
+      read,
+      classifyFailure: (error) => (error === "conflict" ? "conflict" : "operation"),
     });
-    expect(h.read).not.toHaveBeenCalled();
+    h.coordinator.change("a=mine\nb=1\n");
+    await vi.waitFor(() => expect(read).toHaveBeenCalled());
+    await vi.waitFor(() => expect(h.coordinator.getSnapshot().error).toBeNull());
+  });
+
+  it("goes on after reconnecting during a failed save's delay", async () => {
+    let attempts = 0;
+    const h = fixture({
+      retryDelaysMs: [3_600_000],
+      write: async () => {
+        attempts += 1;
+        if (attempts < 2) throw "operation";
+        return { revision: "saved" };
+      },
+      classifyFailure: () => "operation",
+    });
+    h.coordinator.change("a=mine\nb=1\n");
+    await vi.waitFor(() => expect(h.coordinator.getSnapshot().error).toBe("operation"));
+    h.coordinator.setConnected(false);
+    h.coordinator.setConnected(true);
+    await vi.waitFor(() =>
+      expect(h.coordinator.getSnapshot()).toMatchObject({ error: null, pending: false }),
+    );
+  });
+
+  it("saves at once when asked, without waiting out a failed save's delay", async () => {
+    let attempts = 0;
+    const h = fixture({
+      retryDelaysMs: [3_600_000],
+      write: async () => {
+        attempts += 1;
+        if (attempts < 2) throw "operation";
+        return { revision: "saved" };
+      },
+      classifyFailure: () => "operation",
+    });
+    h.coordinator.change("a=mine\nb=1\n");
+    await vi.waitFor(() => expect(attempts).toBe(1));
+    await vi.waitFor(() => expect(h.coordinator.getSnapshot().inFlight).toBe(false));
+    expect(await h.coordinator.flushNow()).toBe(true);
+    expect(h.coordinator.getSnapshot()).toMatchObject({ error: null, pending: false });
   });
 
   it("releases only the exact recovered namespace holder and preserves newer source through destination publication", async () => {
@@ -1111,57 +1118,6 @@ describe("DocumentPersistenceCoordinator mutation outcomes", () => {
       vi.clearAllTimers();
       vi.useRealTimers();
     }
-  });
-
-  it("does not overwrite a pathname that appears after absence acceptance or lose the historical draft when reviewing that refusal", async () => {
-    const source = "key=A\n";
-    const attention = {
-      recoveryId: "absent-race",
-      mutationId: "old",
-      retainedPaths: ["/private/A"],
-      message: "Review.",
-    };
-    let current: DocumentPersistenceCurrentReview = {
-      missing: true,
-      revision: null,
-      publicationAttention: attention,
-    };
-    const write = vi.fn(async (intent: DocumentSaveIntent) => {
-      if (intent.createOnly && !current.missing) throw "target_changed";
-      current = { source: intent.source, revision: "overwritten" };
-      return { revision: "overwritten" };
-    });
-    const h = fixture({
-      source,
-      initialPublicationAttention: attention,
-      write,
-      classifyFailure: (error) =>
-        error === "target_changed" ? "target_changed" : classifyFailure(error),
-      describeOutcome: () => "unchanged",
-      readForReview: async () => current,
-      resolve: async () => {
-        current = { missing: true, revision: null };
-        return { revision: null };
-      },
-    });
-    expect(await h.coordinator.resolveRetainedAttention("absent-race", null)).toBe(true);
-    current = { source: "key=C\n", revision: "foreign" };
-    expect(await h.coordinator.recreateMissingCurrent()).toBe(false);
-    expect(current).toEqual({ source: "key=C\n", revision: "foreign" });
-    expect(h.coordinator.getSnapshot()).toMatchObject({
-      currentMissing: true,
-      pending: true,
-      draftSource: source,
-      attention: "target_changed",
-    });
-    expect(await h.coordinator.reviewUnchangedRefusal("foreign")).toBe(true);
-    expect(h.coordinator.getSnapshot()).toMatchObject({
-      currentMissing: false,
-      draftSource: source,
-      baselineSource: "key=C\n",
-      conflict: { externalSource: "key=C\n", externalRevision: "foreign" },
-      pending: true,
-    });
   });
 
   it("requires absent current before and after nullable resolution, including explicit replay after lost confirmation", async () => {

@@ -102,7 +102,6 @@ it("opens technical details beneath the line and keeps them out of the sentence"
   expect(region.textContent).not.toContain("05_advanced_math");
   await page.getByRole("button", { name: "Details" }).click();
   await expect.element(page.getByText(/Code: ENOSPC/)).toBeVisible();
-  expect(region.textContent).toContain("Save reference: 4d26d68b");
   const directory = import.meta.env.VITE_SCIENT_SAVE_NOTICE_SCREENSHOTS;
   if (directory)
     await page.screenshot({ path: `${directory}/refused-details-dark.png`, element: region });

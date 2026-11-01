@@ -586,11 +586,6 @@ export class MarkdownPersistenceRegistry {
           projectFileOperationKey(target))
         ? checkpoint.renameIntent
         : null;
-    const namespaceAttention =
-      checkpoint?.renameIntent?.acknowledgement &&
-      !renamePending &&
-      !checkpoint.publicationIntent &&
-      checkpoint.attentionMutationId === checkpoint.renameIntent.mutationId;
     const coordinator = new DocumentPersistenceCoordinator<DocumentPatchReconciliation>({
       ...(initialConflict === undefined ? {} : { initialConflict }),
       ...(initialCurrentMissing ? { initialCurrentMissing: true } : {}),
@@ -599,25 +594,9 @@ export class MarkdownPersistenceRegistry {
             initialAttention: checkpoint?.attention ?? "outcome_unknown",
             initialAttentionMutationId: renamePending.mutationId,
           }
-        : checkpoint?.attention && !namespaceAttention
-          ? { initialAttention: checkpoint.attention }
-          : {}),
-      ...(checkpoint?.publicationOutcome && !namespaceAttention
-        ? { initialPublicationOutcome: checkpoint.publicationOutcome }
         : {}),
-      ...(!renamePending && !namespaceAttention && checkpoint?.attentionMutationId
-        ? { initialAttentionMutationId: checkpoint.attentionMutationId }
-        : {}),
-      ...(initial.publicationAttention
-        ? { initialPublicationAttention: initial.publicationAttention }
-        : checkpoint?.publicationAttention && !namespaceAttention
-          ? { initialPublicationAttention: checkpoint.publicationAttention }
-          : {}),
       ...(checkpoint?.publicationIntent
         ? { initialPublication: checkpoint.publicationIntent }
-        : {}),
-      ...(checkpoint?.authorizedCurrentReview && !renamePending && !namespaceAttention
-        ? { initialAuthorizedCurrentReview: checkpoint.authorizedCurrentReview }
         : {}),
       reconcile,
       source: initial.contents,

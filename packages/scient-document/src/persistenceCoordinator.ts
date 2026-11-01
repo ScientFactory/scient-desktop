@@ -140,6 +140,11 @@ export interface DocumentPersistenceOptions<
   readonly prepareExternalUpdate?: PrepareDocumentExternalUpdate<R>;
 }
 
+/** How long a failed save waits before going again; the last delay repeats. */
+const SAVE_RETRY_DELAYS_MS = [250, 1_000, 3_000, 10_000, 30_000];
+/** Tries that stay out of sight, since a brief hold usually passes. */
+const QUIET_SAVE_RETRIES = 3;
+
 export interface DocumentPersistenceSnapshot extends DocumentSession {
   readonly transitionVersion: number;
   /** Exact owned attempt, retained while its publication may be ambiguous. */
@@ -242,6 +247,10 @@ export class DocumentPersistenceCoordinator<
     | "persistAuthorizedCurrentReview"
   >;
   private publicationUncertain = false;
+  /** A failed save is due again, so its shown error doesn't hold the next write. */
+  private savingAgain = false;
+  /** A save failed without saying what happened, so its bytes may be on disk. */
+  private attemptMayHaveLanded = false;
   private reconciliationCount = 0;
   private reconciliationDeferred = false;
   private missingCreationHold = false;
@@ -418,11 +427,17 @@ export class DocumentPersistenceCoordinator<
       this.snapshot.conflict !== null ||
       this.snapshot.attention !== null ||
       this.missingCreationHold ||
-      this.snapshot.error !== null
+      (this.snapshot.error !== null && this.retryTimer === null)
     ) {
       return Promise.resolve(false);
     }
     this.clearDebounce();
+    // Saving by hand doesn't wait out the delay of a failed save.
+    if (this.retryTimer !== null) {
+      this.clearRetry();
+      this.savingAgain = true;
+      this.update({ error: null });
+    }
     return new Promise((resolve) => {
       this.waiters.add(resolve);
       this.drive();
@@ -475,33 +490,16 @@ export class DocumentPersistenceCoordinator<
   }
 
   /** A held external mutation failed without a confirmed success acknowledgement. */
-  noteMutationFailure(error: unknown, mutationId?: string): void {
+  /** A rename's lost answer stays with its id, for replay. Otherwise the file says what stands. */
+  noteMutationFailure(_error: unknown, mutationId?: string): void {
     if (this.disposed) return;
-    const kind = this.classify(error);
-    const attention =
-      kind === "recovery_required" ||
-      kind === "target_changed" ||
-      kind === "mutation_unavailable" ||
-      kind === "mutation_intent_conflict"
-        ? kind
-        : "outcome_unknown";
-    this.clearDebounce();
-    this.clearRetry();
-    this.verificationNeeded = false;
-    this.readRequest?.resolve?.(false);
-    this.readRequest?.review?.(null);
-    this.readRequest = null;
-    this.update({
-      attention,
-      error,
-      publicationAttention:
-        this.io.describeAttention?.(error, mutationId) ?? this.snapshot.publicationAttention,
-      publicationOutcome: this.snapshot.publicationAttention
-        ? "retained-attention"
-        : (this.io.describeOutcome?.(error) ?? null),
-      attentionMutationId: mutationId ?? this.snapshot.attentionMutationId,
-      authorizedCurrentReview: null,
-    });
+    if (mutationId !== undefined) {
+      this.update({ attentionMutationId: mutationId });
+      return;
+    }
+    this.verificationNeeded = true;
+    this.publish();
+    this.drive();
   }
 
   private observePublicationAttention(attention: DocumentFilePublicationAttention): void {
@@ -744,6 +742,8 @@ export class DocumentPersistenceCoordinator<
     this.connected = connected;
     if (connected) {
       this.requestedGeneration += 1;
+      // A failed save that was waiting goes now, instead of being forgotten.
+      if (this.retryTimer !== null && this.ambiguousIntent !== null) this.savingAgain = true;
       this.clearRetry();
       if (
         this.snapshot.attention === null &&
@@ -930,7 +930,8 @@ export class DocumentPersistenceCoordinator<
       this.startRead(request);
       return;
     }
-    if (this.snapshot.conflict !== null || this.snapshot.error !== null) return;
+    if (this.snapshot.conflict !== null || (this.snapshot.error !== null && !this.savingAgain))
+      return;
     if (this.missingCreationHold) return;
     if (this.verificationNeeded) {
       this.startRead({ purpose: { type: "verify" } });
@@ -938,7 +939,10 @@ export class DocumentPersistenceCoordinator<
     }
     if (this.debounceTimer !== null) return;
     if (this.ambiguousIntent !== null) {
-      this.startWrite(this.ambiguousIntent);
+      // A failed save never goes out over newer typing or an undo: see what landed first.
+      if (!this.publicationUncertain && this.ambiguousIntent.source !== this.snapshot.draftSource)
+        this.startRead({ purpose: { type: "verify" } });
+      else this.startWrite(this.ambiguousIntent);
     } else if (
       this.snapshot.currentMissing ||
       this.snapshot.draftSource !== this.snapshot.baselineSource
@@ -954,6 +958,7 @@ export class DocumentPersistenceCoordinator<
 
   private startWrite(intent: DocumentSaveIntent): void {
     const id = this.nextOperationId++;
+    this.savingAgain = false;
     this.writeOperation = { id, intent };
     this.ambiguousIntent = intent;
     this.publish();
@@ -967,6 +972,7 @@ export class DocumentPersistenceCoordinator<
       this.writeOperation = null;
       this.ambiguousIntent = null;
       this.publicationUncertain = false;
+      this.attemptMayHaveLanded = false;
       this.reconciliationCount = 0;
       this.retryCount = 0;
       this.update({
@@ -981,14 +987,12 @@ export class DocumentPersistenceCoordinator<
       if (this.writeOperation?.id !== id) return;
       this.writeOperation = null;
       const kind = this.classify(error);
-      if (kind === "conflict" && !this.publicationUncertain) {
+      if (kind === "conflict") {
+        this.publicationUncertain = false;
         this.verificationNeeded = true;
-        this.publish();
+        this.update({ error: null });
         this.drive();
-      } else {
-        this.publicationUncertain = true;
-        this.handleFailure(error, kind === "conflict" ? "outcome_unknown" : kind);
-      }
+      } else this.handleFailure(error, kind);
     }
   }
 
@@ -1007,6 +1011,7 @@ export class DocumentPersistenceCoordinator<
   }
 
   private startRead(request: ReadRequest): void {
+    this.savingAgain = false;
     const operation: ActiveRead = {
       id: this.nextOperationId++,
       request,
@@ -1169,7 +1174,16 @@ export class DocumentPersistenceCoordinator<
       const kind = this.classify(error);
       if (this.canRetry(kind)) {
         this.readRequest ??= operation.request;
-        this.handleFailure(error, kind);
+        this.clearDebounce();
+        const delays = this.options.retryDelaysMs ?? [250, 1_000, 3_000];
+        const delay = delays[this.retryCount] ?? 0;
+        this.retryCount += 1;
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          this.publish();
+          this.drive();
+        }, delay);
+        this.publish();
       } else {
         operation.request.resolve?.(false);
         if (
@@ -1184,7 +1198,7 @@ export class DocumentPersistenceCoordinator<
           this.update({ error: null });
         } else {
           this.readFailure = error;
-          this.handleFailure(error, kind);
+          this.handleReadFailure(error, kind);
         }
       }
     }
@@ -1437,7 +1451,12 @@ export class DocumentPersistenceCoordinator<
     const matchesAttempt = attempted !== null && disk.source === attempted.source;
     const matchesBaseline = disk.source === current.baselineSource;
     const clean = !current.pending;
-    const canReconcile = !this.publicationUncertain && this.reconciliationCount < 3;
+    // Text the person has since moved on from may or may not be on disk, so a merge can't
+    // tell their undo from someone else's change.
+    const canReconcile =
+      !this.publicationUncertain &&
+      this.reconciliationCount < 3 &&
+      !(this.attemptMayHaveLanded && attempted?.source !== current.draftSource);
     this.ambiguousIntent = null;
     this.verificationNeeded = false;
     if (matchesDraft || matchesAttempt || matchesBaseline) {
@@ -1560,59 +1579,46 @@ export class DocumentPersistenceCoordinator<
     }
   }
 
+  private handleReadFailure(error: unknown, kind: DocumentPersistenceFailureKind): void {
+    // The check before saving again failed: the save still goes on trying.
+    if (this.ambiguousIntent !== null && !this.publicationUncertain) {
+      this.handleFailure(error, kind);
+      return;
+    }
+    this.clearDebounce();
+    if (kind === "disconnected") this.connected = false;
+    this.update({ error });
+  }
+
   private canRetry(kind: DocumentPersistenceFailureKind): boolean {
     const delays = this.options.retryDelaysMs ?? [250, 1_000, 3_000];
     return kind === "transient" && this.retryCount < delays.length;
   }
 
+  /**
+   * A save either lands or it doesn't yet, so a failed one simply goes again. The server knows
+   * bytes already in place, which also settles a save whose answer was lost, and nothing about
+   * a failure ever stops the person typing. Only a failure that lasts is shown.
+   */
   private handleFailure(error: unknown, kind: DocumentPersistenceFailureKind): void {
     this.clearDebounce();
-    if (
-      kind === "recovery_required" ||
-      kind === "target_changed" ||
-      kind === "mutation_unavailable" ||
-      kind === "mutation_intent_conflict" ||
-      kind === "outcome_unknown" ||
-      ((kind === "operation" || kind === "terminal") &&
-        this.ambiguousIntent !== null &&
-        this.publicationUncertain)
-    ) {
-      this.verificationNeeded = false;
-      this.clearRetry();
-      this.readRequest?.resolve?.(false);
-      this.readRequest?.review?.(null);
-      this.readRequest = null;
-      this.update({
-        attention: kind === "operation" || kind === "terminal" ? "outcome_unknown" : kind,
-        error,
-        publicationAttention:
-          this.io.describeAttention?.(error, this.ambiguousIntent?.mutationId) ??
-          this.snapshot.publicationAttention,
-        publicationOutcome: this.snapshot.publicationAttention
-          ? "retained-attention"
-          : (this.io.describeOutcome?.(error) ?? null),
-        attentionMutationId: this.ambiguousIntent?.mutationId ?? this.snapshot.attentionMutationId,
-        authorizedCurrentReview: null,
-      });
-      return;
-    }
     if (kind === "disconnected") {
       this.connected = false;
       this.update({ error });
       return;
     }
-    if (this.canRetry(kind)) {
-      const delay = (this.options.retryDelaysMs ?? [250, 1_000, 3_000])[this.retryCount] ?? 0;
-      this.retryCount += 1;
-      this.retryTimer = setTimeout(() => {
-        this.retryTimer = null;
-        this.publish();
-        this.drive();
-      }, delay);
+    this.attemptMayHaveLanded = true;
+    const delays = this.options.retryDelaysMs ?? SAVE_RETRY_DELAYS_MS;
+    const delay = delays[Math.min(this.retryCount, delays.length - 1)] ?? 0;
+    this.retryCount += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.savingAgain = true;
       this.publish();
-      return;
-    }
-    this.update({ error });
+      this.drive();
+    }, delay);
+    if (kind !== "transient" || this.retryCount > QUIET_SAVE_RETRIES) this.update({ error });
+    else this.publish();
   }
 
   private clearDebounce(): void {
