@@ -54,6 +54,8 @@ const VERSION_IN_PATH: ReadonlyArray<RegExp> = [
   /\/candidates\/[^/]+\/(\d[^/-]*)/u,
   /\/cmdstan-(\d[^/]*)\//u,
   /\/(?:R|Octave|JAGS|Maxima|scilab|Julia)-(\d[\d.]*)[/.]/u,
+  /\/JavaVirtualMachines\/[^/]*?(\d+(?:\.\d+)*)[^/]*\.jdk\//u,
+  /\/(?:jvm|Java|Eclipse Adoptium|Amazon Corretto|Microsoft)\/[A-Za-z-]*?(\d+(?:\.\d+)*)[^/]*\/bin\//u,
 ];
 
 function versionFromPath(real: string): string | null {
@@ -228,6 +230,7 @@ function managerFolders(context: DiscoveryContext): ReadonlyArray<string> {
   const env = context.environment;
   const tree = (name: string, fallback: string) => env[name] ?? fallback;
   const toolchains = [
+    ...(env.JAVA_HOME === undefined ? [] : [`${env.JAVA_HOME}/bin`]),
     `${tree("PYENV_ROOT", "~/.pyenv")}/versions/*/bin`,
     `${tree("ASDF_DATA_DIR", "~/.asdf")}/installs/*/*/bin`,
     `${tree("RUSTUP_HOME", "~/.rustup")}/toolchains/*/bin`,

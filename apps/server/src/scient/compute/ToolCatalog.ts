@@ -54,6 +54,7 @@ const MSVC =
 
 export const LANGUAGE_TOOLS: Readonly<Record<string, LanguageTools>> = {
   sql: { commands: ["duckdb", "sqlite3", "psql", "mysql"] },
+  sqlite: { commands: ["sqlite3"] },
   bash: {
     commands: ["bash"],
     places: {

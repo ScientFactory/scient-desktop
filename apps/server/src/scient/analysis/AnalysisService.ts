@@ -80,6 +80,7 @@ import {
 } from "./analysisOutputBuffer.ts";
 import { matlabRuntimeAdapter } from "./MatlabAdapter.ts";
 import { ToolDiscovery } from "../compute/ToolDiscovery.ts";
+import { ComputeProjectOutputObserver } from "../compute/ComputeProjectOutputObserver.ts";
 import { makeRunTableAdapters } from "./RunTableAdapter.ts";
 
 const RUN_HISTORY_DEFAULT_LIMIT = 20;
@@ -208,6 +209,7 @@ const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
   const toolDiscovery = yield* ToolDiscovery;
+  const outputObserver = yield* Effect.serviceOption(ComputeProjectOutputObserver);
   const runWith = Effect.runPromiseWith(yield* Effect.context<never>());
   const runtimeAdapters = [
     ...(yield* AnalysisRuntimeAdapters),
@@ -222,6 +224,10 @@ const make = Effect.gen(function* () {
             ),
           ),
           platform: hostPlatform,
+          ...Option.match(outputObserver, {
+            onNone: () => ({}),
+            onSome: (observer) => ({ observer }),
+          }),
         })),
   ];
   const processes = yield* LocalExecutionProcess.ExecutionProcess;
@@ -1251,6 +1257,7 @@ const make = Effect.gen(function* () {
               status:
                 collected.failureMessage === null ? ("succeeded" as const) : ("failed" as const),
               artifacts,
+              writtenFiles: collected.writtenFiles ?? [],
               failureMessage: collected.failureMessage,
             };
           }).pipe(
@@ -1263,6 +1270,7 @@ const make = Effect.gen(function* () {
                 return {
                   status: "failed" as const,
                   artifacts: [],
+                  writtenFiles: [],
                   failureMessage: `${profile.label} finished, but Scient could not collect its generated figures.`,
                 };
               }),
@@ -1271,6 +1279,9 @@ const make = Effect.gen(function* () {
           yield* updateReceipt(runId, "start", (run) => ({
             ...run,
             artifacts: collection.artifacts,
+            ...(collection.writtenFiles.length === 0
+              ? {}
+              : { writtenFiles: collection.writtenFiles }),
             artifactReceipt: {
               status: collection.status,
               failureMessage: collection.failureMessage,
@@ -1518,14 +1529,32 @@ const make = Effect.gen(function* () {
             "The source file changed after it was opened. Wait for save or reload it before running.",
           );
         }
-        const profile = yield* inspectProfile(adapter, false);
-        if (profile.availability !== "available" || profile.executablePath === null) {
+        const inspected = yield* inspectProfile(adapter, false);
+        if (inspected.availability !== "available" || inspected.executablePath === null) {
           return yield* analysisError(
             "start",
-            profile.availability === "invalid" ? "runtime-invalid" : "runtime-missing",
-            profile.detail ?? `${profile.label} is unavailable.`,
+            inspected.availability === "invalid" ? "runtime-invalid" : "runtime-missing",
+            inspected.detail ?? `${inspected.label} is unavailable.`,
           );
         }
+        const alternative = inspected.alternatives?.find(
+          (candidate) => candidate.executablePath === input.executablePath,
+        );
+        if (input.executablePath !== undefined && alternative === undefined) {
+          return yield* analysisError(
+            "start",
+            "runtime-invalid",
+            `That ${inspected.label} install is no longer on this computer.`,
+          );
+        }
+        const profile =
+          alternative === undefined
+            ? inspected
+            : {
+                ...inspected,
+                executablePath: alternative.executablePath,
+                version: alternative.version,
+              };
         if (!profile.capabilities.includes("run-file")) {
           return yield* analysisError(
             "start",

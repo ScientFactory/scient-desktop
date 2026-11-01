@@ -45,6 +45,33 @@ describe("compute host capacity", () => {
     ),
   );
 
+  it.effect("asks for room when full, and takes the slot that frees", () =>
+    Effect.gen(function* () {
+      const capacity = yield* ComputeHostCapacity;
+      const held = yield* capacity.acquire();
+      yield* capacity.setReclaim(held.pipe(Effect.as(true)));
+      const release = yield* capacity.acquire();
+      yield* release;
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Environment, { SCIENT_COMPUTE_MAX_LIVE_SESSIONS: "1" }),
+    ),
+  );
+
+  it.effect("still refuses when nothing can be ended", () =>
+    Effect.gen(function* () {
+      const capacity = yield* ComputeHostCapacity;
+      const held = yield* capacity.acquire();
+      yield* capacity.setReclaim(Effect.succeed(false));
+      const next = yield* capacity.acquire().pipe(Effect.result);
+      expect(next._tag === "Failure" && next.failure.reason).toBe("capacity-reached");
+      yield* held;
+    }).pipe(
+      Effect.provide(layer),
+      Effect.provideService(HostProcess.Environment, { SCIENT_COMPUTE_MAX_LIVE_SESSIONS: "1" }),
+    ),
+  );
+
   it.effect(
     "shares the configured ceiling across independently composed session and batch services",
     () => {

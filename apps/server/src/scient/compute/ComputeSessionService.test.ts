@@ -1810,6 +1810,7 @@ describe("interactive capture analytics", () => {
           begin: () => Effect.succeed({ projectRoot: "/synthetic", baseline: null, warnings: [] }),
           collect: () =>
             Effect.succeed({
+              tables: [],
               images: [
                 {
                   relativePath: "private-figure.png",
@@ -1854,6 +1855,7 @@ describe("interactive capture analytics", () => {
           collect: () =>
             Effect.succeed({
               images: [],
+              tables: [],
               warnings: ["private project-output warning /private/path"],
             }),
         },
@@ -2152,6 +2154,32 @@ describe("compute session startup", () => {
           }),
         );
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("a full host ends the session idle longest instead of refusing the next run", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ capacity: 2 });
+      yield* test.use(
+        Effect.gen(function* () {
+          const service = yield* ComputeSessionService;
+          const oldest = ComputeSessionId.make("oldest");
+          const newer = ComputeSessionId.make("newer");
+          yield* service.startSession(startInput({ sessionId: oldest }));
+          yield* TestClock.adjust("1 minute");
+          yield* service.startSession(startInput({ sessionId: newer }));
+          yield* TestClock.adjust("1 minute");
+          const third = yield* service.startSession(
+            startInput({ sessionId: ComputeSessionId.make("third") }),
+          );
+          expect(third.status).toBe("ready");
+          const sessions = yield* service.listSessions({ projectId: PROJECT_ID });
+          const status = (sessionId: ComputeSessionId) =>
+            sessions.find((session) => session.sessionId === sessionId)?.status;
+          expect(status(oldest)).toBe("stopped");
+          expect(status(newer)).toBe("ready");
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("fresh runs use host admission limits and cannot become interactive sessions", () =>
