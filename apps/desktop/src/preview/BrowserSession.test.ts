@@ -17,7 +17,10 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
       // SCIENT-FORK:START — Scient Browser: site identity hook.
-      readonly webRequest: { readonly onBeforeSendHeaders: ReturnType<typeof vi.fn> };
+      readonly webRequest: {
+        readonly onBeforeSendHeaders: ReturnType<typeof vi.fn>;
+        readonly onHeadersReceived: ReturnType<typeof vi.fn>;
+      };
       // SCIENT-FORK:END
     }
   >(),
@@ -67,7 +70,7 @@ describe("BrowserSession", () => {
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
         // SCIENT-FORK:START — Scient Browser: site identity hook.
-        webRequest: { onBeforeSendHeaders: vi.fn() },
+        webRequest: { onBeforeSendHeaders: vi.fn(), onHeadersReceived: vi.fn() },
         // SCIENT-FORK:END
       };
       sessions.set(partition, browserSession);
@@ -149,7 +152,7 @@ describe("BrowserSession", () => {
             userAgent = next;
           }),
           // SCIENT-FORK:START — Scient Browser: site identity hook.
-          webRequest: { onBeforeSendHeaders: vi.fn() },
+          webRequest: { onBeforeSendHeaders: vi.fn(), onHeadersReceived: vi.fn() },
           // SCIENT-FORK:END
         };
         sessions.set(partition, browserSession);
@@ -176,10 +179,9 @@ describe("BrowserSession", () => {
       yield* browserSessions.getSession("scope-a", false);
 
       for (const partition of [persistent, incognito]) {
-        assert.strictEqual(
-          sessions.get(partition)?.webRequest.onBeforeSendHeaders.mock.calls.length,
-          1,
-        );
+        const webRequest = sessions.get(partition)?.webRequest;
+        assert.strictEqual(webRequest?.onBeforeSendHeaders.mock.calls.length, 1);
+        assert.strictEqual(webRequest?.onHeadersReceived.mock.calls.length, 1);
       }
     }).pipe(Effect.provide(layer)),
   );
