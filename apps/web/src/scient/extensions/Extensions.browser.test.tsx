@@ -2229,7 +2229,7 @@ describe("Detail pages", () => {
     });
     await fixture.render(<PluginDetailPage pluginId="sources" />);
     const includes = fixture.section("Includes");
-    await userEvent.click(buttonIn(fixture.section("Skills 1"), "Find Papers")!);
+    await userEvent.click(buttonIn(fixture.section("Skills 1"), "find-papers")!);
     await expect.element(page.getByRole("dialog")).toBeVisible();
     expect(state.queryTargets).toContainEqual(
       expect.objectContaining({
