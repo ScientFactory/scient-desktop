@@ -366,7 +366,8 @@ export function ManagedRuntimeNotice({
     (runtime.cancelling
       ? "Cancelling…"
       : managedRuntimeOperationLabel(runtime.status, runtime.languageId));
-  const failure = showFailure ? runtime.failure : null;
+  // While something is being done about a failure, it is no longer the news.
+  const failure = showFailure && !progress ? runtime.failure : null;
   // Removal always stays behind its confirmation dialog, including retries.
   const retryAction = failure?.retryAction === "remove" ? null : (failure?.retryAction ?? null);
   const retry =
@@ -410,25 +411,20 @@ export function ManagedRuntimeNotice({
                 render={
                   <button
                     type="button"
-                    className="min-w-0 truncate whitespace-nowrap text-left text-xs text-destructive"
+                    className="min-w-0 truncate whitespace-nowrap text-left text-xs text-destructive underline-offset-2 hover:underline"
                     role="alert"
                     onClick={retry}
                   />
                 }
               >
-                {retryAction === "repair" ? "Needs repair" : headline}
-              </TooltipTrigger>
-              <TooltipPopup>{retry === undefined ? headline : `Retry ${headline}`}</TooltipPopup>
-            </Tooltip>
-            {retry !== undefined ? (
-              <Button size="xs" variant="outline" className="shrink-0" onClick={retry}>
                 {retryAction === "repair"
                   ? "Repair"
                   : retryAction === "install"
                     ? "Install"
-                    : "Retry"}
-              </Button>
-            ) : null}
+                    : headline}
+              </TooltipTrigger>
+              <TooltipPopup>{failure.detail}</TooltipPopup>
+            </Tooltip>
             {retry === undefined ? (
               <Tooltip>
                 <TooltipTrigger
@@ -451,7 +447,7 @@ export function ManagedRuntimeNotice({
                 <TooltipPopup>Copy the full error</TooltipPopup>
               </Tooltip>
             ) : null}
-            {failure.detail === failure.summary ? null : (
+            {retry !== undefined || failure.detail === failure.summary ? null : (
               <Popover>
                 <PopoverTrigger
                   render={
