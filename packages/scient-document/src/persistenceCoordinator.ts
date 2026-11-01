@@ -255,6 +255,7 @@ export class DocumentPersistenceCoordinator<
   /** A failed save is due again, so its shown error doesn't hold the next write. */
   private savingAgain = false;
   private keepingLocal = false;
+  private restoredConflict = false;
   /** The last try to keep the person's text didn't work, and another is due. */
   private keepLocalRetry: ReturnType<typeof setTimeout> | null = null;
   /** A save failed without saying what happened, so its bytes may be on disk. */
@@ -374,7 +375,10 @@ export class DocumentPersistenceCoordinator<
       editingBlocked: false,
     };
     if (this.snapshot.pending) this.scheduleDraft();
-    if (options.initialConflict) queueMicrotask(() => this.keepLocalOverConflict());
+    if (options.initialConflict) {
+      this.restoredConflict = true;
+      queueMicrotask(() => this.keepLocalOverConflict());
+    }
   }
 
   getSnapshot = (): DocumentPersistenceSnapshot => this.snapshot;
@@ -642,11 +646,19 @@ export class DocumentPersistenceCoordinator<
     )
       return;
     this.keepingLocal = true;
-    void this.resolveWithLocal(conflict.externalRevision).then((saved) => {
+    // A draft restored from an earlier session is no one's action now, so the file stands and
+    // the draft is offered back. Only what the person is doing now goes over the file.
+    const restored = this.restoredConflict;
+    const settled = restored
+      ? this.resolveWithDisk()
+      : this.resolveWithLocal(conflict.externalRevision);
+    void settled.then((saved) => {
       this.keepingLocal = false;
       if (this.disposed) return;
       if (saved) {
-        this.update({ recoverySource: conflict.externalSource, recoveryFromElsewhere: true });
+        this.restoredConflict = false;
+        if (!restored)
+          this.update({ recoverySource: conflict.externalSource, recoveryFromElsewhere: true });
         return;
       }
       // Nothing was replaced. A file that can't be, for now, is said out loud and tried later.

@@ -611,7 +611,7 @@ describe("MarkdownPersistenceCoordinator", () => {
     expect(h.coordinator.getSnapshot().draftSource).toBe(mergeBase);
   });
 
-  it("settles a restored conflict by itself", async () => {
+  it("keeps the file over a draft from an earlier session, and offers the draft", async () => {
     const other = mergeBase.replace("First", "Theirs");
     const mine = mergeBase.replace("First", "Mine");
     const h = fixture({
@@ -621,11 +621,16 @@ describe("MarkdownPersistenceCoordinator", () => {
       initialConflict: { externalSource: other, externalRevision: "external" },
     });
     h.setDisk(other, "external");
-    expect(await h.coordinator.flushNow()).toBe(true);
     await vi.waitFor(() =>
-      expect(h.coordinator.getSnapshot()).toMatchObject({ conflict: null, pending: false }),
+      expect(h.coordinator.getSnapshot()).toMatchObject({
+        conflict: null,
+        pending: false,
+        draftSource: other,
+        recoverySource: mine,
+      }),
     );
-    expect(h.disk().source).toBe(mine);
+    expect(h.disk().source).toBe(other);
+    expect(h.write).not.toHaveBeenCalled();
   });
 
   it("says so and waits when the file can't be replaced, instead of spinning", async () => {
