@@ -48,8 +48,10 @@ const scoped = Effect.fn("runFile.test.scoped")(function* (
   runtimes: ReadonlyArray<ReturnType<typeof available>>,
   contents: string,
   path: string,
+  project?: string,
 ) {
-  const root = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "run-file-")));
+  const root =
+    project ?? NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "run-file-")));
   yield* Effect.promise(() => initializeScientProject({ root }));
   const workspace = yield* computeWorkspaceResolverForTest.resolveWorkspaceRoot(root);
   const started: AnalysisStartRunInput[] = [];
@@ -91,6 +93,21 @@ it.effect("runs a file through the same run the app starts, and reports what it 
     });
     expect(result._tag === "Success" && result.success.run.output).toContain("exited with code 1");
     expect(result._tag === "Success" && result.success.run.output).toContain("a.java:1: error");
+  }),
+);
+
+it.effect("accepts the full path of a file in the project", () =>
+  Effect.gen(function* () {
+    const project = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "run-file-")),
+    );
+    const { started } = yield* scoped(
+      [available("java")],
+      "class A {}",
+      NodePath.join(project, "src", "a.java"),
+      project,
+    );
+    expect(started[0]?.relativePath).toBe("src/a.java");
   }),
 );
 

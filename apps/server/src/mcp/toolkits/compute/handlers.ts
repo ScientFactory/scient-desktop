@@ -1,5 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off -- execution ids are random UUIDs.
+// @effect-diagnostics nodeBuiltinImport:off -- execution ids are random UUIDs, and agents name files by host paths.
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 import {
   AnalysisRunId,
@@ -311,6 +312,10 @@ export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(fu
 }) {
   const scope = yield* agentScope();
   const { gateway } = scope;
+  // Agents often hold a file's full path. Anything outside the project is refused on read.
+  const relativePath = NodePath.isAbsolute(input.path)
+    ? NodePath.relative(scope.cwd, input.path).replaceAll("\\", "/")
+    : input.path;
   const waited = (
     runId: AnalysisRunId,
     start: Effect.Effect<AnalysisRunSnapshot, AnalysisOperationError>,
@@ -320,7 +325,7 @@ export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(fu
         // Subscribe before starting so a fast run cannot finish unobserved.
         const events = yield* gateway.subscribeFileRuns({
           cwd: scope.cwd,
-          relativePath: input.path,
+          relativePath,
         });
         const started = yield* start;
         if (isFinishedRun(started)) return started;
@@ -345,12 +350,12 @@ export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(fu
     return describeFileRun(run);
   }
   const file = yield* gateway
-    .readFile({ cwd: scope.cwd, relativePath: input.path })
+    .readFile({ cwd: scope.cwd, relativePath })
     .pipe(Effect.mapError(() => toolError("compute-failed", `Cannot read '${input.path}'.`)));
   const { runtimes } = yield* gateway
     .inspectFileRuntimes({ cwd: scope.cwd })
     .pipe(Effect.mapError(computeFailed));
-  const runtime = computeRunRoutesForPath(input.path)
+  const runtime = computeRunRoutesForPath(relativePath)
     .filter((route) => route.languageId !== "sqlite" || isSqliteScript(file.contents))
     .flatMap((route) =>
       runtimes.filter(
@@ -370,7 +375,7 @@ export const runScientComputeFile = Effect.fn("ScientComputeToolkit.runFile")(fu
     gateway.startFileRun({
       runId,
       cwd: scope.cwd,
-      relativePath: input.path,
+      relativePath,
       sourceRevision: AnalysisSourceRevision.make(file.revision),
       runtimeId: runtime.id,
     }),
