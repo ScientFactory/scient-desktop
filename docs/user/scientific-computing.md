@@ -227,8 +227,9 @@ Octave; `.gp` to gnuplot, then PARI/GP; `.v` to Rocq, then Verilog; and `.pro` t
 
 The output fills the pane. A file shows only **Run** until it has a result; then **Code**, **Split**
 and **Results** appear, and reopening the file brings its last run back. Each `file:line` in the
-output opens that line. A failed run offers **Ask agent**, which puts the error in your chat. Pictures
-a run writes in the project show as results, and tables it writes are linked. The run's menu holds
+output opens that line. A failed run offers **Ask agent**, which adds the error to your chat as a
+quote and leaves what you are typing alone. Selected output offers **Ask in chat**, as in every other
+language. Pictures a run writes in the project show as results, and tables it writes are linked. The run's menu holds
 **Run with**, for one run on another install, **Save to project**, **Remove this run** and **Clean up
 project**.
 

@@ -8,7 +8,7 @@ import { AnalysisRunId, AnalysisSourceRevision } from "@t3tools/contracts";
 import { useClientSettings } from "~/hooks/useSettings";
 import { formatTimestamp } from "~/timestampFormat";
 import { useCancelComputeBatchRun } from "./useCancelComputeBatchRun";
-import { randomUUID } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 import type {
   AnalysisRunSnapshot,
   AnalysisRunSummary,
@@ -1013,7 +1013,8 @@ export function ComputeBatchResults({
     const segments = outputSegments(run.receipt.output);
     const textOf = (parts: typeof segments) =>
       parts
-        .map((part) => part.text)
+        .flatMap((part) => splitRunOutputLinks(part.text, run.source))
+        .map((piece) => piece.text)
         .join("")
         .trim();
     askAboutText(
@@ -1182,21 +1183,28 @@ export function ComputeBatchResults({
                 : `Run ${props.runtimeLabel}`}
           </Button>
         ) : null}
-        <ScientTooltip content={selectedRun?.source.cwd ?? runtimeStatusText}>
-          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+        <ScientTooltip
+          content={
+            selectedRun === null
+              ? runtimeStatusText
+              : `${shownRuntimeText} · ${selectedRun.source.cwd}`
+          }
+        >
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-xs text-muted-foreground",
+              failed && !activeRun && "text-destructive",
+            )}
+          >
             {activeRun
               ? statusLabel(activeRun, props.runtimeLabel)
               : operationStatus
                 ? operationStatus
                 : projectNotInitialized
                   ? "Add this folder to Scient to run it"
-                  : shownRuntimeText}
-            {!activeRun && !operationStatus && (failed || stoppedEarly) ? (
-              <span className={failed ? "text-destructive" : undefined}>
-                {" · "}
-                {statusLabel(selectedRun, props.runtimeLabel)}
-              </span>
-            ) : null}
+                  : failed || stoppedEarly
+                    ? statusLabel(selectedRun, props.runtimeLabel)
+                    : shownRuntimeText}
           </span>
         </ScientTooltip>
         {askableRun === null ? null : asksAgent ? (

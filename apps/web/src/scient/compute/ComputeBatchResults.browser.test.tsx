@@ -909,7 +909,7 @@ describe("Compute batch results", () => {
     expect(mocks.setPrompt).not.toHaveBeenCalled();
     expect(mocks.citeText).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: `${source.cwd}/${source.relativePath}:12:5: error: bad`,
+        text: `${source.relativePath}:12:5: error: bad`,
         place: { _tag: "file-run", runId: "failed-run", path: source.relativePath },
       }),
       expect.anything(),
