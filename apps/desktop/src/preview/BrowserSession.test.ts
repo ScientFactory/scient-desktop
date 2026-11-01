@@ -16,6 +16,9 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       readonly setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       readonly setUserAgent: ReturnType<typeof vi.fn>;
+      // SCIENT-FORK:START — Scient Browser: site identity hook.
+      readonly webRequest: { readonly onBeforeSendHeaders: ReturnType<typeof vi.fn> };
+      // SCIENT-FORK:END
     }
   >(),
 }));
@@ -63,6 +66,9 @@ describe("BrowserSession", () => {
         setPermissionRequestHandler: vi.fn(),
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
+        // SCIENT-FORK:START — Scient Browser: site identity hook.
+        webRequest: { onBeforeSendHeaders: vi.fn() },
+        // SCIENT-FORK:END
       };
       sessions.set(partition, browserSession);
       return browserSession;
@@ -142,6 +148,9 @@ describe("BrowserSession", () => {
           setUserAgent: vi.fn((next: string) => {
             userAgent = next;
           }),
+          // SCIENT-FORK:START — Scient Browser: site identity hook.
+          webRequest: { onBeforeSendHeaders: vi.fn() },
+          // SCIENT-FORK:END
         };
         sessions.set(partition, browserSession);
         return browserSession;
@@ -156,6 +165,25 @@ describe("BrowserSession", () => {
       assert.strictEqual(browserSession.getUserAgent(), nativeUserAgent);
     }).pipe(Effect.provide(layer)),
   );
+
+  // SCIENT-FORK:START — Scient Browser: site identity hook.
+  it.effect("adds the site identity rule to every browser session", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const persistent = yield* browserSessions.getPartition("scope-a");
+      const incognito = yield* browserSessions.getPartition("scope-a", false);
+      yield* browserSessions.getSession("scope-a");
+      yield* browserSessions.getSession("scope-a", false);
+
+      for (const partition of [persistent, incognito]) {
+        assert.strictEqual(
+          sessions.get(partition)?.webRequest.onBeforeSendHeaders.mock.calls.length,
+          1,
+        );
+      }
+    }).pipe(Effect.provide(layer)),
+  );
+  // SCIENT-FORK:END
 
   it.effect("grants preview permissions through both the request and check handlers", () =>
     Effect.gen(function* () {
