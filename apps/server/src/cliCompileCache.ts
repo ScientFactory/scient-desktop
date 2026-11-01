@@ -12,6 +12,7 @@ export function enableCliCompileCache(): void {
       process.env.XDG_CACHE_HOME ||
       // oxlint-disable-next-line t3code/no-global-process-runtime -- Runs before the CLI's Effect runtime loads.
       (process.platform === "linux" ? NodePath.join(NodeOS.homedir(), ".cache") : NodeOS.tmpdir());
-    NodeModule.enableCompileCache(NodePath.join(cacheRoot, "t3code", "compile-cache"));
+    // SCIENT-FORK: Scient keeps its cache apart from a T3 Code install on the same machine.
+    NodeModule.enableCompileCache(NodePath.join(cacheRoot, "scient", "compile-cache"));
   } catch {}
 }
