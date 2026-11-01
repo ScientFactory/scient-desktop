@@ -273,7 +273,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "keep-computer-awake",
     title: "Keep computer awake",
-    to: "/settings/general",
+    to: "/settings/maintenance",
     searchTerms: ["sleep", "awake", "power", "caffeinate", "battery"],
     desktopOnly: true,
   },

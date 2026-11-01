@@ -51,7 +51,7 @@ choose a project every time.
 
 ## Keep the computer awake
 
-In the desktop app, **Settings > General > Keep computer awake** stops this computer
+In the desktop app, **Settings > Maintenance > Keep computer awake** stops this computer
 sleeping while its threads work. It's off by default. To cover one thread without
 the setting, right-click it and choose **Keep computer awake until done**. That
 choice ends by itself about a minute after the thread and its subagents finish, and
