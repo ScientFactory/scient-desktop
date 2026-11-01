@@ -26,6 +26,9 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopVoice from "./DesktopVoice.ts";
+// SCIENT-FORK:START — the keep-awake IPC handler needs its service.
+import * as DesktopKeepAwake from "../scient/keepAwake/DesktopKeepAwake.ts";
+// SCIENT-FORK:END
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopBackendConfiguration from "../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
@@ -205,6 +208,9 @@ const runStartup = (env: Record<string, string> = {}, isPackaged = false) =>
         markComplete: Effect.void,
       }),
       Layer.mock(DesktopRendererHistory.DesktopRendererHistory, { shutdown: Effect.void }),
+      // SCIENT-FORK:START — the keep-awake IPC handler needs its service.
+      Layer.mock(DesktopKeepAwake.DesktopKeepAwake, {}),
+      // SCIENT-FORK:END
       Layer.mock(DesktopAppActivation.DesktopAppActivation, { start: Effect.void }),
       Layer.mock(DesktopSnapShot.DesktopSnapShot, { initialize: Effect.void }),
       Layer.mock(DesktopWslBackend.DesktopWslBackend, { reconcile: Effect.void }),

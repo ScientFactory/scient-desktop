@@ -2,6 +2,9 @@ import { liveShellEnvironmentIdsAtom } from "../state/shell";
 import { attachSidebarTree, SIDEBAR_TREE_PROPS } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+// SCIENT-FORK:START — keep the computer awake until a thread is done.
+import { handleKeepAwakeMenuAction, readKeepAwakeChosen } from "../scient/keepAwake/threadChoice";
+// SCIENT-FORK:END
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
   dropThreadContext,
@@ -2811,9 +2814,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         // SCIENT-FORK:START
         onSectionInteractionChange(true);
         // SCIENT-FORK:END
+        // SCIENT-FORK:START — keep the computer awake until a thread is done.
+        const keepAwakeChosen = await readKeepAwakeChosen(thread);
+        // SCIENT-FORK:END
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
+              // SCIENT-FORK:START — keep the computer awake until a thread is done.
+              keepAwakeChosen,
+              // SCIENT-FORK:END
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
@@ -2859,6 +2868,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         // SCIENT-FORK:END
         if (clicked._tag === "Failure" || clicked.value === null) return;
         // SCIENT-FORK:START
+        if (await handleKeepAwakeMenuAction(clicked.value, thread, keepAwakeChosen)) return;
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
         if (handleOpenInNewWindowMenuAction(clicked.value, threadRef)) return;

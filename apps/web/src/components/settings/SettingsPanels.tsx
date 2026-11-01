@@ -1,4 +1,7 @@
 import { AutomaticThreadPlacementSettings } from "../../scient/sections/AutomaticThreadPlacementSettings";
+// SCIENT-FORK:START — keep the computer awake while threads work.
+import { KeepAwakeSettings } from "../../scient/keepAwake/KeepAwakeSettings";
+// SCIENT-FORK:END
 import { NotificationSettings } from "./NotificationSettings";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -1637,6 +1640,10 @@ export function MaintenanceSettingsPanel() {
 
       <SettingsSection id="background" title="Background activity">
         <BackgroundActivitySettingsRow />
+
+        {/* SCIENT-FORK:START — keep the computer awake while threads work. */}
+        <KeepAwakeSettings />
+        {/* SCIENT-FORK:END */}
       </SettingsSection>
 
       <StorageCleanupSections />

@@ -128,6 +128,9 @@ export * from "./scientPandoc.ts";
 // SCIENT-FORK:START — Scient Overleaf sync contracts (new file, no upstream edits).
 export * from "./scientOverleaf.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient keep-awake contracts (new file, no upstream edits).
+export * from "./scientKeepAwake.ts";
+// SCIENT-FORK:END
 export * from "./mcpApps.ts";
 export * from "./browserImport.ts";
 export * from "./browserProfile.ts";

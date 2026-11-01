@@ -270,6 +270,15 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
   .join(" ");
 
 export const SETTINGS_SEARCH_ITEMS = [
+  // SCIENT-FORK:START — keep the computer awake while threads work.
+  {
+    id: "keep-computer-awake",
+    title: "Keep computer awake",
+    to: "/settings/maintenance",
+    searchTerms: ["sleep", "awake", "power", "caffeinate", "battery"],
+    desktopOnly: true,
+  },
+  // SCIENT-FORK:END
   {
     id: "desktop-update-track",
     title: "Update track",

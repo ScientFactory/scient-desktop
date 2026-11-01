@@ -1,4 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+// SCIENT-FORK:START — keep the computer awake until a thread is done.
+import { keepAwakeMenu, type KeepAwakeMenuId } from "../scient/keepAwake/menu";
+// SCIENT-FORK:END
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 // SCIENT-FORK:START
 import type { SectionMenuId } from "../scient/sections/menu";
@@ -28,6 +31,9 @@ export type ThreadActionMenuId =
   | "auto-settle"
   | "auto-settle:enabled"
   | "auto-settle:disabled"
+  // SCIENT-FORK:START — keep the computer awake until a thread is done.
+  | KeepAwakeMenuId
+  // SCIENT-FORK:END
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
@@ -92,6 +98,9 @@ export function buildDraftActionMenuItems(options: {
 }
 
 export interface ThreadActionMenuState {
+  // SCIENT-FORK:START — keep the computer awake until a thread is done.
+  readonly keepAwakeChosen?: boolean | undefined;
+  // SCIENT-FORK:END
   readonly canOperate: boolean;
   readonly canFind?: boolean;
   readonly branch: string | null;
@@ -263,6 +272,9 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    // SCIENT-FORK:START — keep the computer awake until a thread is done.
+    ...keepAwakeMenu(state.keepAwakeChosen),
+    // SCIENT-FORK:END
     {
       id: "copy",
       label: "Copy",

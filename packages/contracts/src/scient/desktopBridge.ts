@@ -21,6 +21,7 @@ import type {
 import type { ClientSettings } from "../settings.ts";
 import type { DesktopAccountsBridge } from "./desktopAccountsBridge.ts";
 import type { DesktopVoiceBridge } from "./desktopVoiceBridge.ts";
+import type { KeepAwakeChoice, KeepAwakeState } from "../scientKeepAwake.ts";
 
 export const DesktopAssetCopyRequestSchema = AssetCopyRequest;
 export type DesktopAssetCopyRequest = AssetCopyRequestType;
@@ -31,6 +32,8 @@ export type DesktopPdfBytesCopyRequest = PdfBytesCopyRequestType;
 
 /** Scient members of the desktop bridge; ipc.ts's DesktopBridge extends this interface. */
 export interface ScientDesktopBridge {
+  /** Scient: reads the keep-awake state, after applying a thread's choice when one is given. */
+  keepAwake?: (choice?: KeepAwakeChoice) => Promise<KeepAwakeState>;
   /**
    * Scient: shows the threads with an unread answer on the app icon; zero clears it. `image` is
    * the Windows taskbar overlay. Resolves whether the platform accepted it.

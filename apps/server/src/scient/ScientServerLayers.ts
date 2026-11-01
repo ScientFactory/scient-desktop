@@ -39,6 +39,7 @@ import { scientSourcesHttpApiLayer } from "./sources/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
 import { scientPdfHttpApiLayer } from "./pdf/http.ts";
+import { scientKeepAwakeHttpApiLayer } from "./keepAwake/http.ts";
 import { scientThreadQueueHttpApiLayer } from "./threadQueue/http.ts";
 import { scientConversationExportHttpApiLayer } from "./conversationExport/http.ts";
 import * as ConversationExportFiles from "./conversationExport/ConversationExportFiles.ts";
@@ -174,6 +175,7 @@ export function makeScientRouteServices<
       Layer.provide(scientLatexHttpApiLayer),
       Layer.provide(scientMarkdownHttpApiLayer),
       Layer.provide(scientPdfHttpApiLayer),
+      Layer.provide(scientKeepAwakeHttpApiLayer),
       Layer.provide(scientThreadQueueHttpApiLayer.pipe(Layer.provide(PersistenceLayerLive))),
       Layer.provide(scientConversationExportHttpApiLayer),
       Layer.provide(scientConversationImportHttpApiLayer),
