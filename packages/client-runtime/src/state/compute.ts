@@ -382,6 +382,8 @@ export function createComputeEnvironmentAtoms<R, E>(
         Atom.setIdleTTL(0),
       ),
       (inventory) =>
+        // A slow place may still answer; a dead one is simply read as unknown.
+        inventory.incomplete === true ||
         inventory.languages.some(
           (language) =>
             language.managedRuntime?.operation != null ||
@@ -407,6 +409,10 @@ export function createComputeEnvironmentAtoms<R, E>(
         registry,
         environmentId,
       ) {
+        // Asks the server to look again; the query below then reads what it found.
+        const scan = runtimeInventory({ environmentId, input: { refresh: true } });
+        registry.refresh(scan);
+        yield* AtomRegistry.getResult(registry, scan, { suspendOnWaiting: true });
         const query = runtimeInventory({ environmentId, input: {} });
         registry.refresh(query);
         return yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
@@ -467,6 +473,11 @@ export function createComputeEnvironmentAtoms<R, E>(
     sessions: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:compute:sessions",
       tag: WS_METHODS.computeListSessions,
+      staleTimeMs: 0,
+    }),
+    activeWork: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:compute:active-work",
+      tag: WS_METHODS.computeActiveWork,
       staleTimeMs: 0,
     }),
     session: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -535,6 +546,37 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.computeInspectVariables,
       scheduler: sessionScheduler,
       concurrency: { mode: "singleFlight", key: sessionKey },
+    }),
+    saveOutput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:save-output",
+      tag: WS_METHODS.computeSaveOutput,
+      scheduler: executionScheduler,
+    }),
+    saveConsoleNotebook: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:save-console-notebook",
+      tag: WS_METHODS.computeSaveConsoleNotebook,
+      scheduler: executionScheduler,
+    }),
+    notebookRead: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:read",
+      tag: WS_METHODS.notebookRead,
+    }),
+    notebookReadOutput: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:read-output",
+      tag: WS_METHODS.notebookReadOutput,
+    }),
+    notebookEdit: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:edit",
+      tag: WS_METHODS.notebookEdit,
+    }),
+    notebookRecordRun: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:notebook:record-run",
+      tag: WS_METHODS.notebookRecordRun,
+    }),
+    submitCells: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:compute:submit-cells",
+      tag: WS_METHODS.computeSubmitCells,
+      scheduler: executionScheduler,
     }),
     submitExecution: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:compute:submit-execution",

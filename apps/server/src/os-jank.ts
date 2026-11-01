@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as NodeOS from "node:os";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+import { DISCOVERY_VARIABLES } from "./scient/compute/ToolCatalog.ts";
 
 function logPathHydrationWarning(message: string, error?: unknown): void {
   process.stderr.write(
@@ -26,7 +27,14 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
       // mise's record of the PATH entries it added. It must travel with the
       // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
       // (`exec mise x claude -- claude`) that then re-runs itself forever.
-      shellEnvironment = readEnvironmentFromLoginShell(shell, ["PATH", "__MISE_DIFF", "JAVA_HOME"]);
+      shellEnvironment = readEnvironmentFromLoginShell(shell, [
+        "PATH",
+        "__MISE_DIFF",
+        "JAVA_HOME",
+        // SCIENT-FORK:START - Compute looks where the person's shell setup says their tools are.
+        ...DISCOVERY_VARIABLES,
+        // SCIENT-FORK:END
+      ]);
     } catch (error) {
       logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
     }
@@ -48,6 +56,11 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
   if (!env.JAVA_HOME && shellEnvironment.JAVA_HOME) {
     env.JAVA_HOME = shellEnvironment.JAVA_HOME;
   }
+  // SCIENT-FORK:START
+  for (const name of DISCOVERY_VARIABLES) {
+    if (!env[name] && shellEnvironment[name]) env[name] = shellEnvironment[name];
+  }
+  // SCIENT-FORK:END
 }
 
 export function hydratePosixHome(

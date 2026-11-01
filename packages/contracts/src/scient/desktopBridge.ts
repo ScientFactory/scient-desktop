@@ -42,6 +42,8 @@ export interface ScientDesktopBridge {
     readonly count: number;
     readonly image: string | null;
   }) => Promise<boolean>;
+  /** Scient: how many runs quitting would stop, so Quit can ask first. */
+  setRunningWork?: (count: number) => Promise<void>;
   // Conversation files the OS opened with Scient.
   /** Scient: removes and returns the `.scic` files opened with Scient that await import. */
   takeOpenedConversationFiles?: () => Promise<ReadonlyArray<DesktopOpenedConversationFile>>;

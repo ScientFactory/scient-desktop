@@ -194,6 +194,7 @@ const buildExeCmd = Command.make(
         "pack",
         "src/analytics-worker.ts",
         "src/pdf-validation-worker.ts",
+        "src/tool-discovery-worker.ts",
         "src/pdf.worker.ts",
         "--out-dir",
         "dist-exe",

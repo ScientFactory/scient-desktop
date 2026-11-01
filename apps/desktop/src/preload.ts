@@ -98,6 +98,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   // SCIENT-FORK:START — the unread-answer app badge.
   setUnreadAnswerBadge: (badge) =>
     ipcRenderer.invoke(IpcChannels.SET_UNREAD_ANSWER_BADGE_CHANNEL, badge),
+  setRunningWork: (count) => ipcRenderer.invoke(IpcChannels.SET_RUNNING_WORK_CHANNEL, count),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — conversation files the OS opened with Scient.
   takeOpenedConversationFiles: () =>

@@ -9,6 +9,12 @@ const Path = Schema.String.check(
   Schema.isMaxLength(4_096),
   Schema.makeFilter((value) => [...value].every((character) => character.charCodeAt(0) >= 32)),
 );
+const WorkspaceRoot = Path.check(
+  Schema.makeFilter(
+    (value) => value.startsWith("/") || /^[A-Za-z]:[/\\]/.test(value) || value.startsWith("\\\\"),
+  ),
+);
+const ComputeId = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256));
 
 /** A captured document quote, not a request to read a file or an assistant message. */
 export const FileCitation = Schema.Struct({
@@ -16,11 +22,7 @@ export const FileCitation = Schema.Struct({
   version: Schema.Literal(1),
   environmentId: EnvironmentId.check(Schema.isMaxLength(512)),
   threadId: ThreadId.check(Schema.isMaxLength(512)),
-  cwd: Path.check(
-    Schema.makeFilter(
-      (value) => value.startsWith("/") || /^[A-Za-z]:[/\\]/.test(value) || value.startsWith("\\\\"),
-    ),
-  ),
+  cwd: WorkspaceRoot,
   path: Path,
   revision: Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/)),
   origin: Schema.Literals(["saved", "draft"]),
@@ -73,7 +75,40 @@ export const PdfCitation = Schema.Struct({
 });
 export type PdfCitation = typeof PdfCitation.Type;
 
-export type ComposerCitation = AssistantCitation | FileCitation | PdfCitation;
+/**
+ * Text quoted from a run or a notebook cell, or the run or cell itself. Its place is what lets the
+ * agent read the rest and a click return to it; positions are in the rendered text, as for an
+ * assistant quote, and go only as far as finding the quote again.
+ */
+export const ComputeCitation = Schema.Struct({
+  kind: Schema.Literal("compute"),
+  version: Schema.Literal(1),
+  environmentId: EnvironmentId.check(Schema.isMaxLength(512)),
+  threadId: ThreadId.check(Schema.isMaxLength(512)),
+  cwd: WorkspaceRoot,
+  place: Schema.Union([
+    Schema.TaggedStruct("run", {
+      sessionId: ComputeId,
+      executionId: ComputeId,
+      /** The script or notebook it ran from; a Console's runs have none. */
+      path: Schema.NullOr(Path),
+    }),
+    Schema.TaggedStruct("cell", {
+      path: Path,
+      cellId: ComputeId,
+      number: Offset.check(Schema.isGreaterThan(0)),
+    }),
+  ]),
+  text: AssistantCitation.fields.text,
+  comment: AssistantCitation.fields.comment,
+  start: AssistantCitation.fields.start,
+  end: AssistantCitation.fields.end,
+  prefix: AssistantCitation.fields.prefix,
+  suffix: AssistantCitation.fields.suffix,
+}).check(Schema.makeFilter((value) => value.end > value.start && value.text.trim().length > 0));
+export type ComputeCitation = typeof ComputeCitation.Type;
+
+export type ComposerCitation = AssistantCitation | FileCitation | PdfCitation | ComputeCitation;
 
 export function isFileCitation(citation: ComposerCitation): citation is FileCitation {
   return "kind" in citation && citation.kind === "file";
@@ -81,6 +116,10 @@ export function isFileCitation(citation: ComposerCitation): citation is FileCita
 
 export function isPdfCitation(citation: ComposerCitation): citation is PdfCitation {
   return "kind" in citation && citation.kind === "pdf";
+}
+
+export function isComputeCitation(citation: ComposerCitation): citation is ComputeCitation {
+  return "kind" in citation && citation.kind === "compute";
 }
 
 /** The quoted text of a PDF citation, across its pages. */

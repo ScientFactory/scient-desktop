@@ -96,6 +96,7 @@ export default mergeConfig(
             "src/analytics-worker.ts",
             "src/claude-history-worker.ts",
             "src/pdf-validation-worker.ts",
+            "src/tool-discovery-worker.ts",
             "src/pdf.worker.ts",
           ],
       outDir: packExecutable ? "dist-exe" : "dist",

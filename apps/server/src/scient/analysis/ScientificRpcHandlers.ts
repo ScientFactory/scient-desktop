@@ -6,9 +6,15 @@
  * @module ScientificRpcHandlers
  */
 import { WS_METHODS, WsRepositoryRpcGroup, WsScientificRpcGroup } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
+import type { makeComputeConsoleNotebook } from "../compute/ComputeConsoleNotebook.ts";
+import type { makeComputeNotebookOutputs } from "../compute/ComputeNotebookOutputs.ts";
+import type * as NotebookStore from "../notebook/NotebookStore.ts";
+import type { makeComputeOutputSave } from "../compute/ComputeOutputSave.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
+import type * as DataTables from "../data/DataTables.ts";
 import type * as AnalysisService from "./AnalysisService.ts";
 
 export const makeScientificRpcHandlers = ({
@@ -16,9 +22,19 @@ export const makeScientificRpcHandlers = ({
   observeRpcStreamEffect,
   analysis,
   computeGateway,
+  saveComputeOutput,
+  notebooks,
+  saveConsoleNotebook,
+  computeNotebookOutputs,
+  dataTables,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStreamEffect"> & {
   readonly analysis: AnalysisService.AnalysisService["Service"];
   readonly computeGateway: ComputeRpcGateway;
+  readonly saveComputeOutput: ReturnType<typeof makeComputeOutputSave>;
+  readonly notebooks: NotebookStore.NotebookStore["Service"];
+  readonly saveConsoleNotebook: ReturnType<typeof makeComputeConsoleNotebook>;
+  readonly computeNotebookOutputs: ReturnType<typeof makeComputeNotebookOutputs>;
+  readonly dataTables: DataTables.DataTables["Service"];
 }) =>
   WsScientificRpcGroup.of({
     [WS_METHODS.analysisConfigureRuntime]: (input) =>
@@ -69,8 +85,16 @@ export const makeScientificRpcHandlers = ({
       observeRpcEffect(WS_METHODS.computeInspectRuntimes, computeGateway.inspectRuntimes(input), {
         "rpc.aggregate": "compute",
       }),
-    [WS_METHODS.computeRuntimeInventory]: () =>
-      observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(), {
+    [WS_METHODS.computeActiveWork]: () =>
+      observeRpcEffect(
+        WS_METHODS.computeActiveWork,
+        Effect.all([computeGateway.activeWork, analysis.activeRunCount]).pipe(
+          Effect.map(([sessions, files]) => ({ count: sessions + files })),
+        ),
+        { "rpc.aggregate": "compute" },
+      ),
+    [WS_METHODS.computeRuntimeInventory]: (input) =>
+      observeRpcEffect(WS_METHODS.computeRuntimeInventory, computeGateway.runtimeInventory(input), {
         "rpc.aggregate": "compute",
       }),
     [WS_METHODS.computeVerifyRuntime]: (input) =>
@@ -137,6 +161,46 @@ export const makeScientificRpcHandlers = ({
       observeRpcEffect(WS_METHODS.computeInspectVariables, computeGateway.inspectVariables(input), {
         "rpc.aggregate": "compute",
       }),
+    [WS_METHODS.computeReadTable]: (input) =>
+      observeRpcEffect(WS_METHODS.computeReadTable, computeGateway.readTable(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.dataReadFileTable]: (input) =>
+      observeRpcEffect(WS_METHODS.dataReadFileTable, dataTables.readFileTable(input), {
+        "rpc.aggregate": "workspace",
+      }),
+    [WS_METHODS.computeSaveConsoleNotebook]: (input) =>
+      observeRpcEffect(WS_METHODS.computeSaveConsoleNotebook, saveConsoleNotebook(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeSaveOutput]: (input) =>
+      observeRpcEffect(WS_METHODS.computeSaveOutput, saveComputeOutput(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.computeSubmitCells]: (input) =>
+      observeRpcEffect(WS_METHODS.computeSubmitCells, computeGateway.submitCells(input), {
+        "rpc.aggregate": "compute",
+      }),
+    [WS_METHODS.notebookRead]: (input) =>
+      observeRpcEffect(WS_METHODS.notebookRead, notebooks.read(input), {
+        "rpc.aggregate": "workspace",
+      }),
+    [WS_METHODS.notebookReadOutput]: (input) =>
+      observeRpcEffect(WS_METHODS.notebookReadOutput, notebooks.readOutput(input), {
+        "rpc.aggregate": "workspace",
+      }),
+    [WS_METHODS.notebookEdit]: (input) =>
+      observeRpcEffect(WS_METHODS.notebookEdit, notebooks.edit(input), {
+        "rpc.aggregate": "workspace",
+      }),
+    [WS_METHODS.notebookRecordRun]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.notebookRecordRun,
+        notebooks.recordRun(input, computeNotebookOutputs),
+        {
+          "rpc.aggregate": "workspace",
+        },
+      ),
     [WS_METHODS.subscribeComputeSessions]: (input) =>
       observeRpcStreamEffect(
         WS_METHODS.subscribeComputeSessions,

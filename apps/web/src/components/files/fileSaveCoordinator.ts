@@ -528,10 +528,6 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
       // destination must still start from its authoritative current read.
       if (copy !== undefined) copy = { ...copy, renameIntent: null };
     }
-    if (this.confirmedFileRevision === "" && (copy === undefined || checkpointHoldsNothing(copy)))
-      throw new Error(
-        "An authoritative source read is required before this file can be published.",
-      );
     if (copy !== undefined && !checkpointHoldsNothing(copy)) {
       const localContents = this.latestContents;
       const localEdits = this.latestRevision;
@@ -610,6 +606,11 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   get hasPendingChanges(): boolean {
     return this.missingCurrent || this.latestRevision > this.confirmedEditRevision;
   }
+  /** A file with no read yet, such as a missing one, has nothing to recover and nothing to save. */
+  private get awaitingFirstRead(): boolean {
+    return this.confirmedFileRevision === "" && !this.missingCurrent;
+  }
+
   get currentMissing(): boolean {
     return this.missingCurrent;
   }
@@ -1002,7 +1003,8 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
       this.requiresRecovery ||
       !this.hasPendingChanges ||
       (this.suspended && !this.disposed && !force) ||
-      this.options.canPersist?.() === false
+      this.options.canPersist?.() === false ||
+      this.awaitingFirstRead
     )
       return;
     this.saving = true;

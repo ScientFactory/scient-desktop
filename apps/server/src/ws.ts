@@ -312,7 +312,12 @@ import { makeFileOpeningRpcHandlers } from "./scient/fileOpening/FileOpeningRpcH
 import { makeEditorFlushRpcHandlers } from "./scient/editorFlush/EditorFlushRpcHandlers.ts";
 // SCIENT-FORK:END
 import * as AnalysisService from "./scient/analysis/AnalysisService.ts";
+import * as DataTables from "./scient/data/DataTables.ts";
 import { makeComputeRpcGateway } from "./scient/compute/ComputeRpcGateway.ts";
+import { makeComputeOutputSave } from "./scient/compute/ComputeOutputSave.ts";
+import { makeComputeConsoleNotebook } from "./scient/compute/ComputeConsoleNotebook.ts";
+import { makeComputeNotebookOutputs } from "./scient/compute/ComputeNotebookOutputs.ts";
+import * as NotebookStore from "./scient/notebook/NotebookStore.ts";
 import {
   makeAnalysisRuntimeInspectionHandlers,
   makeScientificRpcHandlers,
@@ -1894,11 +1899,28 @@ export const layerWsRpc = (
         serverSettings,
       });
       const analysis = yield* AnalysisService.AnalysisService;
+      const dataTables = yield* DataTables.DataTables;
       const compute = yield* ComputeSessionService.ComputeSessionService;
       const computeGateway = makeComputeRpcGateway({
         workspaceResolver: yield* WorkspaceBindingResolver,
         compute,
         serverSettings: yield* ScientificRuntimePreferences,
+        workspaceFileSystem,
+      });
+      const saveComputeOutput = makeComputeOutputSave({
+        gateway: computeGateway,
+        compute,
+        workspaceFileSystem,
+        fileSystem: yield* FileSystem.FileSystem,
+      });
+      const computeNotebookOutputs = makeComputeNotebookOutputs({
+        gateway: computeGateway,
+        compute,
+        fileSystem: yield* FileSystem.FileSystem,
+      });
+      const saveConsoleNotebook = makeComputeConsoleNotebook({
+        gateway: computeGateway,
+        notebookOutputs: computeNotebookOutputs,
         workspaceFileSystem,
       });
       const scientSkillManagement = yield* ScientSkillManagement.ScientSkillManagement;
@@ -3833,6 +3855,11 @@ export const layerWsRpc = (
           observeRpcStreamEffect,
           analysis,
           computeGateway,
+          dataTables,
+          saveComputeOutput,
+          notebooks: yield* NotebookStore.NotebookStore,
+          saveConsoleNotebook,
+          computeNotebookOutputs,
         }),
       });
       // SCIENT-FORK:START — Scient extensions RPCs.

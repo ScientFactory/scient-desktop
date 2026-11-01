@@ -32,7 +32,6 @@ const inspection = (): ComputeRuntimeInspection => ({
         sourceExtensions: [".py"],
         capabilities: [],
       },
-      enabled: true,
       configuredExecutable: null,
       managedRuntime: {
         installed: true,
@@ -138,7 +137,6 @@ describe("dependency recovery guidance", () => {
     const language = data.languages[0]!;
     const candidate = language.runtimes[0]!;
     for (const changed of [
-      { ...language, enabled: false },
       { ...language, toolkits: [] },
       { ...language, managedRuntime: null },
       {

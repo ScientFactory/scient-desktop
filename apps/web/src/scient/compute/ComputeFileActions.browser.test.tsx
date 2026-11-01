@@ -16,6 +16,8 @@ import { page } from "vite-plus/test/browser";
 
 const mocks = vi.hoisted(() => ({
   languages: [] as ComputeLanguageRuntimeInspection[],
+  /** Replaces the inspection a render sets up, e.g. a server that returned no languages. */
+  inspectedLanguages: null as ComputeLanguageRuntimeInspection[] | null,
   managedStatus: null as ComputeManagedRuntimeStatus | null,
   sessions: [] as unknown[],
   markup: "",
@@ -27,14 +29,14 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("~/hooks/useSettings", async (original) => ({
   ...(await original<typeof import("~/hooks/useSettings")>()),
-  useEnvironmentSettings: () => ({ languages: { python: { enabled: true, executable: "" } } }),
+  useEnvironmentSettings: () => ({ languages: { python: { executable: "" } } }),
 }));
 vi.mock("~/state/query", async (original) => ({
   ...(await original<typeof import("~/state/query")>()),
   useEnvironmentQuery: (query: string) => ({
     data:
       query === "runtimes"
-        ? { languages: mocks.languages }
+        ? { languages: mocks.inspectedLanguages ?? mocks.languages }
         : query === "sessions"
           ? mocks.sessions
           : query === "managed-status"
@@ -116,7 +118,6 @@ function setRuntimeCandidates(candidates = [runtime("managed")], language = PYTH
         sourceExtensions: [],
         capabilities: [],
       },
-      enabled: true,
       configuredExecutable: null,
       managedRuntime: mocks.managedStatus,
       toolkits: [],
@@ -184,6 +185,7 @@ describe("Python file run actions", () => {
     });
     vi.clearAllMocks();
     mocks.managedStatus = null;
+    mocks.inspectedLanguages = null;
     mocks.sessions = [];
     mocks.markup = "";
     mocks.stop.mockReset();
@@ -317,6 +319,7 @@ describe("Python file run actions", () => {
         sessionId: expect.any(String),
         languageId: "python",
         executable: null,
+        owner: { _tag: "file", path: "test.py" },
       },
     });
     expect(mocks.submit.mock.calls[0]?.[0].input).toMatchObject({
@@ -410,6 +413,7 @@ describe("Python file run actions", () => {
             sessionId: expect.any(String),
             languageId: "python",
             executable,
+            owner: { _tag: "file", path: "test.py" },
           },
         });
       } finally {
@@ -606,6 +610,87 @@ describe("Python file run actions", () => {
       }
     },
   );
+
+  it("never lets a borrowed script stop the Console it runs in", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    await render(_fixture);
+    const sessionId = ComputeSessionId.make("console-session");
+    const generation = ComputeSessionGeneration.make(1);
+    const consoleId = "compute-console-test" as ComputeContextId;
+    ensureComputeContext({
+      contextId: consoleId,
+      environmentId: testEnvironmentId,
+      cwd: "/project",
+      ownerKey: "console",
+    });
+    ensureComputeContext({
+      contextId: testContextId,
+      environmentId: testEnvironmentId,
+      cwd: "/project",
+      ownerKey: "file",
+    });
+    const store = useComputeContextStore.getState();
+    store.reserveSession({ contextId: consoleId, sessionId, generation });
+    store.bindSession({ contextId: consoleId, sessionId, generation });
+    store.borrowSession({ contextId: testContextId, sessionId, generation });
+    mocks.sessions = [
+      {
+        sessionId,
+        generation: 1,
+        languageId: "python",
+        label: "Python",
+        workingDirectory: "/project",
+        status: "ready",
+        activity: "idle",
+        runtime: runtime("managed").profile,
+        updatedAt: "2026-09-15T00:00:00.000Z",
+      },
+    ];
+    mocks.start.mockResolvedValueOnce({
+      _tag: "Failure",
+      cause: Cause.fail({ reason: "capacity-reached", message: "One slot in use" }),
+    });
+
+    const container = document.createElement("div");
+    const root = _fixture.stack.use(await _fixtureRender(null, { container: container }));
+    try {
+      await act(
+        async () =>
+          await root.rerender(
+            <ComputeFileActions
+              language={PYTHON_COMPUTE_SOURCE}
+              environmentId={testEnvironmentId}
+              cwd="/project"
+              relativePath="test.py"
+              contents="print(1)"
+              sourceRevision="revision-1"
+              sourcePending={false}
+              selection={null}
+              editorSelection={null}
+              contextId={testContextId}
+              onRunRequested={mocks.runRequested}
+              onShowMatlabOneShot={vi.fn()}
+              onExecutionSubmitted={vi.fn()}
+            />,
+          ),
+      );
+      await page.getByRole("button", { name: "Choose Python code to run" }).last().click();
+      await page.getByRole("menuitem", { name: "Run fresh", exact: true }).click();
+      await vi.waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1));
+      await page.getByRole("button", { name: "Choose a compute session to stop" }).click();
+      await expect
+        .element(page.getByRole("menuitem", { name: "No other sessions" }))
+        .toBeInTheDocument();
+      await expect
+        .element(page.getByRole("menuitem", { name: "Stop this session and run fresh…" }))
+        .not.toBeInTheDocument();
+      expect(mocks.stop).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => await root.unmount());
+    }
+  });
 
   it.each([true, false])(
     "keeps Run file literal and respects runtime availability (%s)",
@@ -828,6 +913,45 @@ describe("Python file run actions", () => {
       expect(mocks.markup.includes('data-compute-notice="toolbar"')).toBe(status !== "ready");
     },
   );
+
+  it("shows an empty runtime check as a failed check to retry, not as Set up Python", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    mocks.inspectedLanguages = [];
+    mocks.refresh.mockResolvedValue({ _tag: "Success", value: { languages: [] } });
+    const handle = createRef<ComputeFileActionsHandle>();
+    mocks.markup = await _renderMarkup(
+      _fixture,
+      <ComputeFileActions
+        ref={handle}
+        language={PYTHON_COMPUTE_SOURCE}
+        environmentId={testEnvironmentId}
+        cwd="/project"
+        relativePath="test.py"
+        contents="print(1)"
+        sourceRevision="revision-1"
+        sourcePending={false}
+        selection={null}
+        editorSelection={null}
+        onRunRequested={mocks.runRequested}
+        onShowMatlabOneShot={vi.fn()}
+        onExecutionSubmitted={vi.fn()}
+      />,
+    );
+    const retry = buttonProps().findLast(
+      (button) => button["aria-label"] === "Couldn't check Python. Retry the check",
+    )!;
+    expect(retry).toBeDefined();
+    expect(mocks.markup).not.toContain("Set up Python");
+    retry.onClick?.({} as Parameters<NonNullable<typeof retry.onClick>>[0]);
+    await vi.waitFor(() =>
+      expect(mocks.refresh).toHaveBeenCalledWith(
+        expect.objectContaining({ input: expect.objectContaining({ refresh: true }) }),
+      ),
+    );
+    expect(mocks.start).not.toHaveBeenCalled();
+  });
 
   it("disables ordinary Run when selected managed Python is unusable despite another ready Python", async () => {
     await using _fixture = _createFixture();

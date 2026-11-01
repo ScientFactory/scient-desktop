@@ -1,21 +1,12 @@
-import {
-  ComputeExecutionId,
-  ComputeSessionGeneration,
-  ComputeSessionId,
-  INITIAL_COMPUTE_SESSION_GENERATION,
-  type ComputeExecutionRecord,
-  type ComputeOutput,
-} from "@t3tools/contracts";
+import type { ComputeExecutionRecord, ComputeOutput } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   computeExecutionStatusLabel,
   computeProjectedStaticImage,
-  computeSourceFreshnessLabel,
   computeSourceLabel,
   computeSystemEventLabel,
   mergeComputeOutputs,
-  selectComputeFigureFallback,
 } from "./computeResultPresentation";
 
 type ComputeExecutionSource = ComputeExecutionRecord["request"]["source"];
@@ -63,58 +54,6 @@ const documentSource = (
   range: { startLine: 0, startColumn: 0, endLine: 20, endColumn: 0 },
   ...overrides,
 });
-
-const execution = (
-  id: string,
-  status: NonNullable<ComputeExecutionRecord["result"]>["status"] | null,
-  imageCount = 0,
-  overrides: Partial<ComputeExecutionRecord["request"]> = {},
-): ComputeExecutionRecord => {
-  const executionId = ComputeExecutionId.make(id);
-  return {
-    request: {
-      executionId,
-      sessionId: ComputeSessionId.make("session-1"),
-      generation: INITIAL_COMPUTE_SESSION_GENERATION,
-      code: "plot()",
-      codeHash: `sha256:${id}`,
-      source: documentSource(),
-      submittedAt: `2026-08-21T09:00:0${id.at(-1) ?? "0"}.000Z`,
-      environmentFingerprint: null,
-      ...overrides,
-    },
-    result:
-      status === null
-        ? null
-        : {
-            executionId,
-            status,
-            outcome:
-              status === "succeeded"
-                ? "succeeded"
-                : status === "failed"
-                  ? "failed"
-                  : status === "cancelled"
-                    ? "cancelled"
-                    : null,
-            queuePosition: null,
-            startedAt: "2026-08-21T09:00:00.000Z",
-            finishedAt:
-              status === "queued" ||
-              status === "submitting" ||
-              status === "running" ||
-              status === "interrupting"
-                ? null
-                : "2026-08-21T09:00:01.000Z",
-            diagnostics: [],
-            outputCount: imageCount,
-            imageCount,
-            outputBytes: imageCount * 100,
-            truncated: false,
-            failureReason: status === "failed" ? "Failed" : null,
-          },
-  };
-};
 
 describe("compute result presentation", () => {
   it("shows live output even when the first durable read was empty", () => {
@@ -200,7 +139,7 @@ describe("compute result presentation", () => {
         }),
         { includePath: false },
       ),
-    ).toBe("Selection · lines 9–12 · unsaved");
+    ).toBe("Selection 9–12 · unsaved");
   });
 
   it("adds the project path only when results are outside the file", () => {
@@ -212,69 +151,8 @@ describe("compute result presentation", () => {
         }),
         { includePath: true },
       ),
-    ).toBe("analysis.py · Cell · line 5");
+    ).toBe("analysis.py · Cell 5");
     expect(computeSourceLabel({ _tag: "console" }, { includePath: true })).toBe("Console");
-  });
-
-  it("shows compact source freshness without adding noise to dirty submissions", () => {
-    expect(
-      computeSourceFreshnessLabel(documentSource(), {
-        revision: "sha256:new",
-        pending: false,
-      }),
-    ).toBe("Source changed");
-    expect(
-      computeSourceFreshnessLabel(documentSource(), {
-        revision: "sha256:revision",
-        pending: true,
-      }),
-    ).toBe("Source changed");
-    expect(
-      computeSourceFreshnessLabel(documentSource({ bufferState: "dirty" }), {
-        revision: "sha256:new",
-        pending: true,
-      }),
-    ).toBeNull();
-  });
-
-  it("keeps the newest same-generation figure visible while an update settles or fails", () => {
-    const previous = execution("execution-1", "succeeded", 2);
-    const running = execution("execution-2", "running");
-    const failed = execution("execution-3", "failed");
-
-    expect(selectComputeFigureFallback([running, previous], running, false)).toEqual({
-      execution: previous,
-      reason: "updating",
-    });
-    expect(selectComputeFigureFallback([failed, previous], failed, false)).toEqual({
-      execution: previous,
-      reason: "latest-run-failed",
-    });
-  });
-
-  it("never mixes figures into history or a newer successful no-figure result", () => {
-    const previous = execution("execution-1", "succeeded", 1);
-    const succeeded = execution("execution-2", "succeeded");
-    const running = execution("execution-3", "running");
-    const otherGeneration = execution("execution-0", "succeeded", 1, {
-      generation: ComputeSessionGeneration.make(2),
-    });
-
-    expect(selectComputeFigureFallback([running, previous], previous, false)).toBeNull();
-    expect(selectComputeFigureFallback([succeeded, previous], succeeded, false)).toBeNull();
-    expect(selectComputeFigureFallback([running, previous], running, true)).toBeNull();
-    expect(selectComputeFigureFallback([running, otherGeneration], running, false)).toBeNull();
-  });
-
-  it("never falls back to a same-file figure from another session", () => {
-    const previousSessionFigure = execution("execution-1", "succeeded", 1, {
-      sessionId: ComputeSessionId.make("session-2"),
-    });
-    const running = execution("execution-2", "running");
-
-    expect(
-      selectComputeFigureFallback([running, previousSessionFigure], running, false),
-    ).toBeNull();
   });
 
   it("uses user-facing execution and system labels", () => {

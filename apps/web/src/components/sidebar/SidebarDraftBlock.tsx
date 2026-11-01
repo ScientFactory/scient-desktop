@@ -1,5 +1,8 @@
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+// SCIENT-FORK:START — a quote in a draft reads as its text.
+import { composerCitationsToPlainText } from "@t3tools/shared/composerCitations";
+// SCIENT-FORK:END
 import { SquarePenIcon, XIcon } from "lucide-react";
 import {
   memo,
@@ -32,10 +35,15 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
 }) {
   const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  // SCIENT-FORK:START — a quote in a draft reads as its text.
   const promptPreview =
-    replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
+    replaceComposerContextReferences(
+      composerCitationsToPlainText(composer.prompt),
+      (occurrence) => occurrence.label,
+    )
       .trim()
       .split("\n", 1)[0] ?? "";
+  // SCIENT-FORK:END
   // images mirrors persistedAttachments once rehydration finishes; before
   // that only the persisted list is populated, hence max not sum.
   const attachmentCount =

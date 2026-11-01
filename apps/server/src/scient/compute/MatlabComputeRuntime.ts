@@ -4,7 +4,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { ComputeRuntimeError, REQUIRED_COMPUTE_CAPABILITIES } from "@scientfactory/compute";
+import {
+  ComputeRuntimeError,
+  REQUIRED_COMPUTE_CAPABILITIES,
+  type ComputeLanguageAdapter,
+} from "@scientfactory/compute";
 import { ExecutionRunId } from "@scientfactory/execution";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -14,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Scope from "effect/Scope";
@@ -30,6 +35,7 @@ import type { ComputeRuntimeBinding } from "./ComputeSessionService.ts";
 import { makeComputeBridgeTransport } from "./ComputeBridgeTransport.ts";
 import {
   MATLAB_LANGUAGE_ID,
+  engineHostRequirementIsMissing,
   makeMatlabRuntimeAdapter,
   matlabEngineDirectory,
   readMatlabInstallation,
@@ -44,6 +50,7 @@ import {
 export const MATLAB_BRIDGE_SCRIPT_NAME = "scient_matlab_engine_bridge.py";
 const PROBE_TIMEOUT = Duration.seconds(20);
 const PROBE_DRAIN_GRACE = Duration.seconds(2);
+const CONNECTION_POLL = Duration.millis(500);
 const MAXIMUM_PROBE_BYTES = 256 * 1024;
 
 const HOST_PROBE_SCRIPT = [
@@ -293,6 +300,32 @@ export const makeMatlabEngineInspector = Effect.fn("makeMatlabEngineInspector")(
   });
 });
 
+/** Test and Run add what MATLAB needs when nothing on this computer can reach its Engine. */
+export function connectingOnDemand(
+  adapter: ComputeLanguageAdapter,
+  addConnection: (cause: ComputeRuntimeError) => Effect.Effect<void, ComputeRuntimeError>,
+): ComputeLanguageAdapter {
+  return {
+    ...adapter,
+    verify: Effect.fn("MatlabComputeRuntime.verify")(function* (request) {
+      const verdict = yield* adapter.verify(request);
+      if (verdict.readiness !== "missing-requirement") return verdict;
+      return yield* addConnection(runtimeError(verdict.message ?? "MATLAB is unavailable.")).pipe(
+        Effect.andThen(() => adapter.verify(request)),
+        Effect.orElseSucceed(() => verdict),
+      );
+    }),
+    prepareLaunch: (request) =>
+      adapter
+        .prepareLaunch(request)
+        .pipe(
+          Effect.catchIf(engineHostRequirementIsMissing, (cause) =>
+            addConnection(cause).pipe(Effect.andThen(() => adapter.prepareLaunch(request))),
+          ),
+        ),
+  };
+}
+
 export const matlabRuntimeBinding: Effect.Effect<
   ComputeRuntimeBinding & {
     readonly managedRuntime?: ReturnType<typeof makeMatlabConnectionHelper>["controller"];
@@ -352,6 +385,31 @@ export const matlabRuntimeBinding: Effect.Effect<
     yield* Effect.addFinalizer(() => Effect.sync(() => helper.controller.dispose()));
   const inspect = yield* makeMatlabEngineInspector(helper?.hostFor);
   const runtime = makeMatlabRuntimeAdapter(inspect, environment, platform, bridgePath);
+  /**
+   * Newer releases bundle an Engine any Python can load, so the helper is only for a computer where
+   * none can. The first Run there adds it, the way a first Run adds R's kernel.
+   */
+  const addConnection = Effect.fn("MatlabComputeRuntime.addConnection")(function* (
+    cause: ComputeRuntimeError,
+  ) {
+    if (helper === null) return yield* cause;
+    const setup = Effect.gen(function* () {
+      if ((yield* helper.controller.status()).installed) return false;
+      yield* helper.controller.manage("install");
+      const finished = yield* helper.controller.status().pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced(CONNECTION_POLL),
+          until: (status) => status.operation == null,
+        }),
+      );
+      return finished.installed;
+    });
+    const added = yield* setup.pipe(
+      Effect.mapError((failure) => runtimeError(failure.message, failure)),
+    );
+    if (!added) return yield* cause;
+    runtime.clearProbeCache();
+  });
   let lastHelperIdentity: string | null = null;
   const managedRuntime =
     helper === null
@@ -371,7 +429,7 @@ export const matlabRuntimeBinding: Effect.Effect<
         };
   const transport = makeComputeBridgeTransport(duplexProcesses, { startupTimeoutMs: 180_000 });
   return {
-    adapter: runtime.adapter,
+    adapter: connectingOnDemand(runtime.adapter, addConnection),
     transport,
     ...(managedRuntime === undefined ? {} : { managedRuntime }),
     descriptor: {
