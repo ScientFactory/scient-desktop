@@ -227,7 +227,7 @@ function ShortcutDialog({ shortcut, onClose }: { shortcut: Shortcut | null; onCl
 function HomeSearch({ onSearch }: { onSearch: (query: string) => void }) {
   const [query, setQuery] = useState("");
   return (
-    <div className="flex w-full flex-col items-center gap-6 pt-6">
+    <div className="flex w-full flex-col items-center gap-7 pt-8">
       <p className="flex items-center gap-1.5 text-xl tracking-tight">
         <ScientSymbol className="size-6" />
         <span>
@@ -282,7 +282,7 @@ export function BrowserHome({
   const remove = useBrowserShortcuts((state) => state.remove);
   const [dialog, setDialog] = useState<{ shortcut: Shortcut | null } | null>(null);
   return (
-    <div className="flex flex-col items-center gap-5">
+    <div className="flex flex-col items-center gap-10 pb-6">
       <div className="flex flex-wrap items-center justify-center gap-1">
         {[GMAIL, ...(moodle ? [moodle] : [])].map((site) => (
           <Button key={site.name} size="sm" variant="ghost" onClick={() => onOpenUrl(site.url)}>
@@ -293,7 +293,7 @@ export function BrowserHome({
         <GoogleApps threadRef={threadRef} onOpenUrl={onOpenUrl} />
       </div>
       <HomeSearch onSearch={onSearch} />
-      <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-1">
+      <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-x-1 gap-y-2">
         {visibleShortcuts({ added, names, hidden, visits }, moodle ? [moodle] : []).map(
           (shortcut) => (
             <ShortcutCircle
