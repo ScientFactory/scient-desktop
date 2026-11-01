@@ -5,6 +5,7 @@ import {
   useThreadAccountHandoffs,
 } from "~/scient/accounts/AccountApprovals";
 // SCIENT-FORK:END
+import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
@@ -4463,6 +4464,11 @@ function ChatViewContent(props: ChatViewProps) {
                         />
                       </div>
                     ) : null}
+                    {/* SCIENT-FORK:END */}
+                    {/* SCIENT-FORK:START — keep child approvals in the composer's column. */}
+                    <div className="mx-auto w-full max-w-(--chat-content-max-width)">
+                      <ChildThreadApprovals threadRef={activeThreadRef} />
+                    </div>
                     {/* SCIENT-FORK:END */}
                     <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                       <ComposerSurface.Host>

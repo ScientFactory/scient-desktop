@@ -46,6 +46,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`CREATE TABLE retained_data (value TEXT)`;
+          yield* sql`INSERT INTO retained_data VALUES ('keep')`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;

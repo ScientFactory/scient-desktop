@@ -43,7 +43,9 @@ import {
   type CursorAgentSdkSendInput,
 } from "./CursorAgentSdk.ts";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
-import { ConfigurationError } from "./sdk.ts";
+import { loadCursorSdk } from "./sdk.ts";
+
+const { ConfigurationError } = loadCursorSdk();
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 

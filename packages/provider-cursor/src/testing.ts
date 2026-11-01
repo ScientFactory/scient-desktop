@@ -6,4 +6,4 @@ export {
   makeCursorAdapterV2,
 } from "./server/adapter.ts";
 export { makeCursorAuth, type CursorAuth, type CursorAuthOptions } from "./server/auth.ts";
-export { InMemoryCredentialStore } from "./server/sdk.ts";
+export { loadCursorSdk } from "./server/sdk.ts";

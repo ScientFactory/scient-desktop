@@ -15,8 +15,6 @@ import * as CodexInstallation from "../CodexInstallation.ts";
 import { CodexAppServerClientFactory } from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ClaudeAgentSdkQueryRunner } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { CursorAgentSdkRunner } from "@t3tools/provider-cursor/server/CursorAgentSdk";
-import { Agent } from "@cursor/sdk";
-import { SqliteLocalAgentStore } from "@cursor/sdk/sqlite";
 import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
 import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
@@ -59,19 +57,12 @@ const providerDependenciesLayer = baseLayer.pipe(
   ),
   Layer.provideMerge(
     Layer.succeed(CursorSdk.CursorSdk, {
-      Agent: new Proxy(Agent, {
-        get() {
-          throw new Error("Continuation identity must not call the real SDK");
-        },
-      }),
-      createAgentPlatform: () => {
-        throw new Error("Continuation identity must not create a real SDK platform");
+      load: () => {
+        throw new Error("Continuation identity must not load the real SDK");
       },
-      SqliteLocalAgentStore: new Proxy(SqliteLocalAgentStore, {
-        get() {
-          throw new Error("Continuation identity must not open a real SDK store");
-        },
-      }),
+      loadSqlite: () => {
+        throw new Error("Continuation identity must not open a real SDK store");
+      },
     }),
   ),
   Layer.provideMerge(OmpExecutableGate.layer),
