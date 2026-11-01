@@ -23,6 +23,7 @@ export const BrowserSuggestionInput = AutocompletePrimitive.Input;
  */
 export function BrowserSuggestions({
   threadRef,
+  profileId,
   text,
   active,
   anchor,
@@ -31,6 +32,7 @@ export function BrowserSuggestions({
   children,
 }: {
   threadRef: ScopedThreadRef;
+  profileId: string;
   text: string;
   active: boolean;
   anchor: RefObject<HTMLElement | null>;
@@ -40,6 +42,7 @@ export function BrowserSuggestions({
 }) {
   const items = useBrowserSuggestions({
     environmentId: threadRef.environmentId,
+    profileId,
     text,
     active,
   });

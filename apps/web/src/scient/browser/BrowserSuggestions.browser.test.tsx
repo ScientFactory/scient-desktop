@@ -39,12 +39,21 @@ const success = (value: unknown) => ({ _tag: "Success" as const, value });
 const failure = { _tag: "Failure" as const, cause: new Error("offline") };
 const nature = { url: "https://nature.com/", title: "Nature", lastVisitedAt: 1 };
 
-function Box({ active, onPick }: { active: boolean; onPick: (value: string) => void }) {
+function Box({
+  active,
+  onPick,
+  profileId = "work",
+}: {
+  active: boolean;
+  onPick: (value: string) => void;
+  profileId?: string;
+}) {
   const [text, setText] = useState("");
   const anchor = useRef<HTMLDivElement>(null);
   return (
     <BrowserSuggestions
       threadRef={threadRef}
+      profileId={profileId}
       text={text}
       active={active}
       anchor={anchor}
@@ -80,6 +89,30 @@ describe("BrowserSuggestions", () => {
       environmentId: threadRef.environmentId,
       input: { query: "nat", engine: "google" },
     });
+  });
+
+  it("looks in the profile it's given, and drops another profile's pages at once", async () => {
+    reset();
+    await using screen = await render(<Box active onPick={vi.fn()} />);
+    await userEvent.type(box(), "nat");
+    await expect.element(page.getByRole("option", { name: /Nature nature\.com/ })).toBeVisible();
+    expect(mocks.suggestPages).toHaveBeenLastCalledWith({
+      environmentId: threadRef.environmentId,
+      input: { profileId: "work", query: "nat" },
+    });
+
+    let answer: (result: ReturnType<typeof success>) => void = () => {};
+    mocks.suggestPages.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    await screen.rerender(<Box active onPick={vi.fn()} profileId="home" />);
+    await expect
+      .element(page.getByRole("option", { name: /Nature nature\.com/ }))
+      .not.toBeInTheDocument();
+    expect(mocks.suggestPages).toHaveBeenLastCalledWith({
+      environmentId: threadRef.environmentId,
+      input: { profileId: "home", query: "nat" },
+    });
+    answer(success({ pages: [{ ...nature, title: "Home Nature" }] }));
+    await expect.element(page.getByRole("option", { name: /Home Nature/ })).toBeVisible();
   });
 
   it("asks once typing pauses, not on every key", async () => {

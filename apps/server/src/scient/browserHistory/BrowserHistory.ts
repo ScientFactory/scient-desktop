@@ -1,7 +1,7 @@
 /**
- * The pages people visit in Scient's browser, on this machine for 90 days. The preview manager
- * already sees every tab's navigation, so recording follows its events and can never slow a page
- * or fail one. Incognito tabs and the tabs agents open stay out.
+ * The pages people visit in Scient's browser, on this machine for 90 days, kept per browser
+ * profile. The preview manager already sees every tab's navigation, so recording follows its
+ * events and can never slow a page or fail one. Incognito tabs and the tabs agents open stay out.
  *
  * @module BrowserHistory
  */
@@ -11,7 +11,10 @@ import {
   type BrowserHistoryListInput,
   type BrowserHistoryListResult,
   type BrowserHistoryPage,
+  type BrowserHistoryRemoveInput,
+  type BrowserHistorySuggestInput,
   type BrowserHistorySuggestResult,
+  type BrowserProfileId,
   INCOGNITO_BROWSER_PROFILE_ID,
   type PreviewEvent,
   PREVIEW_URL_MAX_LENGTH,
@@ -62,15 +65,16 @@ export class BrowserHistory extends Context.Service<
     ) => Effect.Effect<BrowserHistoryListResult, BrowserHistoryError>;
     /** The few pages most likely meant by what's being typed. */
     readonly suggest: (
-      query: string,
+      input: BrowserHistorySuggestInput,
     ) => Effect.Effect<BrowserHistorySuggestResult, BrowserHistoryError>;
-    readonly remove: (urls: ReadonlyArray<string>) => Effect.Effect<void, BrowserHistoryError>;
-    readonly clear: Effect.Effect<void, BrowserHistoryError>;
+    readonly remove: (input: BrowserHistoryRemoveInput) => Effect.Effect<void, BrowserHistoryError>;
+    readonly clear: (profileId: BrowserProfileId) => Effect.Effect<void, BrowserHistoryError>;
   }
 >()("t3/scient/browserHistory/BrowserHistory") {}
 
 interface VisitedPage {
   readonly tabId: string;
+  readonly profileId: BrowserProfileId;
   readonly url: string;
   readonly title: string;
 }
@@ -85,7 +89,12 @@ function visitedPage(event: PreviewEvent): VisitedPage | null {
   if (!/^https?:/i.test(navStatus.url) || navStatus.url.length >= PREVIEW_URL_MAX_LENGTH) {
     return null;
   }
-  return { tabId, url: navStatus.url, title: navStatus.title.slice(0, TITLE_MAX_LENGTH) };
+  return {
+    tabId,
+    profileId,
+    url: navStatus.url,
+    title: navStatus.title.slice(0, TITLE_MAX_LENGTH),
+  };
 }
 
 export const layer = Layer.effect(
@@ -102,9 +111,9 @@ export const layer = Layer.effect(
     const recordVisit = Effect.fn("BrowserHistory.recordVisit")(function* (page: VisitedPage) {
       const now = yield* Clock.currentTimeMillis;
       yield* sql`
-        INSERT INTO scient_browser_history (url, title, last_visited_at, visit_count)
-        VALUES (${page.url}, ${page.title}, ${now}, 1)
-        ON CONFLICT (url) DO UPDATE SET
+        INSERT INTO scient_browser_history (profile_id, url, title, last_visited_at, visit_count)
+        VALUES (${page.profileId}, ${page.url}, ${page.title}, ${now}, 1)
+        ON CONFLICT (profile_id, url) DO UPDATE SET
           title = CASE WHEN excluded.title = '' THEN title ELSE excluded.title END,
           last_visited_at = excluded.last_visited_at,
           visit_count = visit_count + 1
@@ -123,10 +132,13 @@ export const layer = Layer.effect(
       if (!page) return;
       const previous = lastPageByTab.get(page.tabId);
       lastPageByTab.set(page.tabId, page);
-      if (previous?.url !== page.url) {
+      if (previous?.url !== page.url || previous.profileId !== page.profileId) {
         yield* recordVisit(page);
       } else if (page.title !== "" && page.title !== previous.title) {
-        yield* sql`UPDATE scient_browser_history SET title = ${page.title} WHERE url = ${page.url}`;
+        yield* sql`
+          UPDATE scient_browser_history SET title = ${page.title}
+          WHERE profile_id = ${page.profileId} AND url = ${page.url}
+        `;
       }
     });
 
@@ -144,26 +156,22 @@ export const layer = Layer.effect(
       Effect.forkScoped,
     );
 
-    const matching = (query: string) =>
-      query
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .slice(0, MAX_SEARCH_TERMS)
-        .map((term) => {
-          const like = likeTerm(term);
-          return sql`(url LIKE ${like} ESCAPE '\\' OR title LIKE ${like} ESCAPE '\\')`;
-        });
+    const searchTerms = (query: string) => query.trim().split(/\s+/).filter(Boolean);
+    const matching = (terms: ReadonlyArray<string>) =>
+      terms.slice(0, MAX_SEARCH_TERMS).map((term) => {
+        const like = likeTerm(term);
+        return sql`(url LIKE ${like} ESCAPE '\\' OR title LIKE ${like} ESCAPE '\\')`;
+      });
 
     const list = Effect.fn("BrowserHistory.list")(
-      function* ({ query, before }: BrowserHistoryListInput) {
-        const conditions = matching(query ?? "");
+      function* ({ profileId, query, before }: BrowserHistoryListInput) {
+        const conditions = [sql`profile_id = ${profileId}`, ...matching(searchTerms(query ?? ""))];
         if (before) {
           conditions.push(sql`(last_visited_at, url) < (${before.lastVisitedAt}, ${before.url})`);
         }
         const rows = yield* sql<PageRow>`
           SELECT url, title, last_visited_at FROM scient_browser_history
-          ${conditions.length > 0 ? sql`WHERE ${sql.and(conditions)}` : sql``}
+          WHERE ${sql.and(conditions)}
           ORDER BY last_visited_at DESC, url DESC
           LIMIT ${BROWSER_HISTORY_PAGE_SIZE + 1}
         `;
@@ -177,9 +185,10 @@ export const layer = Layer.effect(
     );
 
     const suggest = Effect.fn("BrowserHistory.suggest")(
-      function* (query: string) {
-        const conditions = matching(query);
-        if (conditions.length === 0) return { pages: [] };
+      function* ({ profileId, query }: BrowserHistorySuggestInput) {
+        const terms = searchTerms(query);
+        if (terms.length === 0) return { pages: [] };
+        const conditions = [sql`profile_id = ${profileId}`, ...matching(terms)];
         const start = escapeLike(query.trim());
         const rows = yield* sql<PageRow>`
           SELECT url, title, last_visited_at FROM scient_browser_history
@@ -197,18 +206,22 @@ export const layer = Layer.effect(
       Effect.catchTags({ SqlError: failed("Could not read your history.") }),
     );
 
-    const remove: BrowserHistory["Service"]["remove"] = (urls) =>
+    const remove: BrowserHistory["Service"]["remove"] = ({ profileId, urls }) =>
       urls.length === 0
         ? Effect.void
-        : sql`DELETE FROM scient_browser_history WHERE ${sql.in("url", urls)}`.pipe(
+        : sql`
+            DELETE FROM scient_browser_history
+            WHERE profile_id = ${profileId} AND ${sql.in("url", urls)}
+          `.pipe(
             Effect.asVoid,
             Effect.catchTags({ SqlError: failed("Could not remove this from your history.") }),
           );
 
-    const clear = sql`DELETE FROM scient_browser_history`.pipe(
-      Effect.asVoid,
-      Effect.catchTags({ SqlError: failed("Could not clear your history.") }),
-    );
+    const clear: BrowserHistory["Service"]["clear"] = (profileId) =>
+      sql`DELETE FROM scient_browser_history WHERE profile_id = ${profileId}`.pipe(
+        Effect.asVoid,
+        Effect.catchTags({ SqlError: failed("Could not clear your history.") }),
+      );
 
     return BrowserHistory.of({ record, list, suggest, remove, clear });
   }),

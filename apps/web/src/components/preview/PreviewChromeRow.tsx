@@ -36,6 +36,7 @@ interface Props {
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Browser: suggestions as you type.
   threadRef: ScopedThreadRef;
+  profileId: string;
   incognito: boolean;
   // SCIENT-FORK:END
   url: string;
@@ -74,6 +75,7 @@ export function PreviewChromeRow({
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Browser: suggestions as you type.
   threadRef,
+  profileId,
   incognito,
   // SCIENT-FORK:END
   loading,
@@ -184,6 +186,7 @@ export function PreviewChromeRow({
         {/* SCIENT-FORK:START — Scient Browser: suggestions as you type. */}
         <BrowserSuggestions
           threadRef={threadRef}
+          profileId={profileId}
           text={shownAddress}
           active={inputFocused && edited && !incognito}
           anchor={addressBar}

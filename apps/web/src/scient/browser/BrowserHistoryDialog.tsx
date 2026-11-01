@@ -33,13 +33,15 @@ import { browserHistoryState } from "./browserHistoryState";
 const SEARCH_DELAY_MS = 150;
 const QUIET = { reportFailure: false, reportDefect: false };
 
-/** Every page visited in the browser, newest first. Opening one closes this. */
+/** Every page visited in this profile, newest first. Opening one closes this. */
 export function BrowserHistoryDialog({
   threadRef,
+  profileId,
   onOpenUrl,
   onClose,
 }: {
   threadRef: ScopedThreadRef;
+  profileId: string;
   onOpenUrl: (url: string) => void;
   onClose: () => void;
 }) {
@@ -61,7 +63,7 @@ export function BrowserHistoryDialog({
     const request = ++latestRequest.current;
     const result = await list({
       environmentId,
-      input: { ...(text ? { query: text } : {}), ...(before ? { before } : {}) },
+      input: { profileId, ...(text ? { query: text } : {}), ...(before ? { before } : {}) },
     });
     if (request !== latestRequest.current) return;
     setFailed(result._tag === "Failure");
@@ -81,7 +83,7 @@ export function BrowserHistoryDialog({
   const removePage = async (url: string) => {
     const before = pages;
     setPages((current) => current?.filter((page) => page.url !== url) ?? null);
-    const result = await remove({ environmentId, input: { urls: [url] } });
+    const result = await remove({ environmentId, input: { profileId, urls: [url] } });
     if (result._tag === "Success") return;
     setPages(before);
     toastManager.add({ type: "error", title: "Could not remove this from your history" });
@@ -89,7 +91,7 @@ export function BrowserHistoryDialog({
 
   const clearAll = async () => {
     setConfirmingClear(false);
-    const result = await clear({ environmentId, input: {} });
+    const result = await clear({ environmentId, input: { profileId } });
     if (result._tag === "Success") {
       setPages([]);
       setNext(undefined);
@@ -190,8 +192,8 @@ export function BrowserHistoryDialog({
           <AlertDialogHeader>
             <AlertDialogTitle>Clear your history?</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes every page from your browser history. Your Recently used list, cookies
-              and sign-ins stay as they are.
+              This removes every page from this profile&apos;s history. Your Recently used list,
+              cookies and sign-ins stay as they are.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

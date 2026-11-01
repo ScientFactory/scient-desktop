@@ -40,6 +40,7 @@ function Row({
       </button>
       <PreviewChromeRow
         threadRef={threadRef}
+        profileId="default"
         incognito={false}
         url={url}
         loading={false}

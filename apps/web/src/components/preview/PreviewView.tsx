@@ -931,6 +931,7 @@ export function PreviewView({
       <PreviewChromeRow
         // SCIENT-FORK:START — Scient Browser: suggestions as you type.
         threadRef={threadRef}
+        profileId={activeProfileId}
         incognito={incognito}
         // SCIENT-FORK:END
         // SCIENT-FORK:START — Scient Accounts: native credentials use the desktop runtime tab id.
@@ -1179,6 +1180,7 @@ export function PreviewView({
           threadRef={threadRef}
           onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
           onClose={() => setHistoryOpen(false)}
+          profileId={activeProfileId}
         />
       ) : null}
       {/* SCIENT-FORK:END */}

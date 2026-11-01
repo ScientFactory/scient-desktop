@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
+import { BrowserProfileId } from "../browserProfile.ts";
 import { PREVIEW_URL_MAX_LENGTH } from "../preview.ts";
 import { BrowserSearchEngine } from "../settings.ts";
 
@@ -27,6 +28,7 @@ export const BrowserHistoryCursor = Schema.Struct({
 export type BrowserHistoryCursor = typeof BrowserHistoryCursor.Type;
 
 export const BrowserHistoryListInput = Schema.Struct({
+  profileId: BrowserProfileId,
   query: Schema.optional(HistoryQuery),
   before: Schema.optional(BrowserHistoryCursor),
 });
@@ -39,13 +41,20 @@ export const BrowserHistoryListResult = Schema.Struct({
 export type BrowserHistoryListResult = typeof BrowserHistoryListResult.Type;
 
 export const BrowserHistoryRemoveInput = Schema.Struct({
+  profileId: BrowserProfileId,
   urls: Schema.Array(HistoryUrl).check(Schema.isMaxLength(BROWSER_HISTORY_REMOVE_MAX_URLS)),
 });
 export type BrowserHistoryRemoveInput = typeof BrowserHistoryRemoveInput.Type;
 
+export const BrowserHistoryClearInput = Schema.Struct({ profileId: BrowserProfileId });
+export type BrowserHistoryClearInput = typeof BrowserHistoryClearInput.Type;
+
 /** What a person is typing, while it's still worth suggesting for. */
-export const BrowserSuggestionsInput = Schema.Struct({ query: HistoryQuery });
-export type BrowserSuggestionsInput = typeof BrowserSuggestionsInput.Type;
+export const BrowserHistorySuggestInput = Schema.Struct({
+  profileId: BrowserProfileId,
+  query: HistoryQuery,
+});
+export type BrowserHistorySuggestInput = typeof BrowserHistorySuggestInput.Type;
 
 export const BrowserHistorySuggestResult = Schema.Struct({
   pages: Schema.Array(BrowserHistoryPage),
@@ -53,7 +62,7 @@ export const BrowserHistorySuggestResult = Schema.Struct({
 export type BrowserHistorySuggestResult = typeof BrowserHistorySuggestResult.Type;
 
 export const BrowserSearchSuggestInput = Schema.Struct({
-  ...BrowserSuggestionsInput.fields,
+  query: HistoryQuery,
   engine: BrowserSearchEngine,
 });
 export type BrowserSearchSuggestInput = typeof BrowserSearchSuggestInput.Type;
@@ -87,11 +96,11 @@ export const WsBrowserHistoryRemoveRpc = Rpc.make(
 );
 export const WsBrowserHistoryClearRpc = Rpc.make(
   SCIENT_BROWSER_HISTORY_WS_METHODS.browserHistoryClear,
-  { payload: Schema.Struct({}), error },
+  { payload: BrowserHistoryClearInput, error },
 );
 export const WsBrowserHistorySuggestRpc = Rpc.make(
   SCIENT_BROWSER_HISTORY_WS_METHODS.browserHistorySuggest,
-  { payload: BrowserSuggestionsInput, success: BrowserHistorySuggestResult, error },
+  { payload: BrowserHistorySuggestInput, success: BrowserHistorySuggestResult, error },
 );
 export const WsBrowserSearchSuggestRpc = Rpc.make(
   SCIENT_BROWSER_HISTORY_WS_METHODS.browserSearchSuggest,

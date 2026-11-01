@@ -46,7 +46,9 @@ const setup = Effect.gen(function* () {
   const history = context.pipe(Context.get(BrowserHistory));
   const publish = (...events: ReadonlyArray<PreviewEvent>) =>
     Effect.forEach(events, history.record, { discard: true });
-  const urls = history.list({}).pipe(Effect.map(({ pages }) => pages.map((page) => page.url)));
+  const urls = history
+    .list({ profileId: "default" })
+    .pipe(Effect.map(({ pages }) => pages.map((page) => page.url)));
   return { history, pubsub, publish, urls };
 });
 
@@ -96,7 +98,7 @@ describe("BrowserHistory", () => {
           navigated(success("https://site.test/", "The title")),
           navigated(success("https://site.test/", "The title")),
         );
-        expect((yield* history.list({})).pages[0]?.title).toBe("The title");
+        expect((yield* history.list({ profileId: "default" })).pages[0]?.title).toBe("The title");
         const rows = yield* sql<{ readonly visit_count: number }>`
           SELECT visit_count FROM scient_browser_history WHERE url = 'https://site.test/'
         `;
@@ -149,7 +151,7 @@ describe("BrowserHistory", () => {
           navigated(success("https://other.test/")),
           navigated(success("https://site.test/", "")),
         );
-        const { pages } = yield* history.list({ query: "site.test" });
+        const { pages } = yield* history.list({ profileId: "default", query: "site.test" });
         expect(pages[0]?.title).toBe("Known");
       }),
     ),
@@ -177,7 +179,9 @@ describe("BrowserHistory", () => {
           navigated(success("https://example.test/100%25_done", "Progress")),
         );
         const found = (query: string) =>
-          history.list({ query }).pipe(Effect.map(({ pages }) => pages.map((page) => page.url)));
+          history
+            .list({ profileId: "default", query })
+            .pipe(Effect.map(({ pages }) => pages.map((page) => page.url)));
 
         expect(yield* found("nature gene")).toEqual(["https://nature.com/articles/1"]);
         expect((yield* found("GENE")).length).toBe(2);
@@ -201,14 +205,14 @@ describe("BrowserHistory", () => {
           navigated(success("https://third.test/nature")),
           navigated(success("https://fourth.test/nature")),
         );
-        const { pages } = yield* history.suggest("nature");
+        const { pages } = yield* history.suggest({ profileId: "default", query: "nature" });
 
         expect(pages).toHaveLength(3);
         expect(pages.slice(0, 2).map((page) => page.url)).toEqual([
           "https://www.nature.com/",
           "https://example.test/nature",
         ]);
-        expect((yield* history.suggest("   ")).pages).toEqual([]);
+        expect((yield* history.suggest({ profileId: "default", query: "   " })).pages).toEqual([]);
       }),
     ),
   );
@@ -222,9 +226,9 @@ describe("BrowserHistory", () => {
             navigated(success(`https://site.test/${index}`)),
           ),
         );
-        const first = yield* history.list({});
+        const first = yield* history.list({ profileId: "default" });
         expect(first.pages).toHaveLength(100);
-        const second = yield* history.list({ before: first.next! });
+        const second = yield* history.list({ profileId: "default", before: first.next! });
         expect(second.pages).toHaveLength(50);
         expect(second.next).toBeUndefined();
         const all = [...first.pages, ...second.pages].map((page) => page.url);
@@ -241,10 +245,65 @@ describe("BrowserHistory", () => {
           navigated(success("https://one.test/")),
           navigated(success("https://two.test/")),
         );
-        yield* history.remove(["https://one.test/"]);
+        yield* history.remove({ profileId: "default", urls: ["https://one.test/"] });
         expect(yield* urls).toEqual(["https://two.test/"]);
-        yield* history.clear;
+        yield* history.clear("default");
         expect(yield* urls).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("keeps each profile's pages to itself", () =>
+    run(
+      Effect.gen(function* () {
+        const { history, publish, urls } = yield* setup;
+        const work = { profileId: "work" };
+        yield* publish(
+          navigated(success("https://shared.test/", "Shared")),
+          navigated(success("https://home.test/")),
+          navigated(success("https://shared.test/", "Shared at work"), work, "tab-2"),
+          navigated(success("https://work.test/"), work, "tab-2"),
+        );
+        const workUrls = history
+          .list({ profileId: "work" })
+          .pipe(Effect.map(({ pages }) => pages.map((page) => page.url)));
+        const suggested = (profileId: string) =>
+          history
+            .suggest({ profileId, query: "test" })
+            .pipe(Effect.map(({ pages }) => pages.map((page) => page.url).toSorted()));
+
+        expect((yield* urls).toSorted()).toEqual(["https://home.test/", "https://shared.test/"]);
+        expect((yield* workUrls).toSorted()).toEqual([
+          "https://shared.test/",
+          "https://work.test/",
+        ]);
+        expect(yield* suggested("default")).toEqual(["https://home.test/", "https://shared.test/"]);
+        expect(yield* suggested("work")).toEqual(["https://shared.test/", "https://work.test/"]);
+        const titles = (yield* history.list({ profileId: "default", query: "shared" })).pages;
+        expect(titles.map((page) => page.title)).toEqual(["Shared"]);
+
+        yield* history.remove({ profileId: "work", urls: ["https://shared.test/"] });
+        expect((yield* urls).toSorted()).toEqual(["https://home.test/", "https://shared.test/"]);
+        expect(yield* workUrls).toEqual(["https://work.test/"]);
+
+        yield* history.clear("work");
+        expect(yield* workUrls).toEqual([]);
+        expect(yield* urls).toHaveLength(2);
+      }),
+    ),
+  );
+
+  it.effect("records a page again when its tab moves to another profile", () =>
+    run(
+      Effect.gen(function* () {
+        const { history, publish, urls } = yield* setup;
+        yield* publish(
+          navigated(success("https://one.test/")),
+          navigated(success("https://one.test/"), { profileId: "work" }),
+        );
+        expect(yield* urls).toEqual(["https://one.test/"]);
+        const { pages } = yield* history.list({ profileId: "work" });
+        expect(pages.map((page) => page.url)).toEqual(["https://one.test/"]);
       }),
     ),
   );
@@ -254,7 +313,7 @@ describe("BrowserHistory", () => {
       Effect.gen(function* () {
         const { history, publish, urls } = yield* setup;
         yield* publish(navigated(success("https://one.test/")));
-        yield* history.remove(["https://one.test/"]);
+        yield* history.remove({ profileId: "default", urls: ["https://one.test/"] });
         yield* publish(navigated(success("https://one.test/", "Newer title")));
         expect(yield* urls).toEqual([]);
       }),

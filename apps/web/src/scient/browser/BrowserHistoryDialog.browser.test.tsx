@@ -48,7 +48,14 @@ function open() {
   return {
     onOpenUrl,
     onClose,
-    view: <BrowserHistoryDialog threadRef={threadRef} onOpenUrl={onOpenUrl} onClose={onClose} />,
+    view: (
+      <BrowserHistoryDialog
+        threadRef={threadRef}
+        profileId="work"
+        onOpenUrl={onOpenUrl}
+        onClose={onClose}
+      />
+    ),
   };
 }
 
@@ -74,7 +81,7 @@ describe("BrowserHistoryDialog", () => {
     await expect.element(screenPage.getByText("nature")).not.toBeInTheDocument();
     expect(mocks.list).toHaveBeenLastCalledWith({
       environmentId: threadRef.environmentId,
-      input: { query: "sci" },
+      input: { profileId: "work", query: "sci" },
     });
   });
 
@@ -106,7 +113,7 @@ describe("BrowserHistoryDialog", () => {
     await expect.element(screenPage.getByText("nature")).toBeVisible();
     expect(mocks.list).toHaveBeenLastCalledWith({
       environmentId: threadRef.environmentId,
-      input: { before: next },
+      input: { profileId: "work", before: next },
     });
     await expect
       .element(screenPage.getByRole("button", { name: "Show more" }))
@@ -129,7 +136,7 @@ describe("BrowserHistoryDialog", () => {
     await expect.element(screenPage.getByText("nature", { exact: true })).not.toBeInTheDocument();
     expect(mocks.remove).toHaveBeenLastCalledWith({
       environmentId: threadRef.environmentId,
-      input: { urls: ["https://nature.test/"] },
+      input: { profileId: "work", urls: ["https://nature.test/"] },
     });
   });
 

@@ -240,10 +240,12 @@ function HomeSearch({
     <div className="flex w-full flex-col items-center gap-7 pt-8">
       <p className="flex items-center gap-1.5 text-xl tracking-tight">
         <ScientSymbol className="size-6" />
+        profileId,
         <span>
           <span className="font-semibold">Scient</span>{" "}
           <span className="text-muted-foreground">Browser</span>
         </span>
+        profileId: string;
       </p>
       <form
         ref={anchor}
@@ -266,6 +268,7 @@ function HomeSearch({
             <BrowserSuggestionInput
               render={
                 <InputGroupInput
+                  profileId={profileId}
                   type="search"
                   aria-label="Search or enter an address"
                   placeholder="Search or enter an address"
@@ -319,7 +322,12 @@ export function BrowserHome({
         ))}
         <GoogleApps threadRef={threadRef} onOpenUrl={onOpenUrl} />
       </div>
-      <HomeSearch threadRef={threadRef} incognito={incognito} onSearch={onSearch} />
+      <HomeSearch
+        threadRef={threadRef}
+        profileId={profileId}
+        incognito={incognito}
+        onSearch={onSearch}
+      />
       <div className="flex max-w-[calc(5rem*4+0.25rem*3)] flex-wrap justify-center gap-x-1 gap-y-2">
         {visibleShortcuts({ added, names, hidden, visits }, moodle ? [moodle] : []).map(
           (shortcut) => (
