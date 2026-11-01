@@ -1067,6 +1067,36 @@ describe("plain creation beside native replacement", () => {
   );
 });
 
+describe("an Overleaf step", () => {
+  it.live("stays inside the kept copies' limit, changing nothing", () =>
+    fileMutationFixture(
+      async (h) => {
+        const target = NodePath.join(h.cwd, "main.tex");
+        const contents = "x".repeat(10_000);
+        await NodeFSP.writeFile(target, contents);
+        const retentionDirectory = NodePath.join(h.root, "vault");
+        await NodeFSP.mkdir(retentionDirectory, { mode: 0o700 });
+        await expect(
+          h.run(
+            h.methods.replaceFileRetained({
+              cwd: h.cwd,
+              relativePath: "main.tex",
+              retentionDirectory,
+              id: "step-0",
+              expectedRevision: revision(contents),
+              bytes: Buffer.from("new"),
+            }),
+          ),
+        ).rejects.toMatchObject({ _tag: "WorkspaceFileMutationUnavailableError" });
+        expect(await NodeFSP.readFile(target, "utf8")).toBe(contents);
+      },
+      {},
+      1,
+      async (helper) => helper,
+    ),
+  );
+});
+
 describe("a save after an older build left a file stuck", () => {
   it.live("goes ahead, and nothing asks about the stuck publication again", () => {
     let target = "",

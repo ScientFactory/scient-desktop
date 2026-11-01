@@ -383,7 +383,7 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     {
       name: "a file replacing a folder",
       create: true,
-      occurrence: 4,
+      occurrence: 3,
       captured: { "notes/a.tex": "base", "notes/b.tex": "B", "guard.tex": "guard" },
       target: { notes: "remote", "guard.tex": "guard" },
     },
@@ -411,16 +411,6 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       await h.restart();
       await editorReads(h);
       const result = await h.apply("crash");
-      if (
-        shape.point === "called" &&
-        "create" in shape &&
-        HostProcess.Platform.defaultValue() !== "linux" &&
-        HostProcess.Platform.defaultValue() !== "win32"
-      ) {
-        expect(result.outcome).toBe("attention");
-        expect(result.interrupted).toHaveLength(1);
-        return;
-      }
       if (!shape.changed) {
         expect(result).toMatchObject({ outcome: "complete", matchesTarget: true });
         for (const [name, text] of Object.entries(shape.target))
@@ -500,11 +490,13 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       }),
   );
 
-  // Between hooks, while a step's copy is being staged: nothing was published, so the
-  // partial copy is discarded and the step is tried again.
-  it.live.each([0, 1])("finishes a unit after a crash while staging step %s", (step) =>
+  // Nothing was published, and the file itself says so: the step simply runs.
+  it.live.each([0, 1])("finishes a unit after a crash before step %s's record", (step) =>
     fixture(async (h) => {
-      await crashAt(h, "done", both, 99, { operation: "open", suffix: `/step-${step}/slot` });
+      await crashAt(h, "done", both, 99, {
+        operation: "rename",
+        suffix: `/step-${step}/record.json`,
+      });
       await h.restart();
       expect(await h.apply("crash")).toMatchObject({
         outcome: "complete",
@@ -513,33 +505,6 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
       });
       expect(await read(h.cwd, "a.tex")).toBe("remote A");
       expect(await read(h.cwd, "b.tex")).toBe("remote B");
-    }),
-  );
-
-  // Between the file layer's intent index and a step's first journal, recovery cannot
-  // prove what happened (the file's folders may already have been made), so the file
-  // stays for explicit review, as the native layer decides. Nothing is lost.
-  it.live.each([0, 1])("holds a file for review after a crash before step %s's journal", (step) =>
-    fixture(async (h) => {
-      await crashAt(h, "done", both, 99, {
-        operation: "rename",
-        suffix: `/step-${step}/record.json`,
-      });
-      await h.restart();
-      const refused = await h.apply("crash").then(
-        () => null,
-        (error: unknown) => error,
-      );
-      expect(refused).toMatchObject({
-        _tag: "WorkspaceApplyError",
-        cause: {
-          _tag: "WorkspaceFileRecoveryRequiredError",
-          relativePath: step === 0 ? "a.tex" : "b.tex",
-          publicationOutcome: "retained-attention",
-        },
-      });
-      expect(await read(h.cwd, "a.tex")).toBe(step === 0 ? "base A" : "remote A");
-      expect(await read(h.cwd, "b.tex")).toBe("base B");
     }),
   );
 
@@ -573,14 +538,10 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
         const result = await h.apply("crash");
         expect(await read(h.cwd, "guard.tex")).toBe("later");
         expect(await read(h.cwd, "notes")).toBeNull();
-        if (point === "checked") {
-          // Nothing was removed: the folder stays and the group is not reported.
+        // An emptied folder is no one's file, so the group is not reported either way.
+        expect(result.interrupted).toEqual([]);
+        if (point === "checked")
           expect((await NodeFSP.lstat(NodePath.join(h.cwd, "notes"))).isDirectory()).toBe(true);
-          expect(result.interrupted).toEqual([]);
-        } else {
-          // The folder was already removed: the group is reported.
-          expect(result.interrupted).toHaveLength(1);
-        }
       }),
   );
 
@@ -590,40 +551,33 @@ describe.skipIf(!canPublish)("WorkspaceApplier after real process death", () => 
     captured: { "guard.tex": "guard" },
     target: { "a.tex": "new", "guard.tex": "guard" },
   };
-  it.live("classifies an interrupted create from its platform ownership evidence", () =>
+  it.live("adds the file after a crash before it was published", () =>
     fixture(async (h) => {
       await crashAt(h, "checked", added);
       await put(h.cwd, { "other.tex": "other" });
       await h.restart();
-      const result = await h.apply("crash");
-      if (HostProcess.Platform.defaultValue() === "linux") {
-        expect(result).toMatchObject({ outcome: "complete", matchesTarget: true });
-        expect(await read(h.cwd, "a.tex")).toBe("new");
-      } else {
-        expect(result.interrupted).toHaveLength(1);
-        expect(await read(h.cwd, "a.tex")).toBeNull();
-      }
+      expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
+      expect(await read(h.cwd, "a.tex")).toBe("new");
     }),
   );
-  it.live("does not add a file again once removed after a crash just after adding it", () =>
+  // A step goes by the file alone, so this rare case can't be told from a crash just before.
+  it.live("adds a file again if it was removed in a crash's gap just after adding it", () =>
     fixture(async (h) => {
       await crashAt(h, "called", added);
       expect(await read(h.cwd, "a.tex")).toBe("new");
       await NodeFSP.unlink(NodePath.join(h.cwd, "a.tex"));
       await h.restart();
-      const result = await h.apply("crash");
-      expect(result.interrupted).toHaveLength(1);
-      expect(await read(h.cwd, "a.tex")).toBeNull();
+      await h.apply("crash");
+      expect(await read(h.cwd, "a.tex")).toBe("new");
     }),
   );
-
   // The last step turns the emptied folder into a file, capturing the folder first.
-  it.live.each([3, 4])(
-    "finishes removing a captured folder after a crash (displaced #%s)",
+  it.live.each([2, 3])(
+    "finishes removing a captured folder after a crash (called #%s)",
     (occurrence) =>
       fixture(async (h) => {
         const folded = emptied("notes/deep/old.tex");
-        await crashAt(h, "displaced", folded, occurrence);
+        await crashAt(h, "called", folded, occurrence);
         await h.restart();
         await editorReads(h);
         expect(await h.apply("crash")).toMatchObject({

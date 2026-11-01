@@ -519,6 +519,27 @@ export async function inspectGuardedFile(file: string, maxBytes?: number, helper
     await handle?.close();
   }
 }
+/** Whether every file published together with one still stands as its group expects. */
+export async function peersIntact(
+  cwd: string,
+  target: string,
+  peerGuards: NonNullable<RetainedMutationInput["peerGuards"]>,
+) {
+  const planned = new Set([
+    NodePath.relative(cwd, target).replaceAll(NodePath.sep, "/"),
+    ...peerGuards.map((peer) => peer.path),
+  ]);
+  for (const peer of peerGuards) {
+    const entry = await peerEntry(cwd, peer.path, planned);
+    if (peer.revision !== null) {
+      if (entry.kind !== "file" || entry.revision !== peer.revision) return false;
+    } else if (entry.kind === "directory") {
+      if (!peer.directory || (peer.only && !(await holdsOnly(cwd, peer.path, peer.only))))
+        return false;
+    } else if (entry.kind !== "absent") return false;
+  }
+  return true;
+}
 async function leadingFileRevision(file: string, maxBytes = 1024 * 1024): Promise<string> {
   const snapshot = await inspectGuardedFile(file, maxBytes);
   if (!snapshot) throw new Error("Captured entry is not a regular file.");
