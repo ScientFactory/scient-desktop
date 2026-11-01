@@ -431,8 +431,8 @@ thread shells and `isLive`, with no upstream changes. The desktop process polls 
 and owns the one sleep request (`apps/desktop/src/scient/keepAwake/`), so closing a window doesn't
 end it. The setting is the client setting `keepComputerAwake`; "until done" choices stay in memory,
 because quitting ends the work they cover. Upstream files only carry marked mounts: the HTTP group,
-the client setting, `main.ts`, `DesktopIpcHandlers.ts`, `preload.ts`, `channels.ts`,
-`SettingsPanels.tsx`, `settingsSearch.ts`, `Sidebar.tsx` and `threadActionMenu.logic.ts`.
+the client setting, `main.ts`, `DesktopIpcHandlers.ts`, `DesktopLocalEnvironmentAuth.ts`,
+`preload.ts`, `channels.ts`, `SettingsPanels.tsx`, `settingsSearch.ts`, `Sidebar.tsx` and `threadActionMenu.logic.ts`.
 
 #### Web and desktop surfaces
 
