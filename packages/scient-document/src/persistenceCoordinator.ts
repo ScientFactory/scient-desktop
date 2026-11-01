@@ -257,6 +257,8 @@ export class DocumentPersistenceCoordinator<
   /** A failed save is due again, so its shown error doesn't hold the next write. */
   private savingAgain = false;
   private keepingLocal = false;
+  /** Replaying a save from an earlier session, which is no one's action now either. */
+  private replayingEarlierSave = false;
   /** The last try to keep the person's text didn't work, and another is due. */
   private keepLocalRetry: ReturnType<typeof setTimeout> | null = null;
   /** A save failed without saying what happened, so its bytes may be on disk. */
@@ -377,6 +379,8 @@ export class DocumentPersistenceCoordinator<
         options.keepLocalOverConflicts === true && options.initialConflict !== undefined,
       editingBlocked: false,
     };
+    this.replayingEarlierSave =
+      options.keepLocalOverConflicts === true && options.initialPublication !== undefined;
     if (this.snapshot.pending) this.scheduleDraft();
   }
 
@@ -392,6 +396,7 @@ export class DocumentPersistenceCoordinator<
     if (this.disposed || this.renameHold !== null || basedOnVersion !== this.snapshot.editVersion)
       return false;
     if (source === this.snapshot.draftSource) return true;
+    this.replayingEarlierSave = false;
     this.update({
       draftSource: source,
       editVersion: this.snapshot.editVersion + 1,
@@ -664,6 +669,11 @@ export class DocumentPersistenceCoordinator<
   /** The person's text wins. What it replaces is kept by the server and offered back here. */
   private keepLocalOverConflict(): void {
     const conflict = this.snapshot.conflict;
+    if (conflict !== null && this.replayingEarlierSave) {
+      this.replayingEarlierSave = false;
+      this.update({ restoredDraft: true });
+      return;
+    }
     if (
       !this.options.keepLocalOverConflicts ||
       conflict === null ||
@@ -1054,6 +1064,7 @@ export class DocumentPersistenceCoordinator<
       this.ambiguousIntent = null;
       this.publicationUncertain = false;
       this.attemptMayHaveLanded = false;
+      this.replayingEarlierSave = false;
       this.reconciliationCount = 0;
       this.retryCount = 0;
       this.update({

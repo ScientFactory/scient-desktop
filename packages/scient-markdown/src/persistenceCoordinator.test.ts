@@ -647,6 +647,32 @@ describe("MarkdownPersistenceCoordinator", () => {
     await vi.waitFor(() => expect(typed.disk().source).toBe(mine + "more\n"));
   });
 
+  it("asks before a save from an earlier session goes over a newer file", async () => {
+    const other = mergeBase.replace("First", "Theirs");
+    const mine = mergeBase.replace("First", "Mine");
+    const h = fixture({
+      source: mergeBase,
+      draftSource: mine,
+      keepLocalOverConflicts: true,
+      initialPublication: {
+        mutationId: "earlier-session",
+        source: mine,
+        expectedRevision: "before",
+        editVersion: 1,
+      },
+    });
+    h.setDisk(other, "external");
+    h.write.mockRejectedValueOnce("conflict");
+    await vi.waitFor(() =>
+      expect(h.coordinator.getSnapshot()).toMatchObject({ restoredDraft: true, pending: true }),
+    );
+    expect(h.write).toHaveBeenCalledOnce();
+    expect(h.disk().source).toBe(other);
+
+    expect(await h.coordinator.resolveRestoredDraft("keep")).toBe(true);
+    await vi.waitFor(() => expect(h.disk().source).toBe(mine));
+  });
+
   it("never saves a draft the person turned down, even if turning it down failed", async () => {
     const other = mergeBase.replace("First", "Theirs");
     const mine = mergeBase.replace("First", "Mine");
