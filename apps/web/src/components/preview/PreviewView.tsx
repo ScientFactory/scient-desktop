@@ -253,12 +253,14 @@ export function PreviewView({
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
 
-  // SCIENT-FORK:START — Scient: shortcuts count what people open, never in an incognito tab.
+  // SCIENT-FORK:START — Scient: shortcuts and Recently used skip incognito tabs.
   const incognito =
     browserDefaults.profiles.find((profile) => profile.id === activeProfileId)?.kind ===
     "incognito";
   const countSiteVisit = (visited: string) => {
-    if (!incognito) recordSiteVisit(visited);
+    if (incognito) return;
+    recordVisitForThread(threadRef, visited);
+    recordSiteVisit(visited);
   };
   // SCIENT-FORK:END
 
@@ -297,7 +299,6 @@ export function PreviewView({
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
       if (await navigateToResolvedUrl(resolved, profileId)) {
-        recordVisitForThread(threadRef, resolved);
         countSiteVisit(resolved);
       }
     } catch (error) {
@@ -323,7 +324,6 @@ export function PreviewView({
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
       if (await navigateToResolvedUrl(resolved, profileId)) {
-        recordVisitForThread(threadRef, next);
         countSiteVisit(next);
       }
     } catch (error) {

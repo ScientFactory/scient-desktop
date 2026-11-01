@@ -393,17 +393,18 @@ describe("PreviewView", () => {
     await vi.waitFor(() =>
       expect(useBrowserShortcuts.getState().visits["nature.com"]?.count).toBe(1),
     );
+    expect(mocks.recordVisitForThread).toHaveBeenCalledOnce();
     await _first[Symbol.asyncDispose]();
     mocks.profileId = INCOGNITO_BROWSER_PROFILE_ID;
     await using _second = await render(view());
     await submitAddress("science.org");
     await vi.waitFor(() =>
-      expect(mocks.recordVisitForThread).toHaveBeenCalledWith(
-        expect.anything(),
-        "https://science.org/",
-      ),
+      expect(mocks.navigate).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, "https://science.org/"),
     );
+    await mocks.navigate.mock.results.at(-1)?.value;
+    await act(async () => {});
     expect(useBrowserShortcuts.getState().visits["science.org"]).toBeUndefined();
+    expect(mocks.recordVisitForThread).toHaveBeenCalledOnce();
   });
   // SCIENT-FORK:END
 
