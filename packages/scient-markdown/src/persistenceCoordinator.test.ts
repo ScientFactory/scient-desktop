@@ -611,26 +611,40 @@ describe("MarkdownPersistenceCoordinator", () => {
     expect(h.coordinator.getSnapshot().draftSource).toBe(mergeBase);
   });
 
-  it("keeps the file over a draft from an earlier session, and offers the draft", async () => {
+  it("leaves a draft from an earlier session alone until the person acts", async () => {
     const other = mergeBase.replace("First", "Theirs");
     const mine = mergeBase.replace("First", "Mine");
-    const h = fixture({
-      source: mergeBase,
-      draftSource: mine,
-      keepLocalOverConflicts: true,
-      initialConflict: { externalSource: other, externalRevision: "external" },
+    const restored = () => {
+      const h = fixture({
+        source: mergeBase,
+        draftSource: mine,
+        keepLocalOverConflicts: true,
+        initialConflict: { externalSource: other, externalRevision: "external" },
+      });
+      h.setDisk(other, "external");
+      return h;
+    };
+    const waiting = restored();
+    expect(await waiting.coordinator.flushNow()).toBe(false);
+    expect(waiting.coordinator.getSnapshot()).toMatchObject({ restoredDraft: true, pending: true });
+    expect(waiting.write).not.toHaveBeenCalled();
+
+    const kept = restored();
+    expect(await kept.coordinator.resolveRestoredDraft("keep")).toBe(true);
+    await vi.waitFor(() => expect(kept.disk().source).toBe(mine));
+
+    const file = restored();
+    expect(await file.coordinator.resolveRestoredDraft("file")).toBe(true);
+    expect(file.coordinator.getSnapshot()).toMatchObject({
+      draftSource: other,
+      recoverySource: mine,
+      restoredDraft: false,
     });
-    h.setDisk(other, "external");
-    await vi.waitFor(() =>
-      expect(h.coordinator.getSnapshot()).toMatchObject({
-        conflict: null,
-        pending: false,
-        draftSource: other,
-        recoverySource: mine,
-      }),
-    );
-    expect(h.disk().source).toBe(other);
-    expect(h.write).not.toHaveBeenCalled();
+    expect(file.write).not.toHaveBeenCalled();
+
+    const typed = restored();
+    typed.coordinator.change(mine + "more\n");
+    await vi.waitFor(() => expect(typed.disk().source).toBe(mine + "more\n"));
   });
 
   it("says so and waits when the file can't be replaced, instead of spinning", async () => {

@@ -247,6 +247,25 @@ export function ScientMarkdownPersistenceNotice({
           ) : null}
         </div>
       ) : null}
+      {snapshot.restoredDraft ? (
+        <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
+          This is an unsaved draft from an earlier session, and the file has changed since.
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => void persistence.resolveRestoredDraft("keep")}
+          >
+            Keep my draft
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => void persistence.resolveRestoredDraft("file")}
+          >
+            Use the file
+          </Button>
+        </div>
+      ) : null}
       {snapshot.recoverySource !== null ? (
         <div className="shrink-0 border-b border-border/50 px-3 py-1.5 scient-reading-micro text-muted-foreground">
           {snapshot.recoveryFromElsewhere

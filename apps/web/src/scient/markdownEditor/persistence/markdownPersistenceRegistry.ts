@@ -114,6 +114,7 @@ export interface MarkdownPersistenceLease {
   readonly reviewUnchangedRefusal: (currentRevision: string | null) => Promise<boolean>;
   readonly resolveWithLocal: (revision: string) => Promise<boolean>;
   readonly resolveWithDisk: () => Promise<boolean>;
+  readonly resolveRestoredDraft: (choice: "keep" | "file") => Promise<boolean>;
   readonly restoreRecovery: () => boolean;
   readonly holdForRename: () => (() => void) | null;
   /** Removes only a clean ordinary recovery copy; never a pending namespace intent. */
@@ -859,6 +860,12 @@ export class MarkdownPersistenceRegistry {
         guarded(() =>
           ownedEntry.pendingInput === null
             ? ownedEntry.coordinator.resolveWithDisk()
+            : Promise.resolve(false),
+        ),
+      resolveRestoredDraft: (choice) =>
+        guarded(() =>
+          ownedEntry.pendingInput === null
+            ? ownedEntry.coordinator.resolveRestoredDraft(choice)
             : Promise.resolve(false),
         ),
       restoreRecovery: () =>

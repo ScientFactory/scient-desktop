@@ -261,7 +261,9 @@ const within = (root: string, target: string) => {
  */
 const plainRun = { nonce: NodeCrypto.randomUUID(), generation: 0 };
 
-const OLDER_PUBLICATIONS_WAIT_MS = 5_000;
+const OLDER_RECORDS_SCAN_MS = 5_000;
+const OLDER_WORK_WRITE_WAIT_MS = 30_000;
+const OLDER_WORK_READ_WAIT_MS = 5_000;
 /** How many files' last saves are remembered; a forgotten one only keeps one extra copy. */
 const LAST_SAVED_FILES = 1024;
 /** Writing over a file holds its earlier bytes in memory, which must stay reasonable. */
@@ -4659,42 +4661,75 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   // Saves and Overleaf's writes are plain on every host. What an older build left unfinished
   // is finished once per root, but nothing it left blocks.
   const plain = makePlainHostMethods();
-  const settledRoots = new Map<string, Promise<unknown>>();
+  const settledRoots = new Map<string, Promise<void>>();
   /**
-   * Once per root, before anything else touches it: what an older build left must not return.
-   * That work gets a few seconds and goes on alone, so it can never hold up a save.
+   * Finishes what an older build left under a root, once. A root with nothing unfinished, which
+   * is nearly every root, never reaches the native helper, so a hung helper can't hold it up.
    */
-  const afterOlderPublications = <A, E, R>(cwd: string, next: Effect.Effect<A, E, R>) =>
-    Effect.promise(() => {
-      const settled =
-        settledRoots.get(cwd) ??
-        Promise.race([
-          runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore)),
-          NodeTimersPromises.setTimeout(OLDER_PUBLICATIONS_WAIT_MS),
+  const finishOlderPublications = (cwd: string) => {
+    const known = settledRoots.get(cwd);
+    if (known) return known;
+    const finished = (async () => {
+      const root = await NodeFSP.realpath(cwd);
+      const records = await Promise.race([
+        recordsUnderRoot(root),
+        NodeTimersPromises.setTimeout(OLDER_RECORDS_SCAN_MS, []),
+      ]);
+      if (records.some(({ record }) => record?.version !== 2 || record.phase !== "done"))
+        await runPromise(withSettledWorkspaceRead({ cwd }, () => Effect.void).pipe(Effect.ignore));
+    })().catch(() => undefined);
+    settledRoots.set(cwd, finished);
+    return finished;
+  };
+  /**
+   * A write never overtakes that work, since it could finish over the write. If it stalls the
+   * write is refused and goes again. A read only waits a moment.
+   */
+  const afterOlderPublications = <A, E, R>(
+    input: { readonly cwd: string; readonly relativePath?: string },
+    next: Effect.Effect<A, E, R>,
+    { writes = true } = {},
+  ) =>
+    Effect.tryPromise({
+      try: async () => {
+        const finished = await Promise.race([
+          finishOlderPublications(input.cwd).then(() => true),
+          NodeTimersPromises.setTimeout(
+            writes ? OLDER_WORK_WRITE_WAIT_MS : OLDER_WORK_READ_WAIT_MS,
+            false,
+          ),
         ]);
-      settledRoots.set(cwd, settled);
-      return settled;
+        if (!finished && writes)
+          throw new RetainedMutationError(
+            "unavailable",
+            "Scient is still finishing earlier work on this project.",
+            "older-publications",
+          );
+      },
+      catch: (cause) =>
+        errorFor({ cwd: input.cwd, relativePath: input.relativePath ?? "." }, input.cwd, cause),
     }).pipe(Effect.andThen(next));
   return withFileHistory({
     ...plain,
-    writeFile: (input) => afterOlderPublications(input.cwd, plain.writeFile(input)),
-    createBinaryFile: (input) => afterOlderPublications(input.cwd, plain.createBinaryFile(input)),
-    writeBinaryFile: (input) => afterOlderPublications(input.cwd, plain.writeBinaryFile(input)),
-    renameFile: (input) => afterOlderPublications(input.cwd, plain.renameFile(input)),
-    deleteFile: (input) => afterOlderPublications(input.cwd, plain.deleteFile(input)),
+    writeFile: (input) => afterOlderPublications(input, plain.writeFile(input)),
+    createBinaryFile: (input) => afterOlderPublications(input, plain.createBinaryFile(input)),
+    writeBinaryFile: (input) => afterOlderPublications(input, plain.writeBinaryFile(input)),
+    renameFile: (input) => afterOlderPublications(input, plain.renameFile(input)),
+    deleteFile: (input) => afterOlderPublications(input, plain.deleteFile(input)),
     // No bytes means recovering a step an older build began, which only it can finish.
     replaceFileRetained: (input) =>
       input.bytes === undefined
         ? replaceFileRetained(input)
-        : afterOlderPublications(input.cwd, plain.replaceFileRetained(input)),
-    removeFileRetained: (input) =>
-      afterOlderPublications(input.cwd, plain.removeFileRetained(input)),
+        : afterOlderPublications(input, plain.replaceFileRetained(input)),
+    removeFileRetained: (input) => afterOlderPublications(input, plain.removeFileRetained(input)),
     prepareRetainedDirectory: preparePrivateDirectory,
     registerRetainedFileHistory,
     withSettledFileRead: (input, read) =>
-      afterOlderPublications(input.cwd, plain.withSettledFileRead(input, read)),
+      afterOlderPublications(input, plain.withSettledFileRead(input, read), { writes: false }),
     withSettledWorkspaceRead: (input, read) =>
-      afterOlderPublications(input.cwd, plain.withSettledWorkspaceRead(input, read)),
+      afterOlderPublications(input, plain.withSettledWorkspaceRead(input, read), {
+        writes: false,
+      }),
     listFileVersions: (input) =>
       listFileVersions(input).pipe(Effect.map((listed) => ({ ...listed, attention: null }))),
     discardFileVersion,

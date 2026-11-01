@@ -171,6 +171,8 @@ export interface DocumentPersistenceSnapshot extends DocumentSession {
   readonly recoverySource: string | null;
   /** `recoverySource` is what was on disk when this text was saved over it. */
   readonly recoveryFromElsewhere: boolean;
+  /** This text is a draft from an earlier session, and the file has changed since. */
+  readonly restoredDraft: boolean;
   readonly editingBlocked: boolean;
 }
 
@@ -255,7 +257,6 @@ export class DocumentPersistenceCoordinator<
   /** A failed save is due again, so its shown error doesn't hold the next write. */
   private savingAgain = false;
   private keepingLocal = false;
-  private restoredConflict = false;
   /** The last try to keep the person's text didn't work, and another is due. */
   private keepLocalRetry: ReturnType<typeof setTimeout> | null = null;
   /** A save failed without saying what happened, so its bytes may be on disk. */
@@ -372,13 +373,11 @@ export class DocumentPersistenceCoordinator<
           : null,
       recoverySource: null,
       recoveryFromElsewhere: false,
+      restoredDraft:
+        options.keepLocalOverConflicts === true && options.initialConflict !== undefined,
       editingBlocked: false,
     };
     if (this.snapshot.pending) this.scheduleDraft();
-    if (options.initialConflict) {
-      this.restoredConflict = true;
-      queueMicrotask(() => this.keepLocalOverConflict());
-    }
   }
 
   getSnapshot = (): DocumentPersistenceSnapshot => this.snapshot;
@@ -400,6 +399,7 @@ export class DocumentPersistenceCoordinator<
       ...(this.snapshot.recoveryFromElsewhere
         ? { recoverySource: null, recoveryFromElsewhere: false }
         : {}),
+      restoredDraft: false,
     });
     this.scheduleDraft();
     return true;
@@ -445,8 +445,7 @@ export class DocumentPersistenceCoordinator<
     if (
       this.disposed ||
       this.externalUpdateHolds.size > 0 ||
-      (this.snapshot.conflict !== null &&
-        (!this.options.keepLocalOverConflicts || this.keepLocalRetry !== null)) ||
+      this.conflictWaits ||
       this.snapshot.attention !== null ||
       this.missingCreationHold ||
       (this.snapshot.error !== null && this.retryTimer === null)
@@ -635,30 +634,50 @@ export class DocumentPersistenceCoordinator<
     return true;
   }
 
+  /**
+   * A draft restored from an earlier session waits for the person, and stays in its checkpoint
+   * until then: it is no one's action now, and only they know which text they want.
+   */
+  private get conflictWaits(): boolean {
+    return (
+      this.snapshot.conflict !== null &&
+      (!this.options.keepLocalOverConflicts ||
+        this.keepLocalRetry !== null ||
+        this.snapshot.restoredDraft)
+    );
+  }
+
+  /** Settles a restored draft: on with it, or back to the file with it offered for now. */
+  resolveRestoredDraft(choice: "keep" | "file"): Promise<boolean> {
+    if (!this.snapshot.restoredDraft) return Promise.resolve(false);
+    if (choice === "keep") {
+      this.update({ restoredDraft: false });
+      return this.flushNow();
+    }
+    this.keepingLocal = true;
+    this.update({ restoredDraft: false });
+    return this.resolveWithDisk().finally(() => {
+      this.keepingLocal = false;
+    });
+  }
+
   /** The person's text wins. What it replaces is kept by the server and offered back here. */
   private keepLocalOverConflict(): void {
     const conflict = this.snapshot.conflict;
     if (
       !this.options.keepLocalOverConflicts ||
       conflict === null ||
+      this.snapshot.restoredDraft ||
       this.keepingLocal ||
       this.keepLocalRetry !== null
     )
       return;
     this.keepingLocal = true;
-    // A draft restored from an earlier session is no one's action now, so the file stands and
-    // the draft is offered back. Only what the person is doing now goes over the file.
-    const restored = this.restoredConflict;
-    const settled = restored
-      ? this.resolveWithDisk()
-      : this.resolveWithLocal(conflict.externalRevision);
-    void settled.then((saved) => {
+    void this.resolveWithLocal(conflict.externalRevision).then((saved) => {
       this.keepingLocal = false;
       if (this.disposed) return;
       if (saved) {
-        this.restoredConflict = false;
-        if (!restored)
-          this.update({ recoverySource: conflict.externalSource, recoveryFromElsewhere: true });
+        this.update({ recoverySource: conflict.externalSource, recoveryFromElsewhere: true });
         return;
       }
       // Nothing was replaced. A file that can't be, for now, is said out loud and tried later.
@@ -917,10 +936,7 @@ export class DocumentPersistenceCoordinator<
 
   private settleWaiters(): void {
     const blocked =
-      this.snapshot.attention !== null ||
-      (this.snapshot.conflict !== null &&
-        (!this.options.keepLocalOverConflicts || this.keepLocalRetry !== null)) ||
-      this.snapshot.error !== null;
+      this.snapshot.attention !== null || this.conflictWaits || this.snapshot.error !== null;
     if (
       !blocked &&
       (this.snapshot.pending || this.readOperation !== null || this.readRequest !== null)

@@ -483,6 +483,12 @@ describe("References bibliography session", () => {
     });
     expect([...guards.attentionSurfaceIds]).toEqual(["refsA.bib"]);
     expect(onSaved).not.toHaveBeenCalled();
+    // A failed save goes on trying, so this one lands rather than reach the next test.
+    publication = deferred();
+    publication.resolve({ revision: "r2" });
+    await act(async () => {
+      expect(await tab.flushNow()).toBe(true);
+    });
   });
 
   it("keeps entry A when an earlier write and superseding entry B leave a clean lane", async () => {
