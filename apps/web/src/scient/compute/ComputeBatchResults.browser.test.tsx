@@ -30,9 +30,13 @@ const mocks = vi.hoisted(() => ({
   openFile: vi.fn(),
   toast: vi.fn(),
   setPrompt: vi.fn(),
+  citeText: vi.fn(() => true),
   artifacts: vi.fn(),
   runs: vi.fn(),
   timestampFormat: "24-hour" as "12-hour" | "24-hour" | "locale",
+}));
+vi.mock("~/composerHandleContext", () => ({
+  useComposerHandleContext: () => ({ current: { citeText: mocks.citeText } }),
 }));
 vi.mock("~/state/analysis", () => ({
   analysisEnvironment: {
@@ -840,9 +844,14 @@ describe("Compute batch results", () => {
     await click(_fixture, "analysis.m:4");
     expect(mocks.openFile).toHaveBeenCalledWith(source.threadRef, "analysis.m", 4);
     await click(_fixture, "Ask agent");
-    expect(mocks.setPrompt).toHaveBeenCalledWith(
-      source.threadRef,
-      expect.stringContaining("Existing draft\n\nPlease diagnose"),
+    expect(mocks.setPrompt).not.toHaveBeenCalled();
+    expect(mocks.citeText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "compute",
+        text: "MATLAB:error: Bad input",
+        place: { _tag: "file-run", runId: "batch-1", path: source.relativePath },
+      }),
+      expect.anything(),
     );
     await clickRunAction(_fixture, "Save to project");
     expect(mocks.promote).toHaveBeenCalledWith({
@@ -897,9 +906,13 @@ describe("Compute batch results", () => {
     await click(_fixture, `${source.relativePath}:12:5`);
     expect(mocks.openFile).toHaveBeenCalledWith(source.threadRef, source.relativePath, 12);
     await click(_fixture, "Ask agent");
-    expect(mocks.setPrompt).toHaveBeenCalledWith(
-      source.threadRef,
-      expect.stringContaining("error: bad"),
+    expect(mocks.setPrompt).not.toHaveBeenCalled();
+    expect(mocks.citeText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: `${source.cwd}/${source.relativePath}:12:5: error: bad`,
+        place: { _tag: "file-run", runId: "failed-run", path: source.relativePath },
+      }),
+      expect.anything(),
     );
     await clickRunAction(_fixture, "Run with Java 21.0.1");
     expect(mocks.start).toHaveBeenCalledWith(

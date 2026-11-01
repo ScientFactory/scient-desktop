@@ -12,7 +12,11 @@ import {
   serializeComposerCitation,
   withComposerCitationComment,
 } from "./composerCitations.ts";
-import { computeCitationPlaceLabel, parseComputeCitationHref } from "./computeCitations.ts";
+import {
+  computeCitationForProvider,
+  computeCitationPlaceLabel,
+  parseComputeCitationHref,
+} from "./computeCitations.ts";
 
 const isComputeCitation = Schema.is(ComputeCitation);
 
@@ -121,5 +125,34 @@ describe("compute citations", () => {
     expect(composerCitationsToPlainText(prompt)).toBe(`Look: ${base.text}`);
     expect(renderComposerCitationsAsText(prompt)).toContain("> analysis\\.ipynb · Cell 3:");
     expect(renderComposerCitationsAsText(prompt)).not.toContain("scient-compute-citation");
+  });
+});
+
+describe("a quote of a file run", () => {
+  const citation = {
+    kind: "compute" as const,
+    version: 1 as const,
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("thread"),
+    cwd: "/project",
+    place: { _tag: "file-run" as const, runId: "run-1", path: "src/a.c" },
+    text: "a.c:3:11: error: expected expression",
+    start: 0,
+    end: 36,
+    prefix: "",
+    suffix: "",
+  };
+
+  it("is a valid quote, named by its file", () => {
+    expect(isComputeCitation(citation)).toBe(true);
+    expect(computeCitationPlaceLabel(citation)).toBe("a.c");
+  });
+
+  it("gives the agent the file and the run, which is what its tool reads", () => {
+    expect(computeCitationForProvider(citation).place).toEqual({
+      type: "file-run",
+      path: "src/a.c",
+      run: "run-1",
+    });
   });
 });

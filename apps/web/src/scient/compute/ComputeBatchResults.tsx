@@ -24,6 +24,7 @@ import {
   Ellipsis,
   FolderDown,
   LoaderCircle,
+  MessageSquarePlus,
   Play,
   Square,
 } from "lucide-react";
@@ -40,13 +41,11 @@ import {
   MenuRadioItem,
   MenuTrigger,
 } from "~/components/ui/menu";
-import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { analysisEnvironment } from "~/state/analysis";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useEnvironmentQuery } from "~/state/query";
-import { useComposerDraftStore } from "~/composerDraftStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 
 import {
@@ -61,6 +60,17 @@ import {
   runForArtifactDisplay,
 } from "../analysis/analysisArtifactPresentation";
 import { splitRunOutputLinks } from "./computeRunOutputLinks";
+import {
+  ComputeQuoteActions,
+  computeFileRunAttributes,
+  computeRunPlace,
+  useAskAboutCompute,
+} from "./ComputeQuoteActions";
+import {
+  finishComputeQuoteReveal,
+  showComputeQuote,
+  usePendingComputeQuote,
+} from "./computeQuoteReveal";
 
 export interface ComputeBatchSource {
   readonly environmentId: EnvironmentId;
@@ -151,9 +161,6 @@ function statusLabel(
   }
 }
 
-/** Enough of a failed run for an agent to start from; it can read the rest by the run's ID. */
-const MAXIMUM_ASKED_OUTPUT = 4000;
-
 function RunOutputView(props: {
   readonly run: AnalysisRunSnapshot;
   readonly runtimeLabel: string;
@@ -166,6 +173,18 @@ function RunOutputView(props: {
 }) {
   const segments = outputSegments(props.run.receipt.output);
   const { cwd, relativePath } = props.run.source;
+  const runId = props.run.receipt.runId;
+  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
+  const [quoted, setQuoted] = useState<HTMLDivElement | null>(null);
+  const revealing = usePendingComputeQuote(props.threadRef, (citation) =>
+    citation.place._tag === "file-run" && citation.place.runId === runId ? citation : null,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a quote's chip brings this run into view
+  useEffect(() => {
+    if (revealing === null || quoted === null || viewport === null) return;
+    showComputeQuote({ source: quoted, scroller: viewport, citation: revealing });
+    finishComputeQuoteReveal(revealing);
+  }, [revealing, quoted, viewport]);
   const open = (path: string, line?: number) => {
     if (path === relativePath) props.onRevealCode?.();
     useRightPanelStore.getState().openFile(props.threadRef, path, line);
@@ -203,8 +222,22 @@ function RunOutputView(props: {
   );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-2 p-3">
+      <div
+        ref={setViewport}
+        data-assistant-citation-viewport=""
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        <ComputeQuoteActions
+          viewport={viewport}
+          threadRef={props.threadRef}
+          cwd={cwd}
+          placeOf={computeRunPlace}
+        />
+        <div
+          ref={setQuoted}
+          className="space-y-2 p-3"
+          {...computeFileRunAttributes({ runId, path: relativePath })}
+        >
           {props.run.writtenFiles !== undefined && props.run.writtenFiles.length > 0 ? (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
               <span className="text-muted-foreground">Wrote</span>
@@ -365,7 +398,7 @@ function RunOutputView(props: {
             </p>
           ) : null}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
@@ -760,6 +793,12 @@ export function ComputeBatchResults({
     null,
   );
   const refreshedTerminalRunIdRef = useRef<string | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const ask = useAskAboutCompute({ threadRef: props.threadRef, cwd: props.cwd });
+  const revealRunId = usePendingComputeQuote(props.threadRef, ({ place }) =>
+    place._tag === "file-run" && place.path === props.relativePath ? place.runId : null,
+  );
+  if (revealRunId !== null && revealRunId !== selectedRunId) setSelectedRunId(revealRunId);
   const observedStreamRunIdsRef = useRef<Set<string> | null>(null);
 
   const historyPage = resultValue(runsResult);
@@ -957,40 +996,32 @@ export function ComputeBatchResults({
     }
   };
 
+  /** Puts the text in the chat as a quote of the run, leaving what someone has typed alone. */
+  const askAboutText = (runId: AnalysisRunSnapshot["receipt"]["runId"], text: string) => {
+    const source = sectionRef.current?.querySelector<HTMLElement>("[data-compute-file-run]");
+    if (source === undefined || source === null) return;
+    ask?.({ source, place: { _tag: "file-run", runId, path: props.relativePath }, text });
+  };
+
   const askAboutDiagnostic = (
     diagnostic: AnalysisDiagnostic,
     runId: AnalysisRunSnapshot["receipt"]["runId"],
-  ) => {
-    const location = diagnostic.relativePath
-      ? `${diagnostic.relativePath}${diagnostic.line ? `:${diagnostic.line}` : ""}`
-      : props.relativePath;
-    askAgent(
-      `Please diagnose and fix this ${props.runtimeLabel} error in ${location}. Scient analysis run ID: ${runId}; diagnostic ID: ${diagnostic.diagnosticId}.\n\n${diagnostic.code ? `${diagnostic.code}: ` : ""}${diagnostic.message}`,
-    );
-  };
+  ) => askAboutText(runId, `${diagnostic.code ? `${diagnostic.code}: ` : ""}${diagnostic.message}`);
 
+  /** A run's errors stand for it, and the agent reads the rest by its ID. */
   const askAboutRun = (run: AnalysisRunSnapshot) => {
-    const output = outputSegments(run.receipt.output)
-      .map((segment) => segment.text)
-      .join("");
-    askAgent(
-      `Please diagnose and fix this ${props.runtimeLabel} failure in ${props.relativePath}. Scient analysis run ID: ${run.receipt.runId}.\n\n${run.receipt.failureMessage ?? ""}\n\n${output.slice(-MAXIMUM_ASKED_OUTPUT)}`.trim(),
-    );
-  };
-
-  const askAgent = (request: string) => {
-    const store = useComposerDraftStore.getState();
-    const current = store.getComposerDraft(props.threadRef)?.prompt ?? "";
-    store.setPrompt(
-      props.threadRef,
-      current.trim().length > 0 ? `${current}\n\n${request}` : request,
-    );
-    toastManager.add(
-      stackedThreadToast({
-        type: "success",
-        title: `Added ${props.runtimeLabel} error to the composer`,
-        description: "Review the request, then send it to your agent.",
-      }),
+    const segments = outputSegments(run.receipt.output);
+    const textOf = (parts: typeof segments) =>
+      parts
+        .map((part) => part.text)
+        .join("")
+        .trim();
+    askAboutText(
+      run.receipt.runId,
+      textOf(segments.filter((segment) => segment.stream === "stderr")) ||
+        textOf(segments) ||
+        run.receipt.failureMessage ||
+        props.relativePath,
     );
   };
 
@@ -1046,7 +1077,11 @@ export function ComputeBatchResults({
   const stoppedEarly =
     selectedRun?.receipt.status === "cancelled" || selectedRun?.receipt.status === "lost";
   // A diagnostic already offers the same help for the error it describes.
-  const askableRun = failed && selectedRun.diagnostics.length === 0 ? (fullRun ?? null) : null;
+  const askableRun =
+    ask !== null && fullRun !== null && isTerminalAnalysisRunStatus(fullRun.receipt.status)
+      ? fullRun
+      : null;
+  const asksAgent = failed && selectedRun.diagnostics.length === 0;
   const outputProps = {
     runtimeLabel: props.runtimeLabel,
     threadRef: props.threadRef,
@@ -1061,6 +1096,7 @@ export function ComputeBatchResults({
   const showHistory = resultPicker === undefined && (runs.length > 1 || historyPage?.hasMore);
   return (
     <section
+      ref={sectionRef}
       className="flex min-h-0 flex-1 flex-col bg-background"
       aria-label={`${props.runtimeLabel} results`}
     >
@@ -1163,11 +1199,22 @@ export function ComputeBatchResults({
             ) : null}
           </span>
         </ScientTooltip>
-        {askableRun !== null ? (
+        {askableRun === null ? null : asksAgent ? (
           <Button size="xs" variant="outline" onClick={() => askAboutRun(askableRun)}>
             Ask agent
           </Button>
-        ) : null}
+        ) : (
+          <ScientTooltip content="Ask in chat">
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              aria-label="Ask in chat"
+              onClick={() => askAboutRun(askableRun)}
+            >
+              <MessageSquarePlus className="size-3" />
+            </Button>
+          </ScientTooltip>
+        )}
         {!projectNotInitialized &&
         (finished || alternatives.length > 0 || (storage && storage.totalBytes > 0)) ? (
           <Menu>
