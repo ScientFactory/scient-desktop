@@ -46,11 +46,11 @@ it("keeps both screenshot edges visible after switching from a cached square pre
   await using screen = await render(preview("square"), { router: false });
   const squareResult = await act(() => createComposerImageThumbnail(file, "square"));
   expect(squareResult).not.toBeNull();
-  await expect.element(screen.getByRole("img", { name: "Window snapshot" })).toBeVisible();
+  // The local preview shows first, then the thumbnail replaces it once decoded.
+  await expect.poll(() => screen.container.querySelector("img")?.src).toBe(squareResult);
   const square = screen.container.querySelector("img")!;
   await square.decode();
   const squareSrc = square.src;
-  expect(squareSrc).toBe(squareResult);
   expect([square.naturalWidth, square.naturalHeight]).toEqual([256, 256]);
   expect(previewEdges(square)).toEqual([
     [0, 255, 0, 255],
