@@ -48,6 +48,9 @@ import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
 import { previewBridge } from "~/components/preview/previewBridge";
 import { cn, randomUUID } from "~/lib/utils";
+// SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+import { useForgetBrowserProfile } from "~/scient/browser/useForgetBrowserProfile";
+// SCIENT-FORK:END
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
@@ -1123,6 +1126,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const settingsHydrated = useClientSettingsHydrated();
   const updateSettings = useUpdatePrimarySettings();
   const { environments, isReady: environmentsReady } = useEnvironments();
+  // SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+  const forgetBrowsing = useForgetBrowserProfile();
+  // SCIENT-FORK:END
   const primaryEnvironment = usePrimaryEnvironment();
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
   const [importSession, setImportSession] = useState<{
@@ -1242,6 +1248,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
         ? { browserDefaultProfileId: DEFAULT_BROWSER_PROFILE_ID }
         : {}),
     });
+    // SCIENT-FORK:START — Scient Browser: a removed profile takes its history and shortcuts.
+    forgetBrowsing(id);
+    // SCIENT-FORK:END
     setProfileRemovalInFlight(false);
     setProfilePendingRemoval(null);
   };

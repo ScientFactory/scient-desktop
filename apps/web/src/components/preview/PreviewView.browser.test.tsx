@@ -195,6 +195,9 @@ import { openPreviewSession } from "./openPreviewSession";
 import { PreviewView } from "./PreviewView";
 import { ToastProvider } from "~/components/ui/toast";
 
+const visits = () =>
+  useBrowserShortcuts.getState().profiles[DEFAULT_BROWSER_PROFILE_ID]?.visits ?? {};
+
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
   threadId: ThreadId.make("thread-1"),
@@ -247,7 +250,7 @@ function setup() {
   mocks.controller = "none";
   mocks.profileId = undefined;
   mocks.noTab = false;
-  useBrowserShortcuts.setState({ added: [], names: {}, hidden: [], visits: {} });
+  useBrowserShortcuts.setState({ profiles: {}, unclaimed: null });
   mocks.exportDisabled = null;
   mocks.runtime = undefined;
   mocks.sourceUrl = "http://example.com/";
@@ -281,7 +284,7 @@ describe("PreviewView", () => {
       ),
     );
     expect(mocks.recordVisitForThread).toHaveBeenCalled();
-    expect(useBrowserShortcuts.getState().visits["mail.google.com"]?.count).toBe(1);
+    expect(visits()["mail.google.com"]?.count).toBe(1);
   });
 
   it("opens Gmail in the profile the toolbar shows when there is no tab yet", async () => {
@@ -396,9 +399,7 @@ describe("PreviewView", () => {
     setup();
     await using _first = await render(view());
     await submitAddress("nature.com");
-    await vi.waitFor(() =>
-      expect(useBrowserShortcuts.getState().visits["nature.com"]?.count).toBe(1),
-    );
+    await vi.waitFor(() => expect(visits()["nature.com"]?.count).toBe(1));
     expect(mocks.recordVisitForThread).toHaveBeenCalledOnce();
     await _first[Symbol.asyncDispose]();
     mocks.profileId = INCOGNITO_BROWSER_PROFILE_ID;
@@ -409,7 +410,8 @@ describe("PreviewView", () => {
     );
     await mocks.navigate.mock.results.at(-1)?.value;
     await act(async () => {});
-    expect(useBrowserShortcuts.getState().visits["science.org"]).toBeUndefined();
+    expect(useBrowserShortcuts.getState().profiles[INCOGNITO_BROWSER_PROFILE_ID]).toBeUndefined();
+    expect(visits()["science.org"]).toBeUndefined();
     expect(mocks.recordVisitForThread).toHaveBeenCalledOnce();
   });
   // SCIENT-FORK:END
@@ -502,6 +504,22 @@ describe("PreviewView", () => {
       close.mockRestore();
       closePanel.mockRestore();
     }
+  });
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — Scient Browser: incognito has no history to show.
+  it("offers History in a normal tab but not in incognito", async () => {
+    setup();
+    await using first = await render(view());
+    await page.getByRole("button", { name: "Preview menu" }).click();
+    await expect.element(page.getByRole("menuitem", { name: "History" })).toBeInTheDocument();
+    await first[Symbol.asyncDispose]();
+
+    mocks.profileId = INCOGNITO_BROWSER_PROFILE_ID;
+    await using _second = await render(view());
+    await page.getByRole("button", { name: "Preview menu" }).click();
+    await expect.element(page.getByRole("menuitem", { name: "Hard reload" })).toBeInTheDocument();
+    await expect.element(page.getByRole("menuitem", { name: "History" })).not.toBeInTheDocument();
   });
   // SCIENT-FORK:END
 

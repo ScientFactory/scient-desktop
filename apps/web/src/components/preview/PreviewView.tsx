@@ -263,10 +263,10 @@ export function PreviewView({
   const incognito =
     browserDefaults.profiles.find((profile) => profile.id === activeProfileId)?.kind ===
     "incognito";
-  const countSiteVisit = (visited: string) => {
+  const countSiteVisit = (visited: string, profileId = activeProfileId) => {
     if (incognito) return;
     recordVisitForThread(threadRef, visited);
-    recordSiteVisit(visited);
+    recordSiteVisit(profileId, visited);
   };
   // SCIENT-FORK:END
 
@@ -305,7 +305,7 @@ export function PreviewView({
     try {
       const resolved = resolveAddressBarInput(next, resolveSearchUrlTemplate(getClientSettings()));
       if (await navigateToResolvedUrl(resolved, profileId)) {
-        countSiteVisit(resolved);
+        countSiteVisit(resolved, profileId);
       }
     } catch (error) {
       // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
@@ -330,7 +330,7 @@ export function PreviewView({
           ? normalizePreviewUrl(next)
           : resolveDiscoveredServerUrl(threadRef.environmentId, next);
       if (await navigateToResolvedUrl(resolved, profileId)) {
-        countSiteVisit(next);
+        countSiteVisit(next, profileId);
       }
     } catch (error) {
       // SCIENT-FORK:START — Scient Browser: the tab's own page explains a site that didn't load.
@@ -1001,7 +1001,9 @@ export function PreviewView({
             <PreviewMoreMenu
               extraItems={
                 <>
-                  <MenuItem onClick={() => setHistoryOpen(true)}>History</MenuItem>
+                  {incognito ? null : (
+                    <MenuItem onClick={() => setHistoryOpen(true)}>History</MenuItem>
+                  )}
                   {previewBridge && tabId ? (
                     <>
                       <PanelTabNewWindowItem label="Open in new Scient window" plain />
@@ -1128,7 +1130,7 @@ export function PreviewView({
                 onSearch={(query) => void handleSubmitUrl(query, activeProfileId)}
               />
             }
-            onShowHistory={() => setHistoryOpen(true)}
+            {...(incognito ? {} : { onShowHistory: () => setHistoryOpen(true) })}
             // SCIENT-FORK:END
           />
         ) : null}
@@ -1178,9 +1180,9 @@ export function PreviewView({
       {historyOpen ? (
         <BrowserHistoryDialog
           threadRef={threadRef}
+          profileId={activeProfileId}
           onOpenUrl={(next) => void handleOpenServerUrl(next, activeProfileId)}
           onClose={() => setHistoryOpen(false)}
-          profileId={activeProfileId}
         />
       ) : null}
       {/* SCIENT-FORK:END */}

@@ -47,6 +47,7 @@ import {
   useClientSettings,
   useClientSettingsHydrated,
 } from "~/hooks/useSettings";
+import { useForgetBrowserProfile } from "~/scient/browser/useForgetBrowserProfile";
 import { useEnvironments } from "~/state/environments";
 import { useServerConfigs } from "~/state/entities";
 import { previewEnvironment } from "~/state/preview";
@@ -646,6 +647,7 @@ export function BrowserProfiles({
   const setControls = useAccountCommand(accountsState.setControls, environmentId);
   const updateRecord = useAccountCommand(accountsState.updateProfile, environmentId);
   const removeRecord = useAccountCommand(accountsState.removeProfile, environmentId);
+  const forgetBrowsing = useForgetBrowserProfile();
   const importPasswords = useAccountCommand(accountsState.importPasswords, environmentId);
   // Only the local desktop can read another browser's saved passwords.
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1060,6 +1062,7 @@ export function BrowserProfiles({
                               : {}),
                           }),
                         );
+                        forgetBrowsing(profile.id);
                       })
                     }
                   >
