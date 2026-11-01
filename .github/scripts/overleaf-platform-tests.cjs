@@ -12,7 +12,7 @@ const FILES = [
   "src/scient/overleaf/manuscriptPaths.test.ts",
   "src/scient/overleaf/overleafHostPaths.test.ts",
   "src/scient/overleaf/overleafFileAvailability.test.ts",
-  "src/scient/overleaf/OverleafSync.stuck.test.ts",
+  "src/scient/overleaf/OverleafSync.folders.test.ts",
   "src/scient/workspace/WindowsRetainedFileMutation.test.ts",
   "src/scient/workspace/NativeFilePublication.resource.test.ts",
 ];
@@ -75,8 +75,15 @@ function run() {
       }
       throw error;
     }
-    validateReport(JSON.parse(fs.readFileSync(output, "utf8")), FILES);
-    for (const file of FILES) console.log(`Qualified without skips: ${file}`);
+    const report = JSON.parse(fs.readFileSync(output, "utf8"));
+    validateReport(report, FILES);
+    for (const file of FILES) {
+      const result = report.testResults.find((entry) =>
+        entry.name.replaceAll("\\", "/").endsWith(`/${file}`),
+      );
+      const seconds = Math.round((result.endTime - result.startTime) / 1000);
+      console.log(`Qualified without skips: ${file} (${seconds} s)`);
+    }
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
